@@ -1,364 +1,58 @@
+
 {
   "entities": {
     "Company": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Company",
       "type": "object",
-      "description": "Represents a registered business organization within the BizForge platform. This entity stores core information about each tenant.",
+      "description": "Represents a registered business organization within the BizForge platform.",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Company entity."
-        },
-        "name": {
-          "type": "string",
-          "description": "The legal name of the company."
-        },
-        "email": {
-          "type": "string",
-          "description": "The primary contact email for the company.",
-          "format": "email"
-        },
-        "phone": {
-          "type": "string",
-          "description": "The primary contact phone number for the company."
-        },
-        "address": {
-          "type": "string",
-          "description": "The physical address of the company."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the company was registered.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the company's information was last updated.",
-          "format": "date-time"
-        },
-        "isActive": {
-          "type": "boolean",
-          "description": "Indicates if the company is currently active on the platform. Can be toggled by Super Admin."
-        },
-        "licenseId": {
-          "type": "string",
-          "description": "Reference to the active License entity assigned to this company. (Relationship: License 1:N Company)"
-        },
-        "enabledModuleIds": {
-          "type": "array",
-          "description": "References to Module entities that are enabled for this company. (Relationship: Module N:N Company)",
-          "items": {
-            "type": "string"
-          }
-        },
-        "ownerUserId": {
-          "type": "string",
-          "description": "Reference to the User entity who is designated as the primary owner of this company. (Relationship: User 1:N Company)"
-        }
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isActive": { "type": "boolean" },
+        "licenseId": { "type": "string" },
+        "ownerUserId": { "type": "string" }
       },
-      "required": [
-        "id",
-        "name",
-        "email",
-        "createdAt",
-        "isActive",
-        "licenseId",
-        "enabledModuleIds",
-        "ownerUserId"
-      ]
+      "required": ["id", "name", "email", "createdAt", "isActive", "ownerUserId"]
     },
     "User": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "User",
       "type": "object",
-      "description": "Represents an authenticated user account in the BizForge platform, globally managed.",
+      "description": "Represents an authenticated user account.",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the User entity, typically corresponding to Firebase Authentication UID."
-        },
-        "email": {
-          "type": "string",
-          "description": "The user's email address.",
-          "format": "email"
-        },
-        "displayName": {
-          "type": "string",
-          "description": "The user's full display name."
-        },
-        "photoUrl": {
-          "type": "string",
-          "description": "URL to the user's profile picture.",
-          "format": "uri"
-        },
-        "globalRoles": {
-          "type": "array",
-          "description": "An array of global roles assigned to the user, such as 'super_admin' or 'billing_admin'.",
-          "items": {
-            "type": "string"
-          }
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the user account was created.",
-          "format": "date-time"
-        },
-        "lastLoginAt": {
-          "type": "string",
-          "description": "Timestamp of the user's last login.",
-          "format": "date-time"
-        }
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoUrl": { "type": "string", "format": "uri" },
+        "globalRoles": { "type": "array", "items": { "type": "string" } },
+        "companyId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
       },
-      "required": [
-        "id",
-        "email",
-        "displayName",
-        "globalRoles",
-        "createdAt"
-      ]
-    },
-    "License": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "License",
-      "type": "object",
-      "description": "Defines a pricing plan or feature set available on the BizForge platform.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the License entity."
-        },
-        "name": {
-          "type": "string",
-          "description": "The name of the license plan (e.g., 'Basic', 'Premium', 'Enterprise')."
-        },
-        "description": {
-          "type": "string",
-          "description": "A detailed description of the license plan's features and benefits."
-        },
-        "price": {
-          "type": "number",
-          "description": "The monetary price of the license plan per billing cycle."
-        },
-        "billingCycle": {
-          "type": "string",
-          "description": "The billing frequency for the license (e.g., 'monthly', 'annually')."
-        },
-        "maxEmployees": {
-          "type": "number",
-          "description": "The maximum number of employees allowed under this license plan."
-        },
-        "includedModuleIds": {
-          "type": "array",
-          "description": "References to Module entities that are included by default in this license plan. (Relationship: Module N:N License)",
-          "items": {
-            "type": "string"
-          }
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the license plan was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the license plan information was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "description",
-        "price",
-        "billingCycle",
-        "maxEmployees",
-        "includedModuleIds",
-        "createdAt"
-      ]
-    },
-    "Module": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Module",
-      "type": "object",
-      "description": "Represents a distinct feature module available in the BizForge platform.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Module entity."
-        },
-        "name": {
-          "type": "string",
-          "description": "The name of the module (e.g., 'Employees', 'Attendance', 'Finance')."
-        },
-        "description": {
-          "type": "string",
-          "description": "A brief description of the module's functionality."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the module definition was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the module definition was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "name",
-        "description",
-        "createdAt"
-      ]
+      "required": ["id", "email", "displayName", "globalRoles", "createdAt"]
     },
     "Employee": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Employee",
       "type": "object",
-      "description": "Represents an employee profile within a specific company. An employee may or may not have a linked user account.",
+      "description": "Represents an employee profile within a specific company.",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Employee entity."
-        },
-        "companyId": {
-          "type": "string",
-          "description": "Reference to the Company this employee belongs to. (Relationship: Company 1:N Employee)"
-        },
-        "userId": {
-          "type": "string",
-          "description": "Optional reference to the User entity if this employee has a linked platform account. (Relationship: User 1:N Employee)"
-        },
-        "firstName": {
-          "type": "string",
-          "description": "The employee's first name."
-        },
-        "lastName": {
-          "type": "string",
-          "description": "The employee's last name."
-        },
-        "email": {
-          "type": "string",
-          "description": "The employee's work email address.",
-          "format": "email"
-        },
-        "phone": {
-          "type": "string",
-          "description": "The employee's contact phone number."
-        },
-        "jobTitle": {
-          "type": "string",
-          "description": "The employee's job title or position."
-        },
-        "department": {
-          "type": "string",
-          "description": "The department the employee belongs to."
-        },
-        "hireDate": {
-          "type": "string",
-          "description": "The date when the employee was hired.",
-          "format": "date"
-        },
-        "salary": {
-          "type": "number",
-          "description": "The employee's salary."
-        },
-        "role": {
-          "type": "string",
-          "description": "The company-specific role of the employee (e.g., 'owner', 'admin', 'manager', 'accountant', 'employee')."
-        },
-        "isActive": {
-          "type": "boolean",
-          "description": "Indicates if the employee is currently active within the company."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the employee record was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the employee record was last updated.",
-          "format": "date-time"
-        }
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "userId": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "jobTitle": { "type": "string" },
+        "role": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "hireDate": { "type": "string", "format": "date" }
       },
-      "required": [
-        "id",
-        "companyId",
-        "firstName",
-        "lastName",
-        "email",
-        "jobTitle",
-        "hireDate",
-        "role",
-        "isActive",
-        "createdAt"
-      ]
-    },
-    "Customer": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Customer",
-      "type": "object",
-      "description": "Represents a customer profile for a specific company. A customer may or may not have a linked user account.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Customer entity."
-        },
-        "companyId": {
-          "type": "string",
-          "description": "Reference to the Company this customer belongs to. (Relationship: Company 1:N Customer)"
-        },
-        "userId": {
-          "type": "string",
-          "description": "Optional reference to the User entity if this customer has a linked platform account. (Relationship: User 1:N Customer)"
-        },
-        "firstName": {
-          "type": "string",
-          "description": "The customer's first name."
-        },
-        "lastName": {
-          "type": "string",
-          "description": "The customer's last name."
-        },
-        "email": {
-          "type": "string",
-          "description": "The customer's primary contact email address.",
-          "format": "email"
-        },
-        "phone": {
-          "type": "string",
-          "description": "The customer's primary contact phone number."
-        },
-        "companyName": {
-          "type": "string",
-          "description": "The name of the customer's company, if applicable (for B2B customers)."
-        },
-        "address": {
-          "type": "string",
-          "description": "The customer's billing or physical address."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the customer record was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the customer record was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "companyId",
-        "firstName",
-        "lastName",
-        "email",
-        "createdAt"
-      ]
+      "required": ["id", "companyId", "firstName", "lastName", "email", "role", "isActive"]
     },
     "Job": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -366,439 +60,25 @@
       "type": "object",
       "description": "Represents a job or project managed by a specific company.",
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Job entity."
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "status": { 
+          "type": "string", 
+          "enum": ["nová", "rozpracovaná", "čeká", "dokončená", "fakturována"] 
         },
-        "companyId": {
-          "type": "string",
-          "description": "Reference to the Company managing this job. (Relationship: Company 1:N Job)"
-        },
-        "name": {
-          "type": "string",
-          "description": "The title or name of the job/project."
-        },
-        "description": {
-          "type": "string",
-          "description": "A detailed description of the job/project."
-        },
-        "status": {
-          "type": "string",
-          "description": "The current status of the job (e.g., 'pending', 'in-progress', 'completed', 'cancelled')."
-        },
-        "startDate": {
-          "type": "string",
-          "description": "The planned start date for the job.",
-          "format": "date"
-        },
-        "endDate": {
-          "type": "string",
-          "description": "The planned or actual end date for the job.",
-          "format": "date"
-        },
-        "budget": {
-          "type": "number",
-          "description": "The allocated budget for the job/project."
-        },
-        "assignedEmployeeIds": {
-          "type": "array",
-          "description": "References to Employee entities assigned to this job. (Relationship: Employee N:N Job)",
-          "items": {
-            "type": "string"
-          }
-        },
-        "customerId": {
-          "type": "string",
-          "description": "Optional reference to the Customer entity for whom this job is being performed. (Relationship: Customer 1:N Job)"
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the job record was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the job record was last updated.",
-          "format": "date-time"
-        }
+        "startDate": { "type": "string", "format": "date" },
+        "endDate": { "type": "string", "format": "date" },
+        "budget": { "type": "number" },
+        "assignedEmployeeIds": { "type": "array", "items": { "type": "string" } },
+        "customerId": { "type": "string" }
       },
-      "required": [
-        "id",
-        "companyId",
-        "name",
-        "status",
-        "startDate",
-        "createdAt"
-      ]
-    },
-    "Attendance": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Attendance",
-      "type": "object",
-      "description": "Records employee check-in and check-out times for a specific company.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Attendance record."
-        },
-        "companyId": {
-          "type": "string",
-          "description": "Reference to the Company for which this attendance record is made. (Relationship: Company 1:N Attendance)"
-        },
-        "employeeId": {
-          "type": "string",
-          "description": "Reference to the Employee entity whose attendance is being recorded. (Relationship: Employee 1:N Attendance)"
-        },
-        "checkInTime": {
-          "type": "string",
-          "description": "Timestamp when the employee checked in.",
-          "format": "date-time"
-        },
-        "checkOutTime": {
-          "type": "string",
-          "description": "Timestamp when the employee checked out. Can be null if still checked in.",
-          "format": "date-time"
-        },
-        "notes": {
-          "type": "string",
-          "description": "Any additional notes regarding the attendance record."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the attendance record was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the attendance record was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "companyId",
-        "employeeId",
-        "checkInTime",
-        "createdAt"
-      ]
-    },
-    "Document": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Document",
-      "type": "object",
-      "description": "Stores metadata and references to documents uploaded by a specific company.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the Document entity."
-        },
-        "companyId": {
-          "type": "string",
-          "description": "Reference to the Company to which this document belongs. (Relationship: Company 1:N Document)"
-        },
-        "uploadedByUserId": {
-          "type": "string",
-          "description": "Reference to the User entity who uploaded this document. (Relationship: User 1:N Document)"
-        },
-        "fileName": {
-          "type": "string",
-          "description": "The original name of the uploaded file."
-        },
-        "fileURL": {
-          "type": "string",
-          "description": "The URL or path to the stored document (e.g., Firebase Storage URL).",
-          "format": "uri"
-        },
-        "fileType": {
-          "type": "string",
-          "description": "The MIME type of the file (e.g., 'application/pdf', 'image/jpeg')."
-        },
-        "fileSize": {
-          "type": "number",
-          "description": "The size of the file in bytes."
-        },
-        "category": {
-          "type": "string",
-          "description": "The category of the document (e.g., 'Contract', 'Invoice', 'HR Policy', 'Bank Record')."
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the document was uploaded.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the document's metadata was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "companyId",
-        "uploadedByUserId",
-        "fileName",
-        "fileURL",
-        "fileType",
-        "fileSize",
-        "createdAt"
-      ]
-    },
-    "BankTransaction": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "BankTransaction",
-      "type": "object",
-      "description": "Records financial transactions for a specific company's bank accounts.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the BankTransaction entity."
-        },
-        "companyId": {
-          "type": "string",
-          "description": "Reference to the Company to which this transaction belongs. (Relationship: Company 1:N BankTransaction)"
-        },
-        "transactionDate": {
-          "type": "string",
-          "description": "The date when the transaction occurred.",
-          "format": "date"
-        },
-        "description": {
-          "type": "string",
-          "description": "A description of the transaction."
-        },
-        "amount": {
-          "type": "number",
-          "description": "The monetary amount of the transaction. Positive for income, negative for expense."
-        },
-        "type": {
-          "type": "string",
-          "description": "The type of transaction (e.g., 'income', 'expense', 'transfer')."
-        },
-        "category": {
-          "type": "string",
-          "description": "The category of the transaction (e.g., 'Salaries', 'Rent', 'Sales Revenue', 'Office Supplies')."
-        },
-        "reconciled": {
-          "type": "boolean",
-          "description": "Indicates if the transaction has been reconciled with bank statements."
-        },
-        "recordedByUserId": {
-          "type": "string",
-          "description": "Reference to the User entity who recorded or imported this transaction. (Relationship: User 1:N BankTransaction)"
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the transaction record was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the transaction record was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "companyId",
-        "transactionDate",
-        "description",
-        "amount",
-        "type",
-        "category",
-        "reconciled",
-        "recordedByUserId",
-        "createdAt"
-      ]
-    },
-    "ChatConversation": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "ChatConversation",
-      "type": "object",
-      "description": "Represents a chat conversation within a specific company's internal messaging system.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the ChatConversation entity."
-        },
-        "companyId": {
-          "type": "string",
-          "description": "Reference to the Company to which this conversation belongs. (Relationship: Company 1:N ChatConversation)"
-        },
-        "name": {
-          "type": "string",
-          "description": "The name or title of the chat conversation (e.g., 'General Support', 'Project X Team')."
-        },
-        "type": {
-          "type": "string",
-          "description": "The type of conversation (e.g., 'direct' for 1-1, 'group' for multiple participants, 'channel')."
-        },
-        "participantUserIds": {
-          "type": "array",
-          "description": "References to User entities participating in this conversation. (Relationship: User N:N ChatConversation)",
-          "items": {
-            "type": "string"
-          }
-        },
-        "lastMessageAt": {
-          "type": "string",
-          "description": "Timestamp of the most recent message in the conversation.",
-          "format": "date-time"
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the chat conversation was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the chat conversation was last updated (e.g., new message, participants changed).",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "companyId",
-        "name",
-        "type",
-        "participantUserIds",
-        "createdAt"
-      ]
-    },
-    "ChatMessage": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "ChatMessage",
-      "type": "object",
-      "description": "Represents an individual message within a ChatConversation.",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the ChatMessage entity."
-        },
-        "chatConversationId": {
-          "type": "string",
-          "description": "Reference to the ChatConversation entity this message belongs to. (Relationship: ChatConversation 1:N ChatMessage)"
-        },
-        "senderUserId": {
-          "type": "string",
-          "description": "Reference to the User entity who sent this message. (Relationship: User 1:N ChatMessage)"
-        },
-        "content": {
-          "type": "string",
-          "description": "The text content of the message."
-        },
-        "sentAt": {
-          "type": "string",
-          "description": "Timestamp when the message was sent.",
-          "format": "date-time"
-        },
-        "readByUsersIds": {
-          "type": "array",
-          "description": "References to User entities who have read this message. (Relationship: User N:N ChatMessage)",
-          "items": {
-            "type": "string"
-          }
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the message record was created (typically same as sentAt).",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "chatConversationId",
-        "senderUserId",
-        "content",
-        "sentAt",
-        "createdAt"
-      ]
-    },
-    "PlatformInvoice": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "PlatformInvoice",
-      "type": "object",
-      "description": "Represents an invoice generated by the BizForge platform for a specific company (e.g., for license fees).",
-      "properties": {
-        "id": {
-          "type": "string",
-          "description": "Unique identifier for the PlatformInvoice entity."
-        },
-        "companyId": {
-          "type": "string",
-          "description": "Reference to the Company entity this invoice is for. (Relationship: Company 1:N PlatformInvoice)"
-        },
-        "invoiceNumber": {
-          "type": "string",
-          "description": "A unique, human-readable invoice number."
-        },
-        "issueDate": {
-          "type": "string",
-          "description": "The date when the invoice was issued.",
-          "format": "date"
-        },
-        "dueDate": {
-          "type": "string",
-          "description": "The date by which the invoice payment is due.",
-          "format": "date"
-        },
-        "totalAmount": {
-          "type": "number",
-          "description": "The total monetary amount of the invoice."
-        },
-        "currency": {
-          "type": "string",
-          "description": "The currency of the invoice amount (e.g., 'USD', 'EUR')."
-        },
-        "status": {
-          "type": "string",
-          "description": "The current status of the invoice (e.g., 'pending', 'paid', 'overdue', 'cancelled')."
-        },
-        "paymentMethod": {
-          "type": "string",
-          "description": "The method used for payment if the invoice is paid (e.g., 'credit card', 'bank transfer')."
-        },
-        "paidAt": {
-          "type": "string",
-          "description": "Timestamp when the invoice was paid, if applicable.",
-          "format": "date-time"
-        },
-        "lineItems": {
-          "type": "array",
-          "description": "An array of line items detailing the services or products billed in the invoice.",
-          "items": {
-            "type": "string"
-          }
-        },
-        "createdAt": {
-          "type": "string",
-          "description": "Timestamp when the invoice record was created.",
-          "format": "date-time"
-        },
-        "updatedAt": {
-          "type": "string",
-          "description": "Timestamp when the invoice record was last updated.",
-          "format": "date-time"
-        }
-      },
-      "required": [
-        "id",
-        "companyId",
-        "invoiceNumber",
-        "issueDate",
-        "dueDate",
-        "totalAmount",
-        "currency",
-        "status",
-        "lineItems",
-        "createdAt"
-      ]
+      "required": ["id", "companyId", "name", "status"]
     }
   },
   "auth": {
-    "providers": [
-      "password",
-      "anonymous"
-    ]
+    "providers": ["password"]
   },
   "firestore": {
     "structure": [
@@ -806,163 +86,34 @@
         "path": "/users/{userId}",
         "definition": {
           "entityName": "User",
-          "schema": {
-            "$ref": "#/backend/entities/User"
-          },
-          "description": "Stores global user profiles with general information and global roles (e.g., 'super_admin', 'billing_admin'). Users can only access their own profile. Global roles enable access to platform-level administrative functions."
-        }
-      },
-      {
-        "path": "/super_admins/{userId}",
-        "definition": {
-          "entityName": "SuperAdminRole",
-          "schema": {
-            "$ref": "#/backend/entities/User"
-          },
-          "description": "Dedicated collection to store Super Admin roles via existence. A document with 'userId' as its ID indicates that user is a Super Admin. Used for authorization independence (existence over content). Refers to User entity for user details."
-        }
-      },
-      {
-        "path": "/billing_admins/{userId}",
-        "definition": {
-          "entityName": "BillingAdminRole",
-          "schema": {
-            "$ref": "#/backend/entities/User"
-          },
-          "description": "Dedicated collection to store Billing Admin roles via existence. A document with 'userId' as its ID indicates that user is a Billing Admin. Used for authorization independence (existence over content). Refers to User entity for user details."
-        }
-      },
-      {
-        "path": "/users/{userId}/company_roles/{companyId}",
-        "definition": {
-          "entityName": "UserCompanyRole",
-          "schema": {
-            "$ref": "#/backend/entities/UserCompanyRole"
-          },
-          "description": "Stores the company-specific role for a user within a particular company (e.g., 'owner', 'admin', 'employee'). This collection is critical for tenant-level authorization, allowing rules to check a user's role for the currently accessed company data without hierarchical dependencies to the Company document itself."
+          "schema": { "$ref": "#/backend/entities/User" },
+          "description": "Global user profiles."
         }
       },
       {
         "path": "/companies/{companyId}",
         "definition": {
           "entityName": "Company",
-          "schema": {
-            "$ref": "#/backend/entities/Company"
-          },
-          "description": "Central registry for all organizations within the platform. Managed by global Super Admins. Includes 'ownerUserId', 'licenseId', and 'enabledModuleIds' for platform-level management and initial company ownership."
-        }
-      },
-      {
-        "path": "/licenses/{licenseId}",
-        "definition": {
-          "entityName": "License",
-          "schema": {
-            "$ref": "#/backend/entities/License"
-          },
-          "description": "Definitions of platform license plans and their included features. Globally managed by Super Admins."
-        }
-      },
-      {
-        "path": "/modules/{moduleId}",
-        "definition": {
-          "entityName": "Module",
-          "schema": {
-            "$ref": "#/backend/entities/Module"
-          },
-          "description": "Definitions of platform feature modules. Globally managed by Super Admins."
-        }
-      },
-      {
-        "path": "/platform_invoices/{platformInvoiceId}",
-        "definition": {
-          "entityName": "PlatformInvoice",
-          "schema": {
-            "$ref": "#/backend/entities/PlatformInvoice"
-          },
-          "description": "Invoices generated by BizForge for companies (e.g., license fees). Includes 'companyId' for direct linkage. Managed by Super Admins and Billing Admins, with read access for relevant company users via their 'company_roles'."
+          "schema": { "$ref": "#/backend/entities/Company" },
+          "description": "Organization details."
         }
       },
       {
         "path": "/companies/{companyId}/employees/{employeeId}",
         "definition": {
           "entityName": "Employee",
-          "schema": {
-            "$ref": "#/backend/entities/Employee"
-          },
-          "description": "Employee profiles specific to a company. Includes 'companyId' for tenant isolation. Access is controlled by company-specific roles defined in `/users/{userId}/company_roles/{companyId}`."
-        }
-      },
-      {
-        "path": "/companies/{companyId}/customers/{customerId}",
-        "definition": {
-          "entityName": "Customer",
-          "schema": {
-            "$ref": "#/backend/entities/Customer"
-          },
-          "description": "Customer profiles specific to a company. Includes 'companyId' for tenant isolation. Access is controlled by company-specific roles defined in `/users/{userId}/company_roles/{companyId}`."
+          "schema": { "$ref": "#/backend/entities/Employee" },
+          "description": "Employee profiles specific to a company."
         }
       },
       {
         "path": "/companies/{companyId}/jobs/{jobId}",
         "definition": {
           "entityName": "Job",
-          "schema": {
-            "$ref": "#/backend/entities/Job"
-          },
-          "description": "Job/project details specific to a company. Includes 'companyId' for tenant isolation. Access is controlled by company-specific roles defined in `/users/{userId}/company_roles/{companyId}`."
-        }
-      },
-      {
-        "path": "/companies/{companyId}/attendance/{attendanceId}",
-        "definition": {
-          "entityName": "Attendance",
-          "schema": {
-            "$ref": "#/backend/entities/Attendance"
-          },
-          "description": "Employee attendance records specific to a company. Includes 'companyId' and 'employeeId' for data segregation and linkage. Access is controlled by company-specific roles defined in `/users/{userId}/company_roles/{companyId}`."
-        }
-      },
-      {
-        "path": "/companies/{companyId}/documents/{documentId}",
-        "definition": {
-          "entityName": "Document",
-          "schema": {
-            "$ref": "#/backend/entities/Document"
-          },
-          "description": "Metadata for documents uploaded by a company. Includes 'companyId' and 'uploadedByUserId' for data segregation and ownership. Access is controlled by company-specific roles defined in `/users/{userId}/company_roles/{companyId}`."
-        }
-      },
-      {
-        "path": "/companies/{companyId}/bank_transactions/{bankTransactionId}",
-        "definition": {
-          "entityName": "BankTransaction",
-          "schema": {
-            "$ref": "#/backend/entities/BankTransaction"
-          },
-          "description": "Financial transaction records for a company. Includes 'companyId' and 'recordedByUserId'. Access is controlled by company-specific roles defined in `/users/{userId}/company_roles/{companyId}`."
-        }
-      },
-      {
-        "path": "/companies/{companyId}/chat_conversations/{chatConversationId}",
-        "definition": {
-          "entityName": "ChatConversation",
-          "schema": {
-            "$ref": "#/backend/entities/ChatConversation"
-          },
-          "description": "Chat conversations specific to a company. Includes 'companyId' for tenant isolation and 'participantUserIds' for direct authorization checks (membership map), enabling authorization independence."
-        }
-      },
-      {
-        "path": "/companies/{companyId}/chat_conversations/{chatConversationId}/messages/{chatMessageId}",
-        "definition": {
-          "entityName": "ChatMessage",
-          "schema": {
-            "$ref": "#/backend/entities/ChatMessage"
-          },
-          "description": "Individual chat messages within a conversation. Denormalizes 'companyId' and 'participantUserIds' from the parent 'ChatConversation' to ensure authorization independence, allowing direct role checks without hierarchical dependencies, crucial for atomic operations and debuggable rules."
+          "schema": { "$ref": "#/backend/entities/Job" },
+          "description": "Job/project details specific to a company."
         }
       }
-    ],
-    "reasoning": "The Firestore structure is designed as a multi-tenant SaaS portal, BizForge, adhering strictly to the core design principles, especially Authorization Independence and Structural Segregation, to ensure security, scalability, and debuggability. The architecture separates global platform administration data from company-specific tenant data, and implements a robust role-based access control system.\n\n**Authorization Independence (CRITICAL):**\nThis design prioritizes authorization independence to eliminate reliance on `get()` calls to unrelated parent documents, which can break atomic operations and complicate rules. This is achieved through explicit denormalization and structural organization:\n\n1.  **Global Roles (Existence over Content):** For global roles like `super_admin` and `billing_admin`, dedicated top-level collections (`/super_admins/{userId}`, `/billing_admins/{userId}`) are used. Authorization rules check for the *existence* of a document with `request.auth.uid` as the `userId`, making the role determination atomic and independent of other data.\n\n2.  **Company-Specific Roles (`/users/{userId}/company_roles/{companyId}`):** For company-level roles (owner, admin, manager, etc.), a dedicated subcollection `/users/{userId}/company_roles/{companyId}` stores a user's role within a specific company. Authorization rules can perform a `get()` call to `get(/users/$(request.auth.uid)/company_roles/$(companyId))` to retrieve the user's role for the currently accessed company. This is considered authorization-independent because the `get()` targets a document directly related to the `request.auth.uid` and provides self-contained role information for the specific `companyId` in the path, rather than traversing up a hierarchy or fetching unrelated documents.\n\n3.  **Tenant Isolation (`companyId` Denormalization):** All company-specific documents (e.g., `Employee`, `Customer`, `Job`, `Attendance`, `Document`, `BankTransaction`, `ChatConversation`, `ChatMessage`) explicitly include the `companyId` field. This ensures that any `list` operation or document access within a company's subcollection (`/companies/{companyId}/...`) can always verify `resource.data.companyId == companyId` from the path. This provides strong tenant isolation and prevents cross-tenant data leakage, directly supporting **QAPs** (rules are not filters) by allowing queries to specify the `companyId` and have the rules enforce it without post-filtering.\n\n4.  **Chat Messages (`participantUserIds` Denormalization):** In strict adherence to Mandate A (\"If a subcollection's access depends on the parent's attributes..., those attributes MUST be copied into every document in the subcollection.\"), the `ChatMessage` entity explicitly denormalizes the `participantUserIds` from its parent `ChatConversation`. This means security rules for `chat_messages` can directly check `request.auth.uid in resource.data.participantUserIds` without requiring a `get()` call to the parent `ChatConversation` document. This is critical for maintaining authorization independence and enabling atomic creation/modification of messages without dependency on the parent's committed state.\n\n**Clarity of Intent & Debuggability:**\nBy segregating data into logically distinct collections based on their security posture (e.g., global platform entities vs. tenant-specific entities, and dedicated role collections), the security rules become simpler and more explicit. For example, a `super_admin` rule only needs to check existence in `/super_admins`, while a company `admin` rule would check the role in `/users/{userId}/company_roles/{companyId}` for the relevant `companyId`.\n\n**Structural Segregation (Homogeneous Security Posture):**\nEach collection and subcollection is designed to hold documents that share the same security requirements. For example, `/licenses` contains only license definitions, accessible by `super_admins` for management and read-only by others. `/companies/{companyId}/employees` contains only employee records for that specific company, with access controlled by company-specific roles. This avoids mixing public and private data in the same collection, simplifying rule logic significantly.\n\n**Access Modeling:**\n*   **Private Data:** User profiles are `/users/{userId}`, ensuring path-based ownership. User-specific roles are in `/users/{userId}/company_roles/{companyId}`.\n*   **Hierarchical Paths for User-Owned/Company-Owned Data:** The structure `/companies/{companyId}/<collection>/<docId>` is consistently applied for all company-specific data, making ownership explicit and rules straightforward.\n*   **Collaborative Data:** `ChatConversation` and `ChatMessage` use the `participantUserIds` array as a membership map, denormalized into the document itself for authorization clarity.\n\nThis architecture ensures that security rules are easy to write, understand, and debug, while maintaining high levels of data integrity and tenant isolation, crucial for a multi-tenant SaaS application."
+    ]
   }
 }

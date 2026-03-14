@@ -1,77 +1,262 @@
 
 "use client";
 
-import React from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import React, { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Loader2, Briefcase } from 'lucide-react';
+import { 
+  Plus, 
+  Loader2, 
+  Briefcase, 
+  Search, 
+  Filter, 
+  MoreVertical,
+  Calendar,
+  DollarSign,
+  User
+} from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
 import { Progress } from '@/components/ui/progress';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useToast } from '@/hooks/use-toast';
+import Link from 'next/link';
 
 export default function JobsPage() {
   const { user } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
   
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
 
   const companyId = profile?.companyId || 'nebula-tech'; 
+  const isAdmin = profile?.role === 'owner' || profile?.role === 'admin' || profile?.globalRoles?.includes('super_admin');
 
-  const jobsQuery = useMemoFirebase(() => {
+  // Načtení zákazníků pro výběr
+  const customersQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
-    return collection(firestore, 'companies', companyId, 'jobs');
+    return collection(firestore, 'companies', companyId, 'customers');
   }, [firestore, companyId]);
+  const { data: customers } = useCollection(customersQuery);
 
-  const { data: jobs, isLoading } = useCollection(jobsQuery);
+  // Načtení zakázek (pokud je zaměstnanec, vidí jen své)
+  const jobsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !user) return null;
+    const baseCol = collection(firestore, 'companies', companyId, 'jobs');
+    if (isAdmin) return baseCol;
+    // Pro zaměstnance filtrujeme podle přiřazení (v reálném Firestore by to vyžadovalo index)
+    // Pro prototyp načteme vše a odfiltrujeme v paměti nebo ponecháme pro jednoduchost
+    return baseCol;
+  }, [firestore, companyId, user, isAdmin]);
+
+  const { data: allJobs, isLoading } = useCollection(jobsQuery);
+
+  // Filtrace pro zaměstnance v paměti (pro prototyp)
+  const jobs = isAdmin ? allJobs : allJobs?.filter(j => j.assignedEmployeeIds?.includes(user?.uid));
+
+  const [isNewJobOpen, setIsNewJobOpen] = useState(false);
+  const [newJob, setNewJob] = useState({
+    name: '',
+    description: '',
+    customerId: '',
+    status: 'nová',
+    budget: '',
+    startDate: '',
+    endDate: ''
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleCreateJob = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyId || !user) return;
+    setIsSubmitting(true);
+
+    try {
+      const colRef = collection(firestore, 'companies', companyId, 'jobs');
+      await addDoc(colRef, {
+        ...newJob,
+        budget: Number(newJob.budget),
+        companyId,
+        assignedEmployeeIds: [user.uid], // Zakladatel je automaticky přiřazen
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp()
+      });
+
+      toast({
+        title: "Zakázka vytvořena",
+        description: `Zakázka "${newJob.name}" byla úspěšně přidána.`
+      });
+      setIsNewJobOpen(false);
+      setNewJob({ name: '', description: '', customerId: '', status: 'nová', budget: '', startDate: '', endDate: '' });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Chyba", description: "Nepodařilo se vytvořit zakázku." });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const getStatusBadge = (status: string) => {
+    const statuses: Record<string, { label: string, variant: "default" | "secondary" | "outline" | "destructive" }> = {
+      'nová': { label: 'Nová', variant: 'outline' },
+      'rozpracovaná': { label: 'Rozpracovaná', variant: 'secondary' },
+      'čeká': { label: 'Čeká', variant: 'outline' },
+      'dokončená': { label: 'Dokončená', variant: 'default' },
+      'fakturována': { label: 'Fakturována', variant: 'default' }
+    };
+    const s = statuses[status] || { label: status, variant: 'outline' };
+    return <Badge variant={s.variant} className="capitalize">{s.label}</Badge>;
+  };
 
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold">Zakázky a Projekty</h1>
-          <p className="text-muted-foreground mt-2">Správa firemních projektů ve workspace {companyId}.</p>
+          <p className="text-muted-foreground mt-2">Správa firemních projektů v rámci {companyId}.</p>
         </div>
-        <Button className="gap-2">
-          <Plus className="w-4 h-4" /> Nová zakázka
-        </Button>
+        {isAdmin && (
+          <Dialog open={isNewJobOpen} onOpenChange={setIsNewJobOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2 shadow-lg shadow-primary/20">
+                <Plus className="w-4 h-4" /> Nová zakázka
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="bg-surface border-border max-w-2xl">
+              <DialogHeader>
+                <DialogTitle>Vytvořit novou zakázku</DialogTitle>
+                <DialogDescription>Zadejte základní informace o novém projektu.</DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleCreateJob} className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2 col-span-2">
+                    <Label htmlFor="name">Název zakázky</Label>
+                    <Input 
+                      id="name" 
+                      required 
+                      value={newJob.name} 
+                      onChange={e => setNewJob({...newJob, name: e.target.value})}
+                      className="bg-background"
+                    />
+                  </div>
+                  <div className="space-y-2 col-span-2">
+                    <Label htmlFor="description">Popis</Label>
+                    <Textarea 
+                      id="description" 
+                      value={newJob.description} 
+                      onChange={e => setNewJob({...newJob, description: e.target.value})}
+                      className="bg-background"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Zákazník</Label>
+                    <Select value={newJob.customerId} onValueChange={v => setNewJob({...newJob, customerId: v})}>
+                      <SelectTrigger className="bg-background">
+                        <SelectValue placeholder="Vyberte zákazníka" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-surface border-border">
+                        {customers?.map(c => (
+                          <SelectItem key={c.id} value={c.id}>{c.firstName} {c.lastName} {c.companyName ? `(${c.companyName})` : ''}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="budget">Rozpočet (Kč)</Label>
+                    <Input 
+                      id="budget" 
+                      type="number"
+                      value={newJob.budget} 
+                      onChange={e => setNewJob({...newJob, budget: e.target.value})}
+                      className="bg-background"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="startDate">Termín zahájení</Label>
+                    <Input 
+                      id="startDate" 
+                      type="date"
+                      value={newJob.startDate} 
+                      onChange={e => setNewJob({...newJob, startDate: e.target.value})}
+                      className="bg-background"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="endDate">Předpokládané dokončení</Label>
+                    <Input 
+                      id="endDate" 
+                      type="date"
+                      value={newJob.endDate} 
+                      onChange={e => setNewJob({...newJob, endDate: e.target.value})}
+                      className="bg-background"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={isSubmitting} className="w-full">
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Vytvořit zakázku"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <Card className="bg-surface border-border">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground text-primary">Aktivní zakázky</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Aktivní zakázky</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{jobs?.filter(j => j.status !== 'completed').length || 0}</div>
+            <div className="text-3xl font-bold text-primary">{jobs?.filter(j => j.status !== 'dokončená' && j.status !== 'fakturována').length || 0}</div>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Dokončeno</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">V realizaci</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{jobs?.filter(j => j.status === 'completed').length || 0}</div>
+            <div className="text-3xl font-bold">{jobs?.filter(j => j.status === 'rozpracovaná').length || 0}</div>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Vytíženost týmu</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Čekající</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">82%</div>
+            <div className="text-3xl font-bold">{jobs?.filter(j => j.status === 'čeká' || j.status === 'nová').length || 0}</div>
           </CardContent>
         </Card>
       </div>
 
       <Card className="bg-surface border-border">
-        <CardHeader className="flex flex-row items-center gap-2">
-          <Briefcase className="w-5 h-5 text-primary" />
-          <CardTitle>Seznam všech zakázek</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">
+          <div className="relative w-80">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <Input placeholder="Hledat zakázku..." className="pl-10 bg-background border-border" />
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="gap-2">
+              <Filter className="w-4 h-4" /> Filtrovat
+            </Button>
+          </div>
+        </div>
+        <CardContent className="p-0">
           {isLoading ? (
             <div className="flex items-center justify-center p-12">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
@@ -79,32 +264,37 @@ export default function JobsPage() {
           ) : jobs && jobs.length > 0 ? (
             <Table>
               <TableHeader>
-                <TableRow className="border-border">
-                  <TableHead>Název zakázky</TableHead>
+                <TableRow className="border-border hover:bg-transparent">
+                  <TableHead className="pl-6">Název zakázky</TableHead>
                   <TableHead>Stav</TableHead>
-                  <TableHead>Pokrok</TableHead>
-                  <TableHead>Zahájení</TableHead>
-                  <TableHead className="text-right">Akce</TableHead>
+                  <TableHead>Termíny</TableHead>
+                  <TableHead>Rozpočet</TableHead>
+                  <TableHead className="pr-6 text-right">Akce</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {jobs.map((job) => (
-                  <TableRow key={job.id} className="border-border">
-                    <TableCell className="font-medium">{job.name}</TableCell>
-                    <TableCell>
-                      <Badge variant={job.status === 'completed' ? 'default' : 'secondary'} className="capitalize">
-                        {job.status === 'completed' ? 'Hotovo' : 'Probíhá'}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="w-48">
-                      <div className="flex items-center gap-2">
-                        <Progress value={job.status === 'completed' ? 100 : 45} className="h-1.5" />
-                        <span className="text-[10px] text-muted-foreground">{job.status === 'completed' ? '100%' : '45%'}</span>
+                  <TableRow key={job.id} className="border-border hover:bg-muted/30">
+                    <TableCell className="pl-6 font-medium">
+                      <div className="flex flex-col">
+                        <span>{job.name}</span>
+                        <span className="text-xs text-muted-foreground font-normal truncate max-w-xs">{job.description}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-sm">{job.startDate || 'neuvedeno'}</TableCell>
-                    <TableCell className="text-right">
-                      <Button variant="ghost" size="sm">Otevřít</Button>
+                    <TableCell>{getStatusBadge(job.status)}</TableCell>
+                    <TableCell>
+                      <div className="flex flex-col text-xs">
+                        <span className="flex items-center gap-1 text-muted-foreground"><Calendar className="w-3 h-3" /> Od: {job.startDate || '-'}</span>
+                        <span className="flex items-center gap-1 font-medium"><Calendar className="w-3 h-3" /> Do: {job.endDate || '-'}</span>
+                      </div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">
+                      {job.budget ? `${job.budget.toLocaleString()} Kč` : '-'}
+                    </TableCell>
+                    <TableCell className="pr-6 text-right">
+                      <Link href={`/portal/jobs/${job.id}`}>
+                        <Button variant="ghost" size="sm">Detaily</Button>
+                      </Link>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -112,7 +302,9 @@ export default function JobsPage() {
             </Table>
           ) : (
             <div className="text-center py-20 text-muted-foreground">
-              Nebyly nalezeny žádné zakázky. Začněte vytvořením prvního projektu.
+              <Briefcase className="w-12 h-12 mx-auto mb-4 opacity-20" />
+              <p>Nebyly nalezeny žádné zakázky.</p>
+              {isAdmin && <Button variant="link" onClick={() => setIsNewJobOpen(true)}>Vytvořit první projekt</Button>}
             </div>
           )}
         </CardContent>
