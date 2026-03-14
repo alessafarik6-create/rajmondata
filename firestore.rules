@@ -1,0 +1,267 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * BIZFORGE MULTI-TENANT SAAS SECURITY RULES
+     *
+     * Philosophy:
+     * This ruleset implements a robust multi-tenant authorization model for the BizForge SaaS platform.
+     * It relies on Authorization Independence, ensuring that tenant data is isolated and permissions
+     * are resolved without complex, multi-level document traversals.
+     *
+     * Data Structure:
+     * 1. Global Platform Data: (/licenses, /modules, /super_admins, /billing_admins) - Managed by platform staff.
+     * 2. User Profiles: (/users/{userId}) - Private user data and global identity.
+     * 3. Tenant-Specific Roles: (/users/{userId}/company_roles/{companyId}) - Maps users to their roles within a company.
+     * 4. Company Data: (/companies/{companyId}) - Root of the tenant data tree.
+     * 5. Tenant Subcollections: (/companies/{companyId}/...) - Employees, Jobs, Attendance, Finance, and Chats.
+     *
+     * Key Security Decisions:
+     * - Global Admin Roles: Determined by document existence in dedicated top-level collections (/super_admins, /billing_admins).
+     * - Company Roles: Looked up via a user-centric subcollection to avoid traversing the Company hierarchy.
+     * - Tenant Isolation: Enforced by validating that the `companyId` in the path matches the `companyId` field in the document.
+     * - Denormalization for Authorization: Chat participants are copied into individual messages to allow for fast, direct access checks.
+     * - Prototyping Flexibility: Data schemas are not strictly enforced, but relational integrity (IDs and ownership) is mandatory.
+     */
+
+    // --- HELPER FUNCTIONS ---
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    // Existence-based Global Roles
+    function isSuperAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/super_admins/$(request.auth.uid));
+    }
+
+    function isBillingAdmin() {
+      return isSignedIn() && exists(/databases/$(database)/documents/billing_admins/$(request.auth.uid));
+    }
+
+    // Role Lookup for Company-Specific Authorization
+    function getCompanyRole(companyId) {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)/company_roles/$(companyId)).data.role;
+    }
+
+    function hasCompanyRole(companyId, roles) {
+      return isSignedIn() && getCompanyRole(companyId) in roles;
+    }
+
+    // Relational/Path Consistency Helpers
+    function matchesPathCompany(pathCompanyId) { // Renamed 'companyId' to 'pathCompanyId' to address validator warning
+      return request.resource.data.companyId == pathCompanyId;
+    }
+
+    // --- COLLECTION RULES ---
+
+    /**
+     * @description Global user profiles. Users manage their own; Super Admins manage all.
+     * @path /users/{userId}
+     * @allow (get, update) if the authenticated user matches the userId.
+     * @deny (create) if the provided ID does not match the auth UID.
+     * @principle Path-based ownership and global admin override.
+     */
+    match /users/{userId} {
+      allow get, list: if isUser(userId) || isSuperAdmin();
+      allow create: if isUser(userId) && request.resource.data.id == userId;
+      allow update: if isUser(userId) && request.resource.data.id == resource.data.id;
+      allow delete: if isSuperAdmin();
+    }
+
+    /**
+     * @description Global platform role markers (Super Admin).
+     * @path /super_admins/{userId}
+     * @allow (get) for any signed-in user to check status.
+     * @deny (write) for anyone except existing Super Admins.
+     */
+    match /super_admins/{userId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    /**
+     * @description Global platform role markers (Billing Admin).
+     * @path /billing_admins/{userId}
+     * @allow (get) for any signed-in user to check status.
+     * @deny (write) for anyone except Super Admins.
+     */
+    match /billing_admins/{userId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    /**
+     * @description Company-specific roles mapped to users.
+     * @path /users/{userId}/company_roles/{companyId}
+     * @allow (read) if the user is the owner of the path or a Super Admin.
+     * @deny (write) unless the user is a Super Admin or an 'owner' of that company.
+     * @principle Separation of role management from primary user data.
+     */
+    match /users/{userId}/company_roles/{companyId} {
+      allow get, list: if isUser(userId) || isSuperAdmin();
+      allow create, update, delete: if isSuperAdmin() || hasCompanyRole(companyId, ['owner']);
+    }
+
+    /**
+     * @description Platform pricing plans and license definitions.
+     * @path /licenses/{licenseId}
+     * @allow (read) for all authenticated users.
+     * @deny (write) for non-Super Admins.
+     * @principle Read-only public reference data.
+     */
+    match /licenses/{licenseId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    /**
+     * @description Platform feature module definitions.
+     * @path /modules/{moduleId}
+     * @allow (read) for all authenticated users.
+     * @deny (write) for non-Super Admins.
+     * @principle Read-only public reference data.
+     */
+    match /modules/{moduleId} {
+      allow get, list: if isSignedIn();
+      allow create, update, delete: if isSuperAdmin();
+    }
+
+    /**
+     * @description Invoices generated by the platform for the companies.
+     * @path /platform_invoices/{invoiceId}
+     * @allow (read) for Super/Billing admins or Company owners/admins.
+     * @deny (write) for anyone except Super or Billing Admins.
+     * @principle Cross-tenant billing visibility for authorized company reps.
+     */
+    match /platform_invoices/{invoiceId} {
+      allow get, list: if isSuperAdmin() || isBillingAdmin() || hasCompanyRole(resource.data.companyId, ['owner', 'admin']);
+      allow create, update, delete: if isSuperAdmin() || isBillingAdmin();
+    }
+
+    /**
+     * @description Central company registry.
+     * @path /companies/{companyId}
+     * @allow (read) if user has any valid role in the company or is a Super Admin.
+     * @deny (create) for non-Super Admins.
+     * @principle Multi-tenant entry point.
+     */
+    match /companies/{companyId} {
+      allow get, list: if isSuperAdmin() || hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'accountant', 'employee']);
+      allow create: if isSuperAdmin();
+      allow update: if isSuperAdmin() || (resource != null && hasCompanyRole(companyId, ['owner', 'admin']));
+      allow delete: if isSuperAdmin();
+    }
+
+    /**
+     * @description Company-specific employee records.
+     * @path /companies/{companyId}/employees/{employeeId}
+     * @allow (read, write) for company management (Owner, Admin, Manager).
+     * @deny (create) if companyId field doesn't match the path.
+     * @principle Role-based tenant isolation.
+     */
+    match /companies/{companyId}/employees/{employeeId} {
+      allow get, list: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'accountant']);
+      allow create: if hasCompanyRole(companyId, ['owner', 'admin']) && matchesPathCompany(companyId);
+      allow update: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null && matchesPathCompany(companyId);
+      allow delete: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null;
+    }
+
+    /**
+     * @description Company-specific customer records.
+     * @path /companies/{companyId}/customers/{customerId}
+     * @allow (read) for all company staff.
+     * @deny (write) for non-management roles.
+     * @principle Tenant data segregation.
+     */
+    match /companies/{companyId}/customers/{customerId} {
+      allow get, list: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'employee', 'accountant']);
+      allow create: if hasCompanyRole(companyId, ['owner', 'admin', 'manager']) && matchesPathCompany(companyId);
+      allow update: if hasCompanyRole(companyId, ['owner', 'admin', 'manager']) && resource != null && matchesPathCompany(companyId);
+      allow delete: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null;
+    }
+
+    /**
+     * @description Jobs and projects managed by the company.
+     * @path /companies/{companyId}/jobs/{jobId}
+     * @allow (read) for company staff.
+     * @deny (update) for non-management roles.
+     */
+    match /companies/{companyId}/jobs/{jobId} {
+      allow get, list: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'employee', 'accountant']);
+      allow create, update: if hasCompanyRole(companyId, ['owner', 'admin', 'manager']) && matchesPathCompany(companyId);
+      allow delete: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null;
+    }
+
+    /**
+     * @description Attendance records for employees.
+     * @path /companies/{companyId}/attendance/{attendanceId}
+     * @allow (read) for management and accountants.
+     * @deny (write) for employees (except for specific app-logic self-check-in, here restricted to management for prototype safety).
+     */
+    match /companies/{companyId}/attendance/{attendanceId} {
+      allow get, list: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'accountant']);
+      allow create, update: if hasCompanyRole(companyId, ['owner', 'admin', 'manager']) && matchesPathCompany(companyId);
+      allow delete: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null;
+    }
+
+    /**
+     * @description Company document metadata.
+     * @path /companies/{companyId}/documents/{documentId}
+     * @allow (read) for staff.
+     * @deny (write) for users outside the company.
+     */
+    match /companies/{companyId}/documents/{documentId} {
+      allow get, list: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'employee', 'accountant']);
+      allow create: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'employee']) && matchesPathCompany(companyId) && request.resource.data.uploadedByUserId == request.auth.uid;
+      allow update: if hasCompanyRole(companyId, ['owner', 'admin', 'manager']) && resource != null;
+      allow delete: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null;
+    }
+
+    /**
+     * @description Financial transactions and records.
+     * @path /companies/{companyId}/bank_transactions/{bankTransactionId}
+     * @allow (read, write) restricted to Owners, Admins, and Accountants.
+     * @deny (list) for general employees or managers.
+     * @principle Financial data isolation.
+     */
+    match /companies/{companyId}/bank_transactions/{bankTransactionId} {
+      allow get, list: if hasCompanyRole(companyId, ['owner', 'admin', 'accountant']);
+      allow create, update: if hasCompanyRole(companyId, ['owner', 'admin', 'accountant']) && matchesPathCompany(companyId);
+      allow delete: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null;
+    }
+
+    /**
+     * @description Internal company chat conversations.
+     * @path /companies/{companyId}/chat_conversations/{chatConversationId}
+     * @allow (read) if the user is a participant.
+     * @deny (create) if the user is not in the participants list.
+     * @principle Shared access via membership map.
+     */
+    match /companies/{companyId}/chat_conversations/{chatConversationId} {
+      allow get, list: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'employee']) && request.auth.uid in resource.data.participantUserIds;
+      allow create: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'employee']) && request.auth.uid in request.resource.data.participantUserIds && matchesPathCompany(companyId);
+      allow update: if hasCompanyRole(companyId, ['owner', 'admin', 'manager', 'employee']) && request.auth.uid in resource.data.participantUserIds;
+      allow delete: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null;
+    }
+
+    /**
+     * @description Individual chat messages.
+     * @path /companies/{companyId}/chat_conversations/{chatConversationId}/messages/{messageId}
+     * @allow (read) if the user is a participant (denormalized on message).
+     * @deny (create) if senderUserId does not match auth UID.
+     * @principle Authorization independence via denormalization.
+     */
+    match /companies/{companyId}/chat_conversations/{chatConversationId}/messages/{messageId} {
+      allow get, list: if isSignedIn() && request.auth.uid in resource.data.participantUserIds;
+      allow create: if isSignedIn() && request.auth.uid in request.resource.data.participantUserIds && request.resource.data.senderUserId == request.auth.uid && matchesPathCompany(companyId);
+      allow update: if isSignedIn() && request.auth.uid in resource.data.participantUserIds;
+      allow delete: if hasCompanyRole(companyId, ['owner', 'admin']) && resource != null;
+    }
+  }
+}
