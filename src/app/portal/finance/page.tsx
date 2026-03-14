@@ -1,7 +1,6 @@
-
 "use client";
 
-import React, { useMemo, useEffect } from 'react';
+import React, { useMemo, useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -40,6 +39,12 @@ export default function FinancePage() {
   const { user } = useUser();
   const firestore = useFirestore();
   const router = useRouter();
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Recharts vyžadují vykreslení pouze na klientovi, jinak způsobují SSR chyby.
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
@@ -87,6 +92,14 @@ export default function FinancePage() {
     { name: 'Provozní náklady', value: stats.costs || 400, fill: 'hsl(var(--primary))' },
     { name: 'Ostatní', value: 8000, fill: 'hsl(var(--secondary))' },
   ];
+
+  if (!isMounted) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   if (!canAccess && profile) return null;
 

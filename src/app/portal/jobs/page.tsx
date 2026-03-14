@@ -1,12 +1,11 @@
-
 "use client";
 
 import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { User, Plus, Loader2, Briefcase, Search, Filter, Calendar, Building2 } from "lucide-react";
+import { Plus, Loader2, Briefcase, Search, Filter, Calendar, Building2 } from "lucide-react";
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import {
@@ -26,7 +25,7 @@ import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 
 export default function JobsPage() {
-  const { user } = userUser(); // V opraveném kódu by mělo být useUser()
+  const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
   
@@ -36,14 +35,12 @@ export default function JobsPage() {
   const companyId = profile?.companyId || 'nebula-tech'; 
   const isAdmin = profile?.role === 'owner' || profile?.role === 'admin' || profile?.globalRoles?.includes('super_admin');
 
-  // Načtení zákazníků pro výběr
   const customersQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return collection(firestore, 'companies', companyId, 'customers');
   }, [firestore, companyId]);
   const { data: customers } = useCollection(customersQuery);
 
-  // Načtení zakázek
   const jobsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return collection(firestore, 'companies', companyId, 'jobs');
@@ -274,5 +271,3 @@ export default function JobsPage() {
     </div>
   );
 }
-
-import { useUser as userUser } from '@/firebase'; // Oprava pro typo v předchozí iteraci

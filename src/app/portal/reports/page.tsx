@@ -1,7 +1,6 @@
-
 "use client";
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -42,6 +41,12 @@ export default function ReportsPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const [isExporting, setIsExporting] = useState(false);
+  const [isMounted, setIsMounted] = useState(false);
+
+  // Deaktivujeme SSR renderování grafů pomocí isMounted stavu.
+  useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
   // Profile and Company detection
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
@@ -107,7 +112,7 @@ export default function ReportsPage() {
 
   const isLoading = isJobsLoading || isFinanceLoading;
 
-  if (isLoading) {
+  if (!isMounted || isLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />

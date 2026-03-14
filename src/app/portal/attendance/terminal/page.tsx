@@ -16,10 +16,8 @@ import {
   Calendar as CalendarIcon,
   Loader2,
   Smartphone,
-  Keyboard,
   Delete,
   X,
-  QrCode,
   Camera
 } from 'lucide-react';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection, useAuth } from '@/firebase';
@@ -28,9 +26,6 @@ import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { useToast } from '@/hooks/use-toast';
 import { signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
 
 type AttendanceType = 'check_in' | 'break_start' | 'break_end' | 'check_out';
 type TerminalMode = 'personal' | 'pin' | 'qr';
@@ -51,7 +46,7 @@ export default function MobileTerminalPage() {
   const [todaySummary, setTodaySummary] = useState({ checkIn: '--:--', checkOut: '--:--', worked: '0h 0m' });
   const [isScanning, setIsScanning] = useState(false);
   
-  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const scannerRef = useRef<any>(null);
 
   useEffect(() => {
     const updateTime = () => {
@@ -68,7 +63,6 @@ export default function MobileTerminalPage() {
   const { data: profile } = useDoc(userRef);
   const companyId = profile?.companyId;
 
-  // Personal mode query
   const personalAttendanceQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !user || terminalMode !== 'personal') return null;
     const today = new Date().toISOString().split('T')[0];
@@ -82,7 +76,6 @@ export default function MobileTerminalPage() {
 
   const { data: todayAttendance } = useCollection(personalAttendanceQuery);
 
-  // Employee lookup for PIN/QR modes
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || terminalMode === 'personal') return null;
     return collection(firestore, 'companies', companyId, 'employees');
@@ -107,7 +100,7 @@ export default function MobileTerminalPage() {
     setTodaySummary({
       checkIn: formatTime(checkInDoc?.timestamp),
       checkOut: formatTime(checkOutDoc?.timestamp),
-      worked: "7h 45m" // Simplification for prototype
+      worked: "7h 45m"
     });
   };
 
@@ -155,6 +148,8 @@ export default function MobileTerminalPage() {
   const startScanner = async () => {
     setIsScanning(true);
     try {
+      // Dynamic import to avoid errors during build/SSR
+      const { Html5Qrcode } = await import('html5-qrcode');
       const html5QrCode = new Html5Qrcode("reader");
       scannerRef.current = html5QrCode;
       
@@ -166,7 +161,7 @@ export default function MobileTerminalPage() {
         (decodedText) => {
           lookupEmployeeByQr(decodedText);
         },
-        (errorMessage) => {
+        () => {
           // ignore scan errors
         }
       );
@@ -178,9 +173,15 @@ export default function MobileTerminalPage() {
   };
 
   const stopScanner = async () => {
-    if (scannerRef.current && scannerRef.current.isScanning) {
-      await scannerRef.current.stop();
-      await scannerRef.current.clear();
+    if (scannerRef.current) {
+      try {
+        if (scannerRef.current.isScanning) {
+          await scannerRef.current.stop();
+        }
+        await scannerRef.current.clear();
+      } catch (e) {
+        // ignore errors on stop
+      }
     }
     setIsScanning(false);
   };
