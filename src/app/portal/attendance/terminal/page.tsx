@@ -1,7 +1,6 @@
-
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -19,7 +18,9 @@ import {
   Smartphone,
   Keypad,
   Delete,
-  X
+  X,
+  QrCode,
+  Camera
 } from 'lucide-react';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection, useAuth } from '@/firebase';
 import { doc, collection, serverTimestamp, query, orderBy, limit, where } from 'firebase/firestore';
@@ -29,8 +30,10 @@ import { signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
 import { Switch } from '@/components/ui/switch';
 import { Label } from '@/components/ui/label';
+import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
 
 type AttendanceType = 'check_in' | 'break_start' | 'break_end' | 'check_out';
+type TerminalMode = 'personal' | 'pin' | 'qr';
 
 export default function MobileTerminalPage() {
   const { user } = useUser();
@@ -39,13 +42,16 @@ export default function MobileTerminalPage() {
   const { toast } = useToast();
   const router = useRouter();
   
-  const [isPinMode, setIsPinMode] = useState(false);
+  const [terminalMode, setTerminalMode] = useState<TerminalMode>('personal');
   const [pin, setPin] = useState('');
   const [activeEmployee, setActiveEmployee] = useState<any | null>(null);
   const [currentTime, setCurrentTime] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<AttendanceType | null>(null);
   const [todaySummary, setTodaySummary] = useState({ checkIn: '--:--', checkOut: '--:--', worked: '0h 0m' });
+  const [isScanning, setIsScanning] = useState(false);
+  
+  const scannerRef = useRef<Html5Qrcode | null>(null);
 
   useEffect(() => {
     const updateTime = () => {
@@ -64,7 +70,7 @@ export default function MobileTerminalPage() {
 
   // Personal mode query
   const personalAttendanceQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !user || isPinMode) return null;
+    if (!firestore || !companyId || !user || terminalMode !== 'personal') return null;
     const today = new Date().toISOString().split('T')[0];
     return query(
       collection(firestore, 'companies', companyId, 'attendance'),
@@ -72,22 +78,22 @@ export default function MobileTerminalPage() {
       where('date', '==', today),
       orderBy('timestamp', 'desc')
     );
-  }, [firestore, companyId, user, isPinMode]);
+  }, [firestore, companyId, user, terminalMode]);
 
   const { data: todayAttendance } = useCollection(personalAttendanceQuery);
 
-  // PIN mode lookup
+  // Employee lookup for PIN/QR modes
   const employeesQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !isPinMode) return null;
+    if (!firestore || !companyId || terminalMode === 'personal') return null;
     return collection(firestore, 'companies', companyId, 'employees');
-  }, [firestore, companyId, isPinMode]);
+  }, [firestore, companyId, terminalMode]);
   const { data: employees } = useCollection(employeesQuery);
 
   useEffect(() => {
-    if (!isPinMode && todayAttendance && todayAttendance.length > 0) {
+    if (terminalMode === 'personal' && todayAttendance && todayAttendance.length > 0) {
       updateAttendanceStatus(todayAttendance);
     }
-  }, [todayAttendance, isPinMode]);
+  }, [todayAttendance, terminalMode]);
 
   const updateAttendanceStatus = (history: any[]) => {
     const latest = history[0];
@@ -101,7 +107,7 @@ export default function MobileTerminalPage() {
     setTodaySummary({
       checkIn: formatTime(checkInDoc?.timestamp),
       checkOut: formatTime(checkOutDoc?.timestamp),
-      worked: "7h 45m" // Simplification
+      worked: "7h 45m" // Simplification for prototype
     });
   };
 
@@ -110,33 +116,78 @@ export default function MobileTerminalPage() {
       const newPin = pin + num;
       setPin(newPin);
       if (newPin.length === 4) {
-        lookupEmployee(newPin);
+        lookupEmployeeByPin(newPin);
       }
     }
   };
 
-  const handlePinClear = () => {
+  const handleClear = () => {
     setPin('');
     setActiveEmployee(null);
     setLastAction(null);
+    stopScanner();
   };
 
-  const lookupEmployee = (code: string) => {
+  const lookupEmployeeByPin = (code: string) => {
     if (!employees) return;
     const emp = employees.find(e => e.attendancePin === code);
     if (emp) {
       setActiveEmployee(emp);
       toast({ title: `Vítejte, ${emp.firstName}!`, duration: 2000 });
-      // In a real app, we'd fetch today's status for this emp too
     } else {
       setPin('');
       toast({ variant: "destructive", title: "Neplatný PIN", duration: 2000 });
     }
   };
 
+  const lookupEmployeeByQr = (qrId: string) => {
+    if (!employees) return;
+    const emp = employees.find(e => e.attendanceQrId === qrId);
+    if (emp) {
+      setActiveEmployee(emp);
+      toast({ title: `Nalezen zaměstnanec: ${emp.firstName}`, duration: 2000 });
+      stopScanner();
+    } else {
+      toast({ variant: "destructive", title: "QR kód nebyl rozpoznán", duration: 2000 });
+    }
+  };
+
+  const startScanner = async () => {
+    setIsScanning(true);
+    try {
+      const html5QrCode = new Html5Qrcode("reader");
+      scannerRef.current = html5QrCode;
+      
+      const config = { fps: 10, qrbox: { width: 250, height: 250 } };
+      
+      await html5QrCode.start(
+        { facingMode: "environment" }, 
+        config, 
+        (decodedText) => {
+          lookupEmployeeByQr(decodedText);
+        },
+        (errorMessage) => {
+          // ignore scan errors
+        }
+      );
+    } catch (err) {
+      console.error(err);
+      toast({ variant: "destructive", title: "Chyba při přístupu ke kameře" });
+      setIsScanning(false);
+    }
+  };
+
+  const stopScanner = async () => {
+    if (scannerRef.current && scannerRef.current.isScanning) {
+      await scannerRef.current.stop();
+      await scannerRef.current.clear();
+    }
+    setIsScanning(false);
+  };
+
   const handleAction = (type: AttendanceType) => {
-    const targetId = isPinMode ? activeEmployee?.id : user?.uid;
-    const targetName = isPinMode ? `${activeEmployee?.firstName} ${activeEmployee?.lastName}` : (profile?.displayName || user?.email);
+    const targetId = terminalMode !== 'personal' ? activeEmployee?.id : user?.uid;
+    const targetName = terminalMode !== 'personal' ? `${activeEmployee?.firstName} ${activeEmployee?.lastName}` : (profile?.displayName || user?.email);
 
     if (!targetId || !companyId) return;
 
@@ -147,7 +198,7 @@ export default function MobileTerminalPage() {
       type,
       timestamp: serverTimestamp(),
       date: new Date().toISOString().split('T')[0],
-      terminalId: isPinMode ? 'shared-pin-terminal' : 'mobile-web'
+      terminalId: terminalMode === 'pin' ? 'shared-pin-terminal' : terminalMode === 'qr' ? 'qr-scanner-terminal' : 'mobile-personal'
     });
 
     const messages = {
@@ -159,8 +210,8 @@ export default function MobileTerminalPage() {
 
     toast({ title: messages[type], duration: 2000 });
 
-    if (isPinMode) {
-      setTimeout(handlePinClear, 1500);
+    if (terminalMode !== 'personal') {
+      setTimeout(handleClear, 1500);
     }
   };
 
@@ -180,11 +231,33 @@ export default function MobileTerminalPage() {
           </div>
         </div>
         <div className="flex flex-col items-end gap-2">
-          <div className="flex items-center gap-2">
-            <Label htmlFor="pin-mode" className="text-[10px] font-bold uppercase text-muted-foreground">Režim PIN</Label>
-            <Switch id="pin-mode" checked={isPinMode} onCheckedChange={(v) => { setIsPinMode(v); handlePinClear(); }} />
+          <div className="flex gap-1 bg-surface p-1 rounded-lg border border-border">
+            <Button 
+              variant={terminalMode === 'personal' ? 'default' : 'ghost'} 
+              size="sm" 
+              className="h-7 px-2 text-[10px]" 
+              onClick={() => { setTerminalMode('personal'); handleClear(); }}
+            >
+              OSOBNÍ
+            </Button>
+            <Button 
+              variant={terminalMode === 'pin' ? 'default' : 'ghost'} 
+              size="sm" 
+              className="h-7 px-2 text-[10px]" 
+              onClick={() => { setTerminalMode('pin'); handleClear(); }}
+            >
+              PIN
+            </Button>
+            <Button 
+              variant={terminalMode === 'qr' ? 'default' : 'ghost'} 
+              size="sm" 
+              className="h-7 px-2 text-[10px]" 
+              onClick={() => { setTerminalMode('qr'); handleClear(); }}
+            >
+              QR
+            </Button>
           </div>
-          {!isPinMode && (
+          {terminalMode === 'personal' && (
             <Button variant="ghost" size="sm" onClick={() => signOut(auth)} className="h-7 text-xs text-muted-foreground hover:text-destructive p-0">
               Odhlásit <LogOut className="w-3 h-3 ml-1" />
             </Button>
@@ -205,7 +278,8 @@ export default function MobileTerminalPage() {
         </CardContent>
       </Card>
 
-      {isPinMode && !activeEmployee ? (
+      {/* PIN Mode View */}
+      {terminalMode === 'pin' && !activeEmployee && (
         <div className="flex-1 flex flex-col items-center">
           <div className="w-full max-w-[280px] space-y-6">
             <div className="text-center">
@@ -224,7 +298,7 @@ export default function MobileTerminalPage() {
                   variant={val === 'C' || val === 'DEL' ? 'outline' : 'default'}
                   className={`h-16 text-xl font-bold rounded-xl ${val === 'DEL' ? 'text-rose-500 border-rose-500/20' : ''}`}
                   onClick={() => {
-                    if (val === 'C') handlePinClear();
+                    if (val === 'C') handleClear();
                     else if (val === 'DEL') setPin(pin.slice(0, -1));
                     else handlePinPress(val);
                   }}
@@ -235,7 +309,40 @@ export default function MobileTerminalPage() {
             </div>
           </div>
         </div>
-      ) : (
+      )}
+
+      {/* QR Mode View */}
+      {terminalMode === 'qr' && !activeEmployee && (
+        <div className="flex-1 flex flex-col items-center space-y-6">
+          <div className="text-center">
+            <h2 className="text-lg font-bold">Naskenujte QR kód</h2>
+            <p className="text-sm text-muted-foreground">Namířte kameru na svůj docházkový kód</p>
+          </div>
+          
+          <div className="w-full aspect-square max-w-[300px] bg-black rounded-2xl overflow-hidden border-2 border-primary/50 relative shadow-2xl">
+            <div id="reader" className="w-full h-full"></div>
+            {!isScanning && (
+              <div className="absolute inset-0 flex items-center justify-center bg-black/80">
+                <Button onClick={startScanner} className="gap-2">
+                  <Camera className="w-4 h-4" /> Spustit skener
+                </Button>
+              </div>
+            )}
+            {isScanning && (
+              <div className="absolute top-0 left-0 w-full h-1 bg-primary animate-bounce" />
+            )}
+          </div>
+          
+          {isScanning && (
+            <Button variant="ghost" onClick={stopScanner} className="text-muted-foreground">
+              Zrušit skenování
+            </Button>
+          )}
+        </div>
+      )}
+
+      {/* Active Session / Personal Actions */}
+      {(terminalMode === 'personal' || activeEmployee) && (
         <>
           {/* User Info */}
           <div className="flex items-center gap-4 mb-6 p-4 rounded-2xl bg-surface/50 border border-border">
@@ -243,14 +350,18 @@ export default function MobileTerminalPage() {
               <User className="w-6 h-6" />
             </div>
             <div className="flex-1">
-              <p className="text-sm font-bold">{isPinMode ? `${activeEmployee?.firstName} ${activeEmployee?.lastName}` : (profile?.displayName || user.email)}</p>
+              <p className="text-sm font-bold truncate">
+                {terminalMode !== 'personal' ? `${activeEmployee?.firstName} ${activeEmployee?.lastName}` : (profile?.displayName || user.email)}
+              </p>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <p className="text-xs text-muted-foreground capitalize">{isPinMode ? activeEmployee?.jobTitle : (profile?.role || 'Zaměstnanec')}</p>
+                <p className="text-xs text-muted-foreground capitalize">
+                  {terminalMode !== 'personal' ? activeEmployee?.jobTitle : (profile?.role || 'Zaměstnanec')}
+                </p>
               </div>
             </div>
-            {isPinMode && (
-              <Button variant="ghost" size="icon" onClick={handlePinClear} className="text-muted-foreground"><X className="w-4 h-4" /></Button>
+            {terminalMode !== 'personal' && (
+              <Button variant="ghost" size="icon" onClick={handleClear} className="text-muted-foreground"><X className="w-4 h-4" /></Button>
             )}
           </div>
 
@@ -294,7 +405,7 @@ export default function MobileTerminalPage() {
           </div>
 
           {/* Daily Summary (Only visible in personal mode for now) */}
-          {!isPinMode && (
+          {terminalMode === 'personal' && (
             <Card className="bg-surface/30 border-border mt-auto">
               <CardHeader className="py-4">
                 <CardTitle className="text-sm font-bold flex items-center gap-2">
@@ -320,7 +431,7 @@ export default function MobileTerminalPage() {
         </>
       )}
 
-      {!isPinMode && (
+      {terminalMode === 'personal' && (
         <Button variant="link" onClick={() => router.push('/portal/dashboard')} className="text-xs text-muted-foreground mt-4">
           Zpět do portálu <ChevronRight className="w-3 h-3 ml-1" />
         </Button>

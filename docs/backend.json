@@ -1,4 +1,3 @@
-
 {
   "entities": {
     "Company": {
@@ -81,7 +80,8 @@
         "jobTitle": { "type": "string" },
         "hourlyRate": { "type": "number" },
         "isActive": { "type": "boolean" },
-        "attendancePin": { "type": "string", "description": "4-digit PIN for quick attendance tracking." }
+        "attendancePin": { "type": "string", "description": "4-digit PIN for quick attendance tracking." },
+        "attendanceQrId": { "type": "string", "description": "Unique QR identifier for attendance scanning." }
       }
     },
     "Customer": {

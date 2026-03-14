@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { useState, useEffect } from 'react';
@@ -22,7 +21,10 @@ import {
   DollarSign,
   AlertTriangle,
   KeyRound,
-  RefreshCw
+  RefreshCw,
+  QrCode,
+  Eye,
+  DownloadCloud
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -47,6 +49,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
+import { QRCodeSVG } from 'qrcode.react';
 
 export default function EmployeesPage() {
   const { user } = useUser();
@@ -80,6 +83,8 @@ export default function EmployeesPage() {
     hourlyRate: '500'
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  
+  const [qrEmployee, setQrEmployee] = useState<any | null>(null);
 
   useEffect(() => {
     if (profile && !canView) {
@@ -101,7 +106,8 @@ export default function EmployeesPage() {
         isActive: true,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-        hireDate: new Date().toISOString().split('T')[0]
+        hireDate: new Date().toISOString().split('T')[0],
+        attendanceQrId: `QR-${Math.random().toString(36).substring(2, 15)}`
       });
       
       toast({
@@ -142,6 +148,18 @@ export default function EmployeesPage() {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
       await updateDoc(docRef, { attendancePin: newPin });
       toast({ title: "PIN vygenerován", description: `Nový docházkový PIN pro zaměstnance: ${newPin}` });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Chyba" });
+    }
+  };
+
+  const generateQrId = async (employeeId: string) => {
+    if (!canManage) return;
+    const newQrId = `QR-${Math.random().toString(36).substring(2, 15)}`;
+    try {
+      const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
+      await updateDoc(docRef, { attendanceQrId: newQrId });
+      toast({ title: "QR ID vygenerováno", description: "Nový identifikátor pro QR docházku byl vytvořen." });
     } catch (error) {
       toast({ variant: "destructive", title: "Chyba" });
     }
@@ -318,7 +336,7 @@ export default function EmployeesPage() {
                 <TableRow className="border-border hover:bg-transparent">
                   <TableHead className="pl-6">Zaměstnanec</TableHead>
                   <TableHead>Role</TableHead>
-                  <TableHead>Sazba / PIN</TableHead>
+                  <TableHead>Identifikace (PIN/QR)</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="pr-6 text-right">Akce</TableHead>
                 </TableRow>
@@ -342,14 +360,28 @@ export default function EmployeesPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                        <span className="font-mono text-xs">{emp.hourlyRate || 500} Kč/h</span>
-                        {emp.attendancePin ? (
-                          <div className="flex items-center gap-1.5 text-[10px] text-emerald-500 font-bold uppercase">
-                            <KeyRound className="w-3 h-3" /> PIN: {emp.attendancePin}
-                          </div>
-                        ) : (
-                          <span className="text-[10px] text-muted-foreground uppercase">Bez PINu</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {emp.attendancePin ? (
+                            <div className="flex items-center gap-1.5 text-[10px] text-emerald-500 font-bold uppercase">
+                              <KeyRound className="w-3 h-3" /> {emp.attendancePin}
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground uppercase">Bez PINu</span>
+                          )}
+                          <Separator orientation="vertical" className="h-3 mx-1" />
+                          {emp.attendanceQrId ? (
+                            <Button 
+                              variant="ghost" 
+                              className="h-auto p-0 text-[10px] text-primary font-bold uppercase gap-1"
+                              onClick={() => setQrEmployee(emp)}
+                            >
+                              <QrCode className="w-3 h-3" /> QR aktivní
+                            </Button>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground uppercase">Bez QR</span>
+                          )}
+                        </div>
+                        <span className="font-mono text-[10px] text-muted-foreground">{emp.hourlyRate || 500} Kč/h</span>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -369,9 +401,15 @@ export default function EmployeesPage() {
                               <UserX className="w-4 h-4 mr-2" /> {emp.isActive ? 'Deaktivovat' : 'Aktivovat'}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
-                            <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Docházkový PIN</DropdownMenuLabel>
+                            <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Identifikace</DropdownMenuLabel>
                             <DropdownMenuItem onClick={() => generatePin(emp.id)}>
                               <RefreshCw className="w-4 h-4 mr-2" /> {emp.attendancePin ? 'Resetovat PIN' : 'Generovat PIN'}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => {
+                              if (!emp.attendanceQrId) generateQrId(emp.id);
+                              setQrEmployee(emp);
+                            }}>
+                              <QrCode className="w-4 h-4 mr-2" /> {emp.attendanceQrId ? 'Zobrazit QR kód' : 'Generovat QR kód'}
                             </DropdownMenuItem>
                             {emp.attendancePin && (
                               <DropdownMenuItem onClick={() => disablePin(emp.id)} className="text-rose-500">
@@ -409,6 +447,34 @@ export default function EmployeesPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* QR Code Dialog */}
+      <Dialog open={!!qrEmployee} onOpenChange={() => setQrEmployee(null)}>
+        <DialogContent className="bg-surface border-border max-w-xs sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Docházkový QR kód</DialogTitle>
+            <DialogDescription>
+              Zaměstnanec: {qrEmployee?.firstName} {qrEmployee?.lastName}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col items-center justify-center p-6 bg-white rounded-xl space-y-4">
+            {qrEmployee?.attendanceQrId && (
+              <QRCodeSVG 
+                value={qrEmployee.attendanceQrId} 
+                size={200}
+                level="H"
+                includeMargin={true}
+              />
+            )}
+            <p className="text-black font-mono text-[10px] select-all">{qrEmployee?.attendanceQrId}</p>
+          </div>
+          <DialogFooter className="sm:justify-center">
+            <Button className="w-full gap-2" onClick={() => window.print()}>
+              <DownloadCloud className="w-4 h-4" /> Vytisknout kartu
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
