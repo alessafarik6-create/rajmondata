@@ -127,18 +127,19 @@ export default function CompanyDashboard() {
                 <div className="text-2xl font-bold">94%</div>
                 <p className="text-xs text-muted-foreground mt-1">Většina týmu je přítomna</p>
               </CardContent>
-              {(isManagement || isAccountant) && (
-                <Card className="bg-surface border-border">
-                  <CardHeader className="flex flex-row items-center justify-between pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">Měsíční obrat</CardTitle>
-                    <Wallet className="h-4 w-4 text-primary" />
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">12 450 Kč</div>
-                    <p className="text-xs text-emerald-500 mt-1">+15% oproti min. měsíci</p>
-                  </CardContent>
-                </Card>
-              )}
+            </Card>
+            {(isManagement || isAccountant) && (
+              <Card className="bg-surface border-border">
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="text-sm font-medium text-muted-foreground">Měsíční obrat</CardTitle>
+                  <Wallet className="h-4 w-4 text-primary" />
+                </CardHeader>
+                <CardContent>
+                  <div className="text-2xl font-bold">12 450 Kč</div>
+                  <p className="text-xs text-emerald-500 mt-1">+15% oproti min. měsíci</p>
+                </CardContent>
+              </Card>
+            )}
           </>
         )}
       </div>
