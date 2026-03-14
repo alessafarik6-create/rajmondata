@@ -1,0 +1,23 @@
+
+{
+  "placeholderImages": [
+    {
+      "id": "hero-login",
+      "description": "Abstract dark background with orange accents",
+      "imageUrl": "https://picsum.photos/seed/bizforge-login/1200/800",
+      "imageHint": "dark abstract orange"
+    },
+    {
+      "id": "avatar-admin",
+      "description": "User avatar for administrator",
+      "imageUrl": "https://picsum.photos/seed/admin-user/100/100",
+      "imageHint": "professional man"
+    },
+    {
+      "id": "company-logo-1",
+      "description": "Tech Solutions Inc Logo",
+      "imageUrl": "https://picsum.photos/seed/company1/200/200",
+      "imageHint": "tech logo"
+    }
+  ]
+}
