@@ -8,17 +8,21 @@ interface FirebaseClientProviderProps {
   children: ReactNode;
 }
 
+/**
+ * Komponenta zajišťující, že Firebase je inicializována pouze na straně klienta.
+ * Tím se předchází chybám při SSR (Server-Side Rendering).
+ */
 export function FirebaseClientProvider({ children }: FirebaseClientProviderProps) {
-  // Use state to store initialized services, starting with null for SSR safety
+  // Služby ukládáme do stavu, výchozí hodnota je null pro bezpečnost SSR
   const [firebaseServices, setFirebaseServices] = useState<ReturnType<typeof initializeFirebase> | null>(null);
 
   useEffect(() => {
-    // This only runs on the client, ensuring Firebase is initialized in the browser
+    // Tento efekt se spustí pouze v prohlížeči po prvním vykreslení.
     setFirebaseServices(initializeFirebase());
   }, []);
 
-  // During SSR and until the client is ready, show a loading state.
-  // This is critical because children (pages) depend on the Firebase context.
+  // Během SSR a do momentu, než je klient připraven, vracíme loading stav.
+  // To zabrání tomu, aby se podstránky pokoušely volat useFirebase() na serveru.
   if (!firebaseServices) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
