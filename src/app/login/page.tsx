@@ -8,8 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Building2, Loader2 } from 'lucide-react';
+import { Building2, Loader2, UserPlus } from 'lucide-react';
 import Image from 'next/image';
+import Link from 'next/link';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useToast } from '@/hooks/use-toast';
 
@@ -35,6 +36,10 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      toast({
+        title: "Přihlášení úspěšné",
+        description: "Vítejte zpět v BizForge."
+      });
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -63,15 +68,15 @@ export default function LoginPage() {
         </div>
       </div>
 
-      <div className="flex items-center justify-center p-8 bg-background">
+      <div className="flex items-center justify-center p-8 bg-background text-foreground">
         <Card className="w-full max-w-md bg-surface border-border shadow-2xl">
           <CardHeader className="text-center space-y-4">
             <div className="mx-auto w-12 h-12 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
               <Building2 className="text-white w-7 h-7" />
             </div>
             <div className="space-y-1">
-              <CardTitle className="text-3xl font-bold tracking-tight">Vítejte zpět</CardTitle>
-              <CardDescription>Zadejte své údaje pro přístup k portálu</CardDescription>
+              <CardTitle className="text-3xl font-bold tracking-tight text-foreground">Vítejte zpět</CardTitle>
+              <CardDescription className="text-muted-foreground">Zadejte své údaje pro přístup k portálu</CardDescription>
             </div>
           </CardHeader>
           <form onSubmit={handleLogin}>
@@ -84,7 +89,7 @@ export default function LoginPage() {
                   placeholder="jmeno@firma.cz" 
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="bg-background border-border"
+                  className="bg-background border-border text-foreground"
                   required
                 />
               </div>
@@ -95,11 +100,11 @@ export default function LoginPage() {
                   type="password" 
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="bg-background border-border" 
+                  className="bg-background border-border text-foreground" 
                   required
                 />
               </div>
-              <Button type="submit" className="w-full h-11 text-lg font-semibold" disabled={loading}>
+              <Button type="submit" className="w-full h-11 text-lg font-semibold bg-primary hover:bg-primary/90 text-white" disabled={loading}>
                 {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
                 Přihlásit se
               </Button>
@@ -107,12 +112,14 @@ export default function LoginPage() {
           </form>
           <CardFooter className="flex flex-col gap-4">
             <div className="relative w-full">
-              <div className="absolute inset-0 flex items-center"><span className="w-full border-t" /></div>
-              <div className="relative flex justify-center text-xs uppercase"><span className="bg-surface px-2 text-muted-foreground">Testovací přístup</span></div>
+              <div className="absolute inset-0 flex items-center"><span className="w-full border-t border-border" /></div>
+              <div className="relative flex justify-center text-xs uppercase"><span className="bg-card px-2 text-muted-foreground">Nová firma?</span></div>
             </div>
-            <p className="text-xs text-center text-muted-foreground px-6">
-              Použijte svůj registrovaný firemní email a heslo poskytnuté vaším administrátorem.
-            </p>
+            <Link href="/register" className="w-full">
+              <Button variant="outline" className="w-full h-11 border-primary text-primary hover:bg-primary hover:text-white transition-all gap-2">
+                <UserPlus className="w-4 h-4" /> Registrovat firmu
+              </Button>
+            </Link>
           </CardFooter>
         </Card>
       </div>
