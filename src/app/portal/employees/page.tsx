@@ -1,19 +1,52 @@
 
 "use client";
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
-import { Plus, Search, Filter, Download, Loader2 } from 'lucide-react';
+import { 
+  Plus, 
+  Search, 
+  Filter, 
+  Download, 
+  Loader2, 
+  MoreVertical, 
+  UserPlus,
+  Shield,
+  UserX,
+  Trash2,
+  Edit2
+} from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
-import { collection, doc } from 'firebase/firestore';
+import { collection, doc, deleteDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useToast } from '@/hooks/use-toast';
 
 export default function EmployeesPage() {
   const { user } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
 
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
@@ -27,6 +60,81 @@ export default function EmployeesPage() {
 
   const { data: employees, isLoading } = useCollection(employeesQuery);
 
+  const [isInviteOpen, setIsInviteOpen] = useState(false);
+  const [inviteData, setInviteData] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    role: 'employee',
+    jobTitle: ''
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const handleInvite = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    try {
+      const colRef = collection(firestore, 'companies', companyId, 'employees');
+      await addDoc(colRef, {
+        ...inviteData,
+        companyId,
+        isActive: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        hireDate: new Date().toISOString().split('T')[0]
+      });
+      
+      toast({
+        title: "Zaměstnanec přidán",
+        description: `${inviteData.firstName} byl úspěšně přidán do systému.`
+      });
+      setIsInviteOpen(false);
+      setInviteData({ firstName: '', lastName: '', email: '', role: 'employee', jobTitle: '' });
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Nepodařilo se přidat zaměstnance."
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const toggleEmployeeStatus = async (employeeId: string, currentStatus: boolean) => {
+    try {
+      const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
+      await updateDoc(docRef, { isActive: !currentStatus });
+      toast({
+        title: "Status aktualizován",
+        description: `Zaměstnanec byl ${!currentStatus ? 'aktivován' : 'deaktivován'}.`
+      });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Chyba při aktualizaci" });
+    }
+  };
+
+  const deleteEmployee = async (employeeId: string) => {
+    if (!confirm('Opravdu chcete tohoto zaměstnance odstranit?')) return;
+    try {
+      const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
+      await deleteDoc(docRef);
+      toast({ title: "Zaměstnanec odstraněn" });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Chyba při mazání" });
+    }
+  };
+
+  const changeRole = async (employeeId: string, newRole: string) => {
+    try {
+      const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
+      await updateDoc(docRef, { role: newRole });
+      toast({ title: "Role změněna", description: `Nová role: ${newRole}` });
+    } catch (error) {
+      toast({ variant: "destructive", title: "Chyba při změně role" });
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-end">
@@ -35,9 +143,87 @@ export default function EmployeesPage() {
           <p className="text-muted-foreground mt-2">Pracovníci organizace {companyId}.</p>
         </div>
         <div className="flex gap-3">
-          <Button className="gap-2">
-            <Plus className="w-4 h-4" /> Přidat člena týmu
-          </Button>
+          <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
+            <DialogTrigger asChild>
+              <Button className="gap-2">
+                <UserPlus className="w-4 h-4" /> Pozvat zaměstnance
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="bg-surface border-border">
+              <DialogHeader>
+                <DialogTitle>Pozvat nového člena týmu</DialogTitle>
+                <DialogDescription>
+                  Vyplňte údaje pro vytvoření profilu zaměstnance.
+                </DialogDescription>
+              </DialogHeader>
+              <form onSubmit={handleInvite} className="space-y-4 py-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="firstName">Jméno</Label>
+                    <Input 
+                      id="firstName" 
+                      required 
+                      value={inviteData.firstName} 
+                      onChange={e => setInviteData({...inviteData, firstName: e.target.value})}
+                      className="bg-background"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="lastName">Příjmení</Label>
+                    <Input 
+                      id="lastName" 
+                      required 
+                      value={inviteData.lastName} 
+                      onChange={e => setInviteData({...inviteData, lastName: e.target.value})}
+                      className="bg-background"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input 
+                    id="email" 
+                    type="email" 
+                    required 
+                    value={inviteData.email} 
+                    onChange={e => setInviteData({...inviteData, email: e.target.value})}
+                    className="bg-background"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="role">Role</Label>
+                    <Select value={inviteData.role} onValueChange={v => setInviteData({...inviteData, role: v})}>
+                      <SelectTrigger className="bg-background">
+                        <SelectValue placeholder="Vyberte roli" />
+                      </SelectTrigger>
+                      <SelectContent className="bg-surface border-border">
+                        <SelectItem value="admin">Administrátor</SelectItem>
+                        <SelectItem value="manager">Manažer</SelectItem>
+                        <SelectItem value="accountant">Účetní</SelectItem>
+                        <SelectItem value="employee">Zaměstnanec</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="jobTitle">Pracovní pozice</Label>
+                    <Input 
+                      id="jobTitle" 
+                      placeholder="Např. Svářeč" 
+                      value={inviteData.jobTitle} 
+                      onChange={e => setInviteData({...inviteData, jobTitle: e.target.value})}
+                      className="bg-background"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button type="submit" disabled={isSubmitting} className="w-full">
+                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Vytvořit profil"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -52,7 +238,7 @@ export default function EmployeesPage() {
               <Filter className="w-4 h-4" /> Filtr
             </Button>
             <Button variant="outline" size="sm" className="gap-2">
-              <Download className="w-4 h-4" /> Exportovat CSV
+              <Download className="w-4 h-4" /> Exportovat
             </Button>
           </div>
         </div>
@@ -65,9 +251,9 @@ export default function EmployeesPage() {
             <Table>
               <TableHeader>
                 <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="pl-6">Jméno</TableHead>
-                  <TableHead>Role ve firmě</TableHead>
-                  <TableHead>Pracovní pozice</TableHead>
+                  <TableHead className="pl-6">Zaměstnanec</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>Pozice</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="pr-6 text-right">Akce</TableHead>
                 </TableRow>
@@ -82,10 +268,12 @@ export default function EmployeesPage() {
                       </div>
                     </TableCell>
                     <TableCell className="capitalize">
-                      {emp.role === 'owner' ? 'Majitel' : 
-                       emp.role === 'admin' ? 'Administrátor' : 
-                       emp.role === 'manager' ? 'Manažer' : 
-                       emp.role === 'accountant' ? 'Účetní' : 'Zaměstnanec'}
+                      <Badge variant="outline" className="border-primary/30 text-primary">
+                        {emp.role === 'owner' ? 'Majitel' : 
+                         emp.role === 'admin' ? 'Administrátor' : 
+                         emp.role === 'manager' ? 'Manažer' : 
+                         emp.role === 'accountant' ? 'Účetní' : 'Zaměstnanec'}
+                      </Badge>
                     </TableCell>
                     <TableCell>{emp.jobTitle}</TableCell>
                     <TableCell>
@@ -94,7 +282,26 @@ export default function EmployeesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="pr-6 text-right">
-                      <Button variant="ghost" size="sm">Upravit</Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end" className="bg-surface border-border">
+                          <DropdownMenuLabel>Možnosti</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => toggleEmployeeStatus(emp.id, emp.isActive)}>
+                            <UserX className="w-4 h-4 mr-2" /> {emp.isActive ? 'Deaktivovat' : 'Aktivovat'}
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Změnit roli</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => changeRole(emp.id, 'admin')}>Administrátor</DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => changeRole(emp.id, 'manager')}>Manažer</SelectItem>
+                          <DropdownMenuItem onClick={() => changeRole(emp.id, 'employee')}>Zaměstnanec</DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>
+                            <Trash2 className="w-4 h-4 mr-2" /> Odstranit
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -103,7 +310,9 @@ export default function EmployeesPage() {
           ) : (
             <div className="text-center py-20">
               <p className="text-muted-foreground">V této organizaci zatím nejsou žádní zaměstnanci.</p>
-              <Button variant="link" className="text-primary mt-2">Přidat prvního pracovníka</Button>
+              <Button variant="link" className="text-primary mt-2" onClick={() => setIsInviteOpen(true)}>
+                Přidat prvního pracovníka
+              </Button>
             </div>
           )}
         </CardContent>
