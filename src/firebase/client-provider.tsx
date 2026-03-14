@@ -2,7 +2,7 @@
 
 import React, { type ReactNode, useEffect, useState } from 'react';
 import { FirebaseProvider } from '@/firebase/provider';
-import { initializeFirebase, getSdks } from '@/firebase';
+import { initializeFirebase } from './init';
 
 interface FirebaseClientProviderProps {
   children: ReactNode;
@@ -17,7 +17,8 @@ export function FirebaseClientProvider({ children }: FirebaseClientProviderProps
     setFirebaseServices(initializeFirebase());
   }, []);
 
-  // During SSR and until the client is ready, show a loading state
+  // During SSR and until the client is ready, show a loading state.
+  // This is critical because children (pages) depend on the Firebase context.
   if (!firebaseServices) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
