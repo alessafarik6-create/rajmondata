@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -19,7 +19,8 @@ import {
   UserX,
   Trash2,
   Edit2,
-  DollarSign
+  DollarSign,
+  AlertTriangle
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -43,16 +44,22 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useToast } from '@/hooks/use-toast';
+import { useRouter } from 'next/navigation';
 
 export default function EmployeesPage() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const router = useRouter();
 
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
 
   const companyId = profile?.companyId || 'nebula-tech'; 
+  const userRole = profile?.role || 'employee';
+  
+  const canManage = userRole === 'owner' || userRole === 'admin';
+  const canView = ['owner', 'admin', 'manager'].includes(userRole);
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -72,8 +79,16 @@ export default function EmployeesPage() {
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
+  useEffect(() => {
+    if (profile && !canView) {
+      toast({ variant: "destructive", title: "Přístup odepřen", description: "Nemáte oprávnění k prohlížení seznamu zaměstnanců." });
+      router.push('/portal/dashboard');
+    }
+  }, [profile, canView, router, toast]);
+
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManage) return;
     setIsSubmitting(true);
     try {
       const colRef = collection(firestore, 'companies', companyId, 'employees');
@@ -105,6 +120,7 @@ export default function EmployeesPage() {
   };
 
   const toggleEmployeeStatus = async (employeeId: string, currentStatus: boolean) => {
+    if (!canManage) return;
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
       await updateDoc(docRef, { isActive: !currentStatus });
@@ -118,6 +134,7 @@ export default function EmployeesPage() {
   };
 
   const deleteEmployee = async (employeeId: string) => {
+    if (!canManage) return;
     if (!confirm('Opravdu chcete tohoto zaměstnance odstranit?')) return;
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
@@ -129,6 +146,7 @@ export default function EmployeesPage() {
   };
 
   const changeRole = async (employeeId: string, newRole: string) => {
+    if (!canManage) return;
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
       await updateDoc(docRef, { role: newRole });
@@ -138,6 +156,8 @@ export default function EmployeesPage() {
     }
   };
 
+  if (!canView && profile) return null;
+
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-end">
@@ -146,102 +166,104 @@ export default function EmployeesPage() {
           <p className="text-muted-foreground mt-2">Pracovníci organizace {companyId}.</p>
         </div>
         <div className="flex gap-3">
-          <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 shadow-lg shadow-primary/20">
-                <UserPlus className="w-4 h-4" /> Pozvat zaměstnance
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-surface border-border max-w-xl">
-              <DialogHeader>
-                <DialogTitle>Pozvat nového člena týmu</DialogTitle>
-                <DialogDescription>
-                  Vyplňte údaje pro vytvoření profilu zaměstnance a nastavení jeho mzdových nákladů.
-                </DialogDescription>
-              </DialogHeader>
-              <form onSubmit={handleInvite} className="space-y-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
+          {canManage && (
+            <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
+              <DialogTrigger asChild>
+                <Button className="gap-2 shadow-lg shadow-primary/20">
+                  <UserPlus className="w-4 h-4" /> Pozvat zaměstnance
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="bg-surface border-border max-w-xl">
+                <DialogHeader>
+                  <DialogTitle>Pozvat nového člena týmu</DialogTitle>
+                  <DialogDescription>
+                    Vyplňte údaje pro vytvoření profilu zaměstnance a nastavení jeho mzdových nákladů.
+                  </DialogDescription>
+                </DialogHeader>
+                <form onSubmit={handleInvite} className="space-y-4 py-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="firstName">Jméno</Label>
+                      <Input 
+                        id="firstName" 
+                        required 
+                        value={inviteData.firstName} 
+                        onChange={e => setInviteData({...inviteData, firstName: e.target.value})}
+                        className="bg-background"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="lastName">Příjmení</Label>
+                      <Input 
+                        id="lastName" 
+                        required 
+                        value={inviteData.lastName} 
+                        onChange={e => setInviteData({...inviteData, lastName: e.target.value})}
+                        className="bg-background"
+                      />
+                    </div>
+                  </div>
                   <div className="space-y-2">
-                    <Label htmlFor="firstName">Jméno</Label>
+                    <Label htmlFor="email">Email</Label>
                     <Input 
-                      id="firstName" 
+                      id="email" 
+                      type="email" 
                       required 
-                      value={inviteData.firstName} 
-                      onChange={e => setInviteData({...inviteData, firstName: e.target.value})}
+                      value={inviteData.email} 
+                      onChange={e => setInviteData({...inviteData, email: e.target.value})}
                       className="bg-background"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="lastName">Příjmení</Label>
-                    <Input 
-                      id="lastName" 
-                      required 
-                      value={inviteData.lastName} 
-                      onChange={e => setInviteData({...inviteData, lastName: e.target.value})}
-                      className="bg-background"
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <Input 
-                    id="email" 
-                    type="email" 
-                    required 
-                    value={inviteData.email} 
-                    onChange={e => setInviteData({...inviteData, email: e.target.value})}
-                    className="bg-background"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="role">Role</Label>
-                    <Select value={inviteData.role} onValueChange={v => setInviteData({...inviteData, role: v})}>
-                      <SelectTrigger className="bg-background">
-                        <SelectValue placeholder="Vyberte roli" />
-                      </SelectTrigger>
-                      <SelectContent className="bg-surface border-border">
-                        <SelectItem value="admin">Administrátor</SelectItem>
-                        <SelectItem value="manager">Manažer</SelectItem>
-                        <SelectItem value="accountant">Účetní</SelectItem>
-                        <SelectItem value="employee">Zaměstnanec</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="role">Role</Label>
+                      <Select value={inviteData.role} onValueChange={v => setInviteData({...inviteData, role: v})}>
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder="Vyberte roli" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-surface border-border">
+                          <SelectItem value="admin">Administrátor</SelectItem>
+                          <SelectItem value="manager">Manažer</SelectItem>
+                          <SelectItem value="accountant">Účetní</SelectItem>
+                          <SelectItem value="employee">Zaměstnanec</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="jobTitle">Pracovní pozice</Label>
+                      <Input 
+                        id="jobTitle" 
+                        placeholder="Např. Svářeč" 
+                        value={inviteData.jobTitle} 
+                        onChange={e => setInviteData({...inviteData, jobTitle: e.target.value})}
+                        className="bg-background"
+                      />
+                    </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="jobTitle">Pracovní pozice</Label>
-                    <Input 
-                      id="jobTitle" 
-                      placeholder="Např. Svářeč" 
-                      value={inviteData.jobTitle} 
-                      onChange={e => setInviteData({...inviteData, jobTitle: e.target.value})}
-                      className="bg-background"
-                    />
+                    <Label htmlFor="hourlyRate">Hodinová sazba (Kč/h)</Label>
+                    <div className="relative">
+                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                      <Input 
+                        id="hourlyRate" 
+                        type="number"
+                        placeholder="500" 
+                        value={inviteData.hourlyRate} 
+                        onChange={e => setInviteData({...inviteData, hourlyRate: e.target.value})}
+                        className="bg-background pl-10"
+                      />
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">Tato sazba se používá pro výpočet finančních nákladů firmy.</p>
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="hourlyRate">Hodinová sazba (Kč/h)</Label>
-                  <div className="relative">
-                    <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <Input 
-                      id="hourlyRate" 
-                      type="number"
-                      placeholder="500" 
-                      value={inviteData.hourlyRate} 
-                      onChange={e => setInviteData({...inviteData, hourlyRate: e.target.value})}
-                      className="bg-background pl-10"
-                    />
-                  </div>
-                  <p className="text-[10px] text-muted-foreground">Tato sazba se používá pro výpočet finančních nákladů firmy.</p>
-                </div>
-                <DialogFooter>
-                  <Button type="submit" disabled={isSubmitting} className="w-full">
-                    {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Vytvořit profil"}
-                  </Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+                  <DialogFooter>
+                    <Button type="submit" disabled={isSubmitting} className="w-full">
+                      {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Vytvořit profil"}
+                    </Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          )}
         </div>
       </div>
 
@@ -304,26 +326,30 @@ export default function EmployeesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="pr-6 text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-surface border-border">
-                          <DropdownMenuLabel>Možnosti</DropdownMenuLabel>
-                          <DropdownMenuItem onClick={() => toggleEmployeeStatus(emp.id, emp.isActive)}>
-                            <UserX className="w-4 h-4 mr-2" /> {emp.isActive ? 'Deaktivovat' : 'Aktivovat'}
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Změnit roli</DropdownMenuLabel>
-                          <DropdownMenuItem onClick={() => changeRole(emp.id, 'admin')}>Administrátor</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => changeRole(emp.id, 'manager')}>Manažer</DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => changeRole(emp.id, 'employee')}>Zaměstnanec</DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>
-                            <Trash2 className="w-4 h-4 mr-2" /> Odstranit
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      {canManage ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="bg-surface border-border">
+                            <DropdownMenuLabel>Možnosti</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => toggleEmployeeStatus(emp.id, emp.isActive)}>
+                              <UserX className="w-4 h-4 mr-2" /> {emp.isActive ? 'Deaktivovat' : 'Aktivovat'}
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Změnit roli</DropdownMenuLabel>
+                            <DropdownMenuItem onClick={() => changeRole(emp.id, 'admin')}>Administrátor</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => changeRole(emp.id, 'manager')}>Manažer</DropdownMenuItem>
+                            <DropdownMenuItem onClick={() => changeRole(emp.id, 'employee')}>Zaměstnanec</SelectItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>
+                              <Trash2 className="w-4 h-4 mr-2" /> Odstranit
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      ) : (
+                        <Shield className="w-4 h-4 text-muted-foreground mx-auto opacity-20" />
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -332,9 +358,11 @@ export default function EmployeesPage() {
           ) : (
             <div className="text-center py-20">
               <p className="text-muted-foreground">V této organizaci zatím nejsou žádní zaměstnanci.</p>
-              <Button variant="link" className="text-primary mt-2" onClick={() => setIsInviteOpen(true)}>
-                Přidat prvního pracovníka
-              </Button>
+              {canManage && (
+                <Button variant="link" className="text-primary mt-2" onClick={() => setIsInviteOpen(true)}>
+                  Přidat prvního pracovníka
+                </Button>
+              )}
             </div>
           )}
         </CardContent>

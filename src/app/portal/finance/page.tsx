@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -14,7 +14,8 @@ import {
   Download, 
   Loader2,
   PieChart as PieChartIcon,
-  BarChart as BarChartIcon
+  BarChart as BarChartIcon,
+  Lock
 } from 'lucide-react';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, query, orderBy, limit } from 'firebase/firestore';
@@ -33,32 +34,37 @@ import {
   CartesianGrid,
   Legend
 } from 'recharts';
+import { useRouter } from 'next/navigation';
 
 export default function FinancePage() {
   const { user } = useUser();
   const firestore = useFirestore();
+  const router = useRouter();
 
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
   const companyId = profile?.companyId || 'nebula-tech';
+  const role = profile?.role || 'employee';
+
+  const canAccess = ['owner', 'admin', 'accountant'].includes(role);
 
   const jobsQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'jobs') : null, [firestore, companyId]);
-  const employeesQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'employees') : null, [firestore, companyId]);
-  const attendanceQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'attendance') : null, [firestore, companyId]);
   const financeQuery = useMemoFirebase(() => companyId ? query(collection(firestore, 'companies', companyId, 'finance'), orderBy('date', 'desc'), limit(50)) : null, [firestore, companyId]);
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
-  const { data: employees } = useCollection(employeesQuery);
-  const { data: attendance } = useCollection(attendanceQuery);
   const { data: financeRecords, isLoading: isFinanceLoading } = useCollection(financeQuery);
+
+  useEffect(() => {
+    if (profile && !canAccess) {
+      router.push('/portal/dashboard');
+    }
+  }, [profile, canAccess, router]);
 
   const stats = useMemo(() => {
     if (!financeRecords) return { revenue: 0, costs: 0, profit: 0, activeJobs: 0 };
 
     const revenue = financeRecords.filter(r => r.type === 'revenue').reduce((sum, r) => sum + Number(r.amount), 0);
     const costs = financeRecords.filter(r => r.type === 'expense').reduce((sum, r) => sum + Number(r.amount), 0);
-    
-    // Add calculated employee costs from attendance if needed, but financeRecords should now include them from the "Doklady" integration
     const profit = revenue - costs;
 
     return {
@@ -82,6 +88,8 @@ export default function FinancePage() {
     { name: 'Ostatní', value: 8000, fill: 'hsl(var(--secondary))' },
   ];
 
+  if (!canAccess && profile) return null;
+
   if (isJobsLoading || isFinanceLoading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -99,7 +107,9 @@ export default function FinancePage() {
         </div>
         <div className="flex gap-3">
           <Button variant="outline" className="gap-2"><Download className="w-4 h-4" /> Exportovat PDF</Button>
-          <Button className="gap-2 shadow-lg shadow-primary/20"><Receipt className="w-4 h-4" /> Nový záznam</Button>
+          {(role === 'owner' || role === 'admin') && (
+            <Button className="gap-2 shadow-lg shadow-primary/20"><Receipt className="w-4 h-4" /> Nový záznam</Button>
+          )}
         </div>
       </div>
 
