@@ -41,9 +41,10 @@ export default function LoginPage() {
         description: "Vítejte zpět v BizForge."
       });
 
-      // Redirect to dashboard on successful login
+      // Redirect to portal dashboard after successful login
       router.push('/portal/dashboard');
     } catch (error: any) {
+      console.error(error);
       toast({
         variant: "destructive",
         title: "Chyba přihlášení",

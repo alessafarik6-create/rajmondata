@@ -9,33 +9,24 @@ interface FirebaseClientProviderProps {
 }
 
 /**
- * Komponenta zajišťující, že Firebase je inicializována pouze na straně klienta.
- * Tím se předchází chybám při SSR (Server-Side Rendering).
+ * Component ensuring Firebase is initialized only on the client side.
+ * Wraps children in the provider even during SSR to avoid context errors.
  */
 export function FirebaseClientProvider({ children }: FirebaseClientProviderProps) {
-  // Služby ukládáme do stavu, výchozí hodnota je null pro bezpečnost SSR
   const [firebaseServices, setFirebaseServices] = useState<ReturnType<typeof initializeFirebase> | null>(null);
 
   useEffect(() => {
-    // Tento efekt se spustí pouze v prohlížeči po prvním vykreslení.
+    // Only initialize in browser after hydration
     setFirebaseServices(initializeFirebase());
   }, []);
 
-  // Během SSR a do momentu, než je klient připraven, vracíme loading stav.
-  // To zabrání tomu, aby se podstránky pokoušely volat useFirebase() na serveru.
-  if (!firebaseServices) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
-      </div>
-    );
-  }
-
+  // Always render the Provider so that child hooks like useFirebase() 
+  // find the context during SSR, preventing "missing provider" errors.
   return (
     <FirebaseProvider
-      firebaseApp={firebaseServices.firebaseApp}
-      auth={firebaseServices.auth}
-      firestore={firebaseServices.firestore}
+      firebaseApp={firebaseServices?.firebaseApp ?? null}
+      auth={firebaseServices?.auth ?? null}
+      firestore={firebaseServices?.firestore ?? null}
     >
       {children}
     </FirebaseProvider>
