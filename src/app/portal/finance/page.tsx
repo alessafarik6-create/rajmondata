@@ -33,7 +33,6 @@ import {
   CartesianGrid,
   Legend
 } from 'recharts';
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
 
 export default function FinancePage() {
   const { user } = useUser();
@@ -43,70 +42,44 @@ export default function FinancePage() {
   const { data: profile } = useDoc(userRef);
   const companyId = profile?.companyId || 'nebula-tech';
 
-  // Načtení dat pro výpočty
   const jobsQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'jobs') : null, [firestore, companyId]);
   const employeesQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'employees') : null, [firestore, companyId]);
   const attendanceQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'attendance') : null, [firestore, companyId]);
-  const financeQuery = useMemoFirebase(() => companyId ? query(collection(firestore, 'companies', companyId, 'finance'), orderBy('date', 'desc'), limit(20)) : null, [firestore, companyId]);
+  const financeQuery = useMemoFirebase(() => companyId ? query(collection(firestore, 'companies', companyId, 'finance'), orderBy('date', 'desc'), limit(50)) : null, [firestore, companyId]);
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
   const { data: employees } = useCollection(employeesQuery);
   const { data: attendance } = useCollection(attendanceQuery);
   const { data: financeRecords, isLoading: isFinanceLoading } = useCollection(financeQuery);
 
-  // Finanční výpočty
   const stats = useMemo(() => {
-    if (!jobs || !employees || !attendance) return null;
+    if (!financeRecords) return { revenue: 0, costs: 0, profit: 0, activeJobs: 0 };
 
-    // 1. Příjmy (Budgety dokončených zakázek)
-    const totalRevenue = jobs.reduce((sum, job) => sum + (Number(job.budget) || 0), 0);
-    const completedRevenue = jobs
-      .filter(j => j.status === 'dokončená' || j.status === 'fakturována')
-      .reduce((sum, job) => sum + (Number(job.budget) || 0), 0);
-
-    // 2. Náklady na zaměstnance (Sazba * Odpracované hodiny)
-    // Pro zjednodušení v prototypu: počítáme odpracované sekundy z check-in/out a násobíme hodinovou sazbou
-    let totalEmployeeCosts = 0;
+    const revenue = financeRecords.filter(r => r.type === 'revenue').reduce((sum, r) => sum + Number(r.amount), 0);
+    const costs = financeRecords.filter(r => r.type === 'expense').reduce((sum, r) => sum + Number(r.amount), 0);
     
-    // Seskupení docházky podle zaměstnanců
-    const attendanceByEmployee: Record<string, any[]> = {};
-    attendance.forEach(a => {
-      if (!attendanceByEmployee[a.employeeId]) attendanceByEmployee[a.employeeId] = [];
-      attendanceByEmployee[a.employeeId].push(a);
-    });
-
-    Object.entries(attendanceByEmployee).forEach(([empId, records]) => {
-      const emp = employees.find(e => e.id === empId);
-      const hourlyRate = Number(emp?.hourlyRate) || 500; // Fallback sazba
-
-      // Velmi zjednodušený výpočet hodin pro prototyp (každý check-in počítáme jako 8h pro demo)
-      const checkIns = records.filter(r => r.type === 'check_in').length;
-      totalEmployeeCosts += checkIns * 8 * hourlyRate;
-    });
-
-    const profit = totalRevenue - totalEmployeeCosts;
+    // Add calculated employee costs from attendance if needed, but financeRecords should now include them from the "Doklady" integration
+    const profit = revenue - costs;
 
     return {
-      revenue: totalRevenue,
-      completedRevenue,
-      costs: totalEmployeeCosts,
+      revenue,
+      costs,
       profit,
-      activeJobs: jobs.filter(j => j.status !== 'dokončená' && j.status !== 'fakturována').length
+      activeJobs: jobs?.filter(j => j.status !== 'dokončená' && j.status !== 'fakturována').length || 0
     };
-  }, [jobs, employees, attendance]);
+  }, [financeRecords, jobs]);
 
   const chartData = [
     { name: 'Leden', revenue: 45000, costs: 32000 },
     { name: 'Únor', revenue: 52000, costs: 35000 },
     { name: 'Březen', revenue: 48000, costs: 31000 },
     { name: 'Duben', revenue: 61000, costs: 42000 },
-    { name: 'Květen', revenue: stats?.revenue || 55000, costs: stats?.costs || 38000 },
+    { name: 'Květen', revenue: stats.revenue || 55000, costs: stats.costs || 38000 },
   ];
 
   const pieData = [
-    { name: 'Mzdy', value: stats?.costs || 400, fill: 'hsl(var(--primary))' },
-    { name: 'Provoz', value: 15000, fill: 'hsl(var(--secondary))' },
-    { name: 'Marketing', value: 8000, fill: 'hsl(var(--muted))' },
+    { name: 'Provozní náklady', value: stats.costs || 400, fill: 'hsl(var(--primary))' },
+    { name: 'Ostatní', value: 8000, fill: 'hsl(var(--secondary))' },
   ];
 
   if (isJobsLoading || isFinanceLoading) {
@@ -122,39 +95,33 @@ export default function FinancePage() {
       <div className="flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold">Finanční centrum</h1>
-          <p className="text-muted-foreground mt-2">Komplexní přehled ekonomiky firmy {companyId}.</p>
+          <p className="text-muted-foreground mt-2">Ekonomika vaší organizace v reálném čase.</p>
         </div>
         <div className="flex gap-3">
-          <Button variant="outline" className="gap-2">
-            <Download className="w-4 h-4" /> Exportovat PDF
-          </Button>
-          <Button className="gap-2 shadow-lg shadow-primary/20">
-            <Receipt className="w-4 h-4" /> Nový doklad
-          </Button>
+          <Button variant="outline" className="gap-2"><Download className="w-4 h-4" /> Exportovat PDF</Button>
+          <Button className="gap-2 shadow-lg shadow-primary/20"><Receipt className="w-4 h-4" /> Nový záznam</Button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card className="bg-surface border-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Celkový obrat</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Celkové příjmy</CardTitle>
             <DollarSign className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.revenue.toLocaleString()} Kč</div>
-            <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1">
-              <TrendingUp className="w-3 h-3" /> +12.5% oproti min. měsíci
-            </p>
+            <div className="text-2xl font-bold">{stats.revenue.toLocaleString()} Kč</div>
+            <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1"><TrendingUp className="w-3 h-3" /> +12%</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Náklady (mzdy + režie)</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Celkové výdaje</CardTitle>
             <TrendingDown className="h-4 w-4 text-rose-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.costs.toLocaleString()} Kč</div>
-            <p className="text-xs text-muted-foreground mt-1">Odhad na základě docházky</p>
+            <div className="text-2xl font-bold">{stats.costs.toLocaleString()} Kč</div>
+            <p className="text-xs text-muted-foreground mt-1">Z dokladů a mezd</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border">
@@ -163,18 +130,18 @@ export default function FinancePage() {
             <TrendingUp className="h-4 w-4 text-emerald-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">{stats?.profit.toLocaleString()} Kč</div>
-            <p className="text-xs text-emerald-500 mt-1">Marže cca 35%</p>
+            <div className="text-2xl font-bold text-primary">{stats.profit.toLocaleString()} Kč</div>
+            <p className="text-xs text-emerald-500 mt-1">Marže v pořádku</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border">
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Aktivní zakázky</CardTitle>
+            <CardTitle className="text-sm font-medium text-muted-foreground">Zakázky</CardTitle>
             <BarChartIcon className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats?.activeJobs}</div>
-            <p className="text-xs text-muted-foreground mt-1">V realizaci</p>
+            <div className="text-2xl font-bold">{stats.activeJobs}</div>
+            <p className="text-xs text-muted-foreground mt-1">Aktivní projekty</p>
           </CardContent>
         </Card>
       </div>
@@ -182,36 +149,18 @@ export default function FinancePage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <Card className="bg-surface border-border">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-primary" /> Vývoj příjmů a nákladů
-            </CardTitle>
-            <CardDescription>Srovnání měsíční výkonnosti firmy</CardDescription>
+            <CardTitle>Vývoj cashflow</CardTitle>
           </CardHeader>
-          <CardContent className="h-[300px] mt-4">
+          <CardContent className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis 
-                  dataKey="name" 
-                  stroke="hsl(var(--muted-foreground))" 
-                  fontSize={12} 
-                  tickLine={false} 
-                  axisLine={false} 
-                />
-                <YAxis 
-                  stroke="hsl(var(--muted-foreground))" 
-                  fontSize={12} 
-                  tickLine={false} 
-                  axisLine={false}
-                  tickFormatter={(value) => `${value / 1000}k`}
-                />
-                <Tooltip 
-                  contentStyle={{ backgroundColor: 'hsl(var(--surface))', borderRadius: '8px', border: '1px solid hsl(var(--border))' }}
-                  itemStyle={{ fontSize: '12px' }}
-                />
+                <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(v) => `${v/1000}k`} />
+                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
                 <Legend />
-                <Line type="monotone" dataKey="revenue" name="Příjmy" stroke="hsl(var(--primary))" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
-                <Line type="monotone" dataKey="costs" name="Náklady" stroke="hsl(var(--rose-500))" strokeWidth={2} strokeDasharray="5 5" />
+                <Line type="monotone" dataKey="revenue" name="Příjmy" stroke="hsl(var(--primary))" strokeWidth={3} />
+                <Line type="monotone" dataKey="costs" name="Výdaje" stroke="hsl(var(--rose-500))" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -219,30 +168,15 @@ export default function FinancePage() {
 
         <Card className="bg-surface border-border">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <PieChartIcon className="w-5 h-5 text-primary" /> Struktura nákladů
-            </CardTitle>
-            <CardDescription>Rozdělení výdajů podle kategorií</CardDescription>
+            <CardTitle>Struktura nákladů</CardTitle>
           </CardHeader>
-          <CardContent className="h-[300px] flex items-center justify-center">
+          <CardContent className="h-[300px]">
             <ResponsiveContainer width="100%" height="100%">
               <PieChart>
-                <Pie
-                  data={pieData}
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {pieData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.fill} />
-                  ))}
+                <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value">
+                  {pieData.map((e, i) => <Cell key={i} fill={e.fill} />)}
                 </Pie>
-                <Tooltip 
-                  contentStyle={{ backgroundColor: 'hsl(var(--surface))', borderRadius: '8px', border: '1px solid hsl(var(--border))' }}
-                />
+                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))' }} />
                 <Legend />
               </PieChart>
             </ResponsiveContainer>
@@ -251,59 +185,20 @@ export default function FinancePage() {
       </div>
 
       <Card className="bg-surface border-border">
-        <CardHeader>
-          <CardTitle>Poslední finanční pohyby</CardTitle>
-          <CardDescription>Přehled faktur a výdajů v rámci workspace</CardDescription>
-        </CardHeader>
+        <CardHeader><CardTitle>Poslední transakce</CardTitle></CardHeader>
         <CardContent>
           <Table>
-            <TableHeader>
-              <TableRow className="border-border">
-                <TableHead>Referenční číslo</TableHead>
-                <TableHead>Kategorie</TableHead>
-                <TableHead>Datum</TableHead>
-                <TableHead>Částka</TableHead>
-                <TableHead>Stav</TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow className="border-border"><TableHead>Popis</TableHead><TableHead>Datum</TableHead><TableHead className="text-right">Částka</TableHead></TableRow></TableHeader>
             <TableBody>
-              {financeRecords && financeRecords.length > 0 ? (
-                financeRecords.map((record) => (
-                  <TableRow key={record.id} className="border-border hover:bg-muted/30">
-                    <TableCell className="font-medium">{record.referenceId || 'INV-TEMP'}</TableCell>
-                    <TableCell>{record.category || 'Zakázka'}</TableCell>
-                    <TableCell>{record.date || 'Dnes'}</TableCell>
-                    <TableCell className={record.type === 'revenue' ? 'text-emerald-500 font-bold' : 'text-rose-500'}>
-                      {record.type === 'revenue' ? '+' : '-'}{record.amount?.toLocaleString()} Kč
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="outline" className="capitalize">
-                        {record.status || 'Dokončeno'}
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                ))
-              ) : (
-                // Dummy data pro naplnění prázdné tabulky v prototypu
-                [
-                  { ref: 'INV-2024-001', cat: 'Zakázka #12', date: '20.05.2024', amt: 24500, type: 'revenue' },
-                  { ref: 'EXP-9923', cat: 'Server Hosting', date: '18.05.2024', amt: 1200, type: 'expense' },
-                  { ref: 'EXP-9924', cat: 'Kancelářské potřeby', date: '15.05.2024', amt: 3400, type: 'expense' },
-                  { ref: 'INV-2024-002', cat: 'Zakázka #08', date: '10.05.2024', amt: 18000, type: 'revenue' },
-                ].map((tx, i) => (
-                  <TableRow key={i} className="border-border hover:bg-muted/30">
-                    <TableCell className="font-medium">{tx.ref}</TableCell>
-                    <TableCell>{tx.cat}</TableCell>
-                    <TableCell>{tx.date}</TableCell>
-                    <TableCell className={tx.type === 'revenue' ? 'text-emerald-500 font-bold' : 'text-rose-500'}>
-                      {tx.type === 'revenue' ? '+' : '-'}{tx.amt.toLocaleString()} Kč
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant="default" className="bg-emerald-600">Zaplaceno</Badge>
-                    </TableCell>
-                  </TableRow>
-                ))
-              )}
+              {financeRecords?.map((r) => (
+                <TableRow key={r.id} className="border-border hover:bg-muted/30">
+                  <TableCell className="font-medium">{r.description}</TableCell>
+                  <TableCell>{r.date}</TableCell>
+                  <TableCell className={`text-right font-bold ${r.type === 'revenue' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                    {r.type === 'revenue' ? '+' : '-'}{r.amount?.toLocaleString()} Kč
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </CardContent>

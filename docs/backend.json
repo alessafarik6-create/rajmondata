@@ -36,46 +36,74 @@
       "required": ["id", "email", "displayName", "globalRoles", "createdAt"]
     },
     "Employee": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
       "title": "Employee",
       "type": "object",
-      "description": "Represents an employee profile within a specific company.",
       "properties": {
         "id": { "type": "string" },
-        "companyId": { "type": "string" },
-        "userId": { "type": "string" },
         "firstName": { "type": "string" },
         "lastName": { "type": "string" },
-        "email": { "type": "string", "format": "email" },
-        "jobTitle": { "type": "string" },
+        "email": { "type": "string" },
         "role": { "type": "string" },
-        "isActive": { "type": "boolean" },
-        "hireDate": { "type": "string", "format": "date" },
-        "hourlyRate": { "type": "number", "description": "Hourly wage for cost calculations." }
-      },
-      "required": ["id", "companyId", "firstName", "lastName", "email", "role", "isActive"]
+        "jobTitle": { "type": "string" },
+        "hourlyRate": { "type": "number" },
+        "isActive": { "type": "boolean" }
+      }
     },
-    "Job": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "title": "Job",
+    "Customer": {
+      "title": "Customer",
       "type": "object",
-      "description": "Represents a job or project managed by a specific company.",
       "properties": {
         "id": { "type": "string" },
-        "companyId": { "type": "string" },
+        "companyName": { "type": "string" },
+        "firstName": { "type": "string" },
+        "lastName": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "ico": { "type": "string" }
+      }
+    },
+    "Job": {
+      "title": "Job",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
         "name": { "type": "string" },
-        "description": { "type": "string" },
-        "status": { 
-          "type": "string", 
-          "enum": ["nová", "rozpracovaná", "čeká", "dokončená", "fakturována"] 
-        },
-        "startDate": { "type": "string", "format": "date" },
-        "endDate": { "type": "string", "format": "date" },
+        "customerId": { "type": "string" },
+        "status": { "type": "string" },
         "budget": { "type": "number" },
-        "assignedEmployeeIds": { "type": "array", "items": { "type": "string" } },
-        "customerId": { "type": "string" }
-      },
-      "required": ["id", "companyId", "name", "status"]
+        "assignedEmployeeIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "Document": {
+      "title": "Document",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["received", "issued"] },
+        "number": { "type": "string" },
+        "entityName": { "type": "string", "description": "Supplier or Customer name" },
+        "amount": { "type": "number" },
+        "vat": { "type": "number" },
+        "date": { "type": "string", "format": "date" },
+        "description": { "type": "string" },
+        "createdBy": { "type": "string" }
+      }
+    },
+    "Invoice": {
+      "title": "Invoice",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "customerId": { "type": "string" },
+        "invoiceNumber": { "type": "string" },
+        "issueDate": { "type": "string", "format": "date" },
+        "dueDate": { "type": "string", "format": "date" },
+        "totalAmount": { "type": "number" },
+        "vat": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "sent", "paid"] },
+        "items": { "type": "array" }
+      }
     },
     "FinancialRecord": {
       "title": "Financial Record",
@@ -84,10 +112,8 @@
         "id": { "type": "string" },
         "companyId": { "type": "string" },
         "type": { "type": "string", "enum": ["revenue", "expense"] },
-        "category": { "type": "string" },
         "amount": { "type": "number" },
         "date": { "type": "string", "format": "date" },
-        "referenceId": { "type": "string" },
         "description": { "type": "string" }
       }
     }
@@ -122,11 +148,35 @@
         }
       },
       {
+        "path": "/companies/{companyId}/customers/{customerId}",
+        "definition": {
+          "entityName": "Customer",
+          "schema": { "$ref": "#/backend/entities/Customer" },
+          "description": "Customer directory."
+        }
+      },
+      {
         "path": "/companies/{companyId}/jobs/{jobId}",
         "definition": {
           "entityName": "Job",
           "schema": { "$ref": "#/backend/entities/Job" },
           "description": "Job/project details specific to a company."
+        }
+      },
+      {
+        "path": "/companies/{companyId}/documents/{docId}",
+        "definition": {
+          "entityName": "Document",
+          "schema": { "$ref": "#/backend/entities/Document" },
+          "description": "Company business documents (received/issued)."
+        }
+      },
+      {
+        "path": "/companies/{companyId}/invoices/{invoiceId}",
+        "definition": {
+          "entityName": "Invoice",
+          "schema": { "$ref": "#/backend/entities/Invoice" },
+          "description": "Company invoices issued to customers."
         }
       },
       {

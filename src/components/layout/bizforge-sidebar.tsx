@@ -16,7 +16,8 @@ import {
   ShieldCheck, 
   Settings,
   CreditCard,
-  UserCircle
+  UserCircle,
+  ReceiptText
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUser, useDoc, useFirestore, useMemoFirebase } from '@/firebase';
@@ -47,8 +48,9 @@ export const BizForgeSidebar = () => {
     { label: 'Zakázky', href: '/portal/jobs', icon: Briefcase },
     { label: 'Docházka', href: '/portal/attendance', icon: Clock },
     { label: 'Finance', href: '/portal/finance', icon: Wallet },
+    { label: 'Faktury', href: '/portal/invoices', icon: ReceiptText },
+    { label: 'Doklady', href: '/portal/documents', icon: FileText },
     { label: 'Zprávy', href: '/portal/chat', icon: MessageSquare },
-    { label: 'Dokumenty', href: '/portal/documents', icon: FileText },
     { label: 'Nastavení', href: '/portal/settings', icon: Settings },
   ];
 
@@ -73,7 +75,7 @@ export const BizForgeSidebar = () => {
             href={link.href}
             className={cn(
               "flex items-center gap-3 px-3 py-2 rounded-md transition-colors",
-              pathname === link.href 
+              pathname.startsWith(link.href)
                 ? "bg-sidebar-accent text-sidebar-primary font-medium" 
                 : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-primary"
             )}
