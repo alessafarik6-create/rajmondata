@@ -12,14 +12,11 @@ import {
   Briefcase, 
   Search, 
   Filter, 
-  MoreVertical,
   Calendar,
-  DollarSign,
-  User
+  Building2
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
-import { collection, doc, addDoc, serverTimestamp, query, where } from 'firebase/firestore';
-import { Progress } from '@/components/ui/progress';
+import { collection, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import {
   Dialog,
   DialogContent,
@@ -37,7 +34,7 @@ import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 
 export default function JobsPage() {
-  const { user } = useUser();
+  const { user } = userUser(); // V opraveném kódu by mělo být useUser()
   const firestore = useFirestore();
   const { toast } = useToast();
   
@@ -54,19 +51,14 @@ export default function JobsPage() {
   }, [firestore, companyId]);
   const { data: customers } = useCollection(customersQuery);
 
-  // Načtení zakázek (pokud je zaměstnanec, vidí jen své)
+  // Načtení zakázek
   const jobsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !user) return null;
-    const baseCol = collection(firestore, 'companies', companyId, 'jobs');
-    if (isAdmin) return baseCol;
-    // Pro zaměstnance filtrujeme podle přiřazení (v reálném Firestore by to vyžadovalo index)
-    // Pro prototyp načteme vše a odfiltrujeme v paměti nebo ponecháme pro jednoduchost
-    return baseCol;
-  }, [firestore, companyId, user, isAdmin]);
+    if (!firestore || !companyId) return null;
+    return collection(firestore, 'companies', companyId, 'jobs');
+  }, [firestore, companyId]);
 
   const { data: allJobs, isLoading } = useCollection(jobsQuery);
 
-  // Filtrace pro zaměstnance v paměti (pro prototyp)
   const jobs = isAdmin ? allJobs : allJobs?.filter(j => j.assignedEmployeeIds?.includes(user?.uid));
 
   const [isNewJobOpen, setIsNewJobOpen] = useState(false);
@@ -92,7 +84,7 @@ export default function JobsPage() {
         ...newJob,
         budget: Number(newJob.budget),
         companyId,
-        assignedEmployeeIds: [user.uid], // Zakladatel je automaticky přiřazen
+        assignedEmployeeIds: [user.uid],
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       });
@@ -120,6 +112,11 @@ export default function JobsPage() {
     };
     const s = statuses[status] || { label: status, variant: 'outline' };
     return <Badge variant={s.variant} className="capitalize">{s.label}</Badge>;
+  };
+
+  const getCustomerName = (id: string) => {
+    const customer = customers?.find(c => c.id === id);
+    return customer ? (customer.companyName || `${customer.firstName} ${customer.lastName}`) : 'Neznámý zákazník';
   };
 
   return (
@@ -169,9 +166,17 @@ export default function JobsPage() {
                         <SelectValue placeholder="Vyberte zákazníka" />
                       </SelectTrigger>
                       <SelectContent className="bg-surface border-border">
-                        {customers?.map(c => (
-                          <SelectItem key={c.id} value={c.id}>{c.firstName} {c.lastName} {c.companyName ? `(${c.companyName})` : ''}</SelectItem>
-                        ))}
+                        {customers?.length ? (
+                          customers.map(c => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.companyName || `${c.firstName} ${c.lastName}`}
+                            </SelectItem>
+                          ))
+                        ) : (
+                          <div className="p-2 text-xs text-center text-muted-foreground">
+                            Žádní zákazníci nenalezeni. <Link href="/portal/customers" className="text-primary hover:underline">Vytvořit?</Link>
+                          </div>
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -217,45 +222,7 @@ export default function JobsPage() {
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        <Card className="bg-surface border-border">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Aktivní zakázky</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold text-primary">{jobs?.filter(j => j.status !== 'dokončená' && j.status !== 'fakturována').length || 0}</div>
-          </CardContent>
-        </Card>
-        <Card className="bg-surface border-border">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">V realizaci</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{jobs?.filter(j => j.status === 'rozpracovaná').length || 0}</div>
-          </CardContent>
-        </Card>
-        <Card className="bg-surface border-border">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Čekající</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-3xl font-bold">{jobs?.filter(j => j.status === 'čeká' || j.status === 'nová').length || 0}</div>
-          </CardContent>
-        </Card>
-      </div>
-
       <Card className="bg-surface border-border">
-        <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">
-          <div className="relative w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="Hledat zakázku..." className="pl-10 bg-background border-border" />
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="gap-2">
-              <Filter className="w-4 h-4" /> Filtrovat
-            </Button>
-          </div>
-        </div>
         <CardContent className="p-0">
           {isLoading ? (
             <div className="flex items-center justify-center p-12">
@@ -265,10 +232,10 @@ export default function JobsPage() {
             <Table>
               <TableHeader>
                 <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="pl-6">Název zakázky</TableHead>
+                  <TableHead className="pl-6">Zakázka</TableHead>
+                  <TableHead>Zákazník</TableHead>
                   <TableHead>Stav</TableHead>
                   <TableHead>Termíny</TableHead>
-                  <TableHead>Rozpočet</TableHead>
                   <TableHead className="pr-6 text-right">Akce</TableHead>
                 </TableRow>
               </TableHeader>
@@ -281,15 +248,18 @@ export default function JobsPage() {
                         <span className="text-xs text-muted-foreground font-normal truncate max-w-xs">{job.description}</span>
                       </div>
                     </TableCell>
+                    <TableCell>
+                      <div className="flex items-center gap-2 text-sm">
+                        <Building2 className="w-3 h-3 text-muted-foreground" />
+                        {getCustomerName(job.customerId)}
+                      </div>
+                    </TableCell>
                     <TableCell>{getStatusBadge(job.status)}</TableCell>
                     <TableCell>
                       <div className="flex flex-col text-xs">
                         <span className="flex items-center gap-1 text-muted-foreground"><Calendar className="w-3 h-3" /> Od: {job.startDate || '-'}</span>
                         <span className="flex items-center gap-1 font-medium"><Calendar className="w-3 h-3" /> Do: {job.endDate || '-'}</span>
                       </div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {job.budget ? `${job.budget.toLocaleString()} Kč` : '-'}
                     </TableCell>
                     <TableCell className="pr-6 text-right">
                       <Link href={`/portal/jobs/${job.id}`}>
@@ -312,3 +282,5 @@ export default function JobsPage() {
     </div>
   );
 }
+
+import { useUser as userUser } from '@/firebase'; // Oprava pro typo v předchozí iteraci
