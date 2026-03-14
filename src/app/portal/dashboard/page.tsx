@@ -7,7 +7,8 @@ import {
   Briefcase, 
   Clock, 
   Wallet,
-  Calendar
+  Calendar,
+  Activity
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,24 +20,43 @@ import { doc, collection } from 'firebase/firestore';
 export default function CompanyDashboard() {
   const { user } = useUser();
   const firestore = useFirestore();
-  const companyId = 'nebula-tech'; 
 
+  // Získání profilu uživatele pro detekci organizace
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
-  const { data: profile } = useDoc(userRef);
+  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+
+  // V reálné aplikaci by ID organizace bylo uloženo v profilu uživatele
+  // Pro účely prototypu a multi-tenant struktury použijeme ID z profilu nebo fallback
+  const companyId = profile?.companyId || 'nebula-tech'; 
+
+  // Načtení dat z Firestore subkolekcí pro danou firmu
+  const employeesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, 'companies', companyId, 'employees');
+  }, [firestore, companyId]);
 
   const jobsQuery = useMemoFirebase(() => {
-    if (!firestore) return null;
+    if (!firestore || !companyId) return null;
     return collection(firestore, 'companies', companyId, 'jobs');
   }, [firestore, companyId]);
 
+  const { data: employees } = useCollection(employeesQuery);
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
+
+  if (isProfileLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-8">
       <div className="flex justify-between items-end">
         <div>
           <h1 className="text-3xl font-bold">Dobré ráno, {profile?.displayName || user?.email?.split('@')[0]}</h1>
-          <p className="text-muted-foreground mt-2">Zde je přehled výkonu vaší organizace pro dnešek.</p>
+          <p className="text-muted-foreground mt-2">Zde je přehled výkonu vaší organizace ({companyId}) pro dnešek.</p>
         </div>
         <div className="flex gap-3">
           <Button variant="outline" className="gap-2">
@@ -55,8 +75,8 @@ export default function CompanyDashboard() {
             <Users className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">42 / 45</div>
-            <p className="text-xs text-muted-foreground mt-1">3 dnes na dovolené</p>
+            <div className="text-2xl font-bold">{employees?.length || 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Celkový počet v {companyId}</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border">
@@ -65,8 +85,8 @@ export default function CompanyDashboard() {
             <Briefcase className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{jobs?.length || 0}</div>
-            <p className="text-xs text-muted-foreground mt-1">Spravováno v {companyId}</p>
+            <div className="text-2xl font-bold">{jobs?.filter(j => j.status !== 'completed').length || 0}</div>
+            <p className="text-xs text-muted-foreground mt-1">Probíhající projekty</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border">
@@ -76,7 +96,7 @@ export default function CompanyDashboard() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">94%</div>
-            <p className="text-xs text-muted-foreground mt-1">2 pozdní příchody</p>
+            <p className="text-xs text-muted-foreground mt-1">Většina týmu je přítomna</p>
           </CardContent>
         </Card>
         <Card className="bg-surface border-border">
@@ -96,7 +116,7 @@ export default function CompanyDashboard() {
           <Card className="bg-surface border-border">
             <CardHeader>
               <CardTitle>Probíhající projekty</CardTitle>
-              <CardDescription>Výkon aktivních zakázek v {companyId}</CardDescription>
+              <CardDescription>Výkon aktivních zakázek v rámci workspace {companyId}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
               {isJobsLoading ? (
@@ -104,7 +124,7 @@ export default function CompanyDashboard() {
                   <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
                 </div>
               ) : jobs && jobs.length > 0 ? (
-                jobs.map((job) => (
+                jobs.slice(0, 5).map((job) => (
                   <div key={job.id} className="space-y-2">
                     <div className="flex justify-between items-center">
                       <div>
@@ -112,7 +132,7 @@ export default function CompanyDashboard() {
                         <p className="text-xs text-muted-foreground">{job.status === 'completed' ? 'Dokončeno' : 'Probíhá'}</p>
                       </div>
                       <Badge variant={job.status === 'completed' ? 'default' : 'secondary'} className="capitalize">
-                        {job.status === 'completed' ? 'Dokončeno' : 'Aktivní'}
+                        {job.status === 'completed' ? 'Hotovo' : 'Aktivní'}
                       </Badge>
                     </div>
                     <Progress value={job.status === 'completed' ? 100 : 45} className="flex-1" />
@@ -133,23 +153,24 @@ export default function CompanyDashboard() {
               <CardTitle>Rychlé akce</CardTitle>
             </CardHeader>
             <CardContent className="grid gap-2">
-              <Button variant="outline" className="justify-start w-full">Log docházky zaměstnanců</Button>
+              <Button variant="outline" className="justify-start w-full">Log docházky týmu</Button>
               <Button variant="outline" className="justify-start w-full">Vytvořit fakturu</Button>
-              <Button variant="outline" className="justify-start w-full">Schválit volno</Button>
-              <Button variant="outline" className="justify-start w-full">Nahrát dokumenty</Button>
+              <Button variant="outline" className="justify-start w-full">Schválit dovolenou</Button>
+              <Button variant="outline" className="justify-start w-full">Nahrát firemní dokumenty</Button>
             </CardContent>
           </Card>
 
           <Card className="bg-surface border-border">
-            <CardHeader>
-              <CardTitle>Nedávná aktivita</CardTitle>
+            <CardHeader className="flex flex-row items-center gap-2">
+              <Activity className="w-5 h-5 text-primary" />
+              <CardTitle>Poslední aktivita</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {[
-                { user: 'Sára J.', action: 'Se přihlásila', time: 'před 5m' },
-                { user: 'Michal T.', action: 'Dokončil zakázku #23', time: 'před 1h' },
-                { user: 'Účetní', action: 'Nahrál daňový doklad', time: 'před 3h' },
-                { user: 'Systém', action: 'Plán byl obnoven', time: 'včera' },
+                { user: 'Sára J.', action: 'Zahájila směnu', time: 'před 5m' },
+                { user: 'Michal T.', action: 'Aktualizoval zakázku #23', time: 'před 1h' },
+                { user: 'Účetní', action: 'Nahrál nový doklad', time: 'před 3h' },
+                { user: 'Systém', action: 'Záloha workspace proběhla', time: 'včera' },
               ].map((item, i) => (
                 <div key={i} className="flex items-start gap-3 text-sm">
                   <div className="mt-0.5 w-2 h-2 rounded-full bg-primary" />
