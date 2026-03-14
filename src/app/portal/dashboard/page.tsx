@@ -34,7 +34,7 @@ export default function CompanyDashboard() {
   const isEmployee = role === 'employee';
   const isCustomer = role === 'customer';
 
-  // Načtení dat z Firestore subkolekcí pro danou firmu - spouští se pouze pokud máme companyId
+  // Načtení dat z Firestore subkolekcí pro danou firmu
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !isManagement) return null;
     return collection(firestore, 'companies', companyId, 'employees');
@@ -70,7 +70,7 @@ export default function CompanyDashboard() {
         <div>
           <h1 className="text-3xl font-bold">Dobré ráno, {profile?.displayName || user?.email?.split('@')[0]}</h1>
           <p className="text-muted-foreground mt-2">
-            {isCustomer ? 'Vítejte ve svém klientském portálu.' : `Zde je přehled vaší práce v ${companyId}.`}
+            {isCustomer ? 'Vítejte ve svém klientském portálu.' : `Zde je přehled vaší práce v ${companyId || 'vaší organizaci'}.`}
           </p>
         </div>
         <div className="flex gap-3">
@@ -100,7 +100,7 @@ export default function CompanyDashboard() {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold">{employees?.length || 0}</div>
-              <p className="text-xs text-muted-foreground mt-1">Celkový počet v {companyId}</p>
+              <p className="text-xs text-muted-foreground mt-1">Celkový počet pracovníků</p>
             </CardContent>
           </Card>
         )}
@@ -112,7 +112,7 @@ export default function CompanyDashboard() {
             <Briefcase className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{jobs?.filter(j => j.status !== 'completed').length || 0}</div>
+            <div className="text-2xl font-bold">{jobs?.filter(j => j.status !== 'dokončená').length || 0}</div>
             <p className="text-xs text-muted-foreground mt-1">Probíhající projekty</p>
           </CardContent>
         </Card>
