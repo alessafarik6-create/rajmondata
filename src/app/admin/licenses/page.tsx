@@ -14,10 +14,11 @@ import {
   X,
   CreditCard,
   Users,
-  Box
+  Box,
+  AlertCircle
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, doc, updateDoc } from 'firebase/firestore';
 import {
   Dialog,
   DialogContent,
@@ -55,7 +56,8 @@ export default function AdminLicensesPage() {
         monthlyPrice: Number(newLicense.monthlyPrice),
         usersLimit: Number(newLicense.usersLimit),
         modulesEnabled: ['dashboard', 'employees', 'jobs'],
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
+        paymentStatus: 'active'
       });
       toast({ title: "Licence vytvořena", description: `Plán ${newLicense.name} byl přidán do nabídky.` });
       setIsNewJobOpen(false);
@@ -64,10 +66,22 @@ export default function AdminLicensesPage() {
     }
   };
 
+  const suspendLicense = async (id: string) => {
+    try {
+      await updateDoc(doc(firestore, 'licenses', id), {
+        paymentStatus: 'unpaid',
+        status: 'suspended'
+      });
+      toast({ title: "Licence pozastavena", description: "Status byl změněn na Nezaplaceno." });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Chyba" });
+    }
+  };
+
   const defaultPlans = [
-    { id: '1', name: 'Starter', price: 490, users: 5, modules: 3, color: 'bg-zinc-500' },
-    { id: '2', name: 'Professional', price: 1290, users: 20, modules: 6, color: 'bg-primary' },
-    { id: '3', name: 'Enterprise', price: 4990, users: 100, modules: 10, color: 'bg-emerald-600' },
+    { id: '1', name: 'Starter', price: 490, users: 5, modules: 3, color: 'bg-zinc-500', paymentStatus: 'active' },
+    { id: '2', name: 'Professional', price: 1290, users: 20, modules: 6, color: 'bg-primary', paymentStatus: 'active' },
+    { id: '3', name: 'Enterprise', price: 4990, users: 100, modules: 10, color: 'bg-emerald-600', paymentStatus: 'unpaid' },
   ];
 
   return (
@@ -122,7 +136,9 @@ export default function AdminLicensesPage() {
             <CardHeader>
               <div className="flex justify-between items-start">
                 <CardTitle className="text-xl">{plan.name}</CardTitle>
-                <Badge variant="outline" className="border-primary/20 text-primary">Aktivní</Badge>
+                <Badge variant={plan.paymentStatus === 'active' ? 'outline' : 'destructive'} className={plan.paymentStatus === 'active' ? 'border-primary/20 text-primary' : ''}>
+                  {plan.paymentStatus === 'active' ? 'Aktivní' : 'Nezaplaceno'}
+                </Badge>
               </div>
               <CardDescription>{plan.description || `Základní plán pro menší týmy.`}</CardDescription>
             </CardHeader>
@@ -146,8 +162,13 @@ export default function AdminLicensesPage() {
                 </li>
               </ul>
             </CardContent>
-            <CardFooter className="pt-6 border-t border-border/50">
+            <CardFooter className="pt-6 border-t border-border/50 flex flex-col gap-2">
               <Button variant="outline" className="w-full gap-2"><Edit2 className="w-4 h-4" /> Upravit parametry</Button>
+              {plan.paymentStatus === 'active' && (
+                <Button variant="ghost" className="w-full text-xs text-rose-500" onClick={() => suspendLicense(plan.id)}>
+                  <AlertCircle className="w-3 h-3 mr-1" /> Simulovat selhání platby
+                </Button>
+              )}
             </CardFooter>
           </Card>
         ))}

@@ -17,7 +17,8 @@ import {
   Settings,
   CreditCard,
   UserCircle,
-  ReceiptText
+  ReceiptText,
+  CreditCard as PaymentIcon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUser, useDoc, useFirestore, useMemoFirebase } from '@/firebase';
@@ -50,6 +51,7 @@ export const BizForgeSidebar = () => {
     { label: 'Finance', href: '/portal/finance', icon: Wallet },
     { label: 'Faktury', href: '/portal/invoices', icon: ReceiptText },
     { label: 'Doklady', href: '/portal/documents', icon: FileText },
+    { label: 'Předplatné', href: '/portal/billing', icon: PaymentIcon },
     { label: 'Zprávy', href: '/portal/chat', icon: MessageSquare },
     { label: 'Nastavení', href: '/portal/settings', icon: Settings },
   ];

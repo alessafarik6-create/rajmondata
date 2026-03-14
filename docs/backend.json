@@ -47,7 +47,13 @@
         "monthlyPrice": { "type": "number" },
         "usersLimit": { "type": "number" },
         "modulesEnabled": { "type": "array", "items": { "type": "string" } },
-        "description": { "type": "string" }
+        "description": { "type": "string" },
+        "subscriptionId": { "type": "string" },
+        "paymentProvider": { "type": "string", "enum": ["stripe", "gopay"] },
+        "billingCycle": { "type": "string", "enum": ["monthly", "yearly"] },
+        "lastPaymentDate": { "type": "string", "format": "date-time" },
+        "nextPaymentDate": { "type": "string", "format": "date-time" },
+        "paymentStatus": { "type": "string", "enum": ["active", "past_due", "unpaid", "canceled"] }
       }
     },
     "PlatformInvoice": {
