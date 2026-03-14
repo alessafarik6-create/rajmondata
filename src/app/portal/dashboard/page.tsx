@@ -1,4 +1,3 @@
-
 "use client";
 
 import React from 'react';
@@ -27,7 +26,7 @@ export default function CompanyDashboard() {
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
 
-  const companyId = profile?.companyId || 'nebula-tech'; 
+  const companyId = profile?.companyId; 
   const role = profile?.role || 'employee';
 
   const isManagement = ['owner', 'admin', 'manager'].includes(role);
@@ -35,7 +34,7 @@ export default function CompanyDashboard() {
   const isEmployee = role === 'employee';
   const isCustomer = role === 'customer';
 
-  // Načtení dat z Firestore subkolekcí pro danou firmu
+  // Načtení dat z Firestore subkolekcí pro danou firmu - spouští se pouze pokud máme companyId
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !isManagement) return null;
     return collection(firestore, 'companies', companyId, 'employees');
@@ -53,11 +52,11 @@ export default function CompanyDashboard() {
   const jobs = allJobs?.filter(j => {
     if (isManagement || isAccountant) return true;
     if (isEmployee) return j.assignedEmployeeIds?.includes(user?.uid);
-    if (isCustomer) return j.customerId === user?.uid; // Předpokládáme mapování ID zákazníka
+    if (isCustomer) return j.customerId === user?.uid; 
     return false;
   });
 
-  if (isProfileLoading) {
+  if (isProfileLoading || !profile) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -128,19 +127,18 @@ export default function CompanyDashboard() {
                 <div className="text-2xl font-bold">94%</div>
                 <p className="text-xs text-muted-foreground mt-1">Většina týmu je přítomna</p>
               </CardContent>
-            </Card>
-            {(isManagement || isAccountant) && (
-              <Card className="bg-surface border-border">
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">Měsíční obrat</CardTitle>
-                  <Wallet className="h-4 w-4 text-primary" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">12 450 Kč</div>
-                  <p className="text-xs text-emerald-500 mt-1">+15% oproti min. měsíci</p>
-                </CardContent>
-              </Card>
-            )}
+              {(isManagement || isAccountant) && (
+                <Card className="bg-surface border-border">
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <CardTitle className="text-sm font-medium text-muted-foreground">Měsíční obrat</CardTitle>
+                    <Wallet className="h-4 w-4 text-primary" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">12 450 Kč</div>
+                    <p className="text-xs text-emerald-500 mt-1">+15% oproti min. měsíci</p>
+                  </CardContent>
+                </Card>
+              )}
           </>
         )}
       </div>

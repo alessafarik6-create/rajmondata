@@ -61,7 +61,7 @@ export default function EmployeesPage() {
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
 
-  const companyId = profile?.companyId || 'nebula-tech'; 
+  const companyId = profile?.companyId; 
   const userRole = profile?.role || 'employee';
   
   const canManage = userRole === 'owner' || userRole === 'admin';
@@ -96,7 +96,7 @@ export default function EmployeesPage() {
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canManage) return;
+    if (!canManage || !companyId) return;
     setIsSubmitting(true);
     try {
       const colRef = collection(firestore, 'companies', companyId, 'employees');
@@ -129,7 +129,7 @@ export default function EmployeesPage() {
   };
 
   const toggleEmployeeStatus = async (employeeId: string, currentStatus: boolean) => {
-    if (!canManage) return;
+    if (!canManage || !companyId) return;
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
       await updateDoc(docRef, { isActive: !currentStatus });
@@ -143,7 +143,7 @@ export default function EmployeesPage() {
   };
 
   const generatePin = async (employeeId: string) => {
-    if (!canManage) return;
+    if (!canManage || !companyId) return;
     const newPin = Math.floor(1000 + Math.random() * 9000).toString();
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
@@ -155,7 +155,7 @@ export default function EmployeesPage() {
   };
 
   const generateQrId = async (employeeId: string) => {
-    if (!canManage) return;
+    if (!canManage || !companyId) return;
     const newQrId = `QR-${Math.random().toString(36).substring(2, 15)}`;
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
@@ -167,7 +167,7 @@ export default function EmployeesPage() {
   };
 
   const disablePin = async (employeeId: string) => {
-    if (!canManage) return;
+    if (!canManage || !companyId) return;
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
       await updateDoc(docRef, { attendancePin: null });
@@ -178,7 +178,7 @@ export default function EmployeesPage() {
   };
 
   const deleteEmployee = async (employeeId: string) => {
-    if (!canManage) return;
+    if (!canManage || !companyId) return;
     if (!confirm('Opravdu chcete tohoto zaměstnance odstranit?')) return;
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
@@ -190,7 +190,7 @@ export default function EmployeesPage() {
   };
 
   const changeRole = async (employeeId: string, newRole: string) => {
-    if (!canManage) return;
+    if (!canManage || !companyId) return;
     try {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
       await updateDoc(docRef, { role: newRole });
@@ -440,7 +440,7 @@ export default function EmployeesPage() {
             <div className="text-center py-20">
               <p className="text-muted-foreground">V této organizaci zatím nejsou žádní zaměstnanci.</p>
               {canManage && (
-                <Button variant="link" className="text-primary mt-2" onClick={() => setIsInviteOpen(true)}>
+                <Button variant="link" className="text-primary mt-2" onClick={() => setIsNewCustomerOpen(true)}>
                   Přidat prvního pracovníka
                 </Button>
               )}
