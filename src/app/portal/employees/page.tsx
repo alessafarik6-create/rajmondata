@@ -1,4 +1,5 @@
 "use client";
+import { Separator } from "@/components/ui/separator";
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent } from '@/components/ui/card';

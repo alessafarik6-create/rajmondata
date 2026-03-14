@@ -30,7 +30,8 @@ import {
   Users, 
   Briefcase, 
   Calendar,
-  CheckCircle2
+  CheckCircle2,
+  Wallet,
 } from 'lucide-react';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, query, orderBy, limit } from 'firebase/firestore';

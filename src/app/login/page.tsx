@@ -36,10 +36,13 @@ export default function LoginPage() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
+      
       toast({
         title: "Přihlášení úspěšné",
         description: "Vítejte zpět v BizForge."
       });
+
+      router.push('/portal/dashboard');
     } catch (error: any) {
       toast({
         variant: "destructive",

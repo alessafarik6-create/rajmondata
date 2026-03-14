@@ -16,7 +16,7 @@ import {
   Calendar as CalendarIcon,
   Loader2,
   Smartphone,
-  Keypad,
+  Keyboard,
   Delete,
   X,
   QrCode,

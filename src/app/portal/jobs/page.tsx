@@ -6,15 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
-import { 
-  Plus, 
-  Loader2, 
-  Briefcase, 
-  Search, 
-  Filter, 
-  Calendar,
-  Building2
-} from 'lucide-react';
+import { User, Plus, Loader2, Briefcase, Search, Filter, Calendar, Building2 } from "lucide-react";
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, addDoc, serverTimestamp } from 'firebase/firestore';
 import {
