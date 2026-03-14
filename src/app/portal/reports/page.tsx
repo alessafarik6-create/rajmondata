@@ -21,19 +21,17 @@ import {
 } from 'recharts';
 import { 
   Download, 
-  FileJson, 
   FileSpreadsheet, 
   FileText, 
   Loader2, 
   TrendingUp, 
   Users, 
   Briefcase, 
-  Calendar,
   CheckCircle2,
   Wallet,
 } from 'lucide-react';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, query, orderBy, limit } from 'firebase/firestore';
+import { doc, collection, query, orderBy } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 
 export default function ReportsPage() {
@@ -43,28 +41,22 @@ export default function ReportsPage() {
   const [isExporting, setIsExporting] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
 
-  // Deaktivujeme SSR renderování grafů pomocí isMounted stavu.
   useEffect(() => {
     setIsMounted(true);
   }, []);
 
-  // Profile and Company detection
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
   const companyId = profile?.companyId || 'nebula-tech';
 
-  // Data fetching
   const jobsQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'jobs') : null, [firestore, companyId]);
   const employeesQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'employees') : null, [firestore, companyId]);
-  const attendanceQuery = useMemoFirebase(() => companyId ? collection(firestore, 'companies', companyId, 'attendance') : null, [firestore, companyId]);
   const financeQuery = useMemoFirebase(() => companyId ? query(collection(firestore, 'companies', companyId, 'finance'), orderBy('date', 'desc')) : null, [firestore, companyId]);
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
   const { data: employees } = useCollection(employeesQuery);
-  const { data: attendance } = useCollection(attendanceQuery);
   const { data: financeRecords, isLoading: isFinanceLoading } = useCollection(financeQuery);
 
-  // Mocked data for charts if real data is sparse
   const monthlyRevenueData = [
     { name: 'Leden', revenue: 42000, costs: 31000 },
     { name: 'Únor', revenue: 55000, costs: 34000 },
@@ -82,7 +74,7 @@ export default function ReportsPage() {
     ];
     return jobs.slice(0, 5).map(j => ({
       name: j.name,
-      profit: j.budget ? j.budget * 0.3 : 5000, // Simulated 30% margin
+      profit: j.budget ? j.budget * 0.3 : 5000,
       margin: 30
     }));
   }, [jobs]);
@@ -95,7 +87,7 @@ export default function ReportsPage() {
     ];
     return employees.map(e => ({
       name: `${e.firstName} ${e.lastName[0]}.`,
-      hours: Math.floor(Math.random() * 40) + 140 // Simulated hours
+      hours: Math.floor(Math.random() * 40) + 140
     }));
   }, [employees]);
 
@@ -110,9 +102,7 @@ export default function ReportsPage() {
     }, 1500);
   };
 
-  const isLoading = isJobsLoading || isFinanceLoading;
-
-  if (!isMounted || isLoading) {
+  if (isJobsLoading || isFinanceLoading) {
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 className="w-10 h-10 animate-spin text-primary" />
@@ -176,20 +166,24 @@ export default function ReportsPage() {
               <CardDescription>Srovnání finančních toků za poslední půlrok</CardDescription>
             </CardHeader>
             <CardContent className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={monthlyRevenueData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(v) => `${v/1000}k`} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }}
-                    cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
-                  />
-                  <Legend />
-                  <Bar dataKey="revenue" name="Příjmy" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="costs" name="Náklady" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+              {isMounted ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={monthlyRevenueData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(v) => `${v/1000}k`} />
+                    <Tooltip 
+                      contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }}
+                      cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
+                    />
+                    <Legend />
+                    <Bar dataKey="revenue" name="Příjmy" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="costs" name="Náklady" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -202,15 +196,19 @@ export default function ReportsPage() {
                 <CardDescription>Srovnání výkonu jednotlivých zaměstnanců za měsíc</CardDescription>
               </CardHeader>
               <CardContent className="h-[350px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={employeeProductivityData} layout="vertical">
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
-                    <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <YAxis dataKey="name" type="category" stroke="hsl(var(--muted-foreground))" fontSize={12} width={80} />
-                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
-                    <Bar dataKey="hours" name="Hodin" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
+                {isMounted ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={employeeProductivityData} layout="vertical">
+                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
+                      <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                      <YAxis dataKey="name" type="category" stroke="hsl(var(--muted-foreground))" fontSize={12} width={80} />
+                      <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
+                      <Bar dataKey="hours" name="Hodin" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+                )}
               </CardContent>
             </Card>
 
@@ -220,31 +218,35 @@ export default function ReportsPage() {
                 <CardDescription>Složení vašeho týmu</CardDescription>
               </CardHeader>
               <CardContent className="h-[350px] flex items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={[
-                        { name: 'Admin', value: 2 },
-                        { name: 'Manager', value: 3 },
-                        { name: 'Employee', value: 12 },
-                        { name: 'Accountant', value: 1 },
-                      ]}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={60}
-                      outerRadius={100}
-                      paddingAngle={5}
-                      dataKey="value"
-                    >
-                      <Cell fill="hsl(var(--primary))" />
-                      <Cell fill="hsl(var(--secondary))" />
-                      <Cell fill="hsl(var(--muted-foreground))" />
-                      <Cell fill="#fb923c" />
-                    </Pie>
-                    <Tooltip />
-                    <Legend />
-                  </PieChart>
-                </ResponsiveContainer>
+                {isMounted ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={[
+                          { name: 'Admin', value: 2 },
+                          { name: 'Manager', value: 3 },
+                          { name: 'Employee', value: 12 },
+                          { name: 'Accountant', value: 1 },
+                        ]}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={100}
+                        paddingAngle={5}
+                        dataKey="value"
+                      >
+                        <Cell fill="hsl(var(--primary))" />
+                        <Cell fill="hsl(var(--secondary))" />
+                        <Cell fill="hsl(var(--muted-foreground))" />
+                        <Cell fill="#fb923c" />
+                      </Pie>
+                      <Tooltip />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+                )}
               </CardContent>
             </Card>
           </div>
@@ -257,17 +259,21 @@ export default function ReportsPage() {
               <CardDescription>Analýza profitu u klíčových projektů</CardDescription>
             </CardHeader>
             <CardContent className="h-[400px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={jobProfitabilityData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="profit" name="Zisk (Kč)" stroke="hsl(var(--primary))" strokeWidth={3} dot={{ r: 6 }} activeDot={{ r: 8 }} />
-                  <Line type="monotone" dataKey="margin" name="Marže (%)" stroke="#10b981" strokeWidth={2} />
-                </LineChart>
-              </ResponsiveContainer>
+              {isMounted ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={jobProfitabilityData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                    <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
+                    <Legend />
+                    <Line type="monotone" dataKey="profit" name="Zisk (Kč)" stroke="hsl(var(--primary))" strokeWidth={3} dot={{ r: 6 }} activeDot={{ r: 8 }} />
+                    <Line type="monotone" dataKey="margin" name="Marže (%)" stroke="#10b981" strokeWidth={2} />
+                  </LineChart>
+                </ResponsiveContainer>
+              ) : (
+                <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+              )}
             </CardContent>
           </Card>
         </TabsContent>
@@ -280,29 +286,33 @@ export default function ReportsPage() {
                 <CardDescription>Kam plynou firemní finance</CardDescription>
               </CardHeader>
               <CardContent className="h-[300px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={[
-                        { name: 'Mzdy', value: 65 },
-                        { name: 'Materiál', value: 20 },
-                        { name: 'Provoz', value: 10 },
-                        { name: 'Marketing', value: 5 },
-                      ]}
-                      dataKey="value"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={80}
-                      label
-                    >
-                      <Cell fill="hsl(var(--primary))" />
-                      <Cell fill="#ef4444" />
-                      <Cell fill="#3b82f6" />
-                      <Cell fill="#a855f7" />
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
+                {isMounted ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={[
+                          { name: 'Mzdy', value: 65 },
+                          { name: 'Materiál', value: 20 },
+                          { name: 'Provoz', value: 10 },
+                          { name: 'Marketing', value: 5 },
+                        ]}
+                        dataKey="value"
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        label
+                      >
+                        <Cell fill="hsl(var(--primary))" />
+                        <Cell fill="#ef4444" />
+                        <Cell fill="#3b82f6" />
+                        <Cell fill="#a855f7" />
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+                )}
               </CardContent>
             </Card>
 

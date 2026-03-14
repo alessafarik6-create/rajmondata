@@ -45,10 +45,12 @@ export default function MobileTerminalPage() {
   const [lastAction, setLastAction] = useState<AttendanceType | null>(null);
   const [todaySummary, setTodaySummary] = useState({ checkIn: '--:--', checkOut: '--:--', worked: '0h 0m' });
   const [isScanning, setIsScanning] = useState(false);
+  const [isClient, setIsClient] = useState(false);
   
   const scannerRef = useRef<any>(null);
 
   useEffect(() => {
+    setIsClient(true);
     const updateTime = () => {
       const now = new Date();
       setCurrentTime(now.toLocaleTimeString('cs-CZ', { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
@@ -146,9 +148,10 @@ export default function MobileTerminalPage() {
   };
 
   const startScanner = async () => {
+    if (!isClient) return;
     setIsScanning(true);
     try {
-      // Dynamic import to avoid errors during build/SSR
+      // Dynamically import to avoid SSR crash
       const { Html5Qrcode } = await import('html5-qrcode');
       const html5QrCode = new Html5Qrcode("reader");
       scannerRef.current = html5QrCode;
@@ -161,9 +164,7 @@ export default function MobileTerminalPage() {
         (decodedText) => {
           lookupEmployeeByQr(decodedText);
         },
-        () => {
-          // ignore scan errors
-        }
+        () => {}
       );
     } catch (err) {
       console.error(err);
@@ -179,9 +180,7 @@ export default function MobileTerminalPage() {
           await scannerRef.current.stop();
         }
         await scannerRef.current.clear();
-      } catch (e) {
-        // ignore errors on stop
-      }
+      } catch (e) {}
     }
     setIsScanning(false);
   };
@@ -220,7 +219,6 @@ export default function MobileTerminalPage() {
 
   return (
     <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto">
-      {/* Header */}
       <div className="flex justify-between items-start mb-6">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
@@ -266,7 +264,6 @@ export default function MobileTerminalPage() {
         </div>
       </div>
 
-      {/* Clock Display */}
       <Card className="bg-surface border-primary/20 shadow-2xl mb-6 overflow-hidden relative">
         <div className="absolute top-0 left-0 w-1 h-full bg-primary" />
         <CardContent className="pt-6 pb-4 text-center">
@@ -279,7 +276,6 @@ export default function MobileTerminalPage() {
         </CardContent>
       </Card>
 
-      {/* PIN Mode View */}
       {terminalMode === 'pin' && !activeEmployee && (
         <div className="flex-1 flex flex-col items-center">
           <div className="w-full max-w-[280px] space-y-6">
@@ -312,7 +308,6 @@ export default function MobileTerminalPage() {
         </div>
       )}
 
-      {/* QR Mode View */}
       {terminalMode === 'qr' && !activeEmployee && (
         <div className="flex-1 flex flex-col items-center space-y-6">
           <div className="text-center">
@@ -342,10 +337,8 @@ export default function MobileTerminalPage() {
         </div>
       )}
 
-      {/* Active Session / Personal Actions */}
       {(terminalMode === 'personal' || activeEmployee) && (
         <>
-          {/* User Info */}
           <div className="flex items-center gap-4 mb-6 p-4 rounded-2xl bg-surface/50 border border-border">
             <div className="w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center text-primary">
               <User className="w-6 h-6" />
@@ -366,7 +359,6 @@ export default function MobileTerminalPage() {
             )}
           </div>
 
-          {/* Action Buttons */}
           <div className="grid grid-cols-1 gap-4 mb-6">
             <Button 
               disabled={lastAction === 'check_in' || lastAction === 'break_end'}
@@ -405,7 +397,6 @@ export default function MobileTerminalPage() {
             </Button>
           </div>
 
-          {/* Daily Summary (Only visible in personal mode for now) */}
           {terminalMode === 'personal' && (
             <Card className="bg-surface/30 border-border mt-auto">
               <CardHeader className="py-4">

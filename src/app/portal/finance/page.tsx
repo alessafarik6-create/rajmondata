@@ -1,10 +1,9 @@
 "use client";
 
-import React, { useMemo, useEffect, useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import React, { useMemo, useState, useEffect } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
 import { 
   TrendingUp, 
   TrendingDown, 
@@ -12,15 +11,11 @@ import {
   Receipt, 
   Download, 
   Loader2,
-  PieChart as PieChartIcon,
-  BarChart as BarChartIcon,
-  Lock
+  BarChart as BarChartIcon
 } from 'lucide-react';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, query, orderBy, limit } from 'firebase/firestore';
 import { 
-  Bar, 
-  BarChart, 
   ResponsiveContainer, 
   XAxis, 
   YAxis, 
@@ -41,7 +36,6 @@ export default function FinancePage() {
   const router = useRouter();
   const [isMounted, setIsMounted] = useState(false);
 
-  // Recharts vyžadují vykreslení pouze na klientovi, jinak způsobují SSR chyby.
   useEffect(() => {
     setIsMounted(true);
   }, []);
@@ -58,12 +52,6 @@ export default function FinancePage() {
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
   const { data: financeRecords, isLoading: isFinanceLoading } = useCollection(financeQuery);
-
-  useEffect(() => {
-    if (profile && !canAccess) {
-      router.push('/portal/dashboard');
-    }
-  }, [profile, canAccess, router]);
 
   const stats = useMemo(() => {
     if (!financeRecords) return { revenue: 0, costs: 0, profit: 0, activeJobs: 0 };
@@ -93,15 +81,10 @@ export default function FinancePage() {
     { name: 'Ostatní', value: 8000, fill: 'hsl(var(--secondary))' },
   ];
 
-  if (!isMounted) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-      </div>
-    );
+  if (profile && !canAccess) {
+    router.push('/portal/dashboard');
+    return null;
   }
-
-  if (!canAccess && profile) return null;
 
   if (isJobsLoading || isFinanceLoading) {
     return (
@@ -175,17 +158,21 @@ export default function FinancePage() {
             <CardTitle>Vývoj cashflow</CardTitle>
           </CardHeader>
           <CardContent className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(v) => `${v/1000}k`} />
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
-                <Legend />
-                <Line type="monotone" dataKey="revenue" name="Příjmy" stroke="hsl(var(--primary))" strokeWidth={3} />
-                <Line type="monotone" dataKey="costs" name="Výdaje" stroke="hsl(var(--rose-500))" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
+            {isMounted ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(v) => `${v/1000}k`} />
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
+                  <Legend />
+                  <Line type="monotone" dataKey="revenue" name="Příjmy" stroke="hsl(var(--primary))" strokeWidth={3} />
+                  <Line type="monotone" dataKey="costs" name="Výdaje" stroke="hsl(var(--rose-500))" strokeWidth={2} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+            )}
           </CardContent>
         </Card>
 
@@ -194,15 +181,19 @@ export default function FinancePage() {
             <CardTitle>Struktura nákladů</CardTitle>
           </CardHeader>
           <CardContent className="h-[300px]">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value">
-                  {pieData.map((e, i) => <Cell key={i} fill={e.fill} />)}
-                </Pie>
-                <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))' }} />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+            {isMounted ? (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value">
+                    {pieData.map((e, i) => <Cell key={i} fill={e.fill} />)}
+                  </Pie>
+                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))' }} />
+                  <Legend />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+            )}
           </CardContent>
         </Card>
       </div>

@@ -1,24 +1,24 @@
 'use client';
 
-import React, { useState, useEffect, type ReactNode } from 'react';
+import React, { type ReactNode, useEffect, useState } from 'react';
 import { FirebaseProvider } from '@/firebase/provider';
-import { initializeFirebase } from '@/firebase';
+import { initializeFirebase, getSdks } from '@/firebase';
 
 interface FirebaseClientProviderProps {
   children: ReactNode;
 }
 
 export function FirebaseClientProvider({ children }: FirebaseClientProviderProps) {
-  const [firebaseServices, setFirebaseServices] = useState<any>(null);
+  // Use state to store initialized services, starting with null for SSR safety
+  const [firebaseServices, setFirebaseServices] = useState<ReturnType<typeof initializeFirebase> | null>(null);
 
   useEffect(() => {
-    // Inicializace Firebase proběhne pouze na straně klienta po hydrataci.
-    // Tím se vyhneme chybám 500 při pokusu o přístup k browser API na serveru.
+    // This only runs on the client, ensuring Firebase is initialized in the browser
     setFirebaseServices(initializeFirebase());
   }, []);
 
+  // During SSR and until the client is ready, show a loading state
   if (!firebaseServices) {
-    // Během SSR a do okamžiku hydratace zobrazíme loading stav.
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
