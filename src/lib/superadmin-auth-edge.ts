@@ -1,4 +1,4 @@
-import { jwtVerify, SignJWT } from "jose";
+import { jwtVerify } from "jose";
 
 export const SUPERADMIN_COOKIE_NAME = "superadmin_session";
 
