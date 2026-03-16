@@ -98,7 +98,19 @@ export function normalizeCompanyFromFirestore(
 /**
  * Fetch all companies, sorted by name (in memory to avoid index requirement).
  */
+export async function getCompanies(db: Firestore) {
+  const snapshot = await db.collection(COMPANIES_COLLECTION).get();
 
+  const companies = snapshot.docs.map((doc) => {
+    const data = doc.data();
+    return {
+      id: doc.id,
+      ...data,
+    };
+  });
+
+  return companies;
+}
 
 /**
  * Fetch one company by id.
