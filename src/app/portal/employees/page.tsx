@@ -203,21 +203,21 @@ export default function EmployeesPage() {
   if (!canView && profile) return null;
 
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold">Správa zaměstnanců</h1>
-          <p className="text-muted-foreground mt-2">Pracovníci organizace {companyId}.</p>
+    <div className="space-y-6 sm:space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+        <div className="min-w-0">
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Správa zaměstnanců</h1>
+          <p className="portal-page-description">Pracovníci organizace {companyId}.</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-2 sm:gap-3">
           {canManage && (
             <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
               <DialogTrigger asChild>
-                <Button className="gap-2 shadow-lg shadow-primary/20">
+                <Button className="gap-2">
                   <UserPlus className="w-4 h-4" /> Pozvat zaměstnance
                 </Button>
               </DialogTrigger>
-              <DialogContent className="bg-surface border-border max-w-xl">
+              <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-xl">
                 <DialogHeader>
                   <DialogTitle>Pozvat nového člena týmu</DialogTitle>
                   <DialogDescription>
@@ -396,7 +396,7 @@ export default function EmployeesPage() {
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="bg-surface border-border w-56">
+                          <DropdownMenuContent align="end" className="w-56">
                             <DropdownMenuLabel>Správa uživatele</DropdownMenuLabel>
                             <DropdownMenuItem onClick={() => toggleEmployeeStatus(emp.id, emp.isActive)}>
                               <UserX className="w-4 h-4 mr-2" /> {emp.isActive ? 'Deaktivovat' : 'Aktivovat'}
@@ -440,7 +440,7 @@ export default function EmployeesPage() {
             <div className="text-center py-20">
               <p className="text-muted-foreground">V této organizaci zatím nejsou žádní zaměstnanci.</p>
               {canManage && (
-                <Button variant="link" className="text-primary mt-2" onClick={() => setIsNewCustomerOpen(true)}>
+                <Button variant="link" className="text-primary mt-2" onClick={() => setIsInviteOpen(true)}>
                   Přidat prvního pracovníka
                 </Button>
               )}

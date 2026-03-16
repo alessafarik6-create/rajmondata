@@ -72,7 +72,7 @@ export default function CustomerDetailPage() {
           <ChevronLeft className="w-6 h-6" />
         </Button>
         <div className="flex-1">
-          <h1 className="text-3xl font-bold">{customer.companyName || `${customer.firstName} ${customer.lastName}`}</h1>
+          <h1 className="portal-page-title">{customer.companyName || `${customer.firstName} ${customer.lastName}`}</h1>
           <p className="text-muted-foreground">Profil zákazníka a historie spolupráce</p>
         </div>
         <div className="flex gap-2">

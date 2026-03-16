@@ -44,3 +44,207 @@
     @apply bg-background text-foreground font-body antialiased;
   }
 }
+
+/* Portal content area: light, high-contrast SaaS dashboard */
+[data-portal-content] {
+  /* Light theme variables so buttons/inputs get readable contrast */
+  --background: 0 0% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 24 94% 53%;
+  --accent-foreground: 0 0% 100%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 24 94% 53%;
+  /* Primary/destructive keep white text */
+  --primary: 24 94% 53%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 100%;
+  --secondary: 20 91% 47%;
+  --secondary-foreground: 0 0% 100%;
+
+  --portal-card: 0 0% 100%;
+  --portal-card-border: 226 232 240; /* slate-200 */
+  --portal-text: 15 23 42;          /* slate-900 */
+  --portal-text-muted: 71 85 105;  /* slate-600 */
+  --portal-text-subtle: 100 116 139; /* slate-500 */
+}
+
+[data-portal-content] [data-slot="card"] {
+  background-color: hsl(var(--portal-card));
+  border-color: rgb(var(--portal-card-border));
+  color: rgb(var(--portal-text));
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+}
+
+[data-portal-content] [data-slot="card"] [data-slot="card-title"] {
+  color: rgb(var(--portal-text));
+  font-weight: 600;
+}
+
+[data-portal-content] [data-slot="card"] [data-slot="card-description"] {
+  color: rgb(var(--portal-text-muted));
+}
+
+[data-portal-content] .portal-page-title {
+  font-size: 1.875rem;
+  font-weight: 700;
+  color: rgb(var(--portal-text));
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+}
+
+[data-portal-content] .portal-page-description {
+  color: rgb(var(--portal-text-muted));
+  font-size: 0.9375rem;
+  margin-top: 0.5rem;
+}
+
+[data-portal-content] .portal-kpi-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: rgb(var(--portal-text));
+  font-variant-numeric: tabular-nums;
+}
+
+[data-portal-content] .portal-kpi-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: rgb(var(--portal-text-muted));
+  margin-top: 0.25rem;
+}
+
+[data-portal-content] .portal-section-label {
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: rgb(var(--portal-text-muted));
+}
+
+[data-portal-content] input,
+[data-portal-content] textarea,
+[data-portal-content] select {
+  background-color: white;
+  border-color: rgb(var(--portal-card-border));
+  color: rgb(var(--portal-text));
+}
+
+[data-portal-content] input::placeholder,
+[data-portal-content] textarea::placeholder {
+  color: rgb(var(--portal-text-subtle));
+}
+
+[data-portal-content] input:focus,
+[data-portal-content] textarea:focus,
+[data-portal-content] select:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+[data-portal-content] input:disabled,
+[data-portal-content] textarea:disabled,
+[data-portal-content] select:disabled {
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  opacity: 1;
+}
+
+[data-portal-content] label {
+  color: rgb(var(--portal-text));
+}
+
+[data-portal-content] [data-slot="card"] label {
+  color: rgb(var(--portal-text-muted));
+}
+
+[data-portal-content] [data-slot="table-wrapper"] {
+  border-color: rgb(var(--portal-card-border));
+}
+
+[data-portal-content] [data-slot="table-wrapper"] th {
+  color: rgb(var(--portal-text-muted));
+  font-weight: 500;
+  font-size: 0.875rem;
+}
+
+[data-portal-content] [data-slot="table-wrapper"] td {
+  color: rgb(var(--portal-text));
+}
+
+[data-portal-content] [data-slot="table-wrapper"] {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Portaled dialogs (e.g. Radix Dialog to body): apply same light theme so inputs are not dark */
+[data-portal-dialog] {
+  --background: 0 0% 98%;
+  --foreground: 222 47% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 47% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 47% 11%;
+  --muted: 210 40% 96%;
+  --muted-foreground: 215 16% 47%;
+  --accent: 24 94% 53%;
+  --accent-foreground: 0 0% 100%;
+  --border: 214 32% 91%;
+  --input: 214 32% 91%;
+  --ring: 24 94% 53%;
+  --primary: 24 94% 53%;
+  --primary-foreground: 0 0% 100%;
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 0 0% 100%;
+  --secondary: 20 91% 47%;
+  --secondary-foreground: 0 0% 100%;
+}
+
+[data-portal-dialog] input,
+[data-portal-dialog] textarea,
+[data-portal-dialog] select,
+[data-portal-dialog] [data-radix-select-trigger] {
+  background-color: white;
+  border-color: hsl(var(--border));
+  color: hsl(var(--foreground));
+}
+
+[data-portal-dialog] input::placeholder,
+[data-portal-dialog] textarea::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+[data-portal-dialog] input:focus,
+[data-portal-dialog] textarea:focus,
+[data-portal-dialog] select:focus,
+[data-portal-dialog] [data-radix-select-trigger]:focus {
+  outline: none;
+  border-color: hsl(var(--ring));
+  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+}
+
+[data-portal-dialog] input:disabled,
+[data-portal-dialog] textarea:disabled,
+[data-portal-dialog] select:disabled {
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  opacity: 1;
+}
+
+[data-portal-dialog] label {
+  color: hsl(var(--foreground));
+}
+
+@media (max-width: 640px) {
+  [data-portal-content] [data-slot="card"] {
+    border-radius: 0.5rem;
+  }
+  [data-portal-content] .portal-page-title {
+    font-size: 1.5rem;
+  }
+}

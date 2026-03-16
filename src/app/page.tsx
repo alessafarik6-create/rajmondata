@@ -18,8 +18,6 @@ export default function Home() {
     if (!isUserLoading && !isProfileLoading) {
       if (!user) {
         router.push('/login');
-      } else if (userProfile?.globalRoles?.includes('super_admin')) {
-        router.push('/admin/dashboard');
       } else {
         router.push('/portal/dashboard');
       }

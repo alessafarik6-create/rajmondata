@@ -1,25 +1,20 @@
-
 "use client";
 
-import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
-import { 
-  Building2, 
-  Search, 
-  Filter, 
-  MoreVertical, 
-  Power, 
-  ExternalLink,
-  Users,
+import React, { useState, useEffect } from "react";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Building2,
+  Search,
   Loader2,
-  Trash2
-} from 'lucide-react';
-import { useFirestore, useCollection, useMemoFirebase } from '@/firebase';
-import { collection, doc, updateDoc, deleteDoc } from 'firebase/firestore';
+  MoreVertical,
+  Power,
+  ExternalLink,
+  ShieldCheck,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -28,122 +23,233 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useToast } from '@/hooks/use-toast';
+import { useToast } from "@/hooks/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { AVAILABLE_MODULES, LICENSE_TYPES, LICENSE_STATUSES } from "@/lib/license-modules";
+import type { LicenseConfig, ModuleKey } from "@/lib/license-modules";
+
+type Company = {
+  id: string;
+  name: string;
+  email?: string;
+  ico?: string;
+  ownerUserId?: string;
+  isActive: boolean;
+  createdAt: string | null;
+  licenseId: string;
+  license: LicenseConfig;
+};
 
 export default function AdminCompaniesPage() {
-  const firestore = useFirestore();
   const { toast } = useToast();
-  const [searchTerm, setSearchTerm] = useState('');
+  const [companies, setCompanies] = useState<Company[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [editing, setEditing] = useState<Company | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [editForm, setEditForm] = useState<LicenseConfig | null>(null);
 
-  const companiesQuery = useMemoFirebase(() => collection(firestore, 'companies'), [firestore]);
-  const { data: companies, isLoading } = useCollection(companiesQuery);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  const toggleCompanyStatus = async (companyId: string, currentStatus: boolean) => {
+  const loadCompanies = async () => {
+    setLoading(true);
+    setLoadError(null);
     try {
-      const docRef = doc(firestore, 'companies', companyId);
-      await updateDoc(docRef, { isActive: !currentStatus });
-      toast({ title: "Status aktualizován", description: `Firma byla ${!currentStatus ? 'aktivována' : 'deaktivována'}.` });
-    } catch (error) {
+      const res = await fetch("/api/superadmin/companies");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data?.error || (res.status === 503 ? "Firebase Admin není nakonfigurován. Přidejte FIREBASE_CLIENT_EMAIL a FIREBASE_PRIVATE_KEY do .env.local." : "Nepodařilo se načíst organizace.");
+        setLoadError(msg);
+        setCompanies([]);
+        if (res.status !== 503) toast({ variant: "destructive", title: "Chyba", description: msg });
+        return;
+      }
+      setCompanies(Array.isArray(data) ? data : []);
+    } catch {
+      setLoadError("Nepodařilo se načíst organizace.");
+      setCompanies([]);
+      toast({ variant: "destructive", title: "Chyba", description: "Nepodařilo se načíst organizace." });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadCompanies();
+  }, []);
+
+  const toggleStatus = async (company: Company) => {
+    try {
+      const res = await fetch(`/api/superadmin/companies/${company.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isActive: !company.isActive }),
+      });
+      if (!res.ok) throw new Error();
+      toast({
+        title: "Status aktualizován",
+        description: `Firma byla ${!company.isActive ? "aktivována" : "deaktivována"}.`,
+      });
+      loadCompanies();
+    } catch {
       toast({ variant: "destructive", title: "Chyba při aktualizaci" });
     }
   };
 
-  const deleteCompany = async (companyId: string) => {
-    if (!confirm('Opravdu chcete tuto firmu a všechna její data TRVALE odstranit?')) return;
+  const openEdit = (company: Company) => {
+    setEditing(company);
+    const exp = company.license.expirationDate ?? (company.license as { licenseExpiresAt?: string | null }).licenseExpiresAt ?? null;
+    setEditForm({
+      licenseType: company.license.licenseType,
+      status: company.license.status,
+      expirationDate: exp,
+      maxUsers: company.license.maxUsers,
+      enabledModules: [...(company.license.enabledModules || [])],
+    });
+  };
+
+  const saveLicense = async () => {
+    if (!editing || !editForm) return;
+    setSaving(true);
     try {
-      await deleteDoc(doc(firestore, 'companies', companyId));
-      toast({ title: "Firma odstraněna" });
-    } catch (error) {
-      toast({ variant: "destructive", title: "Chyba při mazání" });
+      const res = await fetch(`/api/superadmin/companies/${editing.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ license: editForm }),
+      });
+      if (!res.ok) throw new Error();
+      toast({ title: "Licence uložena", description: "Změny byly aplikovány." });
+      setEditing(null);
+      setEditForm(null);
+      loadCompanies();
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při ukládání" });
+    } finally {
+      setSaving(false);
     }
   };
 
-  const filteredCompanies = companies?.filter(c => 
-    c.name?.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    c.ico?.includes(searchTerm)
+  const toggleModule = (key: ModuleKey) => {
+    if (!editForm) return;
+    const current = editForm.enabledModules || [];
+    const next = current.includes(key) ? current.filter((m) => m !== key) : [...current, key];
+    setEditForm({ ...editForm, enabledModules: next });
+  };
+
+  const filtered = companies.filter(
+    (c) =>
+      c.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.ico?.includes(searchTerm) ||
+      c.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-8">
       <div>
-        <h1 className="text-3xl font-bold text-foreground">Správa Organizací</h1>
-        <p className="text-muted-foreground mt-2">Přehled všech registrovaných firem na platformě BizForge.</p>
+        <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Správa organizací</h1>
+        <p className="text-slate-600 mt-1">Přehled všech organizací a jejich licencí.</p>
       </div>
 
-      <Card className="bg-surface border-border overflow-hidden">
-        <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">
-          <div className="relative w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input 
-              placeholder="Hledat firmu nebo IČO..." 
+      <Card className="border-slate-200 overflow-hidden">
+        <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row gap-4 justify-between">
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input
+              placeholder="Hledat firmu, IČO, email..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-10 bg-background border-border" 
+              className="pl-10 bg-white border-slate-200"
             />
-          </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="gap-2"><Filter className="w-4 h-4" /> Filtrovat</Button>
           </div>
         </div>
         <CardContent className="p-0">
-          {isLoading ? (
-            <div className="flex items-center justify-center p-12">
+          {loadError && (
+            <div className="p-4 bg-amber-50 border-b border-amber-200 text-amber-800 text-sm">
+              {loadError}
+            </div>
+          )}
+          {loading ? (
+            <div className="flex justify-center p-12">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
-          ) : filteredCompanies && filteredCompanies.length > 0 ? (
+          ) : filtered.length > 0 ? (
             <Table>
               <TableHeader>
-                <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="pl-6">Organizace</TableHead>
-                  <TableHead>IČO</TableHead>
-                  <TableHead>Vlastník</TableHead>
+                <TableRow className="border-slate-200 hover:bg-transparent">
+                  <TableHead className="pl-4 sm:pl-6">Organizace</TableHead>
+                  <TableHead className="hidden lg:table-cell font-mono text-xs">ID</TableHead>
+                  <TableHead className="hidden md:table-cell">IČO</TableHead>
+                  <TableHead className="hidden md:table-cell">Vytvořeno</TableHead>
                   <TableHead>Licence</TableHead>
+                  <TableHead>Moduly</TableHead>
                   <TableHead>Stav</TableHead>
-                  <TableHead className="pr-6 text-right">Akce</TableHead>
+                  <TableHead className="pr-4 sm:pr-6 text-right">Akce</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredCompanies.map((company) => (
-                  <TableRow key={company.id} className="border-border hover:bg-muted/30">
-                    <TableCell className="pl-6 font-medium">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded bg-primary/10 flex items-center justify-center text-primary font-bold">
-                          {company.name?.[0]}
-                        </div>
-                        <div className="flex flex-col">
-                          <span>{company.name}</span>
-                          <span className="text-xs text-muted-foreground font-normal">{company.email}</span>
-                        </div>
+                {filtered.map((company) => (
+                  <TableRow key={company.id} className="border-slate-200 hover:bg-slate-50">
+                    <TableCell className="pl-4 sm:pl-6 font-medium">
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-slate-900">{company.name}</span>
+                        {company.email && (
+                          <span className="text-xs text-slate-500 truncate">{company.email}</span>
+                        )}
                       </div>
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{company.ico || '-'}</TableCell>
-                    <TableCell className="text-xs">{company.ownerUserId?.substring(0, 8)}...</TableCell>
+                    <TableCell className="font-mono text-xs text-slate-500 hidden lg:table-cell max-w-[120px] truncate" title={company.id}>
+                      {company.id}
+                    </TableCell>
+                    <TableCell className="font-mono text-xs text-slate-600 hidden md:table-cell">
+                      {company.ico || "—"}
+                    </TableCell>
+                    <TableCell className="hidden md:table-cell text-slate-600 text-xs">
+                      {company.createdAt ? new Date(company.createdAt).toLocaleDateString("cs-CZ") : "—"}
+                    </TableCell>
                     <TableCell>
                       <Badge variant="outline" className="border-primary/30 text-primary capitalize">
-                        {company.licenseId || 'Basic'}
+                        {company.licenseId || company.license.licenseType}
                       </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-slate-600">
+                      {(company.license.enabledModules?.length ?? 0)} modulů
                     </TableCell>
                     <TableCell>
-                      <Badge variant={company.isActive ? 'default' : 'secondary'}>
-                        {company.isActive ? 'Aktivní' : 'Neaktivní'}
+                      <Badge variant={company.isActive ? "default" : "secondary"}>
+                        {company.isActive ? "Aktivní" : "Neaktivní"}
                       </Badge>
                     </TableCell>
-                    <TableCell className="pr-6 text-right">
+                    <TableCell className="pr-4 sm:pr-6 text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
+                          <Button variant="ghost" size="icon">
+                            <MoreVertical className="w-4 h-4" />
+                          </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-surface border-border">
-                          <DropdownMenuLabel>Správa firmy</DropdownMenuLabel>
-                          <DropdownMenuItem onClick={() => window.open(`/portal/dashboard`, '_blank')}>
-                            <ExternalLink className="w-4 h-4 mr-2" /> Otevřít dashboard
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Správa</DropdownMenuLabel>
+                          <DropdownMenuItem onClick={() => openEdit(company)}>
+                            <ShieldCheck className="w-4 h-4 mr-2" /> Licence a moduly
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => toggleCompanyStatus(company.id, company.isActive)}>
-                            <Power className="w-4 h-4 mr-2" /> {company.isActive ? 'Deaktivovat' : 'Aktivovat'}
+                          <DropdownMenuItem
+                            onClick={() => window.open(`/portal/dashboard`, "_blank")}
+                          >
+                            <ExternalLink className="w-4 h-4 mr-2" /> Otevřít portál
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive" onClick={() => deleteCompany(company.id)}>
-                            <Trash2 className="w-4 h-4 mr-2" /> Odstranit firmu
+                          <DropdownMenuItem onClick={() => toggleStatus(company)}>
+                            <Power className="w-4 h-4 mr-2" />{" "}
+                            {company.isActive ? "Deaktivovat" : "Aktivovat"}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -153,13 +259,126 @@ export default function AdminCompaniesPage() {
               </TableBody>
             </Table>
           ) : (
-            <div className="text-center py-20 text-muted-foreground">
-              <Building2 className="w-12 h-12 mx-auto mb-4 opacity-20" />
-              <p>Nebyly nalezeny žádné firmy.</p>
+            <div className="text-center py-16 text-slate-600">
+              <Building2 className="w-12 h-12 mx-auto mb-4 opacity-40" />
+              <p>Žádné organizace nenalezeny.</p>
             </div>
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
+        <DialogContent className="max-w-lg bg-white border-slate-200 text-slate-900" data-portal-dialog>
+          <DialogHeader>
+            <DialogTitle>Licence a moduly – {editing?.name}</DialogTitle>
+            <DialogDescription>
+              Nastavte typ licence, stav a povolené moduly pro tuto organizaci.
+            </DialogDescription>
+          </DialogHeader>
+          {editForm && (
+            <div className="space-y-4 py-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Typ licence</Label>
+                  <Select
+                    value={editForm.licenseType}
+                    onValueChange={(v) =>
+                      setEditForm({ ...editForm, licenseType: v as LicenseConfig["licenseType"] })
+                    }
+                  >
+                    <SelectTrigger className="bg-white border-slate-200">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-white border-slate-200">
+                      {LICENSE_TYPES.map((t) => (
+                        <SelectItem key={t.value} value={t.value}>
+                          {t.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Stav licence</Label>
+                  <Select
+                    value={editForm.status}
+                    onValueChange={(v) =>
+                      setEditForm({ ...editForm, status: v as LicenseConfig["status"] })
+                    }
+                  >
+                    <SelectTrigger className="bg-white border-slate-200">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent className="bg-white border-slate-200">
+                      {LICENSE_STATUSES.map((s) => (
+                        <SelectItem key={s.value} value={s.value}>
+                          {s.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Datum expirace licence (volitelné)</Label>
+                  <Input
+                    type="date"
+                    value={editForm.expirationDate ?? ""}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        expirationDate: e.target.value || null,
+                      })
+                    }
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Max. uživatelé (volitelné)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={editForm.maxUsers ?? ""}
+                    onChange={(e) =>
+                      setEditForm({
+                        ...editForm,
+                        maxUsers: e.target.value === "" ? null : parseInt(e.target.value, 10),
+                      })
+                    }
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Povolené moduly</Label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 border border-slate-200 rounded-lg p-3 bg-slate-50/50">
+                  {AVAILABLE_MODULES.map((mod) => (
+                    <label
+                      key={mod.key}
+                      className="flex items-center gap-2 cursor-pointer text-sm text-slate-700"
+                    >
+                      <Switch
+                        checked={(editForm.enabledModules || []).includes(mod.key)}
+                        onCheckedChange={() => toggleModule(mod.key)}
+                      />
+                      {mod.label}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditing(null)}>
+              Zrušit
+            </Button>
+            <Button onClick={saveLicense} disabled={saving}>
+              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Uložit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

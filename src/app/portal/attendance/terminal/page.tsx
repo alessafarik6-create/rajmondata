@@ -18,11 +18,16 @@ import {
   Smartphone,
   Delete,
   X,
-  Camera
+  Camera,
+  AlertCircle,
+  Inbox
 } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection, useAuth } from '@/firebase';
 import { doc, collection, serverTimestamp, query, orderBy, limit, where } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
+import { errorEmitter } from '@/firebase/error-emitter';
+import { FirestorePermissionError } from '@/firebase/errors';
 import { useToast } from '@/hooks/use-toast';
 import { signOut } from 'firebase/auth';
 import { useRouter } from 'next/navigation';
@@ -62,7 +67,7 @@ export default function MobileTerminalPage() {
   }, []);
 
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
-  const { data: profile } = useDoc(userRef);
+  const { data: profile, isLoading: profileLoading, error: profileError } = useDoc(userRef);
   const companyId = profile?.companyId;
 
   const personalAttendanceQuery = useMemoFirebase(() => {
@@ -76,19 +81,49 @@ export default function MobileTerminalPage() {
     );
   }, [firestore, companyId, user, terminalMode]);
 
-  const { data: todayAttendance } = useCollection(personalAttendanceQuery);
+  const { data: todayAttendance, isLoading: attendanceLoading, error: attendanceError } = useCollection(personalAttendanceQuery);
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || terminalMode === 'personal') return null;
     return collection(firestore, 'companies', companyId, 'employees');
   }, [firestore, companyId, terminalMode]);
-  const { data: employees } = useCollection(employeesQuery);
+  const { data: employees, isLoading: employeesLoading, error: employeesError } = useCollection(employeesQuery);
+
+  // Log Firestore errors for debugging
+  useEffect(() => {
+    if (profileError) {
+      console.error('[AttendanceTerminal] Firestore profile error:', profileError.message, profileError);
+    }
+  }, [profileError]);
+  useEffect(() => {
+    if (attendanceError) {
+      console.error('[AttendanceTerminal] Firestore attendance error:', attendanceError.message, attendanceError);
+    }
+  }, [attendanceError]);
+  useEffect(() => {
+    if (employeesError) {
+      console.error('[AttendanceTerminal] Firestore employees error:', employeesError.message, employeesError);
+    }
+  }, [employeesError]);
+
+  // Show toast when a write to attendance fails (permission or other Firestore error)
+  useEffect(() => {
+    const handler = (err: FirestorePermissionError) => {
+      const path = err.request?.path ?? '';
+      if (path.includes('attendance')) {
+        console.error('[AttendanceTerminal] Firestore write error:', err.message, err);
+        toast({ variant: 'destructive', title: 'Záznam se nepodařilo uložit. Zkontrolujte oprávnění.' });
+      }
+    };
+    errorEmitter.on('permission-error', handler);
+    return () => errorEmitter.off('permission-error', handler);
+  }, [toast]);
 
   useEffect(() => {
-    if (terminalMode === 'personal' && todayAttendance && todayAttendance.length > 0) {
+    if (terminalMode === 'personal' && !attendanceError && todayAttendance && todayAttendance.length > 0) {
       updateAttendanceStatus(todayAttendance);
     }
-  }, [todayAttendance, terminalMode]);
+  }, [todayAttendance, terminalMode, attendanceError]);
 
   const updateAttendanceStatus = (history: any[]) => {
     const latest = history[0];
@@ -217,24 +252,123 @@ export default function MobileTerminalPage() {
 
   if (!user) return null;
 
-  return (
-    <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto">
-      <div className="flex justify-between items-start mb-6">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
-            <Smartphone className="text-white w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold leading-tight">BizForge Terminál</h1>
-            <p className="text-xs text-muted-foreground uppercase font-bold tracking-tighter">{companyId}</p>
+  // —— Profile loading: show clock + loading state ——
+  if (profileLoading) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
+        <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start mb-6">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-10 h-10 shrink-0 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
+              <Smartphone className="text-white w-6 h-6" />
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-xl font-bold leading-tight truncate">BizForge Terminál</h1>
+              <p className="text-xs text-muted-foreground uppercase font-bold tracking-tighter">Načítání…</p>
+            </div>
           </div>
         </div>
-        <div className="flex flex-col items-end gap-2">
-          <div className="flex gap-1 bg-surface p-1 rounded-lg border border-border">
+        <Card className="border-primary/20 shadow-2xl mb-6 overflow-hidden relative">
+          <div className="absolute top-0 left-0 w-1 h-full bg-primary" />
+          <CardContent className="pt-6 pb-4 text-center">
+            <p className="text-5xl font-mono font-bold text-primary tracking-tighter mb-1">
+              {currentTime || '00:00:00'}
+            </p>
+            <p className="text-sm text-muted-foreground font-medium flex items-center justify-center gap-2">
+              <CalendarIcon className="w-3 h-3" /> {currentDate}
+            </p>
+          </CardContent>
+        </Card>
+        <div className="flex-1 flex items-center justify-center py-12">
+          <div className="flex flex-col items-center gap-4 text-muted-foreground">
+            <Loader2 className="w-10 h-10 animate-spin" />
+            <p className="text-sm font-medium">Načítání profilu…</p>
+          </div>
+        </div>
+        <Button variant="link" onClick={() => router.push('/portal/dashboard')} className="text-xs text-muted-foreground mt-4 w-fit">
+          Zpět do portálu <ChevronRight className="w-3 h-3 ml-1 shrink-0" />
+        </Button>
+      </div>
+    );
+  }
+
+  // —— Profile error: permission denied or Firestore error ——
+  if (profileError) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 shrink-0 bg-primary rounded-lg flex items-center justify-center">
+            <Smartphone className="text-white w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-bold">BizForge Terminál</h1>
+        </div>
+        <Alert variant="destructive" className="mb-6">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Profil se nepodařilo načíst</AlertTitle>
+          <AlertDescription>
+            Nemáme přístup k vašim údajům (např. oprávnění Firestore). Zkuste se odhlásit a přihlásit znovu, nebo kontaktujte administrátora.
+          </AlertDescription>
+        </Alert>
+        <div className="flex flex-col gap-3 mt-auto">
+          <Button variant="outline" onClick={() => signOut(auth)} className="gap-2 min-h-[44px]">
+            <LogOut className="w-4 h-4" /> Odhlásit se
+          </Button>
+          <Button variant="link" onClick={() => router.push('/portal/dashboard')} className="text-muted-foreground">
+            Zpět do portálu <ChevronRight className="w-3 h-3 ml-1" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  // —— No profile document (empty) or no company ——
+  if (!profile || !companyId) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 shrink-0 bg-primary rounded-lg flex items-center justify-center">
+            <Smartphone className="text-white w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-bold">BizForge Terminál</h1>
+        </div>
+        <Alert className="mb-6">
+          <Inbox className="h-4 w-4" />
+          <AlertTitle>Profil nenalezen</AlertTitle>
+          <AlertDescription>
+            {!profile
+              ? 'Váš uživatelský profil v systému chybí.'
+              : 'Nemáte přiřazenou firmu. Kontaktujte administrátora.'}
+          </AlertDescription>
+        </Alert>
+        <div className="flex flex-col gap-3 mt-auto">
+          <Button variant="outline" onClick={() => signOut(auth)} className="gap-2 min-h-[44px]">
+            <LogOut className="w-4 h-4" /> Odhlásit se
+          </Button>
+          <Button variant="link" onClick={() => router.push('/portal/dashboard')} className="text-muted-foreground">
+            Zpět do portálu <ChevronRight className="w-3 h-3 ml-1" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start mb-6">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 shrink-0 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
+            <Smartphone className="text-white w-6 h-6" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold leading-tight truncate">BizForge Terminál</h1>
+            <p className="text-xs text-muted-foreground uppercase font-bold tracking-tighter truncate">{companyId}</p>
+          </div>
+        </div>
+        <div className="flex flex-col items-stretch sm:items-end gap-2">
+          <div className="flex gap-1 p-1 rounded-lg border border-border bg-muted/30">
             <Button 
               variant={terminalMode === 'personal' ? 'default' : 'ghost'} 
               size="sm" 
-              className="h-7 px-2 text-[10px]" 
+              className="min-h-[44px] flex-1 sm:flex-initial sm:h-7 sm:min-h-0 px-2 text-[10px] sm:text-[10px]" 
               onClick={() => { setTerminalMode('personal'); handleClear(); }}
             >
               OSOBNÍ
@@ -242,7 +376,7 @@ export default function MobileTerminalPage() {
             <Button 
               variant={terminalMode === 'pin' ? 'default' : 'ghost'} 
               size="sm" 
-              className="h-7 px-2 text-[10px]" 
+              className="min-h-[44px] flex-1 sm:flex-initial sm:h-7 sm:min-h-0 px-2 text-[10px]" 
               onClick={() => { setTerminalMode('pin'); handleClear(); }}
             >
               PIN
@@ -250,15 +384,15 @@ export default function MobileTerminalPage() {
             <Button 
               variant={terminalMode === 'qr' ? 'default' : 'ghost'} 
               size="sm" 
-              className="h-7 px-2 text-[10px]" 
+              className="min-h-[44px] flex-1 sm:flex-initial sm:h-7 sm:min-h-0 px-2 text-[10px]" 
               onClick={() => { setTerminalMode('qr'); handleClear(); }}
             >
               QR
             </Button>
           </div>
           {terminalMode === 'personal' && (
-            <Button variant="ghost" size="sm" onClick={() => signOut(auth)} className="h-7 text-xs text-muted-foreground hover:text-destructive p-0">
-              Odhlásit <LogOut className="w-3 h-3 ml-1" />
+            <Button variant="ghost" size="sm" onClick={() => signOut(auth)} className="min-h-[44px] sm:min-h-0 text-xs text-muted-foreground hover:text-destructive touch-manipulation">
+              Odhlásit <LogOut className="w-3 h-3 ml-1 shrink-0" />
             </Button>
           )}
         </div>
@@ -276,8 +410,33 @@ export default function MobileTerminalPage() {
         </CardContent>
       </Card>
 
+      {terminalMode === 'personal' && attendanceError && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Dnešní docházku nelze načíst</AlertTitle>
+          <AlertDescription>
+            Oprávnění k záznamům docházky jsou omezená. Příchod a odchod stále můžete zapisovat.
+          </AlertDescription>
+        </Alert>
+      )}
+
       {terminalMode === 'pin' && !activeEmployee && (
         <div className="flex-1 flex flex-col items-center">
+          {employeesError && (
+            <Alert variant="destructive" className="mb-4 w-full max-w-[280px]">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Seznam zaměstnanců není k dispozici</AlertTitle>
+              <AlertDescription>
+                Načtení zaměstnanců selhalo (např. oprávnění Firestore). Zkuste režim Osobní nebo kontaktujte administrátora.
+              </AlertDescription>
+            </Alert>
+          )}
+          {employeesLoading && !employeesError && (
+            <div className="flex items-center gap-2 text-muted-foreground mb-4">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">Načítání zaměstnanců…</span>
+            </div>
+          )}
           <div className="w-full max-w-[280px] space-y-6">
             <div className="text-center">
               <h2 className="text-lg font-bold mb-1">Zadejte svůj PIN</h2>
@@ -310,6 +469,21 @@ export default function MobileTerminalPage() {
 
       {terminalMode === 'qr' && !activeEmployee && (
         <div className="flex-1 flex flex-col items-center space-y-6">
+          {employeesError && (
+            <Alert variant="destructive" className="w-full max-w-[300px]">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Seznam zaměstnanců není k dispozici</AlertTitle>
+              <AlertDescription>
+                Načtení zaměstnanců selhalo (např. oprávnění Firestore). Zkuste režim Osobní nebo kontaktujte administrátora.
+              </AlertDescription>
+            </Alert>
+          )}
+          {employeesLoading && !employeesError && (
+            <div className="flex items-center gap-2 text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">Načítání zaměstnanců…</span>
+            </div>
+          )}
           <div className="text-center">
             <h2 className="text-lg font-bold">Naskenujte QR kód</h2>
             <p className="text-sm text-muted-foreground">Namířte kameru na svůj docházkový kód</p>

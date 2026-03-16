@@ -44,7 +44,7 @@ export function useDoc<T = any>(
   type StateDataType = WithId<T> | null;
 
   const [data, setData] = useState<StateDataType>(null);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !!memoizedDocRef);
   const [error, setError] = useState<FirestoreError | Error | null>(null);
 
   useEffect(() => {
@@ -63,12 +63,18 @@ export function useDoc<T = any>(
       memoizedDocRef,
       (snapshot: DocumentSnapshot<DocumentData>) => {
         if (snapshot.exists()) {
-          setData({ ...(snapshot.data() as T), id: snapshot.id });
+          const docData = { ...(snapshot.data() as T), id: snapshot.id };
+          setData(docData);
+          if (typeof window !== 'undefined') {
+            console.debug('[useDoc]', memoizedDocRef.path, docData);
+          }
         } else {
-          // Document does not exist
           setData(null);
+          if (typeof window !== 'undefined') {
+            console.debug('[useDoc]', memoizedDocRef.path, 'document does not exist');
+          }
         }
-        setError(null); // Clear any previous error on successful snapshot (even if doc doesn't exist)
+        setError(null);
         setIsLoading(false);
       },
       (error: FirestoreError) => {

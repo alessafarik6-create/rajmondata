@@ -119,19 +119,19 @@ export default function CustomersPage() {
   );
 
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold">Adresář zákazníků</h1>
-          <p className="text-muted-foreground mt-2">Spravujte vztahy s klienty a kontaktní informace vaší firmy.</p>
+    <div className="space-y-6 sm:space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+        <div className="min-w-0">
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Adresář zákazníků</h1>
+          <p className="portal-page-description">Spravujte vztahy s klienty a kontaktní informace vaší firmy.</p>
         </div>
         <Dialog open={isNewCustomerOpen} onOpenChange={setIsNewCustomerOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2 shadow-lg shadow-primary/20">
+            <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
               <UserPlus className="w-4 h-4" /> Nový zákazník
             </Button>
           </DialogTrigger>
-          <DialogContent className="bg-surface border-border max-w-2xl">
+          <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-2xl w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Přidat nového zákazníka</DialogTitle>
               <DialogDescription>Vyplňte údaje o novém klientovi pro vaši databázi.</DialogDescription>
@@ -292,7 +292,7 @@ export default function CustomersPage() {
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="bg-surface border-border">
+                          <DropdownMenuContent align="end">
                             <DropdownMenuLabel>Možnosti</DropdownMenuLabel>
                             <DropdownMenuItem asChild>
                                <Link href={`/portal/customers/${cust.id}`}>Zobrazit profil</Link>

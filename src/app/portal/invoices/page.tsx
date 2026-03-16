@@ -82,28 +82,28 @@ export default function InvoicesPage() {
   };
 
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold">Faktury</h1>
-          <p className="text-muted-foreground mt-2">Vystavujte faktury zákazníkům a sledujte jejich úhrady.</p>
+    <div className="space-y-6 sm:space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+        <div className="min-w-0">
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Faktury</h1>
+          <p className="portal-page-description">Vystavujte faktury zákazníkům a sledujte jejich úhrady.</p>
         </div>
-        <Link href="/portal/invoices/new">
-          <Button className="gap-2 shadow-lg shadow-primary/20">
-            <Plus className="w-4 h-4" /> Nová faktura
+        <Link href="/portal/invoices/new" className="w-full sm:w-auto">
+          <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
+            <Plus className="w-4 h-4 shrink-0" /> Nová faktura
           </Button>
         </Link>
       </div>
 
-      <Card className="bg-surface border-border overflow-hidden">
-        <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">
-          <div className="relative w-80">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="Hledat číslo faktury nebo firmu..." className="pl-10 bg-background border-border" />
+      <Card className="overflow-hidden">
+        <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row gap-4 justify-between">
+          <div className="relative w-full sm:max-w-xs">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <Input placeholder="Hledat číslo faktury nebo firmu..." className="pl-10 bg-white border-slate-200 min-h-[44px]" />
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="gap-2"><Filter className="w-4 h-4" /> Filtr</Button>
-            <Button variant="outline" size="sm" className="gap-2"><Printer className="w-4 h-4" /> Tisk přehledu</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outlineLight" size="sm" className="gap-2 min-h-[44px] sm:min-h-0"><Filter className="w-4 h-4 shrink-0" /> Filtr</Button>
+            <Button variant="outlineLight" size="sm" className="gap-2 min-h-[44px] sm:min-h-0"><Printer className="w-4 h-4 shrink-0" /> Tisk</Button>
           </div>
         </div>
         <CardContent className="p-0">
@@ -141,7 +141,7 @@ export default function InvoicesPage() {
                         <DropdownMenuTrigger asChild>
                           <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="bg-surface border-border">
+                        <DropdownMenuContent align="end">
                           <DropdownMenuLabel>Možnosti</DropdownMenuLabel>
                           <DropdownMenuItem asChild>
                             <Link href={`/portal/invoices/${inv.id}`}>

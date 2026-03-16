@@ -114,7 +114,7 @@ export default function TerminalSettingsPage() {
           <ChevronLeft className="w-6 h-6" />
         </Button>
         <div>
-          <h1 className="text-3xl font-bold">Nastavení terminálů</h1>
+          <h1 className="portal-page-title">Nastavení terminálů</h1>
           <p className="text-muted-foreground">Konfigurace docházkových bodů pro vaši firmu.</p>
         </div>
       </div>

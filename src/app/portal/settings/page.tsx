@@ -24,22 +24,22 @@ export default function SettingsPage() {
   const isAdmin = profile?.role === 'owner' || profile?.role === 'admin' || profile?.globalRoles?.includes('super_admin');
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold">Nastavení</h1>
-        <p className="text-muted-foreground mt-2">Spravujte svůj účet a preference organizace.</p>
+    <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 px-0">
+      <div className="min-w-0">
+        <h1 className="portal-page-title text-2xl sm:text-3xl">Nastavení</h1>
+        <p className="portal-page-description">Spravujte svůj účet a preference organizace.</p>
       </div>
 
-      <Tabs defaultValue="profile" className="w-full">
-        <TabsList className="bg-surface border border-border w-full justify-start h-12 p-1">
-          <TabsTrigger value="profile" className="gap-2"><Building2 className="w-4 h-4" /> Profil</TabsTrigger>
-          {isAdmin && <TabsTrigger value="organization" className="gap-2"><ShieldCheck className="w-4 h-4" /> Organizace</TabsTrigger>}
-          {isAdmin && <TabsTrigger value="management" className="gap-2"><Users className="w-4 h-4" /> Správa týmu</TabsTrigger>}
-          <TabsTrigger value="notifications" className="gap-2"><Bell className="w-4 h-4" /> Oznámení</TabsTrigger>
+      <Tabs defaultValue="profile" className="w-full overflow-hidden">
+        <TabsList className="bg-white border border-slate-200 w-full flex flex-wrap justify-start h-auto p-1 gap-1">
+          <TabsTrigger value="profile" className="gap-2 min-h-[44px] sm:min-h-0"><Building2 className="w-4 h-4 shrink-0" /> Profil</TabsTrigger>
+          {isAdmin && <TabsTrigger value="organization" className="gap-2 min-h-[44px] sm:min-h-0"><ShieldCheck className="w-4 h-4 shrink-0" /> Organizace</TabsTrigger>}
+          {isAdmin && <TabsTrigger value="management" className="gap-2 min-h-[44px] sm:min-h-0"><Users className="w-4 h-4 shrink-0" /> Správa týmu</TabsTrigger>}
+          <TabsTrigger value="notifications" className="gap-2 min-h-[44px] sm:min-h-0"><Bell className="w-4 h-4 shrink-0" /> Oznámení</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="profile" className="mt-6">
-          <Card className="bg-surface border-border">
+        <TabsContent value="profile" className="mt-4 sm:mt-6">
+          <Card>
             <CardHeader>
               <CardTitle>Osobní informace</CardTitle>
               <CardDescription>Aktualizujte své jméno a profilové údaje.</CardDescription>

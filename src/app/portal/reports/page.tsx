@@ -112,77 +112,77 @@ export default function ReportsPage() {
 
   return (
     <div className="space-y-8">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold">Analytika a Reporty</h1>
-          <p className="text-muted-foreground mt-1">Komplexní pohled na výkonnost organizace {companyId}.</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start md:items-center">
+        <div className="min-w-0">
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Analytika a Reporty</h1>
+          <p className="portal-page-description">Komplexní pohled na výkonnost organizace {companyId}.</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" className="gap-2" onClick={() => handleExport('csv')}>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outlineLight" className="gap-2" onClick={() => handleExport('csv')}>
             <FileSpreadsheet className="w-4 h-4" /> CSV
           </Button>
-          <Button className="gap-2 shadow-lg shadow-primary/20" onClick={() => handleExport('pdf')}>
+          <Button className="gap-2" onClick={() => handleExport('pdf')}>
             <FileText className="w-4 h-4" /> PDF Report
           </Button>
         </div>
       </div>
 
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="bg-surface border border-border mb-6">
-          <TabsTrigger value="overview" className="gap-2"><TrendingUp className="w-4 h-4" /> Přehled</TabsTrigger>
-          <TabsTrigger value="employees" className="gap-2"><Users className="w-4 h-4" /> Zaměstnanci</TabsTrigger>
-          <TabsTrigger value="jobs" className="gap-2"><Briefcase className="w-4 h-4" /> Zakázky</TabsTrigger>
-          <TabsTrigger value="financials" className="gap-2"><Wallet className="w-4 h-4" /> Finance</TabsTrigger>
+        <TabsList className="bg-white border border-slate-200 mb-6 shadow-sm rounded-lg">
+          <TabsTrigger value="overview" className="gap-2 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900 text-slate-600"><TrendingUp className="w-4 h-4" /> Přehled</TabsTrigger>
+          <TabsTrigger value="employees" className="gap-2 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900 text-slate-600"><Users className="w-4 h-4" /> Zaměstnanci</TabsTrigger>
+          <TabsTrigger value="jobs" className="gap-2 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900 text-slate-600"><Briefcase className="w-4 h-4" /> Zakázky</TabsTrigger>
+          <TabsTrigger value="financials" className="gap-2 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900 text-slate-600"><Wallet className="w-4 h-4" /> Finance</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="space-y-8">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <Card className="bg-surface border-border">
-              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Celkové příjmy (YTD)</CardTitle></CardHeader>
+        <TabsContent value="overview" className="space-y-6 sm:space-y-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6">
+            <Card className="bg-white border-slate-200 shadow-sm">
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-600">Celkové příjmy (YTD)</CardTitle></CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold text-primary">1 284 500 Kč</div>
-                <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1"><TrendingUp className="w-3 h-3" /> +8.4% oproti minulému roku</p>
+                <div className="portal-kpi-value text-2xl">1 284 500 Kč</div>
+                <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1 font-medium"><TrendingUp className="w-3 h-3" /> +8.4% oproti minulému roku</p>
               </CardContent>
             </Card>
-            <Card className="bg-surface border-border">
-              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Průměrná marže</CardTitle></CardHeader>
+            <Card className="bg-white border-slate-200 shadow-sm">
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-600">Průměrná marže</CardTitle></CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">24.2%</div>
-                <p className="text-xs text-muted-foreground mt-1">Cíl: 25.0%</p>
+                <div className="portal-kpi-value text-2xl">24.2%</div>
+                <p className="text-xs text-slate-600 mt-1">Cíl: 25.0%</p>
               </CardContent>
             </Card>
-            <Card className="bg-surface border-border">
-              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-muted-foreground">Produktivita týmu</CardTitle></CardHeader>
+            <Card className="bg-white border-slate-200 shadow-sm">
+              <CardHeader className="pb-2"><CardTitle className="text-sm font-medium text-slate-600">Produktivita týmu</CardTitle></CardHeader>
               <CardContent>
-                <div className="text-3xl font-bold">92%</div>
-                <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> V normě</p>
+                <div className="portal-kpi-value text-2xl">92%</div>
+                <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1 font-medium"><CheckCircle2 className="w-3 h-3" /> V normě</p>
               </CardContent>
             </Card>
           </div>
 
-          <Card className="bg-surface border-border">
+          <Card className="bg-white border-slate-200 shadow-sm">
             <CardHeader>
-              <CardTitle>Měsíční příjmy a náklady</CardTitle>
-              <CardDescription>Srovnání finančních toků za poslední půlrok</CardDescription>
+              <CardTitle className="text-slate-900">Měsíční příjmy a náklady</CardTitle>
+              <CardDescription className="text-slate-600">Srovnání finančních toků za poslední půlrok</CardDescription>
             </CardHeader>
             <CardContent className="h-[400px]">
               {isMounted ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={monthlyRevenueData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                    <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(v) => `${v/1000}k`} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                    <XAxis dataKey="name" stroke="#475569" fontSize={12} tick={{ fill: '#475569' }} />
+                    <YAxis stroke="#475569" fontSize={12} tick={{ fill: '#475569' }} tickFormatter={(v) => `${v/1000}k`} />
                     <Tooltip 
-                      contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))', borderRadius: '8px' }}
-                      cursor={{ fill: 'hsl(var(--muted))', opacity: 0.2 }}
+                      contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#0f172a' }}
+                      cursor={{ fill: '#f1f5f9', opacity: 0.5 }}
                     />
-                    <Legend />
+                    <Legend wrapperStyle={{ fontSize: '12px' }} />
                     <Bar dataKey="revenue" name="Příjmy" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="costs" name="Náklady" fill="hsl(var(--muted-foreground))" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="costs" name="Náklady" fill="#64748b" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+                <div className="w-full h-full bg-slate-100 animate-pulse rounded-lg" />
               )}
             </CardContent>
           </Card>
@@ -190,32 +190,32 @@ export default function ReportsPage() {
 
         <TabsContent value="employees" className="space-y-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <Card className="bg-surface border-border">
+            <Card className="bg-white border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>Odpracované hodiny</CardTitle>
-                <CardDescription>Srovnání výkonu jednotlivých zaměstnanců za měsíc</CardDescription>
+                <CardTitle className="text-slate-900">Odpracované hodiny</CardTitle>
+                <CardDescription className="text-slate-600">Srovnání výkonu jednotlivých zaměstnanců za měsíc</CardDescription>
               </CardHeader>
               <CardContent className="h-[350px]">
                 {isMounted ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={employeeProductivityData} layout="vertical">
-                      <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" horizontal={false} />
-                      <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                      <YAxis dataKey="name" type="category" stroke="hsl(var(--muted-foreground))" fontSize={12} width={80} />
-                      <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" horizontal={false} />
+                      <XAxis type="number" stroke="#475569" fontSize={12} tick={{ fill: '#475569' }} />
+                      <YAxis dataKey="name" type="category" stroke="#475569" fontSize={12} width={80} tick={{ fill: '#475569' }} />
+                      <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }} />
                       <Bar dataKey="hours" name="Hodin" fill="hsl(var(--primary))" radius={[0, 4, 4, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+                  <div className="w-full h-full bg-slate-100 animate-pulse rounded-lg" />
                 )}
               </CardContent>
             </Card>
 
-            <Card className="bg-surface border-border">
+            <Card className="bg-white border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>Distribuce rolí</CardTitle>
-                <CardDescription>Složení vašeho týmu</CardDescription>
+                <CardTitle className="text-slate-900">Distribuce rolí</CardTitle>
+                <CardDescription className="text-slate-600">Složení vašeho týmu</CardDescription>
               </CardHeader>
               <CardContent className="h-[350px] flex items-center justify-center">
                 {isMounted ? (
@@ -237,15 +237,15 @@ export default function ReportsPage() {
                       >
                         <Cell fill="hsl(var(--primary))" />
                         <Cell fill="hsl(var(--secondary))" />
-                        <Cell fill="hsl(var(--muted-foreground))" />
+                        <Cell fill="#64748b" />
                         <Cell fill="#fb923c" />
                       </Pie>
-                      <Tooltip />
-                      <Legend />
+                      <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }} />
+                      <Legend wrapperStyle={{ fontSize: '12px' }} />
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+                  <div className="w-full h-full bg-slate-100 animate-pulse rounded-lg" />
                 )}
               </CardContent>
             </Card>
@@ -253,26 +253,26 @@ export default function ReportsPage() {
         </TabsContent>
 
         <TabsContent value="jobs" className="space-y-8">
-          <Card className="bg-surface border-border">
+          <Card className="bg-white border-slate-200 shadow-sm">
             <CardHeader>
-              <CardTitle>Ziskovost zakázek</CardTitle>
-              <CardDescription>Analýza profitu u klíčových projektů</CardDescription>
+              <CardTitle className="text-slate-900">Ziskovost zakázek</CardTitle>
+              <CardDescription className="text-slate-600">Analýza profitu u klíčových projektů</CardDescription>
             </CardHeader>
             <CardContent className="h-[400px]">
               {isMounted ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={jobProfitabilityData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                    <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
-                    <Legend />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                    <XAxis dataKey="name" stroke="#475569" fontSize={12} tick={{ fill: '#475569' }} />
+                    <YAxis stroke="#475569" fontSize={12} tick={{ fill: '#475569' }} />
+                    <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }} />
+                    <Legend wrapperStyle={{ fontSize: '12px' }} />
                     <Line type="monotone" dataKey="profit" name="Zisk (Kč)" stroke="hsl(var(--primary))" strokeWidth={3} dot={{ r: 6 }} activeDot={{ r: 8 }} />
                     <Line type="monotone" dataKey="margin" name="Marže (%)" stroke="#10b981" strokeWidth={2} />
                   </LineChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+                <div className="w-full h-full bg-slate-100 animate-pulse rounded-lg" />
               )}
             </CardContent>
           </Card>
@@ -280,10 +280,10 @@ export default function ReportsPage() {
 
         <TabsContent value="financials" className="space-y-8">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <Card className="bg-surface border-border">
+            <Card className="bg-white border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>Struktura nákladů</CardTitle>
-                <CardDescription>Kam plynou firemní finance</CardDescription>
+                <CardTitle className="text-slate-900">Struktura nákladů</CardTitle>
+                <CardDescription className="text-slate-600">Kam plynou firemní finance</CardDescription>
               </CardHeader>
               <CardContent className="h-[300px]">
                 {isMounted ? (
@@ -307,35 +307,35 @@ export default function ReportsPage() {
                         <Cell fill="#3b82f6" />
                         <Cell fill="#a855f7" />
                       </Pie>
-                      <Tooltip />
+                      <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', color: '#0f172a' }} />
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+                  <div className="w-full h-full bg-slate-100 animate-pulse rounded-lg" />
                 )}
               </CardContent>
             </Card>
 
-            <Card className="bg-surface border-border">
+            <Card className="bg-white border-slate-200 shadow-sm">
               <CardHeader>
-                <CardTitle>Rychlé statistiky</CardTitle>
+                <CardTitle className="text-slate-900">Rychlé statistiky</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="flex justify-between items-center p-3 rounded-lg bg-background/50 border border-border/50">
-                  <span className="text-sm">Průměrná hodnota zakázky</span>
-                  <span className="font-bold">84 200 Kč</span>
+                <div className="flex justify-between items-center p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-sm text-slate-600">Průměrná hodnota zakázky</span>
+                  <span className="font-bold text-slate-900 tabular-nums">84 200 Kč</span>
                 </div>
-                <div className="flex justify-between items-center p-3 rounded-lg bg-background/50 border border-border/50">
-                  <span className="text-sm">Náklady na 1 odpracovanou hodinu</span>
-                  <span className="font-bold">542 Kč</span>
+                <div className="flex justify-between items-center p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-sm text-slate-600">Náklady na 1 odpracovanou hodinu</span>
+                  <span className="font-bold text-slate-900 tabular-nums">542 Kč</span>
                 </div>
-                <div className="flex justify-between items-center p-3 rounded-lg bg-background/50 border border-border/50">
-                  <span className="text-sm">Počet nevyfakturovaných zakázek</span>
-                  <span className="font-bold text-rose-500">4</span>
+                <div className="flex justify-between items-center p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-sm text-slate-600">Počet nevyfakturovaných zakázek</span>
+                  <span className="font-bold text-rose-700 tabular-nums">4</span>
                 </div>
-                <div className="flex justify-between items-center p-3 rounded-lg bg-background/50 border border-border/50">
-                  <span className="text-sm">Očekávané příjmy (příští měsíc)</span>
-                  <span className="font-bold text-emerald-500">210 000 Kč</span>
+                <div className="flex justify-between items-center p-3 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="text-sm text-slate-600">Očekávané příjmy (příští měsíc)</span>
+                  <span className="font-bold text-emerald-700 tabular-nums">210 000 Kč</span>
                 </div>
               </CardContent>
             </Card>

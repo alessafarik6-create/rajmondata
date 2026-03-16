@@ -105,7 +105,7 @@ export default function NewInvoicePage() {
         <Button variant="ghost" size="icon" onClick={() => router.push('/portal/invoices')}>
           <ChevronLeft className="w-6 h-6" />
         </Button>
-        <h1 className="text-3xl font-bold">Vytvořit novou fakturu</h1>
+        <h1 className="portal-page-title">Vytvořit novou fakturu</h1>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">

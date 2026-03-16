@@ -111,20 +111,20 @@ export default function DocumentsPage() {
   const filteredDocs = (type: string) => documents?.filter(d => d.type === type) || [];
 
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold">Firemní doklady</h1>
-          <p className="text-muted-foreground mt-2">Správa přijatých a vydaných dokladů vaší organizace.</p>
+    <div className="space-y-6 sm:space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+        <div className="min-w-0">
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Firemní doklady</h1>
+          <p className="portal-page-description">Správa přijatých a vydaných dokladů vaší organizace.</p>
         </div>
-        <div className="flex gap-2">
-          <Dialog open={isAddDocOpen} onOpenChange={setIsAddDocOpen}>
-            <DialogTrigger asChild>
-              <Button className="gap-2 shadow-lg shadow-primary/20">
-                <Plus className="w-4 h-4" /> Přidat doklad
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-surface border-border max-w-xl">
+        <div className="flex flex-wrap gap-2">
+        <Dialog open={isAddDocOpen} onOpenChange={setIsAddDocOpen}>
+          <DialogTrigger asChild>
+            <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
+              <Plus className="w-4 h-4 shrink-0" /> Přidat doklad
+            </Button>
+          </DialogTrigger>
+          <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-xl w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Nový obchodní doklad</DialogTitle>
                 <DialogDescription>Zadejte údaje z faktury nebo účtenky pro evidenci.</DialogDescription>
@@ -181,16 +181,16 @@ export default function DocumentsPage() {
               </form>
             </DialogContent>
           </Dialog>
-          <Button variant="outline" className="gap-2">
-            <Upload className="w-4 h-4" /> Nahrát PDF
+          <Button variant="outlineLight" className="gap-2 min-h-[44px]">
+            <Upload className="w-4 h-4 shrink-0" /> Nahrát PDF
           </Button>
         </div>
       </div>
 
-      <Tabs defaultValue="received" className="w-full">
-        <TabsList className="bg-surface border border-border mb-6">
-          <TabsTrigger value="received" className="gap-2"><FileText className="w-4 h-4" /> Přijaté doklady</TabsTrigger>
-          <TabsTrigger value="issued" className="gap-2"><FileText className="w-4 h-4 text-emerald-500" /> Vydané doklady</TabsTrigger>
+      <Tabs defaultValue="received" className="w-full min-w-0">
+        <TabsList className="flex flex-wrap h-auto gap-1 p-1 mb-6">
+          <TabsTrigger value="received" className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"><FileText className="w-4 h-4 shrink-0" /> Přijaté doklady</TabsTrigger>
+          <TabsTrigger value="issued" className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"><FileText className="w-4 h-4 shrink-0 text-emerald-500" /> Vydané doklady</TabsTrigger>
         </TabsList>
 
         <TabsContent value="received">
@@ -207,15 +207,15 @@ export default function DocumentsPage() {
 
 function DocumentTable({ data, isLoading, onDelete, title }: { data: any[], isLoading: boolean, onDelete: (id: string) => void, title: string }) {
   return (
-    <Card className="bg-surface border-border overflow-hidden">
-      <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">
-        <div className="relative w-80">
+    <Card className="overflow-hidden min-w-0">
+      <div className="p-4 border-b flex flex-col sm:flex-row gap-4 justify-between">
+        <div className="relative w-full sm:max-w-xs">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input placeholder="Hledat v dokladech..." className="pl-10 bg-background border-border" />
+          <Input placeholder="Hledat v dokladech..." className="pl-10 min-h-[44px] w-full" />
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="gap-2"><Filter className="w-4 h-4" /> Filtr</Button>
-          <Button variant="outline" size="sm" className="gap-2"><Download className="w-4 h-4" /> Export</Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outlineLight" size="sm" className="gap-2 min-h-[44px] sm:min-h-0"><Filter className="w-4 h-4 shrink-0" /> Filtr</Button>
+          <Button variant="outlineLight" size="sm" className="gap-2 min-h-[44px] sm:min-h-0"><Download className="w-4 h-4 shrink-0" /> Export</Button>
         </div>
       </div>
       <CardContent className="p-0">

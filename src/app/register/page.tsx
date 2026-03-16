@@ -2,7 +2,7 @@
 "use client";
 
 import React, { useState } from 'react';
-import { useAuth, useFirestore } from '@/firebase';
+import { useFirebase } from '@/firebase';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -12,12 +12,13 @@ import { Building2, Loader2, ArrowLeft } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, setDoc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { ORGANIZATIONS_COLLECTION, COMPANIES_COLLECTION, USERS_COLLECTION } from '@/lib/firestore-collections';
+import { DEFAULT_LICENSE } from '@/lib/license-modules';
 
 export default function RegisterPage() {
-  const auth = useAuth();
-  const db = useFirestore();
+  const { auth, firestore: db, areServicesAvailable } = useFirebase();
   const router = useRouter();
   const { toast } = useToast();
   
@@ -38,70 +39,90 @@ export default function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!areServicesAvailable) {
+      toast({ variant: "destructive", title: "Načítání", description: "Firebase se ještě načítá. Zkuste to za chvíli." });
+      return;
+    }
     setLoading(true);
 
     try {
-      // 1. Vytvoření uživatele v Firebase Auth
+      // 1. Create Firebase Auth user
       const userCredential = await createUserWithEmailAndPassword(auth, formData.email, formData.password);
       const user = userCredential.user;
-
-      // Aktualizace jména v Auth profilu
       await updateProfile(user, { displayName: formData.adminName });
 
-      // 2. Vygenerování ID firmy (slug z názvu + náhodný řetězec pro unikátnost)
-      const companySlug = formData.companyName.toLowerCase().replace(/[^a-z0-9]/g, '-');
-      const companyId = `${companySlug}-${Math.random().toString(36).substring(2, 7)}`;
+      // 2. Generate organization/company id (slug + random suffix)
+      const slug = formData.companyName.toLowerCase().replace(/[^a-z0-9]/g, '-');
+      const companyId = `${slug}-${Math.random().toString(36).substring(2, 7)}`;
 
-      // 3. Vytvoření dokumentu firmy
-      const companyRef = doc(db, 'companies', companyId);
-      await setDoc(companyRef, {
+      // 3. Organization document: same shape for superadmin (společnosti) and portal (companies)
+      const enabledModules = [...DEFAULT_LICENSE.enabledModules];
+      const orgPayload = {
         id: companyId,
         name: formData.companyName,
-        ico: formData.ico,
+        slug,
         email: formData.email,
-        phone: formData.phone,
-        address: formData.address,
+        ico: formData.ico,
+        phone: formData.phone ?? '',
+        address: formData.address ?? '',
         ownerUserId: user.uid,
+        createdBy: user.uid,
+        active: true,
         isActive: true,
-        licenseId: 'free-trial', // Výchozí licence
-        enabledModuleIds: ['dashboard', 'employees', 'jobs', 'attendance'],
+        plan: 'starter',
+        licenseStatus: 'active',
+        licenseId: 'starter',
+        license: {
+          licenseType: DEFAULT_LICENSE.licenseType,
+          status: DEFAULT_LICENSE.status,
+          expirationDate: null,
+          maxUsers: DEFAULT_LICENSE.maxUsers,
+          enabledModules,
+        },
+        enabledModuleIds: enabledModules,
         createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      });
+        updatedAt: serverTimestamp(),
+      };
 
-      // 4. Vytvoření profilu uživatele
-      const userRef = doc(db, 'users', user.uid);
-      await setDoc(userRef, {
+      const batch = writeBatch(db);
+
+      // 4. Create organization in společnosti (superadmin dashboard) and companies (portal)
+      batch.set(doc(db, ORGANIZATIONS_COLLECTION, companyId), orgPayload);
+      batch.set(doc(db, COMPANIES_COLLECTION, companyId), orgPayload);
+
+      // 5. User document linked to organization
+      batch.set(doc(db, USERS_COLLECTION, user.uid), {
         id: user.uid,
         email: formData.email,
         displayName: formData.adminName,
-        globalRoles: [],
-        companyId: companyId, // Pro snadnou navigaci
-        createdAt: serverTimestamp()
-      });
-
-      // 5. Přiřazení role v rámci firmy
-      const roleRef = doc(db, 'users', user.uid, 'company_roles', companyId);
-      await setDoc(roleRef, {
+        companyId,
         role: 'owner',
-        assignedAt: serverTimestamp()
+        globalRoles: [],
+        createdAt: serverTimestamp(),
       });
 
-      // 6. Vytvoření záznamu zaměstnance pro majitele
-      const employeeRef = doc(db, 'companies', companyId, 'employees', user.uid);
-      await setDoc(employeeRef, {
+      // 6. Company role (owner for this organization)
+      batch.set(doc(db, USERS_COLLECTION, user.uid, 'company_roles', companyId), {
+        role: 'owner',
+        assignedAt: serverTimestamp(),
+      });
+
+      // 7. Owner as first employee under companies (portal tenant data)
+      batch.set(doc(db, COMPANIES_COLLECTION, companyId, 'employees', user.uid), {
         id: user.uid,
-        companyId: companyId,
+        companyId,
         userId: user.uid,
-        firstName: formData.adminName.split(' ')[0],
+        firstName: formData.adminName.split(' ')[0] ?? formData.adminName,
         lastName: formData.adminName.split(' ').slice(1).join(' ') || '',
         email: formData.email,
         jobTitle: 'Majitel firmy',
         role: 'owner',
         isActive: true,
         hireDate: new Date().toISOString().split('T')[0],
-        createdAt: serverTimestamp()
+        createdAt: serverTimestamp(),
       });
+
+      await batch.commit();
 
       toast({
         title: "Registrace úspěšná",
@@ -249,7 +270,7 @@ export default function RegisterPage() {
                 />
               </div>
 
-              <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20" disabled={loading}>
+              <Button type="submit" className="w-full h-12 text-lg font-bold shadow-lg shadow-primary/20" disabled={loading || !areServicesAvailable}>
                 {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : "Vytvořit firemní portál"}
               </Button>
             </CardContent>

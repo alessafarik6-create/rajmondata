@@ -34,6 +34,7 @@ export interface FirebaseContextState {
 
 // Return type for useFirebase()
 export interface FirebaseServicesAndUser {
+  areServicesAvailable: boolean;
   firebaseApp: FirebaseApp;
   firestore: Firestore;
   auth: Auth;
@@ -127,6 +128,7 @@ export const useFirebase = (): FirebaseServicesAndUser => {
     if (typeof window === 'undefined') {
       // Mock returns for SSR to avoid crashing during pre-render
       return {
+        areServicesAvailable: false,
         firebaseApp: {} as any,
         firestore: {} as any,
         auth: {} as any,
@@ -137,6 +139,7 @@ export const useFirebase = (): FirebaseServicesAndUser => {
     }
     // Also return a safe loading state on client if services are not yet ready
     return {
+      areServicesAvailable: false,
       firebaseApp: {} as any,
       firestore: {} as any,
       auth: {} as any,
@@ -147,6 +150,7 @@ export const useFirebase = (): FirebaseServicesAndUser => {
   }
 
   return {
+    areServicesAvailable: true,
     firebaseApp: context.firebaseApp,
     firestore: context.firestore,
     auth: context.auth,

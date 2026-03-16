@@ -82,20 +82,20 @@ export default function BillingPage() {
   };
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold">Předplatné a Fakturace</h1>
-          <p className="text-muted-foreground mt-2">Správa vašeho tarifu, platebních metod a historie plateb.</p>
+    <div className="max-w-5xl mx-auto space-y-6 sm:space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+        <div className="min-w-0">
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Předplatné a Fakturace</h1>
+          <p className="portal-page-description">Správa vašeho tarifu, platebních metod a historie plateb.</p>
         </div>
-        <Badge variant={billingData.paymentStatus === 'active' ? 'default' : 'destructive'} className="h-8 px-4 text-sm gap-2">
+        <Badge variant={billingData.paymentStatus === 'active' ? 'default' : 'destructive'} className="h-8 px-4 text-sm gap-2 w-fit">
           {billingData.paymentStatus === 'active' ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
           Stav: {billingData.paymentStatus === 'active' ? 'Aktivní' : 'Problém s platbou'}
         </Badge>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <Card className="lg:col-span-2 bg-surface border-border overflow-hidden">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
+        <Card className="lg:col-span-2 overflow-hidden min-w-0">
           <CardHeader className="bg-primary/5 border-b border-primary/10">
             <div className="flex justify-between items-center">
               <div>
@@ -106,7 +106,7 @@ export default function BillingPage() {
             </div>
           </CardHeader>
           <CardContent className="py-6 space-y-6">
-            <div className="grid grid-cols-2 gap-8">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 sm:gap-8">
               <div className="space-y-1">
                 <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider">Příští platba</p>
                 <div className="flex items-center gap-2 font-semibold text-lg">
@@ -142,17 +142,17 @@ export default function BillingPage() {
               </div>
             </div>
           </CardContent>
-          <CardFooter className="bg-background/50 border-t flex justify-end gap-3 py-4">
-            <Button variant="outline" disabled={!isOwner}>Změnit tarif</Button>
-            <Button disabled={!isOwner || isProcessing} onClick={() => handleSimulatePayment('stripe')} className="gap-2">
+          <CardFooter className="border-t flex flex-col-reverse sm:flex-row justify-end gap-3 py-4">
+            <Button variant="outline" disabled={!isOwner} className="min-h-[44px] w-full sm:w-auto">Změnit tarif</Button>
+            <Button disabled={!isOwner || isProcessing} onClick={() => handleSimulatePayment('stripe')} className="gap-2 min-h-[44px] w-full sm:w-auto">
               {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <CreditCard className="w-4 h-4" />}
               Zaplatit nyní
             </Button>
           </CardFooter>
         </Card>
 
-        <div className="space-y-8">
-          <Card className="bg-surface border-border shadow-lg">
+        <div className="space-y-6 lg:space-y-8">
+          <Card className="shadow-lg min-w-0">
             <CardHeader>
               <CardTitle className="text-lg flex items-center gap-2">
                 <Lock className="w-4 h-4 text-primary" /> Fakturační údaje
@@ -175,7 +175,7 @@ export default function BillingPage() {
             </CardContent>
           </Card>
 
-          <Card className="bg-surface border-border">
+          <Card className="min-w-0">
             <CardHeader>
               <CardTitle className="text-sm flex items-center gap-2">
                 <History className="w-4 h-4 text-muted-foreground" /> Poslední platby

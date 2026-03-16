@@ -6,25 +6,24 @@ import { useParams, useRouter } from 'next/navigation';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { User } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { 
   Briefcase, 
   Calendar, 
-  DollarSign, 
   Users, 
   Clock, 
   ChevronLeft, 
   Edit2, 
-  CheckCircle2,
-  AlertCircle,
-  FileText
+  FileText,
+  FileStack
 } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import { useToast } from '@/hooks/use-toast';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import type { JobTemplate } from '@/lib/job-templates';
 
 export default function JobDetailPage() {
   const { jobId } = useParams();
@@ -39,6 +38,12 @@ export default function JobDetailPage() {
 
   const jobRef = useMemoFirebase(() => companyId && jobId ? doc(firestore, 'companies', companyId, 'jobs', jobId as string) : null, [firestore, companyId, jobId]);
   const { data: job, isLoading } = useDoc(jobRef);
+
+  const templateRef = useMemoFirebase(
+    () => companyId && job?.templateId ? doc(firestore, 'companies', companyId, 'jobTemplates', job.templateId) : null,
+    [firestore, companyId, job?.templateId]
+  );
+  const { data: template } = useDoc(templateRef);
 
   const isAdmin = profile?.role === 'owner' || profile?.role === 'admin' || profile?.globalRoles?.includes('super_admin');
 
@@ -80,7 +85,7 @@ export default function JobDetailPage() {
         </Button>
         <div className="flex-1">
           <div className="flex items-center gap-3">
-            <h1 className="text-3xl font-bold">{job.name}</h1>
+            <h1 className="portal-page-title">{job.name}</h1>
             <Badge variant="outline" className="border-primary/30 text-primary">ID: {jobId?.toString().substring(0, 8)}</Badge>
           </div>
           <p className="text-muted-foreground">Detailní přehled projektu</p>
@@ -118,6 +123,43 @@ export default function JobDetailPage() {
               </p>
             </CardContent>
           </Card>
+
+          {job.templateId && template && (job.templateValues != null && Object.keys(job.templateValues).length > 0) && (
+            <Card className="bg-surface border-border">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileStack className="w-5 h-5 text-primary" /> Data šablony: {(template as JobTemplate).name}
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="space-y-4">
+                  {(template as JobTemplate).sections?.map((section) => {
+                    const fieldsWithValues = section.fields?.filter(
+                      (f) => job.templateValues[`${section.id}_${f.id}`] !== undefined && job.templateValues[`${section.id}_${f.id}`] !== '' && job.templateValues[`${section.id}_${f.id}`] !== null
+                    ) ?? [];
+                    if (fieldsWithValues.length === 0) return null;
+                    return (
+                      <div key={section.id}>
+                        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">{section.name}</p>
+                        <dl className="space-y-1.5">
+                          {fieldsWithValues.map((f) => (
+                            <div key={f.id} className="flex justify-between gap-4 text-sm">
+                              <dt className="text-muted-foreground">{f.label}</dt>
+                              <dd className="font-medium text-right">
+                                {typeof job.templateValues[`${section.id}_${f.id}`] === 'boolean'
+                                  ? (job.templateValues[`${section.id}_${f.id}`] ? 'Ano' : 'Ne')
+                                  : String(job.templateValues[`${section.id}_${f.id}`])}
+                              </dd>
+                            </div>
+                          ))}
+                        </dl>
+                      </div>
+                    );
+                  })}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <Card className="bg-surface border-border">
             <CardHeader>

@@ -95,65 +95,65 @@ export default function FinancePage() {
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex justify-between items-end">
-        <div>
-          <h1 className="text-3xl font-bold">Finanční centrum</h1>
-          <p className="text-muted-foreground mt-2">Ekonomika vaší organizace v reálném čase.</p>
+    <div className="space-y-6 sm:space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+        <div className="min-w-0">
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Finanční centrum</h1>
+          <p className="portal-page-description">Ekonomika vaší organizace v reálném čase.</p>
         </div>
-        <div className="flex gap-3">
-          <Button variant="outline" className="gap-2"><Download className="w-4 h-4" /> Exportovat PDF</Button>
+        <div className="flex flex-wrap gap-2 sm:gap-3">
+          <Button variant="outlineLight" className="gap-2 min-h-[44px]"><Download className="w-4 h-4 shrink-0" /> Exportovat PDF</Button>
           {(role === 'owner' || role === 'admin') && (
-            <Button className="gap-2 shadow-lg shadow-primary/20"><Receipt className="w-4 h-4" /> Nový záznam</Button>
+            <Button className="gap-2 min-h-[44px]"><Receipt className="w-4 h-4 shrink-0" /> Nový záznam</Button>
           )}
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="bg-surface border-border">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
+        <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Celkové příjmy</CardTitle>
+            <CardTitle className="text-sm font-medium portal-section-label">Celkové příjmy</CardTitle>
             <DollarSign className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.revenue.toLocaleString()} Kč</div>
-            <p className="text-xs text-emerald-500 mt-1 flex items-center gap-1"><TrendingUp className="w-3 h-3" /> +12%</p>
+            <div className="portal-kpi-value">{stats.revenue.toLocaleString()} Kč</div>
+            <p className="portal-kpi-label text-emerald-600 font-medium flex items-center gap-1"><TrendingUp className="w-3 h-3" /> +12%</p>
           </CardContent>
         </Card>
-        <Card className="bg-surface border-border">
+        <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Celkové výdaje</CardTitle>
+            <CardTitle className="text-sm font-medium portal-section-label">Celkové výdaje</CardTitle>
             <TrendingDown className="h-4 w-4 text-rose-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.costs.toLocaleString()} Kč</div>
-            <p className="text-xs text-muted-foreground mt-1">Z dokladů a mezd</p>
+            <div className="portal-kpi-value">{stats.costs.toLocaleString()} Kč</div>
+            <p className="portal-kpi-label">Z dokladů a mezd</p>
           </CardContent>
         </Card>
-        <Card className="bg-surface border-border">
+        <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Čistý zisk</CardTitle>
+            <CardTitle className="text-sm font-medium portal-section-label">Čistý zisk</CardTitle>
             <TrendingUp className="h-4 w-4 text-emerald-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">{stats.profit.toLocaleString()} Kč</div>
-            <p className="text-xs text-emerald-500 mt-1">Marže v pořádku</p>
+            <div className="portal-kpi-value text-emerald-700">{stats.profit.toLocaleString()} Kč</div>
+            <p className="portal-kpi-label text-emerald-600 font-medium">Marže v pořádku</p>
           </CardContent>
         </Card>
-        <Card className="bg-surface border-border">
+        <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="text-sm font-medium text-muted-foreground">Zakázky</CardTitle>
+            <CardTitle className="text-sm font-medium portal-section-label">Zakázky</CardTitle>
             <BarChartIcon className="h-4 w-4 text-primary" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.activeJobs}</div>
-            <p className="text-xs text-muted-foreground mt-1">Aktivní projekty</p>
+            <div className="portal-kpi-value">{stats.activeJobs}</div>
+            <p className="portal-kpi-label">Aktivní projekty</p>
           </CardContent>
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <Card className="bg-surface border-border">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+        <Card>
           <CardHeader>
             <CardTitle>Vývoj cashflow</CardTitle>
           </CardHeader>
@@ -161,22 +161,22 @@ export default function FinancePage() {
             {isMounted ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
-                  <XAxis dataKey="name" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} tickFormatter={(v) => `${v/1000}k`} />
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))', border: '1px solid hsl(var(--border))' }} />
-                  <Legend />
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                  <XAxis dataKey="name" stroke="#475569" fontSize={12} tick={{ fill: '#475569' }} />
+                  <YAxis stroke="#475569" fontSize={12} tick={{ fill: '#475569' }} tickFormatter={(v) => `${v/1000}k`} />
+                  <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#0f172a' }} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
                   <Line type="monotone" dataKey="revenue" name="Příjmy" stroke="hsl(var(--primary))" strokeWidth={3} />
-                  <Line type="monotone" dataKey="costs" name="Výdaje" stroke="hsl(var(--rose-500))" strokeWidth={2} />
+                  <Line type="monotone" dataKey="costs" name="Výdaje" stroke="#f43f5e" strokeWidth={2} />
                 </LineChart>
               </ResponsiveContainer>
             ) : (
-              <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+              <div className="w-full h-full bg-slate-100 animate-pulse rounded-lg" />
             )}
           </CardContent>
         </Card>
 
-        <Card className="bg-surface border-border">
+        <Card>
           <CardHeader>
             <CardTitle>Struktura nákladů</CardTitle>
           </CardHeader>
@@ -187,28 +187,28 @@ export default function FinancePage() {
                   <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} dataKey="value">
                     {pieData.map((e, i) => <Cell key={i} fill={e.fill} />)}
                   </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--surface))' }} />
-                  <Legend />
+                  <Tooltip contentStyle={{ backgroundColor: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px', color: '#0f172a' }} />
+                  <Legend wrapperStyle={{ fontSize: '12px' }} />
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="w-full h-full bg-muted/10 animate-pulse rounded-lg" />
+              <div className="w-full h-full bg-slate-100 animate-pulse rounded-lg" />
             )}
           </CardContent>
         </Card>
       </div>
 
-      <Card className="bg-surface border-border">
+      <Card className="overflow-hidden">
         <CardHeader><CardTitle>Poslední transakce</CardTitle></CardHeader>
-        <CardContent>
+        <CardContent className="overflow-x-auto">
           <Table>
-            <TableHeader><TableRow className="border-border"><TableHead>Popis</TableHead><TableHead>Datum</TableHead><TableHead className="text-right">Částka</TableHead></TableRow></TableHeader>
+            <TableHeader><TableRow className="border-slate-200 hover:bg-transparent"><TableHead className="text-slate-600 font-medium">Popis</TableHead><TableHead className="text-slate-600 font-medium">Datum</TableHead><TableHead className="text-right text-slate-600 font-medium">Částka</TableHead></TableRow></TableHeader>
             <TableBody>
               {financeRecords?.map((r) => (
-                <TableRow key={r.id} className="border-border hover:bg-muted/30">
-                  <TableCell className="font-medium">{r.description}</TableCell>
-                  <TableCell>{r.date}</TableCell>
-                  <TableCell className={`text-right font-bold ${r.type === 'revenue' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                <TableRow key={r.id} className="border-slate-200 hover:bg-slate-50">
+                  <TableCell className="font-medium text-slate-900">{r.description}</TableCell>
+                  <TableCell className="text-slate-700">{r.date}</TableCell>
+                  <TableCell className={`text-right font-bold tabular-nums ${r.type === 'revenue' ? 'text-emerald-700' : 'text-rose-700'}`}>
                     {r.type === 'revenue' ? '+' : '-'}{r.amount?.toLocaleString()} Kč
                   </TableCell>
                 </TableRow>

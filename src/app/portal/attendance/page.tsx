@@ -108,40 +108,40 @@ export default function AttendancePage() {
   };
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-3xl font-bold">Docházkový systém</h1>
-          <p className="text-muted-foreground mt-2">Pracovní prostor: <span className="text-primary font-semibold">{companyId}</span></p>
+    <div className="space-y-6 sm:space-y-8">
+      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
+        <div className="min-w-0">
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Docházkový systém</h1>
+          <p className="portal-page-description">Pracovní prostor: <span className="text-primary font-semibold">{companyId}</span></p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
           {isAdmin && (
             <Link href="/portal/attendance/terminal/settings">
-              <Button variant="outline" size="icon" title="Nastavení terminálů"><Settings className="w-4 h-4" /></Button>
+              <Button variant="outlineLight" size="icon" className="h-11 w-11 shrink-0" title="Nastavení terminálů"><Settings className="w-4 h-4" /></Button>
             </Link>
           )}
-          <Link href="/portal/attendance/terminal">
-            <Button className="gap-2 bg-primary hover:bg-primary/90 shadow-lg shadow-primary/20">
-              <Smartphone className="w-4 h-4" /> Mobilní terminál
+          <Link href="/portal/attendance/terminal" className="min-w-0">
+            <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
+              <Smartphone className="w-4 h-4 shrink-0" /> Mobilní terminál
             </Button>
           </Link>
-          <div className="bg-surface p-4 rounded-xl border border-primary/20 shadow-lg text-right min-w-[200px] hidden sm:block">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-right min-w-[180px] hidden sm:block">
             <p className="text-4xl font-mono font-bold text-primary">{currentTime || '--:--:--'}</p>
             <p className="text-sm text-muted-foreground font-medium">{new Date().toLocaleDateString('cs-CZ', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</p>
           </div>
         </div>
       </div>
 
-      <Tabs defaultValue="terminal" className="w-full">
-        <TabsList className="bg-surface border border-border mb-6">
-          <TabsTrigger value="terminal" className="gap-2"><Timer className="w-4 h-4" /> Terminál</TabsTrigger>
-          <TabsTrigger value="history" className="gap-2"><History className="w-4 h-4" /> Moje historie</TabsTrigger>
-          {isAdmin && <TabsTrigger value="admin" className="gap-2"><UserCheck className="w-4 h-4" /> Přehled týmu</TabsTrigger>}
+      <Tabs defaultValue="terminal" className="w-full overflow-hidden">
+        <TabsList className="bg-white border border-slate-200 mb-4 sm:mb-6 flex flex-wrap h-auto gap-1 p-1">
+          <TabsTrigger value="terminal" className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"><Timer className="w-4 h-4 shrink-0" /> Terminál</TabsTrigger>
+          <TabsTrigger value="history" className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"><History className="w-4 h-4 shrink-0" /> Moje historie</TabsTrigger>
+          {isAdmin && <TabsTrigger value="admin" className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"><UserCheck className="w-4 h-4 shrink-0" /> Přehled týmu</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="terminal">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-            <Card className="lg:col-span-2 bg-surface border-border shadow-xl">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
+            <Card className="lg:col-span-2 min-w-0">
               <CardHeader>
                 <CardTitle>Docházkový terminál</CardTitle>
                 <CardDescription>Zaznamenejte svůj příchod, pauzu nebo odchod kliknutím na příslušné tlačítko.</CardDescription>

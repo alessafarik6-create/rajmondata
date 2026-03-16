@@ -1,20 +1,20 @@
 "use client";
 
 import React, { useState } from 'react';
-import { useAuth } from '@/firebase';
+import { useFirebase } from '@/firebase';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
-import { Building2, Loader2, UserPlus } from 'lucide-react';
+import { Building2, Loader2, UserPlus, ShieldCheck } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { signInWithEmailAndPassword } from 'firebase/auth';
 import { useToast } from '@/hooks/use-toast';
 
 export default function LoginPage() {
-  const auth = useAuth();
+  const { auth, areServicesAvailable } = useFirebase();
   const router = useRouter();
   const { toast } = useToast();
   const [email, setEmail] = useState('');
@@ -23,6 +23,10 @@ export default function LoginPage() {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!areServicesAvailable) {
+      toast({ variant: "destructive", title: "Načítání", description: "Firebase se ještě načítá. Zkuste to za chvíli." });
+      return;
+    }
     if (!email || !password) {
       toast({
         variant: "destructive",
@@ -108,7 +112,7 @@ export default function LoginPage() {
                   required
                 />
               </div>
-              <Button type="submit" className="w-full h-11 text-lg font-semibold bg-primary hover:bg-primary/90 text-white" disabled={loading}>
+              <Button type="submit" className="w-full h-11 text-lg font-semibold bg-primary hover:bg-primary/90 text-white" disabled={loading || !areServicesAvailable}>
                 {loading ? <Loader2 className="w-5 h-5 animate-spin mr-2" /> : null}
                 Přihlásit se
               </Button>
@@ -122,6 +126,11 @@ export default function LoginPage() {
             <Link href="/register" className="w-full">
               <Button variant="outline" className="w-full h-11 border-primary text-primary hover:bg-primary hover:text-white transition-all gap-2">
                 <UserPlus className="w-4 h-4" /> Registrovat firmu
+              </Button>
+            </Link>
+            <Link href="/admin/login" className="w-full">
+              <Button variant="ghost" className="w-full h-10 text-muted-foreground hover:text-foreground gap-2">
+                <ShieldCheck className="w-4 h-4" /> Globální administrace
               </Button>
             </Link>
           </CardFooter>
