@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import { getCompanies } from "@/lib/superadmin-companies";
+import { getCompany } from "@/lib/superadmin-companies";
 
 export async function GET() {
   const session = await getSessionFromCookie();
@@ -21,7 +21,7 @@ if (!session) {
   }
 
   try {
-    const companies = await getCompanies(db);
+    const companies = await getCompany(db);
     return NextResponse.json(companies);
   } catch (e) {
     console.error("[superadmin companies]", e);
