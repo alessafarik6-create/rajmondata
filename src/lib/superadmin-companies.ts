@@ -98,30 +98,12 @@ export function normalizeCompanyFromFirestore(
 /**
  * Fetch all companies, sorted by name (in memory to avoid index requirement).
  */
-export async function getCompanies(db: Firestore): Promise<CompanyWithLicense[]> {
-  const snapshot = await db.collection(ORGANIZATIONS_COLLECTION).get();
 
-  const list = snapshot.docs.map((doc: any) =>
-    normalizeCompanyFromFirestore(doc.data(), doc.id)
-  );
-  
-  list.sort((a: any, b: any) =>
-    (a.name || "").localeCompare(b.name || "", "cs")
-  );
-  
-  return list;
 
 /**
  * Fetch one company by id.
  */
-export async function getCompany(
-  db: Firestore,
-  id: string
-): Promise<CompanyWithLicense | null> {
-  const snap = await db.collection(ORGANIZATIONS_COLLECTION).doc(id).get();
-  if (!snap.exists) return null;
-  return normalizeCompanyFromFirestore(snap.data()!, snap.id);
-}
+
 
 /**
  * Build Firestore-updatable license object from API input.
