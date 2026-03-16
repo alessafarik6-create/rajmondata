@@ -3,7 +3,7 @@
  * Reads from Firestore collection "společnosti" (organizations).
  * Normalizes license and enabledModules from existing docs (e.g. enabledModuleIds from register).
  */
-import type { Firestore } from "firebase-admin/firestore";
+import type { Firestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import {
   DEFAULT_LICENSE,
   MODULE_KEYS,
@@ -101,7 +101,7 @@ export function normalizeCompanyFromFirestore(
 export async function getCompanies(db: Firestore) {
   const snapshot = await db.collection(COMPANIES_COLLECTION).get();
 
-  const companies = snapshot.docs.map((doc) => {
+  const companies = snapshot.docs.map((doc: any) => {
     const data = doc.data();
     return {
       id: doc.id,
