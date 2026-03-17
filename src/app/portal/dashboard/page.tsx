@@ -14,7 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection, useCompany } from '@/firebase';
 import { doc, collection } from 'firebase/firestore';
 import Link from 'next/link';
 
@@ -45,6 +45,8 @@ export default function CompanyDashboard() {
 
   const { data: employees, error: employeesError } = useCollection(employeesQuery);
   const { data: allJobs, isLoading: isJobsLoading, error: jobsError } = useCollection(jobsQuery);
+
+  const { companyName } = useCompany();
 
   const jobs = allJobs?.filter(j => {
     if (isManagement || isAccountant) return true;
@@ -134,7 +136,9 @@ export default function CompanyDashboard() {
         <div className="min-w-0">
           <h1 className="portal-page-title text-2xl sm:text-3xl truncate">Dobré ráno, {profile?.displayName || user?.email?.split('@')[0]}</h1>
           <p className="portal-page-description">
-            {isCustomer ? 'Vítejte ve svém klientském portálu.' : `Zde je přehled vaší práce v ${companyId || 'vaší organizaci'}.`}
+            {isCustomer
+              ? 'Vítejte ve svém klientském portálu.'
+              : `Zde je přehled vaší práce v ${companyName || companyId || 'vaší organizaci'}.`}
           </p>
         </div>
         <div className="flex flex-wrap gap-2 sm:gap-3">

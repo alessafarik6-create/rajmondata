@@ -23,7 +23,7 @@ import {
   Inbox
 } from 'lucide-react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection, useAuth } from '@/firebase';
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection, useAuth, useCompany } from '@/firebase';
 import { doc, collection, serverTimestamp, query, orderBy, limit, where } from 'firebase/firestore';
 import { addDocumentNonBlocking } from '@/firebase/non-blocking-updates';
 import { errorEmitter } from '@/firebase/error-emitter';
@@ -41,6 +41,7 @@ export default function MobileTerminalPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const router = useRouter();
+  const { companyName } = useCompany();
   
   const [terminalMode, setTerminalMode] = useState<TerminalMode>('personal');
   const [pin, setPin] = useState('');
@@ -262,7 +263,7 @@ export default function MobileTerminalPage() {
               <Smartphone className="text-white w-6 h-6" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-xl font-bold leading-tight truncate">BizForge Terminál</h1>
+              <h1 className="text-xl font-bold leading-tight truncate">{companyName || 'BizForge Terminál'}</h1>
               <p className="text-xs text-muted-foreground uppercase font-bold tracking-tighter">Načítání…</p>
             </div>
           </div>
@@ -299,7 +300,7 @@ export default function MobileTerminalPage() {
           <div className="w-10 h-10 shrink-0 bg-primary rounded-lg flex items-center justify-center">
             <Smartphone className="text-white w-6 h-6" />
           </div>
-          <h1 className="text-xl font-bold">BizForge Terminál</h1>
+          <h1 className="text-xl font-bold truncate">{companyName || 'BizForge Terminál'}</h1>
         </div>
         <Alert variant="destructive" className="mb-6">
           <AlertCircle className="h-4 w-4" />
@@ -328,7 +329,7 @@ export default function MobileTerminalPage() {
           <div className="w-10 h-10 shrink-0 bg-primary rounded-lg flex items-center justify-center">
             <Smartphone className="text-white w-6 h-6" />
           </div>
-          <h1 className="text-xl font-bold">BizForge Terminál</h1>
+          <h1 className="text-xl font-bold truncate">{companyName || 'BizForge Terminál'}</h1>
         </div>
         <Alert className="mb-6">
           <Inbox className="h-4 w-4" />
@@ -359,8 +360,10 @@ export default function MobileTerminalPage() {
             <Smartphone className="text-white w-6 h-6" />
           </div>
           <div className="min-w-0">
-            <h1 className="text-xl font-bold leading-tight truncate">BizForge Terminál</h1>
-            <p className="text-xs text-muted-foreground uppercase font-bold tracking-tighter truncate">{companyId}</p>
+            <h1 className="text-xl font-bold leading-tight truncate">{companyName || 'BizForge Terminál'}</h1>
+            <p className="text-xs text-muted-foreground uppercase font-bold tracking-tighter truncate">
+              {companyName ? 'Docházkový terminál' : companyId}
+            </p>
           </div>
         </div>
         <div className="flex flex-col items-stretch sm:items-end gap-2">

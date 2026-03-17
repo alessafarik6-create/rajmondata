@@ -1,7 +1,7 @@
 
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -9,19 +9,114 @@ import { Label } from '@/components/ui/label';
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useUser, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
-import { doc } from 'firebase/firestore';
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from '@/firebase';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
 import Link from 'next/link';
 import { Users, ShieldCheck, Bell, Building2 } from 'lucide-react';
+import { useToast } from '@/hooks/use-toast';
+import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
 
 export default function SettingsPage() {
   const { user } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
   
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
 
-  const isAdmin = profile?.role === 'owner' || profile?.role === 'admin' || profile?.globalRoles?.includes('super_admin');
+  const isAdmin =
+    profile?.role === 'owner' ||
+    profile?.role === 'admin' ||
+    profile?.globalRoles?.includes('super_admin');
+
+  const { company, companyName, companyId } = useCompany();
+  const [companyNameInput, setCompanyNameInput] = useState('');
+  const [icoInput, setIcoInput] = useState('');
+  const [publicProfile, setPublicProfile] = useState(false);
+  const [isSavingCompany, setIsSavingCompany] = useState(false);
+
+  useEffect(() => {
+    if (company) {
+      setCompanyNameInput(
+        company.companyName || (company as any).name || ''
+      );
+      setIcoInput(company.ico || '');
+      setPublicProfile(Boolean(company.publicProfile));
+    } else {
+      setCompanyNameInput('');
+      setIcoInput('');
+      setPublicProfile(false);
+    }
+  }, [company]);
+
+  const handleSaveOrganization = async () => {
+    if (!firestore || !companyId) {
+      toast({
+        variant: 'destructive',
+        title: 'Organizace nenalezena',
+        description: 'Nepodařilo se najít vaši organizaci. Zkuste stránku obnovit.',
+      });
+      return;
+    }
+
+    const trimmedName = companyNameInput.trim();
+    if (!trimmedName) {
+      toast({
+        variant: 'destructive',
+        title: 'Název společnosti je povinný',
+        description: 'Zadejte prosím platný název společnosti.',
+      });
+      return;
+    }
+
+    try {
+      setIsSavingCompany(true);
+
+      const payloadBase = {
+        companyName: trimmedName,
+        name: trimmedName,
+        ico: icoInput.trim() || null,
+        publicProfile,
+        updatedAt: serverTimestamp(),
+      };
+
+      const companyDocRef = doc(firestore, COMPANIES_COLLECTION, companyId);
+      const orgDocRef = doc(firestore, ORGANIZATIONS_COLLECTION, companyId);
+
+      const payloadForSet =
+        company == null
+          ? { ...payloadBase, createdAt: serverTimestamp() }
+          : payloadBase;
+
+      console.log('[Settings] Saving company profile', {
+        collectionName: COMPANIES_COLLECTION,
+        companyId,
+        companyDocPath: `${COMPANIES_COLLECTION}/${companyId}`,
+        orgCollectionName: ORGANIZATIONS_COLLECTION,
+        orgDocPath: `${ORGANIZATIONS_COLLECTION}/${companyId}`,
+        payload: payloadForSet,
+      });
+
+      await Promise.all([
+        setDoc(companyDocRef, payloadForSet, { merge: true }),
+        setDoc(orgDocRef, payloadForSet, { merge: true }),
+      ]);
+
+      toast({
+        title: 'Nastavení uloženo',
+        description: 'Název společnosti byl úspěšně aktualizován.',
+      });
+    } catch (error: any) {
+      console.error('Failed to save company profile', error);
+      toast({
+        variant: 'destructive',
+        title: 'Chyba při ukládání',
+        description: error?.message || 'Název společnosti se nepodařilo uložit.',
+      });
+    } finally {
+      setIsSavingCompany(false);
+    }
+  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 sm:space-y-8 px-0">
@@ -74,11 +169,21 @@ export default function SettingsPage() {
               <CardContent className="space-y-6">
                 <div className="space-y-2">
                   <Label>Název společnosti</Label>
-                  <Input defaultValue="Moje Firma s.r.o." className="bg-background" />
+                  <Input
+                    value={companyNameInput}
+                    onChange={(e) => setCompanyNameInput(e.target.value)}
+                    placeholder="Moje Firma s.r.o."
+                    className="bg-background"
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>IČO</Label>
-                  <Input defaultValue="12345678" className="bg-background" />
+                  <Input
+                    value={icoInput}
+                    onChange={(e) => setIcoInput(e.target.value)}
+                    placeholder="12345678"
+                    className="bg-background"
+                  />
                 </div>
                 <Separator className="bg-border" />
                 <div className="flex items-center justify-between">
@@ -86,9 +191,14 @@ export default function SettingsPage() {
                     <Label>Veřejný profil</Label>
                     <p className="text-xs text-muted-foreground">Umožněte ostatním najít vaši organizaci na platformě.</p>
                   </div>
-                  <Switch />
+                  <Switch
+                    checked={publicProfile}
+                    onCheckedChange={setPublicProfile}
+                  />
                 </div>
-                <Button className="w-fit">Aktualizovat firmu</Button>
+                <Button className="w-fit" onClick={handleSaveOrganization} disabled={isSavingCompany}>
+                  {isSavingCompany ? 'Ukládání…' : 'Aktualizovat firmu'}
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>

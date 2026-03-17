@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
-import { useAuth, useUser, useFirestore, useDoc, useMemoFirebase } from '@/firebase';
+import { useAuth, useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from '@/firebase';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
   DropdownMenu, 
@@ -32,6 +32,8 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
 
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
+
+  const { companyName } = useCompany();
 
   const isAdminArea = pathname?.startsWith('/admin');
   useEffect(() => {
@@ -79,6 +81,11 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
           >
             <Menu className="h-5 w-5" />
           </Button>
+        )}
+        {companyName && (
+          <div className="hidden md:flex items-center gap-2 text-slate-700 font-semibold truncate max-w-xs">
+            <span className="truncate">{companyName}</span>
+          </div>
         )}
         <div className="relative w-full max-w-md hidden sm:block">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />

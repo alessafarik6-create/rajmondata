@@ -1,6 +1,16 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Organization documents
+    match /organizations/{orgId} {
+      allow read, update: if request.auth != null;
+    }
+
+    // Czech collection name used in this project for organizations
+    match /společnosti/{orgId} {
+      allow read, update: if request.auth != null;
+    }
+
     match /{document=**} {
       allow read, write: if true;
     }
