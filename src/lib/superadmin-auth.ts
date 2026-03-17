@@ -16,24 +16,20 @@ export interface SuperadminSession {
 }
 
 function getCookieOptions() {
-  const isProduction = process.env.NODE_ENV === "production";
-
   return {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: (isProduction ? "none" : "lax") as "none" | "lax",
+    secure: true,
+    sameSite: "none" as const,
     path: "/",
     maxAge: COOKIE_MAX_AGE,
   };
 }
 
 function getClearCookieOptions() {
-  const isProduction = process.env.NODE_ENV === "production";
-
   return {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: (isProduction ? "none" : "lax") as "none" | "lax",
+    secure: true,
+    sameSite: "none" as const,
     path: "/",
     maxAge: 0,
     expires: new Date(0),
