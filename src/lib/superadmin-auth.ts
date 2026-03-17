@@ -3,9 +3,9 @@ import { cookies } from "next/headers";
 import type { NextResponse } from "next/server";
 
 const COOKIE_NAME = "superadmin_session";
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.SUPERADMIN_JWT_SECRET || "superadmin-secret-change-in-production"
-);
+const JWT_SECRET_VALUE =
+  process.env.SUPERADMIN_JWT_SECRET || "superadmin-secret-change-in-production";
+const JWT_SECRET = new TextEncoder().encode(JWT_SECRET_VALUE);
 const JWT_ISSUER = "bizforge-superadmin";
 const JWT_AUDIENCE = "bizforge-admin";
 const COOKIE_MAX_AGE = 60 * 60 * 24; // 24 hours
@@ -15,8 +15,38 @@ export interface SuperadminSession {
   role: string;
 }
 
-export async function createSession(payload: SuperadminSession): Promise<string> {
-  return new SignJWT({ ...payload })
+function getCookieOptions() {
+  const isProduction = process.env.NODE_ENV === "production";
+
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: (isProduction ? "none" : "lax") as "none" | "lax",
+    path: "/",
+    maxAge: COOKIE_MAX_AGE,
+  };
+}
+
+function getClearCookieOptions() {
+  const isProduction = process.env.NODE_ENV === "production";
+
+  return {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: (isProduction ? "none" : "lax") as "none" | "lax",
+    path: "/",
+    maxAge: 0,
+    expires: new Date(0),
+  };
+}
+
+export async function createSession(
+  payload: SuperadminSession
+): Promise<string> {
+  return new SignJWT({
+    username: payload.username,
+    role: payload.role,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuer(JWT_ISSUER)
     .setAudience(JWT_AUDIENCE)
@@ -25,17 +55,23 @@ export async function createSession(payload: SuperadminSession): Promise<string>
     .sign(JWT_SECRET);
 }
 
-export async function verifySession(token: string): Promise<SuperadminSession | null> {
+export async function verifySession(
+  token: string
+): Promise<SuperadminSession | null> {
   try {
     const { payload } = await jwtVerify(token, JWT_SECRET, {
       issuer: JWT_ISSUER,
       audience: JWT_AUDIENCE,
     });
 
-    return {
-      username: String(payload.username ?? ""),
-      role: String(payload.role ?? ""),
-    };
+    const username = String(payload.username ?? "").trim();
+    const role = String(payload.role ?? "").trim();
+
+    if (!username || !role) {
+      return null;
+    }
+
+    return { username, role };
   } catch {
     return null;
   }
@@ -45,7 +81,9 @@ export async function getSessionFromCookie(): Promise<SuperadminSession | null> 
   const cookieStore = await cookies();
   const token = cookieStore.get(COOKIE_NAME)?.value;
 
-  if (!token) return null;
+  if (!token) {
+    return null;
+  }
 
   return verifySession(token);
 }
@@ -56,13 +94,7 @@ export async function setSessionCookie(
   tokenOrResponse: string | CookieSetterResponse,
   maybeToken?: string
 ): Promise<void> {
-  const options = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    maxAge: COOKIE_MAX_AGE,
-    path: "/",
-  };
+  const options = getCookieOptions();
 
   if (typeof tokenOrResponse === "string") {
     const cookieStore = await cookies();
@@ -77,14 +109,10 @@ export async function setSessionCookie(
   tokenOrResponse.cookies.set(COOKIE_NAME, maybeToken, options);
 }
 
-export async function clearSessionCookie(response?: CookieSetterResponse): Promise<void> {
-  const options = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    maxAge: 0,
-    path: "/",
-  };
+export async function clearSessionCookie(
+  response?: CookieSetterResponse
+): Promise<void> {
+  const options = getClearCookieOptions();
 
   if (response) {
     response.cookies.set(COOKIE_NAME, "", options);
