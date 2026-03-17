@@ -6,9 +6,17 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { username, password } = body as { username?: string; password?: string };
+    const { username, password } = body as {
+      username?: string;
+      password?: string;
+    };
 
-    if (!username || typeof username !== "string" || !password || typeof password !== "string") {
+    if (
+      !username ||
+      typeof username !== "string" ||
+      !password ||
+      typeof password !== "string"
+    ) {
       return NextResponse.json(
         { error: "Uživatelské jméno a heslo jsou povinné." },
         { status: 400 }
@@ -32,10 +40,24 @@ export async function POST(request: NextRequest) {
       const match = await bcrypt.compare(password, envHash);
 
       if (match) {
-        const token = await createSession({ username: envUser, role: "superadmin" });
+        const token = await createSession({
+          username: envUser,
+          role: "superadmin",
+        });
 
-        const response = NextResponse.json({ ok: true, username: envUser });
+        const response = NextResponse.json(
+          { ok: true, username: envUser },
+          { status: 200 }
+        );
+
         await setSessionCookie(response, token);
+
+        console.log("[superadmin/login] success", {
+          source: "env",
+          username: envUser,
+          cookieName: "superadmin_session",
+        });
+        console.log("[superadmin/login] cookie set");
 
         return response;
       }
@@ -57,7 +79,10 @@ export async function POST(request: NextRequest) {
         const data = doc.data();
 
         if (data.active === false) {
-          return NextResponse.json({ error: "Účet je deaktivován." }, { status: 403 });
+          return NextResponse.json(
+            { error: "Účet je deaktivován." },
+            { status: 403 }
+          );
         }
 
         const passwordHash = data.passwordHash as string | undefined;
@@ -68,8 +93,19 @@ export async function POST(request: NextRequest) {
             role: data.role || "superadmin",
           });
 
-          const response = NextResponse.json({ ok: true, username: trimmedUsername });
+          const response = NextResponse.json(
+            { ok: true, username: trimmedUsername },
+            { status: 200 }
+          );
+
           await setSessionCookie(response, token);
+
+          console.log("[superadmin/login] success", {
+            source: "firestore",
+            username: trimmedUsername,
+            cookieName: "superadmin_session",
+          });
+          console.log("[superadmin/login] cookie set");
 
           return response;
         }
@@ -85,13 +121,31 @@ export async function POST(request: NextRequest) {
       trimmedUsername === "admin" &&
       (await bcrypt.compare(password, defaultAdminHash))
     ) {
-      const token = await createSession({ username: "admin", role: "superadmin" });
+      const token = await createSession({
+        username: "admin",
+        role: "superadmin",
+      });
 
-      const response = NextResponse.json({ ok: true, username: "admin" });
+      const response = NextResponse.json(
+        { ok: true, username: "admin" },
+        { status: 200 }
+      );
+
       await setSessionCookie(response, token);
+
+      console.log("[superadmin/login] success", {
+        source: "development-fallback",
+        username: "admin",
+        cookieName: "superadmin_session",
+      });
+      console.log("[superadmin/login] cookie set");
 
       return response;
     }
+
+    console.warn("[superadmin/login] invalid credentials", {
+      username: trimmedUsername,
+    });
 
     return NextResponse.json(
       { error: "Neplatné uživatelské jméno nebo heslo." },
