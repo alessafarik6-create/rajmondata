@@ -116,6 +116,7 @@ type WorkContractForm = {
   depositPercentage: string;
   depositAmount: string;
   bankAccountNumber: string;
+  bankAccountId?: string | null;
 };
 
 type WorkContractDoc = {
@@ -132,6 +133,7 @@ type WorkContractDoc = {
   depositPercentage?: string | number | null;
   depositAmount?: string | number | null;
   bankAccountNumber?: string | null;
+  bankAccountId?: string | null;
   pdfHtml?: string;
   pdfSavedAt?: any;
   createdAt?: any;
@@ -161,6 +163,19 @@ type PhotoDoc = {
   fileName?: string;
   createdAt?: any;
   createdBy?: string;
+};
+
+type CompanyBankAccountDoc = {
+  id: string;
+  name?: string;
+  accountNumber?: string;
+  bankCode?: string;
+  iban?: string;
+  swift?: string;
+  currency?: string;
+  companyId?: string;
+  createdAt?: any;
+  updatedAt?: any;
 };
 
 export default function JobDetailPage() {
@@ -193,6 +208,16 @@ export default function JobDetailPage() {
       ""
     );
   }, [companyDoc]);
+
+  const bankAccountsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "bankAccounts")
+        : null,
+    [firestore, companyId]
+  );
+  const { data: bankAccounts, isLoading: isLoadingBankAccounts } =
+    useCollection<CompanyBankAccountDoc>(bankAccountsColRef);
 
   const jobRef = useMemoFirebase(
     () =>
@@ -383,7 +408,15 @@ export default function JobDetailPage() {
     depositPercentage: "",
     depositAmount: "",
     bankAccountNumber: "",
+    bankAccountId: null,
   });
+
+  const selectedBankAccount = useMemo(() => {
+    if (!contractForm.bankAccountId) return null;
+    return (bankAccounts || []).find(
+      (a) => a.id === contractForm.bankAccountId
+    );
+  }, [bankAccounts, contractForm.bankAccountId]);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
   const [isGeneratingPdf, setIsGeneratingPdf] = useState(false);
 
@@ -590,19 +623,109 @@ export default function JobDetailPage() {
     return [name, address, ico, dic, email, phone].filter(Boolean).join("\n");
   };
 
-  const deriveContractorText = (co: any, coName: string): string => {
-    const name = coName || co?.companyName || co?.name || "";
-    const address =
+  const buildFullCompanyAddress = (co: any): string => {
+    const streetAndNumber = (co as any)?.companyAddressStreetAndNumber;
+    const city = (co as any)?.companyAddressCity;
+    const postalCode = (co as any)?.companyAddressPostalCode;
+    const country = (co as any)?.companyAddressCountry;
+
+    const structured =
+      streetAndNumber || city || postalCode || country
+        ? [
+            streetAndNumber ? String(streetAndNumber).trim() : "",
+            [postalCode ? String(postalCode).trim() : "", city ? String(city).trim() : ""]
+              .filter(Boolean)
+              .join(" "),
+            country ? String(country).trim() : "",
+          ]
+            .filter(Boolean)
+            .join("\n")
+        : "";
+
+    if (structured) return structured;
+
+    // Legacy fallbacks.
+    return (
       co?.registeredOfficeAddress ||
       co?.registeredOffice ||
       co?.address ||
       co?.sidlo ||
-      "";
+      ""
+    );
+  };
+
+  const formatCompanyBankAccountNumber = (
+    ba?: CompanyBankAccountDoc | null
+  ): string => {
+    if (!ba) return companyBankAccountNumber || "";
+    const iban = (ba.iban || "").trim();
+    if (iban) return iban;
+    const acc = (ba.accountNumber || "").trim();
+    const code = (ba.bankCode || "").trim();
+    if (acc && code) return `${acc}/${code}`;
+    return acc || "";
+  };
+
+  const formatCompanyBankAccountDisplay = (
+    ba: CompanyBankAccountDoc
+  ): string => {
+    const name = (ba.name || "").trim();
+    const currency = (ba.currency || "").trim() || "CZK";
+    const iban = (ba.iban || "").trim();
+    const acc = (ba.accountNumber || "").trim();
+    const code = (ba.bankCode || "").trim();
+    const czech = acc && code ? `${acc}/${code}` : acc || "";
+    const core = iban ? `IBAN: ${iban}` : czech ? `Účet: ${czech}` : "—";
+    return `${name ? name + " — " : ""}${core} (${currency})`;
+  };
+
+  const deriveContractorText = (
+    co: any,
+    coName: string,
+    bankAccount?: CompanyBankAccountDoc | null
+  ): string => {
+    const name = coName || co?.companyName || co?.name || "";
+    const address = buildFullCompanyAddress(co);
     const ico = co?.ico ? `IČO: ${co.ico}` : "";
     const dicRaw =
-      co?.dic || (co as any).DIČ || (co as any).DIC || (co as any)["dič"] || "";
+      co?.dic ||
+      (co as any).DIČ ||
+      (co as any).DIC ||
+      (co as any)["dič"] ||
+      "";
     const dic = dicRaw ? `DIČ: ${dicRaw}` : "";
-    return [name, address, ico, dic].filter(Boolean).join("\n");
+    const email = co?.email ? `Email: ${co.email}` : "";
+    const phone = co?.phone ? `Telefon: ${co.phone}` : "";
+
+    const iban = (bankAccount?.iban || "").trim();
+    const swift = (bankAccount?.swift || "").trim();
+    const acc = (bankAccount?.accountNumber || "").trim();
+    const bankCode = (bankAccount?.bankCode || "").trim();
+    const czechAcc = acc && bankCode ? `${acc}/${bankCode}` : acc || "";
+
+    const czechLine =
+      czechAcc && bankCode
+        ? `Číslo účtu / kód banky: ${czechAcc}`
+        : czechAcc
+          ? `Číslo účtu: ${czechAcc}`
+          : "";
+
+    const ibanLine = iban ? `IBAN: ${iban}` : "";
+    const swiftLine = swift ? `SWIFT: ${swift}` : "";
+
+    return [
+      name,
+      address,
+      ico,
+      dic,
+      email,
+      phone,
+      czechLine,
+      ibanLine,
+      swiftLine,
+    ]
+      .filter(Boolean)
+      .join("\n");
   };
 
   const computeDepositAmountFromPercent = useCallback(
@@ -633,12 +756,7 @@ export default function JobDetailPage() {
         companyDoc?.companyName ||
         (companyDoc as any)?.name ||
         "";
-      const supplierAddress =
-        (companyDoc as any)?.registeredOfficeAddress ||
-        (companyDoc as any)?.registeredOffice ||
-        (companyDoc as any)?.address ||
-        (companyDoc as any)?.sidlo ||
-        "";
+      const supplierAddress = buildFullCompanyAddress(companyDoc as any);
       const supplierIco = companyDoc?.ico || "";
       const supplierDicRaw =
         (companyDoc as any)?.dic ||
@@ -647,9 +765,17 @@ export default function JobDetailPage() {
         (companyDoc as any)["dič"] ||
         "";
 
+      const bankAccountForTokens =
+        formOverride?.bankAccountId
+          ? (bankAccounts || []).find(
+              (a) => a.id === formOverride.bankAccountId
+            ) || null
+          : selectedBankAccount;
+
       const supplierAutoText = deriveContractorText(
         companyDoc,
-        companyNameFromDoc
+        companyNameFromDoc,
+        bankAccountForTokens
       );
 
       const customerName = deriveCustomerDisplayName(customer);
@@ -673,6 +799,19 @@ export default function JobDetailPage() {
         "dodavatel.ico": supplierIco ? String(supplierIco) : "",
         "dodavatel.dic": supplierDicRaw ? String(supplierDicRaw) : "",
         dodavatel: supplierAutoText,
+        "dodavatel.email": companyDoc?.email
+          ? String(companyDoc.email)
+          : "",
+        "dodavatel.telefon": companyDoc?.phone
+          ? String(companyDoc.phone)
+          : "",
+        "dodavatel.ucet": bankAccountNumber || "",
+        "dodavatel.iban": bankAccountForTokens?.iban
+          ? String(bankAccountForTokens.iban)
+          : "",
+        "dodavatel.swift": bankAccountForTokens?.swift
+          ? String(bankAccountForTokens.swift)
+          : "",
 
         "objednatel.nazev": customerName,
         "objednatel.sidlo": customerAddress,
@@ -711,6 +850,8 @@ export default function JobDetailPage() {
       contractForm.depositPercentage,
       contractForm.depositAmount,
       contractForm.bankAccountNumber,
+      selectedBankAccount,
+      bankAccounts,
       computeDepositAmountFromPercent,
       formatKc,
     ]
@@ -835,7 +976,11 @@ export default function JobDetailPage() {
 
   const prefillContractFormFromJobAndCustomer = useCallback(() => {
     const clientText = deriveClientText(customer);
-    const contractorText = deriveContractorText(companyDoc, companyNameFromDoc);
+    const contractorText = deriveContractorText(
+      companyDoc,
+      companyNameFromDoc,
+      selectedBankAccount
+    );
 
     setContractForm((prev) => ({
       ...prev,
@@ -847,6 +992,7 @@ export default function JobDetailPage() {
     customer,
     companyDoc,
     companyNameFromDoc,
+    selectedBankAccount,
     buildPrefilledContractHeader,
   ]);
 
@@ -886,9 +1032,11 @@ export default function JobDetailPage() {
     setSelectedWorkContractTemplateId("__new__");
 
     const autoClientText = deriveClientText(customer);
+    const defaultBankAccount = bankAccounts && bankAccounts.length > 0 ? bankAccounts[0] : null;
     const autoContractorText = deriveContractorText(
       companyDoc,
-      companyNameFromDoc
+      companyNameFromDoc,
+      defaultBankAccount
     );
 
     setContractForm({
@@ -900,7 +1048,10 @@ export default function JobDetailPage() {
       additionalInfo: "",
       depositPercentage: "",
       depositAmount: "",
-      bankAccountNumber: companyBankAccountNumber,
+      bankAccountNumber: defaultBankAccount
+        ? formatCompanyBankAccountNumber(defaultBankAccount)
+        : companyBankAccountNumber,
+      bankAccountId: defaultBankAccount?.id || null,
     });
   }, [
     firestore,
@@ -914,6 +1065,9 @@ export default function JobDetailPage() {
     deriveContractorText,
     buildPrefilledContractHeader,
     buildJobSpecificationContractBody,
+    bankAccounts,
+    companyBankAccountNumber,
+    formatCompanyBankAccountNumber,
   ]);
 
   const openWorkContract = useCallback(
@@ -962,6 +1116,7 @@ export default function JobDetailPage() {
           depositPercentage: data.depositPercentage != null ? String(data.depositPercentage) : "",
           depositAmount: data.depositAmount != null ? String(data.depositAmount) : "",
           bankAccountNumber: (data.bankAccountNumber as any) || companyBankAccountNumber || "",
+          bankAccountId: (data.bankAccountId as any) || null,
         });
       } catch (err: any) {
         console.error("[WorkContract] openWorkContract failed", err);
@@ -1023,6 +1178,7 @@ export default function JobDetailPage() {
             data.depositAmount != null ? String(data.depositAmount) : "",
           bankAccountNumber:
             (data.bankAccountNumber as any) || companyBankAccountNumber || "",
+          bankAccountId: (data.bankAccountId as any) || null,
         };
 
         const header = applyTemplateVariables(form.contractHeader || "");
@@ -1167,6 +1323,7 @@ export default function JobDetailPage() {
           depositPercentage: "",
           depositAmount: "",
           bankAccountNumber: companyBankAccountNumber,
+          bankAccountId: null,
         });
         return;
       }
@@ -1202,6 +1359,7 @@ export default function JobDetailPage() {
           (tmpl.depositAmount != null ? String(tmpl.depositAmount) : ""),
         bankAccountNumber:
           (tmpl.bankAccountNumber as any) || companyBankAccountNumber || "",
+        bankAccountId: (tmpl.bankAccountId as any) || null,
       });
     },
     [toast, workContractTemplates]
@@ -1267,6 +1425,7 @@ export default function JobDetailPage() {
           depositPercentage: contractForm.depositPercentage,
           depositAmount: contractForm.depositAmount,
           bankAccountNumber: contractForm.bankAccountNumber,
+          bankAccountId: contractForm.bankAccountId ?? null,
           createdBy: user?.uid || null,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -1461,6 +1620,7 @@ export default function JobDetailPage() {
       depositPercentage: contractForm.depositPercentage,
       depositAmount: contractForm.depositAmount,
       bankAccountNumber: contractForm.bankAccountNumber,
+      bankAccountId: contractForm.bankAccountId ?? null,
       updatedAt: serverTimestamp(),
     };
 
@@ -3495,20 +3655,85 @@ export default function JobDetailPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Číslo účtu</Label>
-              <Input
-                value={contractForm.bankAccountNumber}
-                onChange={(e) => {
-                  setIsContractDirty(true);
-                  setContractForm((prev) => ({
-                    ...prev,
-                    bankAccountNumber: e.target.value,
-                  }));
-                }}
-                placeholder="Např. 123456789/0300 nebo IBAN"
-                disabled={isContractReadOnly}
-                className="bg-background"
-              />
+              {bankAccounts && bankAccounts.length > 1 ? (
+                <div className="space-y-2">
+                  <Label>Vybraný firemní účet</Label>
+                  <Select
+                    value={
+                      contractForm.bankAccountId &&
+                      (bankAccounts || []).some(
+                        (a) => a.id === contractForm.bankAccountId
+                      )
+                        ? contractForm.bankAccountId
+                        : "__manual__"
+                    }
+                    onValueChange={(v) => {
+                      setIsContractDirty(true);
+                      if (isContractReadOnly) return;
+                      if (v === "__manual__") {
+                        setContractForm((prev) => ({
+                          ...prev,
+                          bankAccountId: null,
+                        }));
+                        return;
+                      }
+
+                      const nextAcc = (bankAccounts || []).find(
+                        (a) => a.id === v
+                      );
+                      if (!nextAcc) return;
+
+                      const nextBankAccountNumber =
+                        formatCompanyBankAccountNumber(nextAcc);
+                      const nextContractor = deriveContractorText(
+                        companyDoc,
+                        companyNameFromDoc,
+                        nextAcc
+                      );
+
+                      setContractForm((prev) => ({
+                        ...prev,
+                        bankAccountId: v,
+                        bankAccountNumber: nextBankAccountNumber,
+                        contractor: nextContractor,
+                      }));
+                    }}
+                    disabled={isContractReadOnly}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Vyberte účet" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-white">
+                      <SelectItem value="__manual__">
+                        Vlastní / ručně
+                      </SelectItem>
+                      {(bankAccounts || []).map((a) => (
+                        <SelectItem key={a.id} value={a.id}>
+                          {formatCompanyBankAccountDisplay(a)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+
+              <div className="space-y-2">
+                <Label>Číslo účtu</Label>
+                <Input
+                  value={contractForm.bankAccountNumber}
+                  onChange={(e) => {
+                    setIsContractDirty(true);
+                    setContractForm((prev) => ({
+                      ...prev,
+                      bankAccountNumber: e.target.value,
+                      bankAccountId: null,
+                    }));
+                  }}
+                  placeholder="Např. 123456789/0300 nebo IBAN"
+                  disabled={isContractReadOnly || !!contractForm.bankAccountId}
+                  className="bg-background"
+                />
+              </div>
             </div>
 
             <div className="space-y-2">

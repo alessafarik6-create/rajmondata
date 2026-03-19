@@ -9,9 +9,29 @@ export type CompanyProfile = {
   id: string;
   companyName: string;
   ico?: string;
+  dic?: string;
+  email?: string;
+  phone?: string;
+  web?: string;
   publicProfile?: boolean;
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
+
+  /**
+   * Structured company address.
+   * Used by "Smlouva o dílo" (Dodavatel) + settings form.
+   */
+  companyAddressStreetAndNumber?: string;
+  companyAddressCity?: string;
+  companyAddressPostalCode?: string;
+  companyAddressCountry?: string;
+
+  /**
+   * Legacy/backward-compatibility fields.
+   * Kept because other parts of the app might still reference them.
+   */
+  registeredOfficeAddress?: string;
+  address?: string;
 };
 
 export function useCompany() {
