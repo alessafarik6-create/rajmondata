@@ -41,7 +41,7 @@ export function useCompany() {
   const firestore = useFirestore();
 
   const userRef = useMemoFirebase(
-    () => (user ? doc(firestore, 'users', user.uid) : null),
+    () => (user && firestore ? doc(firestore, 'users', user.uid) : null),
     [firestore, user],
   );
   const { data: profile } = useDoc<any>(userRef);
