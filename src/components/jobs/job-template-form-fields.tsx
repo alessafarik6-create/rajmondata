@@ -1,12 +1,12 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import type { JobTemplate, JobTemplateValues } from "@/lib/job-templates";
+import type { JobTemplate, JobTemplateSection, JobTemplateValues } from "@/lib/job-templates";
 import { cn } from "@/lib/utils";
 import {
   LIGHT_FORM_CONTROL_CLASS,
@@ -22,31 +22,64 @@ type Props = {
   className?: string;
 };
 
+function normalizeSections(template: JobTemplate | null | undefined): JobTemplateSection[] {
+  const raw = template?.sections;
+  if (!Array.isArray(raw)) return [];
+  return [...raw].sort((a, b) => {
+    const ao = typeof a?.order === "number" ? a.order : 0;
+    const bo = typeof b?.order === "number" ? b.order : 0;
+    return ao - bo;
+  });
+}
+
 export function JobTemplateFormFields({ template, values, onChange, className }: Props) {
   const setValue = (key: string, value: string | number | boolean | null) => {
     onChange({ ...values, [key]: value });
   };
 
+  const sections = useMemo(() => normalizeSections(template), [template]);
+
+  if (!template || typeof template !== "object") {
+    return (
+      <p className="text-sm text-slate-500">
+        Neplatná šablona — nelze zobrazit pole.
+      </p>
+    );
+  }
+
+  if (sections.length === 0) {
+    return (
+      <p className="text-sm text-slate-500">
+        Šablona zatím nemá definovaná pole (chybí sekce v datech).
+      </p>
+    );
+  }
+
   return (
     <div className={className}>
-      {template.sections
-        .sort((a, b) => a.order - b.order)
-        .map((section) => (
-          <div key={section.id} className="space-y-3 mb-6">
+      {sections.map((section) => {
+        const sectionId = section?.id ?? "section";
+        const fields = Array.isArray(section?.fields) ? section.fields : [];
+        return (
+          <div key={sectionId} className="space-y-3 mb-6">
             <h4 className="text-sm font-semibold text-slate-700 border-b border-slate-200 pb-1">
-              {section.name}
+              {section?.name ?? "Sekce"}
             </h4>
             <div className="space-y-3 pl-0">
-              {section.fields.map((field) => {
-                const key = `${section.id}_${field.id}`;
+              {fields.map((field) => {
+                if (!field || typeof field !== "object") return null;
+                const fid = field.id ?? "field";
+                const key = `${sectionId}_${fid}`;
                 const value = values[key];
+                const ftype = field.type;
+
                 return (
-                  <div key={field.id} className="space-y-1.5">
+                  <div key={fid} className="space-y-1.5">
                     <Label className="text-slate-700">
-                      {field.label}
+                      {field.label ?? fid}
                       {field.required && <span className="text-destructive ml-0.5">*</span>}
                     </Label>
-                    {field.type === "short_text" && (
+                    {ftype === "short_text" && (
                       <Input
                         value={typeof value === "string" ? value : ""}
                         onChange={(e) => setValue(key, e.target.value)}
@@ -55,7 +88,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
                         className={cn(LIGHT_FORM_CONTROL_CLASS)}
                       />
                     )}
-                    {field.type === "long_text" && (
+                    {ftype === "long_text" && (
                       <Textarea
                         value={typeof value === "string" ? value : ""}
                         onChange={(e) => setValue(key, e.target.value)}
@@ -65,17 +98,19 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
                         className={cn(LIGHT_FORM_CONTROL_CLASS)}
                       />
                     )}
-                    {field.type === "number" && (
+                    {ftype === "number" && (
                       <Input
                         type="number"
                         value={value !== null && value !== undefined ? String(value) : ""}
-                        onChange={(e) => setValue(key, e.target.value === "" ? null : Number(e.target.value))}
+                        onChange={(e) =>
+                          setValue(key, e.target.value === "" ? null : Number(e.target.value))
+                        }
                         placeholder={field.placeholder}
                         required={field.required}
                         className={cn(LIGHT_FORM_CONTROL_CLASS)}
                       />
                     )}
-                    {field.type === "measurement" && (
+                    {ftype === "measurement" && (
                       <Input
                         value={typeof value === "string" ? value : ""}
                         onChange={(e) => setValue(key, e.target.value)}
@@ -84,7 +119,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
                         className={cn(LIGHT_FORM_CONTROL_CLASS)}
                       />
                     )}
-                    {field.type === "checkbox" && (
+                    {ftype === "checkbox" && (
                       <div className="flex items-center gap-2">
                         <Checkbox
                           checked={value === true}
@@ -93,25 +128,39 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
                         <span className="text-sm text-slate-600">Ano</span>
                       </div>
                     )}
-                    {field.type === "select" && (
-                      <Select
-                        value={typeof value === "string" ? value : ""}
-                        onValueChange={(v) => setValue(key, v)}
-                        required={field.required}
-                      >
-                        <SelectTrigger className={cn(LIGHT_SELECT_TRIGGER_CLASS)}>
-                          <SelectValue placeholder={field.placeholder || "Vyberte..."} />
-                        </SelectTrigger>
-                        <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
-                          {(field.options || []).map((opt) => (
-                            <SelectItem key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    )}
-                    {field.type === "date" && (
+                    {ftype === "select" && (() => {
+                      const raw = typeof value === "string" ? value : "";
+                      const selectValue = raw.length > 0 ? raw : undefined;
+                      const options = (field.options ?? []).filter(
+                        (opt) => opt && typeof opt.value === "string" && opt.value.length > 0
+                      );
+                      if (options.length === 0) {
+                        return (
+                          <p className="text-xs text-amber-700">
+                            Pole výběru nemá žádné platné možnosti.
+                          </p>
+                        );
+                      }
+                      return (
+                        <Select
+                          value={selectValue}
+                          onValueChange={(v) => setValue(key, v)}
+                          required={field.required}
+                        >
+                          <SelectTrigger className={cn(LIGHT_SELECT_TRIGGER_CLASS)}>
+                            <SelectValue placeholder={field.placeholder || "Vyberte..."} />
+                          </SelectTrigger>
+                          <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
+                            {options.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>
+                                {opt.label ?? opt.value}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      );
+                    })()}
+                    {ftype === "date" && (
                       <Input
                         type="date"
                         value={typeof value === "string" ? value : ""}
@@ -120,7 +169,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
                         className={cn(LIGHT_FORM_CONTROL_CLASS, "[color-scheme:light]")}
                       />
                     )}
-                    {field.type === "notes" && (
+                    {ftype === "notes" && (
                       <Textarea
                         value={typeof value === "string" ? value : ""}
                         onChange={(e) => setValue(key, e.target.value)}
@@ -134,7 +183,8 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
               })}
             </div>
           </div>
-        ))}
+        );
+      })}
     </div>
   );
 }
