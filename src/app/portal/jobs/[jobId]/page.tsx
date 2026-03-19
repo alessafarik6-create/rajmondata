@@ -66,15 +66,45 @@ import {
   uploadBytes,
   getDownloadURL,
   deleteObject,
+  getBlob,
 } from "firebase/storage";
 
-type Segment = {
+type DimensionColor = "red" | "yellow" | "white" | "black" | "blue";
+
+type DimensionAnnotation = {
+  id: string;
+  type: "dimension";
   startX: number;
   startY: number;
   endX: number;
   endY: number;
   label: string;
+  color: DimensionColor;
 };
+
+type NoteAnnotation = {
+  id: string;
+  type: "note";
+  targetX: number;
+  targetY: number;
+  boxX: number;
+  boxY: number;
+  text: string;
+  color: DimensionColor;
+};
+
+type Annotation = DimensionAnnotation | NoteAnnotation;
+
+type AnnotationTool = "dimension" | "note" | "select";
+
+type DragMode =
+  | "none"
+  | "dim-start"
+  | "dim-end"
+  | "dim-move"
+  | "dim-draw"
+  | "note-target"
+  | "note-box";
 
 type WorkContractForm = {
   templateName: string;
@@ -320,9 +350,14 @@ export default function JobDetailPage() {
   const [imageForCanvas, setImageForCanvas] = useState<HTMLImageElement | null>(null);
   const [baseImageLoaded, setBaseImageLoaded] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
-  const [isDrawing, setIsDrawing] = useState(false);
-  const [segments, setSegments] = useState<Segment[]>([]);
-  const [currentSegment, setCurrentSegment] = useState<Segment | null>(null);
+  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [activeTool, setActiveTool] = useState<AnnotationTool>("dimension");
+  const [activeColor, setActiveColor] = useState<DimensionColor>("red");
+  const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
+  const [draftAnnotationId, setDraftAnnotationId] = useState<string | null>(null);
+  const [dragMode, setDragMode] = useState<DragMode>("none");
+  const [dragLastPoint, setDragLastPoint] = useState<{ x: number; y: number } | null>(null);
+  const [imageObjectUrl, setImageObjectUrl] = useState<string | null>(null);
 
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
   const [contractDialogMode, setContractDialogMode] = useState<"view" | "edit">(
@@ -378,9 +413,19 @@ export default function JobDetailPage() {
     setImageError(null);
     setImageForCanvas(null);
     setBaseImageLoaded(false);
-    setIsDrawing(false);
-    setSegments([]);
-    setCurrentSegment(null);
+    setAnnotations([]);
+    setSelectedAnnotationId(null);
+    setDraftAnnotationId(null);
+    setDragMode("none");
+    setDragLastPoint(null);
+    setImageObjectUrl((prev) => {
+      if (prev) {
+        try {
+          URL.revokeObjectURL(prev);
+        } catch {}
+      }
+      return null;
+    });
   }, []);
 
   const annotationSource = useMemo(() => {
@@ -448,6 +493,58 @@ export default function JobDetailPage() {
 
     return await getDownloadURL(ref(storage, value));
   }, []);
+
+  const colorToHex = (c: DimensionColor) => {
+    switch (c) {
+      case "red":
+        return "#ef4444";
+      case "yellow":
+        return "#facc15";
+      case "white":
+        return "#ffffff";
+      case "black":
+        return "#000000";
+      case "blue":
+        return "#3b82f6";
+      default:
+        return "#ef4444";
+    }
+  };
+
+  const createId = () =>
+    `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  const distance = (x1: number, y1: number, x2: number, y2: number) =>
+    Math.hypot(x2 - x1, y2 - y1);
+
+  const distancePointToSegment = (
+    px: number,
+    py: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number
+  ) => {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    if (dx === 0 && dy === 0) return distance(px, py, x1, y1);
+    const t = ((px - x1) * dx + (py - y1) * dy) / (dx * dx + dy * dy);
+    const clamped = Math.max(0, Math.min(1, t));
+    const cx = x1 + clamped * dx;
+    const cy = y1 + clamped * dy;
+    return distance(px, py, cx, cy);
+  };
+
+  const getScaleAwareSizes = (canvas: HTMLCanvasElement) => {
+    const longest = Math.max(canvas.width, canvas.height);
+    const scale = Math.max(1, longest / 1200);
+    const fontSize = Math.round(25 * scale);
+    const lineWidth = Math.max(6, Math.round(6 * scale));
+    const endpointRadius = Math.max(8, Math.round(8 * scale));
+    const arrowLen = Math.max(18, Math.round(18 * scale));
+    const hitRadius = Math.max(18, Math.round(18 * scale));
+    return { fontSize, lineWidth, endpointRadius, arrowLen, hitRadius };
+  };
 
   const escapeHtml = (value: string) =>
     value.replace(/[&<>"']/g, (ch) => {
@@ -703,6 +800,39 @@ export default function JobDetailPage() {
       .join("\n");
   }, [job?.description, job?.measuring, job?.measuringDetails, buildTemplateValuesText]);
 
+  const openPrintableWindow = useCallback((html: string) => {
+    const w = window.open("", "_blank");
+    if (!w) {
+      throw new Error(
+        "Popup blokováno prohlížečem. Povolit vyskakovací okna a zkuste znovu."
+      );
+    }
+
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+
+    const cleanup = () => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
+    };
+
+    // Use navigation instead of document.write to avoid DOM tree inconsistencies.
+    w.location.href = url;
+    w.focus();
+
+    // Fallback print attempt (some browsers may not reliably trigger onload for blob URLs).
+    setTimeout(() => {
+      try {
+        w.print();
+      } catch (err) {
+        console.error("[WorkContract] print failed", err);
+      } finally {
+        cleanup();
+      }
+    }, 300);
+  }, []);
+
   const prefillContractFormFromJobAndCustomer = useCallback(() => {
     const clientText = deriveClientText(customer);
     const contractorText = deriveContractorText(companyDoc, companyNameFromDoc);
@@ -953,25 +1083,7 @@ export default function JobDetailPage() {
           { merge: true }
         );
 
-        const w = window.open("", "_blank");
-        if (!w) {
-          throw new Error(
-            "Popup blokováno prohlížečem. Povolit vyskakovací okna."
-          );
-        }
-
-        w.document.open();
-        w.document.write(html);
-        w.document.close();
-        w.focus();
-
-        setTimeout(() => {
-          try {
-            w.print();
-          } catch (err) {
-            console.error("[WorkContract] print failed", err);
-          }
-        }, 200);
+        openPrintableWindow(html);
 
         toast({
           title: "PDF se připravuje",
@@ -987,7 +1099,15 @@ export default function JobDetailPage() {
         });
       }
     },
-    [firestore, companyId, jobId, user, toast, applyTemplateVariables]
+    [
+      firestore,
+      companyId,
+      jobId,
+      user,
+      toast,
+      applyTemplateVariables,
+      openPrintableWindow,
+    ]
   );
 
   const deleteWorkContract = useCallback(
@@ -1465,30 +1585,14 @@ export default function JobDetailPage() {
         { merge: true }
       );
 
-      const w = window.open("", "_blank");
-      if (!w) {
-        throw new Error(
-          "Popup blokováno prohlížečem. Povolit vyskakovací okna a zkuste znovu."
-        );
-      }
-
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-      w.focus();
-      setTimeout(() => {
-        try {
-          w.print();
-        } catch (err) {
-          console.error("[WorkContract] print failed", err);
-        }
-      }, 200);
+      openPrintableWindow(html);
 
       toast({
         title: "PDF se připravuje",
         description: "Otevřelo se tiskové okno. Uložte jako PDF.",
       });
-      setContractDialogOpen(false);
+      // Nezavíráme modal okamžitě (Radix/React může během tisku/unmountu
+      // vyhazovat chyby s DOM uzly). Uživatel může modal zavřít ručně.
     } catch (err: any) {
       console.error("[WorkContract] generatePDF failed", err);
       toast({
@@ -1508,6 +1612,7 @@ export default function JobDetailPage() {
     contractForm,
     upsertWorkContractBase,
     buildContractHtml,
+    openPrintableWindow,
   ]);
 
   useEffect(() => {
@@ -1532,7 +1637,18 @@ export default function JobDetailPage() {
         );
         if (cancelled) return;
 
-        const resolvedUrl = await resolveAnnotationImageUrl(annotationSource);
+        // Prefer Storage SDK blob -> objectUrl to avoid CORS/tainted canvas.
+        let resolvedUrl = await resolveAnnotationImageUrl(annotationSource);
+        if (photoToEdit?.storagePath || photoToEdit?.annotatedStoragePath) {
+          const storagePath =
+            photoToEdit.annotatedStoragePath || photoToEdit.storagePath;
+          if (storagePath) {
+            const blob = await getBlob(ref(storage, storagePath));
+            const objectUrl = URL.createObjectURL(blob);
+            setImageObjectUrl(objectUrl);
+            resolvedUrl = objectUrl;
+          }
+        }
         if (cancelled) return;
 
         let image: HTMLImageElement;
@@ -1590,6 +1706,8 @@ export default function JobDetailPage() {
     resolveAnnotationImageUrl,
     loadHtmlImage,
     resetAnnotationState,
+    photoToEdit?.storagePath,
+    photoToEdit?.annotatedStoragePath,
   ]);
 
   const redrawCanvas = useCallback(() => {
@@ -1602,72 +1720,136 @@ export default function JobDetailPage() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(imageForCanvas, 0, 0, canvas.width, canvas.height);
 
-    const allSegments = [...segments, ...(currentSegment ? [currentSegment] : [])];
+    const { fontSize, lineWidth, endpointRadius, arrowLen } =
+      getScaleAwareSizes(canvas);
 
-    ctx.strokeStyle = "#ff6b00";
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-
-    allSegments.forEach((seg) => {
+    const drawArrowHead = (x: number, y: number, ang: number) => {
       ctx.beginPath();
-      ctx.moveTo(seg.startX, seg.startY);
-      ctx.lineTo(seg.endX, seg.endY);
+      ctx.moveTo(x, y);
+      ctx.lineTo(
+        x - arrowLen * Math.cos(ang - Math.PI / 6),
+        y - arrowLen * Math.sin(ang - Math.PI / 6)
+      );
+      ctx.lineTo(
+        x - arrowLen * Math.cos(ang + Math.PI / 6),
+        y - arrowLen * Math.sin(ang + Math.PI / 6)
+      );
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    const drawDimension = (a: DimensionAnnotation, isSelected: boolean) => {
+      const stroke = colorToHex(a.color);
+      ctx.lineWidth = isSelected ? lineWidth + 2 : lineWidth;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = stroke;
+      ctx.fillStyle = stroke;
+
+      ctx.beginPath();
+      ctx.moveTo(a.startX, a.startY);
+      ctx.lineTo(a.endX, a.endY);
       ctx.stroke();
 
-      ctx.fillStyle = "#ff6b00";
       ctx.beginPath();
-      ctx.arc(seg.startX, seg.startY, 4, 0, Math.PI * 2);
+      ctx.arc(a.startX, a.startY, endpointRadius, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(a.endX, a.endY, endpointRadius, 0, Math.PI * 2);
       ctx.fill();
 
-      ctx.beginPath();
-      ctx.arc(seg.endX, seg.endY, 4, 0, Math.PI * 2);
-      ctx.fill();
+      const angle = Math.atan2(a.endY - a.startY, a.endX - a.startX);
+      drawArrowHead(a.startX, a.startY, angle + Math.PI);
+      drawArrowHead(a.endX, a.endY, angle);
 
-      const angle = Math.atan2(seg.endY - seg.startY, seg.endX - seg.startX);
-      const arrowLen = 12;
+      const label = (a.label || "").trim();
+      if (label) {
+        const midX = (a.startX + a.endX) / 2;
+        const midY = (a.startY + a.endY) / 2;
+        const paddingX = Math.round(fontSize * 0.6);
+        const paddingY = Math.round(fontSize * 0.45);
+        const offset = Math.round(fontSize * 0.6);
 
-      const drawArrow = (x: number, y: number, ang: number) => {
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(
-          x - arrowLen * Math.cos(ang - Math.PI / 6),
-          y - arrowLen * Math.sin(ang - Math.PI / 6)
-        );
-        ctx.moveTo(x, y);
-        ctx.lineTo(
-          x - arrowLen * Math.cos(ang + Math.PI / 6),
-          y - arrowLen * Math.sin(ang + Math.PI / 6)
-        );
-        ctx.stroke();
-      };
-
-      drawArrow(seg.startX, seg.startY, angle + Math.PI);
-      drawArrow(seg.endX, seg.endY, angle);
-
-      if (seg.label) {
-        const midX = (seg.startX + seg.endX) / 2;
-        const midY = (seg.startY + seg.endY) / 2;
-
-        const paddingX = 8;
-        const paddingY = 6;
-        const fontSize = 16;
-
-        ctx.font = `${fontSize}px sans-serif`;
-        const textWidth = ctx.measureText(seg.label).width;
+        ctx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+        ctx.textBaseline = "alphabetic";
+        const textWidth = ctx.measureText(label).width;
         const boxWidth = textWidth + paddingX * 2;
         const boxHeight = fontSize + paddingY * 2;
         const boxX = midX - boxWidth / 2;
-        const boxY = midY - boxHeight / 2;
+        const boxY = midY - boxHeight / 2 - offset;
 
-        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        ctx.fillStyle = "rgba(0,0,0,0.75)";
         ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
 
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = isSelected ? stroke : "rgba(255,255,255,0.35)";
+        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
         ctx.fillStyle = "#ffffff";
-        ctx.fillText(seg.label, boxX + paddingX, boxY + fontSize + 1);
+        ctx.fillText(label, boxX + paddingX, boxY + paddingY + fontSize);
       }
+    };
+
+    const drawNote = (a: NoteAnnotation, isSelected: boolean) => {
+      const stroke = colorToHex(a.color);
+      ctx.lineWidth = isSelected ? lineWidth + 2 : lineWidth;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = stroke;
+      ctx.fillStyle = stroke;
+
+      // Arrow from box center to target point
+      const text = (a.text || "").trim();
+      ctx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+      const paddingX = Math.round(fontSize * 0.6);
+      const paddingY = Math.round(fontSize * 0.45);
+      const maxWidth = Math.max(240, Math.round(canvas.width * 0.35));
+      const clipped = text.length > 140 ? `${text.slice(0, 140)}…` : text;
+      const measured = Math.min(ctx.measureText(clipped).width, maxWidth);
+      const boxWidth = measured + paddingX * 2;
+      const boxHeight = fontSize + paddingY * 2;
+      const boxX = a.boxX;
+      const boxY = a.boxY;
+      const cx = boxX + boxWidth / 2;
+      const cy = boxY + boxHeight / 2;
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      ctx.lineTo(a.targetX, a.targetY);
+      ctx.stroke();
+
+      const angle = Math.atan2(a.targetY - cy, a.targetX - cx);
+      drawArrowHead(a.targetX, a.targetY, angle);
+
+      ctx.fillStyle = "rgba(0,0,0,0.75)";
+      ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = isSelected ? stroke : "rgba(255,255,255,0.35)";
+      ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(clipped, boxX + paddingX, boxY + paddingY + fontSize);
+
+      // Target handle
+      ctx.fillStyle = stroke;
+      ctx.beginPath();
+      ctx.arc(a.targetX, a.targetY, endpointRadius, 0, Math.PI * 2);
+      ctx.fill();
+    };
+
+    annotations.forEach((a) => {
+      const isSelected = a.id === selectedAnnotationId;
+      if (a.type === "dimension") drawDimension(a, isSelected);
+      if (a.type === "note") drawNote(a, isSelected);
     });
-  }, [imageForCanvas, baseImageLoaded, segments, currentSegment]);
+  }, [
+    imageForCanvas,
+    baseImageLoaded,
+    annotations,
+    selectedAnnotationId,
+    colorToHex,
+    getScaleAwareSizes,
+  ]);
 
   useEffect(() => {
     redrawCanvas();
@@ -1687,107 +1869,298 @@ export default function JobDetailPage() {
     };
   };
 
-  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!imageForCanvas || !baseImageLoaded) return;
+  const hitTestAnnotation = useCallback(
+    (x: number, y: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      const { hitRadius } = getScaleAwareSizes(canvas);
 
-    const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
-    setCurrentSegment({
-      startX: pt.x,
-      startY: pt.y,
-      endX: pt.x,
-      endY: pt.y,
-      label: "",
-    });
-    setIsDrawing(true);
-  };
+      // Top-most first (last drawn)
+      for (let i = annotations.length - 1; i >= 0; i--) {
+        const a = annotations[i];
 
-  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !currentSegment || !imageForCanvas || !baseImageLoaded) return;
+        if (a.type === "dimension") {
+          const nearStart = distance(x, y, a.startX, a.startY) <= hitRadius;
+          if (nearStart) return { id: a.id, part: "dim-start" as const };
+          const nearEnd = distance(x, y, a.endX, a.endY) <= hitRadius;
+          if (nearEnd) return { id: a.id, part: "dim-end" as const };
 
-    const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
-    setCurrentSegment((prev) =>
-      prev
-        ? {
-            ...prev,
-            endX: pt.x,
-            endY: pt.y,
+          const dLine = distancePointToSegment(
+            x,
+            y,
+            a.startX,
+            a.startY,
+            a.endX,
+            a.endY
+          );
+          if (dLine <= hitRadius) return { id: a.id, part: "dim-move" as const };
+        }
+
+        if (a.type === "note") {
+          // Approximate box for hit test: use current font measurement rules.
+          const { fontSize } = getScaleAwareSizes(canvas);
+          const paddingX = Math.round(fontSize * 0.6);
+          const paddingY = Math.round(fontSize * 0.45);
+          const maxWidth = Math.max(240, Math.round(canvas.width * 0.35));
+          const text = (a.text || "").trim();
+          const clipped = text.length > 140 ? `${text.slice(0, 140)}…` : text;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+            const measured = Math.min(ctx.measureText(clipped).width, maxWidth);
+            const boxW = measured + paddingX * 2;
+            const boxH = fontSize + paddingY * 2;
+            const inBox =
+              x >= a.boxX &&
+              x <= a.boxX + boxW &&
+              y >= a.boxY &&
+              y <= a.boxY + boxH;
+            if (inBox) return { id: a.id, part: "note-box" as const };
           }
-        : prev
-    );
-  };
 
-  const finishSegment = useCallback(() => {
-    if (!currentSegment) return;
+          const nearTarget = distance(x, y, a.targetX, a.targetY) <= hitRadius;
+          if (nearTarget) return { id: a.id, part: "note-target" as const };
+        }
+      }
 
-    const label = window.prompt("Zadejte rozměr (např. 1200 mm):") || "";
-    setIsDrawing(false);
+      return null;
+    },
+    [annotations]
+  );
 
-    if (!label.trim()) {
-      setCurrentSegment(null);
+  const updateSelectedColor = useCallback(
+    (newColor: DimensionColor) => {
+      setActiveColor(newColor);
+      if (!selectedAnnotationId) return;
+      setAnnotations((prev) =>
+        prev.map((a) =>
+          a.id === selectedAnnotationId ? { ...a, color: newColor } : a
+        )
+      );
+    },
+    [selectedAnnotationId]
+  );
+
+  const editSelectedText = useCallback(() => {
+    if (!selectedAnnotationId) return;
+    const a = annotations.find((x) => x.id === selectedAnnotationId);
+    if (!a) return;
+    if (a.type === "dimension") {
+      const next = window.prompt("Upravit kótu:", a.label || "") ?? null;
+      if (next === null) return;
+      setAnnotations((prev) =>
+        prev.map((x) =>
+          x.id === a.id && x.type === "dimension"
+            ? { ...x, label: next.trim() }
+            : x
+        )
+      );
+      return;
+    }
+    if (a.type === "note") {
+      const next = window.prompt("Upravit poznámku:", a.text || "") ?? null;
+      if (next === null) return;
+      setAnnotations((prev) =>
+        prev.map((x) =>
+          x.id === a.id && x.type === "note" ? { ...x, text: next.trim() } : x
+        )
+      );
+    }
+  }, [annotations, selectedAnnotationId]);
+
+  const deleteSelectedAnnotation = useCallback(() => {
+    if (!selectedAnnotationId) return;
+    setAnnotations((prev) => prev.filter((a) => a.id !== selectedAnnotationId));
+    setSelectedAnnotationId(null);
+    setDraftAnnotationId(null);
+    setDragMode("none");
+    setDragLastPoint(null);
+  }, [selectedAnnotationId]);
+
+  const undoLast = useCallback(() => {
+    setAnnotations((prev) => prev.slice(0, -1));
+    setSelectedAnnotationId(null);
+    setDraftAnnotationId(null);
+    setDragMode("none");
+    setDragLastPoint(null);
+  }, []);
+
+  const clearAllAnnotations = useCallback(() => {
+    setAnnotations([]);
+    setSelectedAnnotationId(null);
+    setDraftAnnotationId(null);
+    setDragMode("none");
+    setDragLastPoint(null);
+  }, []);
+
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!imageForCanvas || !baseImageLoaded) return;
+    if (!canvasRef.current) return;
+    e.preventDefault();
+
+    const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
+    const hit = hitTestAnnotation(pt.x, pt.y);
+
+    if (activeTool === "dimension") {
+      if (hit) {
+        setSelectedAnnotationId(hit.id);
+        setDraftAnnotationId(hit.id);
+        setDragMode(hit.part);
+        setDragLastPoint(pt);
+        return;
+      }
+
+      const id = createId();
+      const a: DimensionAnnotation = {
+        id,
+        type: "dimension",
+        startX: pt.x,
+        startY: pt.y,
+        endX: pt.x,
+        endY: pt.y,
+        label: "",
+        color: activeColor,
+      };
+      setAnnotations((prev) => [...prev, a]);
+      setSelectedAnnotationId(id);
+      setDraftAnnotationId(id);
+      setDragMode("dim-draw");
+      setDragLastPoint(pt);
       return;
     }
 
-    setSegments((prev) => [
-      ...prev,
-      {
-        ...currentSegment,
-        label: label.trim(),
-      },
-    ]);
-    setCurrentSegment(null);
-  }, [currentSegment]);
+    if (activeTool === "note") {
+      if (hit) {
+        setSelectedAnnotationId(hit.id);
+        setDraftAnnotationId(hit.id);
+        setDragMode(hit.part);
+        setDragLastPoint(pt);
+        return;
+      }
 
-  const handleCanvasMouseUp = () => {
-    if (!isDrawing || !currentSegment || !imageForCanvas || !baseImageLoaded) return;
-    finishSegment();
+      const text = (window.prompt("Zadejte poznámku:") || "").trim();
+      if (!text) return;
+      const id = createId();
+      const canvas = canvasRef.current;
+      const { fontSize } = getScaleAwareSizes(canvas);
+      const offset = Math.round(fontSize * 2);
+      const note: NoteAnnotation = {
+        id,
+        type: "note",
+        targetX: pt.x,
+        targetY: pt.y,
+        boxX: Math.max(0, pt.x + offset),
+        boxY: Math.max(0, pt.y - offset),
+        text,
+        color: activeColor,
+      };
+      setAnnotations((prev) => [...prev, note]);
+      setSelectedAnnotationId(id);
+      setDraftAnnotationId(id);
+      setDragMode("note-box");
+      setDragLastPoint(pt);
+      return;
+    }
+
+    // select tool
+    if (hit) {
+      setSelectedAnnotationId(hit.id);
+      setDraftAnnotationId(hit.id);
+      setDragMode(hit.part);
+      setDragLastPoint(pt);
+    } else {
+      setSelectedAnnotationId(null);
+      setDraftAnnotationId(null);
+      setDragMode("none");
+      setDragLastPoint(null);
+    }
   };
 
-  const handleCanvasMouseLeave = () => {
-    if (!isDrawing || !currentSegment || !imageForCanvas || !baseImageLoaded) return;
-    finishSegment();
-  };
-
-  const handleCanvasTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!imageForCanvas || !baseImageLoaded) return;
+    if (!canvasRef.current) return;
+    if (dragMode === "none") return;
+    if (!draftAnnotationId) return;
+    if (!dragLastPoint) return;
     e.preventDefault();
 
-    const touch = e.touches[0];
-    if (!touch) return;
+    const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
+    const dx = pt.x - dragLastPoint.x;
+    const dy = pt.y - dragLastPoint.y;
 
-    const pt = getCanvasCoordsFromClient(touch.clientX, touch.clientY);
-    setCurrentSegment({
-      startX: pt.x,
-      startY: pt.y,
-      endX: pt.x,
-      endY: pt.y,
-      label: "",
-    });
-    setIsDrawing(true);
-  };
+    setAnnotations((prev) =>
+      prev.map((a) => {
+        if (a.id !== draftAnnotationId) return a;
 
-  const handleCanvasTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !currentSegment || !imageForCanvas || !baseImageLoaded) return;
-    e.preventDefault();
-
-    const touch = e.touches[0];
-    if (!touch) return;
-
-    const pt = getCanvasCoordsFromClient(touch.clientX, touch.clientY);
-    setCurrentSegment((prev) =>
-      prev
-        ? {
-            ...prev,
-            endX: pt.x,
-            endY: pt.y,
+        if (a.type === "dimension") {
+          if (dragMode === "dim-draw" || dragMode === "dim-end") {
+            return { ...a, endX: pt.x, endY: pt.y };
           }
-        : prev
+          if (dragMode === "dim-start") {
+            return { ...a, startX: pt.x, startY: pt.y };
+          }
+          if (dragMode === "dim-move") {
+            return {
+              ...a,
+              startX: a.startX + dx,
+              startY: a.startY + dy,
+              endX: a.endX + dx,
+              endY: a.endY + dy,
+            };
+          }
+        }
+
+        if (a.type === "note") {
+          if (dragMode === "note-target") {
+            return { ...a, targetX: pt.x, targetY: pt.y };
+          }
+          if (dragMode === "note-box") {
+            return { ...a, boxX: a.boxX + dx, boxY: a.boxY + dy };
+          }
+        }
+
+        return a;
+      })
     );
+
+    setDragLastPoint(pt);
   };
 
-  const handleCanvasTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing || !currentSegment || !imageForCanvas || !baseImageLoaded) return;
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!imageForCanvas || !baseImageLoaded) return;
+    if (!draftAnnotationId) {
+      setDragMode("none");
+      setDragLastPoint(null);
+      return;
+    }
     e.preventDefault();
-    finishSegment();
+
+    const a = annotations.find((x) => x.id === draftAnnotationId);
+    if (a?.type === "dimension" && dragMode === "dim-draw") {
+      // If it was just a tap, discard.
+      const len = distance(a.startX, a.startY, a.endX, a.endY);
+      if (len < 8) {
+        setAnnotations((prev) => prev.filter((x) => x.id !== a.id));
+        setSelectedAnnotationId(null);
+        setDraftAnnotationId(null);
+        setDragMode("none");
+        setDragLastPoint(null);
+        return;
+      }
+      const label = window.prompt("Zadejte rozměr (např. 1200 mm):", a.label) ?? null;
+      if (label !== null) {
+        setAnnotations((prev) =>
+          prev.map((x) =>
+            x.id === a.id && x.type === "dimension"
+              ? { ...x, label: label.trim() }
+              : x
+          )
+        );
+      }
+    }
+
+    setDragMode("none");
+    setDragLastPoint(null);
   };
 
   const handlePhotoUpload = async (file: File) => {
@@ -1872,123 +2245,170 @@ export default function JobDetailPage() {
     ctx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
     ctx.drawImage(imageForCanvas, 0, 0);
 
-    segments.forEach((seg) => {
-      ctx.strokeStyle = "#ff6b00";
-      ctx.fillStyle = "#ff6b00";
-      ctx.lineWidth = 3;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
+    const drawAll = (targetCtx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
+      const { fontSize, lineWidth, endpointRadius, arrowLen } =
+        getScaleAwareSizes(canvas);
 
-      ctx.beginPath();
-      ctx.moveTo(seg.startX, seg.startY);
-      ctx.lineTo(seg.endX, seg.endY);
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc(seg.startX, seg.startY, 4, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.arc(seg.endX, seg.endY, 4, 0, Math.PI * 2);
-      ctx.fill();
-
-      const angle = Math.atan2(seg.endY - seg.startY, seg.endX - seg.startX);
-      const arrowLen = 12;
-
-      const drawArrow = (x: number, y: number, ang: number) => {
-        ctx.beginPath();
-        ctx.moveTo(x, y);
-        ctx.lineTo(
+      const drawArrowHead = (x: number, y: number, ang: number, fill: string) => {
+        targetCtx.fillStyle = fill;
+        targetCtx.beginPath();
+        targetCtx.moveTo(x, y);
+        targetCtx.lineTo(
           x - arrowLen * Math.cos(ang - Math.PI / 6),
           y - arrowLen * Math.sin(ang - Math.PI / 6)
         );
-        ctx.moveTo(x, y);
-        ctx.lineTo(
+        targetCtx.lineTo(
           x - arrowLen * Math.cos(ang + Math.PI / 6),
           y - arrowLen * Math.sin(ang + Math.PI / 6)
         );
-        ctx.stroke();
+        targetCtx.closePath();
+        targetCtx.fill();
       };
 
-      drawArrow(seg.startX, seg.startY, angle + Math.PI);
-      drawArrow(seg.endX, seg.endY, angle);
+      annotations.forEach((a) => {
+        const stroke = colorToHex(a.color);
+        targetCtx.lineWidth = lineWidth;
+        targetCtx.lineCap = "round";
+        targetCtx.lineJoin = "round";
+        targetCtx.strokeStyle = stroke;
+        targetCtx.fillStyle = stroke;
 
-      const midX = (seg.startX + seg.endX) / 2;
-      const midY = (seg.startY + seg.endY) / 2;
+        if (a.type === "dimension") {
+          targetCtx.beginPath();
+          targetCtx.moveTo(a.startX, a.startY);
+          targetCtx.lineTo(a.endX, a.endY);
+          targetCtx.stroke();
 
-      ctx.font = "20px sans-serif";
-      const paddingX = 10;
-      const paddingY = 8;
-      const textWidth = ctx.measureText(seg.label).width;
-      const boxWidth = textWidth + paddingX * 2;
-      const boxHeight = 20 + paddingY * 2;
-      const boxX = midX - boxWidth / 2;
-      const boxY = midY - boxHeight / 2;
+          targetCtx.beginPath();
+          targetCtx.arc(a.startX, a.startY, endpointRadius, 0, Math.PI * 2);
+          targetCtx.fill();
+          targetCtx.beginPath();
+          targetCtx.arc(a.endX, a.endY, endpointRadius, 0, Math.PI * 2);
+          targetCtx.fill();
 
-      ctx.fillStyle = "rgba(0,0,0,0.75)";
-      ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+          const angle = Math.atan2(a.endY - a.startY, a.endX - a.startX);
+          drawArrowHead(a.startX, a.startY, angle + Math.PI, stroke);
+          drawArrowHead(a.endX, a.endY, angle, stroke);
 
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(seg.label, boxX + paddingX, boxY + 22);
-    });
+          const label = (a.label || "").trim();
+          if (label) {
+            const midX = (a.startX + a.endX) / 2;
+            const midY = (a.startY + a.endY) / 2;
+            const paddingX = Math.round(fontSize * 0.6);
+            const paddingY = Math.round(fontSize * 0.45);
+            const offset = Math.round(fontSize * 0.6);
+            targetCtx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+            const textWidth = targetCtx.measureText(label).width;
+            const boxWidth = textWidth + paddingX * 2;
+            const boxHeight = fontSize + paddingY * 2;
+            const boxX = midX - boxWidth / 2;
+            const boxY = midY - boxHeight / 2 - offset;
 
-    exportCanvas.toBlob(
-      async (blob) => {
-        if (!blob) {
-          toast({
-            variant: "destructive",
-            title: "Chyba při exportu",
-            description: "Upravenou fotografii se nepodařilo exportovat.",
-          });
-          return;
+            targetCtx.fillStyle = "rgba(0,0,0,0.75)";
+            targetCtx.fillRect(boxX, boxY, boxWidth, boxHeight);
+            targetCtx.lineWidth = 2;
+            targetCtx.strokeStyle = stroke;
+            targetCtx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+            targetCtx.fillStyle = "#ffffff";
+            targetCtx.fillText(label, boxX + paddingX, boxY + paddingY + fontSize);
+          }
         }
 
-        try {
-          const annotatedPath = `${
-            photoToEdit.storagePath || `job-photos/${companyId}/${jobId}/${photoToEdit.id}`
-          }-annotated.png`;
+        if (a.type === "note") {
+          const text = (a.text || "").trim();
+          targetCtx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+          const paddingX = Math.round(fontSize * 0.6);
+          const paddingY = Math.round(fontSize * 0.45);
+          const maxWidth = Math.max(240, Math.round(canvas.width * 0.35));
+          const clipped = text.length > 140 ? `${text.slice(0, 140)}…` : text;
+          const measured = Math.min(targetCtx.measureText(clipped).width, maxWidth);
+          const boxWidth = measured + paddingX * 2;
+          const boxHeight = fontSize + paddingY * 2;
+          const boxX = a.boxX;
+          const boxY = a.boxY;
+          const cx = boxX + boxWidth / 2;
+          const cy = boxY + boxHeight / 2;
 
-          const annotatedRef = ref(storage, annotatedPath);
-          await uploadBytes(annotatedRef, blob);
-          const annotatedUrl = await getDownloadURL(annotatedRef);
+          targetCtx.beginPath();
+          targetCtx.moveTo(cx, cy);
+          targetCtx.lineTo(a.targetX, a.targetY);
+          targetCtx.stroke();
+          const angle = Math.atan2(a.targetY - cy, a.targetX - cx);
+          drawArrowHead(a.targetX, a.targetY, angle, stroke);
 
-          await updateDoc(
-            doc(
-              firestore,
-              "companies",
-              companyId,
-              "jobs",
-              jobId as string,
-              "photos",
-              photoToEdit.id
-            ),
-            {
-              originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
-              annotatedImageUrl: annotatedUrl,
-              annotatedStoragePath: annotatedPath,
-              updatedAt: serverTimestamp(),
-            }
-          );
+          targetCtx.fillStyle = "rgba(0,0,0,0.75)";
+          targetCtx.fillRect(boxX, boxY, boxWidth, boxHeight);
+          targetCtx.lineWidth = 2;
+          targetCtx.strokeStyle = stroke;
+          targetCtx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+          targetCtx.fillStyle = "#ffffff";
+          targetCtx.fillText(clipped, boxX + paddingX, boxY + paddingY + fontSize);
 
-          toast({
-            title: "Fotografie upravena",
-            description: "Rozměry byly uloženy.",
-          });
-
-          setEditorOpen(false);
-          setPhotoToEdit(null);
-          resetAnnotationState();
-        } catch (err) {
-          console.error("[JobDetailPage] saving annotated photo failed", err);
-          toast({
-            variant: "destructive",
-            title: "Chyba",
-            description: "Upravenou fotografii se nepodařilo uložit.",
-          });
+          targetCtx.fillStyle = stroke;
+          targetCtx.beginPath();
+          targetCtx.arc(a.targetX, a.targetY, endpointRadius, 0, Math.PI * 2);
+          targetCtx.fill();
         }
-      },
-      "image/png"
-    );
+      });
+    };
+
+    drawAll(ctx, exportCanvas);
+
+    const canvasToBlob = (canvas: HTMLCanvasElement): Promise<Blob> =>
+      new Promise((resolve, reject) => {
+        canvas.toBlob(
+          (b) => (b ? resolve(b) : reject(new Error("Canvas export failed."))),
+          "image/png"
+        );
+      });
+
+    try {
+      const blob = await canvasToBlob(exportCanvas);
+
+      const annotatedPath = `${
+        photoToEdit.storagePath || `job-photos/${companyId}/${jobId}/${photoToEdit.id}`
+      }-annotated.png`;
+
+      const annotatedRef = ref(storage, annotatedPath);
+      await uploadBytes(annotatedRef, blob);
+      const annotatedUrl = await getDownloadURL(annotatedRef);
+
+      await updateDoc(
+        doc(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          jobId as string,
+          "photos",
+          photoToEdit.id
+        ),
+        {
+          originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+          annotatedImageUrl: annotatedUrl,
+          annotatedStoragePath: annotatedPath,
+          updatedAt: serverTimestamp(),
+        }
+      );
+
+      toast({
+        title: "Fotografie upravena",
+        description: "Kóty a poznámky byly uloženy.",
+      });
+
+      setEditorOpen(false);
+      setPhotoToEdit(null);
+      resetAnnotationState();
+    } catch (err: any) {
+      console.error("[JobDetailPage] saving annotated photo failed", err);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description:
+          err?.message ||
+          "Upravenou fotografii se nepodařilo uložit (možný CORS/canvas problém).",
+      });
+    }
   };
 
   const handleDeleteJob = async () => {
@@ -2039,6 +2459,13 @@ export default function JobDetailPage() {
       });
     }
   };
+
+  const canvasCursor = useMemo(() => {
+    if (dragMode !== "none") return "grabbing";
+    if (activeTool === "dimension") return "crosshair";
+    if (activeTool === "note") return "copy";
+    return "default";
+  }, [activeTool, dragMode]);
 
   const openEditJobDialog = useCallback(() => {
     if (!isAdmin) {
@@ -2487,9 +2914,9 @@ export default function JobDetailPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {job.assignedEmployeeIds?.map((empId: string, i: number) => (
+                {job.assignedEmployeeIds?.map((empId: string) => (
                   <div
-                    key={i}
+                    key={empId}
                     className="flex items-center justify-between p-3 rounded-lg bg-background/50 border border-border/50"
                   >
                     <div className="flex items-center gap-3">
@@ -3203,24 +3630,106 @@ export default function JobDetailPage() {
           </DialogHeader>
 
           <div className="flex-1 flex flex-col space-y-4 overflow-hidden">
-            <p className="text-sm text-muted-foreground">
-              Klikněte nebo se dotkněte a táhněte pro nakreslení přímky, poté
-              zadejte rozměr. Můžete přidat více rozměrů.
-            </p>
+            <div className="flex flex-col gap-2">
+              <p className="text-sm text-muted-foreground">
+                Režimy: kóty (tažením), poznámka (klepnutím vložíte šipku na bod
+                + text), výběr (úpravy/přesun). Vše funguje i dotykem.
+              </p>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant={activeTool === "dimension" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("dimension")}
+                >
+                  Kóty
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeTool === "note" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("note")}
+                >
+                  Poznámka
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeTool === "select" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("select")}
+                >
+                  Výběr
+                </Button>
+
+                <Separator orientation="vertical" className="h-6 mx-1" />
+
+                {(
+                  [
+                    { id: "red", label: "Červená" },
+                    { id: "yellow", label: "Žlutá" },
+                    { id: "white", label: "Bílá" },
+                    { id: "black", label: "Černá" },
+                    { id: "blue", label: "Modrá" },
+                  ] as const
+                ).map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    aria-label={c.label}
+                    title={c.label}
+                    onClick={() => updateSelectedColor(c.id)}
+                    className={`h-9 w-9 rounded-md border ${
+                      activeColor === c.id
+                        ? "ring-2 ring-primary ring-offset-2"
+                        : ""
+                    }`}
+                    style={{
+                      backgroundColor: colorToHex(c.id),
+                      borderColor:
+                        c.id === "white" ? "rgba(0,0,0,0.35)" : "transparent",
+                    }}
+                  />
+                ))}
+
+                <Separator orientation="vertical" className="h-6 mx-1" />
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={editSelectedText}
+                  disabled={!selectedAnnotationId}
+                >
+                  Upravit text
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={deleteSelectedAnnotation}
+                  disabled={!selectedAnnotationId}
+                >
+                  Smazat
+                </Button>
+              </div>
+            </div>
 
             <div className="relative flex-1 overflow-auto border rounded-md bg-black/80 flex items-center justify-center">
               <canvas
                 ref={setCanvasNode}
-                onMouseDown={handleCanvasMouseDown}
-                onMouseMove={handleCanvasMouseMove}
-                onMouseUp={handleCanvasMouseUp}
-                onMouseLeave={handleCanvasMouseLeave}
-                onTouchStart={handleCanvasTouchStart}
-                onTouchMove={handleCanvasTouchMove}
-                onTouchEnd={handleCanvasTouchEnd}
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={handleCanvasPointerUp}
                 className={`max-w-full max-h-full touch-none ${
                   baseImageLoaded ? "opacity-100" : "opacity-0"
                 }`}
+                style={{ cursor: canvasCursor }}
               />
 
               {!baseImageLoaded && !imageError && (
@@ -3248,8 +3757,8 @@ export default function JobDetailPage() {
                   variant="outline"
                   size="sm"
                   className="min-h-[36px]"
-                  onClick={() => setSegments((prev) => prev.slice(0, -1))}
-                  disabled={!segments.length}
+                  onClick={undoLast}
+                  disabled={!annotations.length}
                 >
                   Zpět
                 </Button>
@@ -3259,11 +3768,8 @@ export default function JobDetailPage() {
                   variant="outline"
                   size="sm"
                   className="min-h-[36px]"
-                  onClick={() => {
-                    setSegments([]);
-                    setCurrentSegment(null);
-                  }}
-                  disabled={!segments.length}
+                  onClick={clearAllAnnotations}
+                  disabled={!annotations.length}
                 >
                   Vymazat vše
                 </Button>
