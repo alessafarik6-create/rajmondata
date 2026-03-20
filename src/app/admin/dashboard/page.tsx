@@ -15,7 +15,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Loader2 } from "lucide-react";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
-
+console.log("projectId", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
+console.log("user", user);
+console.log("company", company);
 type Company = {
   id: string;
   name: string;
