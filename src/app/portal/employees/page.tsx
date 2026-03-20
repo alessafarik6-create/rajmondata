@@ -20,7 +20,6 @@ import {
   Trash2,
   Edit2,
   DollarSign,
-  AlertTriangle,
   KeyRound,
   RefreshCw,
   QrCode,

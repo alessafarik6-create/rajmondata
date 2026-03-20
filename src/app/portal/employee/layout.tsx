@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { Loader2 } from "lucide-react";
+import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 
 const DEBUG_EMPLOYEE_LAYOUT = process.env.NODE_ENV === "development";
 
@@ -34,6 +35,12 @@ export default function EmployeeSectionLayout({
       Array.isArray(profile?.globalRoles) &&
       profile.globalRoles.includes("super_admin")
     );
+
+  useEffect(() => {
+    releaseDocumentModalLocks();
+    const id = window.requestAnimationFrame(() => releaseDocumentModalLocks());
+    return () => window.cancelAnimationFrame(id);
+  }, [pathname]);
 
   useEffect(() => {
     if (DEBUG_EMPLOYEE_LAYOUT && typeof window !== "undefined") {

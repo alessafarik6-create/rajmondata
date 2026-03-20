@@ -11,6 +11,7 @@ import { ensureUserProfile } from "@/lib/seed-firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 
 const REDIRECT_GRACE_MS = 2500;
 
@@ -32,10 +33,12 @@ export default function PortalLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authResolved, setAuthResolved] = useState(false);
 
-  /** Zavření až po navigaci — vyhneme se kolizi s portálem Sheet při změně route. */
+  /** Po změně route zavřít mobilní menu a uvolnit případné zámky od Radix modalu. */
   useEffect(() => {
-    const id = window.setTimeout(() => setMobileMenuOpen(false), 0);
-    return () => window.clearTimeout(id);
+    setMobileMenuOpen(false);
+    releaseDocumentModalLocks();
+    const id = window.requestAnimationFrame(() => releaseDocumentModalLocks());
+    return () => window.cancelAnimationFrame(id);
   }, [pathname]);
 
   const userRef = useMemoFirebase(
@@ -50,6 +53,33 @@ export default function PortalLayout({
       profile.globalRoles.includes("super_admin"));
 
   const isEmployeePortalPath = pathname.startsWith("/portal/employee");
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    console.log("[PortalLayout] modal / loading", {
+      pathname,
+      mobileMenuOpen,
+      isProfileLoading,
+      isUserLoading,
+      isSeeding,
+      isPortalEmployeeOnly,
+      isEmployeePortalPath,
+    });
+  }, [
+    pathname,
+    mobileMenuOpen,
+    isProfileLoading,
+    isUserLoading,
+    isSeeding,
+    isPortalEmployeeOnly,
+    isEmployeePortalPath,
+  ]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) {
+      releaseDocumentModalLocks();
+    }
+  }, [mobileMenuOpen]);
 
   useEffect(() => {
     if (!profile || isProfileLoading) return;
@@ -224,18 +254,33 @@ export default function PortalLayout({
         <SidebarComponent />
       </aside>
 
-      <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen} modal>
-        <SheetContent
-          side="left"
-          className="w-[min(280px,85vw)] max-w-full p-0 bg-sidebar border-sidebar-border rounded-r-lg [&>button]:text-sidebar-foreground [&>button]:hover:bg-sidebar-accent [&>button]:hover:text-sidebar-primary"
+      {/* Sheet jen když je menu otevřené — jinak žádný portal/overlay v DOM (řeší „uvíznutý“ tmavý backdrop). */}
+      {mobileMenuOpen ? (
+        <Sheet
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setMobileMenuOpen(false);
+              releaseDocumentModalLocks();
+            }
+          }}
+          modal
         >
-          <div className="flex flex-col h-full overflow-y-auto">
-            <SidebarComponent
-              mobileSheetClose={() => setMobileMenuOpen(false)}
-            />
-          </div>
-        </SheetContent>
-      </Sheet>
+          <SheetContent
+            side="left"
+            className="w-[min(280px,85vw)] max-w-full p-0 bg-sidebar border-sidebar-border rounded-r-lg [&>button]:text-sidebar-foreground [&>button]:hover:bg-sidebar-accent [&>button]:hover:text-sidebar-primary"
+          >
+            <div className="flex flex-col h-full overflow-y-auto">
+              <SidebarComponent
+                mobileSheetClose={() => {
+                  setMobileMenuOpen(false);
+                  releaseDocumentModalLocks();
+                }}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
 
       <div
         className="flex-1 flex flex-col min-w-0 min-h-screen bg-slate-100 text-slate-900"
