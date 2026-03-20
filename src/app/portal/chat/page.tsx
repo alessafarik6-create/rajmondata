@@ -34,11 +34,7 @@ export default function ChatPage() {
         <ScrollArea className="flex-1">
           <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground">
             <MessageSquare className="h-10 w-10 opacity-40" />
-            <p>Zatím nemáte žádné zprávy ani konverzace.</p>
-            <p className="text-xs">
-              Po založení prvního týmového kanálu nebo zprávy se kontakty
-              zobrazí zde.
-            </p>
+            <p>Zatím nemáte žádné zprávy.</p>
           </div>
         </ScrollArea>
       </Card>
@@ -47,12 +43,9 @@ export default function ChatPage() {
         <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
           <MessageSquare className="h-12 w-12 text-muted-foreground opacity-30" />
           <div className="max-w-md space-y-2">
-            <h3 className="text-lg font-semibold text-foreground">
-              Vyberte konverzaci
-            </h3>
+            <h3 className="text-lg font-semibold text-foreground">Zprávy</h3>
             <p className="text-sm text-muted-foreground">
-              Zatím není k dispozici žádný obsah chatu. Žádné ukázkové zprávy se
-              neukládají – pracovní prostor je po registraci prázdný.
+              Zatím nemáte žádné zprávy.
             </p>
           </div>
         </div>

@@ -138,7 +138,8 @@ export default function ReportsPage() {
   );
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
-  const { data: employees } = useCollection(employeesQuery);
+  const { data: employees, isLoading: isEmployeesLoading } =
+    useCollection(employeesQuery);
   const { data: financeRecords, isLoading: isFinanceLoading } =
     useCollection(financeQuery);
 
@@ -291,7 +292,7 @@ export default function ReportsPage() {
     );
   }
 
-  if (isJobsLoading || isFinanceLoading) {
+  if (isJobsLoading || isFinanceLoading || isEmployeesLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-10 w-10 animate-spin text-primary" />
@@ -300,6 +301,11 @@ export default function ReportsPage() {
   }
 
   const orgLabel = companyName || companyId;
+
+  const hasAnyReportingBasics =
+    (financeRecords?.length ?? 0) > 0 ||
+    (jobs?.length ?? 0) > 0 ||
+    (employees?.length ?? 0) > 0;
 
   return (
     <div className="space-y-8">
@@ -330,6 +336,16 @@ export default function ReportsPage() {
           </Button>
         </div>
       </div>
+
+      {!hasAnyReportingBasics && (
+        <Alert className="border-slate-200 bg-slate-50">
+          <AlertTitle>Zatím nejsou dostupná žádná data</AlertTitle>
+          <AlertDescription>
+            Po přidání zakázek, záznamů ve financích nebo zaměstnanců se zde
+            zobrazí přehledy.
+          </AlertDescription>
+        </Alert>
+      )}
 
       <Tabs defaultValue="overview" className="w-full">
         <TabsList className="mb-6 rounded-lg border border-slate-200 bg-white shadow-sm">
@@ -468,7 +484,7 @@ export default function ReportsPage() {
                 </ResponsiveContainer>
               ) : (
                 <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-center text-sm text-muted-foreground">
-                  Zatím nejsou žádné měsíční finanční údaje k zobrazení.
+                  Zatím nejsou dostupná žádná data.
                 </div>
               )}
             </CardContent>

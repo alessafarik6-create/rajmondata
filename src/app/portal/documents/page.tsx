@@ -276,7 +276,7 @@ function DocumentTable({ data, isLoading, onDelete, title }: { data: any[], isLo
             </TableBody>
           </Table>
         ) : (
-          <div className="text-center py-20 text-muted-foreground">Zatím nemáte žádné dokumenty v kategorii {title}.</div>
+          <div className="text-center py-20 text-muted-foreground">Zatím nemáte žádné dokumenty.</div>
         )}
       </CardContent>
     </Card>

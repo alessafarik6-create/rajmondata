@@ -208,7 +208,7 @@ export default function CustomerDetailPage() {
               ) : (
                 <div className="text-center py-12 text-muted-foreground border-2 border-dashed border-border rounded-xl">
                   <Briefcase className="w-8 h-8 mx-auto mb-2 opacity-20" />
-                  <p>Tento zákazník zatím nemá žádné zakázky.</p>
+                  <p>Zatím nemáte žádné zakázky.</p>
                 </div>
               )}
             </CardContent>

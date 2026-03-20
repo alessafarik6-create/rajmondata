@@ -211,7 +211,9 @@ export default function CompanyDashboard() {
             </CardHeader>
             <CardContent>
               <div className="portal-kpi-value">—</div>
-              <p className="portal-kpi-label">Žádná data</p>
+              <p className="portal-kpi-label">
+                Zatím nejsou k dispozici žádná data
+              </p>
             </CardContent>
           </Card>
 
@@ -223,7 +225,9 @@ export default function CompanyDashboard() {
             </CardHeader>
             <CardContent>
               <div className="portal-kpi-value">—</div>
-              <p className="portal-kpi-label">Žádná data</p>
+              <p className="portal-kpi-label">
+                Zatím nejsou k dispozici žádná data
+              </p>
             </CardContent>
           </Card>
         </div>
@@ -316,7 +320,7 @@ export default function CompanyDashboard() {
                 <div className="portal-kpi-value">{attendanceTodayCount}</div>
                 <p className="portal-kpi-label">
                   {attendanceTodayCount === 0
-                    ? "Zatím žádné záznamy docházky na dnešek"
+                    ? "Zatím nejsou záznamy docházky"
                     : "Záznamy docházky za dnešek"}
                 </p>
               </CardContent>
@@ -336,8 +340,8 @@ export default function CompanyDashboard() {
                   </div>
                   <p className="portal-kpi-label">
                     {monthlyRevenueCzk === 0
-                      ? "Podle příjmových dokladů ve finančním modulu"
-                      : "Součet příjmů v aktuálním měsíci"}
+                      ? "Zatím nejsou k dispozici žádná data"
+                      : "Součet příjmů v aktuálním měsíci z dokladů"}
                   </p>
                 </CardContent>
               </Card>
@@ -455,8 +459,7 @@ export default function CompanyDashboard() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Zatím nemáte žádnou zaznamenanou aktivitu. Po začátku práce se zde
-                budou zobrazovat reálné události z aplikace.
+                Zatím nejsou k dispozici žádná data.
               </p>
             </CardContent>
           </Card>

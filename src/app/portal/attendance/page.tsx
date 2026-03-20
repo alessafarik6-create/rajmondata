@@ -36,6 +36,7 @@ import {
   useDoc,
   useMemoFirebase,
   useCollection,
+  useCompany,
 } from "@/firebase";
 import {
   doc,
@@ -76,12 +77,14 @@ export default function AttendancePage() {
   }, []);
 
   const userRef = useMemoFirebase(
-    () => (user ? doc(firestore, "users", user.uid) : null),
+    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
   );
 
   const { data: profile } = useDoc(userRef);
   const companyId = profile?.companyId;
+  const { companyName } = useCompany();
+  const orgLabel = companyName || companyId || "vaší organizace";
 
   const attendanceQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -170,7 +173,7 @@ export default function AttendancePage() {
           </h1>
           <div className="portal-page-description">
             Pracovní prostor:{" "}
-            <span className="text-primary font-semibold">{companyId}</span>
+            <span className="font-semibold text-primary">{orgLabel}</span>
           </div>
         </div>
 
@@ -433,7 +436,7 @@ export default function AttendancePage() {
               <CardHeader>
                 <CardTitle>Celkový přehled týmu</CardTitle>
                 <CardDescription>
-                  Poslední aktivity všech zaměstnanců organizace {companyId}
+                  Poslední záznamy všech zaměstnanců ({orgLabel})
                 </CardDescription>
               </CardHeader>
 
@@ -495,7 +498,7 @@ export default function AttendancePage() {
                   </Table>
                 ) : (
                   <div className="text-center py-16 text-muted-foreground">
-                    Žádná data o docházce týmu nebyla nalezena.
+                    Zatím nejsou záznamy docházky.
                   </div>
                 )}
               </CardContent>

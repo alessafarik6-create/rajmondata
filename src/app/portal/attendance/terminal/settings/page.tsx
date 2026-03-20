@@ -149,8 +149,8 @@ export default function TerminalSettingsPage() {
                   </SelectTrigger>
                   <SelectContent className="bg-surface border-border">
                     <SelectItem value="user_login">Uživatelské přihlášení</SelectItem>
-                    <SelectItem value="pin">Rychlý PIN kód (Placeholder)</SelectItem>
-                    <SelectItem value="qr">QR kód (Placeholder)</SelectItem>
+                    <SelectItem value="pin">Rychlý PIN kód</SelectItem>
+                    <SelectItem value="qr">QR kód</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

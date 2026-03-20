@@ -373,7 +373,7 @@ export default function FinancePage() {
             ) : (
               <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/80 px-4 text-center text-sm text-muted-foreground">
                 {isMounted
-                  ? "Zatím nejsou žádné měsíční údaje. Přidejte doklady ve financích nebo v dokladech."
+                  ? "Zatím nejsou dostupná žádná data."
                   : null}
               </div>
             )}
@@ -414,7 +414,7 @@ export default function FinancePage() {
             ) : (
               <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50/80 px-4 text-center text-sm text-muted-foreground">
                 {isMounted
-                  ? "Graf se zobrazí po prvních příjmových nebo výdajových záznamech."
+                  ? "Zatím nejsou dostupná žádná data."
                   : null}
               </div>
             )}
