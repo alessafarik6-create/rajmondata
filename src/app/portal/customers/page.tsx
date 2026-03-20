@@ -42,15 +42,16 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function CustomersPage() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
-  const { data: profile } = useDoc(userRef);
-  const companyId = profile?.companyId || 'nebula-tech';
+  const userRef = useMemoFirebase(() => user && firestore ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+  const companyId = profile?.companyId;
 
   const customersQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -117,6 +118,25 @@ export default function CustomersPage() {
     c.lastName?.toLowerCase().includes(searchTerm.toLowerCase()) ||
     c.email?.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  if (isProfileLoading) {
+    return (
+      <div className="flex justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-xl border-slate-200 bg-slate-50">
+        <AlertTitle>Není vybraná firma</AlertTitle>
+        <AlertDescription>
+          Nelze načíst zákazníky bez přiřazení k organizaci.
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -315,7 +335,7 @@ export default function CustomersPage() {
             </Table>
           ) : (
             <div className="text-center py-20">
-              <p className="text-muted-foreground">Žádní zákazníci nebyli nalezeni.</p>
+              <p className="text-muted-foreground">Zatím nemáte žádné zákazníky.</p>
               <Button variant="link" className="text-primary mt-2" onClick={() => setIsNewCustomerOpen(true)}>
                 Přidat prvního zákazníka
               </Button>

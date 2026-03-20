@@ -1,124 +1,74 @@
-
 "use client";
 
-import React, { useState } from 'react';
-import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
-import { Search, Send, Plus, MoreHorizontal, Smile, Paperclip } from 'lucide-react';
-import { ScrollArea } from '@/components/ui/scroll-area';
+import React, { useState } from "react";
+import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Search, Send, MessageSquare } from "lucide-react";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
+/**
+ * Týmová komunikace – bez ukázkových kontaktů a zpráv.
+ * Konverzace se vytvoří až po napojení na reálné kanály v databázi.
+ */
 export default function ChatPage() {
-  const [message, setMessage] = useState('');
-  
-  const contacts = [
-    { id: '1', name: 'Obecný kanál', type: 'channel', lastMsg: 'Alex: Aktualizovali jsme projekt...', active: true },
-    { id: '2', name: 'Management', type: 'channel', lastMsg: 'Sára: Prosím projděte si ty dokumenty', active: false },
-    { id: '3', name: 'Sára Millerová', type: 'direct', lastMsg: 'Můžeme si promluvit později?', active: false, avatar: 'https://picsum.photos/seed/sarah/100/100' },
-    { id: '4', name: 'Michal Thompson', type: 'direct', lastMsg: 'Report je připraven.', active: false, avatar: 'https://picsum.photos/seed/mike/100/100' },
-  ];
-
-  const messages = [
-    { id: '1', user: 'Alex Thompson', content: 'Ahoj týme, viděli všichni aktualizaci pro zakázku #12?', time: '09:45', self: false },
-    { id: '2', user: 'Vy', content: 'Ano, vypadá to dobře. Dnes začnu s implementací.', time: '10:02', self: true },
-    { id: '3', user: 'Sára Millerová', content: 'Skvělé! Dejte mi vědět, pokud budete něco potřebovat.', time: '10:05', self: false },
-  ];
+  const [draft, setDraft] = useState("");
 
   return (
-    <div className="h-[calc(100vh-160px)] flex gap-6 overflow-hidden">
-      {/* Sidebar */}
-      <Card className="w-80 bg-surface border-border flex flex-col shrink-0">
-        <div className="p-4 border-b">
+    <div className="flex h-[calc(100vh-160px)] gap-6 overflow-hidden">
+      <Card className="flex w-80 shrink-0 flex-col border-border bg-surface">
+        <div className="border-b p-4">
           <div className="relative mb-4">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <Input placeholder="Hledat zprávy..." className="pl-10 bg-background border-border" />
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Hledat zprávy..."
+              className="border-border bg-background pl-10"
+              disabled
+              aria-disabled="true"
+            />
           </div>
-          <Button variant="outline" className="w-full justify-between">
-            Nová zpráva <Plus className="w-4 h-4" />
+          <Button variant="outline" className="w-full justify-between" disabled>
+            Nová zpráva
           </Button>
         </div>
         <ScrollArea className="flex-1">
-          <div className="p-2 space-y-1">
-            {contacts.map((contact) => (
-              <button
-                key={contact.id}
-                className={`w-full text-left p-3 rounded-md transition-colors ${contact.active ? 'bg-primary/10 text-primary' : 'hover:bg-muted/50'}`}
-              >
-                <div className="flex items-center gap-3">
-                  {contact.type === 'channel' ? (
-                    <div className="w-10 h-10 rounded-md bg-muted flex items-center justify-center font-bold text-lg">#</div>
-                  ) : (
-                    <Avatar className="w-10 h-10">
-                      <AvatarImage src={contact.avatar} />
-                      <AvatarFallback>{contact.name[0]}</AvatarFallback>
-                    </Avatar>
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm truncate">{contact.name}</p>
-                    <p className="text-xs text-muted-foreground truncate">{contact.lastMsg}</p>
-                  </div>
-                </div>
-              </button>
-            ))}
+          <div className="flex flex-col items-center justify-center gap-3 p-8 text-center text-sm text-muted-foreground">
+            <MessageSquare className="h-10 w-10 opacity-40" />
+            <p>Zatím nemáte žádné zprávy ani konverzace.</p>
+            <p className="text-xs">
+              Po založení prvního týmového kanálu nebo zprávy se kontakty
+              zobrazí zde.
+            </p>
           </div>
         </ScrollArea>
       </Card>
 
-      {/* Main Chat Area */}
-      <Card className="flex-1 bg-surface border-border flex flex-col overflow-hidden">
-        <div className="p-4 border-b flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-md bg-muted flex items-center justify-center font-bold text-lg">#</div>
-            <div>
-              <h3 className="font-bold">Obecný kanál</h3>
-              <p className="text-xs text-muted-foreground">Týmová diskuse</p>
-            </div>
+      <Card className="flex flex-1 flex-col overflow-hidden border-border bg-surface">
+        <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
+          <MessageSquare className="h-12 w-12 text-muted-foreground opacity-30" />
+          <div className="max-w-md space-y-2">
+            <h3 className="text-lg font-semibold text-foreground">
+              Vyberte konverzaci
+            </h3>
+            <p className="text-sm text-muted-foreground">
+              Zatím není k dispozici žádný obsah chatu. Žádné ukázkové zprávy se
+              neukládají – pracovní prostor je po registraci prázdný.
+            </p>
           </div>
-          <Button variant="ghost" size="icon"><MoreHorizontal className="w-5 h-5" /></Button>
         </div>
 
-        <ScrollArea className="flex-1 p-6">
-          <div className="space-y-6">
-            {messages.map((msg) => (
-              <div key={msg.id} className={`flex gap-4 ${msg.self ? 'flex-row-reverse' : ''}`}>
-                {!msg.self && (
-                  <Avatar className="w-8 h-8 shrink-0 mt-1">
-                    <AvatarFallback className="bg-primary/20 text-primary text-xs">{msg.user[0]}</AvatarFallback>
-                  </Avatar>
-                )}
-                <div className={`max-w-[70%] ${msg.self ? 'items-end' : ''} flex flex-col gap-1`}>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-xs font-bold">{msg.self ? 'Vy' : msg.user}</span>
-                    <span className="text-[10px] text-muted-foreground">{msg.time}</span>
-                  </div>
-                  <div className={`p-3 rounded-2xl text-sm ${msg.self ? 'bg-primary text-white rounded-tr-none' : 'bg-muted text-foreground rounded-tl-none'}`}>
-                    {msg.content}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-
-        <div className="p-4 border-t bg-background/30">
-          <div className="flex items-center gap-2 bg-background border border-border rounded-lg p-1 pr-3 shadow-inner focus-within:ring-1 focus-within:ring-primary">
-            <Button variant="ghost" size="icon" className="text-muted-foreground"><Smile className="w-5 h-5" /></Button>
-            <Button variant="ghost" size="icon" className="text-muted-foreground"><Paperclip className="w-5 h-5" /></Button>
-            <Input 
-              placeholder="Napište zprávu..." 
-              className="border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 h-10"
-              value={message}
-              onChange={(e) => setMessage(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && message && (setMessage(''))}
+        <div className="border-t bg-background/30 p-4">
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-background p-1 pr-3 shadow-inner">
+            <Input
+              placeholder="Zprávy budou dostupné po založení konverzace..."
+              className="h-10 border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              disabled
+              aria-label="Pole pro zprávu – zatím neaktivní"
             />
-            <Button 
-              size="icon" 
-              className="bg-primary hover:bg-secondary h-8 w-8"
-              disabled={!message}
-              onClick={() => setMessage('')}
-            >
-              <Send className="w-4 h-4" />
+            <Button size="icon" className="h-8 w-8 shrink-0" disabled>
+              <Send className="h-4 w-4" />
             </Button>
           </div>
         </div>

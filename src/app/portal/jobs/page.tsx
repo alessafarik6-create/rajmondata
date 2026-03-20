@@ -60,6 +60,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { JobTemplate, JobTemplateValues } from "@/lib/job-templates";
 import { JobTemplateFormFields } from "@/components/jobs/job-template-form-fields";
 import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-contract-templates-manager-dialog";
@@ -140,12 +141,12 @@ function JobsPageContent() {
   const { toast } = useToast();
 
   const userRef = useMemoFirebase(
-    () => (user ? doc(firestore, "users", user.uid) : null),
+    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
   );
-  const { data: profile } = useDoc(userRef);
+  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
 
-  const companyId = profile?.companyId || "nebula-tech";
+  const companyId = profile?.companyId;
   const isAdmin =
     profile?.role === "owner" ||
     profile?.role === "admin" ||
@@ -419,6 +420,25 @@ function JobsPageContent() {
     );
   };
 
+  if (isProfileLoading) {
+    return (
+      <div className="flex justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-xl border-slate-200 bg-slate-50">
+        <AlertTitle>Není vybraná firma</AlertTitle>
+        <AlertDescription>
+          Zakázky nelze načíst bez přiřazení k organizaci.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   return (
     <div className="space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
@@ -427,7 +447,7 @@ function JobsPageContent() {
             Zakázky a Projekty
           </h1>
           <p className="portal-page-description">
-            Správa firemních projektů v rámci {companyId}.
+            Správa firemních projektů vaší organizace.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -821,7 +841,7 @@ function JobsPageContent() {
           ) : (
             <div className="text-center py-20 text-slate-600">
               <Briefcase className="w-12 h-12 mx-auto mb-4 opacity-20" />
-              <p>Nebyly nalezeny žádné zakázky.</p>
+              <p>Zatím nemáte žádné zakázky.</p>
               {isAdmin && (
                 <Button
                   variant="link"

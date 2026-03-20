@@ -81,7 +81,7 @@ export default function EmployeesPage() {
     email: '',
     role: 'employee',
     jobTitle: '',
-    hourlyRate: '500'
+    hourlyRate: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   
@@ -100,9 +100,14 @@ export default function EmployeesPage() {
     setIsSubmitting(true);
     try {
       const colRef = collection(firestore, 'companies', companyId, 'employees');
+      const { hourlyRate: rateStr, ...inviteRest } = inviteData;
+      const hourlyRate =
+        rateStr.trim() === "" ? null : Number(rateStr);
       await addDoc(colRef, {
-        ...inviteData,
-        hourlyRate: Number(inviteData.hourlyRate),
+        ...inviteRest,
+        ...(hourlyRate != null && !Number.isNaN(hourlyRate)
+          ? { hourlyRate }
+          : {}),
         companyId,
         isActive: true,
         createdAt: new Date().toISOString(),
@@ -116,7 +121,7 @@ export default function EmployeesPage() {
         description: `${inviteData.firstName} byl úspěšně přidán do systému.`
       });
       setIsInviteOpen(false);
-      setInviteData({ firstName: '', lastName: '', email: '', role: 'employee', jobTitle: '', hourlyRate: '500' });
+      setInviteData({ firstName: '', lastName: '', email: '', role: 'employee', jobTitle: '', hourlyRate: '' });
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -291,7 +296,7 @@ export default function EmployeesPage() {
                       <Input 
                         id="hourlyRate" 
                         type="number"
-                        placeholder="500" 
+                        placeholder="např. 350" 
                         value={inviteData.hourlyRate} 
                         onChange={e => setInviteData({...inviteData, hourlyRate: e.target.value})}
                         className="bg-background pl-10"
@@ -382,7 +387,11 @@ export default function EmployeesPage() {
                             <span className="text-[10px] text-muted-foreground uppercase">Bez QR</span>
                           )}
                         </div>
-                        <span className="font-mono text-[10px] text-muted-foreground">{emp.hourlyRate || 500} Kč/h</span>
+                        <span className="font-mono text-[10px] text-muted-foreground">
+                          {emp.hourlyRate != null && emp.hourlyRate !== ""
+                            ? `${emp.hourlyRate} Kč/h`
+                            : "—"}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell>
@@ -438,7 +447,7 @@ export default function EmployeesPage() {
             </Table>
           ) : (
             <div className="text-center py-20">
-              <p className="text-muted-foreground">V této organizaci zatím nejsou žádní zaměstnanci.</p>
+              <p className="text-muted-foreground">Zatím nemáte žádné zaměstnance.</p>
               {canManage && (
                 <Button variant="link" className="text-primary mt-2" onClick={() => setIsInviteOpen(true)}>
                   Přidat prvního pracovníka

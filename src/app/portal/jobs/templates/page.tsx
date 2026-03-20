@@ -43,9 +43,9 @@ export default function JobTemplatesPage() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const userRef = useMemoFirebase(() => (user ? doc(firestore, "users", user.uid) : null), [firestore, user]);
-  const { data: profile } = useDoc(userRef);
-  const companyId = profile?.companyId || "nebula-tech";
+  const userRef = useMemoFirebase(() => (user && firestore ? doc(firestore, "users", user.uid) : null), [firestore, user]);
+  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+  const companyId = profile?.companyId;
   const isAdmin = profile?.role === "owner" || profile?.role === "admin" || profile?.globalRoles?.includes("super_admin");
 
   const templatesRef = useMemoFirebase(
@@ -196,6 +196,31 @@ export default function JobTemplatesPage() {
       setSaving(false);
     }
   };
+
+  if (isProfileLoading) {
+    return (
+      <div className="flex justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <div className="space-y-6">
+        <Link href="/portal/jobs">
+          <Button variant="ghost" className="gap-2">
+            <ChevronLeft className="w-4 h-4" /> Zpět na zakázky
+          </Button>
+        </Link>
+        <Card>
+          <CardContent className="py-8 text-center text-muted-foreground">
+            Nejste přiřazeni k firmě. Šablony zakázek nelze načíst.
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   if (!isAdmin) {
     return (

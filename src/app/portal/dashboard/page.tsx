@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useMemo } from "react";
 import {
   Users,
   Briefcase,
@@ -18,7 +18,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   useUser,
@@ -28,7 +27,7 @@ import {
   useCollection,
   useCompany,
 } from "@/firebase";
-import { doc, collection } from "firebase/firestore";
+import { doc, collection, query, orderBy, limit } from "firebase/firestore";
 import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
@@ -80,12 +79,33 @@ export default function CompanyDashboard() {
     return collection(firestore, "companies", companyId, "jobs");
   }, [firestore, companyId]);
 
-  const { data: employees, error: employeesError } = useCollection(employeesQuery);
+  const financeQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    if (!isManagement && !isAccountant) return null;
+    return query(
+      collection(firestore, "companies", companyId, "finance"),
+      orderBy("date", "desc"),
+      limit(500)
+    );
+  }, [firestore, companyId, isManagement, isAccountant]);
+
+  const attendanceQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      orderBy("timestamp", "desc"),
+      limit(100)
+    );
+  }, [firestore, companyId]);
+
+  const { data: employees } = useCollection(employeesQuery);
   const {
     data: allJobs,
     isLoading: isJobsLoading,
     error: jobsError,
   } = useCollection(jobsQuery);
+  const { data: financeRows = [] } = useCollection(financeQuery);
+  const { data: attendanceRows = [] } = useCollection(attendanceQuery);
 
   const { companyName } = useCompany();
 
@@ -102,50 +122,44 @@ export default function CompanyDashboard() {
     return false;
   });
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+  const todayIso = useMemo(
+    () => new Date().toISOString().split("T")[0],
+    []
+  );
 
-    console.log("[Dashboard] NEXT_PUBLIC_FIREBASE_PROJECT_ID =", process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID);
-    console.log("[Dashboard] auth user =", user);
-    console.log("[Dashboard] firestore ready =", !!firestore);
-    console.log("[Dashboard] userRef =", userRef);
-    console.log("[Dashboard] profile loading =", isProfileLoading);
-    console.log("[Dashboard] profile =", typedProfile);
-    console.log("[Dashboard] companyId =", companyId);
-    console.log("[Dashboard] role =", role);
-    console.log("[Dashboard] companyName =", companyName);
-    console.log("[Dashboard] employees count =", employees?.length ?? 0);
-    console.log("[Dashboard] allJobs count =", typedJobs.length);
-    console.log("[Dashboard] visible jobs count =", jobs.length);
-    console.log("[Dashboard] visible jobs =", jobs);
+  const attendanceTodayCount = useMemo(() => {
+    if (!attendanceRows?.length) return 0;
+    return attendanceRows.filter(
+      (a: { date?: string }) => a.date === todayIso
+    ).length;
+  }, [attendanceRows, todayIso]);
 
-    if (profileError) {
-      console.error("[Dashboard] profile error =", profileError);
+  const monthlyRevenueCzk = useMemo(() => {
+    if (!financeRows?.length) return 0;
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = now.getMonth();
+    let sum = 0;
+    for (const r of financeRows as { type?: string; amount?: unknown; date?: unknown }[]) {
+      if (r.type !== "revenue") continue;
+      const raw = r.date;
+      let rd: Date | null = null;
+      if (typeof raw === "string") {
+        const t = Date.parse(raw);
+        if (!Number.isNaN(t)) rd = new Date(t);
+      } else if (
+        raw &&
+        typeof raw === "object" &&
+        "toDate" in raw &&
+        typeof (raw as { toDate: () => Date }).toDate === "function"
+      ) {
+        rd = (raw as { toDate: () => Date }).toDate();
+      }
+      if (!rd || rd.getFullYear() !== y || rd.getMonth() !== m) continue;
+      sum += Number(r.amount) || 0;
     }
-
-    if (employeesError) {
-      console.error("[Dashboard] employees error =", employeesError);
-    }
-
-    if (jobsError) {
-      console.error("[Dashboard] jobs error =", jobsError);
-    }
-  }, [
-    user,
-    firestore,
-    userRef,
-    isProfileLoading,
-    typedProfile,
-    companyId,
-    role,
-    companyName,
-    employees,
-    typedJobs,
-    jobs,
-    profileError,
-    employeesError,
-    jobsError,
-  ]);
+    return sum;
+  }, [financeRows]);
 
   if (isProfileLoading) {
     return (
@@ -299,8 +313,12 @@ export default function CompanyDashboard() {
                 <Clock className="h-4 w-4 text-primary" />
               </CardHeader>
               <CardContent>
-                <div className="portal-kpi-value">94%</div>
-                <p className="portal-kpi-label">Většina týmu je přítomna</p>
+                <div className="portal-kpi-value">{attendanceTodayCount}</div>
+                <p className="portal-kpi-label">
+                  {attendanceTodayCount === 0
+                    ? "Zatím žádné záznamy docházky na dnešek"
+                    : "Záznamy docházky za dnešek"}
+                </p>
               </CardContent>
             </Card>
 
@@ -313,9 +331,13 @@ export default function CompanyDashboard() {
                   <Wallet className="h-4 w-4 text-primary" />
                 </CardHeader>
                 <CardContent>
-                  <div className="portal-kpi-value">12 450 Kč</div>
-                  <p className="portal-kpi-label font-medium text-emerald-600">
-                    +15% oproti min. měsíci
+                  <div className="portal-kpi-value">
+                    {monthlyRevenueCzk.toLocaleString("cs-CZ")} Kč
+                  </div>
+                  <p className="portal-kpi-label">
+                    {monthlyRevenueCzk === 0
+                      ? "Podle příjmových dokladů ve finančním modulu"
+                      : "Součet příjmů v aktuálním měsíci"}
                   </p>
                 </CardContent>
               </Card>
@@ -355,7 +377,7 @@ export default function CompanyDashboard() {
                 </div>
               ) : jobs.length > 0 ? (
                 jobs.slice(0, 5).map((job) => (
-                  <div key={job.id} className="space-y-2">
+                  <div key={job.id} className="space-y-2 border-b border-slate-100 pb-4 last:border-0 last:pb-0">
                     <div className="flex items-center justify-between">
                       <div className="flex flex-col">
                         <span className="font-semibold text-slate-900">
@@ -376,21 +398,11 @@ export default function CompanyDashboard() {
                         </Button>
                       </Link>
                     </div>
-
-                    <Progress
-                      value={
-                        job.status === "dokončená" ||
-                        job.status === "fakturována"
-                          ? 100
-                          : 45
-                      }
-                      className="h-1.5"
-                    />
                   </div>
                 ))
               ) : (
                 <div className="py-12 text-center text-slate-600">
-                  Nebyly nalezeny žádné relevantní zakázky.
+                  Zatím nemáte žádné zakázky.
                 </div>
               )}
             </CardContent>
@@ -442,30 +454,10 @@ export default function CompanyDashboard() {
               <CardTitle>Poslední aktivita</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {[
-                { user: "Sára J.", action: "Zahájila směnu", time: "před 5m" },
-                {
-                  user: "Michal T.",
-                  action: "Aktualizoval zakázku #23",
-                  time: "před 1h",
-                },
-                {
-                  user: "Účetní",
-                  action: "Nahrál nový doklad",
-                  time: "před 3h",
-                },
-              ].map((item, i) => (
-                <div key={i} className="flex items-start gap-3 text-sm">
-                  <div className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
-                  <div>
-                    <span className="font-semibold text-slate-900">
-                      {item.user}
-                    </span>
-                    <span className="text-slate-700"> {item.action}</span>
-                    <p className="mt-0.5 text-xs text-slate-500">{item.time}</p>
-                  </div>
-                </div>
-              ))}
+              <p className="text-sm text-muted-foreground">
+                Zatím nemáte žádnou zaznamenanou aktivitu. Po začátku práce se zde
+                budou zobrazovat reálné události z aplikace.
+              </p>
             </CardContent>
           </Card>
         </div>

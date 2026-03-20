@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import Link from 'next/link';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function CustomerDetailPage() {
   const { customerId } = useParams();
@@ -30,9 +31,9 @@ export default function CustomerDetailPage() {
   const { user } = useUser();
   const firestore = useFirestore();
 
-  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
-  const { data: profile } = useDoc(userRef);
-  const companyId = profile?.companyId || 'nebula-tech';
+  const userRef = useMemoFirebase(() => user && firestore ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+  const companyId = profile?.companyId;
 
   const customerRef = useMemoFirebase(() => companyId && customerId ? doc(firestore, 'companies', companyId, 'customers', customerId as string) : null, [firestore, companyId, customerId]);
   const { data: customer, isLoading } = useDoc(customerRef);
@@ -47,6 +48,25 @@ export default function CustomerDetailPage() {
   }, [firestore, companyId, customerId]);
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
+
+  if (isProfileLoading) {
+    return (
+      <div className="flex h-full items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-xl border-slate-200 bg-slate-50">
+        <AlertTitle>Není vybraná firma</AlertTitle>
+        <AlertDescription>
+          Detail zákazníka nelze načíst bez přiřazení k organizaci.
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   if (isLoading) {
     return (

@@ -32,15 +32,16 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function DocumentsPage() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
-  const { data: profile } = useDoc(userRef);
-  const companyId = profile?.companyId || 'nebula-tech';
+  const userRef = useMemoFirebase(() => user && firestore ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+  const companyId = profile?.companyId;
 
   const documentsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -109,6 +110,25 @@ export default function DocumentsPage() {
   };
 
   const filteredDocs = (type: string) => documents?.filter(d => d.type === type) || [];
+
+  if (isProfileLoading) {
+    return (
+      <div className="flex justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-xl border-slate-200 bg-slate-50">
+        <AlertTitle>Není vybraná firma</AlertTitle>
+        <AlertDescription>
+          Nelze načíst doklady bez přiřazení k organizaci.
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -256,7 +276,7 @@ function DocumentTable({ data, isLoading, onDelete, title }: { data: any[], isLo
             </TableBody>
           </Table>
         ) : (
-          <div className="text-center py-20 text-muted-foreground">Nebyly nalezeny žádné doklady v kategorii {title}.</div>
+          <div className="text-center py-20 text-muted-foreground">Zatím nemáte žádné dokumenty v kategorii {title}.</div>
         )}
       </CardContent>
     </Card>

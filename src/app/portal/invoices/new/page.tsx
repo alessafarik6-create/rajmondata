@@ -20,6 +20,7 @@ import {
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function NewInvoicePage() {
   const router = useRouter();
@@ -27,9 +28,9 @@ export default function NewInvoicePage() {
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
-  const { data: profile } = useDoc(userRef);
-  const companyId = profile?.companyId || 'nebula-tech';
+  const userRef = useMemoFirebase(() => user && firestore ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+  const companyId = profile?.companyId;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [items, setItems] = useState([{ id: '1', description: '', quantity: 1, unitPrice: 0 }]);
@@ -98,6 +99,25 @@ export default function NewInvoicePage() {
       setIsSubmitting(false);
     }
   };
+
+  if (isProfileLoading) {
+    return (
+      <div className="flex justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-xl border-slate-200 bg-slate-50">
+        <AlertTitle>Není vybraná firma</AlertTitle>
+        <AlertDescription>
+          Novou fakturu můžete vystavit až po přiřazení k organizaci.
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">

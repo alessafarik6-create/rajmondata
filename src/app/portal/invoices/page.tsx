@@ -31,15 +31,16 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
 export default function InvoicesPage() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
-  const { data: profile } = useDoc(userRef);
-  const companyId = profile?.companyId || 'nebula-tech';
+  const userRef = useMemoFirebase(() => user && firestore ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+  const companyId = profile?.companyId;
 
   const invoicesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -80,6 +81,25 @@ export default function InvoicesPage() {
       default: return <Badge variant="outline">{status}</Badge>;
     }
   };
+
+  if (isProfileLoading) {
+    return (
+      <div className="flex justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-xl border-slate-200 bg-slate-50">
+        <AlertTitle>Není vybraná firma</AlertTitle>
+        <AlertDescription>
+          Nelze načíst faktury bez přiřazení k organizaci.
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   return (
     <div className="space-y-6 sm:space-y-8">
@@ -169,7 +189,7 @@ export default function InvoicesPage() {
           ) : (
             <div className="text-center py-20 text-muted-foreground">
               <ReceiptText className="w-12 h-12 mx-auto mb-4 opacity-20" />
-              <p>Zatím nebyly vystaveny žádné faktury.</p>
+              <p>Zatím nemáte žádné faktury.</p>
               <Button variant="link" asChild><Link href="/portal/invoices/new">Vytvořit první fakturu</Link></Button>
             </div>
           )}
