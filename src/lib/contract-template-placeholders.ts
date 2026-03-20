@@ -13,6 +13,8 @@ export const CONTRACT_TEMPLATE_PLACEHOLDER_KEYS = [
   "nazev_zakazky",
   "cena",
   "zalohova_castka",
+  "zalohova_procenta",
+  "doplatek",
 ] as const;
 
 export type ContractTemplatePlaceholderKey =
@@ -30,6 +32,8 @@ Dostupné proměnné (vložte přesně v uvedeném tvaru):
 {{nazev_zakazky}} — název aktuální zakázky
 {{cena}} — rozpočet zakázky formátovaný v Kč (např. 720 000 Kč)
 {{zalohova_castka}} — částka zálohy z formuláře smlouvy (nebo z % a rozpočtu), např. 25 000 Kč; prázdná hodnota → 0 Kč
+{{zalohova_procenta}} — záloha v procentech, např. 30 % (prázdné, pokud je jen částka)
+{{doplatek}} — doplatek = celková cena díla − záloha (např. 70 000 Kč); bez rozpočtu zakázky prázdné
 `.trim();
 
 /** Částka v Kč — stejná logika jako ve formuláři smlouvy (prázdný vstup → 0 Kč). */
@@ -59,6 +63,10 @@ export type BuildContractPlaceholderValuesInput = {
    * Prázdný řetězec → dosadí se „0 Kč“.
    */
   zalohovaCastkaRaw: string;
+  /** Např. "30 %" nebo prázdné (jen částka bez %). */
+  zalohovaProcentaDisplay: string;
+  /** Např. "70 000 Kč" nebo prázdné bez rozpočtu. */
+  doplatekFormatted: string;
 };
 
 /**
@@ -76,6 +84,8 @@ export function buildContractPlaceholderValues(
     nazev_zakazky: opts.nazevZakazky,
     cena: opts.cena,
     zalohova_castka: formatWorkContractAmountKc(opts.zalohovaCastkaRaw),
+    zalohova_procenta: opts.zalohovaProcentaDisplay,
+    doplatek: opts.doplatekFormatted,
   };
 }
 

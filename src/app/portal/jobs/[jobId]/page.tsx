@@ -67,6 +67,14 @@ import {
   applyContractTemplatePlaceholders,
   formatWorkContractAmountKc,
 } from "@/lib/contract-template-placeholders";
+import {
+  computeDepositAmountKc,
+  computeDoplatekKc,
+  validateWorkContractDeposit,
+  parsePercentValue,
+  parseAmountKc,
+  formatPercentForTemplate,
+} from "@/lib/work-contract-deposit";
 import { allocateNextSodContractNumber } from "@/lib/work-contract-counter";
 import {
   buildWorkContractPrintHtml,
@@ -164,6 +172,10 @@ type WorkContractDoc = {
   additionalInfo?: string;
   depositPercentage?: string | number | null;
   depositAmount?: string | number | null;
+  /** Uložená částka zálohy (Kč), dopočtená při ukládání. */
+  zalohovaCastka?: string | number | null;
+  /** Uložené procento zálohy (0–100), pokud bylo zadáno. */
+  zalohovaProcenta?: string | number | null;
   bankAccountNumber?: string | null;
   bankAccountId?: string | null;
   contractNumber?: string | null;
@@ -788,19 +800,6 @@ export default function JobDetailPage() {
       .join("\n");
   };
 
-  const computeDepositAmountFromPercent = useCallback(
-    (percentStr: string): string => {
-      if (jobBudgetKc == null) return "";
-      const p = Number(String(percentStr).replace(",", "."));
-      if (!Number.isFinite(p)) return "";
-
-      const raw = (jobBudgetKc * p) / 100;
-      const rounded = Math.round(raw);
-      return String(rounded);
-    },
-    [jobBudgetKc]
-  );
-
   const applyTemplateVariables = useCallback(
     (input: string, formOverride?: WorkContractForm): string => {
       const today = new Intl.DateTimeFormat("cs-CZ").format(new Date());
@@ -844,13 +843,24 @@ export default function JobDetailPage() {
         formOverride?.depositPercentage ?? contractForm.depositPercentage;
       const depositAmount =
         formOverride?.depositAmount ?? contractForm.depositAmount;
-      const depositAmountTrimmed = String(depositAmount ?? "").trim();
-      const effectiveDepositStr =
-        depositAmountTrimmed !== ""
-          ? depositAmountTrimmed
-          : computeDepositAmountFromPercent(
-              String(depositPercentage ?? "").trim()
-            ) || "";
+
+      const depKc = computeDepositAmountKc({
+        depositAmountStr: depositAmount ?? "",
+        depositPercentStr: depositPercentage ?? "",
+        budgetKc: jobBudgetKc,
+      });
+      const effectiveDepositStr = String(depKc);
+      const doplatekKc = computeDoplatekKc(jobBudgetKc, depKc);
+      const doplatekFormatted =
+        doplatekKc != null
+          ? formatWorkContractAmountKc(String(doplatekKc))
+          : "";
+
+      const pctFieldOnly = String(depositPercentage ?? "").trim();
+      const zalohovaProcentaTemplate = pctFieldOnly
+        ? formatPercentForTemplate(pctFieldOnly)
+        : "";
+
       const bankAccountNumber =
         formOverride?.bankAccountNumber ?? contractForm.bankAccountNumber;
 
@@ -913,7 +923,7 @@ export default function JobDetailPage() {
         "zakazka.id": jobId?.toString() || "",
         datum: today,
 
-        "zaloha.procenta": depositPercentage ? `${depositPercentage} %` : "",
+        "zaloha.procenta": zalohovaProcentaTemplate,
         "zaloha.castka": formatWorkContractAmountKc(effectiveDepositStr),
         "zaloha.ucet":
           (bankAccountNumber && String(bankAccountNumber).trim()) ||
@@ -921,6 +931,8 @@ export default function JobDetailPage() {
           "",
         zaloha: formatWorkContractAmountKc(effectiveDepositStr),
         zalohova_castka: formatWorkContractAmountKc(effectiveDepositStr),
+        zalohova_procenta: zalohovaProcentaTemplate,
+        doplatek: doplatekFormatted,
 
         data_sablony: formatJobTemplateDataPlainText(
           template as JobTemplate | undefined,
@@ -953,7 +965,6 @@ export default function JobDetailPage() {
       contractForm.contractDateLabel,
       selectedBankAccount,
       bankAccounts,
-      computeDepositAmountFromPercent,
       template,
       job?.templateValues,
       companyProfileBankAccountDisplay,
@@ -980,21 +991,25 @@ export default function JobDetailPage() {
 
       const payCompanyAcct = companyProfileBankAccountDisplay.trim();
       const payFormAcct = (form.bankAccountNumber || "").trim();
-      const depAmtForm = (form.depositAmount || "").trim();
       const depPctForm = (form.depositPercentage || "").trim();
-      const effDepForm =
-        depAmtForm !== ""
-          ? depAmtForm
-          : computeDepositAmountFromPercent(depPctForm) || "";
+      const depKcForm = computeDepositAmountKc({
+        depositAmountStr: form.depositAmount ?? "",
+        depositPercentStr: form.depositPercentage ?? "",
+        budgetKc: jobBudgetKc,
+      });
+      const effDepForm = String(depKcForm);
+      const depPctDisplay = depPctForm
+        ? formatPercentForTemplate(depPctForm)
+        : "";
       const paymentLines = [
         payCompanyAcct ? `Číslo účtu: ${payCompanyAcct}` : "",
         form.contractNumber?.trim()
           ? `Variabilní symbol: ${form.contractNumber.trim()}`
           : "",
         depPctForm
-          ? `Záloha ve výši ${depPctForm} % z ceny díla.`
+          ? `Záloha ve výši ${depPctDisplay} z ceny díla.`
           : "",
-        effDepForm
+        depKcForm > 0
           ? `Částka zálohy: ${formatWorkContractAmountKc(effDepForm)}.`
           : "",
         payFormAcct && payFormAcct !== payCompanyAcct
@@ -1044,9 +1059,18 @@ export default function JobDetailPage() {
       job?.templateValues,
       template,
       jobBudgetKc,
-      computeDepositAmountFromPercent,
       companyProfileBankAccountDisplay,
     ]
+  );
+
+  const depositValidationError = useMemo(
+    () =>
+      validateWorkContractDeposit({
+        depositAmountStr: contractForm.depositAmount,
+        depositPercentStr: contractForm.depositPercentage,
+        budgetKc: jobBudgetKc,
+      }),
+    [contractForm.depositAmount, contractForm.depositPercentage, jobBudgetKc]
   );
 
   const buildPrefilledContractHeader = useCallback((): string => {
@@ -1293,8 +1317,18 @@ export default function JobDetailPage() {
           client: (data.client as any) || "",
           contractor: (data.contractor as any) || "",
           additionalInfo: (data.additionalInfo as any) || "",
-          depositPercentage: data.depositPercentage != null ? String(data.depositPercentage) : "",
-          depositAmount: data.depositAmount != null ? String(data.depositAmount) : "",
+          depositPercentage:
+            data.zalohovaProcenta != null && String(data.zalohovaProcenta) !== ""
+              ? String(data.zalohovaProcenta)
+              : data.depositPercentage != null
+                ? String(data.depositPercentage)
+                : "",
+          depositAmount:
+            data.zalohovaCastka != null && String(data.zalohovaCastka) !== ""
+              ? String(data.zalohovaCastka)
+              : data.depositAmount != null
+                ? String(data.depositAmount)
+                : "",
           bankAccountNumber: (data.bankAccountNumber as any) || companyBankAccountNumber || "",
           bankAccountId: (data.bankAccountId as any) || null,
           contractNumber: (data.contractNumber as any) || "",
@@ -1382,17 +1416,37 @@ export default function JobDetailPage() {
           contractor: (data.contractor as any) || "",
           additionalInfo: (data.additionalInfo as any) || "",
           depositPercentage:
-            data.depositPercentage != null
-              ? String(data.depositPercentage)
-              : "",
+            data.zalohovaProcenta != null && String(data.zalohovaProcenta) !== ""
+              ? String(data.zalohovaProcenta)
+              : data.depositPercentage != null
+                ? String(data.depositPercentage)
+                : "",
           depositAmount:
-            data.depositAmount != null ? String(data.depositAmount) : "",
+            data.zalohovaCastka != null && String(data.zalohovaCastka) !== ""
+              ? String(data.zalohovaCastka)
+              : data.depositAmount != null
+                ? String(data.depositAmount)
+                : "",
           bankAccountNumber:
             (data.bankAccountNumber as any) || companyBankAccountNumber || "",
           bankAccountId: (data.bankAccountId as any) || null,
           contractNumber,
           contractDateLabel,
         };
+
+        const depErrListed = validateWorkContractDeposit({
+          depositAmountStr: form.depositAmount,
+          depositPercentStr: form.depositPercentage,
+          budgetKc: jobBudgetKc,
+        });
+        if (depErrListed) {
+          toast({
+            variant: "destructive",
+            title: "Nelze vytvořit PDF",
+            description: depErrListed,
+          });
+          return;
+        }
 
         const html = buildContractHtmlForForm(form);
 
@@ -1432,6 +1486,7 @@ export default function JobDetailPage() {
       buildContractHtmlForForm,
       openPrintableWindow,
       companyBankAccountNumber,
+      jobBudgetKc,
     ]
   );
 
@@ -1534,8 +1589,13 @@ export default function JobDetailPage() {
             ? `${Math.round(jobBudgetKc).toLocaleString("cs-CZ")} Kč`
             : "";
 
-        const preDepositRaw =
-          computeDepositAmountFromPercent("") || "";
+        const preDepositNum = computeDepositAmountKc({
+          depositAmountStr: "",
+          depositPercentStr: "",
+          budgetKc: jobBudgetKc,
+        });
+        const preDepositRaw = String(preDepositNum);
+        const preDopKc = computeDoplatekKc(jobBudgetKc, preDepositNum);
         const placeholderMap = buildContractPlaceholderValues({
           nazevFirmy,
           jmenoZakaznika,
@@ -1545,6 +1605,11 @@ export default function JobDetailPage() {
           nazevZakazky,
           cena,
           zalohovaCastkaRaw: preDepositRaw,
+          zalohovaProcentaDisplay: "",
+          doplatekFormatted:
+            preDopKc != null
+              ? formatWorkContractAmountKc(String(preDopKc))
+              : "",
         });
 
         let mainBody = applyContractTemplatePlaceholders(
@@ -1565,7 +1630,7 @@ export default function JobDetailPage() {
           ),
           additionalInfo: "",
           depositPercentage: "",
-          depositAmount: computeDepositAmountFromPercent("") || "",
+          depositAmount: "",
           bankAccountNumber: companyBankAccountNumber,
           bankAccountId: null,
           contractNumber: "",
@@ -1589,8 +1654,15 @@ export default function JobDetailPage() {
 
       const loadedDepositPercentage =
         tmpl.depositPercentage != null ? String(tmpl.depositPercentage) : "";
-      const computedDepositAmount =
-        computeDepositAmountFromPercent(loadedDepositPercentage);
+      const tmplDepAmountStr =
+        tmpl.depositAmount != null ? String(tmpl.depositAmount) : "";
+      const computedDepositAmount = String(
+        computeDepositAmountKc({
+          depositAmountStr: tmplDepAmountStr,
+          depositPercentStr: loadedDepositPercentage,
+          budgetKc: jobBudgetKc,
+        })
+      );
 
       setContractForm({
         templateName: tmpl.templateName || "",
@@ -1601,8 +1673,11 @@ export default function JobDetailPage() {
         additionalInfo: tmpl.additionalInfo || "",
         depositPercentage: loadedDepositPercentage,
         depositAmount:
-          computedDepositAmount ||
-          (tmpl.depositAmount != null ? String(tmpl.depositAmount) : ""),
+          tmplDepAmountStr.trim() !== ""
+            ? tmplDepAmountStr
+            : computedDepositAmount !== "0"
+              ? computedDepositAmount
+              : "",
         bankAccountNumber:
           (tmpl.bankAccountNumber as any) || companyBankAccountNumber || "",
         bankAccountId: (tmpl.bankAccountId as any) || null,
@@ -1620,7 +1695,6 @@ export default function JobDetailPage() {
       customer,
       job?.name,
       jobBudgetKc,
-      computeDepositAmountFromPercent,
       applyTemplateVariables,
       buildPrefilledContractHeader,
       deriveClientText,
@@ -1863,6 +1937,16 @@ export default function JobDetailPage() {
         new Intl.DateTimeFormat("cs-CZ").format(new Date());
     }
 
+    const zalohovaCastkaPersist = computeDepositAmountKc({
+      depositAmountStr: contractForm.depositAmount,
+      depositPercentStr: contractForm.depositPercentage,
+      budgetKc: jobBudgetKc,
+    });
+    const pctFormRaw = String(contractForm.depositPercentage ?? "").trim();
+    const zalohovaProcentaPersist = pctFormRaw
+      ? parsePercentValue(pctFormRaw)
+      : null;
+
     const payload: Record<string, any> = {
       id: activeWorkContractId,
       jobId: jobId as string,
@@ -1880,6 +1964,9 @@ export default function JobDetailPage() {
       additionalInfo: contractForm.additionalInfo,
       depositPercentage: contractForm.depositPercentage,
       depositAmount: contractForm.depositAmount,
+      zalohovaCastka: zalohovaCastkaPersist,
+      zalohovaProcenta:
+        zalohovaProcentaPersist != null ? zalohovaProcentaPersist : null,
       bankAccountNumber: contractForm.bankAccountNumber,
       bankAccountId: contractForm.bankAccountId ?? null,
       contractNumber,
@@ -1909,6 +1996,7 @@ export default function JobDetailPage() {
     activeWorkContractId,
     selectedWorkContractTemplateId,
     contractForm,
+    jobBudgetKc,
   ]);
 
   const saveContract = useCallback(async () => {
@@ -1934,6 +2022,20 @@ export default function JobDetailPage() {
         variant: "destructive",
         title: "Nelze uložit smlouvu",
         description: `Chybí: ${missing.join(", ")}`,
+      });
+      return;
+    }
+
+    const depErrSave = validateWorkContractDeposit({
+      depositAmountStr: contractForm.depositAmount,
+      depositPercentStr: contractForm.depositPercentage,
+      budgetKc: jobBudgetKc,
+    });
+    if (depErrSave) {
+      toast({
+        variant: "destructive",
+        title: "Nelze uložit smlouvu",
+        description: depErrSave,
       });
       return;
     }
@@ -1971,6 +2073,7 @@ export default function JobDetailPage() {
     toast,
     contractForm,
     upsertWorkContractBase,
+    jobBudgetKc,
   ]);
 
   const generatePDF = useCallback(async () => {
@@ -1996,6 +2099,20 @@ export default function JobDetailPage() {
         variant: "destructive",
         title: "Nelze vytvořit PDF",
         description: `Chybí: ${missing.join(", ")}`,
+      });
+      return;
+    }
+
+    const depErrPdf = validateWorkContractDeposit({
+      depositAmountStr: contractForm.depositAmount,
+      depositPercentStr: contractForm.depositPercentage,
+      budgetKc: jobBudgetKc,
+    });
+    if (depErrPdf) {
+      toast({
+        variant: "destructive",
+        title: "Nelze vytvořit PDF",
+        description: depErrPdf,
       });
       return;
     }
@@ -2055,6 +2172,7 @@ export default function JobDetailPage() {
     upsertWorkContractBase,
     buildContractHtmlForForm,
     openPrintableWindow,
+    jobBudgetKc,
   ]);
 
   const previewWorkContractDocument = useCallback(() => {
@@ -2075,6 +2193,20 @@ export default function JobDetailPage() {
       return;
     }
 
+    const depErrPrev = validateWorkContractDeposit({
+      depositAmountStr: contractForm.depositAmount,
+      depositPercentStr: contractForm.depositPercentage,
+      budgetKc: jobBudgetKc,
+    });
+    if (depErrPrev) {
+      toast({
+        variant: "destructive",
+        title: "Nelze zobrazit náhled",
+        description: depErrPrev,
+      });
+      return;
+    }
+
     try {
       const html = buildContractHtmlForForm(contractForm);
       openContractPreviewWindow(html);
@@ -2090,6 +2222,7 @@ export default function JobDetailPage() {
     buildContractHtmlForForm,
     openContractPreviewWindow,
     toast,
+    jobBudgetKc,
   ]);
 
   useEffect(() => {
@@ -3986,24 +4119,34 @@ export default function JobDetailPage() {
             <div className="space-y-2">
               <Label>Výše zálohy v procentech (%)</Label>
               <Input
+                type="text"
+                inputMode="decimal"
                 value={contractForm.depositPercentage}
                 onChange={(e) => {
-                  const nextPercent = e.target.value;
-                  const computedAmount = computeDepositAmountFromPercent(
-                    nextPercent
-                  );
-
                   setIsContractDirty(true);
                   setContractForm((prev) => ({
                     ...prev,
-                    depositPercentage: nextPercent,
+                    depositPercentage: e.target.value,
+                  }));
+                }}
+                onBlur={(e) => {
+                  const raw = e.target.value;
+                  const p = parsePercentValue(raw);
+                  setContractForm((prev) => ({
+                    ...prev,
+                    depositPercentage:
+                      raw.trim() === ""
+                        ? ""
+                        : p != null
+                          ? String(p)
+                          : raw.trim(),
                     depositAmount:
-                      computedAmount !== ""
-                        ? computedAmount
+                      p != null && jobBudgetKc != null
+                        ? String(Math.round((jobBudgetKc * p) / 100))
                         : prev.depositAmount,
                   }));
                 }}
-                placeholder="Např. 30"
+                placeholder="Např. 30 nebo 30 %"
                 disabled={isContractReadOnly}
                 className="bg-background"
               />
@@ -4012,21 +4155,68 @@ export default function JobDetailPage() {
             <div className="space-y-2">
               <Label>Částka zálohy (Kč)</Label>
               <Input
+                type="text"
+                inputMode="decimal"
                 value={contractForm.depositAmount}
                 onChange={(e) => {
+                  const raw = e.target.value;
                   setIsContractDirty(true);
+                  if (/%/.test(raw)) {
+                    const p = parsePercentValue(raw);
+                    setContractForm((prev) => ({
+                      ...prev,
+                      depositPercentage:
+                        p != null ? String(p) : prev.depositPercentage,
+                      depositAmount:
+                        p != null && jobBudgetKc != null
+                          ? String(Math.round((jobBudgetKc * p) / 100))
+                          : "",
+                    }));
+                    return;
+                  }
                   setContractForm((prev) => ({
                     ...prev,
-                    depositAmount: e.target.value,
+                    depositAmount: raw,
                   }));
                 }}
-                placeholder={jobBudgetKc != null ? "Automaticky se přepočítá" : "Zadejte částku ručně"}
+                onBlur={(e) => {
+                  const raw = e.target.value;
+                  const n = parseAmountKc(raw);
+                  setContractForm((prev) => {
+                    if (n == null || raw.trim() === "" || /%/.test(raw)) {
+                      return prev;
+                    }
+                    const pct = parsePercentValue(prev.depositPercentage);
+                    const fromPct =
+                      pct != null && jobBudgetKc != null
+                        ? Math.round((jobBudgetKc * pct) / 100)
+                        : null;
+                    if (fromPct != null && fromPct === n) {
+                      return prev;
+                    }
+                    return { ...prev, depositPercentage: "" };
+                  });
+                }}
+                placeholder={
+                  jobBudgetKc != null
+                    ? "Částka nebo % (např. 30 %)"
+                    : "Zadejte částku ručně nebo % s rozpočtem"
+                }
                 disabled={isContractReadOnly}
                 className="bg-background"
               />
+              <p className="text-xs text-muted-foreground">
+                Můžete zadat částku nebo procenta (např. 30 %).
+              </p>
+              {depositValidationError ? (
+                <p className="text-xs text-destructive font-medium mt-1">
+                  {depositValidationError}
+                </p>
+              ) : null}
               {jobBudgetKc == null && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Rozpočet zakázky není vyplněný, zálohu je potřeba doplnit ručně.
+                  Pro přepočet z procent je potřeba rozpočet zakázky.
                 </p>
               )}
             </div>
@@ -4138,8 +4328,8 @@ export default function JobDetailPage() {
               <code>{"{{objednatel}}"}</code>).
               <br />
               Záloha: <code>{"{{zaloha.procenta}}"}</code>, <code>{"{{zaloha.castka}}"}</code>,{" "}
-              <code>{"{{zalohova_castka}}"}</code> (totéž číslo jako záloha),{" "}
-              <code>{"{{zaloha.ucet}}"}</code>.
+              <code>{"{{zalohova_castka}}"}</code>, <code>{"{{zalohova_procenta}}"}</code>,{" "}
+              <code>{"{{doplatek}}"}</code>, <code>{"{{zaloha.ucet}}"}</code>.
               <br />
               Číslo dokumentu: <code>{"{{smlouva.cislo}}"}</code>,{" "}
               <code>{"{{smlouva.vs}}"}</code> (stejné jako číslo),{" "}
@@ -4153,7 +4343,8 @@ export default function JobDetailPage() {
               <code>{"{{adresa}}"}</code>, <code>{"{{cislo_uctu_firmy}}"}</code>,{" "}
               <code>{"{{variabilni_symbol}}"}</code>, <code>{"{{jmeno_zakaznika}}"}</code>,{" "}
               <code>{"{{nazev_zakazky}}"}</code>, <code>{"{{cena}}"}</code>,{" "}
-              <code>{"{{zalohova_castka}}"}</code>, <code>{"{{datum}}"}</code>.
+              <code>{"{{zalohova_castka}}"}</code>, <code>{"{{zalohova_procenta}}"}</code>,{" "}
+              <code>{"{{doplatek}}"}</code>, <code>{"{{datum}}"}</code>.
             </div>
           </div>
 
