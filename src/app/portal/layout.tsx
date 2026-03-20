@@ -79,8 +79,13 @@ export default function PortalLayout({
     };
   }, [user, isUserLoading, router]);
 
+  /** Automatický seed profilu jen ve vývoji — v produkci vzniká firma výhradně přes registraci (žádné náhodné demo). */
+  const enableDevProfileSeed =
+    typeof process !== "undefined" && process.env.NODE_ENV === "development";
+
   useEffect(() => {
     if (
+      !enableDevProfileSeed ||
       !user ||
       !firestore ||
       isProfileLoading ||
@@ -98,19 +103,25 @@ export default function PortalLayout({
       .then(() => {
         if (typeof window !== "undefined") {
           console.debug(
-            "[PortalLayout] Seed completed, profile will update via useDoc"
+            "[PortalLayout] Dev seed completed, profile will update via useDoc"
           );
         }
       })
       .catch((err) => {
-        console.error("[PortalLayout] Seed failed", err);
+        console.error("[PortalLayout] Dev seed failed", err);
         setSeedError(err instanceof Error ? err : new Error("Seed failed"));
         seedStartedRef.current = false;
       })
       .finally(() => {
         setIsSeeding(false);
       });
-  }, [user, firestore, isProfileLoading, profile]);
+  }, [
+    enableDevProfileSeed,
+    user,
+    firestore,
+    isProfileLoading,
+    profile,
+  ]);
 
   if (isUserLoading || (!authResolved && !user)) {
     return (

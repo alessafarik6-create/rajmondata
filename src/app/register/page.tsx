@@ -262,38 +262,33 @@ export default function RegisterPage() {
       const slug = formData.companyName.toLowerCase().replace(/[^a-z0-9]/g, '-');
       const companyId = `${slug}-${Math.random().toString(36).substring(2, 7)}`;
 
-      // 3. Organization document: same shape for superadmin (společnosti) and portal (companies)
+      // 3. Minimální metadata firmy — žádné demo záznamy, žádné subkolekce (zakázky, zákazníci, …).
+      // Kolekce jako jobs / customers / jobTemplates se vytvoří až při prvním použití.
       const enabledModules = [...DEFAULT_LICENSE.enabledModules];
-      const orgPayload = {
+      const companyPayload = {
         id: companyId,
-        companyName: formData.companyName,
-        name: formData.companyName,
+        companyName: formData.companyName.trim(),
+        name: formData.companyName.trim(),
         slug,
+        /** Povinné identifikační a kontaktní údaje z registrace (nevzorová data). */
+        ico: formData.ico.replace(/\s+/g, ''),
+        dic: formData.dic?.trim() || null,
+        legalForm: formData.legalForm?.trim() || null,
         email: normalizedEmail,
-        ico: formData.ico,
-        dic: formData.dic || null,
-        legalForm: formData.legalForm || null,
-        phone: formData.phone ?? '',
+        phone: (formData.phone ?? '').trim(),
         address: fullAddressBlock,
-        registeredOfficeAddress: fullAddressBlock,
-        registeredAddressFull: fullAddressBlock,
+        registeredAddressFull:
+          formData.registeredAddressFull.trim() || fullAddressBlock,
         companyAddressStreetAndNumber: street,
         companyAddressCity: city,
         companyAddressPostalCode: zip,
         companyAddressCountry: country,
-        // Aliases for backward/forward compatibility.
-        addressStreet: street,
-        addressCity: city,
-        addressZip: zip,
-        addressCountry: country,
-        establishedAt: formData.establishedAt || null,
+        establishedAt: formData.establishedAt?.trim() || null,
+        ownerId: user.uid,
         ownerUserId: user.uid,
-        createdBy: user.uid,
         active: true,
         isActive: true,
-        plan: 'starter',
-        licenseStatus: 'active',
-        licenseId: 'starter',
+        licenseId: DEFAULT_LICENSE.licenseType,
         license: {
           licenseType: DEFAULT_LICENSE.licenseType,
           status: DEFAULT_LICENSE.status,
@@ -308,11 +303,11 @@ export default function RegisterPage() {
 
       const batch = writeBatch(db);
 
-      // 4. Create organization in společnosti (superadmin dashboard) and companies (portal)
-      batch.set(doc(db, ORGANIZATIONS_COLLECTION, companyId), orgPayload);
-      batch.set(doc(db, COMPANIES_COLLECTION, companyId), orgPayload);
+      // 4. Stejný dokument pro superadmin (společnosti) a portál (companies) — bez kopírování z jiných firem.
+      batch.set(doc(db, ORGANIZATIONS_COLLECTION, companyId), companyPayload);
+      batch.set(doc(db, COMPANIES_COLLECTION, companyId), companyPayload);
 
-      // 5. User document linked to organization
+      // 5. Uživatel (owner) vázaný na firmu
       batch.set(doc(db, USERS_COLLECTION, user.uid), {
         id: user.uid,
         email: normalizedEmail,
@@ -323,25 +318,10 @@ export default function RegisterPage() {
         createdAt: serverTimestamp(),
       });
 
-      // 6. Company role (owner for this organization)
+      // 6. Role owner pro tuto organizaci
       batch.set(doc(db, USERS_COLLECTION, user.uid, 'company_roles', companyId), {
         role: 'owner',
         assignedAt: serverTimestamp(),
-      });
-
-      // 7. Owner as first employee under companies (portal tenant data)
-      batch.set(doc(db, COMPANIES_COLLECTION, companyId, 'employees', user.uid), {
-        id: user.uid,
-        companyId,
-        userId: user.uid,
-        firstName: formData.adminName.split(' ')[0] ?? formData.adminName,
-        lastName: formData.adminName.split(' ').slice(1).join(' ') || '',
-        email: normalizedEmail,
-        jobTitle: 'Majitel firmy',
-        role: 'owner',
-        isActive: true,
-        hireDate: new Date().toISOString().split('T')[0],
-        createdAt: serverTimestamp(),
       });
 
       await batch.commit();
