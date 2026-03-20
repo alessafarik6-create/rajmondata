@@ -653,6 +653,28 @@ export default function EmployeesPage() {
                                 <KeyRound className="w-4 h-4 mr-2" /> Bez přihlašovacího účtu
                               </DropdownMenuItem>
                             )}
+                            {(canManage ||
+                              ["owner", "admin", "manager", "accountant"].includes(
+                                userRole
+                              ) ||
+                              isSuperAdmin) && (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">
+                                  Peníze
+                                </DropdownMenuLabel>
+                                <DropdownMenuItem
+                                  onClick={() =>
+                                    router.push(
+                                      `/portal/employees/payroll?employee=${encodeURIComponent(emp.id)}`
+                                    )
+                                  }
+                                >
+                                  <DollarSign className="w-4 h-4 mr-2" /> Výplaty
+                                  a výkazy
+                                </DropdownMenuItem>
+                              </>
+                            )}
                             {canManage ? (
                               <>
                                 <DropdownMenuSeparator />

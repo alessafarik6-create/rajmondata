@@ -19,6 +19,7 @@ import {
   getPayableHours,
   getLoggedHours,
   getReviewLabel,
+  moneyForBlock,
   sumMoneyForBlocks,
   sumPayableHoursForBlocks,
   sumPaidAdvances,
@@ -456,7 +457,27 @@ export default function EmployeeMoneyPage() {
                     <p className="mt-2 text-sm text-black">
                       {b.startTime} – {b.endTime} · zápis {b.hours ?? "—"} h ·
                       schváleno {getPayableHours(b)} h
+                      {hourlyRate > 0 && getPayableHours(b) > 0
+                        ? ` · ${formatKc(moneyForBlock(b, hourlyRate))}`
+                        : ""}
                     </p>
+                    {(b.reviewStatus === "adjusted" || b.reviewStatus === "approved") &&
+                    (b.adminNote || b.adjustmentReason) ? (
+                      <p className="mt-1 rounded border border-slate-200 bg-slate-50 px-2 py-1 text-xs text-slate-900">
+                        {b.adminNote ? (
+                          <span className="block">
+                            <span className="font-semibold">Poznámka:</span>{" "}
+                            {b.adminNote}
+                          </span>
+                        ) : null}
+                        {b.adjustmentReason ? (
+                          <span className="mt-0.5 block">
+                            <span className="font-semibold">Úprava:</span>{" "}
+                            {b.adjustmentReason}
+                          </span>
+                        ) : null}
+                      </p>
+                    ) : null}
                     <p className="mt-1 text-sm text-slate-800">
                       {b.description || "—"}
                     </p>
@@ -472,6 +493,7 @@ export default function EmployeeMoneyPage() {
                       <TableHead className="text-black">Hodiny</TableHead>
                       <TableHead className="text-black">Schv. h</TableHead>
                       <TableHead className="text-black">Stav</TableHead>
+                      <TableHead className="text-black">Částka</TableHead>
                       <TableHead className="text-black">Popis</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -493,8 +515,20 @@ export default function EmployeeMoneyPage() {
                         <TableCell className="text-black">
                           {getReviewLabel(b.reviewStatus)}
                         </TableCell>
-                        <TableCell className="max-w-[220px] truncate text-black">
-                          {b.description || "—"}
+                        <TableCell className="whitespace-nowrap font-medium text-black">
+                          {hourlyRate > 0 && getPayableHours(b) > 0
+                            ? formatKc(moneyForBlock(b, hourlyRate))
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="max-w-[200px] text-black">
+                          <span className="block truncate">
+                            {b.description || "—"}
+                          </span>
+                          {(b.adminNote || b.adjustmentReason) && (
+                            <span className="mt-1 block truncate text-xs text-slate-700">
+                              {b.adminNote || b.adjustmentReason}
+                            </span>
+                          )}
                         </TableCell>
                       </TableRow>
                     ))}

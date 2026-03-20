@@ -25,6 +25,10 @@ export type WorkTimeBlockMoney = {
   originalHours?: number;
   approvedHours?: number;
   reviewStatus?: WorkTimeReviewStatus | string;
+  adminNote?: string;
+  adjustmentReason?: string;
+  reviewedAt?: unknown;
+  reviewedBy?: string;
   startTime?: string;
   endTime?: string;
   description?: string;
@@ -147,6 +151,17 @@ export function sumMoneyForBlocks(
   const h = sumPayableHoursForBlocks(blocks, range);
   const r = Number(hourlyRate);
   if (!Number.isFinite(r) || r <= 0) return 0;
+  return Math.round(h * r * 100) / 100;
+}
+
+/** Částka za jeden blok: schválené hodiny × sazba (0 při zamítnutí / čekání). */
+export function moneyForBlock(
+  block: WorkTimeBlockMoney,
+  hourlyRate: number
+): number {
+  const h = getPayableHours(block);
+  const r = Number(hourlyRate);
+  if (!Number.isFinite(r) || r <= 0 || h <= 0) return 0;
   return Math.round(h * r * 100) / 100;
 }
 

@@ -98,7 +98,12 @@ service cloud.firestore {
           (isPrivileged() || workBlockEmployeeCanSelfDelete());
       }
 
-      /** Zálohy / výplaty — zaměstnanec čte jen své, admin spravuje. */
+      /**
+       * Zálohy / výplaty: companies/{companyId}/advances/{advanceId}
+       * Pole: amount (number), date (string), employeeId, companyId, note, status (paid|unpaid),
+       * createdAt, updatedAt, createdBy (uid).
+       * Zaměstnanec čte jen své záznamy, správa jen isPrivileged().
+       */
       match /advances/{advanceId} {
         allow read: if signedIn() && sameCompany(companyId) &&
           (isPrivileged() || resource.data.employeeId == ownEmployeeId());

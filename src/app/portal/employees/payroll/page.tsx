@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   useUser,
   useFirestore,
@@ -64,8 +65,10 @@ import { cn } from "@/lib/utils";
 
 const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
 
-export default function PayrollAdminPage() {
+function PayrollAdminPageInner() {
   const { user, isUserLoading } = useUser();
+  const searchParams = useSearchParams();
+  const employeeFromUrl = searchParams.get("employee");
   const firestore = useFirestore();
   const { toast } = useToast();
 
@@ -98,10 +101,18 @@ export default function PayrollAdminPage() {
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
 
   useEffect(() => {
-    if (!selectedEmployeeId && employees.length > 0) {
+    if (employees.length === 0) return;
+    if (
+      employeeFromUrl &&
+      employees.some((e) => e.id === employeeFromUrl)
+    ) {
+      setSelectedEmployeeId(employeeFromUrl);
+      return;
+    }
+    if (!selectedEmployeeId) {
       setSelectedEmployeeId(employees[0].id);
     }
-  }, [employees, selectedEmployeeId]);
+  }, [employees, selectedEmployeeId, employeeFromUrl]);
 
   const blocksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !selectedEmployeeId) return null;
@@ -169,7 +180,9 @@ export default function PayrollAdminPage() {
   }, [blocksMoney]);
 
   const sortedAdvances = useMemo(() => {
-    return [...advances].sort((a, b) => b.date.localeCompare(a.date));
+    return [...advances].sort((a, b) =>
+      String(b.date || "").localeCompare(String(a.date || ""))
+    );
   }, [advances]);
 
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -1012,5 +1025,20 @@ export default function PayrollAdminPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function PayrollAdminPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[30vh] items-center justify-center gap-2 text-black">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <span>Načítání…</span>
+        </div>
+      }
+    >
+      <PayrollAdminPageInner />
+    </Suspense>
   );
 }
