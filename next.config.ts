@@ -4,6 +4,11 @@ const nextConfig: NextConfig = {
     return [
       { source: "/employee", destination: "/portal/employee", permanent: false },
       { source: "/employee/:path*", destination: "/portal/employee/:path*", permanent: false },
+      {
+        source: "/portal/employee/work-log",
+        destination: "/portal/employee/worklogs",
+        permanent: false,
+      },
     ];
   },
   eslint: {

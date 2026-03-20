@@ -19,7 +19,7 @@ export type EmployeePortalSidebarProps = {
 const links = [
   { label: "Hlavní stránka", href: "/portal/employee", icon: LayoutDashboard },
   { label: "Docházka", href: "/portal/employee/attendance", icon: Clock },
-  { label: "Výkaz práce", href: "/portal/employee/work-log", icon: CalendarDays },
+  { label: "Výkaz práce", href: "/portal/employee/worklogs", icon: CalendarDays },
   { label: "Profil", href: "/portal/employee/profile", icon: UserCircle },
 ];
 
@@ -29,14 +29,24 @@ export function EmployeePortalSidebar({
   const pathname = usePathname();
   const router = useRouter();
 
-  const linkClass = (href: string) =>
-    cn(
-      "flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg transition-colors min-h-[44px] sm:min-h-0 touch-manipulation",
+  const linkClass = (href: string) => {
+    const workLogActive =
+      href === "/portal/employee/worklogs" &&
+      (pathname.startsWith("/portal/employee/worklogs") ||
+        pathname.startsWith("/portal/employee/work-log"));
+    const active =
       pathname === href ||
-        (href !== "/portal/employee" && pathname.startsWith(href))
+      workLogActive ||
+      (href !== "/portal/employee" &&
+        !href.startsWith("/portal/employee/work") &&
+        pathname.startsWith(href));
+    return cn(
+      "flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg transition-colors min-h-[44px] sm:min-h-0 touch-manipulation",
+      active
         ? "bg-sidebar-accent text-sidebar-primary font-medium"
         : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-primary"
     );
+  };
 
   const handleMobileNav = (href: string) => {
     mobileSheetClose?.();

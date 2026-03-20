@@ -84,14 +84,20 @@ export default function EmployeeAttendancePage() {
     if (!DEBUG) return;
     console.log("[employee/attendance]", {
       route: pathname,
-      uid: user?.uid ?? null,
+      userUid: user?.uid ?? null,
+      employeeProfile: profile
+        ? { id: profile.id, employeeId: profile.employeeId, companyId: profile.companyId }
+        : null,
       role: profile?.role ?? null,
       companyId: companyId ?? null,
       employeeId: employeeId ?? null,
       profileLoading,
       attendanceLoading,
       companyLoading,
-      rowsCount: rowsSafe.length,
+      rawRowsCount: rowsSafe.length,
+      rawSample: rowsSafe.slice(0, 3),
+      summariesCount: summaries.length,
+      transformedSample: summaries.slice(0, 3),
       profileError: profileError?.message ?? null,
       attendanceError: attendanceError?.message ?? null,
     });
@@ -104,7 +110,8 @@ export default function EmployeeAttendancePage() {
     profileLoading,
     attendanceLoading,
     companyLoading,
-    rowsSafe.length,
+    rowsSafe,
+    summaries,
     profileError,
     attendanceError,
   ]);
@@ -210,7 +217,7 @@ export default function EmployeeAttendancePage() {
             </p>
           ) : summaries.length === 0 ? (
             <p className="text-sm text-slate-500">
-              Zatím nejsou dostupná žádná data docházky.
+              Zatím nejsou dostupné žádné záznamy docházky.
             </p>
           ) : (
             <Table>

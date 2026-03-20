@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import { format } from "date-fns";
+import { cs as csFns } from "date-fns/locale";
 import { cs } from "react-day-picker/locale";
 import {
   useUser,
@@ -107,7 +108,42 @@ export default function EmployeeWorkLogPage() {
       return String(a.startTime || "").localeCompare(String(b.startTime || ""));
     });
     return list;
-  }, [blocksRaw]);
+  }, [blocksRawSafe]);
+
+  useEffect(() => {
+    if (!DEBUG) return;
+    console.log("[employee/work-log]", {
+      route: pathname,
+      userUid: user?.uid ?? null,
+      employeeProfile: profile
+        ? { id: profile.id, employeeId: profile.employeeId, companyId: profile.companyId }
+        : null,
+      companyId: companyId ?? null,
+      employeeId: employeeId ?? null,
+      isUserLoading,
+      profileLoading,
+      blocksLoading,
+      companyLoading,
+      rawBlocksCount: blocksRawSafe.length,
+      transformedBlocksCount: blocks.length,
+      profileError: profileError?.message ?? null,
+      blocksError: blocksError?.message ?? null,
+    });
+  }, [
+    pathname,
+    user?.uid,
+    profile,
+    companyId,
+    employeeId,
+    isUserLoading,
+    profileLoading,
+    blocksLoading,
+    companyLoading,
+    blocksRawSafe,
+    blocks.length,
+    profileError,
+    blocksError,
+  ]);
 
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(new Date());
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -393,6 +429,11 @@ export default function EmployeeWorkLogPage() {
             >
               Dnešní den
             </Button>
+            {!blocksLoading && blocks.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-500">
+                Zatím nejsou dostupné žádné záznamy výkazu práce.
+              </p>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -402,7 +443,7 @@ export default function EmployeeWorkLogPage() {
           <DialogHeader>
             <DialogTitle>
               {selectedDay
-                ? format(selectedDay, "d. M. yyyy", { locale: cs })
+                ? format(selectedDay, "d. M. yyyy", { locale: csFns })
                 : "Den"}
             </DialogTitle>
           </DialogHeader>
@@ -445,8 +486,8 @@ export default function EmployeeWorkLogPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {dayBlocks.map((b) => (
-                        <TableRow key={b.id}>
+                      {dayBlocks.map((b, idx) => (
+                        <TableRow key={b.id || `block-${dayKey}-${idx}`}>
                           <TableCell>
                             <Checkbox
                               checked={!!mergeIds[b.id]}
