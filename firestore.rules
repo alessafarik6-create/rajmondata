@@ -30,6 +30,14 @@ service cloud.firestore {
       return userRole() in ['owner', 'admin', 'manager', 'accountant'];
     }
 
+    /** Zaměstnanec může mazat jen vlastní blok ve stavu „čeká“ (nebo legacy bez reviewStatus). */
+    function workBlockEmployeeCanSelfDelete() {
+      return resource.data.authUserId == request.auth.uid &&
+        (!('reviewStatus' in resource.data) ||
+          resource.data.reviewStatus == 'pending' ||
+          resource.data.reviewStatus == 'rejected');
+    }
+
     function ownEmployeeId() {
       return hasUser() ? userDoc().employeeId : null;
     }
@@ -84,8 +92,22 @@ service cloud.firestore {
         allow create: if signedIn() && sameCompany(companyId) &&
           request.resource.data.authUserId == request.auth.uid &&
           request.resource.data.employeeId == ownEmployeeId();
-        allow update, delete: if signedIn() && sameCompany(companyId) &&
-          resource.data.authUserId == request.auth.uid;
+        /** Úpravy schválení / hodin jen privilegované role (zaměstnanec jen maže „pending“ bloky). */
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || workBlockEmployeeCanSelfDelete());
+      }
+
+      /** Zálohy / výplaty — zaměstnanec čte jen své, admin spravuje. */
+      match /advances/{advanceId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.employeeId is string &&
+          request.resource.data.amount is number &&
+          request.resource.data.status in ['paid', 'unpaid'];
+        allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.

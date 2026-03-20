@@ -11,6 +11,7 @@ import {
   Briefcase, 
   Clock, 
   Wallet, 
+  DollarSign,
   MessageSquare, 
   FileText, 
   ShieldCheck, 
@@ -60,6 +61,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   const portalLinks = [
     { label: 'Přehled', href: '/portal/dashboard', icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'accountant', 'employee', 'customer'] },
     { label: 'Zaměstnanci', href: '/portal/employees', icon: Users, roles: ['owner', 'admin', 'manager'] },
+    { label: 'Výplaty a výkazy', href: '/portal/employees/payroll', icon: DollarSign, roles: ['owner', 'admin', 'manager', 'accountant'] },
     { label: 'Zákazníci', href: '/portal/customers', icon: UserCircle, roles: ['owner', 'admin', 'manager', 'accountant'] },
     { label: 'Zakázky', href: '/portal/jobs', icon: Briefcase, roles: ['owner', 'admin', 'manager', 'employee', 'customer'] },
     { label: 'Docházka', href: '/portal/attendance', icon: Clock, roles: ['owner', 'admin', 'manager', 'employee'] },
@@ -75,13 +77,18 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
 
   const links = isAdminArea ? adminLinks : portalLinks;
 
+  const isPortalLinkActive = (href: string) => {
+    if (pathname === href) return true;
+    if (href === "/portal/dashboard" || href === "/admin/dashboard") return false;
+    /** „Zaměstnanci“ jen přesná shoda — podstránky (např. payroll) mají vlastní položku. */
+    if (href === "/portal/employees") return false;
+    return pathname.startsWith(`${href}/`);
+  };
+
   const linkClass = (href: string) =>
     cn(
       "flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg transition-colors min-h-[44px] sm:min-h-0 touch-manipulation",
-      pathname === href ||
-        (pathname.startsWith(href) &&
-          href !== "/portal/dashboard" &&
-          href !== "/admin/dashboard")
+      isPortalLinkActive(href)
         ? "bg-sidebar-accent text-sidebar-primary font-medium"
         : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-primary"
     );

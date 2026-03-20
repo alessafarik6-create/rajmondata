@@ -8,6 +8,7 @@ import {
   Clock,
   CalendarDays,
   UserCircle,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
@@ -20,6 +21,7 @@ const links = [
   { label: "Hlavní stránka", href: "/portal/employee", icon: LayoutDashboard },
   { label: "Docházka", href: "/portal/employee/attendance", icon: Clock },
   { label: "Výkaz práce", href: "/portal/employee/worklogs", icon: CalendarDays },
+  { label: "Peníze", href: "/portal/employee/money", icon: Wallet },
   { label: "Profil", href: "/portal/employee/profile", icon: UserCircle },
 ];
 
