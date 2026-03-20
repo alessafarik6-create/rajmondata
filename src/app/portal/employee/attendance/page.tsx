@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
+import { usePathname } from "next/navigation";
 import {
   useUser,
   useFirestore,
@@ -26,19 +27,24 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Info } from "lucide-react";
+import { Info, Loader2, AlertCircle } from "lucide-react";
 import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
 
+const DEBUG = process.env.NODE_ENV === "development";
+
 export default function EmployeeAttendancePage() {
-  const { user } = useUser();
+  const pathname = usePathname();
+  const { user, isUserLoading } = useUser();
   const firestore = useFirestore();
-  const { companyName } = useCompany();
+  const { companyName, isLoading: companyLoading } = useCompany();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
   );
-  const { data: profile } = useDoc<any>(userRef);
+  const { data: profile, isLoading: profileLoading, error: profileError } =
+    useDoc<any>(userRef);
+
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
 
@@ -53,14 +59,110 @@ export default function EmployeeAttendancePage() {
     return query(base, where("employeeId", "in", ids), limit(500));
   }, [firestore, companyId, employeeId, user]);
 
-  const { data: rawRows = [], isLoading } = useCollection(attendanceQuery);
+  const {
+    data: rawRows,
+    isLoading: attendanceLoading,
+    error: attendanceError,
+  } = useCollection(attendanceQuery);
+
+  /** useCollection vrací data: null — default `= []` v destructuringu neplatí pro null! */
+  const rowsSafe = Array.isArray(rawRows) ? rawRows : [];
 
   const summaries = useMemo(() => {
-    return summarizeAttendanceByDay(rawRows as any[], {
-      employeeId,
-      authUid: user?.uid,
+    try {
+      return summarizeAttendanceByDay(rowsSafe as any[], {
+        employeeId,
+        authUid: user?.uid,
+      });
+    } catch (e) {
+      console.error("[employee/attendance] summarizeAttendanceByDay", e);
+      return [];
+    }
+  }, [rowsSafe, employeeId, user?.uid]);
+
+  useEffect(() => {
+    if (!DEBUG) return;
+    console.log("[employee/attendance]", {
+      route: pathname,
+      uid: user?.uid ?? null,
+      role: profile?.role ?? null,
+      companyId: companyId ?? null,
+      employeeId: employeeId ?? null,
+      profileLoading,
+      attendanceLoading,
+      companyLoading,
+      rowsCount: rowsSafe.length,
+      profileError: profileError?.message ?? null,
+      attendanceError: attendanceError?.message ?? null,
     });
-  }, [rawRows, employeeId, user?.uid]);
+  }, [
+    pathname,
+    user?.uid,
+    profile,
+    companyId,
+    employeeId,
+    profileLoading,
+    attendanceLoading,
+    companyLoading,
+    rowsSafe.length,
+    profileError,
+    attendanceError,
+  ]);
+
+  if (isUserLoading || !user) {
+    return (
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm">Ověřujeme přihlášení…</p>
+      </div>
+    );
+  }
+
+  if (profileLoading) {
+    return (
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm">Načítání profilu…</p>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <Alert variant="destructive" className="max-w-lg">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Profil nebyl nalezen</AlertTitle>
+        <AlertDescription>
+          Kontaktujte administrátora. Bez profilu nelze zobrazit docházku.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-lg border-amber-200 bg-amber-50 text-amber-950">
+        <AlertCircle className="h-4 w-4 text-amber-700" />
+        <AlertTitle>Chybí organizace</AlertTitle>
+        <AlertDescription>
+          V profilu není <code className="text-xs">companyId</code>. Docházku
+          nelze načíst.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (profileError) {
+    return (
+      <Alert variant="destructive" className="max-w-lg">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Chyba profilu</AlertTitle>
+        <AlertDescription>
+          {profileError.message || "Zkuste obnovit stránku."}
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-5xl">
@@ -68,7 +170,9 @@ export default function EmployeeAttendancePage() {
         <h1 className="portal-page-title text-2xl sm:text-3xl">Moje docházka</h1>
         <p className="portal-page-description">
           Pouze pro čtení. Úpravy záznamů provádí administrátor.
-          {companyName ? ` · ${companyName}` : ""}
+          {companyName && companyName !== "Organization"
+            ? ` · ${companyName}`
+            : ""}
         </p>
       </div>
 
@@ -80,6 +184,17 @@ export default function EmployeeAttendancePage() {
         </AlertDescription>
       </Alert>
 
+      {attendanceError ? (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Docházku nelze načíst</AlertTitle>
+          <AlertDescription>
+            {attendanceError.message ||
+              "Zkontrolujte oprávnění nebo připojení k síti."}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <Card className="bg-white border-slate-200 shadow-sm">
         <CardHeader>
           <CardTitle>Přehled po dnech</CardTitle>
@@ -88,11 +203,14 @@ export default function EmployeeAttendancePage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {isLoading ? (
-            <p className="text-sm text-slate-500">Načítání…</p>
+          {attendanceLoading ? (
+            <p className="text-sm text-slate-500 flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              Načítání…
+            </p>
           ) : summaries.length === 0 ? (
             <p className="text-sm text-slate-500">
-              Zatím nemáte žádné záznamy docházky.
+              Zatím nejsou dostupná žádná data docházky.
             </p>
           ) : (
             <Table>
@@ -115,7 +233,7 @@ export default function EmployeeAttendancePage() {
                       {s.hoursWorked != null ? `${s.hoursWorked} h` : "—"}
                     </TableCell>
                     <TableCell className="text-slate-600">
-                      {s.statusLabel}
+                      {s.statusLabel ?? "—"}
                     </TableCell>
                   </TableRow>
                 ))}

@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import {
   useUser,
   useAuth,
@@ -8,6 +9,7 @@ import {
   useDoc,
   useMemoFirebase,
   useCompany,
+  useFirebaseApp,
 } from "@/firebase";
 import { doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import {
@@ -15,15 +17,17 @@ import {
   reauthenticateWithCredential,
   updatePassword,
 } from "firebase/auth";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "@/firebase/storage";
+import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Upload, Trash2 } from "lucide-react";
+import { Loader2, Upload, Trash2, AlertCircle } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+
+const DEBUG = process.env.NODE_ENV === "development";
 import { LIGHT_FORM_CONTROL_CLASS } from "@/lib/light-form-control-classes";
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
 
@@ -49,17 +53,20 @@ function mapPasswordChangeError(err: unknown): string {
 }
 
 export default function EmployeeProfilePage() {
-  const { user } = useUser();
+  const pathname = usePathname();
+  const { user, isUserLoading } = useUser();
   const auth = useAuth();
   const firestore = useFirestore();
+  const firebaseApp = useFirebaseApp();
   const { toast } = useToast();
-  const { companyName } = useCompany();
+  const { companyName, isLoading: companyLoading } = useCompany();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
   );
-  const { data: profile } = useDoc<any>(userRef);
+  const { data: profile, isLoading: profileLoading, error: profileError } =
+    useDoc<any>(userRef);
 
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
@@ -70,6 +77,31 @@ export default function EmployeeProfilePage() {
   const [pwdNew, setPwdNew] = useState("");
   const [pwdConfirm, setPwdConfirm] = useState("");
   const [pwdLoading, setPwdLoading] = useState(false);
+
+  useEffect(() => {
+    if (!DEBUG) return;
+    console.log("[employee/profile]", {
+      route: pathname,
+      uid: user?.uid ?? null,
+      companyId: companyId ?? null,
+      employeeId: employeeId ?? null,
+      hasProfile: !!profile,
+      isUserLoading,
+      profileLoading,
+      companyLoading,
+      profileError: profileError?.message ?? null,
+    });
+  }, [
+    pathname,
+    user?.uid,
+    companyId,
+    employeeId,
+    profile,
+    isUserLoading,
+    profileLoading,
+    companyLoading,
+    profileError,
+  ]);
 
   const syncProfileImage = async (url: string | null) => {
     if (!user || !firestore) return;
@@ -108,6 +140,7 @@ export default function EmployeeProfilePage() {
     }
     setUploading(true);
     try {
+      const storage = getStorage(firebaseApp);
       const path = `profile_images/${user.uid}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const sref = ref(storage, path);
       await uploadBytes(sref, file, { contentType: file.type });
@@ -188,6 +221,48 @@ export default function EmployeeProfilePage() {
     profile?.displayName ||
     [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
     user?.email;
+
+  if (isUserLoading || !user) {
+    return (
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm">Ověřujeme přihlášení…</p>
+      </div>
+    );
+  }
+
+  if (profileLoading) {
+    return (
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm">Načítání profilu…</p>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <Alert variant="destructive" className="max-w-lg">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Profil nebyl nalezen</AlertTitle>
+        <AlertDescription>
+          Dokument uživatele ve Firestore chybí. Kontaktujte administrátora.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (profileError) {
+    return (
+      <Alert variant="destructive" className="max-w-lg">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Chyba načtení profilu</AlertTitle>
+        <AlertDescription>
+          {profileError.message || "Zkuste obnovit stránku."}
+        </AlertDescription>
+      </Alert>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -287,7 +362,11 @@ export default function EmployeeProfilePage() {
           </div>
           <div>
             <span className="text-slate-500">Organizace</span>
-            <p className="font-medium">{companyName || companyId || "—"}</p>
+            <p className="font-medium">
+              {companyName && companyName !== "Organization"
+                ? companyName
+                : companyId || "—"}
+            </p>
           </div>
           <p className="text-xs text-slate-500 pt-2">
             Změnu jména, pozice a sazby řeší administrátor firmy.

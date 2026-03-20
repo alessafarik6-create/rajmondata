@@ -84,10 +84,17 @@ export function useCollection<T = any>(
         setError(null);
         setIsLoading(false);
         if (typeof window !== 'undefined') {
-          const path = memoizedTargetRefOrQuery.type === 'collection'
-            ? (memoizedTargetRefOrQuery as CollectionReference).path
-            : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query.path.canonicalString();
-          console.debug('[useCollection]', path, results.length, 'docs', results);
+          try {
+            const path =
+              (memoizedTargetRefOrQuery as { type?: string }).type ===
+              'collection'
+                ? (memoizedTargetRefOrQuery as CollectionReference).path
+                : (memoizedTargetRefOrQuery as unknown as InternalQuery)
+                    ._query?.path?.canonicalString?.() ?? '(query)';
+            console.debug('[useCollection]', path, results.length, 'docs', results);
+          } catch {
+            console.debug('[useCollection]', 'path unknown', results.length, 'docs');
+          }
         }
       },
       (error: FirestoreError) => {

@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { usePathname } from "next/navigation";
 import { format } from "date-fns";
-import { cs } from "date-fns/locale";
+import { cs } from "react-day-picker/locale";
 import {
   useUser,
   useFirestore,
@@ -61,16 +62,18 @@ type WorkBlock = {
 };
 
 export default function EmployeeWorkLogPage() {
-  const { user } = useUser();
+  const pathname = usePathname();
+  const { user, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const { companyName } = useCompany();
+  const { companyName, isLoading: companyLoading } = useCompany();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
   );
-  const { data: profile } = useDoc<any>(userRef);
+  const { data: profile, isLoading: profileLoading, error: profileError } =
+    useDoc<any>(userRef);
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
 
@@ -83,10 +86,17 @@ export default function EmployeeWorkLogPage() {
     );
   }, [firestore, companyId, employeeId]);
 
-  const { data: blocksRaw = [], isLoading } = useCollection(blocksQuery);
+  const {
+    data: blocksRaw,
+    isLoading: blocksLoading,
+    error: blocksError,
+  } = useCollection(blocksQuery);
+
+  /** useCollection vrací null, ne prázdné pole — default [] v destructuringu nefunguje. */
+  const blocksRawSafe = Array.isArray(blocksRaw) ? blocksRaw : [];
 
   const blocks = useMemo(() => {
-    const list = (blocksRaw as WorkBlock[]).map((b: any) => ({
+    const list = (blocksRawSafe as WorkBlock[]).map((b: any) => ({
       ...b,
       id: b.id,
     }));
@@ -264,11 +274,68 @@ export default function EmployeeWorkLogPage() {
     }
   };
 
+  if (isUserLoading || !user) {
+    return (
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm">Ověřujeme přihlášení…</p>
+      </div>
+    );
+  }
+
+  if (profileLoading) {
+    return (
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm">Načítání profilu…</p>
+      </div>
+    );
+  }
+
+  if (!profile) {
+    return (
+      <Alert variant="destructive" className="max-w-lg">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Profil nebyl nalezen</AlertTitle>
+        <AlertDescription>Kontaktujte administrátora.</AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-lg border-amber-200 bg-amber-50 text-amber-950">
+        <AlertCircle className="h-4 w-4 text-amber-700" />
+        <AlertTitle>Chybí organizace</AlertTitle>
+        <AlertDescription>
+          Nelze načíst výkaz bez přiřazení k firmě.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   if (!employeeId) {
     return (
-      <div className="max-w-xl text-sm text-slate-600">
-        Váš účet nemá propojené <code>employeeId</code>. Kontaktujte administrátora.
-      </div>
+      <Alert className="max-w-lg border-amber-200 bg-amber-50 text-amber-950">
+        <AlertCircle className="h-4 w-4 text-amber-700" />
+        <AlertTitle>Profil zaměstnance nebyl nalezen</AlertTitle>
+        <AlertDescription>
+          V účtu chybí <code className="text-xs">employeeId</code>. Kontaktujte
+          administrátora.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (profileError) {
+    return (
+      <Alert variant="destructive" className="max-w-lg">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Chyba profilu</AlertTitle>
+        <AlertDescription>
+          {profileError.message || "Zkuste obnovit stránku."}
+        </AlertDescription>
+      </Alert>
     );
   }
 
@@ -277,9 +344,21 @@ export default function EmployeeWorkLogPage() {
       <div>
         <h1 className="portal-page-title text-2xl sm:text-3xl">Výkaz práce</h1>
         <p className="portal-page-description">
-          Kalendář a záznamy po hodinových blocích. {companyName ? companyName : ""}
+          Kalendář a záznamy po hodinových blocích.{" "}
+          {companyName && companyName !== "Organization" ? companyName : ""}
         </p>
       </div>
+
+      {blocksError ? (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Bloky práce nelze načíst</AlertTitle>
+          <AlertDescription>
+            {blocksError.message ||
+              "Zkontrolujte oprávnění nebo zkuste stránku obnovit."}
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <Card className="bg-white border-slate-200 shadow-sm">
         <CardHeader>
@@ -328,8 +407,11 @@ export default function EmployeeWorkLogPage() {
             </DialogTitle>
           </DialogHeader>
 
-          {isLoading ? (
-            <Loader2 className="animate-spin w-8 h-8 text-primary" />
+          {blocksLoading ? (
+            <div className="flex items-center gap-2 text-slate-600">
+              <Loader2 className="animate-spin w-8 h-8 text-primary" />
+              <span className="text-sm">Načítání záznamů…</span>
+            </div>
           ) : (
             <>
               <div className="space-y-2">
