@@ -32,7 +32,11 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   const firestore = useFirestore();
   const [superadminUsername, setSuperadminUsername] = useState<string | null>(null);
 
-  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const userRef = useMemoFirebase(
+    () =>
+      user && firestore ? doc(firestore, "users", user.uid) : null,
+    [firestore, user],
+  );
   const { data: profile } = useDoc(userRef);
 
   const { companyName } = useCompany();
