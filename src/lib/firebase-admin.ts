@@ -1,6 +1,8 @@
 import type { Firestore } from "firebase-admin/firestore";
+import type { Auth } from "firebase-admin/auth";
 
 let adminFirestore: Firestore | null = null;
+let adminAuth: Auth | null = null;
 
 const LOG_PREFIX = "[firebase-admin]";
 
@@ -35,6 +37,20 @@ export function getAdminFirestore(): Firestore | null {
   } catch (e) {
     const err = e as Error;
     console.error(`${LOG_PREFIX} init error:`, err?.message ?? String(e));
+    return null;
+  }
+}
+
+/** Firebase Auth (Admin) — např. vytvoření účtu zaměstnance. */
+export function getAdminAuth(): Auth | null {
+  if (adminAuth) return adminAuth;
+  if (!getAdminFirestore()) return null;
+  try {
+    const admin = require("firebase-admin") as typeof import("firebase-admin");
+    adminAuth = admin.auth();
+    return adminAuth;
+  } catch (e) {
+    console.error(`${LOG_PREFIX} getAdminAuth:`, (e as Error)?.message ?? e);
     return null;
   }
 }

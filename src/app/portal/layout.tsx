@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
+import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
 import { doc } from "firebase/firestore";
 import { ensureUserProfile } from "@/lib/seed-firestore";
@@ -42,6 +43,26 @@ export default function PortalLayout({
     [firestore, user]
   );
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+
+  const isPortalEmployeeOnly =
+    profile?.role === "employee" &&
+    !(Array.isArray(profile?.globalRoles) &&
+      profile.globalRoles.includes("super_admin"));
+
+  const isEmployeePortalPath = pathname.startsWith("/portal/employee");
+
+  useEffect(() => {
+    if (!profile || isProfileLoading) return;
+    if (isPortalEmployeeOnly && !isEmployeePortalPath) {
+      router.replace("/portal/employee");
+    }
+  }, [
+    profile,
+    isProfileLoading,
+    isPortalEmployeeOnly,
+    isEmployeePortalPath,
+    router,
+  ]);
 
   useEffect(() => {
     if (isUserLoading) {
@@ -179,10 +200,28 @@ export default function PortalLayout({
     );
   }
 
+  if (isPortalEmployeeOnly && !isEmployeePortalPath) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
+        <div
+          className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"
+          aria-hidden
+        />
+        <p className="text-sm text-muted-foreground">
+          Otevírám zaměstnanecký portál…
+        </p>
+      </div>
+    );
+  }
+
+  const SidebarComponent = isPortalEmployeeOnly
+    ? EmployeePortalSidebar
+    : BizForgeSidebar;
+
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="hidden lg:block shrink-0">
-        <BizForgeSidebar />
+        <SidebarComponent />
       </aside>
 
       <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen} modal>
@@ -191,7 +230,7 @@ export default function PortalLayout({
           className="w-[min(280px,85vw)] max-w-full p-0 bg-sidebar border-sidebar-border rounded-r-lg [&>button]:text-sidebar-foreground [&>button]:hover:bg-sidebar-accent [&>button]:hover:text-sidebar-primary"
         >
           <div className="flex flex-col h-full overflow-y-auto">
-            <BizForgeSidebar
+            <SidebarComponent
               mobileSheetClose={() => setMobileMenuOpen(false)}
             />
           </div>

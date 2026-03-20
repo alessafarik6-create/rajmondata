@@ -38,6 +38,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   const { companyName } = useCompany();
 
   const isAdminArea = pathname?.startsWith('/admin');
+  const isEmployeePortal = pathname?.startsWith('/portal/employee');
   useEffect(() => {
     if (!isAdminArea) return;
     fetch('/api/superadmin/session')
@@ -85,7 +86,13 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
           </Button>
         )}
         <Link
-          href={isAdminArea ? '/admin/dashboard' : '/portal/dashboard'}
+          href={
+            isAdminArea
+              ? '/admin/dashboard'
+              : isEmployeePortal
+                ? '/portal/employee'
+                : '/portal/dashboard'
+          }
           className="hidden sm:flex shrink-0 mr-1 items-center"
           aria-label="Přehled portálu"
         >
@@ -119,11 +126,20 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
                   {superadminUsername || profile?.displayName || user?.email || 'Účet'}
                 </p>
                 <p className="text-xs text-slate-500 mt-1 capitalize">
-                  {superadminUsername ? 'Super administrátor' : getRoleLabel(profile?.globalRoles?.[0])}
+                  {superadminUsername
+                    ? 'Super administrátor'
+                    : getRoleLabel(
+                        profile?.role ||
+                          (Array.isArray(profile?.globalRoles)
+                            ? profile?.globalRoles?.[0]
+                            : undefined)
+                      )}
                 </p>
               </div>
               <Avatar className="h-9 w-9 border-2 border-primary/20">
-                <AvatarImage src={profile?.photoUrl} />
+                <AvatarImage
+                  src={profile?.profileImage || profile?.photoUrl}
+                />
                 <AvatarFallback className="bg-primary text-white font-bold">
                   {(superadminUsername?.[0] || profile?.displayName?.[0] || user?.email?.[0] || 'U').toUpperCase()}
                 </AvatarFallback>
@@ -134,8 +150,10 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             <DropdownMenuLabel>Můj účet</DropdownMenuLabel>
             <DropdownMenuSeparator />
             {!superadminUsername && (
-              <DropdownMenuItem className="cursor-pointer">
-                <User className="w-4 h-4 mr-2" /> Profil
+              <DropdownMenuItem asChild className="cursor-pointer">
+                <Link href={isEmployeePortal ? '/portal/employee/profile' : '/portal/settings'}>
+                  <User className="w-4 h-4 mr-2" /> Profil
+                </Link>
               </DropdownMenuItem>
             )}
             <DropdownMenuItem className="cursor-pointer text-destructive" onClick={handleLogout}>

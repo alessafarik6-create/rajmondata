@@ -27,6 +27,7 @@ import {
   signInWithEmailAndPassword,
 } from "firebase/auth";
 import { useToast } from "@/hooks/use-toast";
+import { doc, getDoc } from "firebase/firestore";
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -37,7 +38,7 @@ function isValidEmail(email: string): boolean {
 }
 
 export default function LoginPage() {
-  const { auth, areServicesAvailable } = useFirebase();
+  const { auth, firestore, areServicesAvailable } = useFirebase();
   const { toast } = useToast();
 
   const [email, setEmail] = useState("");
@@ -94,14 +95,39 @@ export default function LoginPage() {
         isMobileBrowser() ? browserLocalPersistence : browserSessionPersistence
       );
 
-      await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      const cred = await signInWithEmailAndPassword(
+        auth,
+        normalizedEmail,
+        password
+      );
 
       toast({
         title: "Přihlášení úspěšné",
         description: `Vítejte zpět v ${PLATFORM_NAME}.`,
       });
 
-      window.location.assign("/portal/dashboard");
+      let target = "/portal/dashboard";
+      if (firestore && cred.user) {
+        try {
+          const snap = await getDoc(doc(firestore, "users", cred.user.uid));
+          if (snap.exists()) {
+            const d = snap.data();
+            const globalRoles = Array.isArray(d.globalRoles)
+              ? d.globalRoles
+              : [];
+            if (
+              d.role === "employee" &&
+              !globalRoles.includes("super_admin")
+            ) {
+              target = "/portal/employee";
+            }
+          }
+        } catch (profileErr) {
+          console.warn("[LoginPage] profile redirect check failed", profileErr);
+        }
+      }
+
+      window.location.assign(target);
       return;
     } catch (error) {
       console.error("[LoginPage] login failed", error);

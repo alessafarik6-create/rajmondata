@@ -28,7 +28,7 @@ import {
   DownloadCloud
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
-import { collection, doc, deleteDoc, updateDoc, addDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import {
   Dialog,
   DialogContent,
@@ -47,7 +47,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from "@/lib/utils";
 
 /** Světlý styl polí v modálu „Pozvat člena týmu“ (neovlivní zbytek portálu). */
@@ -104,45 +103,98 @@ export default function EmployeesPage() {
   const [qrEmployee, setQrEmployee] = useState<any | null>(null);
 
   useEffect(() => {
-    if (profile && !canView) {
-      toast({ variant: "destructive", title: "Přístup odepřen", description: "Nemáte oprávnění k prohlížení seznamu zaměstnanců." });
-      router.push('/portal/dashboard');
+    if (!profile) return;
+    if (!canView) {
+      if (userRole === "employee") {
+        router.replace("/portal/employee");
+        return;
+      }
+      toast({
+        variant: "destructive",
+        title: "Přístup odepřen",
+        description: "Nemáte oprávnění k prohlížení seznamu zaměstnanců.",
+      });
+      router.push("/portal/dashboard");
     }
-  }, [profile, canView, router, toast]);
+  }, [profile, canView, userRole, router, toast]);
+
+  const [invitePassword, setInvitePassword] = useState("");
+  const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("");
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!canManage || !companyId) return;
+    if (!canManage || !companyId || !user) return;
+
+    if (invitePassword.length < 8) {
+      toast({
+        variant: "destructive",
+        title: "Slabé heslo",
+        description: "Heslo pro přihlášení musí mít alespoň 8 znaků.",
+      });
+      return;
+    }
+    if (invitePassword !== invitePasswordConfirm) {
+      toast({
+        variant: "destructive",
+        title: "Hesla se neshodují",
+        description: "Zkontrolujte pole heslo a potvrzení.",
+      });
+      return;
+    }
+
     setIsSubmitting(true);
     try {
-      const colRef = collection(firestore, 'companies', companyId, 'employees');
-      const { hourlyRate: rateStr, ...inviteRest } = inviteData;
+      const rateStr = inviteData.hourlyRate.trim();
       const hourlyRate =
-        rateStr.trim() === "" ? null : Number(rateStr);
-      await addDoc(colRef, {
-        ...inviteRest,
-        ...(hourlyRate != null && !Number.isNaN(hourlyRate)
-          ? { hourlyRate }
-          : {}),
-        companyId,
-        isActive: true,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        hireDate: new Date().toISOString().split('T')[0],
-        attendanceQrId: `QR-${Math.random().toString(36).substring(2, 15)}`
+        rateStr === "" ? null : Number(rateStr);
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/employees/create-auth", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          firstName: inviteData.firstName.trim(),
+          lastName: inviteData.lastName.trim(),
+          email: inviteData.email.trim().toLowerCase(),
+          password: invitePassword,
+          jobTitle: inviteData.jobTitle.trim(),
+          hourlyRate:
+            hourlyRate != null && !Number.isNaN(hourlyRate) ? hourlyRate : null,
+        }),
       });
-      
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Vytvoření účtu selhalo."
+        );
+      }
+
       toast({
         title: "Zaměstnanec přidán",
-        description: `${inviteData.firstName} byl úspěšně přidán do systému.`
+        description:
+          data.message ||
+          `${inviteData.firstName} má účet a přístup do zaměstnaneckého portálu.`,
       });
       setIsInviteOpen(false);
-      setInviteData({ firstName: '', lastName: '', email: '', role: 'employee', jobTitle: '', hourlyRate: '' });
-    } catch (error: any) {
+      setInviteData({
+        firstName: "",
+        lastName: "",
+        email: "",
+        role: "employee",
+        jobTitle: "",
+        hourlyRate: "",
+      });
+      setInvitePassword("");
+      setInvitePasswordConfirm("");
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error ? error.message : "Nepodařilo se přidat zaměstnance.";
       toast({
         variant: "destructive",
         title: "Chyba",
-        description: "Nepodařilo se přidat zaměstnance."
+        description: msg,
       });
     } finally {
       setIsSubmitting(false);
@@ -293,47 +345,52 @@ export default function EmployeesPage() {
                       className={INVITE_INPUT_CLASS}
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="jobTitle" className={INVITE_LABEL_CLASS}>
+                      Pracovní pozice
+                    </Label>
+                    <Input
+                      id="jobTitle"
+                      placeholder="Např. Svářeč"
+                      value={inviteData.jobTitle}
+                      onChange={(e) =>
+                        setInviteData({ ...inviteData, jobTitle: e.target.value })
+                      }
+                      className={INVITE_INPUT_CLASS}
+                    />
+                    <p className="text-[10px] text-gray-500">
+                      Účet v aplikaci má roli <strong>zaměstnanec</strong> (vlastní portál, bez přístupu k administraci firmy).
+                    </p>
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="role" className={INVITE_LABEL_CLASS}>
-                        Role
-                      </Label>
-                      <Select
-                        value={inviteData.role}
-                        onValueChange={(v) =>
-                          setInviteData({ ...inviteData, role: v })
-                        }
-                      >
-                        <SelectTrigger className={INVITE_SELECT_TRIGGER_CLASS}>
-                          <SelectValue placeholder="Vyberte roli" />
-                        </SelectTrigger>
-                        <SelectContent className={INVITE_SELECT_CONTENT_CLASS}>
-                          <SelectItem value="admin" className={INVITE_SELECT_ITEM_CLASS}>
-                            Administrátor
-                          </SelectItem>
-                          <SelectItem value="manager" className={INVITE_SELECT_ITEM_CLASS}>
-                            Manažer
-                          </SelectItem>
-                          <SelectItem value="accountant" className={INVITE_SELECT_ITEM_CLASS}>
-                            Účetní
-                          </SelectItem>
-                          <SelectItem value="employee" className={INVITE_SELECT_ITEM_CLASS}>
-                            Zaměstnanec
-                          </SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="jobTitle" className={INVITE_LABEL_CLASS}>
-                        Pracovní pozice
+                      <Label htmlFor="invitePassword" className={INVITE_LABEL_CLASS}>
+                        Heslo pro přihlášení
                       </Label>
                       <Input
-                        id="jobTitle"
-                        placeholder="Např. Svářeč"
-                        value={inviteData.jobTitle}
-                        onChange={(e) =>
-                          setInviteData({ ...inviteData, jobTitle: e.target.value })
-                        }
+                        id="invitePassword"
+                        type="password"
+                        autoComplete="new-password"
+                        required
+                        minLength={8}
+                        value={invitePassword}
+                        onChange={(e) => setInvitePassword(e.target.value)}
+                        className={INVITE_INPUT_CLASS}
+                        placeholder="Min. 8 znaků"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="invitePasswordConfirm" className={INVITE_LABEL_CLASS}>
+                        Potvrzení hesla
+                      </Label>
+                      <Input
+                        id="invitePasswordConfirm"
+                        type="password"
+                        autoComplete="new-password"
+                        required
+                        minLength={8}
+                        value={invitePasswordConfirm}
+                        onChange={(e) => setInvitePasswordConfirm(e.target.value)}
                         className={INVITE_INPUT_CLASS}
                       />
                     </div>

@@ -1,18 +1,126 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Organization documents
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userPath() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function userDoc() {
+      return get(userPath()).data;
+    }
+
+    function hasUser() {
+      return signedIn() && exists(userPath());
+    }
+
+    function userCompanyId() {
+      return hasUser() ? userDoc().companyId : null;
+    }
+
+    function userRole() {
+      return hasUser() ? userDoc().role : null;
+    }
+
+    function isPrivileged() {
+      return userRole() in ['owner', 'admin', 'manager', 'accountant'];
+    }
+
+    function ownEmployeeId() {
+      return hasUser() ? userDoc().employeeId : null;
+    }
+
+    function isSuperAdminFirebase() {
+      return hasUser() &&
+        'globalRoles' in userDoc() &&
+        userDoc().globalRoles is list &&
+        'super_admin' in userDoc().globalRoles;
+    }
+
+    function sameCompany(companyId) {
+      return hasUser() && userCompanyId() == companyId;
+    }
+
+    // --- Uživatelské profily (klientská aplikace) ---
+    match /users/{userId} {
+      allow read: if signedIn() && request.auth.uid == userId;
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update: if signedIn() && request.auth.uid == userId;
+      allow delete: if false;
+
+      match /{subcollection}/{docId} {
+        allow read, write: if signedIn() && request.auth.uid == userId;
+      }
+    }
+
+    // --- Firma ---
+    match /companies/{companyId} {
+      allow read: if signedIn() && sameCompany(companyId);
+      allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+
+      match /employees/{empId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.authUserId == request.auth.uid);
+        allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      match /attendance/{aid} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() ||
+            resource.data.employeeId == ownEmployeeId() ||
+            resource.data.employeeId == request.auth.uid);
+        allow create: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || request.resource.data.employeeId == request.auth.uid);
+        allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      match /work_time_blocks/{bid} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.authUserId == request.auth.uid);
+        allow create: if signedIn() && sameCompany(companyId) &&
+          request.resource.data.authUserId == request.auth.uid &&
+          request.resource.data.employeeId == ownEmployeeId();
+        allow update, delete: if signedIn() && sameCompany(companyId) &&
+          resource.data.authUserId == request.auth.uid;
+      }
+
+      // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
+      // Zaměstnanec se sem nedostane (frontend redirect + tyto pravidla).
+      match /{document=**} {
+        allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+    }
+
+    // Šablony smluv (kořenová kolekce)
+    match /contractTemplates/{tid} {
+      allow read: if signedIn() &&
+        resource.data.companyId == userCompanyId();
+      allow create: if signedIn() &&
+        request.resource.data.companyId == userCompanyId() &&
+        isPrivileged();
+      allow update, delete: if signedIn() &&
+        resource.data.companyId == userCompanyId() &&
+        isPrivileged();
+    }
+
+    match /platform_invoices/{id} {
+      allow read, write: if isSuperAdminFirebase();
+    }
+
     match /organizations/{orgId} {
-      allow read, update: if request.auth != null;
+      allow read, update: if signedIn();
     }
 
-    // Czech collection name used in this project for organizations
     match /společnosti/{orgId} {
-      allow read, update: if request.auth != null;
+      allow read, update: if signedIn();
     }
 
-    match /{document=**} {
-      allow read, write: if true;
+    match /superadmins/{id} {
+      allow read, write: if false;
     }
   }
 }
