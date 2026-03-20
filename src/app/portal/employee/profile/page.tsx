@@ -24,6 +24,29 @@ import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Upload, Trash2 } from "lucide-react";
+import { LIGHT_FORM_CONTROL_CLASS } from "@/lib/light-form-control-classes";
+import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
+
+const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
+
+function mapPasswordChangeError(err: unknown): string {
+  const code = (err as { code?: string })?.code;
+  switch (code) {
+    case "auth/wrong-password":
+    case "auth/invalid-credential":
+      return "Současné heslo není správné.";
+    case "auth/weak-password":
+      return "Nové heslo je příliš slabé. Zvolte delší nebo složitější heslo.";
+    case "auth/too-many-requests":
+      return "Příliš mnoho pokusů. Zkuste to později.";
+    case "auth/user-not-found":
+      return "Účet neexistuje nebo byl odstraněn.";
+    case "auth/requires-recent-login":
+      return "Z bezpečnostních důvodů se znovu přihlaste a opakujte změnu hesla.";
+    default:
+      return "Změna hesla se nezdařila. Zkuste to znovu.";
+  }
+}
 
 export default function EmployeeProfilePage() {
   const { user } = useUser();
@@ -125,11 +148,11 @@ export default function EmployeeProfilePage() {
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.email || !auth) return;
-    if (pwdNew.length < 8) {
+    if (pwdNew.length < MIN_EMPLOYEE_PASSWORD_LENGTH) {
       toast({
         variant: "destructive",
         title: "Heslo je příliš krátké",
-        description: "Minimálně 8 znaků.",
+        description: `Nové heslo musí mít alespoň ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků.`,
       });
       return;
     }
@@ -148,14 +171,13 @@ export default function EmployeeProfilePage() {
       setPwdCurrent("");
       setPwdNew("");
       setPwdConfirm("");
-      toast({ title: "Heslo bylo změněno" });
+      toast({
+        title: "Heslo bylo změněno",
+        description: "Od příštího přihlášení použijte nové heslo.",
+      });
     } catch (err: unknown) {
       console.error(err);
-      const code = (err as { code?: string })?.code;
-      let msg = "Změna hesla se nezdařila.";
-      if (code === "auth/wrong-password" || code === "auth/invalid-credential") {
-        msg = "Současné heslo není správné.";
-      }
+      const msg = mapPasswordChangeError(err);
       toast({ variant: "destructive", title: "Chyba", description: msg });
     } finally {
       setPwdLoading(false);
@@ -273,51 +295,66 @@ export default function EmployeeProfilePage() {
         </CardContent>
       </Card>
 
-      <Card className="bg-white border-slate-200 shadow-sm">
+      <Card className="bg-white border border-gray-200 shadow-sm">
         <CardHeader>
-          <CardTitle>Změna hesla</CardTitle>
+          <CardTitle className="text-black">Změna hesla</CardTitle>
+          <p className="text-sm text-gray-600 font-normal pt-1">
+            Pro změnu hesla zadejte současné heslo a nové heslo (min.{" "}
+            {MIN_EMPLOYEE_PASSWORD_LENGTH} znaků). Heslo se ukládá pouze v
+            přihlášení Firebase, ne do databáze.
+          </p>
         </CardHeader>
         <CardContent>
-          <form onSubmit={handlePasswordChange} className="space-y-4 max-w-md">
+          <form
+            onSubmit={handlePasswordChange}
+            className="space-y-4 w-full max-w-md"
+          >
             <div className="space-y-2">
-              <Label htmlFor="pwd-c">Současné heslo</Label>
+              <Label htmlFor="pwd-c" className={PROFILE_LABEL_CLASS}>
+                Aktuální heslo
+              </Label>
               <Input
                 id="pwd-c"
                 type="password"
                 autoComplete="current-password"
                 value={pwdCurrent}
                 onChange={(e) => setPwdCurrent(e.target.value)}
-                className="bg-white border-slate-200"
+                className={LIGHT_FORM_CONTROL_CLASS}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="pwd-n">Nové heslo</Label>
+              <Label htmlFor="pwd-n" className={PROFILE_LABEL_CLASS}>
+                Nové heslo
+              </Label>
               <Input
                 id="pwd-n"
                 type="password"
                 autoComplete="new-password"
                 value={pwdNew}
                 onChange={(e) => setPwdNew(e.target.value)}
-                className="bg-white border-slate-200"
+                className={LIGHT_FORM_CONTROL_CLASS}
                 required
-                minLength={8}
+                minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+                placeholder={`Min. ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků`}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="pwd-r">Potvrzení nového hesla</Label>
+              <Label htmlFor="pwd-r" className={PROFILE_LABEL_CLASS}>
+                Potvrzení nového hesla
+              </Label>
               <Input
                 id="pwd-r"
                 type="password"
                 autoComplete="new-password"
                 value={pwdConfirm}
                 onChange={(e) => setPwdConfirm(e.target.value)}
-                className="bg-white border-slate-200"
+                className={LIGHT_FORM_CONTROL_CLASS}
                 required
-                minLength={8}
+                minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
               />
             </div>
-            <Button type="submit" disabled={pwdLoading}>
+            <Button type="submit" disabled={pwdLoading} className="w-full sm:w-auto">
               {pwdLoading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : (

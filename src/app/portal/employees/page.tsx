@@ -83,9 +83,13 @@ export default function EmployeesPage() {
     Array.isArray(profile?.globalRoles) &&
     profile.globalRoles.includes("super_admin");
 
-  const canManage =
-    userRole === "owner" || userRole === "admin" || isSuperAdmin;
-  const canView = ['owner', 'admin', 'manager'].includes(userRole);
+  /** Plná správa (pozvánka, role, mazání…) — pouze vlastník / admin firmy. */
+  const canManage = userRole === "owner" || userRole === "admin";
+  /** Reset hesla v Auth — i super_admin u zaměstnanců vybrané firmy. */
+  const canResetEmployeeAuthPassword =
+    canManage || (isSuperAdmin && !!companyId);
+  const canView =
+    ["owner", "admin", "manager"].includes(userRole) || isSuperAdmin;
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -272,6 +276,76 @@ export default function EmployeesPage() {
     }
   };
 
+  const closePwdResetDialog = () => {
+    setPwdResetEmployee(null);
+    setPwdResetNew("");
+    setPwdResetConfirm("");
+  };
+
+  const handleAdminPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!canResetEmployeeAuthPassword || !user || !pwdResetEmployee?.id) return;
+    if (pwdResetNew.length < MIN_EMPLOYEE_PASSWORD_LENGTH) {
+      toast({
+        variant: "destructive",
+        title: "Slabé heslo",
+        description: `Nové heslo musí mít alespoň ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků.`,
+      });
+      return;
+    }
+    if (pwdResetNew !== pwdResetConfirm) {
+      toast({
+        variant: "destructive",
+        title: "Hesla se neshodují",
+        description: "Zkontrolujte nové heslo a potvrzení.",
+      });
+      return;
+    }
+    if (!companyId) {
+      toast({
+        variant: "destructive",
+        title: "Chybí organizace",
+        description: "Nelze nastavit heslo bez kontextu firmy.",
+      });
+      return;
+    }
+    setPwdResetLoading(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/employees/reset-password", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          employeeId: pwdResetEmployee.id,
+          newPassword: pwdResetNew,
+          companyId,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Reset hesla selhal."
+        );
+      }
+      toast({
+        title: "Heslo bylo nastaveno",
+        description:
+          data.message ||
+          "Zaměstnanec se přihlásí novým heslem; staré heslo již neplatí.",
+      });
+      closePwdResetDialog();
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error ? error.message : "Nepodařilo se nastavit heslo.";
+      toast({ variant: "destructive", title: "Chyba", description: msg });
+    } finally {
+      setPwdResetLoading(false);
+    }
+  };
+
   const changeRole = async (employeeId: string, newRole: string) => {
     if (!canManage || !companyId) return;
     try {
@@ -306,7 +380,8 @@ export default function EmployeesPage() {
                     Pozvat nového člena týmu
                   </DialogTitle>
                   <DialogDescription className="text-sm text-gray-700">
-                    Vyplňte údaje pro vytvoření profilu zaměstnance a nastavení jeho mzdových nákladů.
+                    Vytvoří se profil zaměstnance a přihlašovací účet (email + heslo). Heslo se
+                    neukládá do databáze, pouze do Firebase Authentication.
                   </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={handleInvite} className="space-y-4 py-4 text-black">
@@ -382,11 +457,11 @@ export default function EmployeesPage() {
                         type="password"
                         autoComplete="new-password"
                         required
-                        minLength={8}
+                        minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
                         value={invitePassword}
                         onChange={(e) => setInvitePassword(e.target.value)}
                         className={INVITE_INPUT_CLASS}
-                        placeholder="Min. 8 znaků"
+                        placeholder={`Min. ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků`}
                       />
                     </div>
                     <div className="space-y-2">
@@ -427,8 +502,16 @@ export default function EmployeesPage() {
                     </p>
                   </div>
                   <DialogFooter>
-                    <Button type="submit" disabled={isSubmitting} className="w-full">
-                      {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : "Vytvořit profil"}
+                    <Button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="w-full"
+                    >
+                      {isSubmitting ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        "Vytvořit zaměstnance a účet"
+                      )}
                     </Button>
                   </DialogFooter>
                 </form>
@@ -522,41 +605,68 @@ export default function EmployeesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="pr-6 text-right">
-                      {canManage ? (
+                      {canManage || canResetEmployeeAuthPassword ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-56">
-                            <DropdownMenuLabel>Správa uživatele</DropdownMenuLabel>
-                            <DropdownMenuItem onClick={() => toggleEmployeeStatus(emp.id, emp.isActive)}>
-                              <UserX className="w-4 h-4 mr-2" /> {emp.isActive ? 'Deaktivovat' : 'Aktivovat'}
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Identifikace</DropdownMenuLabel>
-                            <DropdownMenuItem onClick={() => generatePin(emp.id)}>
-                              <RefreshCw className="w-4 h-4 mr-2" /> {emp.attendancePin ? 'Resetovat PIN' : 'Generovat PIN'}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => {
-                              if (!emp.attendanceQrId) generateQrId(emp.id);
-                              setQrEmployee(emp);
-                            }}>
-                              <QrCode className="w-4 h-4 mr-2" /> {emp.attendanceQrId ? 'Zobrazit QR kód' : 'Generovat QR kód'}
-                            </DropdownMenuItem>
-                            {emp.attendancePin && (
-                              <DropdownMenuItem onClick={() => disablePin(emp.id)} className="text-rose-500">
-                                <Shield className="w-4 h-4 mr-2" /> Zakázat PIN
+                            {canManage ? (
+                              <>
+                                <DropdownMenuLabel>Správa uživatele</DropdownMenuLabel>
+                                <DropdownMenuItem onClick={() => toggleEmployeeStatus(emp.id, emp.isActive)}>
+                                  <UserX className="w-4 h-4 mr-2" /> {emp.isActive ? 'Deaktivovat' : 'Aktivovat'}
+                                </DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Identifikace</DropdownMenuLabel>
+                                <DropdownMenuItem onClick={() => generatePin(emp.id)}>
+                                  <RefreshCw className="w-4 h-4 mr-2" /> {emp.attendancePin ? 'Resetovat PIN' : 'Generovat PIN'}
+                                </DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => {
+                                  if (!emp.attendanceQrId) generateQrId(emp.id);
+                                  setQrEmployee(emp);
+                                }}>
+                                  <QrCode className="w-4 h-4 mr-2" /> {emp.attendanceQrId ? 'Zobrazit QR kód' : 'Generovat QR kód'}
+                                </DropdownMenuItem>
+                                {emp.attendancePin && (
+                                  <DropdownMenuItem onClick={() => disablePin(emp.id)} className="text-rose-500">
+                                    <Shield className="w-4 h-4 mr-2" /> Zakázat PIN
+                                  </DropdownMenuItem>
+                                )}
+                                <DropdownMenuSeparator />
+                              </>
+                            ) : null}
+                            <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">
+                              Přihlášení
+                            </DropdownMenuLabel>
+                            {emp.authUserId ? (
+                              <DropdownMenuItem
+                                onClick={() => {
+                                  setPwdResetEmployee(emp);
+                                  setPwdResetNew("");
+                                  setPwdResetConfirm("");
+                                }}
+                              >
+                                <KeyRound className="w-4 h-4 mr-2" /> Nastavit nové heslo
+                              </DropdownMenuItem>
+                            ) : (
+                              <DropdownMenuItem disabled className="opacity-60">
+                                <KeyRound className="w-4 h-4 mr-2" /> Bez přihlašovacího účtu
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Změnit roli</DropdownMenuLabel>
-                            <DropdownMenuItem onClick={() => changeRole(emp.id, 'admin')}>Administrátor</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => changeRole(emp.id, 'manager')}>Manažer</DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => changeRole(emp.id, 'employee')}>Zaměstnanec</DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>
-                              <Trash2 className="w-4 h-4 mr-2" /> Odstranit
-                            </DropdownMenuItem>
+                            {canManage ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Změnit roli</DropdownMenuLabel>
+                                <DropdownMenuItem onClick={() => changeRole(emp.id, 'admin')}>Administrátor</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => changeRole(emp.id, 'manager')}>Manažer</DropdownMenuItem>
+                                <DropdownMenuItem onClick={() => changeRole(emp.id, 'employee')}>Zaměstnanec</DropdownMenuItem>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>
+                                  <Trash2 className="w-4 h-4 mr-2" /> Odstranit
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       ) : (
@@ -579,6 +689,80 @@ export default function EmployeesPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={!!pwdResetEmployee}
+        onOpenChange={(open) => {
+          if (!open) closePwdResetDialog();
+        }}
+      >
+        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">
+              Nastavit nové heslo
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {pwdResetEmployee
+                ? `${pwdResetEmployee.firstName} ${pwdResetEmployee.lastName} — ${pwdResetEmployee.email}`
+                : ""}
+              <span className="block mt-2">
+                Staré heslo přestane platit. Heslo se ukládá jen do Firebase Authentication.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleAdminPasswordReset} className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="adminPwdNew" className={INVITE_LABEL_CLASS}>
+                Nové heslo
+              </Label>
+              <Input
+                id="adminPwdNew"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+                value={pwdResetNew}
+                onChange={(e) => setPwdResetNew(e.target.value)}
+                className={INVITE_INPUT_CLASS}
+                placeholder={`Min. ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků`}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="adminPwdConfirm" className={INVITE_LABEL_CLASS}>
+                Potvrzení hesla
+              </Label>
+              <Input
+                id="adminPwdConfirm"
+                type="password"
+                autoComplete="new-password"
+                required
+                minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+                value={pwdResetConfirm}
+                onChange={(e) => setPwdResetConfirm(e.target.value)}
+                className={INVITE_INPUT_CLASS}
+              />
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-gray-200 bg-white text-black hover:bg-gray-50"
+                onClick={closePwdResetDialog}
+                disabled={pwdResetLoading}
+              >
+                Zrušit
+              </Button>
+              <Button type="submit" disabled={pwdResetLoading}>
+                {pwdResetLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Uložit nové heslo"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
 
       {/* QR Code Dialog */}
       <Dialog open={!!qrEmployee} onOpenChange={() => setQrEmployee(null)}>

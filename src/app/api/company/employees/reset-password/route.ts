@@ -78,6 +78,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: pwdErr }, { status: 400 });
   }
 
+  // Owner/admin vždy cílí jen vlastní firmu (companyId z těla se ignoruje kvůli bezpečnosti).
   let targetCompanyId = callerCompanyId;
   if (isSuperAdmin) {
     const fromBody = String(body.companyId || "").trim();

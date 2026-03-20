@@ -57,13 +57,7 @@ export async function POST(request: NextRequest) {
 
   const companyId = caller.companyId as string | undefined;
   const callerRole = caller.role as string | undefined;
-  const globalRoles = caller.globalRoles as string[] | undefined;
-  const isSuperAdmin =
-    Array.isArray(globalRoles) && globalRoles.includes("super_admin");
-  if (
-    !companyId ||
-    (!["owner", "admin"].includes(callerRole || "") && !isSuperAdmin)
-  ) {
+  if (!companyId || !["owner", "admin"].includes(callerRole || "")) {
     return NextResponse.json(
       { error: "Pouze vlastník nebo administrátor firmy může vytvářet účty zaměstnanců." },
       { status: 403 }
