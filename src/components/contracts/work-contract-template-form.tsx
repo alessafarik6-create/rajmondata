@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -8,7 +8,10 @@ import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LIGHT_FORM_CONTROL_CLASS } from "@/lib/light-form-control-classes";
-import { CONTRACT_TEMPLATE_PLACEHOLDER_HELP } from "@/lib/contract-template-placeholders";
+import {
+  CONTRACT_TEMPLATE_PLACEHOLDER_HELP,
+  CONTRACT_TEMPLATE_PLACEHOLDER_KEYS,
+} from "@/lib/contract-template-placeholders";
 
 const FIELD = cn(
   LIGHT_FORM_CONTROL_CLASS,
@@ -40,22 +43,44 @@ export function WorkContractTemplateForm({
   editingId,
   name,
   content,
-  onNameChange,
   onContentChange,
+  onNameChange,
   onSubmit,
   saving,
   onCancel,
 }: WorkContractTemplateFormProps) {
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertPlaceholder = (key: (typeof CONTRACT_TEMPLATE_PLACEHOLDER_KEYS)[number]) => {
+    const snippet = `{{${key}}}`;
+    const ta = textareaRef.current;
+    if (!ta) {
+      onContentChange(content + snippet);
+      return;
+    }
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    const next = content.slice(0, start) + snippet + content.slice(end);
+    onContentChange(next);
+    requestAnimationFrame(() => {
+      const el = textareaRef.current;
+      if (!el) return;
+      el.focus();
+      const pos = start + snippet.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
   return (
-    <div className="flex-1 min-w-0 flex flex-col min-h-0">
-      <div className="flex-1 min-h-0 overflow-y-auto h-[50vh] lg:h-[calc(90vh-220px)]">
-        <div className="p-6 space-y-4">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="h-[50vh] min-h-0 flex-1 overflow-y-auto lg:h-[calc(90vh-220px)]">
+        <div className="space-y-4 p-6">
           <div className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-black">
             <span className="font-semibold">
               {editingId ? "Úprava šablony" : "Nová šablona"}
             </span>
             {editingId ? (
-              <span className="text-slate-600 ml-2">(ID: {editingId})</span>
+              <span className="ml-2 text-slate-600">(ID: {editingId})</span>
             ) : null}
           </div>
 
@@ -78,6 +103,7 @@ export function WorkContractTemplateForm({
               Obsah smlouvy
             </Label>
             <Textarea
+              ref={textareaRef}
               id="wct-form-content"
               value={content}
               onChange={(e) => onContentChange(e.target.value)}
@@ -87,19 +113,46 @@ export function WorkContractTemplateForm({
             />
           </div>
 
-          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800 whitespace-pre-wrap">
-            <p className="font-semibold text-black mb-2">Proměnné v textu</p>
+          <div className="rounded-lg border border-dashed border-orange-200 bg-orange-50/60 p-4 text-sm text-slate-800">
+            <p className="mb-2 font-semibold text-black">
+              Vložit dynamickou proměnnou
+            </p>
+            <p className="mb-3 text-xs text-slate-600">
+              Po vytvoření smlouvy u zakázky se zástupné výrazy (např.{" "}
+              <code className="rounded bg-white px-1">{"{{zalohova_castka}}"}</code>) nahradí
+              skutečnými údaji — v editoru zůstávají ve tvaru se závorkami.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {CONTRACT_TEMPLATE_PLACEHOLDER_KEYS.map((key) => (
+                <Button
+                  key={key}
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-auto min-h-[36px] border-slate-300 bg-white px-2 py-1.5 font-mono text-xs text-black hover:bg-slate-50"
+                  disabled={disabled}
+                  onClick={() => insertPlaceholder(key)}
+                  title={`Vložit {{${key}}}`}
+                >
+                  {`{{${key}}}`}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-slate-800">
+            <p className="mb-2 font-semibold text-black">Popis proměnných</p>
             {CONTRACT_TEMPLATE_PLACEHOLDER_HELP}
           </div>
         </div>
       </div>
 
-      <div className="shrink-0 px-6 py-4 border-t border-slate-200 bg-white flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+      <div className="flex shrink-0 flex-col-reverse gap-2 border-t border-slate-200 bg-white px-6 py-4 sm:flex-row sm:justify-end">
         {onCancel ? (
           <Button
             type="button"
             variant="outline"
-            className="min-h-[44px] border-slate-300 text-black bg-white"
+            className="min-h-[44px] border-slate-300 bg-white text-black"
             disabled={disabled || saving}
             onClick={onCancel}
           >
@@ -108,13 +161,13 @@ export function WorkContractTemplateForm({
         ) : null}
         <Button
           type="button"
-          className="min-h-[44px] bg-orange-500 hover:bg-orange-600 text-white border-0"
+          className="min-h-[44px] border-0 bg-orange-500 text-white hover:bg-orange-600"
           disabled={disabled || saving}
           onClick={() => void onSubmit()}
         >
           {saving ? (
             <>
-              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               Ukládám…
             </>
           ) : editingId ? (

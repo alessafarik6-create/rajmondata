@@ -12,6 +12,7 @@ export const CONTRACT_TEMPLATE_PLACEHOLDER_KEYS = [
   "datum",
   "nazev_zakazky",
   "cena",
+  "zalohova_castka",
 ] as const;
 
 export type ContractTemplatePlaceholderKey =
@@ -28,7 +29,15 @@ Dostupné proměnné (vložte přesně v uvedeném tvaru):
 {{datum}} — dnešní datum (česky)
 {{nazev_zakazky}} — název aktuální zakázky
 {{cena}} — rozpočet zakázky formátovaný v Kč (např. 720 000 Kč)
+{{zalohova_castka}} — částka zálohy z formuláře smlouvy (nebo z % a rozpočtu), např. 25 000 Kč; prázdná hodnota → 0 Kč
 `.trim();
+
+/** Částka v Kč — stejná logika jako ve formuláři smlouvy (prázdný vstup → 0 Kč). */
+export function formatWorkContractAmountKc(amountStr: string): string {
+  const n = Number(String(amountStr).replace(/\s+/g, "").replace(",", "."));
+  if (!Number.isFinite(n)) return "";
+  return `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
+}
 
 export type BuildContractPlaceholderValuesInput = {
   /** Název dodavatelské firmy (z firemního profilu). */
@@ -45,6 +54,11 @@ export type BuildContractPlaceholderValuesInput = {
   nazevZakazky: string;
   /** Cena včetně měny, např. „720 000 Kč“. */
   cena: string;
+  /**
+   * Částka zálohy jako číslo v řetězci (bez měny), např. "25000".
+   * Prázdný řetězec → dosadí se „0 Kč“.
+   */
+  zalohovaCastkaRaw: string;
 };
 
 /**
@@ -61,6 +75,7 @@ export function buildContractPlaceholderValues(
     datum: opts.datum,
     nazev_zakazky: opts.nazevZakazky,
     cena: opts.cena,
+    zalohova_castka: formatWorkContractAmountKc(opts.zalohovaCastkaRaw),
   };
 }
 

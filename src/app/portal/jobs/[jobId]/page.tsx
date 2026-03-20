@@ -65,6 +65,7 @@ import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-
 import {
   buildContractPlaceholderValues,
   applyContractTemplatePlaceholders,
+  formatWorkContractAmountKc,
 } from "@/lib/contract-template-placeholders";
 import { allocateNextSodContractNumber } from "@/lib/work-contract-counter";
 import {
@@ -800,12 +801,6 @@ export default function JobDetailPage() {
     [jobBudgetKc]
   );
 
-  const formatKc = useCallback((amountStr: string): string => {
-    const n = Number(String(amountStr).replace(/\s+/g, "").replace(",", "."));
-    if (!Number.isFinite(n)) return "";
-    return `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
-  }, []);
-
   const applyTemplateVariables = useCallback(
     (input: string, formOverride?: WorkContractForm): string => {
       const today = new Intl.DateTimeFormat("cs-CZ").format(new Date());
@@ -849,6 +844,13 @@ export default function JobDetailPage() {
         formOverride?.depositPercentage ?? contractForm.depositPercentage;
       const depositAmount =
         formOverride?.depositAmount ?? contractForm.depositAmount;
+      const depositAmountTrimmed = String(depositAmount ?? "").trim();
+      const effectiveDepositStr =
+        depositAmountTrimmed !== ""
+          ? depositAmountTrimmed
+          : computeDepositAmountFromPercent(
+              String(depositPercentage ?? "").trim()
+            ) || "";
       const bankAccountNumber =
         formOverride?.bankAccountNumber ?? contractForm.bankAccountNumber;
 
@@ -912,12 +914,13 @@ export default function JobDetailPage() {
         datum: today,
 
         "zaloha.procenta": depositPercentage ? `${depositPercentage} %` : "",
-        "zaloha.castka": formatKc(depositAmount),
+        "zaloha.castka": formatWorkContractAmountKc(effectiveDepositStr),
         "zaloha.ucet":
           (bankAccountNumber && String(bankAccountNumber).trim()) ||
           companyProfileBankAccountDisplay ||
           "",
-        zaloha: formatKc(depositAmount),
+        zaloha: formatWorkContractAmountKc(effectiveDepositStr),
+        zalohova_castka: formatWorkContractAmountKc(effectiveDepositStr),
 
         data_sablony: formatJobTemplateDataPlainText(
           template as JobTemplate | undefined,
@@ -951,7 +954,6 @@ export default function JobDetailPage() {
       selectedBankAccount,
       bankAccounts,
       computeDepositAmountFromPercent,
-      formatKc,
       template,
       job?.templateValues,
       companyProfileBankAccountDisplay,
@@ -978,16 +980,22 @@ export default function JobDetailPage() {
 
       const payCompanyAcct = companyProfileBankAccountDisplay.trim();
       const payFormAcct = (form.bankAccountNumber || "").trim();
+      const depAmtForm = (form.depositAmount || "").trim();
+      const depPctForm = (form.depositPercentage || "").trim();
+      const effDepForm =
+        depAmtForm !== ""
+          ? depAmtForm
+          : computeDepositAmountFromPercent(depPctForm) || "";
       const paymentLines = [
         payCompanyAcct ? `Číslo účtu: ${payCompanyAcct}` : "",
         form.contractNumber?.trim()
           ? `Variabilní symbol: ${form.contractNumber.trim()}`
           : "",
-        form.depositPercentage?.trim()
-          ? `Záloha ve výši ${form.depositPercentage.trim()} % z ceny díla.`
+        depPctForm
+          ? `Záloha ve výši ${depPctForm} % z ceny díla.`
           : "",
-        form.depositAmount?.trim()
-          ? `Částka zálohy: ${formatKc(form.depositAmount)}.`
+        effDepForm
+          ? `Částka zálohy: ${formatWorkContractAmountKc(effDepForm)}.`
           : "",
         payFormAcct && payFormAcct !== payCompanyAcct
           ? `Úhrada zálohy na účet: ${payFormAcct}.`
@@ -1036,7 +1044,7 @@ export default function JobDetailPage() {
       job?.templateValues,
       template,
       jobBudgetKc,
-      formatKc,
+      computeDepositAmountFromPercent,
       companyProfileBankAccountDisplay,
     ]
   );
@@ -1526,6 +1534,8 @@ export default function JobDetailPage() {
             ? `${Math.round(jobBudgetKc).toLocaleString("cs-CZ")} Kč`
             : "";
 
+        const preDepositRaw =
+          computeDepositAmountFromPercent("") || "";
         const placeholderMap = buildContractPlaceholderValues({
           nazevFirmy,
           jmenoZakaznika,
@@ -1534,6 +1544,7 @@ export default function JobDetailPage() {
           datum,
           nazevZakazky,
           cena,
+          zalohovaCastkaRaw: preDepositRaw,
         });
 
         let mainBody = applyContractTemplatePlaceholders(
@@ -4127,6 +4138,7 @@ export default function JobDetailPage() {
               <code>{"{{objednatel}}"}</code>).
               <br />
               Záloha: <code>{"{{zaloha.procenta}}"}</code>, <code>{"{{zaloha.castka}}"}</code>,{" "}
+              <code>{"{{zalohova_castka}}"}</code> (totéž číslo jako záloha),{" "}
               <code>{"{{zaloha.ucet}}"}</code>.
               <br />
               Číslo dokumentu: <code>{"{{smlouva.cislo}}"}</code>,{" "}
@@ -4141,7 +4153,7 @@ export default function JobDetailPage() {
               <code>{"{{adresa}}"}</code>, <code>{"{{cislo_uctu_firmy}}"}</code>,{" "}
               <code>{"{{variabilni_symbol}}"}</code>, <code>{"{{jmeno_zakaznika}}"}</code>,{" "}
               <code>{"{{nazev_zakazky}}"}</code>, <code>{"{{cena}}"}</code>,{" "}
-              <code>{"{{datum}}"}</code>.
+              <code>{"{{zalohova_castka}}"}</code>, <code>{"{{datum}}"}</code>.
             </div>
           </div>
 
