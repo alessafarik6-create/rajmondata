@@ -48,6 +48,22 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { cn } from "@/lib/utils";
+
+/** Světlý styl polí v modálu „Pozvat člena týmu“ (neovlivní zbytek portálu). */
+const INVITE_INPUT_CLASS =
+  "flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-base text-black ring-offset-0 placeholder:text-gray-400 focus-visible:border-orange-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:ring-offset-0 md:text-sm disabled:opacity-70";
+
+const INVITE_SELECT_TRIGGER_CLASS =
+  "flex h-10 w-full items-center justify-between rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-black ring-offset-0 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-0 disabled:opacity-70 [&>span]:line-clamp-1 [&>span]:text-black";
+
+const INVITE_SELECT_CONTENT_CLASS =
+  "bg-white text-black border border-gray-200";
+
+const INVITE_SELECT_ITEM_CLASS =
+  "cursor-pointer text-black focus:bg-gray-100 focus:text-black data-[highlighted]:bg-gray-100 data-[highlighted]:text-black";
+
+const INVITE_LABEL_CLASS = "text-sm font-medium text-gray-700";
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
@@ -222,87 +238,126 @@ export default function EmployeesPage() {
                   <UserPlus className="w-4 h-4" /> Pozvat zaměstnance
                 </Button>
               </DialogTrigger>
-              <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-xl">
+              <DialogContent className="max-w-xl border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
                 <DialogHeader>
-                  <DialogTitle>Pozvat nového člena týmu</DialogTitle>
-                  <DialogDescription>
+                  <DialogTitle className="text-lg font-semibold text-black">
+                    Pozvat nového člena týmu
+                  </DialogTitle>
+                  <DialogDescription className="text-sm text-gray-700">
                     Vyplňte údaje pro vytvoření profilu zaměstnance a nastavení jeho mzdových nákladů.
                   </DialogDescription>
                 </DialogHeader>
-                <form onSubmit={handleInvite} className="space-y-4 py-4">
+                <form onSubmit={handleInvite} className="space-y-4 py-4 text-black">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="firstName">Jméno</Label>
-                      <Input 
-                        id="firstName" 
-                        required 
-                        value={inviteData.firstName} 
-                        onChange={e => setInviteData({...inviteData, firstName: e.target.value})}
-                        className="bg-background"
+                      <Label htmlFor="firstName" className={INVITE_LABEL_CLASS}>
+                        Jméno
+                      </Label>
+                      <Input
+                        id="firstName"
+                        required
+                        value={inviteData.firstName}
+                        onChange={(e) =>
+                          setInviteData({ ...inviteData, firstName: e.target.value })
+                        }
+                        className={INVITE_INPUT_CLASS}
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="lastName">Příjmení</Label>
-                      <Input 
-                        id="lastName" 
-                        required 
-                        value={inviteData.lastName} 
-                        onChange={e => setInviteData({...inviteData, lastName: e.target.value})}
-                        className="bg-background"
+                      <Label htmlFor="lastName" className={INVITE_LABEL_CLASS}>
+                        Příjmení
+                      </Label>
+                      <Input
+                        id="lastName"
+                        required
+                        value={inviteData.lastName}
+                        onChange={(e) =>
+                          setInviteData({ ...inviteData, lastName: e.target.value })
+                        }
+                        className={INVITE_INPUT_CLASS}
                       />
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="email">Email</Label>
-                    <Input 
-                      id="email" 
-                      type="email" 
-                      required 
-                      value={inviteData.email} 
-                      onChange={e => setInviteData({...inviteData, email: e.target.value})}
-                      className="bg-background"
+                    <Label htmlFor="email" className={INVITE_LABEL_CLASS}>
+                      Email
+                    </Label>
+                    <Input
+                      id="email"
+                      type="email"
+                      required
+                      value={inviteData.email}
+                      onChange={(e) =>
+                        setInviteData({ ...inviteData, email: e.target.value })
+                      }
+                      className={INVITE_INPUT_CLASS}
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
-                      <Label htmlFor="role">Role</Label>
-                      <Select value={inviteData.role} onValueChange={v => setInviteData({...inviteData, role: v})}>
-                        <SelectTrigger className="bg-background">
+                      <Label htmlFor="role" className={INVITE_LABEL_CLASS}>
+                        Role
+                      </Label>
+                      <Select
+                        value={inviteData.role}
+                        onValueChange={(v) =>
+                          setInviteData({ ...inviteData, role: v })
+                        }
+                      >
+                        <SelectTrigger className={INVITE_SELECT_TRIGGER_CLASS}>
                           <SelectValue placeholder="Vyberte roli" />
                         </SelectTrigger>
-                        <SelectContent className="bg-surface border-border">
-                          <SelectItem value="admin">Administrátor</SelectItem>
-                          <SelectItem value="manager">Manažer</SelectItem>
-                          <SelectItem value="accountant">Účetní</SelectItem>
-                          <SelectItem value="employee">Zaměstnanec</SelectItem>
+                        <SelectContent className={INVITE_SELECT_CONTENT_CLASS}>
+                          <SelectItem value="admin" className={INVITE_SELECT_ITEM_CLASS}>
+                            Administrátor
+                          </SelectItem>
+                          <SelectItem value="manager" className={INVITE_SELECT_ITEM_CLASS}>
+                            Manažer
+                          </SelectItem>
+                          <SelectItem value="accountant" className={INVITE_SELECT_ITEM_CLASS}>
+                            Účetní
+                          </SelectItem>
+                          <SelectItem value="employee" className={INVITE_SELECT_ITEM_CLASS}>
+                            Zaměstnanec
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label htmlFor="jobTitle">Pracovní pozice</Label>
-                      <Input 
-                        id="jobTitle" 
-                        placeholder="Např. Svářeč" 
-                        value={inviteData.jobTitle} 
-                        onChange={e => setInviteData({...inviteData, jobTitle: e.target.value})}
-                        className="bg-background"
+                      <Label htmlFor="jobTitle" className={INVITE_LABEL_CLASS}>
+                        Pracovní pozice
+                      </Label>
+                      <Input
+                        id="jobTitle"
+                        placeholder="Např. Svářeč"
+                        value={inviteData.jobTitle}
+                        onChange={(e) =>
+                          setInviteData({ ...inviteData, jobTitle: e.target.value })
+                        }
+                        className={INVITE_INPUT_CLASS}
                       />
                     </div>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="hourlyRate">Hodinová sazba (Kč/h)</Label>
+                    <Label htmlFor="hourlyRate" className={INVITE_LABEL_CLASS}>
+                      Hodinová sazba (Kč/h)
+                    </Label>
                     <div className="relative">
-                      <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input 
-                        id="hourlyRate" 
+                      <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <Input
+                        id="hourlyRate"
                         type="number"
-                        placeholder="např. 350" 
-                        value={inviteData.hourlyRate} 
-                        onChange={e => setInviteData({...inviteData, hourlyRate: e.target.value})}
-                        className="bg-background pl-10"
+                        placeholder="např. 350"
+                        value={inviteData.hourlyRate}
+                        onChange={(e) =>
+                          setInviteData({ ...inviteData, hourlyRate: e.target.value })
+                        }
+                        className={cn(INVITE_INPUT_CLASS, "pl-10")}
                       />
                     </div>
-                    <p className="text-[10px] text-muted-foreground">Tato sazba se používá pro výpočet finančních nákladů firmy.</p>
+                    <p className="text-[10px] text-gray-500">
+                      Tato sazba se používá pro výpočet finančních nákladů firmy.
+                    </p>
                   </div>
                   <DialogFooter>
                     <Button type="submit" disabled={isSubmitting} className="w-full">
