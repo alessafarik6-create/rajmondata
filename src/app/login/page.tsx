@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useFirebase } from "@/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,8 +19,10 @@ import { PLATFORM_NAME } from "@/lib/platform-brand";
 import Image from "next/image";
 import Link from "next/link";
 import {
+  AuthError,
   browserLocalPersistence,
   browserSessionPersistence,
+  sendPasswordResetEmail,
   setPersistence,
   signInWithEmailAndPassword,
 } from "firebase/auth";
@@ -30,6 +32,10 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 export default function LoginPage() {
   const { auth, areServicesAvailable } = useFirebase();
   const { toast } = useToast();
@@ -37,31 +43,45 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
+
+  const normalizedEmail = useMemo(() => normalizeEmail(email), [email]);
 
   const isMobileBrowser = () => {
     if (typeof window === "undefined") return false;
     return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
   };
 
+  const canSubmit =
+    !loading && normalizedEmail.length > 0 && password.length > 0;
+
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-
-    if (!areServicesAvailable) {
-      toast({
-        variant: "destructive",
-        title: "Načítání",
-        description: "Firebase se ještě načítá. Zkuste to za chvíli.",
-      });
-      return;
-    }
-
-    const normalizedEmail = normalizeEmail(email);
 
     if (!normalizedEmail || !password) {
       toast({
         variant: "destructive",
         title: "Chybějící údaje",
         description: "Prosím zadejte email i heslo.",
+      });
+      return;
+    }
+
+    if (!isValidEmail(normalizedEmail)) {
+      toast({
+        variant: "destructive",
+        title: "Neplatný email",
+        description: "Zadejte email ve správném formátu.",
+      });
+      return;
+    }
+
+    if (!auth || !areServicesAvailable) {
+      toast({
+        variant: "destructive",
+        title: "Přihlášení není připravené",
+        description:
+          "Firebase se ještě nenačetl. Obnovte stránku a zkuste to znovu za chvíli.",
       });
       return;
     }
@@ -81,20 +101,117 @@ export default function LoginPage() {
         description: `Vítejte zpět v ${PLATFORM_NAME}.`,
       });
 
-      // Na mobilu je spolehlivější plný reload než router.push(),
-      // aby se auth stav jistě propsal i po přihlášení.
       window.location.assign("/portal/dashboard");
       return;
     } catch (error) {
       console.error("[LoginPage] login failed", error);
 
+      const authError = error as AuthError;
+      let description = "Neplatný email nebo heslo.";
+
+      switch (authError?.code) {
+        case "auth/invalid-email":
+          description = "Email nemá správný formát.";
+          break;
+        case "auth/user-disabled":
+          description = "Tento účet je zakázán.";
+          break;
+        case "auth/user-not-found":
+        case "auth/wrong-password":
+        case "auth/invalid-credential":
+          description = "Neplatný email nebo heslo.";
+          break;
+        case "auth/too-many-requests":
+          description =
+            "Příliš mnoho pokusů o přihlášení. Zkuste to znovu za chvíli.";
+          break;
+        case "auth/network-request-failed":
+          description =
+            "Chyba připojení k síti. Zkontrolujte internet a zkuste to znovu.";
+          break;
+      }
+
       toast({
         variant: "destructive",
         title: "Chyba přihlášení",
-        description: "Neplatný email nebo heslo.",
+        description,
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!normalizedEmail) {
+      toast({
+        variant: "destructive",
+        title: "Zadejte email",
+        description:
+          "Nejdříve zadejte emailovou adresu, na kterou chcete poslat obnovu hesla.",
+      });
+      return;
+    }
+
+    if (!isValidEmail(normalizedEmail)) {
+      toast({
+        variant: "destructive",
+        title: "Neplatný email",
+        description: "Zadejte email ve správném formátu.",
+      });
+      return;
+    }
+
+    if (!auth || !areServicesAvailable) {
+      toast({
+        variant: "destructive",
+        title: "Obnova hesla není připravená",
+        description:
+          "Firebase se ještě nenačetl. Obnovte stránku a zkuste to znovu za chvíli.",
+      });
+      return;
+    }
+
+    setResetLoading(true);
+
+    try {
+      await sendPasswordResetEmail(auth, normalizedEmail);
+
+      toast({
+        title: "Email odeslán",
+        description:
+          "Pokud účet existuje, poslali jsme na zadaný email odkaz pro obnovu hesla. Zkontrolujte i spam.",
+      });
+    } catch (error) {
+      console.error("[LoginPage] password reset failed", error);
+
+      const authError = error as AuthError;
+      let description =
+        "Obnovu hesla se nepodařilo odeslat. Zkuste to znovu.";
+
+      switch (authError?.code) {
+        case "auth/invalid-email":
+          description = "Email nemá správný formát.";
+          break;
+        case "auth/missing-email":
+          description = "Zadejte emailovou adresu.";
+          break;
+        case "auth/too-many-requests":
+          description =
+            "Příliš mnoho pokusů. Zkuste odeslání znovu za chvíli.";
+          break;
+        case "auth/network-request-failed":
+          description =
+            "Chyba připojení k síti. Zkontrolujte internet a zkuste to znovu.";
+          break;
+      }
+
+      toast({
+        variant: "destructive",
+        title: "Obnova hesla selhala",
+        description,
+      });
+    } finally {
+      setResetLoading(false);
     }
   };
 
@@ -138,6 +255,13 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin}>
             <CardContent className="space-y-4">
+              {!areServicesAvailable ? (
+                <div className="rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-sm text-orange-600">
+                  Přihlašování se ještě načítá. Pokud stav trvá déle, obnovte
+                  stránku.
+                </div>
+              ) : null}
+
               <div className="space-y-2">
                 <Label htmlFor="email">Emailová adresa</Label>
                 <Input
@@ -166,15 +290,30 @@ export default function LoginPage() {
                 />
               </div>
 
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  disabled={resetLoading}
+                  className="text-sm text-primary hover:underline disabled:opacity-60"
+                >
+                  {resetLoading ? "Odesílám reset..." : "Zapomenuté heslo?"}
+                </button>
+              </div>
+
               <Button
                 type="submit"
                 className="h-11 w-full bg-primary text-lg font-semibold text-white hover:bg-primary/90"
-                disabled={loading || !areServicesAvailable}
+                disabled={!canSubmit}
               >
                 {loading ? (
-                  <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                ) : null}
-                Přihlásit se
+                  <>
+                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                    Přihlašování...
+                  </>
+                ) : (
+                  "Přihlásit se"
+                )}
               </Button>
             </CardContent>
           </form>
@@ -194,7 +333,7 @@ export default function LoginPage() {
             <Link href="/register" className="w-full">
               <Button
                 variant="outline"
-                className="w-full h-11 gap-2 border-primary text-primary transition-all hover:bg-primary hover:text-white"
+                className="h-11 w-full gap-2 border-primary text-primary transition-all hover:bg-primary hover:text-white"
               >
                 <UserPlus className="h-4 w-4" /> Registrovat firmu
               </Button>
