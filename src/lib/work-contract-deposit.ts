@@ -2,6 +2,32 @@
  * Parsování a validace zálohy u smlouvy o dílo (částka i procenta).
  */
 
+/** Rozpočet zakázky z Firestore / UI (číslo, řetězec s mezerami apod.). */
+export function parseBudgetKcFromJob(raw: unknown): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return Math.round(raw);
+  }
+  let s = String(raw)
+    .trim()
+    .replace(/\s+/g, "")
+    .replace(/kč/gi, "")
+    .replace(/czk/gi, "");
+  if (s === "") return null;
+  // Desetinná čárka
+  if (s.includes(",") && !s.includes(".")) {
+    s = s.replace(",", ".");
+  } else if (s.includes(",") && s.includes(".")) {
+    if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+      s = s.replace(/\./g, "").replace(",", ".");
+    } else {
+      s = s.replace(/,/g, "");
+    }
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? Math.round(n) : null;
+}
+
 /** Odstraní % a zbytečné mezery, převede na číslo. */
 export function parsePercentValue(raw: string): number | null {
   const cleaned = String(raw ?? "")

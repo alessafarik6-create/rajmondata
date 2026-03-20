@@ -66,6 +66,8 @@ import {
   buildContractPlaceholderValues,
   applyContractTemplatePlaceholders,
   formatWorkContractAmountKc,
+  formatWorkContractAmountKcFromNumber,
+  CONTRACT_FINANCIAL_PLACEHOLDER_KEYS,
 } from "@/lib/contract-template-placeholders";
 import {
   computeDepositAmountKc,
@@ -74,6 +76,7 @@ import {
   parsePercentValue,
   parseAmountKc,
   formatPercentForTemplate,
+  parseBudgetKcFromJob,
 } from "@/lib/work-contract-deposit";
 import { allocateNextSodContractNumber } from "@/lib/work-contract-counter";
 import {
@@ -290,12 +293,10 @@ export default function JobDetailPage() {
   );
   const { data: job, isLoading } = useDoc(jobRef);
 
-  const jobBudgetKc = useMemo(() => {
-    const b: any = job?.budget;
-    if (b === undefined || b === null || b === "") return null;
-    const n = typeof b === "number" ? b : Number(b);
-    return Number.isFinite(n) ? n : null;
-  }, [job?.budget]);
+  const jobBudgetKc = useMemo(
+    () => parseBudgetKcFromJob(job?.budget),
+    [job?.budget]
+  );
 
   const templateRef = useMemoFirebase(
     () =>
@@ -801,7 +802,11 @@ export default function JobDetailPage() {
   };
 
   const applyTemplateVariables = useCallback(
-    (input: string, formOverride?: WorkContractForm): string => {
+    (
+      input: string,
+      formOverride?: WorkContractForm,
+      templateOpts?: { freezePlaceholders?: ReadonlySet<string> }
+    ): string => {
       const today = new Intl.DateTimeFormat("cs-CZ").format(new Date());
 
       const supplierName =
@@ -849,12 +854,16 @@ export default function JobDetailPage() {
         depositPercentStr: depositPercentage ?? "",
         budgetKc: jobBudgetKc,
       });
-      const effectiveDepositStr = String(depKc);
       const doplatekKc = computeDoplatekKc(jobBudgetKc, depKc);
       const doplatekFormatted =
-        doplatekKc != null
-          ? formatWorkContractAmountKc(String(doplatekKc))
-          : "";
+        doplatekKc != null ? formatWorkContractAmountKcFromNumber(doplatekKc) : "";
+
+      // DEBUG (SOD): dočasné — rozpočet, záloha, doplatek
+      console.log("[SOD deposit]", {
+        rozpočetKč: jobBudgetKc,
+        zálohaKč: depKc,
+        doplatekKč: doplatekKc,
+      });
 
       const pctFieldOnly = String(depositPercentage ?? "").trim();
       const zalohovaProcentaTemplate = pctFieldOnly
@@ -924,13 +933,13 @@ export default function JobDetailPage() {
         datum: today,
 
         "zaloha.procenta": zalohovaProcentaTemplate,
-        "zaloha.castka": formatWorkContractAmountKc(effectiveDepositStr),
+        "zaloha.castka": formatWorkContractAmountKcFromNumber(depKc),
         "zaloha.ucet":
           (bankAccountNumber && String(bankAccountNumber).trim()) ||
           companyProfileBankAccountDisplay ||
           "",
-        zaloha: formatWorkContractAmountKc(effectiveDepositStr),
-        zalohova_castka: formatWorkContractAmountKc(effectiveDepositStr),
+        zaloha: formatWorkContractAmountKcFromNumber(depKc),
+        zalohova_castka: formatWorkContractAmountKcFromNumber(depKc),
         zalohova_procenta: zalohovaProcentaTemplate,
         doplatek: doplatekFormatted,
 
@@ -944,6 +953,7 @@ export default function JobDetailPage() {
       return input.replace(
         /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g,
         (match, token) => {
+          if (templateOpts?.freezePlaceholders?.has(token)) return match;
           const v = tokenMap[token];
           return v !== undefined ? v : match;
         }
@@ -997,7 +1007,6 @@ export default function JobDetailPage() {
         depositPercentStr: form.depositPercentage ?? "",
         budgetKc: jobBudgetKc,
       });
-      const effDepForm = String(depKcForm);
       const depPctDisplay = depPctForm
         ? formatPercentForTemplate(depPctForm)
         : "";
@@ -1010,7 +1019,7 @@ export default function JobDetailPage() {
           ? `Záloha ve výši ${depPctDisplay} z ceny díla.`
           : "",
         depKcForm > 0
-          ? `Částka zálohy: ${formatWorkContractAmountKc(effDepForm)}.`
+          ? `Částka zálohy: ${formatWorkContractAmountKcFromNumber(depKcForm)}.`
           : "",
         payFormAcct && payFormAcct !== payCompanyAcct
           ? `Úhrada zálohy na účet: ${payFormAcct}.`
@@ -1072,6 +1081,26 @@ export default function JobDetailPage() {
       }),
     [contractForm.depositAmount, contractForm.depositPercentage, jobBudgetKc]
   );
+
+  /** Okamžitý přehled záloha / doplatek ve formuláři (stejná logika jako ve šabloně). */
+  const depositAndDoplatekPreview = useMemo(() => {
+    const depKc = computeDepositAmountKc({
+      depositAmountStr: contractForm.depositAmount,
+      depositPercentStr: contractForm.depositPercentage,
+      budgetKc: jobBudgetKc,
+    });
+    const dopKc = computeDoplatekKc(jobBudgetKc, depKc);
+    return {
+      depKc,
+      dopKc,
+      doplatekFormatted:
+        dopKc != null ? formatWorkContractAmountKcFromNumber(dopKc) : "—",
+    };
+  }, [
+    contractForm.depositAmount,
+    contractForm.depositPercentage,
+    jobBudgetKc,
+  ]);
 
   const buildPrefilledContractHeader = useCallback((): string => {
     const jobName = job?.name || "Zakázka";
@@ -1596,7 +1625,7 @@ export default function JobDetailPage() {
         });
         const preDepositRaw = String(preDepositNum);
         const preDopKc = computeDoplatekKc(jobBudgetKc, preDepositNum);
-        const placeholderMap = buildContractPlaceholderValues({
+        const fullPlaceholderMap = buildContractPlaceholderValues({
           nazevFirmy,
           jmenoZakaznika,
           adresa,
@@ -1608,15 +1637,26 @@ export default function JobDetailPage() {
           zalohovaProcentaDisplay: "",
           doplatekFormatted:
             preDopKc != null
-              ? formatWorkContractAmountKc(String(preDopKc))
+              ? formatWorkContractAmountKcFromNumber(preDopKc)
               : "",
         });
 
+        // Nevkládat zálohu/doplatek v prvním kroku — jinak by se do textu zapeklo „0 Kč“ / celý rozpočet
+        // a proměnné by zmizely dřív, než uživatel vyplní formulář.
+        const {
+          zalohova_castka: _omitZalohaCastka,
+          zalohova_procenta: _omitZalohaPct,
+          doplatek: _omitDoplatek,
+          ...ctStaticPlaceholders
+        } = fullPlaceholderMap;
+
         let mainBody = applyContractTemplatePlaceholders(
           tmpl.content || "",
-          placeholderMap
+          ctStaticPlaceholders
         );
-        mainBody = applyTemplateVariables(mainBody);
+        mainBody = applyTemplateVariables(mainBody, undefined, {
+          freezePlaceholders: CONTRACT_FINANCIAL_PLACEHOLDER_KEYS,
+        });
 
         setContractForm({
           templateName: tmpl.name || "",
@@ -4213,6 +4253,18 @@ export default function JobDetailPage() {
                   {depositValidationError}
                 </p>
               ) : null}
+              <p className="text-xs text-muted-foreground mt-1">
+                Záloha (přepočet):{" "}
+                <span className="font-medium text-foreground">
+                  {formatWorkContractAmountKcFromNumber(
+                    depositAndDoplatekPreview.depKc
+                  )}
+                </span>
+                {" · "}Doplatek:{" "}
+                <span className="font-medium text-foreground">
+                  {depositAndDoplatekPreview.doplatekFormatted}
+                </span>
+              </p>
               {jobBudgetKc == null && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Rozpočet zakázky není vyplněný, zálohu je potřeba doplnit ručně.

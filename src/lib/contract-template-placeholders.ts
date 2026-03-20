@@ -17,6 +17,16 @@ export const CONTRACT_TEMPLATE_PLACEHOLDER_KEYS = [
   "doplatek",
 ] as const;
 
+/**
+ * Proměnné zálohy / doplatku – při prvním vložení šablony ct: nesmí být zapečeny staticky,
+ * jinak zmizí z textu a už se nepřepočítají podle formuláře.
+ */
+export const CONTRACT_FINANCIAL_PLACEHOLDER_KEYS = new Set<string>([
+  "zalohova_castka",
+  "zalohova_procenta",
+  "doplatek",
+]);
+
 export type ContractTemplatePlaceholderKey =
   (typeof CONTRACT_TEMPLATE_PLACEHOLDER_KEYS)[number];
 
@@ -36,11 +46,19 @@ Dostupné proměnné (vložte přesně v uvedeném tvaru):
 {{doplatek}} — doplatek = celková cena díla − záloha (např. 70 000 Kč); bez rozpočtu zakázky prázdné
 `.trim();
 
-/** Částka v Kč — stejná logika jako ve formuláři smlouvy (prázdný vstup → 0 Kč). */
-export function formatWorkContractAmountKc(amountStr: string): string {
-  const n = Number(String(amountStr).replace(/\s+/g, "").replace(",", "."));
+/** Jednotný výstup částky z čísla (např. 50 000 Kč). */
+export function formatWorkContractAmountKcFromNumber(n: number): string {
   if (!Number.isFinite(n)) return "";
   return `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
+}
+
+/** Částka v Kč z textu (prázdný řetězec → prázdný výstup; „0“ → 0 Kč). */
+export function formatWorkContractAmountKc(amountStr: string): string {
+  const s = String(amountStr ?? "").trim();
+  if (s === "") return "";
+  const n = Number(s.replace(/\s+/g, "").replace(",", "."));
+  if (!Number.isFinite(n)) return "";
+  return formatWorkContractAmountKcFromNumber(n);
 }
 
 export type BuildContractPlaceholderValuesInput = {
@@ -83,7 +101,11 @@ export function buildContractPlaceholderValues(
     datum: opts.datum,
     nazev_zakazky: opts.nazevZakazky,
     cena: opts.cena,
-    zalohova_castka: formatWorkContractAmountKc(opts.zalohovaCastkaRaw),
+    zalohova_castka: formatWorkContractAmountKc(
+      String(opts.zalohovaCastkaRaw ?? "").trim() === ""
+        ? "0"
+        : String(opts.zalohovaCastkaRaw)
+    ),
     zalohova_procenta: opts.zalohovaProcentaDisplay,
     doplatek: opts.doplatekFormatted,
   };
@@ -95,7 +117,7 @@ export function buildContractPlaceholderValues(
  */
 export function applyContractTemplatePlaceholders(
   template: string,
-  values: Record<string, string>
+  values: Record<string, string | undefined>
 ): string {
   if (!template) return "";
   return template.replace(

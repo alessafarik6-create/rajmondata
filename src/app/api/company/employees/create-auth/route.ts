@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore, getAdminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { passwordPolicyError } from "@/lib/employee-password-policy";
 
 type Body = {
   firstName?: string;
@@ -56,7 +57,13 @@ export async function POST(request: NextRequest) {
 
   const companyId = caller.companyId as string | undefined;
   const callerRole = caller.role as string | undefined;
-  if (!companyId || !["owner", "admin"].includes(callerRole || "")) {
+  const globalRoles = caller.globalRoles as string[] | undefined;
+  const isSuperAdmin =
+    Array.isArray(globalRoles) && globalRoles.includes("super_admin");
+  if (
+    !companyId ||
+    (!["owner", "admin"].includes(callerRole || "") && !isSuperAdmin)
+  ) {
     return NextResponse.json(
       { error: "Pouze vlastník nebo administrátor firmy může vytvářet účty zaměstnanců." },
       { status: 403 }
@@ -87,11 +94,9 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  if (password.length < 8) {
-    return NextResponse.json(
-      { error: "Heslo musí mít alespoň 8 znaků." },
-      { status: 400 }
-    );
+  const pwdPolicy = passwordPolicyError(password);
+  if (pwdPolicy) {
+    return NextResponse.json({ error: pwdPolicy }, { status: 400 });
   }
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -127,6 +132,15 @@ export async function POST(request: NextRequest) {
         { error: "Email je již registrován." },
         { status: 409 }
       );
+    }
+    if (code === "auth/weak-password") {
+      return NextResponse.json(
+        { error: "Heslo je příliš slabé. Zvolte delší nebo složitější heslo." },
+        { status: 400 }
+      );
+    }
+    if (code === "auth/invalid-email") {
+      return NextResponse.json({ error: "Neplatný formát emailu." }, { status: 400 });
     }
     console.error("[create-auth] createUser", e);
     return NextResponse.json(

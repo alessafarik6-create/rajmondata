@@ -66,6 +66,7 @@ const INVITE_LABEL_CLASS = "text-sm font-medium text-gray-700";
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
+import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
 
 export default function EmployeesPage() {
   const { user } = useUser();
@@ -76,10 +77,14 @@ export default function EmployeesPage() {
   const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile } = useDoc(userRef);
 
-  const companyId = profile?.companyId; 
-  const userRole = profile?.role || 'employee';
-  
-  const canManage = userRole === 'owner' || userRole === 'admin';
+  const companyId = profile?.companyId;
+  const userRole = profile?.role || "employee";
+  const isSuperAdmin =
+    Array.isArray(profile?.globalRoles) &&
+    profile.globalRoles.includes("super_admin");
+
+  const canManage =
+    userRole === "owner" || userRole === "admin" || isSuperAdmin;
   const canView = ['owner', 'admin', 'manager'].includes(userRole);
 
   const employeesQuery = useMemoFirebase(() => {
@@ -121,15 +126,20 @@ export default function EmployeesPage() {
   const [invitePassword, setInvitePassword] = useState("");
   const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("");
 
+  const [pwdResetEmployee, setPwdResetEmployee] = useState<any | null>(null);
+  const [pwdResetNew, setPwdResetNew] = useState("");
+  const [pwdResetConfirm, setPwdResetConfirm] = useState("");
+  const [pwdResetLoading, setPwdResetLoading] = useState(false);
+
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canManage || !companyId || !user) return;
 
-    if (invitePassword.length < 8) {
+    if (invitePassword.length < MIN_EMPLOYEE_PASSWORD_LENGTH) {
       toast({
         variant: "destructive",
         title: "Slabé heslo",
-        description: "Heslo pro přihlášení musí mít alespoň 8 znaků.",
+        description: `Heslo pro přihlášení musí mít alespoň ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků.`,
       });
       return;
     }
