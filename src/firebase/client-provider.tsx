@@ -3,6 +3,8 @@
 import React, { type ReactNode, useMemo } from "react";
 import { FirebaseProvider } from "@/firebase/provider";
 import { initializeFirebase } from "./init";
+import { firebaseClientEnvReady } from "@/firebase/config";
+import { getFirebaseClientEnvUserMessage } from "@/lib/firebase-client-env";
 
 interface FirebaseClientProviderProps {
   children: ReactNode;
@@ -16,8 +18,15 @@ interface FirebaseClientProviderProps {
 export function FirebaseClientProvider({
   children,
 }: FirebaseClientProviderProps) {
+  const firebaseConfigError = firebaseClientEnvReady
+    ? null
+    : getFirebaseClientEnvUserMessage();
+
   const firebaseServices = useMemo(() => {
     if (typeof window === "undefined") {
+      return null;
+    }
+    if (!firebaseClientEnvReady) {
       return null;
     }
 
@@ -34,6 +43,7 @@ export function FirebaseClientProvider({
       firebaseApp={firebaseServices?.firebaseApp ?? null}
       auth={firebaseServices?.auth ?? null}
       firestore={firebaseServices?.firestore ?? null}
+      firebaseConfigError={firebaseConfigError}
     >
       {children}
     </FirebaseProvider>

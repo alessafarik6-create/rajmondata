@@ -28,6 +28,7 @@ import {
 } from "firebase/auth";
 import { useToast } from "@/hooks/use-toast";
 import { doc, getDoc } from "firebase/firestore";
+import { describeFirebaseAuthError } from "@/lib/firebase-client-env";
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -38,7 +39,8 @@ function isValidEmail(email: string): boolean {
 }
 
 export default function LoginPage() {
-  const { auth, firestore, areServicesAvailable } = useFirebase();
+  const { auth, firestore, areServicesAvailable, firebaseConfigError } =
+    useFirebase();
   const { toast } = useToast();
 
   const [email, setEmail] = useState("");
@@ -73,6 +75,15 @@ export default function LoginPage() {
         variant: "destructive",
         title: "Neplatný email",
         description: "Zadejte email ve správném formátu.",
+      });
+      return;
+    }
+
+    if (firebaseConfigError) {
+      toast({
+        variant: "destructive",
+        title: "Chybí konfigurace Firebase",
+        description: firebaseConfigError,
       });
       return;
     }
@@ -133,29 +144,7 @@ export default function LoginPage() {
       console.error("[LoginPage] login failed", error);
 
       const authError = error as AuthError;
-      let description = "Neplatný email nebo heslo.";
-
-      switch (authError?.code) {
-        case "auth/invalid-email":
-          description = "Email nemá správný formát.";
-          break;
-        case "auth/user-disabled":
-          description = "Tento účet je zakázán.";
-          break;
-        case "auth/user-not-found":
-        case "auth/wrong-password":
-        case "auth/invalid-credential":
-          description = "Neplatný email nebo heslo.";
-          break;
-        case "auth/too-many-requests":
-          description =
-            "Příliš mnoho pokusů o přihlášení. Zkuste to znovu za chvíli.";
-          break;
-        case "auth/network-request-failed":
-          description =
-            "Chyba připojení k síti. Zkontrolujte internet a zkuste to znovu.";
-          break;
-      }
+      const description = describeFirebaseAuthError(authError?.code);
 
       toast({
         variant: "destructive",
@@ -187,6 +176,15 @@ export default function LoginPage() {
       return;
     }
 
+    if (firebaseConfigError) {
+      toast({
+        variant: "destructive",
+        title: "Chybí konfigurace Firebase",
+        description: firebaseConfigError,
+      });
+      return;
+    }
+
     if (!auth || !areServicesAvailable) {
       toast({
         variant: "destructive",
@@ -211,24 +209,17 @@ export default function LoginPage() {
       console.error("[LoginPage] password reset failed", error);
 
       const authError = error as AuthError;
-      let description =
-        "Obnovu hesla se nepodařilo odeslat. Zkuste to znovu.";
-
-      switch (authError?.code) {
-        case "auth/invalid-email":
-          description = "Email nemá správný formát.";
-          break;
-        case "auth/missing-email":
-          description = "Zadejte emailovou adresu.";
-          break;
-        case "auth/too-many-requests":
-          description =
-            "Příliš mnoho pokusů. Zkuste odeslání znovu za chvíli.";
-          break;
-        case "auth/network-request-failed":
-          description =
-            "Chyba připojení k síti. Zkontrolujte internet a zkuste to znovu.";
-          break;
+      const code = authError?.code;
+      let description = "Obnovu hesla se nepodařilo odeslat. Zkuste to znovu.";
+      if (code === "auth/missing-email") {
+        description = "Zadejte emailovou adresu.";
+      } else if (code === "auth/invalid-email") {
+        description = "Email nemá správný formát.";
+      } else if (code === "auth/too-many-requests") {
+        description =
+          "Příliš mnoho pokusů. Zkuste odeslání znovu za chvíli.";
+      } else if (code === "auth/network-request-failed") {
+        description = describeFirebaseAuthError(code);
       }
 
       toast({
@@ -281,7 +272,11 @@ export default function LoginPage() {
 
           <form onSubmit={handleLogin}>
             <CardContent className="space-y-4">
-              {!areServicesAvailable ? (
+              {firebaseConfigError ? (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {firebaseConfigError}
+                </div>
+              ) : !areServicesAvailable ? (
                 <div className="rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-sm text-orange-600">
                   Přihlašování se ještě načítá. Pokud stav trvá déle, obnovte
                   stránku.

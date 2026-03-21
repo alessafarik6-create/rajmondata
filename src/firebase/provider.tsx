@@ -12,6 +12,8 @@ interface FirebaseProviderProps {
   firebaseApp: FirebaseApp | null;
   firestore: Firestore | null;
   auth: Auth | null;
+  /** Set when NEXT_PUBLIC_FIREBASE_* are missing — services stay null. */
+  firebaseConfigError?: string | null;
 }
 
 // Internal state for user authentication
@@ -24,6 +26,7 @@ interface UserAuthState {
 // Combined state for the Firebase context
 export interface FirebaseContextState {
   areServicesAvailable: boolean; // True if core services (app, firestore, auth instance) are provided
+  firebaseConfigError: string | null;
   firebaseApp: FirebaseApp | null;
   firestore: Firestore | null;
   auth: Auth | null; // The Auth service instance
@@ -36,6 +39,7 @@ export interface FirebaseContextState {
 // Return type for useFirebase()
 export interface FirebaseServicesAndUser {
   areServicesAvailable: boolean;
+  firebaseConfigError: string | null;
   firebaseApp: FirebaseApp;
   firestore: Firestore;
   auth: Auth;
@@ -62,6 +66,7 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
   firebaseApp,
   firestore,
   auth,
+  firebaseConfigError = null,
 }) => {
   const [userAuthState, setUserAuthState] = useState<UserAuthState>({
     user: null,
@@ -97,6 +102,7 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
     const servicesAvailable = !!(firebaseApp && firestore && auth);
     return {
       areServicesAvailable: servicesAvailable,
+      firebaseConfigError: firebaseConfigError ?? null,
       firebaseApp,
       firestore,
       auth,
@@ -104,7 +110,7 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
       isUserLoading: userAuthState.isUserLoading,
       userError: userAuthState.userError,
     };
-  }, [firebaseApp, firestore, auth, userAuthState]);
+  }, [firebaseApp, firestore, auth, firebaseConfigError, userAuthState]);
 
   return (
     <FirebaseContext.Provider value={contextValue}>
@@ -130,6 +136,7 @@ export const useFirebase = (): FirebaseServicesAndUser => {
       // Mock returns for SSR to avoid crashing during pre-render
       return {
         areServicesAvailable: false,
+        firebaseConfigError: context.firebaseConfigError ?? null,
         firebaseApp: {} as any,
         firestore: {} as any,
         auth: {} as any,
@@ -141,17 +148,19 @@ export const useFirebase = (): FirebaseServicesAndUser => {
     // Also return a safe loading state on client if services are not yet ready
     return {
       areServicesAvailable: false,
+      firebaseConfigError: context.firebaseConfigError ?? null,
       firebaseApp: {} as any,
       firestore: {} as any,
       auth: {} as any,
       user: null,
-      isUserLoading: true,
+      isUserLoading: !context.firebaseConfigError,
       userError: null
     };
   }
 
   return {
     areServicesAvailable: true,
+    firebaseConfigError: null,
     firebaseApp: context.firebaseApp,
     firestore: context.firestore,
     auth: context.auth,
@@ -194,10 +203,12 @@ export const useUser = (): UserHookResult => {
   const context = useContext(FirebaseContext);
   
   if (context) {
-    return { 
-      user: context.user, 
-      isUserLoading: context.isUserLoading || !context.areServicesAvailable, 
-      userError: context.userError 
+    const waitingForServices =
+      !context.firebaseConfigError && !context.areServicesAvailable;
+    return {
+      user: context.user,
+      isUserLoading: context.isUserLoading || waitingForServices,
+      userError: context.userError,
     };
   }
   

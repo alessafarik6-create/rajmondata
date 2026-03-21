@@ -48,7 +48,8 @@ function normalizeEmail(email: string): string {
 }
 
 export default function RegisterPage() {
-  const { auth, firestore: db, areServicesAvailable } = useFirebase();
+  const { auth, firestore: db, areServicesAvailable, firebaseConfigError } =
+    useFirebase();
   const router = useRouter();
   const { toast } = useToast();
   
@@ -197,6 +198,14 @@ export default function RegisterPage() {
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (firebaseConfigError) {
+      toast({
+        variant: "destructive",
+        title: "Chybí konfigurace Firebase",
+        description: firebaseConfigError,
+      });
+      return;
+    }
     if (!areServicesAvailable) {
       toast({ variant: "destructive", title: "Načítání", description: "Firebase se ještě načítá. Zkuste to za chvíli." });
       return;
@@ -403,6 +412,11 @@ export default function RegisterPage() {
           </CardHeader>
           <form onSubmit={handleRegister}>
             <CardContent className="space-y-6">
+              {firebaseConfigError ? (
+                <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                  {firebaseConfigError}
+                </div>
+              ) : null}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="companyName">Název firmy</Label>
