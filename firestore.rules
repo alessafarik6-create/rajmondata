@@ -77,6 +77,11 @@ service cloud.firestore {
       );
     }
 
+    /** Alias pro starší název v pravidlech create výkazu. */
+    function jobAssignedToEmployee(companyId, jobId) {
+      return jobAssignedForWorklog(companyId, jobId);
+    }
+
     /** Zakázka pro docházkový terminál (vlastní zaměstnanec). */
     function jobAssignedForTerminal(companyId, jobId) {
       let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
@@ -119,7 +124,11 @@ service cloud.firestore {
         (!('reviewedBy' in resource.data) ||
           request.resource.data.reviewedBy == resource.data.reviewedBy) &&
         (!('reviewedAt' in resource.data) ||
-          request.resource.data.reviewedAt == resource.data.reviewedAt);
+          request.resource.data.reviewedAt == resource.data.reviewedAt) &&
+        (
+          (!('description_translated' in request.resource.data) && !('description_translated' in resource.data)) ||
+          request.resource.data.description_translated == resource.data.description_translated
+        );
     }
 
     /** Kiosk terminál po custom tokenu (claim terminalAccess + companyId). */
@@ -168,7 +177,11 @@ service cloud.firestore {
           request.resource.data.jobId is string &&
           request.resource.data.jobId.size() > 0 &&
           jobAssignedToEmployee(companyId, request.resource.data.jobId) &&
-          request.resource.data.reviewStatus == 'pending';
+          request.resource.data.reviewStatus == 'pending' &&
+          (!('description_translated' in request.resource.data) ||
+            request.resource.data.description_translated == null) &&
+          (!('language' in request.resource.data) ||
+            request.resource.data.language in ['cs', 'ua']);
         allow update: if signedIn() && sameCompany(companyId) && (
           isPrivileged() ||
           (canLogOwnWorkTime() && workBlockOwnPending() && employeeWorkBlockUpdateValid(companyId))
@@ -181,6 +194,11 @@ service cloud.firestore {
         allow read: if signedIn() && sameCompany(companyId) &&
           (isPrivileged() || (canLogOwnWorkTime() && (jobAssignedForWorklog(companyId, jobId) || jobAssignedForTerminal(companyId, jobId))));
         allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /** Plánovaná zaměření před zakázkou: companies/{companyId}/measurements/{measurementId} */
+      match /measurements/{measurementId} {
+        allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
       /**
@@ -204,6 +222,32 @@ service cloud.firestore {
         allow read: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
         allow create: if (terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId))) && attendanceJobValid(companyId);
         allow update, delete: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
+      }
+
+      /** Chat zaměstnanec ↔ administrace: companies/{companyId}/chat/{messageId} */
+      match /chat/{messageId} {
+        allow read: if signedIn() && sameCompany(companyId);
+        allow create: if signedIn() && sameCompany(companyId) &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.senderId == request.auth.uid &&
+          request.resource.data.text is string &&
+          request.resource.data.text.size() > 0 &&
+          request.resource.data.text.size() <= 8000 &&
+          request.resource.data.read == false &&
+          request.resource.data.senderRole in ['employee', 'admin'] &&
+          (
+            (request.resource.data.senderRole == 'employee' && canLogOwnWorkTime()) ||
+            (request.resource.data.senderRole == 'admin' && isPrivileged())
+          );
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.senderId == resource.data.senderId &&
+          request.resource.data.companyId == resource.data.companyId &&
+          request.resource.data.text == resource.data.text &&
+          request.resource.data.senderRole == resource.data.senderRole &&
+          request.resource.data.read is bool &&
+          resource.data.read == false &&
+          request.resource.data.read == true;
+        allow delete: if false;
       }
 
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.

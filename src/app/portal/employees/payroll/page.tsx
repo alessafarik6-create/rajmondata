@@ -21,6 +21,7 @@ import {
   updateDoc,
   deleteDoc,
   serverTimestamp,
+  type Firestore,
 } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -71,8 +72,99 @@ import {
   FileDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Switch } from "@/components/ui/switch";
+import {
+  getWorklogDescriptionOriginal,
+  getWorklogLanguage,
+} from "@/lib/worklog-description-fields";
+import {
+  translateToCzech,
+  translateToCzechSync,
+} from "@/lib/translate-to-czech";
 
 const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
+
+function PayrollWorklogDescriptionCell({
+  block,
+  showCzech,
+  companyId,
+  firestore,
+  translatingId,
+  setTranslatingId,
+  toast,
+}: {
+  block: any;
+  showCzech: boolean;
+  companyId: string;
+  firestore: Firestore;
+  translatingId: string | null;
+  setTranslatingId: (id: string | null) => void;
+  toast: (opts: {
+    title: string;
+    description?: string;
+    variant?: "default" | "destructive";
+  }) => void;
+}) {
+  const orig = getWorklogDescriptionOriginal(block);
+  const lang = getWorklogLanguage(block);
+  const display =
+    showCzech && lang === "ua"
+      ? String(
+          block.description_translated?.trim() || translateToCzechSync(orig)
+        )
+      : orig;
+
+  const canSaveTranslation =
+    showCzech &&
+    lang === "ua" &&
+    !String(block.description_translated ?? "").trim();
+
+  return (
+    <span className="whitespace-pre-wrap break-words">
+      {String(display ?? "").trim() || "—"}
+      {canSaveTranslation ? (
+        <Button
+          type="button"
+          variant="link"
+          className="block h-auto p-0 text-xs"
+          disabled={translatingId === block.id}
+          onClick={() => {
+            setTranslatingId(block.id);
+            void (async () => {
+              try {
+                const translated = await translateToCzech(orig);
+                await updateDoc(
+                  doc(
+                    firestore,
+                    "companies",
+                    companyId,
+                    "work_time_blocks",
+                    block.id
+                  ),
+                  {
+                    description_translated: translated,
+                    updatedAt: serverTimestamp(),
+                  }
+                );
+                toast({ title: "Překlad uložen" });
+              } catch (e) {
+                console.error(e);
+                toast({
+                  variant: "destructive",
+                  title: "Uložení překladu se nezdařilo",
+                });
+              } finally {
+                setTranslatingId(null);
+              }
+            })();
+          }}
+        >
+          {translatingId === block.id ? "Ukládám…" : "Uložit překlad do DB"}
+        </Button>
+      ) : null}
+    </span>
+  );
+}
 
 function PayrollAdminPageInner() {
   const { user, isUserLoading } = useUser();
@@ -83,6 +175,8 @@ function PayrollAdminPageInner() {
   const { companyName } = useCompany();
   const worklogReportRef = useRef<HTMLDivElement>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
+  const [showCzechTranslation, setShowCzechTranslation] = useState(false);
+  const [translatingId, setTranslatingId] = useState<string | null>(null);
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -666,6 +760,19 @@ function PayrollAdminPageInner() {
                 Export PDF
               </Button>
             </div>
+            <div className="flex flex-wrap items-center gap-3 print:hidden">
+              <Switch
+                id="payroll-translate-all"
+                checked={showCzechTranslation}
+                onCheckedChange={setShowCzechTranslation}
+              />
+              <Label
+                htmlFor="payroll-translate-all"
+                className="cursor-pointer text-sm font-medium text-black"
+              >
+                Přeložit do češtiny (ukrajinské popisy)
+              </Label>
+            </div>
             <div ref={worklogReportRef} className="space-y-4">
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-black print:border-0 print:bg-white print:p-0">
                 <h2 className="text-xl font-bold tracking-tight">
@@ -731,9 +838,19 @@ function PayrollAdminPageInner() {
                                 </span>
                               </TableCell>
                               <TableCell className="max-w-[320px] align-top text-sm text-black">
-                                <span className="whitespace-pre-wrap break-words">
-                                  {String(b.description ?? "").trim() || "—"}
-                                </span>
+                                {companyId ? (
+                                  <PayrollWorklogDescriptionCell
+                                    block={b}
+                                    showCzech={showCzechTranslation}
+                                    companyId={companyId}
+                                    firestore={firestore}
+                                    translatingId={translatingId}
+                                    setTranslatingId={setTranslatingId}
+                                    toast={toast}
+                                  />
+                                ) : (
+                                  "—"
+                                )}
                               </TableCell>
                               <TableCell className="text-black">
                                 {b.hours ?? "—"}
@@ -828,6 +945,19 @@ function PayrollAdminPageInner() {
                 Export PDF
               </Button>
             </div>
+            <div className="flex flex-wrap items-center gap-3 print:hidden">
+              <Switch
+                id="payroll-translate-one"
+                checked={showCzechTranslation}
+                onCheckedChange={setShowCzechTranslation}
+              />
+              <Label
+                htmlFor="payroll-translate-one"
+                className="cursor-pointer text-sm font-medium text-black"
+              >
+                Přeložit do češtiny (ukrajinské popisy)
+              </Label>
+            </div>
             <div ref={worklogReportRef} className="space-y-4">
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-black print:border-0 print:bg-white print:p-0">
                 <h2 className="text-xl font-bold tracking-tight">
@@ -886,9 +1016,19 @@ function PayrollAdminPageInner() {
                                   </span>
                                 </TableCell>
                                 <TableCell className="max-w-[320px] align-top text-sm text-black">
-                                  <span className="whitespace-pre-wrap break-words">
-                                    {String(b.description ?? "").trim() || "—"}
-                                  </span>
+                                  {companyId ? (
+                                    <PayrollWorklogDescriptionCell
+                                      block={b}
+                                      showCzech={showCzechTranslation}
+                                      companyId={companyId}
+                                      firestore={firestore}
+                                      translatingId={translatingId}
+                                      setTranslatingId={setTranslatingId}
+                                      toast={toast}
+                                    />
+                                  ) : (
+                                    "—"
+                                  )}
                                 </TableCell>
                                 <TableCell className="text-black">
                                   {b.hours ?? "—"}
@@ -1264,7 +1404,7 @@ function PayrollAdminPageInner() {
                   Popis práce (z výkazu zaměstnance)
                 </Label>
                 <p className="mt-2 max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-words text-sm text-black">
-                  {String(reviewBlock.description ?? "").trim() || "—"}
+                  {getWorklogDescriptionOriginal(reviewBlock) || "—"}
                 </p>
               </div>
               <div className="space-y-2">

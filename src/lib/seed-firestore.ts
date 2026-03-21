@@ -104,6 +104,7 @@ export async function ensureUserProfile(
     role: 'owner',
     companyId,
     globalRoles: [],
+    language: 'cs',
     createdAt: serverTimestamp(),
   });
 

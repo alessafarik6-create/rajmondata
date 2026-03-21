@@ -30,6 +30,12 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 const DEBUG = process.env.NODE_ENV === "development";
 import { LIGHT_FORM_CONTROL_CLASS } from "@/lib/light-form-control-classes";
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
+import {
+  type EmployeeUiLang,
+  normalizeEmployeeUiLang,
+} from "@/lib/i18n/employee-ui";
+import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
+import { cn } from "@/lib/utils";
 
 const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
 
@@ -77,6 +83,9 @@ export default function EmployeeProfilePage() {
   const [pwdNew, setPwdNew] = useState("");
   const [pwdConfirm, setPwdConfirm] = useState("");
   const [pwdLoading, setPwdLoading] = useState(false);
+  const [langSaving, setLangSaving] = useState(false);
+
+  const { t, lang: uiLang } = useEmployeeUiLang(profile);
 
   useEffect(() => {
     if (!DEBUG) return;
@@ -178,6 +187,27 @@ export default function EmployeeProfilePage() {
     }
   };
 
+  const saveUiLanguage = async (next: EmployeeUiLang) => {
+    if (!user || !firestore) return;
+    setLangSaving(true);
+    try {
+      await updateDoc(doc(firestore, "users", user.uid), {
+        language: next,
+        updatedAt: serverTimestamp(),
+      });
+      toast({ title: t("saved"), description: "" });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Jazyk se nepodařilo uložit.",
+      });
+    } finally {
+      setLangSaving(false);
+    }
+  };
+
   const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user?.email || !auth) return;
@@ -267,7 +297,7 @@ export default function EmployeeProfilePage() {
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
-        <h1 className="portal-page-title text-2xl sm:text-3xl">Profil</h1>
+        <h1 className="portal-page-title text-2xl sm:text-3xl">{t("profile")}</h1>
         <p className="portal-page-description">
           Vaše údaje a nastavení účtu.
         </p>
@@ -370,6 +400,40 @@ export default function EmployeeProfilePage() {
           </div>
           <p className="text-xs text-slate-500 pt-2">
             Změnu jména, pozice a sazby řeší administrátor firmy.
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardTitle>{t("language")}</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          {(
+            [
+              { code: "cs" as const, label: t("languageCs") },
+              { code: "ua" as const, label: t("languageUa") },
+            ] as const
+          ).map(({ code, label }) => (
+            <Button
+              key={code}
+              type="button"
+              variant={normalizeEmployeeUiLang(profile?.language) === code ? "default" : "outline"}
+              disabled={langSaving}
+              className={cn(
+                normalizeEmployeeUiLang(profile?.language) === code && "pointer-events-none"
+              )}
+              onClick={() => void saveUiLanguage(code)}
+            >
+              {langSaving && uiLang === code ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : null}
+              {label}
+            </Button>
+          ))}
+          <p className="w-full text-xs text-slate-500 pt-1">
+            Ovlivňuje rozhraní zaměstnaneckého portálu a jazyk popisu ve výkazu
+            práce.
           </p>
         </CardContent>
       </Card>

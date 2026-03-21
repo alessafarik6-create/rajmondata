@@ -80,6 +80,15 @@ function releaseModalLocksAfterDismiss() {
   }
 }
 
+/** Porovnání množin ID — zabrání zbytečným setState při stejném obsahu. */
+function jobIdSetsEqual(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false;
+  for (const id of a) {
+    if (!b.has(id)) return false;
+  }
+  return true;
+}
+
 export default function EmployeesPage() {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -165,12 +174,16 @@ export default function EmployeesPage() {
   const [savingAssignedTerminalJobs, setSavingAssignedTerminalJobs] =
     useState(false);
 
+  /** Pouze id — celé objekty zaměstnance v deps useMemoFirebase rozbíjely stabilitu dotazu. */
+  const assignJobsTargetId =
+    assignWorklogEmployee?.id ?? assignTerminalEmployee?.id ?? null;
+
   const jobsForAssignQuery = useMemoFirebase(
     () =>
-      firestore && companyId && (assignWorklogEmployee || assignTerminalEmployee)
+      firestore && companyId && assignJobsTargetId
         ? collection(firestore, "companies", companyId, "jobs")
         : null,
-    [firestore, companyId, assignWorklogEmployee, assignTerminalEmployee]
+    [firestore, companyId, assignJobsTargetId]
   );
   const { data: companyJobsRaw, isLoading: companyJobsLoading } =
     useCollection(jobsForAssignQuery);
@@ -186,25 +199,38 @@ export default function EmployeesPage() {
       .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, "cs"));
   }, [companyJobsRaw]);
 
-  useEffect(() => {
-    if (!assignWorklogEmployee) {
-      setAssignWorklogJobIds(new Set());
-      return;
-    }
-    setAssignWorklogJobIds(
-      new Set(parseAssignedWorklogJobIds(assignWorklogEmployee))
-    );
-  }, [assignWorklogEmployee]);
+  const worklogEmployeeId = assignWorklogEmployee?.id ?? null;
+  const terminalEmployeeId = assignTerminalEmployee?.id ?? null;
 
   useEffect(() => {
-    if (!assignTerminalEmployee) {
-      setAssignTerminalJobIds(new Set());
+    if (!worklogEmployeeId) {
+      setAssignWorklogJobIds((prev) => {
+        if (prev.size === 0) return prev;
+        return new Set();
+      });
       return;
     }
-    setAssignTerminalJobIds(
-      new Set(parseAssignedTerminalJobIds(assignTerminalEmployee))
+    if (!assignWorklogEmployee) return;
+    const next = new Set(parseAssignedWorklogJobIds(assignWorklogEmployee));
+    setAssignWorklogJobIds((prev) =>
+      jobIdSetsEqual(prev, next) ? prev : next
     );
-  }, [assignTerminalEmployee]);
+  }, [worklogEmployeeId, assignWorklogEmployee]);
+
+  useEffect(() => {
+    if (!terminalEmployeeId) {
+      setAssignTerminalJobIds((prev) => {
+        if (prev.size === 0) return prev;
+        return new Set();
+      });
+      return;
+    }
+    if (!assignTerminalEmployee) return;
+    const next = new Set(parseAssignedTerminalJobIds(assignTerminalEmployee));
+    setAssignTerminalJobIds((prev) =>
+      jobIdSetsEqual(prev, next) ? prev : next
+    );
+  }, [terminalEmployeeId, assignTerminalEmployee]);
 
   const toggleAssignWorklogJob = (jobId: string) => {
     setAssignWorklogJobIds((prev) => {
@@ -826,13 +852,25 @@ export default function EmployeesPage() {
                                 {canManage && (
                                   <>
                                     <DropdownMenuItem
-                                      onClick={() => setAssignWorklogEmployee(emp)}
+                                      onSelect={(e) => {
+                                        e.preventDefault();
+                                        releaseDocumentModalLocks();
+                                        queueMicrotask(() =>
+                                          setAssignWorklogEmployee(emp)
+                                        );
+                                      }}
                                     >
                                       <Briefcase className="w-4 h-4 mr-2" /> Zakázky
                                       pro výkaz práce
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      onClick={() => setAssignTerminalEmployee(emp)}
+                                      onSelect={(e) => {
+                                        e.preventDefault();
+                                        releaseDocumentModalLocks();
+                                        queueMicrotask(() =>
+                                          setAssignTerminalEmployee(emp)
+                                        );
+                                      }}
                                     >
                                       <Briefcase className="w-4 h-4 mr-2" /> Zakázky
                                       pro docházkový terminál

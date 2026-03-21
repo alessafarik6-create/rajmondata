@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -9,27 +9,51 @@ import {
   CalendarDays,
   UserCircle,
   Wallet,
+  MessageSquare,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
+import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
+import { doc } from "firebase/firestore";
+import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 
 export type EmployeePortalSidebarProps = {
   mobileSheetClose?: () => void;
 };
-
-const links = [
-  { label: "Hlavní stránka", href: "/portal/employee", icon: LayoutDashboard },
-  { label: "Docházka", href: "/portal/employee/attendance", icon: Clock },
-  { label: "Výkaz práce", href: "/portal/employee/worklogs", icon: CalendarDays },
-  { label: "Peníze", href: "/portal/employee/money", icon: Wallet },
-  { label: "Profil", href: "/portal/employee/profile", icon: UserCircle },
-];
 
 export function EmployeePortalSidebar({
   mobileSheetClose,
 }: EmployeePortalSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { user } = useUser();
+  const firestore = useFirestore();
+  const userRef = useMemoFirebase(
+    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
+    [firestore, user]
+  );
+  const { data: profile } = useDoc<any>(userRef);
+  const { t } = useEmployeeUiLang(profile);
+
+  const links = useMemo(
+    () => [
+      { label: t("home"), href: "/portal/employee", icon: LayoutDashboard },
+      { label: t("attendance"), href: "/portal/employee/attendance", icon: Clock },
+      {
+        label: t("workReport"),
+        href: "/portal/employee/worklogs",
+        icon: CalendarDays,
+      },
+      { label: t("money"), href: "/portal/employee/money", icon: Wallet },
+      {
+        label: t("messages"),
+        href: "/portal/employee/messages",
+        icon: MessageSquare,
+      },
+      { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
+    ],
+    [t]
+  );
 
   const linkClass = (href: string) =>
     cn(
@@ -55,7 +79,7 @@ export function EmployeePortalSidebar({
           <Logo context="sidebar" className="max-w-full" />
         </Link>
         <p className="mt-3 text-xs font-semibold text-sidebar-foreground/80 uppercase tracking-wide px-1">
-          Zaměstnanec
+          {t("employeeSection")}
         </p>
       </div>
 

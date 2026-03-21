@@ -93,6 +93,15 @@ import {
   chunkArray,
   isJobIdAssigned,
 } from "@/lib/assigned-jobs";
+import { normalizeEmployeeUiLang } from "@/lib/i18n/employee-ui";
+import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
+import {
+  buildWorklogDescriptionPayload,
+  getWorklogDescriptionOriginal,
+  getWorklogLanguage,
+  mergeWorklogDescriptionsForBlocks,
+  type WorklogTextLanguage,
+} from "@/lib/worklog-description-fields";
 
 const DEBUG = process.env.NODE_ENV === "development";
 
@@ -123,6 +132,9 @@ type WorkBlock = {
   authUserId?: string;
   jobId?: string;
   jobName?: string;
+  description_original?: string;
+  description_translated?: string;
+  language?: string;
 };
 
 function canEmployeeDeleteBlock(b: WorkBlock): boolean {
@@ -226,6 +238,8 @@ export default function EmployeeWorklogsPage() {
   );
   const { data: profile, isLoading: profileLoading, error: profileError } =
     useDoc<any>(userRef);
+
+  const { t } = useEmployeeUiLang(profile);
 
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
@@ -340,6 +354,14 @@ export default function EmployeeWorklogsPage() {
   const [editDesc, setEditDesc] = useState("");
   const [editJobId, setEditJobId] = useState("");
   const [editSaving, setEditSaving] = useState(false);
+  const [newBlockLang, setNewBlockLang] = useState<WorklogTextLanguage>("cs");
+  const [editLang, setEditLang] = useState<WorklogTextLanguage>("cs");
+
+  useEffect(() => {
+    setNewBlockLang(
+      normalizeEmployeeUiLang(profile?.language) === "ua" ? "ua" : "cs"
+    );
+  }, [profile?.language]);
 
   const employeeDisplayName = useMemo(() => {
     const en = [employeeDoc?.firstName, employeeDoc?.lastName]
@@ -523,6 +545,10 @@ export default function EmployeeWorklogsPage() {
     }
     const jobName =
       assignedJobs.find((j) => j.id === newJobId)?.name || "";
+    const descPayload = buildWorklogDescriptionPayload(
+      normalizeWorklogDescription(newDesc),
+      newBlockLang
+    );
     setSaving(true);
     try {
       await addDoc(
@@ -539,7 +565,7 @@ export default function EmployeeWorklogsPage() {
           originalHours: h,
           approvedHours: h,
           reviewStatus: "pending",
-          description: normalizeWorklogDescription(newDesc),
+          ...descPayload,
           jobId: newJobId,
           jobName,
           createdAt: serverTimestamp(),
@@ -669,10 +695,10 @@ export default function EmployeeWorklogsPage() {
       });
       return;
     }
-    const description = chosen
-      .map((b) => b.description?.trim())
-      .filter(Boolean)
-      .join(" · ");
+    const descriptionParts = chosen.map((b) =>
+      getWorklogDescriptionOriginal(b)
+    );
+    const description = descriptionParts.filter(Boolean).join(" · ");
 
     if (description.length > WORKLOG_DESCRIPTION_MAX_LENGTH) {
       toast({
@@ -686,6 +712,10 @@ export default function EmployeeWorklogsPage() {
     if (!user || !companyId || !employeeId) return;
     setSaving(true);
     try {
+      const mergedPayload = mergeWorklogDescriptionsForBlocks(
+        descriptionParts,
+        normalizeEmployeeUiLang(profile?.language)
+      );
       const batch = writeBatch(firestore);
       const newRef = doc(
         collection(firestore, "companies", companyId, "work_time_blocks")
@@ -702,7 +732,7 @@ export default function EmployeeWorklogsPage() {
         originalHours: h,
         approvedHours: h,
         reviewStatus: "pending",
-        description,
+        ...mergedPayload,
         jobId: firstJob,
         jobName: mergedJobName,
         createdAt: serverTimestamp(),
@@ -736,7 +766,8 @@ export default function EmployeeWorklogsPage() {
     setEditBlock(b);
     setEditStart(b.startTime || "09:00");
     setEditEnd(b.endTime || "10:00");
-    setEditDesc(b.description || "");
+    setEditDesc(getWorklogDescriptionOriginal(b));
+    setEditLang(getWorklogLanguage(b));
     setEditJobId(b.jobId || "");
     setEditOpen(true);
   };
@@ -808,6 +839,10 @@ export default function EmployeeWorklogsPage() {
       assignedJobs.find((j) => j.id === editJobId)?.name ||
       editBlock.jobName ||
       "";
+    const descPayload = buildWorklogDescriptionPayload(
+      normalizeWorklogDescription(editDesc),
+      editLang
+    );
     setEditSaving(true);
     try {
       await updateDoc(
@@ -824,7 +859,7 @@ export default function EmployeeWorklogsPage() {
           hours: h,
           originalHours: h,
           approvedHours: h,
-          description: normalizeWorklogDescription(editDesc),
+          ...descPayload,
           jobId: editJobId,
           jobName,
           updatedAt: serverTimestamp(),
@@ -914,7 +949,7 @@ export default function EmployeeWorklogsPage() {
     <div className="mx-auto max-w-5xl space-y-6 px-1 pb-8 sm:px-0">
       <div className="print:hidden">
         <h1 className="portal-page-title text-2xl text-black sm:text-3xl">
-          Výkaz práce
+          {t("workReport")}
         </h1>
         <p className="portal-page-description mt-1 text-base text-slate-800">
           Kalendář a záznamy po hodinových blocích.{" "}
@@ -1098,7 +1133,7 @@ export default function EmployeeWorklogsPage() {
                           </TableCell>
                           <TableCell className="max-w-[320px] align-top text-sm text-black">
                             <span className="whitespace-pre-wrap break-words">
-                              {String(b.description ?? "").trim() || "—"}
+                              {getWorklogDescriptionOriginal(b) || "—"}
                             </span>
                           </TableCell>
                           <TableCell className="text-black">{b.hours ?? "—"}</TableCell>
@@ -1283,7 +1318,7 @@ export default function EmployeeWorklogsPage() {
                                   Popis
                                 </dt>
                                 <dd className="break-words text-black">
-                                  {b.description?.trim() || "—"}
+                                  {getWorklogDescriptionOriginal(b) || "—"}
                                 </dd>
                               </div>
                               {(b.adminNote || b.adjustmentReason) && (
@@ -1373,7 +1408,7 @@ export default function EmployeeWorklogsPage() {
                                   {b.jobName?.trim() || b.jobId || "—"}
                                 </TableCell>
                                 <TableCell className="max-w-[200px] truncate text-black">
-                                  {b.description || "—"}
+                                  {getWorklogDescriptionOriginal(b) || "—"}
                                 </TableCell>
                                 <TableCell>
                                   <div className="flex items-center gap-0.5">
@@ -1474,10 +1509,32 @@ export default function EmployeeWorklogsPage() {
                   </div>
                   <div className="space-y-2">
                     <Label
+                      htmlFor="worklog-lang"
+                      className="text-sm font-semibold text-black"
+                    >
+                      Jazyk popisu
+                    </Label>
+                    <select
+                      id="worklog-lang"
+                      className={selectBaseClass}
+                      value={newBlockLang}
+                      onChange={(e) =>
+                        setNewBlockLang(e.target.value as WorklogTextLanguage)
+                      }
+                      disabled={dayLocked || saving}
+                      aria-label="Jazyk popisu práce"
+                    >
+                      <option value="cs">Čeština</option>
+                      <option value="ua">Українська</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label
                       htmlFor="worklog-desc"
                       className="text-sm font-semibold text-black"
                     >
-                      Popis práce <span className="text-red-600">*</span>
+                      {t("workDescription")}{" "}
+                      <span className="text-red-600">*</span>
                     </Label>
                     <Textarea
                       id="worklog-desc"
@@ -1591,8 +1648,25 @@ export default function EmployeeWorklogsPage() {
               </select>
             </div>
             <div className="space-y-2">
+              <Label htmlFor="edit-lang" className="text-black">
+                Jazyk popisu
+              </Label>
+              <select
+                id="edit-lang"
+                className={selectBaseClass}
+                value={editLang}
+                onChange={(e) =>
+                  setEditLang(e.target.value as WorklogTextLanguage)
+                }
+                disabled={dayLocked || editSaving}
+              >
+                <option value="cs">Čeština</option>
+                <option value="ua">Українська</option>
+              </select>
+            </div>
+            <div className="space-y-2">
               <Label htmlFor="edit-desc" className="text-black">
-                Popis práce
+                {t("workDescription")}
               </Label>
               <Textarea
                 id="edit-desc"

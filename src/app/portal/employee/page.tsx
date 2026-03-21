@@ -17,6 +17,7 @@ import {
   summarizeAttendanceByDay,
   sumHoursTodayAndWeek,
 } from "@/lib/employee-attendance";
+import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { Calendar, Clock, Loader2, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
@@ -34,6 +35,8 @@ export default function EmployeeHomePage() {
   );
   const { data: profile, isLoading: isProfileLoading, error: profileError } =
     useDoc<any>(userRef);
+
+  const { t } = useEmployeeUiLang(profile);
 
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
@@ -194,7 +197,7 @@ export default function EmployeeHomePage() {
   const greetingName =
     profile?.firstName ||
     (typeof displayName === "string" ? displayName.split(" ")[0] : "") ||
-    "kolego";
+    t("colleague");
 
   return (
     <div className="space-y-6 sm:space-y-8 max-w-4xl">
@@ -220,7 +223,7 @@ export default function EmployeeHomePage() {
         </Avatar>
         <div className="min-w-0">
           <h1 className="portal-page-title text-2xl sm:text-3xl">
-            Dobrý den, {greetingName}!
+            {t("goodDay")}, {greetingName}!
           </h1>
           <p className="portal-page-description mt-1">
             {profile?.jobTitle ? (
@@ -256,7 +259,7 @@ export default function EmployeeHomePage() {
             ) : (
               <>
                 <div className="flex justify-between">
-                  <span>Dnes</span>
+                  <span>{t("today")}</span>
                   <span className="font-semibold tabular-nums">
                     {today > 0 ? `${today} h` : "—"}
                   </span>
@@ -276,7 +279,7 @@ export default function EmployeeHomePage() {
           <CardHeader className="pb-2">
             <CardTitle className="text-base flex items-center gap-2">
               <Calendar className="w-4 h-4 text-primary" />
-              Přehled dne ({todayIso})
+              {t("dayOverview")} ({todayIso})
             </CardTitle>
           </CardHeader>
           <CardContent className="text-sm text-slate-700 space-y-1">
@@ -307,9 +310,7 @@ export default function EmployeeHomePage() {
                 </p>
               </>
             ) : (
-              <p className="text-slate-500">
-                Pro dnešek nemáte v docházce žádné záznamy.
-              </p>
+              <p className="text-slate-500">{t("noAttendanceToday")}</p>
             )}
           </CardContent>
         </Card>

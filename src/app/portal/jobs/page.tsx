@@ -28,6 +28,7 @@ import {
   Building2,
   FileStack,
   FileText,
+  Ruler,
 } from "lucide-react";
 import {
   useFirestore,
@@ -64,6 +65,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { JobTemplate, JobTemplateValues } from "@/lib/job-templates";
 import { JobTemplateFormFields } from "@/components/jobs/job-template-form-fields";
 import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-contract-templates-manager-dialog";
+import { userCanManageMeasurements } from "@/lib/measurements";
 
 const nativeSelectClass =
   "flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] sm:min-h-10";
@@ -451,6 +453,17 @@ function JobsPageContent() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {userCanManageMeasurements(profile) && (
+            <Link href="/portal/jobs/measurements">
+              <Button
+                type="button"
+                className="gap-2 min-h-[44px] bg-emerald-600 hover:bg-emerald-700 text-white border-0 shadow-md shadow-emerald-600/25"
+              >
+                <Ruler className="w-4 h-4" />
+                Zaměření
+              </Button>
+            </Link>
+          )}
           {isAdmin && (
             <>
               <Link href="/portal/jobs/templates">
