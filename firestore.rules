@@ -71,8 +71,7 @@ service cloud.firestore {
       allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
 
       match /employees/{empId} {
-        allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.authUserId == request.auth.uid);
+        allow read: if request.auth != null;
         allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
