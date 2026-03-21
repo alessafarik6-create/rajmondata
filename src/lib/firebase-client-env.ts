@@ -19,23 +19,36 @@ export type FirebasePublicEnvResult = {
 /**
  * Reads NEXT_PUBLIC_FIREBASE_* from the environment.
  * Do not log values — API keys are still sensitive in client bundles.
+ *
+ * Important: Next.js only inlines `process.env.NEXT_PUBLIC_*` when each name is
+ * referenced statically. Dynamic access like `process.env[key]` is not replaced
+ * in the client bundle and will be undefined in production (e.g. Vercel).
  */
 export function getFirebasePublicEnv(): FirebasePublicEnvResult {
+  const apiKey = process.env.NEXT_PUBLIC_FIREBASE_API_KEY;
+  const authDomain = process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN;
+  const projectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+  const storageBucket = process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET;
+  const messagingSenderId = process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID;
+  const appId = process.env.NEXT_PUBLIC_FIREBASE_APP_ID;
+
   const missing: string[] = [];
-  for (const key of REQUIRED_NEXT_PUBLIC_FIREBASE_KEYS) {
-    const v = process.env[key];
-    if (v === undefined || String(v).trim() === "") {
-      missing.push(key);
-    }
+  if (!String(apiKey ?? "").trim()) missing.push("NEXT_PUBLIC_FIREBASE_API_KEY");
+  if (!String(authDomain ?? "").trim()) missing.push("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN");
+  if (!String(projectId ?? "").trim()) missing.push("NEXT_PUBLIC_FIREBASE_PROJECT_ID");
+  if (!String(storageBucket ?? "").trim()) missing.push("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET");
+  if (!String(messagingSenderId ?? "").trim()) {
+    missing.push("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID");
   }
+  if (!String(appId ?? "").trim()) missing.push("NEXT_PUBLIC_FIREBASE_APP_ID");
 
   const config: FirebaseOptions = {
-    apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? "",
-    authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN ?? "",
-    projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID ?? "",
-    storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ?? "",
-    messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID ?? "",
-    appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID ?? "",
+    apiKey: apiKey ?? "",
+    authDomain: authDomain ?? "",
+    projectId: projectId ?? "",
+    storageBucket: storageBucket ?? "",
+    messagingSenderId: messagingSenderId ?? "",
+    appId: appId ?? "",
     measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || undefined,
   };
 
