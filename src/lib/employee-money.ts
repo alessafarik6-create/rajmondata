@@ -32,6 +32,10 @@ export type WorkTimeBlockMoney = {
   startTime?: string;
   endTime?: string;
   description?: string;
+  employeeId?: string;
+  employeeName?: string;
+  jobId?: string;
+  jobName?: string;
 };
 
 export type AdvanceStatus = "paid" | "unpaid";

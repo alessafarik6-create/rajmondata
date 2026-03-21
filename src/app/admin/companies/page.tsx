@@ -14,6 +14,8 @@ import {
   Power,
   ExternalLink,
   ShieldCheck,
+  TabletSmartphone,
+  Copy,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -50,6 +52,13 @@ type Company = {
   license: LicenseConfig;
 };
 
+type TerminalInfo = {
+  hasActiveToken?: boolean;
+  url?: string | null;
+  activeToken?: string | null;
+  companyName?: string;
+};
+
 export default function AdminCompaniesPage() {
   const { toast } = useToast();
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -60,6 +69,10 @@ export default function AdminCompaniesPage() {
   const [editForm, setEditForm] = useState<LicenseConfig | null>(null);
 
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  const [terminalFor, setTerminalFor] = useState<Company | null>(null);
+  const [terminalInfo, setTerminalInfo] = useState<TerminalInfo | null>(null);
+  const [terminalLoading, setTerminalLoading] = useState(false);
 
   const loadCompanies = async () => {
     setLoading(true);
@@ -144,6 +157,82 @@ export default function AdminCompaniesPage() {
     const current = editForm.enabledModules || [];
     const next = current.includes(key) ? current.filter((m) => m !== key) : [...current, key];
     setEditForm({ ...editForm, enabledModules: next });
+  };
+
+  const openTerminalDialog = async (company: Company) => {
+    setTerminalFor(company);
+    setTerminalInfo(null);
+    setTerminalLoading(true);
+    try {
+      const res = await fetch(`/api/superadmin/companies/${company.id}/terminal`);
+      const data = (await res.json().catch(() => ({}))) as TerminalInfo & { error?: string };
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: data?.error || "Nepodařilo se načíst stav terminálu.",
+        });
+        setTerminalFor(null);
+        return;
+      }
+      setTerminalInfo(data);
+    } catch {
+      toast({ variant: "destructive", title: "Chyba", description: "Nepodařilo se načíst stav terminálu." });
+      setTerminalFor(null);
+    } finally {
+      setTerminalLoading(false);
+    }
+  };
+
+  const runTerminalAction = async (action: "generate" | "regenerate" | "deactivate") => {
+    if (!terminalFor) return;
+    setTerminalLoading(true);
+    try {
+      const res = await fetch(`/api/superadmin/companies/${terminalFor.id}/terminal`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: (data as { error?: string })?.error || "Operace se nezdařila.",
+        });
+        return;
+      }
+      if (action === "deactivate") {
+        toast({ title: "Terminál byl deaktivován", description: "Odkaz na tablet přestal platit." });
+      } else if ((data as { alreadyExists?: boolean }).alreadyExists) {
+        toast({ title: "Aktivní odkaz již existuje", description: "Zkopíte ho níže nebo použijte regeneraci." });
+      } else {
+        toast({
+          title: action === "regenerate" ? "Odkaz byl znovu vygenerován" : "Odkaz pro terminál byl vytvořen",
+        });
+      }
+      const gr = await fetch(`/api/superadmin/companies/${terminalFor.id}/terminal`);
+      const fresh = await gr.json().catch(() => ({}));
+      if (gr.ok) setTerminalInfo(fresh as TerminalInfo);
+    } catch {
+      toast({ variant: "destructive", title: "Operace se nezdařila" });
+    } finally {
+      setTerminalLoading(false);
+    }
+  };
+
+  const copyTerminalUrl = async () => {
+    const u = terminalInfo?.url;
+    if (!u) {
+      toast({ variant: "destructive", title: "Není co kopírovat" });
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(u);
+      toast({ title: "URL zkopírována do schránky" });
+    } catch {
+      toast({ variant: "destructive", title: "Kopírování se nepodařilo" });
+    }
   };
 
   const filtered = companies.filter(
@@ -240,6 +329,9 @@ export default function AdminCompaniesPage() {
                           <DropdownMenuLabel>Správa</DropdownMenuLabel>
                           <DropdownMenuItem onClick={() => openEdit(company)}>
                             <ShieldCheck className="w-4 h-4 mr-2" /> Licence a moduly
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void openTerminalDialog(company)}>
+                            <TabletSmartphone className="w-4 h-4 mr-2" /> Docházkový terminál
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => window.open(`/portal/dashboard`, "_blank")}
@@ -377,6 +469,85 @@ export default function AdminCompaniesPage() {
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Uložit"}
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!terminalFor}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTerminalFor(null);
+            setTerminalInfo(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg bg-white border-slate-200 text-slate-900" data-portal-dialog>
+          <DialogHeader>
+            <DialogTitle>Docházkový terminál – {terminalFor?.name}</DialogTitle>
+            <DialogDescription>
+              Bezpečný odkaz pro tablet: po otevření se zařízení přihlásí jen k zápisu docházky. Zaměstnanci se
+              identifikují PINem nebo QR kódem (stejně jako na terminálu v portálu).
+            </DialogDescription>
+          </DialogHeader>
+          {terminalLoading && !terminalInfo ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            </div>
+          ) : (
+            <div className="space-y-4 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm font-medium text-slate-700">Stav terminálu</span>
+                <Badge variant={terminalInfo?.hasActiveToken ? "default" : "secondary"}>
+                  {terminalInfo?.hasActiveToken ? "Aktivní odkaz" : "Žádný aktivní odkaz"}
+                </Badge>
+              </div>
+              <div className="space-y-2">
+                <Label>URL pro tablet</Label>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Input
+                    readOnly
+                    value={terminalInfo?.url || ""}
+                    placeholder={terminalInfo?.hasActiveToken ? "" : "Nejprve vygenerujte odkaz"}
+                    className="font-mono text-xs bg-slate-50 border-slate-200"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={!terminalInfo?.url}
+                    onClick={() => void copyTerminalUrl()}
+                  >
+                    <Copy className="w-4 h-4 mr-2" /> Kopírovat
+                  </Button>
+                </div>
+              </div>
+              <DialogFooter className="flex-col sm:flex-row gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  disabled={terminalLoading || !terminalInfo?.hasActiveToken}
+                  onClick={() => void runTerminalAction("deactivate")}
+                >
+                  Deaktivovat odkaz
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={terminalLoading || !terminalInfo?.hasActiveToken}
+                  onClick={() => void runTerminalAction("regenerate")}
+                >
+                  Regenerovat odkaz
+                </Button>
+                <Button
+                  type="button"
+                  disabled={terminalLoading}
+                  onClick={() => void runTerminalAction("generate")}
+                >
+                  Vygenerovat odkaz pro terminál
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

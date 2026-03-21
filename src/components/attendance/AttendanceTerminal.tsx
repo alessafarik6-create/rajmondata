@@ -57,6 +57,10 @@ export type AttendanceTerminalProps = {
   standalone?: boolean;
   /** Např. z ?company= nebo /companies/[companyId]/terminal — musí odpovídat účtu. */
   companyIdOverride?: string | null;
+  /**
+   * Relace z `/terminal/[token]` po serverovém ověření tokenu (custom token, bez users/{uid} profilu).
+   */
+  kioskTokenSession?: boolean;
 };
 
 type AttendanceType = "check_in" | "break_start" | "break_end" | "check_out";
@@ -65,6 +69,7 @@ type TerminalMode = "personal" | "pin" | "qr";
 export function AttendanceTerminal({
   standalone = false,
   companyIdOverride = null,
+  kioskTokenSession = false,
 }: AttendanceTerminalProps) {
   const { user } = useUser();
   const auth = useAuth();
@@ -93,6 +98,12 @@ export function AttendanceTerminal({
   const [isClient, setIsClient] = useState(false);
 
   const scannerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (kioskTokenSession) {
+      setTerminalMode("pin");
+    }
+  }, [kioskTokenSession]);
 
   useEffect(() => {
     setIsClient(true);
@@ -130,7 +141,9 @@ export function AttendanceTerminal({
   } = useDoc(userRef);
   const override = companyIdOverride?.trim();
   const fromProfile = profile?.companyId as string | undefined;
+  const isKioskSession = Boolean(kioskTokenSession && override);
   const companyAccessDenied =
+    !isKioskSession &&
     Boolean(
       user &&
         profile &&
@@ -468,7 +481,9 @@ export function AttendanceTerminal({
         timestamp: serverTimestamp(),
         date: new Date().toISOString().split("T")[0],
         terminalId: standalone
-          ? `tablet-kiosk-${terminalMode}`
+          ? kioskTokenSession
+            ? `token-kiosk-${terminalMode}`
+            : `tablet-kiosk-${terminalMode}`
           : terminalMode === "pin"
             ? "shared-pin-terminal"
             : terminalMode === "qr"
@@ -611,7 +626,7 @@ export function AttendanceTerminal({
     );
   }
 
-  if (!profileLoading && profile && companyAccessDenied) {
+  if (!isKioskSession && !profileLoading && profile && companyAccessDenied) {
     return (
       <div
         className={
@@ -649,7 +664,7 @@ export function AttendanceTerminal({
     );
   }
 
-  if (profileLoading) {
+  if (profileLoading && !(isKioskSession && effectiveCompanyId)) {
     return (
       <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
         <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start mb-6">
@@ -698,7 +713,7 @@ export function AttendanceTerminal({
     );
   }
 
-  if (profileError) {
+  if (profileError && !isKioskSession) {
     return (
       <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
         <div className="flex items-center gap-3 mb-6">
@@ -739,7 +754,7 @@ export function AttendanceTerminal({
     );
   }
 
-  if (!profile || !effectiveCompanyId) {
+  if ((!profile || !effectiveCompanyId) && !isKioskSession) {
     return (
       <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
         <div className="flex items-center gap-3 mb-6">
@@ -805,17 +820,19 @@ export function AttendanceTerminal({
         </div>
         <div className="flex flex-col items-stretch sm:items-end gap-2">
           <div className="flex gap-1 p-1 rounded-lg border border-border bg-muted/30">
-            <Button
-              variant={terminalMode === "personal" ? "default" : "ghost"}
-              size="sm"
-              className="min-h-[44px] flex-1 sm:flex-initial sm:h-7 sm:min-h-0 px-2 text-[10px] sm:text-[10px]"
-              onClick={() => {
-                setTerminalMode("personal");
-                handleClear();
-              }}
-            >
-              OSOBNÍ
-            </Button>
+            {!kioskTokenSession && (
+              <Button
+                variant={terminalMode === "personal" ? "default" : "ghost"}
+                size="sm"
+                className="min-h-[44px] flex-1 sm:flex-initial sm:h-7 sm:min-h-0 px-2 text-[10px] sm:text-[10px]"
+                onClick={() => {
+                  setTerminalMode("personal");
+                  handleClear();
+                }}
+              >
+                OSOBNÍ
+              </Button>
+            )}
             <Button
               variant={terminalMode === "pin" ? "default" : "ghost"}
               size="sm"

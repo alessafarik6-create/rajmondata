@@ -1,7 +1,7 @@
 "use client";
 import { Separator } from "@/components/ui/separator";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -24,10 +24,12 @@ import {
   RefreshCw,
   QrCode,
   Eye,
-  DownloadCloud
+  DownloadCloud,
+  Briefcase,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { parseAssignedJobIds } from '@/lib/assigned-jobs';
 import {
   Dialog,
   DialogContent,
@@ -133,6 +135,71 @@ export default function EmployeesPage() {
   const [pwdResetNew, setPwdResetNew] = useState("");
   const [pwdResetConfirm, setPwdResetConfirm] = useState("");
   const [pwdResetLoading, setPwdResetLoading] = useState(false);
+
+  const [assignJobsEmployee, setAssignJobsEmployee] = useState<any | null>(null);
+  const [assignJobIds, setAssignJobIds] = useState<Set<string>>(new Set());
+  const [savingAssignedJobs, setSavingAssignedJobs] = useState(false);
+
+  const jobsForAssignQuery = useMemoFirebase(
+    () =>
+      firestore && companyId && assignJobsEmployee
+        ? collection(firestore, "companies", companyId, "jobs")
+        : null,
+    [firestore, companyId, assignJobsEmployee]
+  );
+  const { data: companyJobsRaw, isLoading: companyJobsLoading } =
+    useCollection(jobsForAssignQuery);
+
+  const companyJobs = useMemo(() => {
+    const raw = Array.isArray(companyJobsRaw) ? companyJobsRaw : [];
+    return raw
+      .map((j: any) => ({
+        id: String(j?.id ?? ""),
+        name: typeof j?.name === "string" ? j.name : "",
+      }))
+      .filter((j) => j.id)
+      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, "cs"));
+  }, [companyJobsRaw]);
+
+  useEffect(() => {
+    if (!assignJobsEmployee) {
+      setAssignJobIds(new Set());
+      return;
+    }
+    setAssignJobIds(new Set(parseAssignedJobIds(assignJobsEmployee.assignedJobIds)));
+  }, [assignJobsEmployee]);
+
+  const toggleAssignJob = (jobId: string) => {
+    setAssignJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  };
+
+  const saveAssignedJobs = async () => {
+    if (!canManage || !companyId || !assignJobsEmployee?.id) return;
+    setSavingAssignedJobs(true);
+    try {
+      await updateDoc(
+        doc(firestore, "companies", companyId, "employees", assignJobsEmployee.id),
+        {
+          assignedJobIds: Array.from(assignJobIds),
+          updatedAt: serverTimestamp(),
+        }
+      );
+      toast({
+        title: "Uloženo",
+        description: "Přiřazení zakázek bylo aktualizováno.",
+      });
+      setAssignJobsEmployee(null);
+    } catch {
+      toast({ variant: "destructive", title: "Uložení se nezdařilo" });
+    } finally {
+      setSavingAssignedJobs(false);
+    }
+  };
 
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -673,6 +740,14 @@ export default function EmployeesPage() {
                                   <DollarSign className="w-4 h-4 mr-2" /> Výplaty
                                   a výkazy
                                 </DropdownMenuItem>
+                                {canManage && (
+                                  <DropdownMenuItem
+                                    onClick={() => setAssignJobsEmployee(emp)}
+                                  >
+                                    <Briefcase className="w-4 h-4 mr-2" /> Přiřazené
+                                    zakázky (výkaz)
+                                  </DropdownMenuItem>
+                                )}
                               </>
                             )}
                             {canManage ? (
@@ -782,6 +857,78 @@ export default function EmployeesPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!assignJobsEmployee}
+        onOpenChange={(open) => {
+          if (!open) setAssignJobsEmployee(null);
+        }}
+      >
+        <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">
+              Přiřazené zakázky — výkaz práce
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {assignJobsEmployee
+                ? `${assignJobsEmployee.firstName} ${assignJobsEmployee.lastName}`
+                : ""}{" "}
+              uvidí při zápisu výkazu jen tyto zakázky. Vyberte je ze seznamu zakázek
+              firmy.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto py-2">
+            {companyJobsLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : companyJobs.length === 0 ? (
+              <p className="text-sm text-gray-600">
+                Ve firmě zatím nejsou žádné zakázky. Vytvořte je v sekci Zakázky.
+              </p>
+            ) : (
+              companyJobs.map((job) => (
+                <label
+                  key={job.id}
+                  className="flex cursor-pointer items-start gap-3 rounded-md border border-gray-200 p-3 text-sm hover:bg-gray-50"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 shrink-0"
+                    checked={assignJobIds.has(job.id)}
+                    onChange={() => toggleAssignJob(job.id)}
+                  />
+                  <span className="font-medium text-black">
+                    {job.name?.trim() || job.id}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-gray-200 bg-white text-black"
+              onClick={() => setAssignJobsEmployee(null)}
+              disabled={savingAssignedJobs}
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void saveAssignedJobs()}
+              disabled={savingAssignedJobs || !canManage}
+            >
+              {savingAssignedJobs ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Uložit přiřazení"
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

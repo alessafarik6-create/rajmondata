@@ -26,6 +26,9 @@ import {
   deleteDoc,
   serverTimestamp,
   writeBatch,
+  updateDoc,
+  documentId,
+  getDocs,
 } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Calendar } from "@/components/ui/calendar";
@@ -59,11 +62,16 @@ import {
   blockOverlapsExisting,
 } from "@/lib/work-time-block";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Plus, Trash2, Merge, AlertCircle, Lock } from "lucide-react";
+import { Loader2, Plus, Trash2, Merge, AlertCircle, Lock, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { getReviewLabel } from "@/lib/employee-money";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
+import {
+  parseAssignedJobIds,
+  chunkArray,
+  isJobIdAssigned,
+} from "@/lib/assigned-jobs";
 
 const DEBUG = process.env.NODE_ENV === "development";
 
@@ -89,14 +97,21 @@ type WorkBlock = {
   reviewStatus?: string;
   description?: string;
   employeeId?: string;
+  employeeName?: string;
   companyId?: string;
   authUserId?: string;
+  jobId?: string;
+  jobName?: string;
 };
 
 function canEmployeeDeleteBlock(b: WorkBlock): boolean {
   const st = b.reviewStatus;
   if (st === "approved" || st === "adjusted") return false;
   return true;
+}
+
+function canEmployeeEditBlock(b: WorkBlock): boolean {
+  return canEmployeeDeleteBlock(b);
 }
 
 function reviewBadgeVariant(
@@ -194,6 +209,70 @@ export default function EmployeeWorklogsPage() {
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
 
+  const employeeRef = useMemoFirebase(
+    () =>
+      firestore && companyId && employeeId
+        ? doc(firestore, "companies", companyId, "employees", employeeId)
+        : null,
+    [firestore, companyId, employeeId]
+  );
+  const { data: employeeDoc } = useDoc<any>(employeeRef);
+
+  const assignedJobIds = useMemo(
+    () => parseAssignedJobIds(employeeDoc?.assignedJobIds),
+    [employeeDoc]
+  );
+  const assignedJobIdsKey = useMemo(
+    () => assignedJobIds.slice().sort().join("|"),
+    [assignedJobIds]
+  );
+
+  const [assignedJobs, setAssignedJobs] = useState<{ id: string; name?: string }[]>(
+    []
+  );
+  const [jobsLoading, setJobsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!firestore || !companyId || assignedJobIds.length === 0) {
+      setAssignedJobs([]);
+      setJobsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setJobsLoading(true);
+    void (async () => {
+      try {
+        const chunks = chunkArray(assignedJobIds, 10);
+        const acc: { id: string; name?: string }[] = [];
+        for (const chunk of chunks) {
+          const q = query(
+            collection(firestore, "companies", companyId, "jobs"),
+            where(documentId(), "in", chunk)
+          );
+          const snap = await getDocs(q);
+          snap.forEach((d) => {
+            const data = d.data() as { name?: string };
+            acc.push({ id: d.id, name: data.name });
+          });
+        }
+        if (!cancelled) {
+          acc.sort((a, b) =>
+            (a.name || a.id).localeCompare(b.name || b.id, "cs")
+          );
+          setAssignedJobs(acc);
+        }
+      } catch (e) {
+        console.error("[worklogs] load jobs", e);
+        if (!cancelled) setAssignedJobs([]);
+      } finally {
+        if (!cancelled) setJobsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, companyId, assignedJobIds, assignedJobIdsKey]);
+
   const blocksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId || !user?.uid) return null;
     return query(
@@ -230,8 +309,24 @@ export default function EmployeeWorklogsPage() {
   const [newStart, setNewStart] = useState("09:00");
   const [newEnd, setNewEnd] = useState("10:00");
   const [newDesc, setNewDesc] = useState("");
+  const [newJobId, setNewJobId] = useState("");
   const [saving, setSaving] = useState(false);
   const [mergeIds, setMergeIds] = useState<Record<string, boolean>>({});
+  const [editOpen, setEditOpen] = useState(false);
+  const [editBlock, setEditBlock] = useState<WorkBlock | null>(null);
+  const [editStart, setEditStart] = useState("09:00");
+  const [editEnd, setEditEnd] = useState("10:00");
+  const [editDesc, setEditDesc] = useState("");
+  const [editJobId, setEditJobId] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+
+  const employeeDisplayName = useMemo(() => {
+    const en = [employeeDoc?.firstName, employeeDoc?.lastName]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
+    return en || user?.email || "";
+  }, [employeeDoc, user?.email]);
 
   const datesWithData = useMemo(() => {
     const s = new Set<string>();
@@ -342,6 +437,8 @@ export default function EmployeeWorklogsPage() {
       });
       return;
     }
+    const jobName =
+      assignedJobs.find((j) => j.id === newJobId)?.name || "";
     setSaving(true);
     try {
       await addDoc(
@@ -349,6 +446,7 @@ export default function EmployeeWorklogsPage() {
         {
           companyId,
           employeeId,
+          employeeName: employeeDisplayName,
           authUserId: user.uid,
           date: dayKey,
           startTime: newStart,
@@ -358,6 +456,8 @@ export default function EmployeeWorklogsPage() {
           approvedHours: h,
           reviewStatus: "pending",
           description: newDesc.trim(),
+          jobId: newJobId,
+          jobName,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         }
@@ -367,6 +467,7 @@ export default function EmployeeWorklogsPage() {
         description: "Blok práce byl úspěšně přidán.",
       });
       setNewDesc("");
+      setNewJobId("");
     } catch (e) {
       console.error(e);
       toast({
@@ -448,6 +549,17 @@ export default function EmployeeWorklogsPage() {
       return;
     }
 
+    const firstJob = chosen[0]?.jobId;
+    if (!firstJob || !chosen.every((b) => b.jobId === firstJob)) {
+      toast({
+        variant: "destructive",
+        title: "Nelze spojit",
+        description: "Vybrané bloky musí mít stejnou zakázku.",
+      });
+      return;
+    }
+    const mergedJobName = chosen[0]?.jobName || "";
+
     const startTime = chosen.reduce((min, b) => {
       const t = b.startTime || "99:99";
       const m = minutesFromHm(t);
@@ -488,6 +600,7 @@ export default function EmployeeWorklogsPage() {
       batch.set(newRef, {
         companyId,
         employeeId,
+        employeeName: employeeDisplayName,
         authUserId: user.uid,
         date: dayKey,
         startTime,
@@ -497,6 +610,8 @@ export default function EmployeeWorklogsPage() {
         approvedHours: h,
         reviewStatus: "pending",
         description,
+        jobId: firstJob,
+        jobName: mergedJobName,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         mergedFrom: ids,
@@ -520,6 +635,104 @@ export default function EmployeeWorklogsPage() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openEdit = (b: WorkBlock) => {
+    if (!canEmployeeEditBlock(b)) return;
+    setEditBlock(b);
+    setEditStart(b.startTime || "09:00");
+    setEditEnd(b.endTime || "10:00");
+    setEditDesc(b.description || "");
+    setEditJobId(b.jobId || "");
+    setEditOpen(true);
+  };
+
+  const handleSaveEdit = async () => {
+    if (!user || !companyId || !editBlock?.id || !employeeId || !firestore) return;
+    if (dayLocked) {
+      toast({
+        variant: "destructive",
+        title: "Den je uzamčen",
+        description:
+          "Zápis výkazu práce je možný pouze do 24 hodin od konce daného dne.",
+      });
+      return;
+    }
+    if (!canEmployeeEditBlock(editBlock)) return;
+    if (!editJobId.trim() || !isJobIdAssigned(assignedJobIds, editJobId)) {
+      toast({
+        variant: "destructive",
+        title: "Vyberte zakázku",
+        description: "Musíte zvolit zakázku přiřazenou vám administrátorem.",
+      });
+      return;
+    }
+    if (!parseHmStrict(editStart) || !parseHmStrict(editEnd)) {
+      toast({
+        variant: "destructive",
+        title: "Neplatný čas",
+        description: "Zkontrolujte čas od a do (formát HH:mm).",
+      });
+      return;
+    }
+    const h = hoursBetween(editStart, editEnd);
+    if (h <= 0) {
+      toast({
+        variant: "destructive",
+        title: "Neplatný čas",
+        description: "Čas „od“ musí být před časem „do“.",
+      });
+      return;
+    }
+    const others = dayBlocks.filter((b) => b.id !== editBlock.id);
+    if (blockOverlapsExisting(editStart, editEnd, others)) {
+      toast({
+        variant: "destructive",
+        title: "Překryv bloků",
+        description:
+          "V tomto čase už máte jiný záznam. Upravte časy tak, aby se nepřekrývaly.",
+      });
+      return;
+    }
+    const jobName =
+      assignedJobs.find((j) => j.id === editJobId)?.name ||
+      editBlock.jobName ||
+      "";
+    setEditSaving(true);
+    try {
+      await updateDoc(
+        doc(
+          firestore,
+          "companies",
+          companyId,
+          "work_time_blocks",
+          editBlock.id
+        ),
+        {
+          startTime: editStart,
+          endTime: editEnd,
+          hours: h,
+          originalHours: h,
+          approvedHours: h,
+          description: editDesc.trim(),
+          jobId: editJobId,
+          jobName,
+          updatedAt: serverTimestamp(),
+        }
+      );
+      toast({ title: "Uloženo", description: "Blok byl aktualizován." });
+      setEditOpen(false);
+      setEditBlock(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Úpravu se nepodařilo uložit.",
+      });
+    } finally {
+      setEditSaving(false);
     }
   };
 
@@ -607,6 +820,17 @@ export default function EmployeeWorklogsPage() {
           <AlertDescription className="text-black">
             {blocksError.message ||
               "Zkontrolujte oprávnění nebo zkuste stránku obnovit."}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {assignedJobIds.length === 0 && !jobsLoading && employeeDoc ? (
+        <Alert className="border-amber-300 bg-amber-50 text-amber-950">
+          <AlertCircle className="h-4 w-4 text-amber-800" />
+          <AlertTitle className="text-black">Žádná přiřazená zakázka</AlertTitle>
+          <AlertDescription className="text-slate-900">
+            Nemůžete zapisovat výkaz, dokud vám administrátor nepřiřadí alespoň jednu zakázku
+            (správa zaměstnanců → Přiřazené zakázky).
           </AlertDescription>
         </Alert>
       ) : null}
@@ -775,21 +999,38 @@ export default function EmployeeWorklogsPage() {
                                   {getReviewLabel(b.reviewStatus)}
                                 </Badge>
                               </div>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon"
-                                className="h-11 w-11 shrink-0 text-destructive hover:bg-red-50"
-                                onClick={() => b.id && handleDelete(b.id, b)}
-                                disabled={
-                                  !b.id ||
-                                  dayLocked ||
-                                  !canEmployeeDeleteBlock(b)
-                                }
-                                aria-label="Smazat blok"
-                              >
-                                <Trash2 className="h-5 w-5" />
-                              </Button>
+                              <div className="flex shrink-0 items-center gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-11 w-11 text-primary hover:bg-primary/10"
+                                  onClick={() => openEdit(b)}
+                                  disabled={
+                                    !b.id ||
+                                    dayLocked ||
+                                    !canEmployeeEditBlock(b)
+                                  }
+                                  aria-label="Upravit blok"
+                                >
+                                  <Pencil className="h-5 w-5" />
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-11 w-11 text-destructive hover:bg-red-50"
+                                  onClick={() => b.id && handleDelete(b.id, b)}
+                                  disabled={
+                                    !b.id ||
+                                    dayLocked ||
+                                    !canEmployeeDeleteBlock(b)
+                                  }
+                                  aria-label="Smazat blok"
+                                >
+                                  <Trash2 className="h-5 w-5" />
+                                </Button>
+                              </div>
                             </div>
                             <dl className="mt-3 grid grid-cols-2 gap-2 text-sm">
                               <div>
@@ -814,6 +1055,14 @@ export default function EmployeeWorklogsPage() {
                                   {b.reviewStatus === "pending"
                                     ? "—"
                                     : (b.approvedHours ?? b.hours ?? "—")}
+                                </dd>
+                              </div>
+                              <div className="col-span-2">
+                                <dt className="font-semibold text-black">
+                                  Zakázka
+                                </dt>
+                                <dd className="break-words text-black">
+                                  {b.jobName?.trim() || b.jobId || "—"}
                                 </dd>
                               </div>
                               <div className="col-span-2">
@@ -861,8 +1110,9 @@ export default function EmployeeWorklogsPage() {
                                 Schv. h
                               </TableHead>
                               <TableHead className="text-black">Stav</TableHead>
+                              <TableHead className="text-black">Zakázka</TableHead>
                               <TableHead className="text-black">Popis</TableHead>
-                              <TableHead className="w-12 text-black" />
+                              <TableHead className="w-24 text-black" />
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -906,25 +1156,45 @@ export default function EmployeeWorklogsPage() {
                                     {getReviewLabel(b.reviewStatus)}
                                   </Badge>
                                 </TableCell>
+                                <TableCell className="max-w-[140px] truncate text-sm text-black">
+                                  {b.jobName?.trim() || b.jobId || "—"}
+                                </TableCell>
                                 <TableCell className="max-w-[200px] truncate text-black">
                                   {b.description || "—"}
                                 </TableCell>
                                 <TableCell>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-10 w-10 text-destructive"
-                                    onClick={() => b.id && handleDelete(b.id, b)}
-                                    disabled={
-                                      !b.id ||
-                                      dayLocked ||
-                                      !canEmployeeDeleteBlock(b)
-                                    }
-                                    aria-label="Smazat"
-                                  >
-                                    <Trash2 className="h-5 w-5" />
-                                  </Button>
+                                  <div className="flex items-center gap-0.5">
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-10 w-10 text-primary"
+                                      onClick={() => openEdit(b)}
+                                      disabled={
+                                        !b.id ||
+                                        dayLocked ||
+                                        !canEmployeeEditBlock(b)
+                                      }
+                                      aria-label="Upravit"
+                                    >
+                                      <Pencil className="h-5 w-5" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-10 w-10 text-destructive"
+                                      onClick={() => b.id && handleDelete(b.id, b)}
+                                      disabled={
+                                        !b.id ||
+                                        dayLocked ||
+                                        !canEmployeeDeleteBlock(b)
+                                      }
+                                      aria-label="Smazat"
+                                    >
+                                      <Trash2 className="h-5 w-5" />
+                                    </Button>
+                                  </div>
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -954,6 +1224,40 @@ export default function EmployeeWorklogsPage() {
                       disabled={dayLocked || saving}
                       idPrefix="new-end"
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="worklog-job"
+                      className="text-sm font-semibold text-black"
+                    >
+                      Zakázka <span className="text-red-600">*</span>
+                    </Label>
+                    <select
+                      id="worklog-job"
+                      className={selectBaseClass}
+                      value={newJobId}
+                      onChange={(e) => setNewJobId(e.target.value)}
+                      disabled={
+                        dayLocked ||
+                        saving ||
+                        jobsLoading ||
+                        assignedJobIds.length === 0
+                      }
+                      aria-label="Zakázka"
+                    >
+                      <option value="">
+                        {jobsLoading
+                          ? "Načítání zakázek…"
+                          : assignedJobIds.length === 0
+                            ? "— nemáte přiřazenou zakázku —"
+                            : "— vyberte zakázku —"}
+                      </option>
+                      {assignedJobs.map((j) => (
+                        <option key={j.id} value={j.id}>
+                          {j.name?.trim() || j.id}
+                        </option>
+                      ))}
+                    </select>
                   </div>
                   <div className="space-y-2">
                     <Label
@@ -999,7 +1303,12 @@ export default function EmployeeWorklogsPage() {
                 type="button"
                 className="h-12 min-h-[48px] w-full text-base font-semibold sm:w-auto"
                 onClick={handleAddBlock}
-                disabled={saving || dayLocked || blocksLoading}
+                disabled={
+                  saving ||
+                  dayLocked ||
+                  blocksLoading ||
+                  assignedJobIds.length === 0
+                }
               >
                 {saving ? (
                   <Loader2 className="h-5 w-5 animate-spin" />
@@ -1011,6 +1320,97 @@ export default function EmployeeWorklogsPage() {
               </Button>
             </DialogFooter>
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={editOpen}
+        onOpenChange={(o) => {
+          setEditOpen(o);
+          if (!o) setEditBlock(null);
+        }}
+      >
+        <DialogContent className="max-w-lg border-slate-200 bg-white text-black">
+          <DialogHeader>
+            <DialogTitle>Upravit blok výkazu</DialogTitle>
+            <DialogDescription className="text-slate-700">
+              Změňte čas, zakázku nebo popis. U schválených záznamů kontaktujte administrátora.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <DigitalTimePair
+              label="Čas od"
+              valueHm={editStart}
+              onChange={setEditStart}
+              disabled={dayLocked || editSaving}
+              idPrefix="edit-start"
+            />
+            <DigitalTimePair
+              label="Čas do"
+              valueHm={editEnd}
+              onChange={setEditEnd}
+              disabled={dayLocked || editSaving}
+              idPrefix="edit-end"
+            />
+            <div className="space-y-2">
+              <Label htmlFor="edit-job" className="text-black">
+                Zakázka <span className="text-red-600">*</span>
+              </Label>
+              <select
+                id="edit-job"
+                className={selectBaseClass}
+                value={editJobId}
+                onChange={(e) => setEditJobId(e.target.value)}
+                disabled={dayLocked || editSaving || jobsLoading}
+              >
+                <option value="">— vyberte zakázku —</option>
+                {assignedJobs.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    {j.name?.trim() || j.id}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-desc" className="text-black">
+                Popis práce
+              </Label>
+              <Textarea
+                id="edit-desc"
+                value={editDesc}
+                onChange={(e) => setEditDesc(e.target.value)}
+                rows={3}
+                disabled={dayLocked || editSaving}
+                className={cn(
+                  inputBaseClass,
+                  "min-h-[96px] resize-y py-3"
+                )}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setEditOpen(false);
+                setEditBlock(null);
+              }}
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void handleSaveEdit()}
+              disabled={editSaving || dayLocked}
+            >
+              {editSaving ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                "Uložit změny"
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -53,6 +53,57 @@ service cloud.firestore {
       return hasUser() && userCompanyId() == companyId;
     }
 
+    /**
+     * První vytvoření firmy při registraci (batch ještě neobsahuje users/{uid}, takže sameCompany nejde použít).
+     * Dokument musí mít vlastníka = aktuální uživatel.
+     */
+    function isNewCompanyOwnedByRequester() {
+      return signedIn() &&
+        request.resource.data.ownerUserId == request.auth.uid &&
+        request.resource.data.ownerId == request.auth.uid;
+    }
+
+    /** Zaměstnanec (ne vlastník/admin/manažer/účetní) může zapisovat vlastní výkaz práce. */
+    function canLogOwnWorkTime() {
+      return hasUser() && ownEmployeeId() != null && !isPrivileged();
+    }
+
+    function jobAssignedToEmployee(companyId, jobId) {
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      return exists(empRef) &&
+        'assignedJobIds' in get(empRef).data &&
+        jobId in get(empRef).data.assignedJobIds;
+    }
+
+    function workBlockOwnPending() {
+      return resource.data.employeeId == ownEmployeeId() &&
+        resource.data.authUserId == request.auth.uid &&
+        (resource.data.reviewStatus == 'pending' || resource.data.reviewStatus == 'rejected');
+    }
+
+    /** Úprava výkazu zaměstnancem — nesmí měnit schvalovací pole; zakázka musí být přiřazená. */
+    function employeeWorkBlockUpdateValid(companyId) {
+      return request.resource.data.employeeId == resource.data.employeeId &&
+        request.resource.data.authUserId == resource.data.authUserId &&
+        request.resource.data.companyId == resource.data.companyId &&
+        request.resource.data.reviewStatus == resource.data.reviewStatus &&
+        request.resource.data.jobId is string &&
+        jobAssignedToEmployee(companyId, request.resource.data.jobId) &&
+        request.resource.data.adminNote == resource.data.adminNote &&
+        request.resource.data.adjustmentReason == resource.data.adjustmentReason &&
+        (!('reviewedBy' in resource.data) ||
+          request.resource.data.reviewedBy == resource.data.reviewedBy) &&
+        (!('reviewedAt' in resource.data) ||
+          request.resource.data.reviewedAt == resource.data.reviewedAt);
+    }
+
+    /** Kiosk terminál po custom tokenu (claim terminalAccess + companyId). */
+    function terminalCompanyMatches(companyId) {
+      return request.auth != null &&
+        request.auth.token.terminalAccess == true &&
+        request.auth.token.companyId == companyId;
+    }
+
     // --- Uživatelské profily (klientská aplikace) ---
     match /users/{userId} {
       allow read: if signedIn() && request.auth.uid == userId;
@@ -65,26 +116,46 @@ service cloud.firestore {
       }
     }
 
+    // --- Odkazy na tablet terminál (pouze Admin SDK) ---
+    match /terminalLinks/{tokenId} {
+      allow read, write: if false;
+    }
+
     // --- Firma ---
     match /companies/{companyId} {
-      allow read: if signedIn() && sameCompany(companyId);
-      allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+      allow read: if signedIn() && sameCompany(companyId) || terminalCompanyMatches(companyId);
+      allow create: if isNewCompanyOwnedByRequester();
+      allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
 
       match /employees/{empId} {
-        allow read: if request.auth != null;
+        allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);
         allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
       match /work_time_blocks/{bid} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.authUserId == request.auth.uid);
+          (isPrivileged() ||
+            (canLogOwnWorkTime() && resource.data.employeeId == ownEmployeeId()));
         allow create: if signedIn() && sameCompany(companyId) &&
+          canLogOwnWorkTime() &&
           request.resource.data.authUserId == request.auth.uid &&
-          request.resource.data.employeeId == ownEmployeeId();
-        /** Úpravy schválení / hodin jen privilegované role (zaměstnanec jen maže „pending“ bloky). */
-        allow update: if signedIn() && sameCompany(companyId) && isPrivileged();
+          request.resource.data.employeeId == ownEmployeeId() &&
+          request.resource.data.jobId is string &&
+          request.resource.data.jobId.size() > 0 &&
+          jobAssignedToEmployee(companyId, request.resource.data.jobId) &&
+          request.resource.data.reviewStatus == 'pending';
+        allow update: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() ||
+          (canLogOwnWorkTime() && workBlockOwnPending() && employeeWorkBlockUpdateValid(companyId))
+        );
         allow delete: if signedIn() && sameCompany(companyId) &&
           (isPrivileged() || workBlockEmployeeCanSelfDelete());
+      }
+
+      match /jobs/{jobId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || (canLogOwnWorkTime() && jobAssignedToEmployee(companyId, jobId)));
+        allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
       /**
@@ -105,8 +176,8 @@ service cloud.firestore {
       }
 
       match /attendance/{documentId} {
-        allow read: if request.auth != null;
-        allow create, update, delete: if request.auth != null;
+        allow read: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
+        allow create, update, delete: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
       }
 
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
@@ -137,6 +208,10 @@ service cloud.firestore {
 
     match /{collectionName}/{orgId} {
       allow read, update: if signedIn() && collectionName == 'společnosti';
+      /** Registrace z /register — stejný dokument jako companies/{companyId}, vlastník = auth uid. */
+      allow create: if signedIn() &&
+        collectionName == 'společnosti' &&
+        isNewCompanyOwnedByRequester();
     }
 
     match /superadmins/{id} {

@@ -15,6 +15,7 @@ import {
   query,
   where,
   limit,
+  orderBy,
   addDoc,
   updateDoc,
   deleteDoc,
@@ -102,6 +103,10 @@ function PayrollAdminPageInner() {
 
   useEffect(() => {
     if (employees.length === 0) return;
+    if (employeeFromUrl === "all") {
+      setSelectedEmployeeId("all");
+      return;
+    }
     if (
       employeeFromUrl &&
       employees.some((e) => e.id === employeeFromUrl)
@@ -115,7 +120,15 @@ function PayrollAdminPageInner() {
   }, [employees, selectedEmployeeId, employeeFromUrl]);
 
   const blocksQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !selectedEmployeeId) return null;
+    if (!firestore || !companyId) return null;
+    if (selectedEmployeeId === "all") {
+      return query(
+        collection(firestore, "companies", companyId, "work_time_blocks"),
+        orderBy("date", "desc"),
+        limit(500)
+      );
+    }
+    if (!selectedEmployeeId) return null;
     return query(
       collection(firestore, "companies", companyId, "work_time_blocks"),
       where("employeeId", "==", selectedEmployeeId),
@@ -128,6 +141,7 @@ function PayrollAdminPageInner() {
 
   const advancesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !selectedEmployeeId) return null;
+    if (selectedEmployeeId === "all") return null;
     return query(
       collection(firestore, "companies", companyId, "advances"),
       where("employeeId", "==", selectedEmployeeId),
@@ -169,6 +183,18 @@ function PayrollAdminPageInner() {
     0,
     Math.round((earnedAll - paidTotal) * 100) / 100
   );
+
+  const employeeLabelById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const e of employees) {
+      const label =
+        [e.firstName, e.lastName].filter(Boolean).join(" ").trim() ||
+        e.email ||
+        e.id;
+      m[e.id] = label;
+    }
+    return m;
+  }, [employees]);
 
   const sortedBlocks = useMemo(() => {
     return [...blocksMoney].sort((a, b) => {
@@ -483,17 +509,20 @@ function PayrollAdminPageInner() {
               {employees.length === 0 ? (
                 <option value="">— žádní zaměstnanci —</option>
               ) : (
-                employees.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {[e.firstName, e.lastName].filter(Boolean).join(" ") ||
-                      e.email ||
-                      e.id}
-                  </option>
-                ))
+                <>
+                  <option value="all">Všichni zaměstnanci (výkazy)</option>
+                  {employees.map((e) => (
+                    <option key={e.id} value={e.id}>
+                      {[e.firstName, e.lastName].filter(Boolean).join(" ") ||
+                        e.email ||
+                        e.id}
+                    </option>
+                  ))}
+                </>
               )}
             </select>
           </div>
-          {selectedEmp && (
+          {selectedEmp && selectedEmployeeId !== "all" && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-black">
               <p>
                 <span className="font-semibold">Sazba:</span>{" "}
@@ -512,11 +541,120 @@ function PayrollAdminPageInner() {
               </p>
             </div>
           )}
+          {selectedEmployeeId === "all" && (
+            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-black">
+              <p className="font-medium">
+                Zobrazují se výkazy všech zaměstnanců. Pro výpočet mezd a záloh
+                vyberte konkrétního zaměstnance.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 
       {!selectedEmployeeId ? (
         <p className="text-black">Vyberte zaměstnance.</p>
+      ) : selectedEmployeeId === "all" ? (
+        <Tabs defaultValue="worklogs" className="w-full">
+          <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-slate-100 p-1 sm:max-w-md">
+            <TabsTrigger
+              value="worklogs"
+              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
+            >
+              Výkazy (všichni)
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="worklogs" className="mt-4 space-y-4">
+            <Card className="border-slate-200 bg-white">
+              <CardHeader>
+                <CardTitle className="text-lg text-black">
+                  Výkaz práce — přehled firmy
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {blocksLoading ? (
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                ) : sortedBlocks.length === 0 ? (
+                  <p className="text-black">Žádné bloky.</p>
+                ) : (
+                  <div className="overflow-x-auto rounded-md border border-slate-200">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-black">Zaměstnanec</TableHead>
+                          <TableHead className="text-black">Datum</TableHead>
+                          <TableHead className="text-black">Čas</TableHead>
+                          <TableHead className="text-black">Zakázka</TableHead>
+                          <TableHead className="text-black">Výkaz h</TableHead>
+                          <TableHead className="text-black">Schv. h</TableHead>
+                          <TableHead className="text-black">Stav</TableHead>
+                          <TableHead className="text-black">Akce</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {sortedBlocks.map((b) => (
+                          <TableRow key={b.id}>
+                            <TableCell className="text-black">
+                              {b.employeeName?.trim() ||
+                                employeeLabelById[String(b.employeeId ?? "")] ||
+                                b.employeeId ||
+                                "—"}
+                            </TableCell>
+                            <TableCell className="font-medium text-black">
+                              {b.date}
+                            </TableCell>
+                            <TableCell className="text-black">
+                              {b.startTime}–{b.endTime}
+                            </TableCell>
+                            <TableCell className="max-w-[180px] truncate text-black">
+                              {b.jobName?.trim() || b.jobId || "—"}
+                            </TableCell>
+                            <TableCell className="text-black">
+                              {b.hours ?? "—"}
+                            </TableCell>
+                            <TableCell className="text-black">
+                              {b.reviewStatus === "pending"
+                                ? "—"
+                                : (b.approvedHours ?? b.hours ?? "—")}
+                            </TableCell>
+                            <TableCell className="text-black">
+                              {getReviewLabel(b.reviewStatus)}
+                            </TableCell>
+                            <TableCell>
+                              <div className="flex flex-wrap gap-2">
+                                {b.reviewStatus === "pending" && (
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="default"
+                                    onClick={() => quickApprove(b)}
+                                  >
+                                    <Check className="mr-1 h-4 w-4" />
+                                    Schválit
+                                  </Button>
+                                )}
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="border-slate-300 text-black"
+                                  onClick={() => openReview(b)}
+                                >
+                                  <Pencil className="mr-1 h-4 w-4" />
+                                  Úprava
+                                </Button>
+                              </div>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       ) : (
         <Tabs defaultValue="worklogs" className="w-full">
           <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-slate-100 p-1 sm:max-w-md">
@@ -563,6 +701,12 @@ function PayrollAdminPageInner() {
                           <p className="mt-2 text-sm text-black">
                             {b.startTime}–{b.endTime} · výkaz {b.hours} h
                           </p>
+                          <p className="mt-1 text-sm text-slate-800">
+                            Zakázka:{" "}
+                            <span className="font-medium text-black">
+                              {b.jobName?.trim() || b.jobId || "—"}
+                            </span>
+                          </p>
                           <div className="mt-3 flex flex-wrap gap-2">
                             {b.reviewStatus === "pending" && (
                               <Button
@@ -595,6 +739,7 @@ function PayrollAdminPageInner() {
                           <TableRow>
                             <TableHead className="text-black">Datum</TableHead>
                             <TableHead className="text-black">Čas</TableHead>
+                            <TableHead className="text-black">Zakázka</TableHead>
                             <TableHead className="text-black">Výkaz h</TableHead>
                             <TableHead className="text-black">Schv. h</TableHead>
                             <TableHead className="text-black">Stav</TableHead>
@@ -609,6 +754,9 @@ function PayrollAdminPageInner() {
                               </TableCell>
                               <TableCell className="text-black">
                                 {b.startTime}–{b.endTime}
+                              </TableCell>
+                              <TableCell className="max-w-[160px] truncate text-black">
+                                {b.jobName?.trim() || b.jobId || "—"}
                               </TableCell>
                               <TableCell className="text-black">
                                 {b.hours ?? "—"}
