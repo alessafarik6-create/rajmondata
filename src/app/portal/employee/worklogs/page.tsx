@@ -89,7 +89,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import {
-  parseAssignedJobIds,
+  parseAssignedWorklogJobIds,
   chunkArray,
   isJobIdAssigned,
 } from "@/lib/assigned-jobs";
@@ -240,7 +240,7 @@ export default function EmployeeWorklogsPage() {
   const { data: employeeDoc } = useDoc<any>(employeeRef);
 
   const assignedJobIds = useMemo(
-    () => parseAssignedJobIds(employeeDoc?.assignedJobIds),
+    () => parseAssignedWorklogJobIds(employeeDoc),
     [employeeDoc]
   );
   const assignedJobIdsKey = useMemo(

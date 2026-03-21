@@ -29,7 +29,10 @@ import {
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
-import { parseAssignedJobIds } from '@/lib/assigned-jobs';
+import {
+  parseAssignedWorklogJobIds,
+  parseAssignedTerminalJobIds,
+} from "@/lib/assigned-jobs";
 import {
   Dialog,
   DialogContent,
@@ -144,16 +147,30 @@ export default function EmployeesPage() {
   const [pwdResetConfirm, setPwdResetConfirm] = useState("");
   const [pwdResetLoading, setPwdResetLoading] = useState(false);
 
-  const [assignJobsEmployee, setAssignJobsEmployee] = useState<any | null>(null);
-  const [assignJobIds, setAssignJobIds] = useState<Set<string>>(new Set());
-  const [savingAssignedJobs, setSavingAssignedJobs] = useState(false);
+  const [assignWorklogEmployee, setAssignWorklogEmployee] = useState<any | null>(
+    null
+  );
+  const [assignWorklogJobIds, setAssignWorklogJobIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [savingAssignedWorklogJobs, setSavingAssignedWorklogJobs] =
+    useState(false);
+
+  const [assignTerminalEmployee, setAssignTerminalEmployee] = useState<any | null>(
+    null
+  );
+  const [assignTerminalJobIds, setAssignTerminalJobIds] = useState<Set<string>>(
+    new Set()
+  );
+  const [savingAssignedTerminalJobs, setSavingAssignedTerminalJobs] =
+    useState(false);
 
   const jobsForAssignQuery = useMemoFirebase(
     () =>
-      firestore && companyId && assignJobsEmployee
+      firestore && companyId && (assignWorklogEmployee || assignTerminalEmployee)
         ? collection(firestore, "companies", companyId, "jobs")
         : null,
-    [firestore, companyId, assignJobsEmployee]
+    [firestore, companyId, assignWorklogEmployee, assignTerminalEmployee]
   );
   const { data: companyJobsRaw, isLoading: companyJobsLoading } =
     useCollection(jobsForAssignQuery);
@@ -170,15 +187,27 @@ export default function EmployeesPage() {
   }, [companyJobsRaw]);
 
   useEffect(() => {
-    if (!assignJobsEmployee) {
-      setAssignJobIds(new Set());
+    if (!assignWorklogEmployee) {
+      setAssignWorklogJobIds(new Set());
       return;
     }
-    setAssignJobIds(new Set(parseAssignedJobIds(assignJobsEmployee.assignedJobIds)));
-  }, [assignJobsEmployee]);
+    setAssignWorklogJobIds(
+      new Set(parseAssignedWorklogJobIds(assignWorklogEmployee))
+    );
+  }, [assignWorklogEmployee]);
 
-  const toggleAssignJob = (jobId: string) => {
-    setAssignJobIds((prev) => {
+  useEffect(() => {
+    if (!assignTerminalEmployee) {
+      setAssignTerminalJobIds(new Set());
+      return;
+    }
+    setAssignTerminalJobIds(
+      new Set(parseAssignedTerminalJobIds(assignTerminalEmployee))
+    );
+  }, [assignTerminalEmployee]);
+
+  const toggleAssignWorklogJob = (jobId: string) => {
+    setAssignWorklogJobIds((prev) => {
       const next = new Set(prev);
       if (next.has(jobId)) next.delete(jobId);
       else next.add(jobId);
@@ -186,27 +215,71 @@ export default function EmployeesPage() {
     });
   };
 
-  const saveAssignedJobs = async () => {
-    if (!canManage || !companyId || !assignJobsEmployee?.id) return;
-    setSavingAssignedJobs(true);
+  const toggleAssignTerminalJob = (jobId: string) => {
+    setAssignTerminalJobIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(jobId)) next.delete(jobId);
+      else next.add(jobId);
+      return next;
+    });
+  };
+
+  const saveAssignedWorklogJobs = async () => {
+    if (!canManage || !companyId || !assignWorklogEmployee?.id) return;
+    setSavingAssignedWorklogJobs(true);
     try {
       await updateDoc(
-        doc(firestore, "companies", companyId, "employees", assignJobsEmployee.id),
+        doc(
+          firestore,
+          "companies",
+          companyId,
+          "employees",
+          assignWorklogEmployee.id
+        ),
         {
-          assignedJobIds: Array.from(assignJobIds),
+          assignedWorklogJobIds: Array.from(assignWorklogJobIds),
           updatedAt: serverTimestamp(),
         }
       );
       toast({
         title: "Uloženo",
-        description: "Přiřazení zakázek bylo aktualizováno.",
+        description: "Zakázky pro výkaz práce byly aktualizovány.",
       });
-      setAssignJobsEmployee(null);
+      setAssignWorklogEmployee(null);
     } catch {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
-      setSavingAssignedJobs(false);
-      /* Radix Dialog + RemoveScroll někdy neodstraní pointer-events/overflow z body po řízeném zavření. */
+      setSavingAssignedWorklogJobs(false);
+      releaseModalLocksAfterDismiss();
+    }
+  };
+
+  const saveAssignedTerminalJobs = async () => {
+    if (!canManage || !companyId || !assignTerminalEmployee?.id) return;
+    setSavingAssignedTerminalJobs(true);
+    try {
+      await updateDoc(
+        doc(
+          firestore,
+          "companies",
+          companyId,
+          "employees",
+          assignTerminalEmployee.id
+        ),
+        {
+          assignedTerminalJobIds: Array.from(assignTerminalJobIds),
+          updatedAt: serverTimestamp(),
+        }
+      );
+      toast({
+        title: "Uloženo",
+        description: "Zakázky pro docházkový terminál byly aktualizovány.",
+      });
+      setAssignTerminalEmployee(null);
+    } catch {
+      toast({ variant: "destructive", title: "Uložení se nezdařilo" });
+    } finally {
+      setSavingAssignedTerminalJobs(false);
       releaseModalLocksAfterDismiss();
     }
   };
@@ -751,12 +824,20 @@ export default function EmployeesPage() {
                                   a výkazy
                                 </DropdownMenuItem>
                                 {canManage && (
-                                  <DropdownMenuItem
-                                    onClick={() => setAssignJobsEmployee(emp)}
-                                  >
-                                    <Briefcase className="w-4 h-4 mr-2" /> Přiřazené
-                                    zakázky (výkaz)
-                                  </DropdownMenuItem>
+                                  <>
+                                    <DropdownMenuItem
+                                      onClick={() => setAssignWorklogEmployee(emp)}
+                                    >
+                                      <Briefcase className="w-4 h-4 mr-2" /> Zakázky
+                                      pro výkaz práce
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => setAssignTerminalEmployee(emp)}
+                                    >
+                                      <Briefcase className="w-4 h-4 mr-2" /> Zakázky
+                                      pro docházkový terminál
+                                    </DropdownMenuItem>
+                                  </>
                                 )}
                               </>
                             )}
@@ -871,10 +952,10 @@ export default function EmployeesPage() {
       </Dialog>
 
       <Dialog
-        open={!!assignJobsEmployee}
+        open={!!assignWorklogEmployee}
         onOpenChange={(open) => {
           if (!open) {
-            setAssignJobsEmployee(null);
+            setAssignWorklogEmployee(null);
             releaseModalLocksAfterDismiss();
           }
         }}
@@ -882,14 +963,13 @@ export default function EmployeesPage() {
         <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
-              Přiřazené zakázky — výkaz práce
+              Zakázky pro výkaz práce
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
-              {assignJobsEmployee
-                ? `${assignJobsEmployee.firstName} ${assignJobsEmployee.lastName}`
+              {assignWorklogEmployee
+                ? `${assignWorklogEmployee.firstName} ${assignWorklogEmployee.lastName}`
                 : ""}{" "}
-              uvidí při zápisu výkazu jen tyto zakázky. Vyberte je ze seznamu zakázek
-              firmy.
+              uvidí při zápisu výkazu jen tyto zakázky (odděleně od terminálu docházky).
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[50vh] space-y-2 overflow-y-auto py-2">
@@ -910,8 +990,8 @@ export default function EmployeesPage() {
                   <input
                     type="checkbox"
                     className="mt-1 h-4 w-4 shrink-0"
-                    checked={assignJobIds.has(job.id)}
-                    onChange={() => toggleAssignJob(job.id)}
+                    checked={assignWorklogJobIds.has(job.id)}
+                    onChange={() => toggleAssignWorklogJob(job.id)}
                   />
                   <span className="font-medium text-black">
                     {job.name?.trim() || job.id}
@@ -926,22 +1006,99 @@ export default function EmployeesPage() {
               variant="outline"
               className="border-gray-200 bg-white text-black"
               onClick={() => {
-                setAssignJobsEmployee(null);
+                setAssignWorklogEmployee(null);
                 releaseModalLocksAfterDismiss();
               }}
-              disabled={savingAssignedJobs}
+              disabled={savingAssignedWorklogJobs}
             >
               Zrušit
             </Button>
             <Button
               type="button"
-              onClick={() => void saveAssignedJobs()}
-              disabled={savingAssignedJobs || !canManage}
+              onClick={() => void saveAssignedWorklogJobs()}
+              disabled={savingAssignedWorklogJobs || !canManage}
             >
-              {savingAssignedJobs ? (
+              {savingAssignedWorklogJobs ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                "Uložit přiřazení"
+                "Uložit"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!assignTerminalEmployee}
+        onOpenChange={(open) => {
+          if (!open) {
+            setAssignTerminalEmployee(null);
+            releaseModalLocksAfterDismiss();
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">
+              Zakázky pro docházkový terminál
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {assignTerminalEmployee
+                ? `${assignTerminalEmployee.firstName} ${assignTerminalEmployee.lastName}`
+                : ""}{" "}
+              uvidí při příchodu na terminálu jen tyto zakázky (odděleně od výkazu práce).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[50vh] space-y-2 overflow-y-auto py-2">
+            {companyJobsLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            ) : companyJobs.length === 0 ? (
+              <p className="text-sm text-gray-600">
+                Ve firmě zatím nejsou žádné zakázky. Vytvořte je v sekci Zakázky.
+              </p>
+            ) : (
+              companyJobs.map((job) => (
+                <label
+                  key={job.id}
+                  className="flex cursor-pointer items-start gap-3 rounded-md border border-gray-200 p-3 text-sm hover:bg-gray-50"
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-1 h-4 w-4 shrink-0"
+                    checked={assignTerminalJobIds.has(job.id)}
+                    onChange={() => toggleAssignTerminalJob(job.id)}
+                  />
+                  <span className="font-medium text-black">
+                    {job.name?.trim() || job.id}
+                  </span>
+                </label>
+              ))
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-gray-200 bg-white text-black"
+              onClick={() => {
+                setAssignTerminalEmployee(null);
+                releaseModalLocksAfterDismiss();
+              }}
+              disabled={savingAssignedTerminalJobs}
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void saveAssignedTerminalJobs()}
+              disabled={savingAssignedTerminalJobs || !canManage}
+            >
+              {savingAssignedTerminalJobs ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Uložit"
               )}
             </Button>
           </DialogFooter>

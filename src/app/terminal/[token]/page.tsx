@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
-import { signInWithCustomToken } from "firebase/auth";
 import { useAuth } from "@/firebase";
 import { AttendanceTerminal } from "@/components/attendance/AttendanceTerminal";
 import { Loader2, AlertCircle } from "lucide-react";
@@ -27,14 +26,13 @@ export default function TerminalByTokenPage() {
     setState("loading");
     setErrorMsg(null);
     try {
-      const res = await fetch("/api/terminal/session", {
+      const res = await fetch("/api/terminal/resolve", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ token }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
-        customToken?: string;
         companyId?: string;
       };
       if (!res.ok) {
@@ -42,13 +40,12 @@ export default function TerminalByTokenPage() {
         setState("error");
         return;
       }
-      const { customToken, companyId: cid } = data;
-      if (!customToken || !cid) {
+      const cid = data.companyId?.trim();
+      if (!cid) {
         setErrorMsg("Neplatná odpověď serveru.");
         setState("error");
         return;
       }
-      await signInWithCustomToken(auth, customToken);
       setCompanyId(cid);
       setState("ready");
     } catch (e) {
@@ -73,7 +70,7 @@ export default function TerminalByTokenPage() {
       <div className="min-h-dvh grid place-items-center bg-background p-6">
         <div className="flex flex-col items-center gap-4 text-muted-foreground">
           <Loader2 className="w-12 h-12 animate-spin text-primary" />
-          <p className="text-lg font-medium">Připojování terminálu…</p>
+          <p className="text-lg font-medium">Ověřování odkazu terminálu…</p>
         </div>
       </div>
     );
@@ -102,7 +99,7 @@ export default function TerminalByTokenPage() {
     <AttendanceTerminal
       standalone
       companyIdOverride={companyId}
-      kioskTokenSession
+      employeeTokenEntry
     />
   );
 }

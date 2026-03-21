@@ -37,6 +37,8 @@ import {
   query,
   orderBy,
   where,
+  documentId,
+  getDocs,
 } from "firebase/firestore";
 import { addDocumentNonBlocking } from "@/firebase/non-blocking-updates";
 import { errorEmitter } from "@/firebase/error-emitter";
@@ -51,6 +53,17 @@ import {
   signInWithEmailAndPassword,
   type AuthError,
 } from "firebase/auth";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  parseAssignedTerminalJobIds,
+  chunkArray,
+} from "@/lib/assigned-jobs";
 
 export type AttendanceTerminalProps = {
   /** Veřejný tablet — bez portálové navigace, výchozí režim PIN. */
@@ -58,9 +71,13 @@ export type AttendanceTerminalProps = {
   /** Např. z ?company= nebo /companies/[companyId]/terminal — musí odpovídat účtu. */
   companyIdOverride?: string | null;
   /**
-   * Relace z `/terminal/[token]` po serverovém ověření tokenu (custom token, bez users/{uid} profilu).
+   * Legacy: relace z `/api/terminal/session` (custom token kiosk).
    */
   kioskTokenSession?: boolean;
+  /**
+   * Odkaz `/terminal/[token]` — ověření firmy tokenem, přihlášení e-mailem/heslem, bez PIN/QR.
+   */
+  employeeTokenEntry?: boolean;
 };
 
 type AttendanceType = "check_in" | "break_start" | "break_end" | "check_out";
@@ -70,6 +87,7 @@ export function AttendanceTerminal({
   standalone = false,
   companyIdOverride = null,
   kioskTokenSession = false,
+  employeeTokenEntry = false,
 }: AttendanceTerminalProps) {
   const { user } = useUser();
   const auth = useAuth();
@@ -100,10 +118,14 @@ export function AttendanceTerminal({
   const scannerRef = useRef<any>(null);
 
   useEffect(() => {
+    if (employeeTokenEntry) {
+      setTerminalMode("personal");
+      return;
+    }
     if (kioskTokenSession) {
       setTerminalMode("pin");
     }
-  }, [kioskTokenSession]);
+  }, [kioskTokenSession, employeeTokenEntry]);
 
   useEffect(() => {
     setIsClient(true);
@@ -141,7 +163,7 @@ export function AttendanceTerminal({
   } = useDoc(userRef);
   const override = companyIdOverride?.trim();
   const fromProfile = profile?.companyId as string | undefined;
-  const isKioskSession = Boolean(kioskTokenSession && override);
+  const isKioskSession = Boolean(kioskTokenSession && override && !employeeTokenEntry);
   const companyAccessDenied =
     !isKioskSession &&
     Boolean(
@@ -162,6 +184,27 @@ export function AttendanceTerminal({
 
   /** Stejný model jako /portal/employee/attendance — employeeId v DB může být auth UID nebo employees/{id}. */
   const profileEmployeeId = profile?.employeeId as string | undefined;
+
+  const employeeSelfRef = useMemoFirebase(
+    () =>
+      firestore && effectiveCompanyId && profileEmployeeId
+        ? doc(
+            firestore,
+            "companies",
+            effectiveCompanyId,
+            "employees",
+            profileEmployeeId
+          )
+        : null,
+    [firestore, effectiveCompanyId, profileEmployeeId]
+  );
+  const { data: employeeDocSelf } = useDoc(employeeSelfRef);
+
+  const [terminalJobOptions, setTerminalJobOptions] = useState<
+    { id: string; name: string }[]
+  >([]);
+  const [terminalJobsLoading, setTerminalJobsLoading] = useState(false);
+  const [jobPickOpen, setJobPickOpen] = useState(false);
 
   const companyDocRef = useMemoFirebase(
     () =>
@@ -236,6 +279,59 @@ export function AttendanceTerminal({
     () => (Array.isArray(employeesRaw) ? employeesRaw : []),
     [employeesRaw]
   );
+
+  useEffect(() => {
+    if (!firestore || !effectiveCompanyId) {
+      setTerminalJobOptions([]);
+      return;
+    }
+    const ids =
+      terminalMode === "personal"
+        ? parseAssignedTerminalJobIds(employeeDocSelf)
+        : parseAssignedTerminalJobIds(activeEmployee);
+    if (ids.length === 0) {
+      setTerminalJobOptions([]);
+      return;
+    }
+    let cancelled = false;
+    setTerminalJobsLoading(true);
+    void (async () => {
+      try {
+        const chunks = chunkArray(ids, 10);
+        const out: { id: string; name: string }[] = [];
+        for (const ch of chunks) {
+          const snap = await getDocs(
+            query(
+              collection(firestore, "companies", effectiveCompanyId, "jobs"),
+              where(documentId(), "in", ch)
+            )
+          );
+          snap.forEach((d) => {
+            const data = d.data() as { name?: string };
+            out.push({
+              id: d.id,
+              name: typeof data.name === "string" ? data.name.trim() || d.id : d.id,
+            });
+          });
+        }
+        if (!cancelled) setTerminalJobOptions(out);
+      } catch (e) {
+        console.error("[AttendanceTerminal] terminal jobs load", e);
+        if (!cancelled) setTerminalJobOptions([]);
+      } finally {
+        if (!cancelled) setTerminalJobsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    firestore,
+    effectiveCompanyId,
+    terminalMode,
+    employeeDocSelf,
+    activeEmployee,
+  ]);
 
   useEffect(() => {
     if (profileError) {
@@ -447,10 +543,16 @@ export function AttendanceTerminal({
     setIsScanning(false);
   };
 
-  const handleAction = (type: AttendanceType) => {
+  const handleAction = (
+    type: AttendanceType,
+    jobId?: string | null,
+    jobName?: string | null
+  ) => {
     try {
       const targetId =
-        terminalMode !== "personal" ? activeEmployee?.id : user?.uid;
+        terminalMode !== "personal"
+          ? activeEmployee?.id
+          : profileEmployeeId || user?.uid;
       const targetName =
         terminalMode !== "personal"
           ? `${activeEmployee?.firstName} ${activeEmployee?.lastName}`
@@ -474,22 +576,29 @@ export function AttendanceTerminal({
         effectiveCompanyId,
         "attendance"
       );
-      addDocumentNonBlocking(colRef, {
+      const payload: Record<string, unknown> = {
         employeeId: targetId,
         employeeName: targetName,
         type,
         timestamp: serverTimestamp(),
         date: new Date().toISOString().split("T")[0],
         terminalId: standalone
-          ? kioskTokenSession
-            ? `token-kiosk-${terminalMode}`
-            : `tablet-kiosk-${terminalMode}`
+          ? employeeTokenEntry
+            ? "employee-token-web"
+            : kioskTokenSession
+              ? `token-kiosk-${terminalMode}`
+              : `tablet-kiosk-${terminalMode}`
           : terminalMode === "pin"
             ? "shared-pin-terminal"
             : terminalMode === "qr"
               ? "qr-scanner-terminal"
               : "mobile-personal",
-      });
+      };
+      if (type === "check_in" && jobId) {
+        payload.jobId = jobId;
+        payload.jobName = jobName || "";
+      }
+      addDocumentNonBlocking(colRef, payload);
 
       const messages: Record<AttendanceType, string> = {
         check_in: "Příchod zaznamenán",
@@ -509,6 +618,18 @@ export function AttendanceTerminal({
         variant: "destructive",
         title: "Akci se nepodařilo provést.",
       });
+    }
+  };
+
+  const initiateCheckIn = () => {
+    const ids =
+      terminalMode === "personal"
+        ? parseAssignedTerminalJobIds(employeeDocSelf)
+        : parseAssignedTerminalJobIds(activeEmployee);
+    if (ids.length > 0) {
+      setJobPickOpen(true);
+    } else {
+      handleAction("check_in", null, null);
     }
   };
 
@@ -650,7 +771,7 @@ export function AttendanceTerminal({
           >
             <LogOut className="w-5 h-5" /> Odhlásit se
           </Button>
-          {!standalone && (
+          {!standalone && !employeeTokenEntry && (
             <Button
               variant="link"
               onClick={() => router.push("/portal/dashboard")}
@@ -699,7 +820,7 @@ export function AttendanceTerminal({
             <p className="text-sm font-medium">Načítání profilu…</p>
           </div>
         </div>
-        {!standalone && (
+        {!standalone && !employeeTokenEntry && (
           <Button
             variant="link"
             onClick={() => router.push("/portal/dashboard")}
@@ -782,7 +903,7 @@ export function AttendanceTerminal({
           >
             <LogOut className="w-4 h-4" /> Odhlásit se
           </Button>
-          {!standalone && (
+          {!standalone && !employeeTokenEntry && (
             <Button
               variant="link"
               onClick={() => router.push("/portal/dashboard")}
@@ -819,6 +940,7 @@ export function AttendanceTerminal({
           </div>
         </div>
         <div className="flex flex-col items-stretch sm:items-end gap-2">
+          {!employeeTokenEntry && (
           <div className="flex gap-1 p-1 rounded-lg border border-border bg-muted/30">
             {!kioskTokenSession && (
               <Button
@@ -856,6 +978,7 @@ export function AttendanceTerminal({
               QR
             </Button>
           </div>
+          )}
           {terminalMode === "personal" && (
             <Button
               variant="ghost"
@@ -1056,7 +1179,7 @@ export function AttendanceTerminal({
               disabled={
                 lastAction === "check_in" || lastAction === "break_end"
               }
-              onClick={() => handleAction("check_in")}
+              onClick={() => initiateCheckIn()}
               className={`${standalone ? "min-h-[5.5rem] text-2xl" : "h-20 text-xl"} font-bold rounded-2xl shadow-lg bg-emerald-600 hover:bg-emerald-700 transition-all gap-4`}
             >
               <Play className="w-6 h-6 fill-white" /> Přihlásit příchod
@@ -1135,7 +1258,43 @@ export function AttendanceTerminal({
         </>
       )}
 
-      {terminalMode === "personal" && !standalone && (
+      <Dialog open={jobPickOpen} onOpenChange={setJobPickOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto border border-border bg-background text-foreground sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="text-xl text-foreground">
+              Zakázka pro příchod
+            </DialogTitle>
+            <DialogDescription className="text-base text-muted-foreground">
+              Vyberte zakázku přiřazenou pro docházkový terminál.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            {terminalJobsLoading ? (
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+              </div>
+            ) : (
+              terminalJobOptions.map((j) => (
+                <Button
+                  key={j.id}
+                  type="button"
+                  variant="outline"
+                  className="min-h-[4.5rem] flex-col justify-center gap-1 border-border py-4 text-lg text-foreground hover:bg-muted/50"
+                  onClick={() => {
+                    handleAction("check_in", j.id, j.name);
+                    setJobPickOpen(false);
+                  }}
+                >
+                  <span className="font-semibold">{j.name}</span>
+                  <span className="text-xs font-normal opacity-70">{j.id}</span>
+                </Button>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {terminalMode === "personal" && !standalone && !employeeTokenEntry && (
         <Button
           variant="link"
           onClick={() => router.push("/portal/dashboard")}

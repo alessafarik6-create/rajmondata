@@ -68,11 +68,36 @@ service cloud.firestore {
       return hasUser() && ownEmployeeId() != null && !isPrivileged();
     }
 
-    function jobAssignedToEmployee(companyId, jobId) {
+    /** Zakázka pro výkaz práce — assignedWorklogJobIds nebo legacy assignedJobIds. */
+    function jobAssignedForWorklog(companyId, jobId) {
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      return exists(empRef) && (
+        ('assignedWorklogJobIds' in get(empRef).data && jobId in get(empRef).data.assignedWorklogJobIds) ||
+        ('assignedJobIds' in get(empRef).data && jobId in get(empRef).data.assignedJobIds)
+      );
+    }
+
+    /** Zakázka pro docházkový terminál (vlastní zaměstnanec). */
+    function jobAssignedForTerminal(companyId, jobId) {
       let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
       return exists(empRef) &&
-        'assignedJobIds' in get(empRef).data &&
-        jobId in get(empRef).data.assignedJobIds;
+        'assignedTerminalJobIds' in get(empRef).data &&
+        jobId in get(empRef).data.assignedTerminalJobIds;
+    }
+
+    function jobAssignedForTerminalToEmployee(companyId, empId, jobId) {
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(empId);
+      return exists(empRef) &&
+        'assignedTerminalJobIds' in get(empRef).data &&
+        jobId in get(empRef).data.assignedTerminalJobIds;
+    }
+
+    /** Pokud je u docházky vyplněno jobId, musí být přiřazeno pro terminál danému zaměstnanci. */
+    function attendanceJobValid(companyId) {
+      return !('jobId' in request.resource.data) ||
+        request.resource.data.jobId == null ||
+        (request.resource.data.jobId is string && request.resource.data.jobId.size() > 0 &&
+          jobAssignedForTerminalToEmployee(companyId, request.resource.data.employeeId, request.resource.data.jobId));
     }
 
     function workBlockOwnPending() {
@@ -88,7 +113,7 @@ service cloud.firestore {
         request.resource.data.companyId == resource.data.companyId &&
         request.resource.data.reviewStatus == resource.data.reviewStatus &&
         request.resource.data.jobId is string &&
-        jobAssignedToEmployee(companyId, request.resource.data.jobId) &&
+        jobAssignedForWorklog(companyId, request.resource.data.jobId) &&
         request.resource.data.adminNote == resource.data.adminNote &&
         request.resource.data.adjustmentReason == resource.data.adjustmentReason &&
         (!('reviewedBy' in resource.data) ||
@@ -154,7 +179,7 @@ service cloud.firestore {
 
       match /jobs/{jobId} {
         allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || (canLogOwnWorkTime() && jobAssignedToEmployee(companyId, jobId)));
+          (isPrivileged() || (canLogOwnWorkTime() && (jobAssignedForWorklog(companyId, jobId) || jobAssignedForTerminal(companyId, jobId))));
         allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
@@ -177,7 +202,8 @@ service cloud.firestore {
 
       match /attendance/{documentId} {
         allow read: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
-        allow create, update, delete: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
+        allow create: if (terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId))) && attendanceJobValid(companyId);
+        allow update, delete: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
       }
 
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
