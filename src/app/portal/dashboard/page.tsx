@@ -27,7 +27,14 @@ import {
   useCollection,
   useCompany,
 } from "@/firebase";
-import { doc, collection, query, orderBy, limit } from "firebase/firestore";
+import {
+  doc,
+  collection,
+  query,
+  orderBy,
+  limit,
+  where,
+} from "firebase/firestore";
 import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
@@ -35,6 +42,7 @@ type ProfileData = {
   displayName?: string;
   companyId?: string;
   role?: string;
+  employeeId?: string;
 };
 
 type JobData = {
@@ -91,12 +99,39 @@ export default function CompanyDashboard() {
 
   const attendanceQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
-    return query(
-      collection(firestore, "companies", companyId, "attendance"),
-      orderBy("timestamp", "desc"),
-      limit(100)
-    );
-  }, [firestore, companyId]);
+    const base = collection(firestore, "companies", companyId, "attendance");
+    if (isManagement || isAccountant) {
+      return query(base, orderBy("timestamp", "desc"), limit(100));
+    }
+    if (isEmployee && user) {
+      const empId = typedProfile?.employeeId;
+      const ids = [...new Set([empId, user.uid].filter(Boolean))] as string[];
+      if (ids.length === 0) return null;
+      if (ids.length === 1) {
+        return query(
+          base,
+          where("employeeId", "==", ids[0]),
+          orderBy("timestamp", "desc"),
+          limit(100)
+        );
+      }
+      return query(
+        base,
+        where("employeeId", "in", ids),
+        orderBy("timestamp", "desc"),
+        limit(100)
+      );
+    }
+    return null;
+  }, [
+    firestore,
+    companyId,
+    isManagement,
+    isAccountant,
+    isEmployee,
+    user,
+    typedProfile?.employeeId,
+  ]);
 
   const { data: employees } = useCollection(employeesQuery);
   const {

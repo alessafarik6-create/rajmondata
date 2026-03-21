@@ -1,0 +1,7 @@
+{
+  "projects": {
+    "firebase deploy --only firestore:rules": "studio-5230144579-281f1"
+  },
+  "targets": {},
+  "etags": {}
+}

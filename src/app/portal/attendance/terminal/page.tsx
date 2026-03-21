@@ -108,15 +108,28 @@ export default function MobileTerminalPage() {
     error: profileError,
   } = useDoc(userRef);
   const companyId = profile?.companyId;
+  /** Stejný model jako /portal/employee/attendance — employeeId v DB může být auth UID nebo employees/{id}. */
+  const profileEmployeeId = profile?.employeeId as string | undefined;
 
   const personalAttendanceQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !user || terminalMode !== "personal")
       return null;
     try {
       const today = new Date().toISOString().split("T")[0];
+      const ids = [...new Set([profileEmployeeId, user.uid].filter(Boolean))] as string[];
+      if (ids.length === 0) return null;
+      const base = collection(firestore, "companies", companyId, "attendance");
+      if (ids.length === 1) {
+        return query(
+          base,
+          where("employeeId", "==", ids[0]),
+          where("date", "==", today),
+          orderBy("timestamp", "desc")
+        );
+      }
       return query(
-        collection(firestore, "companies", companyId, "attendance"),
-        where("employeeId", "==", user.uid),
+        base,
+        where("employeeId", "in", ids),
         where("date", "==", today),
         orderBy("timestamp", "desc")
       );
@@ -124,7 +137,7 @@ export default function MobileTerminalPage() {
       console.error("[AttendanceTerminal] personalAttendanceQuery build failed:", e);
       return null;
     }
-  }, [firestore, companyId, user, terminalMode]);
+  }, [firestore, companyId, user, terminalMode, profileEmployeeId]);
 
   const {
     data: todayAttendanceRaw,

@@ -45,6 +45,7 @@ import {
   query,
   orderBy,
   limit,
+  where,
 } from "firebase/firestore";
 import { addDocumentNonBlocking } from "@/firebase/non-blocking-updates";
 import { useToast } from "@/hooks/use-toast";
@@ -86,15 +87,38 @@ export default function AttendancePage() {
   const { companyName } = useCompany();
   const orgLabel = companyName || companyId || "vaší organizace";
 
-  const attendanceQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
+  const role = (profile as { role?: string } | null)?.role ?? "employee";
+  const profileEmployeeId = (profile as { employeeId?: string } | null)?.employeeId;
+  const isAttendancePrivileged =
+    role === "owner" ||
+    role === "admin" ||
+    role === "manager" ||
+    role === "accountant";
 
+  const attendanceQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !user) return null;
+
+    const base = collection(firestore, "companies", companyId, "attendance");
+    if (isAttendancePrivileged) {
+      return query(base, orderBy("timestamp", "desc"), limit(100));
+    }
+    const ids = [...new Set([profileEmployeeId, user.uid].filter(Boolean))] as string[];
+    if (ids.length === 0) return null;
+    if (ids.length === 1) {
+      return query(
+        base,
+        where("employeeId", "==", ids[0]),
+        orderBy("timestamp", "desc"),
+        limit(100)
+      );
+    }
     return query(
-      collection(firestore, "companies", companyId, "attendance"),
+      base,
+      where("employeeId", "in", ids),
       orderBy("timestamp", "desc"),
       limit(100)
     );
-  }, [firestore, companyId]);
+  }, [firestore, companyId, user, isAttendancePrivileged, profileEmployeeId]);
 
   const {
     data: historyData = [],
