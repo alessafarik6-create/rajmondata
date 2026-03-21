@@ -76,3 +76,14 @@ export function blockOverlapsExisting(
   }
   return false;
 }
+
+/** Max. délka pole `description` na dokumentu work_time_blocks (shodně s validací ve formuláři). */
+export const WORKLOG_DESCRIPTION_MAX_LENGTH = 2000;
+
+export function normalizeWorklogDescription(raw: string): string {
+  return raw.replace(/\r\n/g, "\n").trim();
+}
+
+export function isWorklogDescriptionTooLong(text: string): boolean {
+  return normalizeWorklogDescription(text).length > WORKLOG_DESCRIPTION_MAX_LENGTH;
+}

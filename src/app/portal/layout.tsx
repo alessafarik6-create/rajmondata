@@ -250,7 +250,7 @@ export default function PortalLayout({
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
-      <aside className="hidden lg:block shrink-0">
+      <aside className="hidden print:hidden lg:block shrink-0">
         <SidebarComponent />
       </aside>
 
@@ -287,7 +287,7 @@ export default function PortalLayout({
         data-portal-content
       >
         <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 overflow-auto">
+        <main className="flex-1 p-4 print:p-2 sm:p-6 lg:p-8 overflow-auto">
           {children}
         </main>
       </div>

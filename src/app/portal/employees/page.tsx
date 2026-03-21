@@ -68,6 +68,14 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
+import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
+
+function releaseModalLocksAfterDismiss() {
+  releaseDocumentModalLocks();
+  if (typeof window !== "undefined") {
+    window.requestAnimationFrame(() => releaseDocumentModalLocks());
+  }
+}
 
 export default function EmployeesPage() {
   const { user } = useUser();
@@ -198,6 +206,8 @@ export default function EmployeesPage() {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
       setSavingAssignedJobs(false);
+      /* Radix Dialog + RemoveScroll někdy neodstraní pointer-events/overflow z body po řízeném zavření. */
+      releaseModalLocksAfterDismiss();
     }
   };
 
@@ -863,7 +873,10 @@ export default function EmployeesPage() {
       <Dialog
         open={!!assignJobsEmployee}
         onOpenChange={(open) => {
-          if (!open) setAssignJobsEmployee(null);
+          if (!open) {
+            setAssignJobsEmployee(null);
+            releaseModalLocksAfterDismiss();
+          }
         }}
       >
         <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
@@ -912,7 +925,10 @@ export default function EmployeesPage() {
               type="button"
               variant="outline"
               className="border-gray-200 bg-white text-black"
-              onClick={() => setAssignJobsEmployee(null)}
+              onClick={() => {
+                setAssignJobsEmployee(null);
+                releaseModalLocksAfterDismiss();
+              }}
               disabled={savingAssignedJobs}
             >
               Zrušit

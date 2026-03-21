@@ -3,7 +3,7 @@
 /**
  * Výkaz práce — jediná kanonická route: /portal/employee/worklogs
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { usePathname } from "next/navigation";
 import { format } from "date-fns";
 import { cs as csFns } from "date-fns/locale";
@@ -60,11 +60,32 @@ import {
   parseHmStrict,
   isWorklogDateLocked,
   blockOverlapsExisting,
+  WORKLOG_DESCRIPTION_MAX_LENGTH,
+  normalizeWorklogDescription,
+  isWorklogDescriptionTooLong,
 } from "@/lib/work-time-block";
+import {
+  getLoggedHours,
+  getReviewLabel,
+  sumPayableHoursForBlocks,
+} from "@/lib/employee-money";
+import {
+  buildWorklogPdfFileName,
+  downloadWorklogPdfFromElement,
+} from "@/lib/worklog-report-pdf";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Loader2, Plus, Trash2, Merge, AlertCircle, Lock, Pencil } from "lucide-react";
+import {
+  Loader2,
+  Plus,
+  Trash2,
+  Merge,
+  AlertCircle,
+  Lock,
+  Pencil,
+  Printer,
+  FileDown,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { getReviewLabel } from "@/lib/employee-money";
 import { cn } from "@/lib/utils";
 import { buttonVariants } from "@/components/ui/button";
 import {
@@ -328,6 +349,61 @@ export default function EmployeeWorklogsPage() {
     return en || user?.email || "";
   }, [employeeDoc, user?.email]);
 
+  const worklogReportRef = useRef<HTMLDivElement>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
+
+  const reportPeriodLabel = useMemo(() => {
+    if (blocks.length === 0) return "Žádné záznamy v přehledu";
+    const dates = blocks.map((b) => String(b.date ?? "")).filter(Boolean);
+    const sorted = [...dates].sort();
+    const min = sorted[0];
+    const max = sorted[sorted.length - 1];
+    return min === max ? `Datum: ${min}` : `Období: ${min} – ${max}`;
+  }, [blocks]);
+
+  const totalLoggedHoursSum = useMemo(() => {
+    const s = blocks.reduce((acc, b) => acc + getLoggedHours(b), 0);
+    return Math.round(s * 100) / 100;
+  }, [blocks]);
+
+  const totalPayableHoursSum = useMemo(
+    () => Math.round(sumPayableHoursForBlocks(blocks) * 100) / 100,
+    [blocks]
+  );
+
+  const handlePrintWorklog = () => {
+    window.print();
+  };
+
+  const handleWorklogPdf = async () => {
+    const el = worklogReportRef.current;
+    if (!el) {
+      toast({
+        variant: "destructive",
+        title: "Nelze exportovat",
+        description: "Chybí oblast přehledu.",
+      });
+      return;
+    }
+    setPdfExporting(true);
+    try {
+      const prefix = `${companyName ?? "firma"}_${employeeDisplayName || "vykaz"}`;
+      await downloadWorklogPdfFromElement(
+        el,
+        buildWorklogPdfFileName(prefix)
+      );
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Export PDF se nezdařil",
+        description: "Zkuste to znovu nebo použijte tisk do PDF v prohlížeči.",
+      });
+    } finally {
+      setPdfExporting(false);
+    }
+  };
+
   const datesWithData = useMemo(() => {
     const s = new Set<string>();
     for (const b of blocks) {
@@ -403,11 +479,19 @@ export default function EmployeeWorklogsPage() {
       });
       return;
     }
-    if (!newDesc.trim()) {
+    if (!normalizeWorklogDescription(newDesc)) {
       toast({
         variant: "destructive",
         title: "Chybí popis",
         description: "Vyplňte stručný popis práce, aby byl záznam platný.",
+      });
+      return;
+    }
+    if (isWorklogDescriptionTooLong(newDesc)) {
+      toast({
+        variant: "destructive",
+        title: "Popis je příliš dlouhý",
+        description: `Maximálně ${WORKLOG_DESCRIPTION_MAX_LENGTH} znaků.`,
       });
       return;
     }
@@ -455,7 +539,7 @@ export default function EmployeeWorklogsPage() {
           originalHours: h,
           approvedHours: h,
           reviewStatus: "pending",
-          description: newDesc.trim(),
+          description: normalizeWorklogDescription(newDesc),
           jobId: newJobId,
           jobName,
           createdAt: serverTimestamp(),
@@ -590,6 +674,15 @@ export default function EmployeeWorklogsPage() {
       .filter(Boolean)
       .join(" · ");
 
+    if (description.length > WORKLOG_DESCRIPTION_MAX_LENGTH) {
+      toast({
+        variant: "destructive",
+        title: "Sloučený popis je příliš dlouhý",
+        description: `Po sloučení zkraťte texty bloků (max. ${WORKLOG_DESCRIPTION_MAX_LENGTH} znaků).`,
+      });
+      return;
+    }
+
     if (!user || !companyId || !employeeId) return;
     setSaving(true);
     try {
@@ -660,6 +753,22 @@ export default function EmployeeWorklogsPage() {
       return;
     }
     if (!canEmployeeEditBlock(editBlock)) return;
+    if (!normalizeWorklogDescription(editDesc)) {
+      toast({
+        variant: "destructive",
+        title: "Chybí popis",
+        description: "Vyplňte stručný popis práce.",
+      });
+      return;
+    }
+    if (isWorklogDescriptionTooLong(editDesc)) {
+      toast({
+        variant: "destructive",
+        title: "Popis je příliš dlouhý",
+        description: `Maximálně ${WORKLOG_DESCRIPTION_MAX_LENGTH} znaků.`,
+      });
+      return;
+    }
     if (!editJobId.trim() || !isJobIdAssigned(assignedJobIds, editJobId)) {
       toast({
         variant: "destructive",
@@ -715,7 +824,7 @@ export default function EmployeeWorklogsPage() {
           hours: h,
           originalHours: h,
           approvedHours: h,
-          description: editDesc.trim(),
+          description: normalizeWorklogDescription(editDesc),
           jobId: editJobId,
           jobName,
           updatedAt: serverTimestamp(),
@@ -803,7 +912,7 @@ export default function EmployeeWorklogsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-1 pb-8 sm:px-0">
-      <div>
+      <div className="print:hidden">
         <h1 className="portal-page-title text-2xl text-black sm:text-3xl">
           Výkaz práce
         </h1>
@@ -835,7 +944,7 @@ export default function EmployeeWorklogsPage() {
         </Alert>
       ) : null}
 
-      <Card className="border-slate-200 bg-white shadow-sm">
+      <Card className="border-slate-200 bg-white shadow-sm print:hidden">
         <CardHeader className="pb-2">
           <CardTitle className="text-xl text-black">Vyberte den</CardTitle>
         </CardHeader>
@@ -902,6 +1011,110 @@ export default function EmployeeWorklogsPage() {
           </div>
         </CardContent>
       </Card>
+
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+          <Button
+            type="button"
+            variant="outline"
+            className="border-slate-300 text-black"
+            disabled={blocksLoading || blocks.length === 0}
+            onClick={handlePrintWorklog}
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            Tisk
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="border-slate-300 text-black"
+            disabled={blocksLoading || blocks.length === 0 || pdfExporting}
+            onClick={() => void handleWorklogPdf()}
+          >
+            {pdfExporting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <FileDown className="mr-2 h-4 w-4" />
+            )}
+            Export PDF
+          </Button>
+        </div>
+        <div ref={worklogReportRef} className="space-y-4">
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-black print:border-0 print:bg-white print:p-0">
+            <h2 className="text-xl font-bold tracking-tight text-black">
+              Pracovní výkaz
+            </h2>
+            {companyName && companyName !== "Organization" ? (
+              <p className="mt-1 text-sm text-slate-700">{companyName}</p>
+            ) : null}
+            <p className="mt-1 text-sm font-medium text-black">
+              {employeeDisplayName || "—"}
+            </p>
+            <p className="mt-1 text-xs text-slate-600">{reportPeriodLabel}</p>
+            <p className="mt-3 text-sm text-black">
+              Součty: výkaz {totalLoggedHoursSum} h · schválený čas (započitatelné){" "}
+              {totalPayableHoursSum} h
+            </p>
+          </div>
+          <Card className="border-slate-200 bg-white shadow-sm print:border-0 print:shadow-none">
+            <CardHeader className="print:hidden">
+              <CardTitle className="text-xl text-black">
+                Přehled zapsaných bloků
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {blocksLoading ? (
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              ) : blocks.length === 0 ? (
+                <p className="text-sm text-slate-800">Zatím nemáte žádné záznamy.</p>
+              ) : (
+                <div className="overflow-x-auto rounded-md border border-slate-200 print:border-slate-300">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-black">Datum</TableHead>
+                        <TableHead className="text-black">Čas</TableHead>
+                        <TableHead className="text-black">Zakázka</TableHead>
+                        <TableHead className="min-w-[200px] max-w-[320px] text-black">
+                          Popis práce
+                        </TableHead>
+                        <TableHead className="text-black">Hodiny</TableHead>
+                        <TableHead className="text-black">Stav</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {blocks.map((b) => (
+                        <TableRow key={b.id}>
+                          <TableCell className="font-medium text-black">
+                            {b.date}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-black">
+                            {b.startTime}–{b.endTime}
+                          </TableCell>
+                          <TableCell className="max-w-[160px] align-top text-sm text-black">
+                            <span className="break-words">
+                              {b.jobName?.trim() || b.jobId || "—"}
+                            </span>
+                          </TableCell>
+                          <TableCell className="max-w-[320px] align-top text-sm text-black">
+                            <span className="whitespace-pre-wrap break-words">
+                              {String(b.description ?? "").trim() || "—"}
+                            </span>
+                          </TableCell>
+                          <TableCell className="text-black">{b.hours ?? "—"}</TableCell>
+                          <TableCell className="text-black">
+                            {getReviewLabel(b.reviewStatus)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent
@@ -1271,6 +1484,7 @@ export default function EmployeeWorklogsPage() {
                       value={newDesc}
                       onChange={(e) => setNewDesc(e.target.value)}
                       rows={3}
+                      maxLength={WORKLOG_DESCRIPTION_MAX_LENGTH}
                       disabled={dayLocked || saving}
                       placeholder="Stručně popište práci v daném čase…"
                       className={cn(
@@ -1278,6 +1492,11 @@ export default function EmployeeWorklogsPage() {
                         "min-h-[96px] resize-y py-3"
                       )}
                     />
+                    <p className="text-xs text-slate-500">
+                      Max. {WORKLOG_DESCRIPTION_MAX_LENGTH} znaků (
+                      {normalizeWorklogDescription(newDesc).length}/
+                      {WORKLOG_DESCRIPTION_MAX_LENGTH}).
+                    </p>
                   </div>
                 </div>
               </div>
@@ -1380,12 +1599,18 @@ export default function EmployeeWorklogsPage() {
                 value={editDesc}
                 onChange={(e) => setEditDesc(e.target.value)}
                 rows={3}
+                maxLength={WORKLOG_DESCRIPTION_MAX_LENGTH}
                 disabled={dayLocked || editSaving}
                 className={cn(
                   inputBaseClass,
                   "min-h-[96px] resize-y py-3"
                 )}
               />
+              <p className="text-xs text-slate-500">
+                Max. {WORKLOG_DESCRIPTION_MAX_LENGTH} znaků (
+                {normalizeWorklogDescription(editDesc).length}/
+                {WORKLOG_DESCRIPTION_MAX_LENGTH}).
+              </p>
             </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">

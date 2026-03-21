@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, Suspense } from "react";
+import React, { useEffect, useMemo, useState, Suspense, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   useUser,
@@ -8,6 +8,7 @@ import {
   useDoc,
   useCollection,
   useMemoFirebase,
+  useCompany,
 } from "@/firebase";
 import {
   doc,
@@ -26,7 +27,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -47,12 +47,18 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   formatKc,
+  getLoggedHours,
   getReviewLabel,
   sumMoneyForBlocks,
   sumPaidAdvances,
+  sumPayableHoursForBlocks,
   type AdvanceDoc,
   type WorkTimeBlockMoney,
 } from "@/lib/employee-money";
+import {
+  buildWorklogPdfFileName,
+  downloadWorklogPdfFromElement,
+} from "@/lib/worklog-report-pdf";
 import {
   Loader2,
   AlertCircle,
@@ -61,6 +67,8 @@ import {
   Trash2,
   XCircle,
   Banknote,
+  Printer,
+  FileDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -72,6 +80,9 @@ function PayrollAdminPageInner() {
   const employeeFromUrl = searchParams.get("employee");
   const firestore = useFirestore();
   const { toast } = useToast();
+  const { companyName } = useCompany();
+  const worklogReportRef = useRef<HTMLDivElement>(null);
+  const [pdfExporting, setPdfExporting] = useState(false);
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -210,6 +221,68 @@ function PayrollAdminPageInner() {
       String(b.date || "").localeCompare(String(a.date || ""))
     );
   }, [advances]);
+
+  const reportEmployeeTitle =
+    selectedEmployeeId === "all"
+      ? "Všichni zaměstnanci"
+      : employeeLabelById[selectedEmployeeId] || selectedEmployeeId || "—";
+
+  const reportPeriodLabel = useMemo(() => {
+    if (sortedBlocks.length === 0) return "Žádné záznamy v přehledu";
+    const dates = sortedBlocks
+      .map((b) => String(b.date ?? ""))
+      .filter(Boolean);
+    const sorted = [...dates].sort();
+    const min = sorted[0];
+    const max = sorted[sorted.length - 1];
+    return min === max ? `Datum: ${min}` : `Období: ${min} – ${max}`;
+  }, [sortedBlocks]);
+
+  const totalLoggedHoursSum = useMemo(() => {
+    const s = sortedBlocks.reduce((acc, b) => acc + getLoggedHours(b), 0);
+    return Math.round(s * 100) / 100;
+  }, [sortedBlocks]);
+
+  const totalPayableHoursSum = useMemo(
+    () => Math.round(sumPayableHoursForBlocks(sortedBlocks) * 100) / 100,
+    [sortedBlocks]
+  );
+
+  const handlePrintWorklog = () => {
+    window.print();
+  };
+
+  const handleWorklogPdf = async () => {
+    const el = worklogReportRef.current;
+    if (!el) {
+      toast({
+        variant: "destructive",
+        title: "Nelze exportovat",
+        description: "Chybí oblast přehledu.",
+      });
+      return;
+    }
+    setPdfExporting(true);
+    try {
+      const prefix =
+        selectedEmployeeId === "all"
+          ? `${companyName ?? "firma"}_vsichni`
+          : `${reportEmployeeTitle}`;
+      await downloadWorklogPdfFromElement(
+        el,
+        buildWorklogPdfFileName(prefix)
+      );
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Export PDF se nezdařil",
+        description: "Zkuste to znovu nebo použijte tisk do PDF v prohlížeči.",
+      });
+    } finally {
+      setPdfExporting(false);
+    }
+  };
 
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewBlock, setReviewBlock] = useState<WorkTimeBlockMoney | null>(
@@ -475,8 +548,8 @@ function PayrollAdminPageInner() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-2 pb-12 sm:px-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <div className="mx-auto max-w-6xl space-y-6 px-2 pb-12 print:max-w-none sm:px-4">
+      <div className="flex flex-col gap-3 print:hidden sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <Banknote className="mt-1 h-8 w-8 shrink-0 text-primary" />
           <div>
@@ -490,7 +563,7 @@ function PayrollAdminPageInner() {
         </div>
       </div>
 
-      <Card className="border-slate-200 bg-white">
+      <Card className="border-slate-200 bg-white print:hidden">
         <CardHeader className="pb-2">
           <CardTitle className="text-lg text-black">Zaměstnanec</CardTitle>
         </CardHeader>
@@ -556,7 +629,7 @@ function PayrollAdminPageInner() {
         <p className="text-black">Vyberte zaměstnance.</p>
       ) : selectedEmployeeId === "all" ? (
         <Tabs defaultValue="worklogs" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-slate-100 p-1 sm:max-w-md">
+          <TabsList className="grid h-auto w-full grid-cols-1 gap-1 bg-slate-100 p-1 print:hidden sm:max-w-md">
             <TabsTrigger
               value="worklogs"
               className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
@@ -565,198 +638,102 @@ function PayrollAdminPageInner() {
             </TabsTrigger>
           </TabsList>
           <TabsContent value="worklogs" className="mt-4 space-y-4">
-            <Card className="border-slate-200 bg-white">
-              <CardHeader>
-                <CardTitle className="text-lg text-black">
-                  Výkaz práce — přehled firmy
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {blocksLoading ? (
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                ) : sortedBlocks.length === 0 ? (
-                  <p className="text-black">Žádné bloky.</p>
+            <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-slate-300 text-black"
+                disabled={blocksLoading || sortedBlocks.length === 0}
+                onClick={handlePrintWorklog}
+              >
+                <Printer className="mr-2 h-4 w-4" />
+                Tisk
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="border-slate-300 text-black"
+                disabled={
+                  blocksLoading || sortedBlocks.length === 0 || pdfExporting
+                }
+                onClick={() => void handleWorklogPdf()}
+              >
+                {pdfExporting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
-                  <div className="overflow-x-auto rounded-md border border-slate-200">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="text-black">Zaměstnanec</TableHead>
-                          <TableHead className="text-black">Datum</TableHead>
-                          <TableHead className="text-black">Čas</TableHead>
-                          <TableHead className="text-black">Zakázka</TableHead>
-                          <TableHead className="text-black">Výkaz h</TableHead>
-                          <TableHead className="text-black">Schv. h</TableHead>
-                          <TableHead className="text-black">Stav</TableHead>
-                          <TableHead className="text-black">Akce</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sortedBlocks.map((b) => (
-                          <TableRow key={b.id}>
-                            <TableCell className="text-black">
-                              {b.employeeName?.trim() ||
-                                employeeLabelById[String(b.employeeId ?? "")] ||
-                                b.employeeId ||
-                                "—"}
-                            </TableCell>
-                            <TableCell className="font-medium text-black">
-                              {b.date}
-                            </TableCell>
-                            <TableCell className="text-black">
-                              {b.startTime}–{b.endTime}
-                            </TableCell>
-                            <TableCell className="max-w-[180px] truncate text-black">
-                              {b.jobName?.trim() || b.jobId || "—"}
-                            </TableCell>
-                            <TableCell className="text-black">
-                              {b.hours ?? "—"}
-                            </TableCell>
-                            <TableCell className="text-black">
-                              {b.reviewStatus === "pending"
-                                ? "—"
-                                : (b.approvedHours ?? b.hours ?? "—")}
-                            </TableCell>
-                            <TableCell className="text-black">
-                              {getReviewLabel(b.reviewStatus)}
-                            </TableCell>
-                            <TableCell>
-                              <div className="flex flex-wrap gap-2">
-                                {b.reviewStatus === "pending" && (
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="default"
-                                    onClick={() => quickApprove(b)}
-                                  >
-                                    <Check className="mr-1 h-4 w-4" />
-                                    Schválit
-                                  </Button>
-                                )}
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  className="border-slate-300 text-black"
-                                  onClick={() => openReview(b)}
-                                >
-                                  <Pencil className="mr-1 h-4 w-4" />
-                                  Úprava
-                                </Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </div>
+                  <FileDown className="mr-2 h-4 w-4" />
                 )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
-      ) : (
-        <Tabs defaultValue="worklogs" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-slate-100 p-1 sm:max-w-md">
-            <TabsTrigger
-              value="worklogs"
-              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
-            >
-              Výkazy
-            </TabsTrigger>
-            <TabsTrigger
-              value="advances"
-              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
-            >
-              Zálohy
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="worklogs" className="mt-4 space-y-4">
-            <Card className="border-slate-200 bg-white">
-              <CardHeader>
-                <CardTitle className="text-lg text-black">
-                  Výkaz práce — kontrola
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                {blocksLoading ? (
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                ) : sortedBlocks.length === 0 ? (
-                  <p className="text-black">Žádné bloky.</p>
-                ) : (
-                  <>
-                    <ul className="flex flex-col gap-3 lg:hidden">
-                      {sortedBlocks.map((b) => (
-                        <li
-                          key={b.id}
-                          className="rounded-lg border border-slate-300 p-4"
-                        >
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <span className="font-bold text-black">
-                              {b.date}
-                            </span>
-                            <Badge>{getReviewLabel(b.reviewStatus)}</Badge>
-                          </div>
-                          <p className="mt-2 text-sm text-black">
-                            {b.startTime}–{b.endTime} · výkaz {b.hours} h
-                          </p>
-                          <p className="mt-1 text-sm text-slate-800">
-                            Zakázka:{" "}
-                            <span className="font-medium text-black">
-                              {b.jobName?.trim() || b.jobId || "—"}
-                            </span>
-                          </p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {b.reviewStatus === "pending" && (
-                              <Button
-                                type="button"
-                                size="lg"
-                                className="min-h-[48px] flex-1"
-                                onClick={() => quickApprove(b)}
-                              >
-                                <Check className="mr-2 h-5 w-5" />
-                                Schválit
-                              </Button>
-                            )}
-                            <Button
-                              type="button"
-                              size="lg"
-                              variant="outline"
-                              className="min-h-[48px] flex-1 border-slate-300 text-black"
-                              onClick={() => openReview(b)}
-                            >
-                              <Pencil className="mr-2 h-5 w-5" />
-                              Upravit
-                            </Button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                    <div className="hidden overflow-x-auto rounded-md border border-slate-200 lg:block">
+                Export PDF
+              </Button>
+            </div>
+            <div ref={worklogReportRef} className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-black print:border-0 print:bg-white print:p-0">
+                <h2 className="text-xl font-bold tracking-tight">
+                  Pracovní výkaz
+                </h2>
+                {companyName ? (
+                  <p className="mt-1 text-sm text-slate-700">{companyName}</p>
+                ) : null}
+                <p className="mt-1 text-sm font-medium">{reportEmployeeTitle}</p>
+                <p className="mt-1 text-xs text-slate-600">{reportPeriodLabel}</p>
+                <p className="mt-3 text-sm">
+                  Součty: výkaz {totalLoggedHoursSum} h · schválený čas (započitatelné){" "}
+                  {totalPayableHoursSum} h
+                </p>
+              </div>
+              <Card className="border-slate-200 bg-white print:border-0 print:shadow-none">
+                <CardHeader className="print:hidden">
+                  <CardTitle className="text-lg text-black">
+                    Výkaz práce — přehled firmy
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {blocksLoading ? (
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  ) : sortedBlocks.length === 0 ? (
+                    <p className="text-black">Žádné bloky.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-md border border-slate-200 print:border-slate-300">
                       <Table>
                         <TableHeader>
                           <TableRow>
+                            <TableHead className="text-black">Zaměstnanec</TableHead>
                             <TableHead className="text-black">Datum</TableHead>
                             <TableHead className="text-black">Čas</TableHead>
                             <TableHead className="text-black">Zakázka</TableHead>
+                            <TableHead className="min-w-[200px] max-w-[320px] text-black">
+                              Popis práce
+                            </TableHead>
                             <TableHead className="text-black">Výkaz h</TableHead>
                             <TableHead className="text-black">Schv. h</TableHead>
                             <TableHead className="text-black">Stav</TableHead>
-                            <TableHead className="text-black">Akce</TableHead>
+                            <TableHead className="print:hidden">Akce</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {sortedBlocks.map((b) => (
                             <TableRow key={b.id}>
+                              <TableCell className="text-black">
+                                {b.employeeName?.trim() ||
+                                  employeeLabelById[String(b.employeeId ?? "")] ||
+                                  b.employeeId ||
+                                  "—"}
+                              </TableCell>
                               <TableCell className="font-medium text-black">
                                 {b.date}
                               </TableCell>
-                              <TableCell className="text-black">
+                              <TableCell className="whitespace-nowrap text-black">
                                 {b.startTime}–{b.endTime}
                               </TableCell>
-                              <TableCell className="max-w-[160px] truncate text-black">
-                                {b.jobName?.trim() || b.jobId || "—"}
+                              <TableCell className="max-w-[160px] align-top text-black">
+                                <span className="line-clamp-4 break-words print:line-clamp-none">
+                                  {b.jobName?.trim() || b.jobId || "—"}
+                                </span>
+                              </TableCell>
+                              <TableCell className="max-w-[320px] align-top text-sm text-black">
+                                <span className="whitespace-pre-wrap break-words">
+                                  {String(b.description ?? "").trim() || "—"}
+                                </span>
                               </TableCell>
                               <TableCell className="text-black">
                                 {b.hours ?? "—"}
@@ -769,7 +746,7 @@ function PayrollAdminPageInner() {
                               <TableCell className="text-black">
                                 {getReviewLabel(b.reviewStatus)}
                               </TableCell>
-                              <TableCell>
+                              <TableCell className="print:hidden">
                                 <div className="flex flex-wrap gap-2">
                                   {b.reviewStatus === "pending" && (
                                     <Button
@@ -799,10 +776,165 @@ function PayrollAdminPageInner() {
                         </TableBody>
                       </Table>
                     </div>
-                  </>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <Tabs defaultValue="worklogs" className="w-full">
+          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-slate-100 p-1 print:hidden sm:max-w-md">
+            <TabsTrigger
+              value="worklogs"
+              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
+            >
+              Výkazy
+            </TabsTrigger>
+            <TabsTrigger
+              value="advances"
+              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
+            >
+              Zálohy
+            </TabsTrigger>
+          </TabsList>
+
+          <TabsContent value="worklogs" className="mt-4 space-y-4">
+            <div className="flex flex-wrap items-center justify-end gap-2 print:hidden">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-slate-300 text-black"
+                disabled={blocksLoading || sortedBlocks.length === 0}
+                onClick={handlePrintWorklog}
+              >
+                <Printer className="mr-2 h-4 w-4" />
+                Tisk
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                className="border-slate-300 text-black"
+                disabled={
+                  blocksLoading || sortedBlocks.length === 0 || pdfExporting
+                }
+                onClick={() => void handleWorklogPdf()}
+              >
+                {pdfExporting ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <FileDown className="mr-2 h-4 w-4" />
                 )}
-              </CardContent>
-            </Card>
+                Export PDF
+              </Button>
+            </div>
+            <div ref={worklogReportRef} className="space-y-4">
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-black print:border-0 print:bg-white print:p-0">
+                <h2 className="text-xl font-bold tracking-tight">
+                  Pracovní výkaz
+                </h2>
+                {companyName ? (
+                  <p className="mt-1 text-sm text-slate-700">{companyName}</p>
+                ) : null}
+                <p className="mt-1 text-sm font-medium">{reportEmployeeTitle}</p>
+                <p className="mt-1 text-xs text-slate-600">{reportPeriodLabel}</p>
+                <p className="mt-3 text-sm">
+                  Součty: výkaz {totalLoggedHoursSum} h · schválený čas (započitatelné){" "}
+                  {totalPayableHoursSum} h
+                </p>
+              </div>
+              <Card className="border-slate-200 bg-white print:border-0 print:shadow-none">
+                <CardHeader className="print:hidden">
+                  <CardTitle className="text-lg text-black">
+                    Výkaz práce — kontrola
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {blocksLoading ? (
+                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  ) : sortedBlocks.length === 0 ? (
+                    <p className="text-black">Žádné bloky.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-md border border-slate-200 print:border-slate-300">
+                      <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="text-black">Datum</TableHead>
+                              <TableHead className="text-black">Čas</TableHead>
+                              <TableHead className="text-black">Zakázka</TableHead>
+                              <TableHead className="min-w-[200px] max-w-[320px] text-black">
+                                Popis práce
+                              </TableHead>
+                              <TableHead className="text-black">Výkaz h</TableHead>
+                              <TableHead className="text-black">Schv. h</TableHead>
+                              <TableHead className="text-black">Stav</TableHead>
+                              <TableHead className="print:hidden">Akce</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {sortedBlocks.map((b) => (
+                              <TableRow key={b.id}>
+                                <TableCell className="font-medium text-black">
+                                  {b.date}
+                                </TableCell>
+                                <TableCell className="whitespace-nowrap text-black">
+                                  {b.startTime}–{b.endTime}
+                                </TableCell>
+                                <TableCell className="max-w-[160px] align-top text-black">
+                                  <span className="line-clamp-4 break-words print:line-clamp-none">
+                                    {b.jobName?.trim() || b.jobId || "—"}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="max-w-[320px] align-top text-sm text-black">
+                                  <span className="whitespace-pre-wrap break-words">
+                                    {String(b.description ?? "").trim() || "—"}
+                                  </span>
+                                </TableCell>
+                                <TableCell className="text-black">
+                                  {b.hours ?? "—"}
+                                </TableCell>
+                                <TableCell className="text-black">
+                                  {b.reviewStatus === "pending"
+                                    ? "—"
+                                    : (b.approvedHours ?? b.hours ?? "—")}
+                                </TableCell>
+                                <TableCell className="text-black">
+                                  {getReviewLabel(b.reviewStatus)}
+                                </TableCell>
+                                <TableCell className="print:hidden">
+                                  <div className="flex flex-wrap gap-2">
+                                    {b.reviewStatus === "pending" && (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="default"
+                                        onClick={() => quickApprove(b)}
+                                      >
+                                        <Check className="mr-1 h-4 w-4" />
+                                        Schválit
+                                      </Button>
+                                    )}
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="border-slate-300 text-black"
+                                      onClick={() => openReview(b)}
+                                    >
+                                      <Pencil className="mr-1 h-4 w-4" />
+                                      Úprava
+                                    </Button>
+                                  </div>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
 
           <TabsContent value="advances" className="mt-4 space-y-4">
@@ -1114,8 +1246,27 @@ function PayrollAdminPageInner() {
             <div className="space-y-4 py-2">
               <p className="text-sm text-slate-800">
                 Datum {reviewBlock.date}, výkazované hodiny:{" "}
-                <strong>{reviewBlock.hours}</strong> h
+                <strong>{reviewBlock.hours}</strong> h · {reviewBlock.startTime}–
+                {reviewBlock.endTime}
+                {reviewBlock.jobName || reviewBlock.jobId ? (
+                  <>
+                    {" "}
+                    · zakázka:{" "}
+                    <strong>
+                      {String(reviewBlock.jobName ?? "").trim() ||
+                        reviewBlock.jobId}
+                    </strong>
+                  </>
+                ) : null}
               </p>
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <Label className="text-xs font-semibold uppercase text-slate-600">
+                  Popis práce (z výkazu zaměstnance)
+                </Label>
+                <p className="mt-2 max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-words text-sm text-black">
+                  {String(reviewBlock.description ?? "").trim() || "—"}
+                </p>
+              </div>
               <div className="space-y-2">
                 <Label className="text-black">Schválené hodiny</Label>
                 <Input

@@ -76,7 +76,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   };
 
   return (
-    <header className="h-14 sm:h-16 border-b border-slate-200 bg-white/90 backdrop-blur-sm sticky top-0 z-40 flex items-center justify-between gap-2 px-4 sm:px-6 lg:px-8">
+    <header className="print:hidden h-14 sm:h-16 border-b border-slate-200 bg-white/90 backdrop-blur-sm sticky top-0 z-40 flex items-center justify-between gap-2 px-4 sm:px-6 lg:px-8">
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {onOpenMobileMenu && (
           <Button

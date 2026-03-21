@@ -45,6 +45,12 @@
   }
 }
 
+@media print {
+  @page {
+    margin: 12mm;
+  }
+}
+
 /* Portal content area: light, high-contrast SaaS dashboard */
 [data-portal-content] {
   /* Light theme variables so buttons/inputs get readable contrast */
