@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { sumClosedSegmentAmountsForWorkDay } from "@/lib/work-segment-server";
 
 type Body = {
   companyId?: string;
@@ -11,6 +12,8 @@ type Body = {
   jobName?: string | null;
   hoursFromAttendance?: number | null;
   hoursConfirmed?: number | null;
+  /** `draft` = rozpracováno, `submit` = odeslat ke schválení */
+  mode?: "draft" | "submit";
 };
 
 function reportDocId(employeeId: string, date: string) {
@@ -18,8 +21,7 @@ function reportDocId(employeeId: string, date: string) {
 }
 
 /**
- * Zaměstnanec uloží / upraví denní výkaz práce (čeká na schválení).
- * Pouze neprivilegovaný účet s employeeId.
+ * Zaměstnanec uloží denní výkaz (koncept nebo odeslání ke schválení).
  */
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -51,13 +53,14 @@ export async function POST(request: NextRequest) {
 
   const companyId = String(body.companyId || "").trim();
   const date = String(body.date || "").trim();
-  const description = typeof body.description === "string" ? body.description.trim() : "";
+  const descriptionRaw = typeof body.description === "string" ? body.description.trim() : "";
+  const mode = body.mode === "draft" ? "draft" : "submit";
 
   if (!companyId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: "Chybí platné companyId nebo datum (YYYY-MM-DD)." }, { status: 400 });
   }
-  if (!description) {
-    return NextResponse.json({ error: "Vyplňte popis práce." }, { status: 400 });
+  if (mode === "submit" && !descriptionRaw) {
+    return NextResponse.json({ error: "Pro odeslání ke schválení vyplňte popis práce." }, { status: 400 });
   }
 
   try {
@@ -72,8 +75,7 @@ export async function POST(request: NextRequest) {
     const globalRoles = caller.globalRoles as string[] | undefined;
     const isSuper = Array.isArray(globalRoles) && globalRoles.includes("super_admin");
     const privileged =
-      isSuper ||
-      ["owner", "admin", "manager", "accountant"].includes(callerRole);
+      isSuper || ["owner", "admin", "manager", "accountant"].includes(callerRole);
 
     if (privileged) {
       return NextResponse.json(
@@ -108,8 +110,16 @@ export async function POST(request: NextRequest) {
 
     const existing = await ref.get();
     const prev = existing.data() as Record<string, unknown> | undefined;
-    if (prev && prev.status === "approved") {
+    const prevStatus = typeof prev?.status === "string" ? prev.status : "";
+
+    if (prevStatus === "approved") {
       return NextResponse.json({ error: "Schválený výkaz nelze měnit." }, { status: 409 });
+    }
+    if (prevStatus === "pending") {
+      return NextResponse.json(
+        { error: "Výkaz čeká na schválení. Úpravy jsou možné až po vrácení nebo zamítnutí." },
+        { status: 409 }
+      );
     }
 
     const note = typeof body.note === "string" ? body.note.trim() : "";
@@ -126,21 +136,70 @@ export async function POST(request: NextRequest) {
         ? body.hoursConfirmed
         : null;
 
+    const clearPayable = {
+      payableAmountCzk: FieldValue.delete(),
+      payableHoursSnapshot: FieldValue.delete(),
+      hourlyRateSnapshot: FieldValue.delete(),
+    };
+
+    const estimatedLaborFromSegmentsCzk = await sumClosedSegmentAmountsForWorkDay(
+      db,
+      companyId,
+      employeeId,
+      date
+    );
+    if (estimatedLaborFromSegmentsCzk > 0) {
+      console.log("Estimated labor cost added to report", { estimatedLaborFromSegmentsCzk });
+    }
+
+    if (mode === "draft") {
+      await ref.set(
+        {
+          companyId,
+          employeeId,
+          employeeName,
+          date,
+          description: descriptionRaw,
+          note,
+          jobId,
+          jobName,
+          hoursFromAttendance,
+          hoursConfirmed,
+          estimatedLaborFromSegmentsCzk:
+            estimatedLaborFromSegmentsCzk > 0 ? estimatedLaborFromSegmentsCzk : FieldValue.delete(),
+          status: "draft",
+          updatedAt: FieldValue.serverTimestamp(),
+          submittedAt: FieldValue.delete(),
+          ...clearPayable,
+          reviewedAt: null,
+          reviewedByUid: null,
+          reviewedByName: null,
+          adminNote: null,
+        },
+        { merge: true }
+      );
+      console.log("Daily work report draft saved");
+      return NextResponse.json({ ok: true, id: rid });
+    }
+
     await ref.set(
       {
         companyId,
         employeeId,
         employeeName,
         date,
-        description,
+        description: descriptionRaw,
         note,
         jobId,
         jobName,
         hoursFromAttendance,
         hoursConfirmed,
+        estimatedLaborFromSegmentsCzk:
+          estimatedLaborFromSegmentsCzk > 0 ? estimatedLaborFromSegmentsCzk : FieldValue.delete(),
         status: "pending",
         submittedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
+        ...clearPayable,
         reviewedAt: null,
         reviewedByUid: null,
         reviewedByName: null,

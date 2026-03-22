@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
-import {
-  employeeDayStats,
-  loadTodayAttendanceEventsByEmployee,
-  readEmployeeHourlyRate,
-} from "@/lib/attendance-day-server";
+import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
+import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
 
 /**
  * Veřejný seznam zaměstnanců pro /attendance-login (bez Auth).
  * Vyžaduje companyId v query — odkaz z portálu s ID firmy.
- * Dopočítá dnešní stav směny (v práci / mimo) a odhad hodin a výdělku.
+ * Vrací jen stav směny (v práci / mimo) — bez hodin a peněz (ty jsou v portálu).
  */
 export async function GET(request: NextRequest) {
   const db = getAdminFirestore();
@@ -23,7 +20,6 @@ export async function GET(request: NextRequest) {
   }
 
   const todayIso = new Date().toISOString().split("T")[0];
-  const nowMs = Date.now();
 
   try {
     const empSnap = await db.collection("companies").doc(companyId).collection("employees").get();
@@ -39,13 +35,8 @@ export async function GET(request: NextRequest) {
             : typeof data.avatarUrl === "string" && data.avatarUrl.trim()
               ? data.avatarUrl.trim()
               : null;
-        const ev = byEmp.get(d.id);
-        const rate = readEmployeeHourlyRate(data);
-        const { inWork, todayHoursWorked, todayEarningsEstimate } = employeeDayStats(
-          ev,
-          rate,
-          nowMs
-        );
+        const ev = byEmp.get(d.id) ?? [];
+        const inWork = isShiftOpenFromSorted(ev);
         return {
           id: d.id,
           firstName: String(data.firstName ?? ""),
@@ -53,8 +44,6 @@ export async function GET(request: NextRequest) {
           photoURL,
           isActive: data.isActive !== false,
           inWork,
-          todayHoursWorked,
-          todayEarningsEstimate,
         };
       })
       .filter(Boolean);

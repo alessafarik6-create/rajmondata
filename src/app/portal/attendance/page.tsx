@@ -52,6 +52,7 @@ import { addDocumentNonBlocking } from "@/firebase/non-blocking-updates";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
+import { formatKc } from "@/lib/employee-money";
 
 type AttendanceType = "check_in" | "break_start" | "break_end" | "check_out";
 
@@ -183,7 +184,7 @@ export default function AttendancePage() {
   const reviewDailyReport = async (
     employeeId: string,
     date: string,
-    action: "approve" | "reject"
+    action: "approve" | "reject" | "return"
   ) => {
     if (!user || !companyId) return;
     const key = `${employeeId}_${date}_${action}`;
@@ -207,8 +208,14 @@ export default function AttendancePage() {
         });
         return;
       }
+      const title =
+        action === "approve"
+          ? "Schváleno"
+          : action === "reject"
+            ? "Zamítnuto"
+            : "Vráceno k úpravě";
       toast({
-        title: action === "approve" ? "Schváleno" : "Zamítnuto",
+        title,
         description: "Stav denního výkazu byl uložen.",
       });
     } catch {
@@ -243,12 +250,20 @@ export default function AttendancePage() {
 
   const reportStatusBadge = (s: string | undefined) => {
     switch (s) {
+      case "draft":
+        return (
+          <Badge variant="secondary" className="bg-slate-600 text-white">
+            Rozpracováno
+          </Badge>
+        );
       case "pending":
-        return <Badge className="bg-amber-500">Čeká na schválení</Badge>;
+        return <Badge className="bg-amber-500">Odesláno ke schválení</Badge>;
       case "approved":
         return <Badge className="bg-emerald-600">Schváleno</Badge>;
       case "rejected":
         return <Badge variant="destructive">Zamítnuto</Badge>;
+      case "returned":
+        return <Badge className="bg-violet-600">K úpravě</Badge>;
       default:
         return <Badge variant="outline">{s || "—"}</Badge>;
     }
@@ -672,6 +687,8 @@ export default function AttendancePage() {
                           <TableHead>Zaměstnanec</TableHead>
                           <TableHead>Stav</TableHead>
                           <TableHead>Popis</TableHead>
+                          <TableHead className="text-right whitespace-nowrap">Segmenty (odhad)</TableHead>
+                          <TableHead className="text-right whitespace-nowrap">K výplatě</TableHead>
                           <TableHead className="text-right">Akce</TableHead>
                         </TableRow>
                       </TableHeader>
@@ -682,6 +699,7 @@ export default function AttendancePage() {
                           const st = String(row.status || "");
                           const busyApprove = reviewBusy === `${employeeId}_${date}_approve`;
                           const busyReject = reviewBusy === `${employeeId}_${date}_reject`;
+                          const busyReturn = reviewBusy === `${employeeId}_${date}_return`;
                           return (
                             <TableRow key={`${employeeId}-${date}-${i}`}>
                               <TableCell className="font-medium whitespace-nowrap">{date}</TableCell>
@@ -689,6 +707,17 @@ export default function AttendancePage() {
                               <TableCell>{reportStatusBadge(st)}</TableCell>
                               <TableCell className="max-w-[min(40vw,320px)] truncate text-sm text-muted-foreground">
                                 {String(row.description || "—")}
+                              </TableCell>
+                              <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                                {typeof row.estimatedLaborFromSegmentsCzk === "number" &&
+                                row.estimatedLaborFromSegmentsCzk > 0
+                                  ? formatKc(row.estimatedLaborFromSegmentsCzk)
+                                  : "—"}
+                              </TableCell>
+                              <TableCell className="text-right text-sm font-medium tabular-nums">
+                                {typeof row.payableAmountCzk === "number" && row.payableAmountCzk > 0
+                                  ? formatKc(row.payableAmountCzk)
+                                  : "—"}
                               </TableCell>
                               <TableCell className="text-right">
                                 {st === "pending" ? (
@@ -700,6 +729,14 @@ export default function AttendancePage() {
                                       onClick={() => void reviewDailyReport(employeeId, date, "approve")}
                                     >
                                       {busyApprove ? <Loader2 className="h-4 w-4 animate-spin" /> : "Schválit"}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      disabled={!!reviewBusy}
+                                      onClick={() => void reviewDailyReport(employeeId, date, "return")}
+                                    >
+                                      {busyReturn ? <Loader2 className="h-4 w-4 animate-spin" /> : "Vrátit k úpravě"}
                                     </Button>
                                     <Button
                                       size="sm"

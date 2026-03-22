@@ -51,9 +51,11 @@ import {
   getLoggedHours,
   getReviewLabel,
   sumMoneyForBlocks,
+  sumMoneyForApprovedDailyReports,
   sumPaidAdvances,
   sumPayableHoursForBlocks,
   type AdvanceDoc,
+  type DailyWorkReportMoney,
   type WorkTimeBlockMoney,
 } from "@/lib/employee-money";
 import {
@@ -257,6 +259,23 @@ function PayrollAdminPageInner() {
   const { data: advancesRaw, isLoading: advancesLoading } =
     useCollection(advancesQuery);
 
+  const dailyReportsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !selectedEmployeeId) return null;
+    if (selectedEmployeeId === "all") {
+      return query(
+        collection(firestore, "companies", companyId, "daily_work_reports"),
+        limit(500)
+      );
+    }
+    return query(
+      collection(firestore, "companies", companyId, "daily_work_reports"),
+      where("employeeId", "==", selectedEmployeeId),
+      limit(500)
+    );
+  }, [firestore, companyId, selectedEmployeeId]);
+
+  const { data: dailyReportsRaw = [] } = useCollection(dailyReportsQuery);
+
   const blocks = useMemo(() => {
     const raw = Array.isArray(blocksRaw) ? blocksRaw : [];
     return raw.map((b: any) => ({ ...b, id: String(b?.id ?? "") }));
@@ -282,7 +301,19 @@ function PayrollAdminPageInner() {
 
   const selectedEmp = employees.find((e) => e.id === selectedEmployeeId);
   const hourlyRate = Number(selectedEmp?.hourlyRate) || 0;
-  const earnedAll = sumMoneyForBlocks(blocksMoney, hourlyRate);
+  const earnedFromBlocks = useMemo(
+    () => sumMoneyForBlocks(blocksMoney, hourlyRate),
+    [blocksMoney, hourlyRate]
+  );
+  const earnedFromDailyReports = useMemo(() => {
+    const raw = Array.isArray(dailyReportsRaw) ? dailyReportsRaw : [];
+    return sumMoneyForApprovedDailyReports(raw as DailyWorkReportMoney[]);
+  }, [dailyReportsRaw]);
+  const earnedAll = useMemo(
+    () =>
+      Math.round((earnedFromBlocks + earnedFromDailyReports) * 100) / 100,
+    [earnedFromBlocks, earnedFromDailyReports]
+  );
   const paidTotal = sumPaidAdvances(advances);
   const remaining = Math.max(
     0,
@@ -698,6 +729,10 @@ function PayrollAdminPageInner() {
               <p className="mt-1">
                 <span className="font-semibold">Vyděláno (schv.):</span>{" "}
                 {formatKc(earnedAll)}
+              </p>
+              <p className="text-xs text-slate-600">
+                Bloky výkazu: {formatKc(earnedFromBlocks)} · Denní výkazy (schv.):{" "}
+                {formatKc(earnedFromDailyReports)}
               </p>
               <p>
                 <span className="font-semibold">Vyplaceno:</span>{" "}

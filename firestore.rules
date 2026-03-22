@@ -266,6 +266,20 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      /** Interní tarify práce (cesta, administrativa, …) — správa privilegovaně; čtení i zaměstnanec (výběr v docházce). */
+      match /work_tariffs/{tariffId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || canLogOwnWorkTime());
+        allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /** Úseky práce na zakázkách / tarifech — zápis přes Admin API; čtení vlastní + privilegovaní. */
+      match /work_segments/{segmentId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow write: if false;
+      }
+
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
       // Zaměstnanec se sem nedostane (frontend redirect + tyto pravidla).
       // Výjimka: employees/{id}/private/** je výše explicitně zakázáno; rekurzivní pravidlo by jinak PIN povolilo (OR pravidel).

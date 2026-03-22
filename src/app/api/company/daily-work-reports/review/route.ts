@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { parseHourlyRate } from "@/lib/attendance-shift-state";
+import { applyApprovedJobLaborFromSegments } from "@/lib/work-segment-server";
 
 type Body = {
   companyId?: string;
   employeeId?: string;
   date?: string;
-  action?: "approve" | "reject";
+  action?: "approve" | "reject" | "return";
   adminNote?: string | null;
 };
 
@@ -15,7 +17,8 @@ function reportDocId(employeeId: string, date: string) {
 }
 
 /**
- * Schválení / zamítnutí denního výkazu — owner / admin / manager / účetní.
+ * Schválení / zamítnutí / vrácení denního výkazu — owner / admin / manager / účetní.
+ * Při schválení se uloží payableAmountCzk (podklad k výplatě).
  */
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -53,7 +56,7 @@ export async function POST(request: NextRequest) {
   if (!companyId || !employeeId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: "Chybí platné údaje výkazu." }, { status: 400 });
   }
-  if (action !== "approve" && action !== "reject") {
+  if (action !== "approve" && action !== "reject" && action !== "return") {
     return NextResponse.json({ error: "Neplatná akce." }, { status: 400 });
   }
 
@@ -91,23 +94,89 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Výkaz neexistuje." }, { status: 404 });
     }
 
+    const report = snap.data() as Record<string, unknown>;
     const adminNote =
       typeof body.adminNote === "string" && body.adminNote.trim() ? body.adminNote.trim() : null;
 
-    await ref.update({
-      status: action === "approve" ? "approved" : "rejected",
-      reviewedAt: FieldValue.serverTimestamp(),
-      reviewedByUid: callerUid,
-      reviewedByName: reviewerName,
-      adminNote: adminNote ?? FieldValue.delete(),
-      updatedAt: FieldValue.serverTimestamp(),
-    });
+    const empSnap = await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("employees")
+      .doc(employeeId)
+      .get();
+    const empData = empSnap.data() as Record<string, unknown> | undefined;
+    const hourlyRate = parseHourlyRate(empData?.hourlyRate) ?? 0;
 
-    console.log(
-      action === "approve"
-        ? "Daily work report approved by admin"
-        : "Daily work report rejected by admin"
-    );
+    const hoursConfirmed =
+      typeof report.hoursConfirmed === "number" && Number.isFinite(report.hoursConfirmed)
+        ? (report.hoursConfirmed as number)
+        : null;
+    const hoursFromAtt =
+      typeof report.hoursFromAttendance === "number" && Number.isFinite(report.hoursFromAttendance)
+        ? (report.hoursFromAttendance as number)
+        : null;
+    const hoursForPay = hoursConfirmed ?? hoursFromAtt ?? 0;
+
+    if (action === "approve") {
+      const fallbackPay =
+        Number.isFinite(hourlyRate) && hourlyRate > 0 && hoursForPay > 0
+          ? Math.round(hoursForPay * hourlyRate * 100) / 100
+          : 0;
+
+      const { totalClosedSegmentPayCzk } = await applyApprovedJobLaborFromSegments(
+        db,
+        companyId,
+        employeeId,
+        date,
+        rid
+      );
+      const payableAmountCzk =
+        totalClosedSegmentPayCzk > 0 ? totalClosedSegmentPayCzk : fallbackPay;
+
+      await ref.update({
+        status: "approved",
+        payableAmountCzk,
+        payableHoursSnapshot: hoursForPay,
+        hourlyRateSnapshot: hourlyRate > 0 ? hourlyRate : FieldValue.delete(),
+        segmentPayTotalCzk:
+          totalClosedSegmentPayCzk > 0 ? totalClosedSegmentPayCzk : FieldValue.delete(),
+        reviewedAt: FieldValue.serverTimestamp(),
+        reviewedByUid: callerUid,
+        reviewedByName: reviewerName,
+        adminNote: adminNote ?? FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      console.log("Daily work report approved by admin");
+    } else if (action === "reject") {
+      await ref.update({
+        status: "rejected",
+        payableAmountCzk: FieldValue.delete(),
+        payableHoursSnapshot: FieldValue.delete(),
+        hourlyRateSnapshot: FieldValue.delete(),
+        reviewedAt: FieldValue.serverTimestamp(),
+        reviewedByUid: callerUid,
+        reviewedByName: reviewerName,
+        adminNote: adminNote ?? FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      console.log("Daily work report rejected by admin");
+    } else {
+      await ref.update({
+        status: "returned",
+        payableAmountCzk: FieldValue.delete(),
+        payableHoursSnapshot: FieldValue.delete(),
+        hourlyRateSnapshot: FieldValue.delete(),
+        reviewedAt: FieldValue.serverTimestamp(),
+        reviewedByUid: callerUid,
+        reviewedByName: reviewerName,
+        adminNote: adminNote ?? FieldValue.delete(),
+        updatedAt: FieldValue.serverTimestamp(),
+      });
+
+      console.log("Daily work report returned for revision by admin");
+    }
 
     return NextResponse.json({ ok: true });
   } catch (e) {

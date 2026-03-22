@@ -33,6 +33,38 @@
       ]
     },
     {
+      "collectionGroup": "work_segments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "employeeId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "closed", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "work_segments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "employeeId", "order": "ASCENDING" },
+        { "fieldPath": "date", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "work_segments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "workDayId", "order": "ASCENDING" },
+        { "fieldPath": "closed", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "work_tariffs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "active", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "settings",
       "queryScope": "COLLECTION_GROUP",
       "fields": [

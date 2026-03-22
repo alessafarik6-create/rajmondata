@@ -9,6 +9,9 @@ import {
   Activity,
   ArrowRight,
   AlertCircle,
+  MessageSquare,
+  Banknote,
+  PieChart,
 } from "lucide-react";
 import {
   Card,
@@ -30,6 +33,12 @@ import { collection, query, orderBy, limit, where } from "firebase/firestore";
 import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 import { useRouter } from "next/navigation";
+import { parseBudgetKcFromJob } from "@/lib/work-contract-deposit";
+import {
+  formatKc,
+  sumMoneyForApprovedDailyReports,
+  type DailyWorkReportMoney,
+} from "@/lib/employee-money";
 
 type ProfileData = {
   displayName?: string;
@@ -42,6 +51,7 @@ type JobData = {
   id: string;
   name?: string;
   status?: string;
+  budget?: unknown;
   assignedEmployeeIds?: string[];
   customerId?: string;
 };
@@ -70,6 +80,9 @@ export default function CompanyDashboard() {
   const isAccountant = role === "accountant";
   const isEmployee = role === "employee";
   const isCustomer = role === "customer";
+  /** Přehledové KPI (zakázky, mzdy, finance, zprávy) — vedení a účetní. */
+  const showAdminDashboard =
+    (isManagement || isAccountant) && !isCustomer;
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !isManagement) return null;
@@ -127,6 +140,23 @@ export default function CompanyDashboard() {
     typedProfile?.employeeId,
   ]);
 
+  const dailyWorkReportsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return query(
+      collection(firestore, "companies", companyId, "daily_work_reports"),
+      limit(2500)
+    );
+  }, [firestore, companyId, showAdminDashboard]);
+
+  const chatDashboardQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return query(
+      collection(firestore, "companies", companyId, "chat"),
+      orderBy("createdAt", "desc"),
+      limit(500)
+    );
+  }, [firestore, companyId, showAdminDashboard]);
+
   const { data: employees } = useCollection(employeesQuery);
   const {
     data: allJobs,
@@ -135,6 +165,14 @@ export default function CompanyDashboard() {
   } = useCollection(jobsQuery);
   const { data: financeRows = [] } = useCollection(financeQuery);
   const { data: attendanceRows = [] } = useCollection(attendanceQuery);
+  const {
+    data: dashboardDailyReports = [],
+    isLoading: dailyReportsLoading,
+  } = useCollection(dailyWorkReportsQuery);
+  const {
+    data: dashboardChatMessages = [],
+    isLoading: chatDashboardLoading,
+  } = useCollection(chatDashboardQuery);
 
   const typedJobs: JobData[] = ((allJobs as JobData[] | undefined) ?? []);
 
@@ -196,6 +234,65 @@ export default function CompanyDashboard() {
     }
     return sum;
   }, [financeRows]);
+
+  const jobsAggregate = useMemo(() => {
+    let count = 0;
+    let totalBudgetKc = 0;
+    for (const j of typedJobs) {
+      count += 1;
+      const b = parseBudgetKcFromJob(j.budget);
+      if (b != null) totalBudgetKc += b;
+    }
+    return { count, totalBudgetKc };
+  }, [typedJobs]);
+
+  const paidToEmployeesCzk = useMemo(() => {
+    const rows = Array.isArray(dashboardDailyReports)
+      ? (dashboardDailyReports as DailyWorkReportMoney[])
+      : [];
+    return sumMoneyForApprovedDailyReports(rows);
+  }, [dashboardDailyReports]);
+
+  const unreadEmployeeChatCount = useMemo(() => {
+    const rows = Array.isArray(dashboardChatMessages)
+      ? dashboardChatMessages
+      : [];
+    return rows.filter(
+      (m: { senderRole?: string; read?: boolean }) =>
+        m.senderRole === "employee" && m.read !== true
+    ).length;
+  }, [dashboardChatMessages]);
+
+  /** Příjmy = součet rozpočtů zakázek; náklady = schválené výplaty z výkazů; zisk = rozdíl (zjednodušený model). */
+  const totalIncomeFromJobsCzk = jobsAggregate.totalBudgetKc;
+  const totalLaborCostsCzk = paidToEmployeesCzk;
+  const profitCzk = totalIncomeFromJobsCzk - totalLaborCostsCzk;
+
+  useEffect(() => {
+    if (!showAdminDashboard || !companyId) return;
+    console.log("Loading dashboard data");
+  }, [showAdminDashboard, companyId]);
+
+  useEffect(() => {
+    if (!showAdminDashboard || isJobsLoading) return;
+    console.log("Jobs loaded");
+  }, [showAdminDashboard, isJobsLoading]);
+
+  useEffect(() => {
+    if (!showAdminDashboard || dailyReportsLoading || isJobsLoading) return;
+    console.log("Finance calculated");
+  }, [
+    showAdminDashboard,
+    dailyReportsLoading,
+    isJobsLoading,
+    paidToEmployeesCzk,
+    jobsAggregate.totalBudgetKc,
+  ]);
+
+  useEffect(() => {
+    if (!showAdminDashboard || chatDashboardLoading) return;
+    console.log("Unread messages count", unreadEmployeeChatCount);
+  }, [showAdminDashboard, chatDashboardLoading, unreadEmployeeChatCount]);
 
   if (isUserLoading || profileOrCompanyLoading) {
     return (
@@ -354,39 +451,152 @@ export default function CompanyDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
-        {isManagement && (
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="portal-section-label text-sm font-medium">
-                Tým
-              </CardTitle>
-              <Users className="h-4 w-4 text-primary" />
-            </CardHeader>
-            <CardContent>
-              <div className="portal-kpi-value">{employees?.length || 0}</div>
-              <p className="portal-kpi-label">Celkový počet pracovníků</p>
-            </CardContent>
-          </Card>
-        )}
+      {showAdminDashboard ? (
+        <div className="space-y-6">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium leading-none">Zakázky</CardTitle>
+                <Briefcase className="h-4 w-4 shrink-0 text-primary" />
+              </CardHeader>
+              <CardContent className="space-y-1">
+                {jobsError ? (
+                  <p className="text-sm text-destructive">Chyba načtení zakázek</p>
+                ) : (
+                  <>
+                    <div className="portal-kpi-value text-2xl sm:text-3xl">
+                      {isJobsLoading ? (
+                        <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent align-middle" />
+                      ) : (
+                        jobsAggregate.count
+                      )}
+                    </div>
+                    <p className="text-xs text-muted-foreground">Počet zakázek ve firmě</p>
+                    <p className="pt-2 text-lg font-semibold tabular-nums text-foreground">
+                      {isJobsLoading ? (
+                        <span className="text-muted-foreground">…</span>
+                      ) : (
+                        formatKc(jobsAggregate.totalBudgetKc)
+                      )}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Součet rozpočtů (Kč)</p>
+                  </>
+                )}
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between pb-2">
-            <CardTitle className="portal-section-label text-sm font-medium">
-              {isCustomer ? "Moje Zakázky" : "Aktivní zakázky"}
-            </CardTitle>
-            <Briefcase className="h-4 w-4 text-primary" />
-          </CardHeader>
-          <CardContent>
-            <div className="portal-kpi-value">
-              {jobs.filter((job) => job.status !== "dokončená").length || 0}
-            </div>
-            <p className="portal-kpi-label">Probíhající projekty</p>
-          </CardContent>
-        </Card>
+            <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium leading-none">
+                  Vyplaceno zaměstnancům
+                </CardTitle>
+                <Banknote className="h-4 w-4 shrink-0 text-primary" />
+              </CardHeader>
+              <CardContent>
+                <div className="portal-kpi-value text-2xl sm:text-3xl">
+                  {dailyReportsLoading ? (
+                    <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent align-middle" />
+                  ) : (
+                    formatKc(paidToEmployeesCzk)
+                  )}
+                </div>
+                <p className="portal-kpi-label mt-1">
+                  Součet schválených výkazů (payableAmountCzk)
+                </p>
+              </CardContent>
+            </Card>
 
-        {!isCustomer && (
-          <>
+            <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md sm:col-span-2 xl:col-span-1">
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium leading-none">Finance</CardTitle>
+                <PieChart className="h-4 w-4 shrink-0 text-primary" />
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm">
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Příjmy (rozpočty)</span>
+                  <span className="font-semibold tabular-nums">
+                    {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsCzk)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Náklady (mzdy)</span>
+                  <span className="font-semibold tabular-nums">
+                    {dailyReportsLoading ? "…" : formatKc(totalLaborCostsCzk)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2 border-t pt-3">
+                  <span className="font-medium">Zisk (odhad)</span>
+                  <span
+                    className={`font-bold tabular-nums ${
+                      profitCzk >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-destructive"
+                    }`}
+                  >
+                    {isJobsLoading || dailyReportsLoading
+                      ? "…"
+                      : formatKc(profitCzk)}
+                  </span>
+                </div>
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  Zisk = součet rozpočtů zakázek minus schválené částky z výkazů. Nezahrnuje ostatní náklady.
+                </p>
+              </CardContent>
+            </Card>
+
+            <Link href="/portal/chat" className="block min-h-[44px] rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+              <Card className="h-full border-border bg-card shadow-sm transition-shadow hover:shadow-md">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                  <CardTitle className="text-sm font-medium leading-none">Zprávy</CardTitle>
+                  <MessageSquare className="h-4 w-4 shrink-0 text-primary" />
+                </CardHeader>
+                <CardContent>
+                  {chatDashboardLoading ? (
+                    <div className="flex h-12 items-center">
+                      <span className="inline-block h-7 w-7 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    </div>
+                  ) : (
+                    <>
+                      <p className="text-lg font-semibold text-foreground">
+                        {unreadEmployeeChatCount === 0
+                          ? "Žádné nové"
+                          : `${unreadEmployeeChatCount} nepřečtených`}
+                      </p>
+                      <p className="portal-kpi-label mt-1">Od zaměstnanců — klepněte pro chat</p>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </Link>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            {isManagement && (
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between pb-2">
+                  <CardTitle className="portal-section-label text-sm font-medium">Tým</CardTitle>
+                  <Users className="h-4 w-4 text-primary" />
+                </CardHeader>
+                <CardContent>
+                  <div className="portal-kpi-value">{employees?.length || 0}</div>
+                  <p className="portal-kpi-label">Celkový počet pracovníků</p>
+                </CardContent>
+              </Card>
+            )}
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="portal-section-label text-sm font-medium">
+                  Aktivní zakázky
+                </CardTitle>
+                <Briefcase className="h-4 w-4 text-primary" />
+              </CardHeader>
+              <CardContent>
+                <div className="portal-kpi-value">
+                  {jobs.filter((job) => job.status !== "dokončená").length || 0}
+                </div>
+                <p className="portal-kpi-label">Probíhající projekty</p>
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
                 <CardTitle className="portal-section-label text-sm font-medium">
@@ -404,29 +614,101 @@ export default function CompanyDashboard() {
               </CardContent>
             </Card>
 
-            {(isManagement || isAccountant) && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="portal-section-label text-sm font-medium">
+                  Měsíční obrat
+                </CardTitle>
+                <Wallet className="h-4 w-4 text-primary" />
+              </CardHeader>
+              <CardContent>
+                <div className="portal-kpi-value">
+                  {monthlyRevenueCzk.toLocaleString("cs-CZ")} Kč
+                </div>
+                <p className="portal-kpi-label">
+                  {monthlyRevenueCzk === 0
+                    ? "Zatím nejsou k dispozici žádná data"
+                    : "Součet příjmů v aktuálním měsíci z dokladů"}
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 lg:grid-cols-4">
+          {isManagement && (
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <CardTitle className="portal-section-label text-sm font-medium">
+                  Tým
+                </CardTitle>
+                <Users className="h-4 w-4 text-primary" />
+              </CardHeader>
+              <CardContent>
+                <div className="portal-kpi-value">{employees?.length || 0}</div>
+                <p className="portal-kpi-label">Celkový počet pracovníků</p>
+              </CardContent>
+            </Card>
+          )}
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="portal-section-label text-sm font-medium">
+                {isCustomer ? "Moje Zakázky" : "Aktivní zakázky"}
+              </CardTitle>
+              <Briefcase className="h-4 w-4 text-primary" />
+            </CardHeader>
+            <CardContent>
+              <div className="portal-kpi-value">
+                {jobs.filter((job) => job.status !== "dokončená").length || 0}
+              </div>
+              <p className="portal-kpi-label">Probíhající projekty</p>
+            </CardContent>
+          </Card>
+
+          {!isCustomer && (
+            <>
               <Card>
                 <CardHeader className="flex flex-row items-center justify-between pb-2">
                   <CardTitle className="portal-section-label text-sm font-medium">
-                    Měsíční obrat
+                    Docházka dnes
                   </CardTitle>
-                  <Wallet className="h-4 w-4 text-primary" />
+                  <Clock className="h-4 w-4 text-primary" />
                 </CardHeader>
                 <CardContent>
-                  <div className="portal-kpi-value">
-                    {monthlyRevenueCzk.toLocaleString("cs-CZ")} Kč
-                  </div>
+                  <div className="portal-kpi-value">{attendanceTodayCount}</div>
                   <p className="portal-kpi-label">
-                    {monthlyRevenueCzk === 0
-                      ? "Zatím nejsou k dispozici žádná data"
-                      : "Součet příjmů v aktuálním měsíci z dokladů"}
+                    {attendanceTodayCount === 0
+                      ? "Zatím nejsou záznamy docházky"
+                      : "Záznamy docházky za dnešek"}
                   </p>
                 </CardContent>
               </Card>
-            )}
-          </>
-        )}
-      </div>
+
+              {(isManagement || isAccountant) && (
+                <Card>
+                  <CardHeader className="flex flex-row items-center justify-between pb-2">
+                    <CardTitle className="portal-section-label text-sm font-medium">
+                      Měsíční obrat
+                    </CardTitle>
+                    <Wallet className="h-4 w-4 text-primary" />
+                  </CardHeader>
+                  <CardContent>
+                    <div className="portal-kpi-value">
+                      {monthlyRevenueCzk.toLocaleString("cs-CZ")} Kč
+                    </div>
+                    <p className="portal-kpi-label">
+                      {monthlyRevenueCzk === 0
+                        ? "Zatím nejsou k dispozici žádná data"
+                        : "Součet příjmů v aktuálním měsíci z dokladů"}
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:gap-8">
         <div className="min-w-0 space-y-6 lg:col-span-2 lg:space-y-8">

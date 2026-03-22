@@ -158,6 +158,22 @@ export function sumMoneyForBlocks(
   return Math.round(h * r * 100) / 100;
 }
 
+/** Schválené denní výkazy — částka uložená při schválení (ne z attendance). */
+export type DailyWorkReportMoney = {
+  status?: string;
+  payableAmountCzk?: number;
+};
+
+export function sumMoneyForApprovedDailyReports(reports: DailyWorkReportMoney[]): number {
+  let s = 0;
+  for (const r of reports) {
+    if (r.status !== "approved") continue;
+    const n = Number(r.payableAmountCzk);
+    if (Number.isFinite(n) && n > 0) s += n;
+  }
+  return Math.round(s * 100) / 100;
+}
+
 /** Částka za jeden blok: schválené hodiny × sazba (0 při zamítnutí / čekání). */
 export function moneyForBlock(
   block: WorkTimeBlockMoney,

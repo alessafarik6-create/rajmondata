@@ -2,11 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
-import {
-  employeeDayStats,
-  loadTodayAttendanceEventsByEmployee,
-  readEmployeeHourlyRate,
-} from "@/lib/attendance-day-server";
+import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
+import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
+import { findOpenWorkSegment } from "@/lib/work-segment-server";
 
 type Body = {
   companyId?: string;
@@ -37,7 +35,6 @@ export async function POST(request: NextRequest) {
   }
 
   const todayIso = new Date().toISOString().split("T")[0];
-  const nowMs = Date.now();
 
   try {
     const ok = await verifyAttendancePinForEmployee(db, companyId, employeeId, pin);
@@ -45,17 +42,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: "Neplatný PIN." }, { status: 401 });
     }
 
-    const empSnap = await db
-      .collection("companies")
-      .doc(companyId)
-      .collection("employees")
-      .doc(employeeId)
-      .get();
-    const ed = empSnap.data() as Record<string, unknown> | undefined;
-    const rate = readEmployeeHourlyRate(ed);
     const byEmp = await loadTodayAttendanceEventsByEmployee(db, companyId, todayIso);
-    const ev = byEmp.get(employeeId);
-    const { inWork, todayHoursWorked, todayEarningsEstimate } = employeeDayStats(ev, rate, nowMs);
+    const ev = byEmp.get(employeeId) ?? [];
+    const inWork = isShiftOpenFromSorted(ev);
+
+    let activeSegment: {
+      sourceType: "job" | "tariff";
+      jobId: string | null;
+      jobName: string;
+      tariffId: string | null;
+      tariffName: string;
+      displayName: string;
+    } | null = null;
+    if (inWork) {
+      const open = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
+      if (open) {
+        const d = open.data() as {
+          sourceType?: string;
+          jobId?: string | null;
+          jobName?: string;
+          tariffId?: string | null;
+          tariffName?: string;
+          displayName?: string;
+        };
+        activeSegment = {
+          sourceType: d.sourceType === "tariff" ? "tariff" : "job",
+          jobId: typeof d.jobId === "string" ? d.jobId : null,
+          jobName: typeof d.jobName === "string" ? d.jobName : "",
+          tariffId: typeof d.tariffId === "string" ? d.tariffId : null,
+          tariffName: typeof d.tariffName === "string" ? d.tariffName : "",
+          displayName: typeof d.displayName === "string" ? d.displayName : "",
+        };
+      }
+    }
 
     console.log(
       `Employee status resolved: ${inWork ? "in work" : "out of work"} (${employeeId})`
@@ -64,8 +83,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       ok: true,
       inWork,
-      todayHoursWorked,
-      todayEarningsEstimate,
+      activeSegment,
     });
   } catch (e) {
     console.error("[attendance-login/verify-pin]", e);

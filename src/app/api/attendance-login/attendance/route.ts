@@ -1,13 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
-import {
-  loadTodayAttendanceEventsByEmployee,
-  readEmployeeHourlyRate,
-} from "@/lib/attendance-day-server";
+import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
 import { durationHoursForClosingCheckOut, isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
+import {
+  closeWorkSegment,
+  createWorkSegment,
+  findOpenWorkSegment,
+  loadActiveWorkTariffs,
+  loadEmployeeAndRatesForSegment,
+  type WorkSegmentSource,
+} from "@/lib/work-segment-server";
 
 type Action = "check-in" | "check-out";
 
@@ -16,8 +22,11 @@ type Body = {
   employeeId?: string;
   pin?: string;
   action?: Action;
+  sourceType?: WorkSegmentSource;
   jobId?: string | null;
   jobName?: string | null;
+  tariffId?: string | null;
+  tariffName?: string | null;
   employeeName?: string;
 };
 
@@ -25,8 +34,26 @@ function mapAction(a: Action): "check_in" | "check_out" {
   return a === "check-in" ? "check_in" : "check_out";
 }
 
+async function getAssignedTerminalJobIds(
+  db: Firestore,
+  companyId: string,
+  employeeId: string
+): Promise<string[]> {
+  const empSnap = await db
+    .collection("companies")
+    .doc(companyId)
+    .collection("employees")
+    .doc(employeeId)
+    .get();
+  const data = empSnap.data() as Record<string, unknown> | undefined;
+  return Array.isArray(data?.assignedTerminalJobIds)
+    ? (data!.assignedTerminalJobIds as unknown[]).filter((x): x is string => typeof x === "string")
+    : [];
+}
+
 /**
  * Zápis docházky z veřejné přihlašovací stránky — PIN v každém požadavku, bez JWT.
+ * Při příchodu lze založit první pracovní segment (zakázka / tarif), při odchodu se uzavře otevřený segment.
  */
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -83,6 +110,13 @@ export async function POST(request: NextRequest) {
     const existing = byEmp.get(employeeId) ?? [];
     const shiftOpen = isShiftOpenFromSorted(existing);
 
+    const assignedJobIds = await getAssignedTerminalJobIds(db, companyId, employeeId);
+    const tariffs = await loadActiveWorkTariffs(db, companyId);
+    const hasChoice = assignedJobIds.length > 0 || tariffs.length > 0;
+
+    const sourceType: WorkSegmentSource | null =
+      body.sourceType === "tariff" ? "tariff" : body.sourceType === "job" ? "job" : null;
+
     if (actionRaw === "check-in" && shiftOpen) {
       return NextResponse.json(
         { error: "Směna je již zahájena — nelze znovu zaznamenat příchod." },
@@ -94,6 +128,77 @@ export async function POST(request: NextRequest) {
         { error: "Nemáte otevřenou směnu — nelze zaznamenat odchod." },
         { status: 409 }
       );
+    }
+
+    if (actionRaw === "check-in" && hasChoice) {
+      if (!sourceType) {
+        return NextResponse.json(
+          { error: "Vyberte zakázku nebo interní tarif (činnost)." },
+          { status: 400 }
+        );
+      }
+      if (sourceType === "job") {
+        const jid = String(body.jobId || "").trim();
+        if (!jid || !assignedJobIds.includes(jid)) {
+          return NextResponse.json({ error: "Neplatná nebo nepřiřazená zakázka." }, { status: 400 });
+        }
+        const tSnap = await db.collection("companies").doc(companyId).collection("jobs").doc(jid).get();
+        if (!tSnap.exists) {
+          return NextResponse.json({ error: "Zakázka neexistuje." }, { status: 400 });
+        }
+      } else {
+        const tid = String(body.tariffId || "").trim();
+        if (!tid) {
+          return NextResponse.json({ error: "Vyberte tarif." }, { status: 400 });
+        }
+        const tr = await db.collection("companies").doc(companyId).collection("work_tariffs").doc(tid).get();
+        const td = tr.data() as { active?: boolean } | undefined;
+        if (!tr.exists || td?.active !== true) {
+          return NextResponse.json({ error: "Tarif neexistuje nebo není aktivní." }, { status: 400 });
+        }
+      }
+    }
+
+    if (actionRaw === "check-in" && hasChoice && sourceType) {
+      const jobId = sourceType === "job" ? String(body.jobId || "").trim() : null;
+      const tariffId = sourceType === "tariff" ? String(body.tariffId || "").trim() : null;
+      const meta = await loadEmployeeAndRatesForSegment(
+        db,
+        companyId,
+        employeeId,
+        sourceType,
+        jobId,
+        tariffId
+      );
+      if (sourceType === "job") {
+        console.log("Employee selected job", { jobId });
+      } else {
+        console.log("Employee selected tariff", { tariffId });
+      }
+      await createWorkSegment({
+        db,
+        companyId,
+        employeeId,
+        employeeName: meta.employeeName,
+        dateIso: todayIso,
+        sourceType,
+        jobId,
+        jobName: sourceType === "job" ? meta.jobName ?? body.jobName ?? null : null,
+        tariffId,
+        tariffName: sourceType === "tariff" ? meta.tariffName ?? body.tariffName ?? null : null,
+        hourlyRateCzk: meta.hourlyRateCzk,
+      });
+    }
+
+    if (actionRaw === "check-out") {
+      const open = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
+      if (open) {
+        const rate =
+          typeof (open.data() as { hourlyRateCzk?: number }).hourlyRateCzk === "number"
+            ? (open.data() as { hourlyRateCzk: number }).hourlyRateCzk
+            : null;
+        await closeWorkSegment(open.ref, nowMs, rate);
+      }
     }
 
     const type = mapAction(actionRaw);
@@ -108,25 +213,29 @@ export async function POST(request: NextRequest) {
       source: "attendance-login",
     };
 
-    if (body.jobId) {
+    if (body.jobId && type === "check_in") {
       docPayload.jobId = body.jobId;
       docPayload.jobName = typeof body.jobName === "string" ? body.jobName : "";
     }
-
-    const rate = readEmployeeHourlyRate(ed);
+    if (body.sourceType === "tariff" && type === "check_in" && body.tariffId) {
+      docPayload.sourceType = "tariff";
+      docPayload.tariffId = body.tariffId;
+      docPayload.tariffName = typeof body.tariffName === "string" ? body.tariffName : "";
+    }
+    if (body.sourceType === "job" && type === "check_in") {
+      docPayload.sourceType = "job";
+    }
 
     if (type === "check_out") {
-      const durationHours = durationHoursForClosingCheckOut(existing, nowMs);
-      docPayload.durationHours = durationHours;
-      if (rate != null) {
-        docPayload.hourlyRateSnapshot = rate;
-        docPayload.earningsCzk = Math.round(durationHours * rate * 100) / 100;
-      }
+      docPayload.durationHours = durationHoursForClosingCheckOut(existing, nowMs);
     }
 
     await db.collection("companies").doc(companyId).collection("attendance").add(docPayload);
 
     console.log("Attendance saved");
+    if (type === "check_out") {
+      console.log("Attendance session closed");
+    }
 
     return NextResponse.json({ ok: true });
   } catch (e) {

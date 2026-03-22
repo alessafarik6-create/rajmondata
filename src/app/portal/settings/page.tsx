@@ -20,7 +20,7 @@ import {
   collection,
 } from 'firebase/firestore';
 import Link from 'next/link';
-import { Users, ShieldCheck, Bell, Building2 } from 'lucide-react';
+import { Users, ShieldCheck, Bell, Building2, Clock } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
 
@@ -302,6 +302,25 @@ export default function SettingsPage() {
         <h1 className="portal-page-title text-2xl sm:text-3xl">Nastavení</h1>
         <p className="portal-page-description">Spravujte svůj účet a preference organizace.</p>
       </div>
+
+      {isAdmin && (
+        <Card className="border-emerald-200 bg-emerald-50/60 dark:border-emerald-900/40 dark:bg-emerald-950/25">
+          <CardContent className="flex flex-col gap-3 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex gap-3">
+              <Clock className="mt-0.5 h-5 w-5 shrink-0 text-emerald-700 dark:text-emerald-400" />
+              <div>
+                <p className="font-medium">Tarify práce</p>
+                <p className="text-sm text-muted-foreground">
+                  Interní činnosti (cesta, administrativa, …) pro výběr v docházce.
+                </p>
+              </div>
+            </div>
+            <Button asChild variant="outline" className="shrink-0">
+              <Link href="/portal/settings/work-tariffs">Spravovat tarify</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="profile" className="w-full overflow-hidden">
         <TabsList className="bg-white border border-slate-200 w-full flex flex-wrap justify-start h-auto p-1 gap-1">

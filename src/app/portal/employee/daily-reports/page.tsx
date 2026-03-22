@@ -33,6 +33,7 @@ import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
 import { parseAssignedWorklogJobIds, chunkArray } from "@/lib/assigned-jobs";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { cn } from "@/lib/utils";
+import { formatKc } from "@/lib/employee-money";
 
 export default function EmployeeDailyReportsPage() {
   const { user, isUserLoading } = useUser();
@@ -135,6 +136,17 @@ export default function EmployeeDailyReportsPage() {
 
   const { data: existingReport, isLoading: reportLoading } = useDoc<any>(reportRef);
 
+  const workSegmentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId || !dayKey) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", employeeId),
+      where("date", "==", dayKey)
+    );
+  }, [firestore, companyId, employeeId, dayKey]);
+
+  const { data: workSegmentsRaw = [], isLoading: segmentsLoading } = useCollection<any>(workSegmentsQuery);
+
   const daySummary = useMemo(() => {
     const rows = Array.isArray(attendanceRows) ? attendanceRows : [];
     const summaries = summarizeAttendanceByDay(rows as any[], {
@@ -169,7 +181,7 @@ export default function EmployeeDailyReportsPage() {
     setHoursConfirmed(h != null ? String(h) : "");
   }, [existingReport, dayKey, daySummary?.hoursWorked]);
 
-  const submit = async () => {
+  const postReport = async (mode: "draft" | "submit") => {
     if (!user || !companyId || !dayKey) return;
     if (privileged) {
       toast({
@@ -179,7 +191,7 @@ export default function EmployeeDailyReportsPage() {
       });
       return;
     }
-    if (!description.trim()) {
+    if (mode === "submit" && !description.trim()) {
       toast({ variant: "destructive", title: "Chybí popis", description: "Vyplňte, co jste dělali." });
       return;
     }
@@ -204,6 +216,7 @@ export default function EmployeeDailyReportsPage() {
           hoursFromAttendance:
             typeof daySummary?.hoursWorked === "number" ? daySummary.hoursWorked : null,
           hoursConfirmed: Number.isFinite(hNum) ? hNum : null,
+          mode,
         }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
@@ -215,7 +228,13 @@ export default function EmployeeDailyReportsPage() {
         });
         return;
       }
-      toast({ title: t("saved"), description: "Denní výkaz byl odeslán ke schválení." });
+      toast({
+        title: t("saved"),
+        description:
+          mode === "draft"
+            ? "Koncept byl uložen."
+            : "Výkaz byl odeslán ke schválení. Částka se započte až po schválení.",
+      });
     } catch (e) {
       console.error(e);
       toast({ variant: "destructive", title: "Chyba", description: "Síťová chyba." });
@@ -265,6 +284,7 @@ export default function EmployeeDailyReportsPage() {
   }
 
   const status = existingReport?.status as string | undefined;
+  const formLocked = status === "approved" || status === "pending";
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -339,25 +359,101 @@ export default function EmployeeDailyReportsPage() {
           </Card>
 
           <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Úseky práce (zakázky / tarify)</CardTitle>
+              <CardDescription>
+                Evidence z docházky — částky jsou orientační do schválení výkazu administrátorem.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {segmentsLoading ? (
+                <p className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Načítám segmenty…
+                </p>
+              ) : !Array.isArray(workSegmentsRaw) || workSegmentsRaw.length === 0 ? (
+                <p className="text-muted-foreground">Žádné úseky za tento den.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {[...workSegmentsRaw]
+                    .sort((a, b) => String(a.id).localeCompare(String(b.id)))
+                    .map((seg: Record<string, unknown>) => {
+                      const st = seg.sourceType === "tariff" ? "Tarif" : "Zakázka";
+                      const name =
+                        typeof seg.displayName === "string"
+                          ? seg.displayName
+                          : String(seg.jobName || seg.tariffName || "—");
+                      const h =
+                        typeof seg.durationHours === "number" ? `${seg.durationHours} h` : "probíhá…";
+                      const amt =
+                        typeof seg.totalAmountCzk === "number"
+                          ? formatKc(seg.totalAmountCzk)
+                          : "—";
+                      return (
+                        <li
+                          key={String(seg.id)}
+                          className="flex flex-wrap items-baseline justify-between gap-2 rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40"
+                        >
+                          <div>
+                            <span className="text-xs font-medium text-muted-foreground">{st}</span>
+                            <p className="font-medium text-slate-900 dark:text-slate-100">{name}</p>
+                          </div>
+                          <div className="text-right text-xs tabular-nums">
+                            <p>{h}</p>
+                            <p className="text-muted-foreground">{amt}</p>
+                          </div>
+                        </li>
+                      );
+                    })}
+                </ul>
+              )}
+              {typeof existingReport?.estimatedLaborFromSegmentsCzk === "number" &&
+                existingReport.estimatedLaborFromSegmentsCzk > 0 && (
+                  <p className="pt-2 text-xs text-muted-foreground">
+                    Odhad z uzavřených segmentů (výkaz):{" "}
+                    <span className="font-semibold tabular-nums text-slate-800 dark:text-slate-200">
+                      {formatKc(existingReport.estimatedLaborFromSegmentsCzk)}
+                    </span>
+                  </p>
+                )}
+            </CardContent>
+          </Card>
+
+          <Card>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
               <div>
                 <CardTitle className="text-base">Výkaz za den</CardTitle>
                 <CardDescription>Popište vykonanou práci — odesláním požádáte o schválení</CardDescription>
               </div>
               {status ? (
-                <Badge
-                  className={cn(
-                    status === "approved" && "bg-emerald-600",
-                    status === "pending" && "bg-amber-500",
-                    status === "rejected" && "bg-red-600"
-                  )}
-                >
-                  {status === "approved"
-                    ? "Schváleno"
-                    : status === "pending"
-                      ? "Čeká na schválení"
-                      : "Zamítnuto"}
-                </Badge>
+                <div className="flex flex-col items-end gap-1">
+                  <Badge
+                    className={cn(
+                      status === "draft" && "bg-slate-600",
+                      status === "approved" && "bg-emerald-600",
+                      status === "pending" && "bg-amber-500",
+                      status === "rejected" && "bg-red-600",
+                      status === "returned" && "bg-violet-600"
+                    )}
+                  >
+                    {status === "draft"
+                      ? "Rozpracováno"
+                      : status === "pending"
+                        ? "Odesláno ke schválení"
+                        : status === "approved"
+                          ? "Schváleno"
+                          : status === "returned"
+                            ? "K úpravě"
+                            : status === "rejected"
+                              ? "Zamítnuto"
+                              : status}
+                  </Badge>
+                  {status === "approved" &&
+                  typeof existingReport?.payableAmountCzk === "number" ? (
+                    <span className="text-xs font-medium text-emerald-800">
+                      Částka k výplatě: {formatKc(existingReport.payableAmountCzk as number)}
+                    </span>
+                  ) : null}
+                </div>
               ) : reportLoading ? (
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               ) : null}
@@ -370,7 +466,7 @@ export default function EmployeeDailyReportsPage() {
                     className="flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
                     value={jobId}
                     onChange={(e) => setJobId(e.target.value)}
-                    disabled={status === "approved" || jobsLoading}
+                    disabled={formLocked || jobsLoading}
                   >
                     <option value="">— volitelně —</option>
                     {assignedJobs.map((j) => (
@@ -391,18 +487,18 @@ export default function EmployeeDailyReportsPage() {
                   className="flex h-11 w-full max-w-[12rem] rounded-md border border-input bg-background px-3 text-sm tabular-nums"
                   value={hoursConfirmed}
                   onChange={(e) => setHoursConfirmed(e.target.value)}
-                  disabled={status === "approved"}
+                  disabled={formLocked}
                   placeholder="např. 8"
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="dr-desc">Co jste dělali *</Label>
+                <Label htmlFor="dr-desc">Co jste dělali {status !== "draft" && !formLocked ? "*" : ""}</Label>
                 <Textarea
                   id="dr-desc"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  disabled={status === "approved"}
+                  disabled={formLocked}
                   rows={4}
                   placeholder="Stručný popis úkolů…"
                 />
@@ -414,19 +510,37 @@ export default function EmployeeDailyReportsPage() {
                   id="dr-note"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  disabled={status === "approved"}
+                  disabled={formLocked}
                   rows={2}
                 />
               </div>
 
-              <Button
-                type="button"
-                className="min-h-[44px] w-full sm:w-auto"
-                disabled={saving || privileged || status === "approved"}
-                onClick={() => void submit()}
-              >
-                {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : t("save")}
-              </Button>
+              {status === "pending" ? (
+                <p className="text-sm text-amber-800">
+                  Výkaz čeká na schválení. Úpravy nejsou možné, dokud ho administrátor nevrátí nebo
+                  nezamítne.
+                </p>
+              ) : null}
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-[44px] w-full sm:w-auto"
+                  disabled={saving || privileged || formLocked}
+                  onClick={() => void postReport("draft")}
+                >
+                  {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : "Uložit rozpracováno"}
+                </Button>
+                <Button
+                  type="button"
+                  className="min-h-[44px] w-full sm:w-auto"
+                  disabled={saving || privileged || formLocked}
+                  onClick={() => void postReport("submit")}
+                >
+                  {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : "Odeslat ke schválení"}
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>

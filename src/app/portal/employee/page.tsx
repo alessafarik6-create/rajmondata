@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo } from "react";
+import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   useUser,
@@ -12,11 +13,21 @@ import {
 } from "@/firebase";
 import { doc, collection, query, where, limit } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   summarizeAttendanceByDay,
   sumHoursTodayAndWeek,
 } from "@/lib/employee-attendance";
+import { formatKc } from "@/lib/employee-money";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { Calendar, Clock, Loader2, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -57,6 +68,27 @@ export default function EmployeeHomePage() {
     isLoading: attendanceLoading,
     error: attendanceError,
   } = useCollection(attendanceQuery);
+
+  const dailyReportsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "daily_work_reports"),
+      where("employeeId", "==", employeeId),
+      limit(200)
+    );
+  }, [firestore, companyId, employeeId]);
+
+  const {
+    data: dailyReportsRaw = [],
+    isLoading: dailyReportsLoading,
+  } = useCollection(dailyReportsQuery);
+
+  const dailyReportsSorted = useMemo(() => {
+    const r = Array.isArray(dailyReportsRaw) ? dailyReportsRaw : [];
+    return [...r].sort((a: { date?: string }, b: { date?: string }) =>
+      String(b.date || "").localeCompare(String(a.date || ""))
+    );
+  }, [dailyReportsRaw]);
 
   const safeRows = Array.isArray(rawRows) ? rawRows : [];
 
@@ -199,6 +231,23 @@ export default function EmployeeHomePage() {
     (typeof displayName === "string" ? displayName.split(" ")[0] : "") ||
     t("colleague");
 
+  const dailyReportStatusLabel = (s: string | undefined) => {
+    switch (s) {
+      case "draft":
+        return "Rozpracováno";
+      case "pending":
+        return "Odesláno ke schválení";
+      case "approved":
+        return "Schváleno";
+      case "rejected":
+        return "Zamítnuto";
+      case "returned":
+        return "K úpravě";
+      default:
+        return s || "—";
+    }
+  };
+
   return (
     <div className="space-y-6 sm:space-y-8 max-w-4xl">
       {attendanceError ? (
@@ -315,6 +364,72 @@ export default function EmployeeHomePage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="border-slate-200 bg-white shadow-sm">
+        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pb-2">
+          <CardTitle className="text-base">Denní výkazy a částky</CardTitle>
+          <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
+            <Link href="/portal/employee/daily-reports">Upravit výkazy</Link>
+          </Button>
+        </CardHeader>
+        <CardContent className="text-sm text-slate-700">
+          {dailyReportsLoading ? (
+            <p className="flex items-center gap-2 text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Načítám výkazy…
+            </p>
+          ) : dailyReportsSorted.length === 0 ? (
+            <p className="text-slate-500">
+              Zatím nemáte žádný denní výkaz. Částka se započte až po schválení administrátorem.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-md border border-slate-200">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Datum</TableHead>
+                    <TableHead>Hodiny</TableHead>
+                    <TableHead>Částka (po schv.)</TableHead>
+                    <TableHead>Stav</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dailyReportsSorted.map((row: Record<string, unknown>, idx: number) => {
+                    const st = String(row.status || "");
+                    const amt =
+                      st === "approved" && typeof row.payableAmountCzk === "number"
+                        ? (row.payableAmountCzk as number)
+                        : 0;
+                    const h =
+                      row.hoursConfirmed != null
+                        ? Number(row.hoursConfirmed)
+                        : row.hoursFromAttendance != null
+                          ? Number(row.hoursFromAttendance)
+                          : null;
+                    return (
+                      <TableRow key={`${String(row.date)}-${idx}`}>
+                        <TableCell className="font-medium whitespace-nowrap">
+                          {String(row.date || "—")}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {h != null && Number.isFinite(h) ? `${h} h` : "—"}
+                        </TableCell>
+                        <TableCell className="tabular-nums">
+                          {amt > 0 ? formatKc(amt) : "—"}
+                        </TableCell>
+                        <TableCell>{dailyReportStatusLabel(st)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+          <p className="mt-3 text-xs text-slate-500">
+            Do výplaty se započítávají jen schválené denní výkazy. Docházka sama o sobě peníze nevyplácí.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

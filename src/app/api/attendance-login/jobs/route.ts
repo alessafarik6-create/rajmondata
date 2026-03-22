@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
+import { loadActiveWorkTariffs } from "@/lib/work-segment-server";
 
 type Body = {
   companyId?: string;
@@ -50,9 +51,14 @@ export async function POST(request: NextRequest) {
       ? (data!.assignedTerminalJobIds as unknown[]).filter((x): x is string => typeof x === "string")
       : [];
 
+    const tariffs = await loadActiveWorkTariffs(db, companyId);
+
     if (ids.length === 0) {
-      console.log("Jobs loaded", { count: 0 });
-      return NextResponse.json({ jobs: [] as { id: string; name: string }[] });
+      console.log("Jobs loaded", { count: 0, tariffs: tariffs.length });
+      return NextResponse.json({
+        jobs: [] as { id: string; name: string }[],
+        tariffs,
+      });
     }
 
     const jobsCol = db.collection("companies").doc(companyId).collection("jobs");
@@ -66,8 +72,8 @@ export async function POST(request: NextRequest) {
         name: typeof jd.name === "string" ? jd.name.trim() || snap.id : snap.id,
       });
     }
-    console.log("Jobs loaded", { count: out.length });
-    return NextResponse.json({ jobs: out });
+    console.log("Jobs loaded", { count: out.length, tariffs: tariffs.length });
+    return NextResponse.json({ jobs: out, tariffs });
   } catch (e) {
     console.error("[attendance-login/jobs]", e);
     return NextResponse.json({ error: "Zakázky se nepodařilo načíst." }, { status: 500 });
