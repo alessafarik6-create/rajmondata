@@ -134,7 +134,7 @@ function StandaloneTerminalInner() {
           setErrorMsg(
             data?.error ||
               (res.status === 503
-                ? "Firma nebyla nalezena nebo terminál není nakonfigurován."
+                ? "Firma nebyla nalezena nebo chybí aktivní záznam v terminálOdkazy (případně TERMINAL_COMPANY_ID / config/terminal)."
                 : "Terminál nelze spustit.")
           );
           setPhase("error");

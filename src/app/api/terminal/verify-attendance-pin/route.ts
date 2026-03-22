@@ -144,7 +144,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             error:
-              "Firma pro terminál není nakonfigurována (TERMINAL_COMPANY_ID nebo config/terminal).",
+              "Firma pro terminál není nakonfigurována. Vytvořte aktivní záznam v terminálOdkazy (aktivní + ID společnosti), případně TERMINAL_COMPANY_ID nebo config/terminal.",
           },
           { status: 503 }
         );
@@ -157,7 +157,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             error:
-              "Firma terminálu neodpovídá konfiguraci serveru. Obnovte stránku terminálu nebo zkontrolujte TERMINAL_COMPANY_ID / config/terminal.",
+              "Firma terminálu neodpovídá konfiguraci serveru. Obnovte stránku terminálu nebo zkontrolujte terminálOdkazy / TERMINAL_COMPANY_ID / config/terminal.",
             code: "TERMINAL_COMPANY_MISMATCH",
           },
           { status: 400 }

@@ -7,13 +7,13 @@ import { USERS_COLLECTION } from "@/lib/firestore-collections";
 import { ensureUserProfile } from "@/lib/seed-firestore";
 
 /**
- * Zajistí existenci dokumentu `users/{uid}` po přihlášení / obnově relace.
- * Pokud chybí, zavolá `ensureUserProfile` (firma + vlastník).
- * Idempotentní — bezpečné opakované volání.
+ * Doplní metadata v `users/{uid}` (email, displayName) po přihlášení.
+ * Nevytváří nový Firestore profil ani firmu — to jen registrace (`allowCreate`) nebo manuální seed.
  */
 export async function ensureUserFirestoreDocument(
   user: User,
-  firestore: Firestore
+  firestore: Firestore,
+  options?: { allowCreate?: boolean }
 ): Promise<void> {
   const userRef = doc(firestore, USERS_COLLECTION, user.uid);
 
@@ -52,8 +52,13 @@ export async function ensureUserFirestoreDocument(
       patch.updatedAt = serverTimestamp();
       await setDoc(userRef, patch, { merge: true });
     }
-    /** Doplní `companies/{companyId}` pokud v profilu je companyId, nebo firmu + vazbu pokud chybí. */
-    await ensureUserProfile(user, firestore);
+    return;
+  }
+
+  if (options?.allowCreate !== true) {
+    console.warn(
+      "[ensureUserFirestoreDocument] Dokument users/{uid} neexistuje — auto-create zakázán (portál nepřidává profil)."
+    );
     return;
   }
 

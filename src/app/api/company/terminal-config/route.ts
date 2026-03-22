@@ -1,15 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import {
+  COMPANIES_COLLECTION,
+  ORGANIZATIONS_COLLECTION,
+  TERMINAL_LINKS_COLLECTION,
+  TERMINAL_LINK_ACTIVE_FIELD,
+  TERMINAL_LINK_COMPANY_ID_FIELD,
+} from "@/lib/firestore-collections";
 
 type Body = {
   companyId?: string;
 };
 
 /**
- * Propojí veřejný terminál s firmou zápisem do Firestore `config/terminal` (companyId).
- * Má přednost před náhodným výběrem „první firmy“ při absenci TERMINAL_COMPANY_ID.
- * Pozn.: pokud je v prostředí nastavené TERMINAL_COMPANY_ID, resolve ho stále přebije — musí odpovídat.
+ * Propojí veřejný terminál se firmou: zápis do terminálOdkazy (kanonicky) + config/terminal (zpětná kompatibilita).
+ * Pozn.: TERMINAL_COMPANY_ID v prostředí má při resolve stále přednost před Firestore — musí odpovídat.
  */
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -80,12 +86,23 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const companySnap = await db.collection("companies").doc(targetCompanyId).get();
-  if (!companySnap.exists) {
-    return NextResponse.json({ error: "Firma neexistuje." }, { status: 404 });
+  const orgSnap = await db.collection(ORGANIZATIONS_COLLECTION).doc(targetCompanyId).get();
+  const compSnap = await db.collection(COMPANIES_COLLECTION).doc(targetCompanyId).get();
+  if (!orgSnap.exists && !compSnap.exists) {
+    return NextResponse.json({ error: "Firma neexistuje ve společnosti ani v companies." }, { status: 404 });
   }
 
   try {
+    const linkRef = db.collection(TERMINAL_LINKS_COLLECTION).doc("default");
+    await linkRef.set(
+      {
+        [TERMINAL_LINK_ACTIVE_FIELD]: true,
+        [TERMINAL_LINK_COMPANY_ID_FIELD]: targetCompanyId,
+        updatedAt: FieldValue.serverTimestamp(),
+        updatedBy: callerUid,
+      },
+      { merge: true }
+    );
     await db.collection("config").doc("terminal").set(
       {
         companyId: targetCompanyId,
@@ -94,7 +111,9 @@ export async function POST(request: NextRequest) {
       },
       { merge: true }
     );
-    console.log("[terminal-config] Terminal company binding saved", { companyId: targetCompanyId });
+    console.log("[terminal-config] Terminal company binding saved (terminálOdkazy + config/terminal)", {
+      companyId: targetCompanyId,
+    });
     return NextResponse.json({ ok: true, companyId: targetCompanyId });
   } catch (e) {
     console.error("[terminal-config]", e);

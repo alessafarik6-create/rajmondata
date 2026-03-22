@@ -13,7 +13,13 @@ export async function GET() {
   try {
     const companyId = await resolveTerminalCompanyId();
     if (!companyId) {
-      return NextResponse.json({ error: "Firma nebyla nalezena." }, { status: 503 });
+      return NextResponse.json(
+        {
+          error:
+            "Terminál není nakonfigurován (terminálOdkazy / TERMINAL_COMPANY_ID / config/terminal).",
+        },
+        { status: 503 }
+      );
     }
     const snap = await db.collection("companies").doc(companyId).collection("employees").get();
     const employees = snap.docs

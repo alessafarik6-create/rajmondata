@@ -43,7 +43,8 @@ export function useCompany() {
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, 'users', user.uid) : null),
-    [firestore, user],
+    /** `user` mění referenci při token refresh / getIdToken — jen uid je stabilní */
+    [firestore, user?.uid],
   );
   const {
     data: userProfile,

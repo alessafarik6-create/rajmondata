@@ -165,7 +165,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log("Saving terminal PIN for user", employeeId);
+    console.log("Saving PIN", employeeId);
     console.log(
       "Generated terminal PIN",
       process.env.NODE_ENV === "development" ? pinPlain : { length: pinPlain.length }
@@ -207,7 +207,7 @@ export async function POST(request: NextRequest) {
       manualPinSet: action === "set" ? true : undefined,
     });
   } catch (e) {
-    console.error("[terminal-pin admin]", e);
+    console.error("PIN save error", e);
     return NextResponse.json(
       { error: "Uložení PINu se nezdařilo." },
       { status: 500 }

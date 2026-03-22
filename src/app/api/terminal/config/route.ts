@@ -20,7 +20,7 @@ export async function GET() {
       return NextResponse.json(
         {
           error:
-            "Firma nebyla nalezena. Nastavte TERMINAL_COMPANY_ID nebo config/terminal (companyId).",
+            "Terminál není nakonfigurován. Vytvořte aktivní záznam v kolekci terminálOdkazy (aktivní = true, pole ID společnosti), případně nastavte TERMINAL_COMPANY_ID nebo config/terminal.",
         },
         { status: 503 }
       );

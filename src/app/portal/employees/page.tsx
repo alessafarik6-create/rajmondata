@@ -110,7 +110,10 @@ export default function EmployeesPage() {
   const { toast } = useToast();
   const router = useRouter();
 
-  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const userRef = useMemoFirebase(
+    () => (user ? doc(firestore, "users", user.uid) : null),
+    [firestore, user?.uid]
+  );
   const { data: profile } = useDoc(userRef);
 
   const companyId = profile?.companyId;
@@ -522,7 +525,7 @@ export default function EmployeesPage() {
       toast({
         title: "Terminál propojen",
         description:
-          "Firestore config/terminal nyní ukazuje na tuto firmu. Ověření PINu na /terminal bude odpovídat administraci.",
+          "Záznam terminálOdkazy (a config/terminal) nyní ukazuje na tuto firmu. Ověření PINu na /terminal bude odpovídat administraci.",
       });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : "Propojení terminálu se nezdařilo.";
@@ -556,19 +559,25 @@ export default function EmployeesPage() {
     }
     setTerminalPinManualSaving(true);
     try {
+      const pinNorm = normalizeTerminalPin(terminalPinManualValue);
+      console.log("Saving PIN", terminalPinManualEmp.id);
       const data = await postTerminalPinAdmin({
         employeeId: terminalPinManualEmp.id,
         action: "set",
-        pin: terminalPinManualValue,
+        pin: pinNorm,
       });
+      console.log("PIN saved successfully");
       toast({
         title: "PIN uložen",
         description:
           data.message ||
           "Zaměstnanec si při prvním použití nastaví vlastní PIN v profilu.",
       });
-      closeTerminalPinManual();
+      startTransition(() => {
+        closeTerminalPinManual();
+      });
     } catch (error: unknown) {
+      console.error("PIN save error", error);
       const msg =
         error instanceof Error ? error.message : "Uložení PINu se nezdařilo.";
       toast({ variant: "destructive", title: "Chyba", description: msg });
@@ -581,6 +590,7 @@ export default function EmployeesPage() {
     if (!terminalPinGenerateEmp?.id || !canManage) return;
     setTerminalPinGenerateSaving(true);
     try {
+      console.log("Saving PIN", terminalPinGenerateEmp.id);
       const data = await postTerminalPinAdmin({
         employeeId: terminalPinGenerateEmp.id,
         action: "generate",
@@ -590,6 +600,7 @@ export default function EmployeesPage() {
           ? normalizeTerminalPin(data.generatedPin)
           : null;
       setTerminalPinGeneratedDisplay(pin);
+      console.log("PIN saved successfully");
       toast({
         title: "PIN vygenerován",
         description: pin
@@ -597,6 +608,7 @@ export default function EmployeesPage() {
           : data.message || "PIN byl nastaven.",
       });
     } catch (error: unknown) {
+      console.error("PIN save error", error);
       const msg =
         error instanceof Error ? error.message : "Generování PINu se nezdařilo.";
       toast({ variant: "destructive", title: "Chyba", description: msg });
@@ -615,10 +627,12 @@ export default function EmployeesPage() {
     if (!terminalPinClearEmp?.id || !canManage) return;
     setTerminalPinClearSaving(true);
     try {
+      console.log("Saving PIN", terminalPinClearEmp.id);
       const data = await postTerminalPinAdmin({
         employeeId: terminalPinClearEmp.id,
         action: "clear",
       });
+      console.log("PIN saved successfully");
       toast({
         title: "PIN zrušen",
         description: data.message || "Docházkový PIN byl odstraněn.",
@@ -626,6 +640,7 @@ export default function EmployeesPage() {
       setTerminalPinClearOpen(false);
       setTerminalPinClearEmp(null);
     } catch (error: unknown) {
+      console.error("PIN save error", error);
       const msg =
         error instanceof Error ? error.message : "Zrušení PINu se nezdařilo.";
       toast({ variant: "destructive", title: "Chyba", description: msg });
@@ -919,8 +934,11 @@ export default function EmployeesPage() {
                 nebude shoda konfigurace.
               </p>
               <p className="text-xs opacity-90">
-                Proměnná prostředí <code className="rounded bg-black/5 px-1 dark:bg-white/10">TERMINAL_COMPANY_ID</code>{" "}
-                má přednost před Firestore — musí odpovídat této firmě, nebo ji vyjměte a použijte tlačítko níže.
+                Primárně se firma pro terminál bere z kolekce{" "}
+                <code className="rounded bg-black/5 px-1 dark:bg-white/10">terminálOdkazy</code> (aktivní + ID
+                společnosti). Proměnná{" "}
+                <code className="rounded bg-black/5 px-1 dark:bg-white/10">TERMINAL_COMPANY_ID</code> ji může přebít —
+                musí odpovídat této firmě, nebo ji vyjměte a použijte tlačítko níže.
               </p>
               <Button
                 type="button"

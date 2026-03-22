@@ -21,7 +21,6 @@ import {
   type User,
 } from 'firebase/auth';
 import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
-import { ensureUserFirestoreDocument } from '@/lib/ensure-user-firestore';
 import { useToast } from '@/hooks/use-toast';
 import { ORGANIZATIONS_COLLECTION, COMPANIES_COLLECTION, USERS_COLLECTION } from '@/lib/firestore-collections';
 import { DEFAULT_LICENSE } from '@/lib/license-modules';
@@ -342,15 +341,6 @@ export default function RegisterPage() {
       });
 
       await batch.commit();
-
-      try {
-        await ensureUserFirestoreDocument(user, db);
-      } catch (ensureErr) {
-        console.error(
-          "[register] ensureUserFirestoreDocument after batch failed (non-fatal)",
-          ensureErr
-        );
-      }
 
       createdUser = null;
 
