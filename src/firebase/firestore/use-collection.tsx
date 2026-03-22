@@ -110,6 +110,13 @@ export function useCollection<T = any>(
         }
         logFirestoreFailure(path, 'listen-query', error);
 
+        if (error.code === 'failed-precondition') {
+          setError(error);
+          setData(null);
+          setIsLoading(false);
+          return;
+        }
+
         const contextualError = new FirestorePermissionError({
           operation: 'list',
           path,

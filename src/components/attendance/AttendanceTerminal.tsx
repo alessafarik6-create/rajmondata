@@ -39,6 +39,7 @@ import {
   where,
   documentId,
   getDocs,
+  type FirestoreError,
 } from "firebase/firestore";
 import { addDocumentNonBlocking } from "@/firebase/non-blocking-updates";
 import { errorEmitter } from "@/firebase/error-emitter";
@@ -84,6 +85,18 @@ export type AttendanceTerminalProps = {
 type AttendanceType = "check_in" | "break_start" | "break_end" | "check_out";
 type TerminalMode = "personal" | "pin" | "qr";
 
+function attendanceTimestampMillis(ts: unknown): number {
+  if (
+    ts &&
+    typeof ts === "object" &&
+    "toDate" in ts &&
+    typeof (ts as { toDate?: () => Date }).toDate === "function"
+  ) {
+    return (ts as { toDate: () => Date }).toDate().getTime();
+  }
+  return 0;
+}
+
 export function AttendanceTerminal({
   standalone = false,
   companyIdOverride = null,
@@ -115,6 +128,9 @@ export function AttendanceTerminal({
   });
   const [isScanning, setIsScanning] = useState(false);
   const [isClient, setIsClient] = useState(false);
+  /** Chybí složený index — dotaz jen podle data + filtrování v klientovi. */
+  const [attendanceIndexFallback, setAttendanceIndexFallback] =
+    useState(false);
 
   const scannerRef = useRef<any>(null);
 
@@ -232,6 +248,9 @@ export function AttendanceTerminal({
       const ids = [...new Set([profileEmployeeId, user.uid].filter(Boolean))] as string[];
       if (ids.length === 0) return null;
       const base = collection(firestore, "companies", effectiveCompanyId, "attendance");
+      if (attendanceIndexFallback) {
+        return query(base, where("date", "==", today));
+      }
       if (ids.length === 1) {
         return query(
           base,
@@ -256,7 +275,14 @@ export function AttendanceTerminal({
       );
       return null;
     }
-  }, [firestore, effectiveCompanyId, user, terminalMode, profileEmployeeId]);
+  }, [
+    firestore,
+    effectiveCompanyId,
+    user,
+    terminalMode,
+    profileEmployeeId,
+    attendanceIndexFallback,
+  ]);
 
   const {
     data: todayAttendanceRaw,
@@ -264,10 +290,47 @@ export function AttendanceTerminal({
     error: attendanceError,
   } = useCollection(personalAttendanceQuery);
 
-  const todayAttendance = useMemo(
-    () => (Array.isArray(todayAttendanceRaw) ? todayAttendanceRaw : []),
-    [todayAttendanceRaw]
-  );
+  useEffect(() => {
+    setAttendanceIndexFallback(false);
+  }, [effectiveCompanyId, user?.uid, terminalMode, profileEmployeeId]);
+
+  useEffect(() => {
+    if (
+      attendanceError &&
+      "code" in attendanceError &&
+      (attendanceError as FirestoreError).code === "failed-precondition"
+    ) {
+      setAttendanceIndexFallback(true);
+    }
+  }, [attendanceError]);
+
+  const attendanceErrorBlocksUi = useMemo(() => {
+    if (!attendanceError) return false;
+    if (
+      "code" in attendanceError &&
+      (attendanceError as FirestoreError).code === "failed-precondition"
+    ) {
+      return false;
+    }
+    return true;
+  }, [attendanceError]);
+
+  const todayAttendance = useMemo(() => {
+    const raw = Array.isArray(todayAttendanceRaw) ? todayAttendanceRaw : [];
+    if (!attendanceIndexFallback) return raw;
+    const ids = new Set(
+      [profileEmployeeId, user?.uid].filter(Boolean) as string[]
+    );
+    return [...raw]
+      .filter((d: { employeeId?: string }) => d && ids.has(d.employeeId ?? ""))
+      .sort(
+        (a, b) =>
+          attendanceTimestampMillis(
+            (b as { timestamp?: unknown }).timestamp
+          ) -
+          attendanceTimestampMillis((a as { timestamp?: unknown }).timestamp)
+      );
+  }, [todayAttendanceRaw, attendanceIndexFallback, profileEmployeeId, user?.uid]);
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !effectiveCompanyId || terminalMode === "personal") return null;
@@ -332,7 +395,11 @@ export function AttendanceTerminal({
         }
         if (!cancelled) setTerminalJobOptions(out);
       } catch (e) {
-        console.error("[AttendanceTerminal] terminal jobs load", e);
+        logFirestoreFailure(
+          `companies/${effectiveCompanyId}/jobs`,
+          "getDocs",
+          e
+        );
         if (!cancelled) setTerminalJobOptions([]);
       } finally {
         if (!cancelled) setTerminalJobsLoading(false);
@@ -407,7 +474,7 @@ export function AttendanceTerminal({
     try {
       if (
         terminalMode === "personal" &&
-        !attendanceError &&
+        !attendanceErrorBlocksUi &&
         todayAttendance.length > 0
       ) {
         updateAttendanceStatus(todayAttendance);
@@ -418,7 +485,7 @@ export function AttendanceTerminal({
   }, [
     todayAttendance,
     terminalMode,
-    attendanceError,
+    attendanceErrorBlocksUi,
     updateAttendanceStatus,
   ]);
 
@@ -1042,13 +1109,27 @@ export function AttendanceTerminal({
         </Alert>
       )}
 
-      {terminalMode === "personal" && attendanceError && (
+      {terminalMode === "personal" && attendanceErrorBlocksUi && (
         <Alert variant="destructive" className="mb-4">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Dnešní docházku nelze načíst</AlertTitle>
           <AlertDescription>
             Oprávnění k záznamům docházky jsou omezená. Příchod a odchod stále
             můžete zapisovat.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {terminalMode === "personal" && attendanceIndexFallback && !attendanceError && (
+        <Alert className="mb-4 border-amber-500/40 bg-amber-500/5">
+          <AlertCircle className="h-4 w-4 text-amber-600" />
+          <AlertTitle>Režim kompatibility</AlertTitle>
+          <AlertDescription>
+            Chybí složený index Firestore pro dotaz na docházku. Záznamy se
+            načítají podle data a filtrují v prohlížeči. Pro plný výkon nasaďte
+            index (viz{" "}
+            <code className="text-xs font-mono">firestore.indexes.json</code>
+            ).
           </AlertDescription>
         </Alert>
       )}
