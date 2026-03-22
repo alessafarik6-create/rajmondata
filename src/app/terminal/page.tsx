@@ -8,19 +8,26 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from "react";
-import { useFirebase } from "@/firebase";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { AttendanceTerminal } from "@/components/attendance/AttendanceTerminal";
+import { PublicTerminalApp } from "@/components/terminal/PublicTerminalApp";
 
 const BOOTSTRAP_TIMEOUT_MS = 8000;
 
-if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
-  console.log(
-    "[terminal] Auto auth creation disabled — no signInWithCustomToken / no kiosk Firebase user"
-  );
-  console.log("[terminal] Terminal uses PIN session only (JWT), not Firebase Auth session");
+/**
+ * `/terminal` – žádný Firebase Auth na klientovi (žádný useFirebase / useUser).
+ * Konfigurace firmy jen přes GET /api/terminal/config (Admin SDK na serveru).
+ */
+function TerminalBootstrapLog() {
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development") {
+      console.log("[terminal] Terminal auth creation disabled");
+      console.log("[terminal] Terminal uses PIN session only");
+      console.log("[terminal] No Firebase auth user is created on /terminal");
+    }
+  }, []);
+  return null;
 }
 
 type BoundaryProps = { children: ReactNode };
@@ -95,8 +102,6 @@ function TerminalFallback() {
 }
 
 function StandaloneTerminalInner() {
-  const { areServicesAvailable, firebaseConfigError } = useFirebase();
-
   const [phase, setPhase] = useState<"init" | "loading" | "ready" | "error">("init");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
@@ -111,16 +116,6 @@ function StandaloneTerminalInner() {
   }, [phase, retryKey]);
 
   useEffect(() => {
-    if (firebaseConfigError) {
-      setErrorMsg(firebaseConfigError);
-      setPhase("error");
-      return;
-    }
-    if (!areServicesAvailable) {
-      setPhase("init");
-      return;
-    }
-
     let cancelled = false;
     setPhase("loading");
     setErrorMsg(null);
@@ -168,18 +163,7 @@ function StandaloneTerminalInner() {
     return () => {
       cancelled = true;
     };
-  }, [areServicesAvailable, firebaseConfigError, retryKey]);
-
-  if (firebaseConfigError && phase !== "ready") {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center p-6">
-        <Alert variant="destructive" className="max-w-md w-full">
-          <AlertTitle>Chyba konfigurace</AlertTitle>
-          <AlertDescription>{firebaseConfigError}</AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
+  }, [retryKey]);
 
   if (phase === "error") {
     return (
@@ -202,17 +186,6 @@ function StandaloneTerminalInner() {
         >
           Zkusit znovu
         </Button>
-      </div>
-    );
-  }
-
-  if (!areServicesAvailable) {
-    return (
-      <div className="flex flex-1 grid place-items-center bg-background p-6">
-        <div className="flex flex-col items-center gap-4 text-muted-foreground max-w-sm text-center">
-          <Loader2 className="w-14 h-14 animate-spin text-primary" />
-          <p className="text-lg font-medium">Připojování…</p>
-        </div>
       </div>
     );
   }
@@ -246,16 +219,10 @@ function StandaloneTerminalInner() {
   if (phase === "ready" && companyId) {
     return (
       <div className="flex flex-1 flex-col min-h-0 w-full overflow-hidden">
+        <TerminalBootstrapLog />
         <AttendanceTerminalErrorBoundary>
           <Suspense fallback={<TerminalFallback />}>
-            <AttendanceTerminal
-              standalone
-              pinSessionOnly
-              hidePortalLinks
-              companyIdOverride={companyId}
-              serverCompanyName={companyName}
-              publicPinOnly
-            />
+            <PublicTerminalApp companyId={companyId} companyName={companyName} />
           </Suspense>
         </AttendanceTerminalErrorBoundary>
       </div>
