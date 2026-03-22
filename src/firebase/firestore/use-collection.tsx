@@ -11,6 +11,7 @@ import {
 } from 'firebase/firestore';
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
+import { logFirestoreFailure } from '@/lib/firestore-log';
 import { isMemoFirebaseTarget } from '@/firebase/memo-firebase-registry';
 
 /** Utility type to add an 'id' field to a given type T. */
@@ -98,11 +99,16 @@ export function useCollection<T = any>(
         }
       },
       (error: FirestoreError) => {
-        // This logic extracts the path from either a ref or a query
-        const path: string =
-          memoizedTargetRefOrQuery.type === 'collection'
-            ? (memoizedTargetRefOrQuery as CollectionReference).path
-            : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query.path.canonicalString()
+        let path = '(unknown-query)';
+        try {
+          path =
+            memoizedTargetRefOrQuery.type === 'collection'
+              ? (memoizedTargetRefOrQuery as CollectionReference).path
+              : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query.path.canonicalString();
+        } catch {
+          path = '(query-path-unavailable)';
+        }
+        logFirestoreFailure(path, 'listen-query', error);
 
         const contextualError = new FirestorePermissionError({
           operation: 'list',

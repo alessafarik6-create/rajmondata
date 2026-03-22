@@ -47,6 +47,7 @@ import { useToast } from "@/hooks/use-toast";
 import { signOut } from "firebase/auth";
 import { useRouter } from "next/navigation";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
+import { logFirestoreFailure } from "@/lib/firestore-log";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -198,7 +199,10 @@ export function AttendanceTerminal({
         : null,
     [firestore, effectiveCompanyId, profileEmployeeId]
   );
-  const { data: employeeDocSelf } = useDoc(employeeSelfRef);
+  const {
+    data: employeeDocSelf,
+    error: employeeSelfError,
+  } = useDoc(employeeSelfRef);
 
   const [terminalJobOptions, setTerminalJobOptions] = useState<
     { id: string; name: string }[]
@@ -213,7 +217,7 @@ export function AttendanceTerminal({
         : null,
     [firestore, effectiveCompanyId]
   );
-  const { data: companyDoc } = useDoc(companyDocRef);
+  const { data: companyDoc, error: companyDocError } = useDoc(companyDocRef);
   const displayCompanyName =
     (companyDoc as { companyName?: string; name?: string } | null)?.companyName ||
     (companyDoc as { name?: string } | null)?.name ||
@@ -243,7 +247,13 @@ export function AttendanceTerminal({
         orderBy("timestamp", "desc")
       );
     } catch (e) {
-      console.error("[AttendanceTerminal] personalAttendanceQuery build failed:", e);
+      logFirestoreFailure(
+        effectiveCompanyId
+          ? `companies/${effectiveCompanyId}/attendance`
+          : "(unknown)",
+        "listen-query",
+        e
+      );
       return null;
     }
   }, [firestore, effectiveCompanyId, user, terminalMode, profileEmployeeId]);
@@ -264,7 +274,13 @@ export function AttendanceTerminal({
     try {
       return collection(firestore, "companies", effectiveCompanyId, "employees");
     } catch (e) {
-      console.error("[AttendanceTerminal] employeesQuery build failed:", e);
+      logFirestoreFailure(
+        effectiveCompanyId
+          ? `companies/${effectiveCompanyId}/employees`
+          : "(unknown)",
+        "listen-query",
+        e
+      );
       return null;
     }
   }, [firestore, effectiveCompanyId, terminalMode]);
@@ -334,42 +350,9 @@ export function AttendanceTerminal({
   ]);
 
   useEffect(() => {
-    if (profileError) {
-      console.error(
-        "[AttendanceTerminal] Firestore profile error:",
-        profileError.message,
-        profileError
-      );
-    }
-  }, [profileError]);
-  useEffect(() => {
-    if (attendanceError) {
-      console.error(
-        "[AttendanceTerminal] Firestore attendance error:",
-        attendanceError.message,
-        attendanceError
-      );
-    }
-  }, [attendanceError]);
-  useEffect(() => {
-    if (employeesError) {
-      console.error(
-        "[AttendanceTerminal] Firestore employees error:",
-        employeesError.message,
-        employeesError
-      );
-    }
-  }, [employeesError]);
-
-  useEffect(() => {
     const handler = (err: FirestorePermissionError) => {
       const path = err.request?.path ?? "";
       if (path.includes("attendance")) {
-        console.error(
-          "[AttendanceTerminal] Firestore write error:",
-          err.message,
-          err
-        );
         toast({
           variant: "destructive",
           title: "Záznam se nepodařilo uložit. Zkontrolujte oprávnění.",
@@ -875,6 +858,50 @@ export function AttendanceTerminal({
     );
   }
 
+  if (effectiveCompanyId && companyDocError) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 shrink-0 bg-primary rounded-lg flex items-center justify-center">
+            <Smartphone className="text-white w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-bold truncate">
+            {displayCompanyName || `${PLATFORM_NAME} · terminál`}
+          </h1>
+        </div>
+        <Alert variant="destructive" className="mb-6">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Firmu se nepodařilo načíst</AlertTitle>
+          <AlertDescription>
+            Nemáme přístup k údajům firmy (např. oprávnění Firestore na cestě{" "}
+            <span className="font-mono text-xs break-all">
+              companies/{effectiveCompanyId}
+            </span>
+            ). Zkuste to znovu později nebo kontaktujte administrátora.
+          </AlertDescription>
+        </Alert>
+        <div className="flex flex-col gap-3 mt-auto">
+          <Button
+            variant="outline"
+            onClick={() => signOut(auth)}
+            className="gap-2 min-h-[44px]"
+          >
+            <LogOut className="w-4 h-4" /> Odhlásit se
+          </Button>
+          {!standalone && (
+            <Button
+              variant="link"
+              onClick={() => router.push("/portal/dashboard")}
+              className="text-muted-foreground"
+            >
+              Zpět do portálu <ChevronRight className="w-3 h-3 ml-1" />
+            </Button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if ((!profile || !effectiveCompanyId) && !isKioskSession) {
     return (
       <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
@@ -1003,6 +1030,17 @@ export function AttendanceTerminal({
           </p>
         </CardContent>
       </Card>
+
+      {profileEmployeeId && employeeSelfError && (
+        <Alert variant="destructive" className="mb-4">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Záznam zaměstnance nelze načíst</AlertTitle>
+          <AlertDescription>
+            Oprávnění k dokumentu zaměstnance jsou omezená. Docházku můžete
+            zapisovat, pokud máte přístup k kolekci docházky.
+          </AlertDescription>
+        </Alert>
+      )}
 
       {terminalMode === "personal" && attendanceError && (
         <Alert variant="destructive" className="mb-4">
