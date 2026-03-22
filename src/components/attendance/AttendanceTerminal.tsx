@@ -73,10 +73,13 @@ import {
 export type AttendanceTerminalProps = {
   /** Veřejný tablet — bez portálové navigace, výchozí režim PIN. */
   standalone?: boolean;
-  /** Např. z ?company= nebo /companies/[companyId]/terminal — musí odpovídat účtu. */
+  /**
+   * Pouze mimo portál: `/terminal-access/[token]`, `/terminal/[token]` (kiosk účet).
+   * Portál používá výhradně `users/{uid}.companyId` — nepředávejte override.
+   */
   companyIdOverride?: string | null;
   /**
-   * Legacy: relace z `/api/terminal/session` (custom token kiosk).
+   * Kiosk relace z API (custom token); v portálu vždy false.
    */
   kioskTokenSession?: boolean;
   /**
@@ -1231,11 +1234,12 @@ export function AttendanceTerminal({
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Firma nebyla nalezena</AlertTitle>
           <AlertDescription>
-            Parametr v adresním řádku odkazuje na neexistující nebo neplatnou
-            organizaci (
-            <span className="font-mono text-xs break-all">{effectiveCompanyId}</span>
-            ). Zkontrolujte odkaz nebo otevřete terminál bez{" "}
-            <span className="font-mono">?company=</span>.
+            Dokument firmy{" "}
+            <span className="font-mono text-xs break-all">companies/{effectiveCompanyId}</span> ve
+            Firestore neexistuje nebo k němu nemáte přístup.
+            {!hidePortalLinks ? (
+              <span className="block mt-2">Zkontrolujte odkaz nebo otevřete terminál z portálu.</span>
+            ) : null}
           </AlertDescription>
         </Alert>
         <Button

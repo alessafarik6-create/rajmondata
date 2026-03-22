@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { doc, type Timestamp } from 'firebase/firestore';
 import { useUser, useFirestore, useMemoFirebase, useDoc } from '@/firebase';
 import { COMPANIES_COLLECTION } from '@/lib/firestore-collections';
@@ -36,6 +36,7 @@ export type CompanyProfile = {
   address?: string;
 };
 
+/** Jednotný výstup: companyId pouze z `users/{uid}.companyId` (žádné URL). */
 export function useCompany() {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -45,12 +46,18 @@ export function useCompany() {
     [firestore, user],
   );
   const {
-    data: profile,
+    data: userProfile,
     isLoading: profileLoading,
     error: profileError,
   } = useDoc<any>(userRef);
 
-  const companyId = profile?.companyId as string | undefined;
+  const companyId = useMemo(() => {
+    const raw = userProfile?.companyId;
+    if (typeof raw === 'string' && raw.trim().length > 0) {
+      return raw.trim();
+    }
+    return undefined;
+  }, [userProfile?.companyId]);
 
   const companyRef = useMemoFirebase(
     () =>
@@ -66,7 +73,7 @@ export function useCompany() {
     error: companyError,
   } = useDoc<CompanyProfile>(companyRef);
 
-  /** Profil i dokument firmy — bez „falešně hotovo“ jen kvůli chybějícímu companyId. */
+  /** Profil uživatele + dokument firmy — dokud běží kterýkoli dotaz. */
   const isLoading =
     profileLoading || (Boolean(companyId) && companyLoading);
 
@@ -86,15 +93,30 @@ export function useCompany() {
     (company as any)?.name ||
     'Organization';
 
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return;
+    try {
+      console.log('USER:', user);
+      console.log('COMPANY ID (from users/{uid}.companyId):', companyId);
+    } catch {
+      /* ignore logging failures */
+    }
+  }, [user, companyId]);
+
   return {
+    /** Dokument `users/{uid}` */
+    userProfile,
+    /** Firestore `companies/{user.companyId}` */
     company,
     companyName,
+    /** Vždy z `userProfile.companyId` (trim), jinak undefined */
     companyId,
     isLoading,
+    profileLoading,
+    companyLoading,
     error,
     companyDocMissing,
     profileError,
     companyError,
   };
 }
-

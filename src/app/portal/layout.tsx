@@ -1,12 +1,11 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from "@/firebase";
+import { useUser, useFirestore, useCompany } from "@/firebase";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
-import { doc } from "firebase/firestore";
 import { ensureUserFirestoreDocument } from "@/lib/ensure-user-firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -44,26 +43,15 @@ export default function PortalLayout({
     return () => window.cancelAnimationFrame(id);
   }, [pathname]);
 
-  const userRef = useMemoFirebase(
-    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
-    [firestore, user]
-  );
   const {
-    data: profile,
-    isLoading: isProfileLoading,
-    error: profileError,
-  } = useDoc(userRef);
-
-  const {
+    userProfile: profile,
+    profileLoading: isProfileLoading,
+    profileError,
+    companyId,
     isLoading: companyBootstrapLoading,
     companyDocMissing,
-    error: companyHookError,
+    companyError: companyHookError,
   } = useCompany();
-
-  const profileCompanyId =
-    typeof (profile as { companyId?: unknown } | null)?.companyId === "string"
-      ? String((profile as { companyId: string }).companyId).trim()
-      : "";
 
   const isPortalEmployeeOnly =
     profile?.role === "employee" &&
@@ -342,15 +330,15 @@ export default function PortalLayout({
     );
   }
 
-  if (!profileCompanyId) {
+  if (!companyId) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
         <Alert variant="destructive" className="max-w-xl border-destructive/60">
           <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Chybí organizace</AlertTitle>
+          <AlertTitle>Uživatel nemá přiřazenou firmu</AlertTitle>
           <AlertDescription>
-            V profilu není nastavené propojení s firmou (<code className="text-xs">companyId</code>).
-            Kontaktujte administrátora nebo se odhlaste a přihlaste znovu.
+            V profilu chybí platné <code className="text-xs">companyId</code>. Kontaktujte administrátora nebo se
+            odhlaste a přihlaste znovu.
           </AlertDescription>
         </Alert>
       </div>
@@ -373,7 +361,7 @@ export default function PortalLayout({
           <AlertDescription>
             V databázi chybí dokument firmy pro{" "}
             <code className="text-xs rounded bg-background/80 px-1 py-0.5">
-              companies/{profileCompanyId}
+              companies/{companyId}
             </code>
             . Účet odkazuje na neexistující organizaci. Kontaktujte administrátora nebo podporu.
           </AlertDescription>
