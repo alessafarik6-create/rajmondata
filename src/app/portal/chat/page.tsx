@@ -10,7 +10,11 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
  * Chat administrace ↔ zaměstnanci (Firestore: companies/{companyId}/chat).
  */
 export default function PortalChatPage() {
-  const { companyId, isLoading: companyLoading } = useCompany();
+  const {
+    companyId,
+    isLoading: companyLoading,
+    companyDocMissing,
+  } = useCompany();
 
   if (companyLoading) {
     return (
@@ -18,6 +22,17 @@ export default function PortalChatPage() {
         <Loader2 className="h-8 w-8 animate-spin" />
         <span>Načítání…</span>
       </div>
+    );
+  }
+
+  if (companyDocMissing) {
+    return (
+      <Alert variant="destructive" className="max-w-lg border-destructive/60">
+        <AlertTitle>Firma neexistuje</AlertTitle>
+        <AlertDescription>
+          Dokument organizace ve Firestore chybí. Kontaktujte administrátora nebo podporu.
+        </AlertDescription>
+      </Alert>
     );
   }
 

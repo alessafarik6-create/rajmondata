@@ -108,6 +108,19 @@ export default function BillingPage() {
     );
   }
 
+  if (!company) {
+    return (
+      <Alert variant="destructive" className="max-w-xl border-destructive/60">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Firma neexistuje</AlertTitle>
+        <AlertDescription>
+          Dokument firmy ve Firestore chybí nebo k němu nemáte přístup. Zkuste obnovit stránku; pokud problém
+          přetrvává, kontaktujte administrátora.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   const billing = company?.billing as
     | {
         paymentStatus?: string;

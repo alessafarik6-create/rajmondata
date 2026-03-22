@@ -44,7 +44,11 @@ export function useCompany() {
     () => (user && firestore ? doc(firestore, 'users', user.uid) : null),
     [firestore, user],
   );
-  const { data: profile } = useDoc<any>(userRef);
+  const {
+    data: profile,
+    isLoading: profileLoading,
+    error: profileError,
+  } = useDoc<any>(userRef);
 
   const companyId = profile?.companyId as string | undefined;
 
@@ -56,7 +60,25 @@ export function useCompany() {
     [firestore, companyId],
   );
 
-  const { data: company, isLoading, error } = useDoc<CompanyProfile>(companyRef);
+  const {
+    data: company,
+    isLoading: companyLoading,
+    error: companyError,
+  } = useDoc<CompanyProfile>(companyRef);
+
+  /** Profil i dokument firmy — bez „falešně hotovo“ jen kvůli chybějícímu companyId. */
+  const isLoading =
+    profileLoading || (Boolean(companyId) && companyLoading);
+
+  const companyDocMissing =
+    Boolean(companyId) &&
+    !profileLoading &&
+    !companyLoading &&
+    !profileError &&
+    !companyError &&
+    company == null;
+
+  const error = profileError ?? companyError;
 
   const companyName =
     company?.companyName ||
@@ -70,6 +92,9 @@ export function useCompany() {
     companyId,
     isLoading,
     error,
+    companyDocMissing,
+    profileError,
+    companyError,
   };
 }
 

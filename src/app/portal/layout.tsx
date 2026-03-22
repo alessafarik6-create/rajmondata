@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from "@/firebase";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
@@ -53,6 +53,17 @@ export default function PortalLayout({
     isLoading: isProfileLoading,
     error: profileError,
   } = useDoc(userRef);
+
+  const {
+    isLoading: companyBootstrapLoading,
+    companyDocMissing,
+    error: companyHookError,
+  } = useCompany();
+
+  const profileCompanyId =
+    typeof (profile as { companyId?: unknown } | null)?.companyId === "string"
+      ? String((profile as { companyId: string }).companyId).trim()
+      : "";
 
   const isPortalEmployeeOnly =
     profile?.role === "employee" &&
@@ -324,6 +335,63 @@ export default function PortalLayout({
             . Účet je v přihlášení, ale záznam ve Firestore nebyl vytvořen (např. nedokončená registrace).
             <span className="block mt-3 text-sm">
               Odhlaste se a přihlaste znovu, nebo kontaktujte administrátora.
+            </span>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (!profileCompanyId) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Alert variant="destructive" className="max-w-xl border-destructive/60">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Chybí organizace</AlertTitle>
+          <AlertDescription>
+            V profilu není nastavené propojení s firmou (<code className="text-xs">companyId</code>).
+            Kontaktujte administrátora nebo se odhlaste a přihlaste znovu.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (companyBootstrapLoading) {
+    if (shellTimedOut) {
+      return shellTimeoutUi;
+    }
+    return spinner("Načítání firmy…");
+  }
+
+  if (companyDocMissing) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Alert variant="destructive" className="max-w-xl border-destructive/60">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Firma neexistuje</AlertTitle>
+          <AlertDescription>
+            V databázi chybí dokument firmy pro{" "}
+            <code className="text-xs rounded bg-background/80 px-1 py-0.5">
+              companies/{profileCompanyId}
+            </code>
+            . Účet odkazuje na neexistující organizaci. Kontaktujte administrátora nebo podporu.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (companyHookError) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Alert variant="destructive" className="max-w-xl border-destructive/60">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Firmu nelze načíst</AlertTitle>
+          <AlertDescription>
+            {companyHookError.message}
+            <span className="block mt-2 text-xs opacity-90">
+              Zkontrolujte pravidla Firestore a oprávnění účtu.
             </span>
           </AlertDescription>
         </Alert>

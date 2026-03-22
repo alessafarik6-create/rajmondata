@@ -52,6 +52,8 @@ export async function ensureUserFirestoreDocument(
       patch.updatedAt = serverTimestamp();
       await setDoc(userRef, patch, { merge: true });
     }
+    /** Doplní `companies/{companyId}` pokud v profilu je companyId, nebo firmu + vazbu pokud chybí. */
+    await ensureUserProfile(user, firestore);
     return;
   }
 

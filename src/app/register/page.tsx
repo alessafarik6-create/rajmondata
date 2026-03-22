@@ -313,9 +313,9 @@ export default function RegisterPage() {
 
       const batch = writeBatch(db);
 
-      // 4. Stejný dokument pro superadmin (společnosti) a portál (companies) — bez kopírování z jiných firem.
-      batch.set(doc(db, ORGANIZATIONS_COLLECTION, companyId), companyPayload);
-      batch.set(doc(db, COMPANIES_COLLECTION, companyId), companyPayload);
+      // 4. Stejný dokument pro superadmin (společnosti) a portál (companies) — id = companyId, merge pro idempotenci.
+      batch.set(doc(db, ORGANIZATIONS_COLLECTION, companyId), companyPayload, { merge: true });
+      batch.set(doc(db, COMPANIES_COLLECTION, companyId), companyPayload, { merge: true });
 
       // 5. Uživatel (owner) vázaný na firmu
       batch.set(

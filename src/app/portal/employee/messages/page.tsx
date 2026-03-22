@@ -17,7 +17,11 @@ import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 export default function EmployeeMessagesPage() {
   const { user } = useUser();
   const firestore = useFirestore();
-  const { companyId, isLoading: companyLoading } = useCompany();
+  const {
+    companyId,
+    isLoading: companyLoading,
+    companyDocMissing,
+  } = useCompany();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -32,6 +36,17 @@ export default function EmployeeMessagesPage() {
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <span className="text-sm">{t("loadingProfile")}</span>
       </div>
+    );
+  }
+
+  if (companyDocMissing) {
+    return (
+      <Alert variant="destructive" className="max-w-lg border-destructive/60">
+        <AlertTitle>Firma neexistuje</AlertTitle>
+        <AlertDescription>
+          Dokument organizace ve Firestore chybí. Kontaktujte administrátora nebo podporu.
+        </AlertDescription>
+      </Alert>
     );
   }
 

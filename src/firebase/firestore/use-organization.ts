@@ -11,7 +11,14 @@ export type Organization = {
 };
 
 export function useOrganization() {
-  const { company, companyName, companyId, isLoading, error } = useCompany();
+  const {
+    company,
+    companyName,
+    companyId,
+    isLoading,
+    error,
+    companyDocMissing,
+  } = useCompany();
 
   return {
     organization: (company as CompanyProfile | null) ?? null,
@@ -19,6 +26,7 @@ export function useOrganization() {
     organizationId: companyId,
     isLoading,
     error,
+    companyDocMissing,
   };
 }
 
