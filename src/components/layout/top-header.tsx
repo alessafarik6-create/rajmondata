@@ -107,12 +107,9 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             <span className="truncate">{companyName}</span>
           </div>
         )}
-        <div className="relative w-full max-w-md hidden sm:block">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-          <Input 
-            placeholder="Hledat..." 
-            className="pl-10 bg-white border-slate-200 text-slate-900 placeholder:text-slate-500 focus-visible:ring-primary h-9 min-h-10"
-          />
+        <div className="relative hidden min-w-0 w-full max-w-md sm:block">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+          <Input placeholder="Hledat..." className="pl-10" />
         </div>
       </div>
 

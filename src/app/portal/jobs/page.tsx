@@ -66,9 +66,7 @@ import type { JobTemplate, JobTemplateValues } from "@/lib/job-templates";
 import { JobTemplateFormFields } from "@/components/jobs/job-template-form-fields";
 import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-contract-templates-manager-dialog";
 import { userCanManageMeasurements } from "@/lib/measurements";
-
-const nativeSelectClass =
-  "flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-50 min-h-[44px] sm:min-h-10";
+import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
@@ -505,7 +503,7 @@ function JobsPageContent() {
                         </Label>
                         <select
                           id="new-job-template"
-                          className={nativeSelectClass}
+                          className={NATIVE_SELECT_CLASS}
                           value={selectedTemplateId || "none"}
                           onChange={(e) => {
                             const v = e.target.value;
@@ -556,7 +554,7 @@ function JobsPageContent() {
                         <Label htmlFor="new-job-customer">Zákazník</Label>
                         <select
                           id="new-job-customer"
-                          className={nativeSelectClass}
+                          className={NATIVE_SELECT_CLASS}
                           value={newJob.customerId}
                           onChange={(e) =>
                             setNewJob({ ...newJob, customerId: e.target.value })

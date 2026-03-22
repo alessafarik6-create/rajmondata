@@ -51,9 +51,9 @@
   }
 }
 
-/* Portal content area: light, high-contrast SaaS dashboard */
-[data-portal-content] {
-  /* Light theme variables so buttons/inputs get readable contrast */
+/* Portal + globální administrace: světlý kontrastní dashboard */
+[data-portal-content],
+[data-admin-content] {
   --background: 0 0% 98%;
   --foreground: 222 47% 11%;
   --card: 0 0% 100%;
@@ -67,7 +67,6 @@
   --border: 214 32% 91%;
   --input: 214 32% 91%;
   --ring: 24 94% 53%;
-  /* Primary/destructive keep white text */
   --primary: 24 94% 53%;
   --primary-foreground: 0 0% 100%;
   --destructive: 0 84.2% 60.2%;
@@ -76,29 +75,33 @@
   --secondary-foreground: 0 0% 100%;
 
   --portal-card: 0 0% 100%;
-  --portal-card-border: 226 232 240; /* slate-200 */
-  --portal-text: 15 23 42;          /* slate-900 */
-  --portal-text-muted: 71 85 105;  /* slate-600 */
-  --portal-text-subtle: 100 116 139; /* slate-500 */
+  --portal-card-border: 226 232 240;
+  --portal-text: 15 23 42;
+  --portal-text-muted: 71 85 105;
+  --portal-text-subtle: 100 116 139;
 }
 
-[data-portal-content] [data-slot="card"] {
+[data-portal-content] [data-slot="card"],
+[data-admin-content] [data-slot="card"] {
   background-color: hsl(var(--portal-card));
   border-color: rgb(var(--portal-card-border));
   color: rgb(var(--portal-text));
   box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
 }
 
-[data-portal-content] [data-slot="card"] [data-slot="card-title"] {
+[data-portal-content] [data-slot="card"] [data-slot="card-title"],
+[data-admin-content] [data-slot="card"] [data-slot="card-title"] {
   color: rgb(var(--portal-text));
   font-weight: 600;
 }
 
-[data-portal-content] [data-slot="card"] [data-slot="card-description"] {
+[data-portal-content] [data-slot="card"] [data-slot="card-description"],
+[data-admin-content] [data-slot="card"] [data-slot="card-description"] {
   color: rgb(var(--portal-text-muted));
 }
 
-[data-portal-content] .portal-page-title {
+[data-portal-content] .portal-page-title,
+[data-admin-content] .portal-page-title {
   font-size: 1.875rem;
   font-weight: 700;
   color: rgb(var(--portal-text));
@@ -106,27 +109,31 @@
   line-height: 1.2;
 }
 
-[data-portal-content] .portal-page-description {
+[data-portal-content] .portal-page-description,
+[data-admin-content] .portal-page-description {
   color: rgb(var(--portal-text-muted));
   font-size: 0.9375rem;
   margin-top: 0.5rem;
 }
 
-[data-portal-content] .portal-kpi-value {
+[data-portal-content] .portal-kpi-value,
+[data-admin-content] .portal-kpi-value {
   font-size: 1.5rem;
   font-weight: 700;
   color: rgb(var(--portal-text));
   font-variant-numeric: tabular-nums;
 }
 
-[data-portal-content] .portal-kpi-label {
+[data-portal-content] .portal-kpi-label,
+[data-admin-content] .portal-kpi-label {
   font-size: 0.75rem;
   font-weight: 500;
   color: rgb(var(--portal-text-muted));
   margin-top: 0.25rem;
 }
 
-[data-portal-content] .portal-section-label {
+[data-portal-content] .portal-section-label,
+[data-admin-content] .portal-section-label {
   font-size: 0.875rem;
   font-weight: 500;
   color: rgb(var(--portal-text-muted));
@@ -134,61 +141,74 @@
 
 [data-portal-content] input,
 [data-portal-content] textarea,
-[data-portal-content] select {
+[data-portal-content] select,
+[data-admin-content] input,
+[data-admin-content] textarea,
+[data-admin-content] select {
   background-color: white;
   border-color: rgb(var(--portal-card-border));
   color: rgb(var(--portal-text));
 }
 
 [data-portal-content] input::placeholder,
-[data-portal-content] textarea::placeholder {
+[data-portal-content] textarea::placeholder,
+[data-admin-content] input::placeholder,
+[data-admin-content] textarea::placeholder {
   color: rgb(var(--portal-text-subtle));
 }
 
 [data-portal-content] input:focus,
 [data-portal-content] textarea:focus,
-[data-portal-content] select:focus {
+[data-portal-content] select:focus,
+[data-admin-content] input:focus,
+[data-admin-content] textarea:focus,
+[data-admin-content] select:focus {
   outline: none;
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+  border-color: rgb(34 197 94);
+  box-shadow: 0 0 0 2px rgb(34 197 94 / 0.25);
 }
 
 [data-portal-content] input:disabled,
 [data-portal-content] textarea:disabled,
-[data-portal-content] select:disabled {
+[data-portal-content] select:disabled,
+[data-admin-content] input:disabled,
+[data-admin-content] textarea:disabled,
+[data-admin-content] select:disabled {
   background-color: hsl(var(--muted));
   color: hsl(var(--muted-foreground));
   opacity: 1;
 }
 
-[data-portal-content] label {
+[data-portal-content] label,
+[data-admin-content] label {
   color: rgb(var(--portal-text));
 }
 
-[data-portal-content] [data-slot="card"] label {
+[data-portal-content] [data-slot="card"] label,
+[data-admin-content] [data-slot="card"] label {
   color: rgb(var(--portal-text-muted));
 }
 
-[data-portal-content] [data-slot="table-wrapper"] {
+[data-portal-content] [data-slot="table-wrapper"],
+[data-admin-content] [data-slot="table-wrapper"] {
   border-color: rgb(var(--portal-card-border));
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
-[data-portal-content] [data-slot="table-wrapper"] th {
+[data-portal-content] [data-slot="table-wrapper"] th,
+[data-admin-content] [data-slot="table-wrapper"] th {
   color: rgb(var(--portal-text-muted));
   font-weight: 500;
   font-size: 0.875rem;
 }
 
-[data-portal-content] [data-slot="table-wrapper"] td {
+[data-portal-content] [data-slot="table-wrapper"] td,
+[data-admin-content] [data-slot="table-wrapper"] td {
   color: rgb(var(--portal-text));
 }
 
-[data-portal-content] [data-slot="table-wrapper"] {
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* Portaled dialogs (e.g. Radix Dialog to body): apply same light theme so inputs are not dark */
+/* Portaled dialogs (Radix): světlý motiv */
 [data-portal-dialog] {
   --background: 0 0% 98%;
   --foreground: 222 47% 11%;
@@ -230,8 +250,8 @@
 [data-portal-dialog] select:focus,
 [data-portal-dialog] [data-radix-select-trigger]:focus {
   outline: none;
-  border-color: hsl(var(--ring));
-  box-shadow: 0 0 0 2px hsl(var(--ring) / 0.2);
+  border-color: rgb(34 197 94);
+  box-shadow: 0 0 0 2px rgb(34 197 94 / 0.25);
 }
 
 [data-portal-dialog] input:disabled,
@@ -247,10 +267,12 @@
 }
 
 @media (max-width: 640px) {
-  [data-portal-content] [data-slot="card"] {
+  [data-portal-content] [data-slot="card"],
+  [data-admin-content] [data-slot="card"] {
     border-radius: 0.5rem;
   }
-  [data-portal-content] .portal-page-title {
+  [data-portal-content] .portal-page-title,
+  [data-admin-content] .portal-page-title {
     font-size: 1.5rem;
   }
 }

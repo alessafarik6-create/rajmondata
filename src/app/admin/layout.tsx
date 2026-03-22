@@ -4,6 +4,8 @@ import React, { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 
 type AdminSession = {
   username: string;
@@ -18,6 +20,20 @@ export default function AdminLayout({
   const pathname = usePathname();
   const [session, setSession] = useState<AdminSession | null>(null);
   const [loading, setLoading] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    releaseDocumentModalLocks();
+    const id = window.requestAnimationFrame(() => releaseDocumentModalLocks());
+    return () => window.cancelAnimationFrame(id);
+  }, [pathname]);
+
+  useEffect(() => {
+    if (!mobileMenuOpen) {
+      releaseDocumentModalLocks();
+    }
+  }, [mobileMenuOpen]);
 
   useEffect(() => {
     let cancelled = false;
@@ -49,8 +65,6 @@ export default function AdminLayout({
         let res = await fetchOnce();
         if (cancelled) return;
 
-        // Mobile browsers can be slightly slower to persist cookies from the
-        // previous navigation. Retry once for 401/unauthorized responses.
         if (!res.ok && res.status === 401) {
           console.warn("[AdminLayout] session unauthorized (401), retrying once after grace", {
             pathname,
@@ -134,10 +148,43 @@ export default function AdminLayout({
 
   return (
     <div className="flex min-h-screen bg-slate-100 text-slate-900">
-      <BizForgeSidebar />
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopHeader />
-        <main className="flex-1 overflow-auto p-4 sm:p-6 lg:p-8">
+      <aside className="hidden print:hidden lg:block shrink-0">
+        <BizForgeSidebar />
+      </aside>
+
+      {mobileMenuOpen ? (
+        <Sheet
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setMobileMenuOpen(false);
+              releaseDocumentModalLocks();
+            }
+          }}
+          modal
+        >
+          <SheetContent
+            side="left"
+            className="w-[min(280px,85vw)] max-w-full p-0 bg-sidebar border-sidebar-border rounded-r-lg [&>button]:text-sidebar-foreground [&>button]:hover:bg-sidebar-accent [&>button]:hover:text-sidebar-primary"
+          >
+            <div className="flex flex-col h-full overflow-y-auto">
+              <BizForgeSidebar
+                mobileSheetClose={() => {
+                  setMobileMenuOpen(false);
+                  releaseDocumentModalLocks();
+                }}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+      ) : null}
+
+      <div
+        className="flex min-w-0 flex-1 flex-col min-h-screen"
+        data-admin-content
+      >
+        <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
+        <main className="flex-1 overflow-auto px-4 py-4 md:px-6 md:py-6 lg:px-8">
           {children}
         </main>
       </div>

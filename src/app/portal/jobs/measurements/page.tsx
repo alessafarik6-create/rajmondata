@@ -69,9 +69,7 @@ import {
   canConvertMeasurement,
   userCanManageMeasurements,
 } from "@/lib/measurements";
-
-const nativeSelectClass =
-  "flex h-10 w-full rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary min-h-[44px] sm:min-h-10";
+import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 
 function formatMoney(n: number): string {
   return new Intl.NumberFormat("cs-CZ", {
@@ -486,7 +484,7 @@ export default function JobMeasurementsPage() {
             </Label>
             <select
               id="m-filter"
-              className={nativeSelectClass}
+              className={NATIVE_SELECT_CLASS}
               value={statusFilter}
               onChange={(e) =>
                 setStatusFilter(e.target.value as MeasurementStatus | "all")

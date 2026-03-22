@@ -25,10 +25,11 @@ const buttonVariants = cva(
           "text-primary underline-offset-4 hover:underline hover:text-primary/90 focus-visible:ring-primary/50 disabled:text-muted-foreground",
       },
       size: {
-        default: "h-10 px-4 py-2",
-        sm: "h-9 rounded-lg px-3",
-        lg: "h-11 rounded-lg px-8",
-        icon: "h-10 w-10",
+        default:
+          "min-h-[44px] px-4 py-2 md:h-10 md:min-h-0 md:py-0",
+        sm: "min-h-[40px] rounded-lg px-3 md:h-9 md:min-h-0",
+        lg: "min-h-[48px] rounded-lg px-8 md:h-11 md:min-h-0",
+        icon: "h-11 w-11 min-h-[44px] min-w-[44px] md:h-10 md:w-10 md:min-h-0 md:min-w-0",
       },
     },
     defaultVariants: {
