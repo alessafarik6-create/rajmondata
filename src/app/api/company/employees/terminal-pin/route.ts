@@ -8,6 +8,7 @@ import {
 } from "@/lib/terminal-pin-crypto";
 import {
   generateRandomTerminalPin,
+  normalizeTerminalPin,
   validateTerminalPinFormat,
 } from "@/lib/terminal-pin-validation";
 
@@ -155,14 +156,24 @@ export async function POST(request: NextRequest) {
 
     let pinPlain = "";
     if (action === "generate") {
-      pinPlain = generateRandomTerminalPin(4);
+      pinPlain = normalizeTerminalPin(generateRandomTerminalPin(4));
     } else {
-      pinPlain = String(body.pin || "").trim();
+      pinPlain = normalizeTerminalPin(String(body.pin ?? ""));
       const err = validateTerminalPinFormat(pinPlain);
       if (err) {
         return NextResponse.json({ error: err }, { status: 400 });
       }
     }
+
+    console.log("[terminal-pin admin] Generating new terminal PIN for user", {
+      employeeId,
+      companyId: targetCompanyId,
+      adminUid: callerUid,
+      action,
+    });
+    console.log("[terminal-pin admin] Saving generated terminal PIN", {
+      normalizedPinLength: pinPlain.length,
+    });
 
     const hash = await hashTerminalPin(pinPlain);
 
@@ -186,6 +197,8 @@ export async function POST(request: NextRequest) {
       },
       { merge: true }
     );
+
+    console.log("[terminal-pin admin] Terminal PIN saved successfully", { employeeId });
 
     return NextResponse.json({
       ok: true,

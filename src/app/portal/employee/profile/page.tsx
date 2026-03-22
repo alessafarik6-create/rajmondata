@@ -36,7 +36,7 @@ import {
 } from "@/lib/i18n/employee-ui";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { cn } from "@/lib/utils";
-import { MIN_TERMINAL_PIN_LENGTH } from "@/lib/terminal-pin-validation";
+import { MIN_TERMINAL_PIN_LENGTH, normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 
 const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
 
@@ -247,9 +247,9 @@ export default function EmployeeProfilePage() {
           Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          oldPin: tpOld,
-          newPin: tpNew,
-          newPinConfirm: tpConfirm,
+          oldPin: normalizeTerminalPin(tpOld),
+          newPin: normalizeTerminalPin(tpNew),
+          newPinConfirm: normalizeTerminalPin(tpConfirm),
         }),
       });
       const data = await res.json().catch(() => ({}));

@@ -6,7 +6,10 @@ import {
   hashTerminalPin,
   verifyTerminalPinHash,
 } from "@/lib/terminal-pin-crypto";
-import { validateTerminalPinFormat } from "@/lib/terminal-pin-validation";
+import {
+  normalizeTerminalPin,
+  validateTerminalPinFormat,
+} from "@/lib/terminal-pin-validation";
 
 type Body = {
   oldPin?: string;
@@ -60,9 +63,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Neplatné JSON tělo." }, { status: 400 });
   }
 
-  const newPin = String(body.newPin || "").trim();
-  const newPinConfirm = String(body.newPinConfirm || "").trim();
-  const oldPin = String(body.oldPin || "").trim();
+  const newPin = normalizeTerminalPin(String(body.newPin ?? ""));
+  const newPinConfirm = normalizeTerminalPin(String(body.newPinConfirm ?? ""));
+  const oldPin = normalizeTerminalPin(String(body.oldPin ?? ""));
 
   const errNew = validateTerminalPinFormat(newPin);
   if (errNew) {
@@ -104,7 +107,10 @@ export async function POST(request: NextRequest) {
   const hash = privateSnap.exists
     ? ((privateSnap.data() as { terminalPinHash?: string })?.terminalPinHash ?? "")
     : "";
-  const legacyPlain = emp.attendancePin != null ? String(emp.attendancePin) : "";
+  const legacyPlain =
+    emp.attendancePin != null && emp.attendancePin !== ""
+      ? normalizeTerminalPin(String(emp.attendancePin))
+      : "";
 
   const hasSecurePin = typeof hash === "string" && hash.length > 0;
   const hasLegacyOnly = !hasSecurePin && legacyPlain.length > 0;

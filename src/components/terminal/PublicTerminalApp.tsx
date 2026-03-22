@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 import {
   MAX_TERMINAL_PIN_LENGTH,
+  normalizeTerminalPin,
   validateTerminalPinFormat,
 } from "@/lib/terminal-pin-validation";
 import { parseAssignedTerminalJobIds } from "@/lib/assigned-jobs";
@@ -219,12 +220,16 @@ export function PublicTerminalApp({ companyId, companyName }: Props) {
       toast({ variant: "destructive", title: err, duration: 2500 });
       return;
     }
+    const pinNorm = normalizeTerminalPin(pin);
+    if (process.env.NODE_ENV === "development") {
+      console.log("[PublicTerminalApp] Looking up employee by terminal PIN");
+    }
     setPinVerifyLoading(true);
     try {
       const res = await fetch("/api/terminal/verify-attendance-pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify({ pin: pinNorm }),
       });
       const data = (await res.json()) as {
         error?: string;

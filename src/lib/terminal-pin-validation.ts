@@ -3,8 +3,18 @@ export const MIN_TERMINAL_PIN_LENGTH = 4;
 /** Maximální délka PINu (číslice). */
 export const MAX_TERMINAL_PIN_LENGTH = 12;
 
+/**
+ * Jednotná normalizace PINu pro ukládání i ověření:
+ * trim, pouze číslice (odstraní mezery a jiné nečíselné znaky).
+ */
+export function normalizeTerminalPin(input: string): string {
+  return String(input ?? "")
+    .trim()
+    .replace(/\D/g, "");
+}
+
 export function validateTerminalPinFormat(pin: string): string | null {
-  const p = pin.trim();
+  const p = normalizeTerminalPin(pin);
   if (!p) return "Zadejte PIN.";
   if (!/^\d+$/.test(p)) {
     return "PIN smí obsahovat pouze číslice (0–9).";

@@ -72,7 +72,10 @@ import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
-import { validateTerminalPinFormat } from "@/lib/terminal-pin-validation";
+import {
+  normalizeTerminalPin,
+  validateTerminalPinFormat,
+} from "@/lib/terminal-pin-validation";
 
 function releaseModalLocksAfterDismiss() {
   releaseDocumentModalLocks();
@@ -174,6 +177,10 @@ export default function EmployeesPage() {
   const [terminalPinGenerateOpen, setTerminalPinGenerateOpen] = useState(false);
   const [terminalPinGenerateEmp, setTerminalPinGenerateEmp] = useState<any | null>(null);
   const [terminalPinGenerateSaving, setTerminalPinGenerateSaving] = useState(false);
+  /** Po úspěšném generate — zobrazíme PIN v dialogu (jednorázově). */
+  const [terminalPinGeneratedDisplay, setTerminalPinGeneratedDisplay] = useState<string | null>(
+    null
+  );
 
   const [terminalPinClearOpen, setTerminalPinClearOpen] = useState(false);
   const [terminalPinClearEmp, setTerminalPinClearEmp] = useState<any | null>(null);
@@ -513,14 +520,17 @@ export default function EmployeesPage() {
         employeeId: terminalPinGenerateEmp.id,
         action: "generate",
       });
+      const pin =
+        typeof data.generatedPin === "string" && data.generatedPin.length > 0
+          ? normalizeTerminalPin(data.generatedPin)
+          : null;
+      setTerminalPinGeneratedDisplay(pin);
       toast({
         title: "PIN vygenerován",
-        description: data.generatedPin
-          ? `Nový PIN: ${data.generatedPin} — předejte ho zaměstnanci bezpečným kanálem.`
+        description: pin
+          ? "PIN je zobrazen níže — předejte ho zaměstnanci bezpečným kanálem."
           : data.message || "PIN byl nastaven.",
       });
-      setTerminalPinGenerateOpen(false);
-      setTerminalPinGenerateEmp(null);
     } catch (error: unknown) {
       const msg =
         error instanceof Error ? error.message : "Generování PINu se nezdařilo.";
@@ -528,6 +538,12 @@ export default function EmployeesPage() {
     } finally {
       setTerminalPinGenerateSaving(false);
     }
+  };
+
+  const closeTerminalPinGenerateDialog = () => {
+    setTerminalPinGenerateOpen(false);
+    setTerminalPinGenerateEmp(null);
+    setTerminalPinGeneratedDisplay(null);
   };
 
   const runTerminalPinClear = async () => {
@@ -1226,47 +1242,70 @@ export default function EmployeesPage() {
         open={terminalPinGenerateOpen}
         onOpenChange={(open) => {
           if (!open) {
-            setTerminalPinGenerateOpen(false);
-            setTerminalPinGenerateEmp(null);
+            closeTerminalPinGenerateDialog();
           }
         }}
       >
         <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
-              Vygenerovat nový PIN
+              {terminalPinGeneratedDisplay ? "Nový PIN terminálu" : "Vygenerovat nový PIN"}
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
               {terminalPinGenerateEmp
                 ? `${terminalPinGenerateEmp.firstName} ${terminalPinGenerateEmp.lastName}`
                 : ""}
-              <span className="block mt-2">
-                Starý PIN přestane platit. Nový kód se zobrazí jednou v potvrzení — předejte ho zaměstnanci
-                bezpečným kanálem.
-              </span>
+              {!terminalPinGeneratedDisplay ? (
+                <span className="block mt-2">
+                  Starý PIN přestane platit. Nový kód se zobrazí níže — předejte ho zaměstnanci bezpečným kanálem.
+                </span>
+              ) : (
+                <span className="block mt-2">
+                  Toto je jediné zobrazení kódu v aplikaci. Po zavření okna už PIN nelze znovu vypsat.
+                </span>
+              )}
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0 sm:justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              className="border-gray-200 bg-white text-black hover:bg-gray-50"
-              onClick={() => {
-                setTerminalPinGenerateOpen(false);
-                setTerminalPinGenerateEmp(null);
-              }}
-              disabled={terminalPinGenerateSaving}
-            >
-              Zrušit
-            </Button>
-            <Button type="button" onClick={() => void runTerminalPinGenerate()} disabled={terminalPinGenerateSaving}>
-              {terminalPinGenerateSaving ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                "Vygenerovat"
-              )}
-            </Button>
-          </DialogFooter>
+          {terminalPinGeneratedDisplay ? (
+            <div className="py-4 space-y-4">
+              <p className="text-center text-xs font-medium text-gray-500 uppercase tracking-wide">
+                Nový PIN (číslice)
+              </p>
+              <p className="text-center text-4xl font-mono font-bold tracking-[0.2em] text-black select-all break-all">
+                {terminalPinGeneratedDisplay}
+              </p>
+              <Button
+                type="button"
+                className="w-full"
+                onClick={() => closeTerminalPinGenerateDialog()}
+              >
+                Hotovo
+              </Button>
+            </div>
+          ) : (
+            <DialogFooter className="gap-2 sm:gap-0 sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-gray-200 bg-white text-black hover:bg-gray-50"
+                onClick={() => closeTerminalPinGenerateDialog()}
+                disabled={terminalPinGenerateSaving}
+              >
+                Zrušit
+              </Button>
+              <Button
+                type="button"
+                onClick={() => void runTerminalPinGenerate()}
+                disabled={terminalPinGenerateSaving}
+              >
+                {terminalPinGenerateSaving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Vygenerovat"
+                )}
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
 

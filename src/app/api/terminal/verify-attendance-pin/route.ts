@@ -3,7 +3,10 @@ import type { Firestore } from "firebase-admin/firestore";
 import type { DecodedIdToken } from "firebase-admin/auth";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyTerminalPinHash } from "@/lib/terminal-pin-crypto";
-import { validateTerminalPinFormat } from "@/lib/terminal-pin-validation";
+import {
+  normalizeTerminalPin,
+  validateTerminalPinFormat,
+} from "@/lib/terminal-pin-validation";
 import { resolveTerminalCompanyId } from "@/lib/terminal-company-resolve";
 import { signTerminalPinSessionToken } from "@/lib/terminal-session-jwt";
 
@@ -22,11 +25,25 @@ function privateTerminalRef(db: Firestore, companyId: string, employeeId: string
     .doc("terminal");
 }
 
+function readStoredPinHash(privateData: Record<string, unknown> | undefined): string {
+  if (!privateData) return "";
+  const h =
+    (privateData.terminalPinHash as string | undefined) ??
+    (privateData.pinHash as string | undefined);
+  return typeof h === "string" && h.length > 0 ? h : "";
+}
+
+/**
+ * Kanonické uložení PINu: `companies/{cid}/employees/{eid}/private/terminal`
+ * pole `terminalPinHash` (bcrypt). Legacy: `employees/{eid}.attendancePin` (plain číslice).
+ */
 async function findEmployeeByPin(
   db: Firestore,
   companyId: string,
-  pin: string
+  pinNormalized: string
 ): Promise<{ employeeId: string; firstName: string; lastName: string } | null> {
+  console.log("[verify-attendance-pin] Looking up employee by terminal PIN", { companyId });
+
   const snap = await db.collection("companies").doc(companyId).collection("employees").get();
 
   for (const doc of snap.docs) {
@@ -35,31 +52,46 @@ async function findEmployeeByPin(
       continue;
     }
     const privateSnap = await privateTerminalRef(db, companyId, doc.id).get();
-    const hash = privateSnap.exists
-      ? ((privateSnap.data() as { terminalPinHash?: string })?.terminalPinHash ?? "")
-      : "";
+    const privateData = privateSnap.exists
+      ? (privateSnap.data() as Record<string, unknown>)
+      : undefined;
+    const hash = readStoredPinHash(privateData);
 
-    if (hash && typeof hash === "string" && hash.length > 0) {
-      const ok = await verifyTerminalPinHash(pin, hash);
+    if (hash.length > 0) {
+      const ok = await verifyTerminalPinHash(pinNormalized, hash);
       if (ok) {
+        console.log("[verify-attendance-pin] Employee found for terminal PIN", {
+          employeeId: doc.id,
+          source: "terminalPinHash",
+        });
         return {
           employeeId: doc.id,
           firstName: String(data.firstName ?? ""),
           lastName: String(data.lastName ?? ""),
         };
       }
-    } else {
-      const legacy = data.attendancePin != null ? String(data.attendancePin) : "";
-      if (legacy && legacy === pin) {
-        return {
-          employeeId: doc.id,
-          firstName: String(data.firstName ?? ""),
-          lastName: String(data.lastName ?? ""),
-        };
-      }
+      continue;
+    }
+
+    const legacyRaw = data.attendancePin;
+    const legacy =
+      legacyRaw != null && legacyRaw !== ""
+        ? normalizeTerminalPin(String(legacyRaw))
+        : "";
+    if (legacy.length > 0 && legacy === pinNormalized) {
+      console.log("[verify-attendance-pin] Employee found for terminal PIN", {
+        employeeId: doc.id,
+        source: "attendancePin_legacy",
+      });
+      return {
+        employeeId: doc.id,
+        firstName: String(data.firstName ?? ""),
+        lastName: String(data.lastName ?? ""),
+      };
     }
   }
 
+  console.log("[verify-attendance-pin] No employee found for terminal PIN", { companyId });
   return null;
 }
 
@@ -86,11 +118,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Neplatné JSON tělo." }, { status: 400 });
   }
 
-  const pin = String(body.pin || "").trim();
-  const pinErr = validateTerminalPinFormat(pin);
+  const pinRaw = String(body.pin ?? "");
+  const pinErr = validateTerminalPinFormat(pinRaw);
   if (pinErr) {
     return NextResponse.json({ error: pinErr }, { status: 400 });
   }
+  const pin = normalizeTerminalPin(pinRaw);
 
   const authHeader = request.headers.get("authorization") || "";
   const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
