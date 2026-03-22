@@ -1,23 +1,23 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   useUser,
   useFirestore,
   useDoc,
   useMemoFirebase,
 } from "@/firebase";
-import { doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { doc } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { Copy, RefreshCw, Loader2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
-import { generateTerminalAccessToken } from "@/lib/terminal-access-token";
 import {
   getTerminalAccessAbsoluteUrl,
   getTerminalAccessPath,
 } from "@/lib/terminal-access-url";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 type Props = {
   companyId: string | undefined;
@@ -29,6 +29,9 @@ export function TerminalTabletLinkSection({ companyId, canManage }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
+  const [linkError, setLinkError] = useState<string | null>(null);
+  /** Okamžité zobrazení tokenu po úspěšném API, než dorazí snapshot z Firestore. */
+  const [tokenOverride, setTokenOverride] = useState<string | null>(null);
 
   const terminalSettingsRef = useMemoFirebase(
     () =>
@@ -47,7 +50,15 @@ export function TerminalTabletLinkSection({ companyId, canManage }: Props) {
     updatedAt?: unknown;
   }>(terminalSettingsRef);
 
-  const token = typeof terminalSettings?.token === "string" ? terminalSettings.token : "";
+  const tokenFromSettings =
+    typeof terminalSettings?.token === "string" ? terminalSettings.token : "";
+  const token = (tokenOverride ?? tokenFromSettings).trim();
+
+  useEffect(() => {
+    if (tokenFromSettings && tokenOverride && tokenFromSettings === tokenOverride) {
+      setTokenOverride(null);
+    }
+  }, [tokenFromSettings, tokenOverride]);
 
   const fullUrl = useMemo(() => {
     if (!token) return "";
@@ -56,33 +67,55 @@ export function TerminalTabletLinkSection({ companyId, canManage }: Props) {
 
   const pathOnly = token ? getTerminalAccessPath(token) : "";
 
-  const persistToken = useCallback(
-    async (newToken: string) => {
-      if (!firestore || !companyId || !user) return;
-      setSaving(true);
-      try {
-        await setDoc(
-          doc(firestore, "companies", companyId, "settings", "terminal"),
-          {
-            token: newToken,
-            updatedAt: serverTimestamp(),
-          },
-          { merge: true }
-        );
-        toast({ title: "Odkaz byl uložen." });
-      } catch (e) {
-        console.error("[TerminalTabletLinkSection]", e);
+  const handleRefresh = useCallback(async () => {
+    if (!canManage || !companyId || !user) return;
+    setSaving(true);
+    setLinkError(null);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/terminal-access-link", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ companyId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        token?: string;
+        success?: boolean;
+      };
+      if (!res.ok) {
+        const msg =
+          typeof data.error === "string"
+            ? data.error
+            : "Odkaz se nepodařilo vytvořit.";
+        setLinkError(msg);
         toast({
           variant: "destructive",
-          title: "Uložení se nezdařilo",
-          description: "Zkontrolujte oprávnění (správce firmy).",
+          title: "Chyba",
+          description: msg,
         });
-      } finally {
-        setSaving(false);
+        return;
       }
-    },
-    [firestore, companyId, user, toast]
-  );
+      if (typeof data.token === "string" && data.token.length > 0) {
+        setTokenOverride(data.token);
+      }
+      toast({ title: "Odkaz byl uložen." });
+    } catch (e) {
+      console.error("[TerminalTabletLinkSection]", e);
+      const msg = "Odkaz se nepodařilo vytvořit. Zkuste to znovu.";
+      setLinkError(msg);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: msg,
+      });
+    } finally {
+      setSaving(false);
+    }
+  }, [canManage, companyId, user, toast]);
 
   const handleCopy = useCallback(async () => {
     if (!fullUrl) {
@@ -102,12 +135,6 @@ export function TerminalTabletLinkSection({ companyId, canManage }: Props) {
       });
     }
   }, [fullUrl, toast]);
-
-  const handleRefresh = useCallback(async () => {
-    if (!canManage) return;
-    const next = generateTerminalAccessToken();
-    await persistToken(next);
-  }, [canManage, persistToken]);
 
   if (!companyId || !user) {
     return null;
@@ -138,6 +165,13 @@ export function TerminalTabletLinkSection({ companyId, canManage }: Props) {
           <p className="text-sm text-destructive">
             Odkaz se nepodařilo načíst. Zkuste obnovit stránku.
           </p>
+        )}
+
+        {linkError && (
+          <Alert variant="destructive">
+            <AlertTitle>Odkaz se nepodařilo uložit</AlertTitle>
+            <AlertDescription>{linkError}</AlertDescription>
+          </Alert>
         )}
 
         {!isLoading && !error && (
@@ -176,7 +210,7 @@ export function TerminalTabletLinkSection({ companyId, canManage }: Props) {
                 ) : (
                   <RefreshCw className="w-5 h-5 mr-2 shrink-0" />
                 )}
-                Obnovit odkaz
+                {token ? "Obnovit odkaz" : "Vygenerovat odkaz"}
               </Button>
             </div>
 
