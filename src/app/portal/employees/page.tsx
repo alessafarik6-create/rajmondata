@@ -72,6 +72,7 @@ import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
+import { validateTerminalPinFormat } from "@/lib/terminal-pin-validation";
 
 function releaseModalLocksAfterDismiss() {
   releaseDocumentModalLocks();
@@ -87,6 +88,14 @@ function jobIdSetsEqual(a: Set<string>, b: Set<string>): boolean {
     if (!b.has(id)) return false;
   }
   return true;
+}
+
+/** PIN terminálu aktivní (hash v private nebo legacy pole attendancePin). */
+function employeeTerminalPinActive(emp: Record<string, unknown>): boolean {
+  if (emp.terminalPinActive === true) return true;
+  if (emp.terminalPinActive === false) return false;
+  const legacy = emp.attendancePin;
+  return legacy != null && String(legacy).length > 0;
 }
 
 export default function EmployeesPage() {
@@ -155,6 +164,20 @@ export default function EmployeesPage() {
   const [pwdResetNew, setPwdResetNew] = useState("");
   const [pwdResetConfirm, setPwdResetConfirm] = useState("");
   const [pwdResetLoading, setPwdResetLoading] = useState(false);
+
+  const [terminalPinManualOpen, setTerminalPinManualOpen] = useState(false);
+  const [terminalPinManualEmp, setTerminalPinManualEmp] = useState<any | null>(null);
+  const [terminalPinManualValue, setTerminalPinManualValue] = useState("");
+  const [terminalPinManualConfirm, setTerminalPinManualConfirm] = useState("");
+  const [terminalPinManualSaving, setTerminalPinManualSaving] = useState(false);
+
+  const [terminalPinGenerateOpen, setTerminalPinGenerateOpen] = useState(false);
+  const [terminalPinGenerateEmp, setTerminalPinGenerateEmp] = useState<any | null>(null);
+  const [terminalPinGenerateSaving, setTerminalPinGenerateSaving] = useState(false);
+
+  const [terminalPinClearOpen, setTerminalPinClearOpen] = useState(false);
+  const [terminalPinClearEmp, setTerminalPinClearEmp] = useState<any | null>(null);
+  const [terminalPinClearSaving, setTerminalPinClearSaving] = useState(false);
 
   const [assignWorklogEmployee, setAssignWorklogEmployee] = useState<any | null>(
     null
@@ -404,15 +427,129 @@ export default function EmployeesPage() {
     }
   };
 
-  const generatePin = async (employeeId: string) => {
-    if (!canManage || !companyId) return;
-    const newPin = Math.floor(1000 + Math.random() * 9000).toString();
+  const postTerminalPinAdmin = async (payload: {
+    employeeId: string;
+    action: "set" | "generate" | "clear";
+    pin?: string;
+  }) => {
+    if (!user || !companyId) {
+      throw new Error("Chybí přihlášení nebo organizace.");
+    }
+    const idToken = await user.getIdToken();
+    const res = await fetch("/api/company/employees/terminal-pin", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        ...payload,
+        companyId,
+      }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        typeof data.error === "string" ? data.error : "Operace s PINem selhala."
+      );
+    }
+    return data as {
+      ok?: boolean;
+      message?: string;
+      generatedPin?: string;
+    };
+  };
+
+  const closeTerminalPinManual = () => {
+    setTerminalPinManualOpen(false);
+    setTerminalPinManualEmp(null);
+    setTerminalPinManualValue("");
+    setTerminalPinManualConfirm("");
+  };
+
+  const submitTerminalPinManual = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!terminalPinManualEmp?.id || !canManage) return;
+    const err = validateTerminalPinFormat(terminalPinManualValue);
+    if (err) {
+      toast({ variant: "destructive", title: err });
+      return;
+    }
+    if (terminalPinManualValue !== terminalPinManualConfirm) {
+      toast({
+        variant: "destructive",
+        title: "PIN a potvrzení se neshodují.",
+      });
+      return;
+    }
+    setTerminalPinManualSaving(true);
     try {
-      const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
-      await updateDoc(docRef, { attendancePin: newPin });
-      toast({ title: "PIN vygenerován", description: `Nový docházkový PIN pro zaměstnance: ${newPin}` });
-    } catch (error) {
-      toast({ variant: "destructive", title: "Chyba" });
+      const data = await postTerminalPinAdmin({
+        employeeId: terminalPinManualEmp.id,
+        action: "set",
+        pin: terminalPinManualValue,
+      });
+      toast({
+        title: "PIN uložen",
+        description:
+          data.message ||
+          "Zaměstnanec si při prvním použití nastaví vlastní PIN v profilu.",
+      });
+      closeTerminalPinManual();
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error ? error.message : "Uložení PINu se nezdařilo.";
+      toast({ variant: "destructive", title: "Chyba", description: msg });
+    } finally {
+      setTerminalPinManualSaving(false);
+    }
+  };
+
+  const runTerminalPinGenerate = async () => {
+    if (!terminalPinGenerateEmp?.id || !canManage) return;
+    setTerminalPinGenerateSaving(true);
+    try {
+      const data = await postTerminalPinAdmin({
+        employeeId: terminalPinGenerateEmp.id,
+        action: "generate",
+      });
+      toast({
+        title: "PIN vygenerován",
+        description: data.generatedPin
+          ? `Nový PIN: ${data.generatedPin} — předejte ho zaměstnanci bezpečným kanálem.`
+          : data.message || "PIN byl nastaven.",
+      });
+      setTerminalPinGenerateOpen(false);
+      setTerminalPinGenerateEmp(null);
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error ? error.message : "Generování PINu se nezdařilo.";
+      toast({ variant: "destructive", title: "Chyba", description: msg });
+    } finally {
+      setTerminalPinGenerateSaving(false);
+    }
+  };
+
+  const runTerminalPinClear = async () => {
+    if (!terminalPinClearEmp?.id || !canManage) return;
+    setTerminalPinClearSaving(true);
+    try {
+      const data = await postTerminalPinAdmin({
+        employeeId: terminalPinClearEmp.id,
+        action: "clear",
+      });
+      toast({
+        title: "PIN zrušen",
+        description: data.message || "Docházkový PIN byl odstraněn.",
+      });
+      setTerminalPinClearOpen(false);
+      setTerminalPinClearEmp(null);
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error ? error.message : "Zrušení PINu se nezdařilo.";
+      toast({ variant: "destructive", title: "Chyba", description: msg });
+    } finally {
+      setTerminalPinClearSaving(false);
     }
   };
 
@@ -423,17 +560,6 @@ export default function EmployeesPage() {
       const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
       await updateDoc(docRef, { attendanceQrId: newQrId });
       toast({ title: "QR ID vygenerováno", description: "Nový identifikátor pro QR docházku byl vytvořen." });
-    } catch (error) {
-      toast({ variant: "destructive", title: "Chyba" });
-    }
-  };
-
-  const disablePin = async (employeeId: string) => {
-    if (!canManage || !companyId) return;
-    try {
-      const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
-      await updateDoc(docRef, { attendancePin: null });
-      toast({ title: "PIN deaktivován" });
     } catch (error) {
       toast({ variant: "destructive", title: "Chyba" });
     }
@@ -746,13 +872,21 @@ export default function EmployeesPage() {
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-2">
-                          {emp.attendancePin ? (
-                            <div className="flex items-center gap-1.5 text-[10px] text-emerald-500 font-bold uppercase">
-                              <KeyRound className="w-3 h-3" /> {emp.attendancePin}
+                        <div className="flex items-center gap-2 flex-wrap">
+                          {employeeTerminalPinActive(emp as Record<string, unknown>) ? (
+                            <div className="flex items-center gap-1.5 text-[10px] text-emerald-600 font-bold uppercase">
+                              <KeyRound className="w-3 h-3" /> PIN nastaven
                             </div>
                           ) : (
                             <span className="text-[10px] text-muted-foreground uppercase">Bez PINu</span>
+                          )}
+                          {emp.terminalPinNeedsChange === true && (
+                            <Badge
+                              variant="outline"
+                              className="text-[9px] h-5 px-1.5 border-amber-500/70 text-amber-900"
+                            >
+                              Změnit v profilu
+                            </Badge>
                           )}
                           <Separator orientation="vertical" className="h-3 mx-1" />
                           {emp.attendanceQrId ? (
@@ -794,8 +928,28 @@ export default function EmployeesPage() {
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Identifikace</DropdownMenuLabel>
-                                <DropdownMenuItem onClick={() => generatePin(emp.id)}>
-                                  <RefreshCw className="w-4 h-4 mr-2" /> {emp.attendancePin ? 'Resetovat PIN' : 'Generovat PIN'}
+                                <DropdownMenuItem
+                                  onSelect={(e) => {
+                                    e.preventDefault();
+                                    setTerminalPinManualEmp(emp);
+                                    setTerminalPinManualValue("");
+                                    setTerminalPinManualConfirm("");
+                                    setTerminalPinManualOpen(true);
+                                  }}
+                                >
+                                  <KeyRound className="w-4 h-4 mr-2" /> Nastavit PIN ručně
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={(e) => {
+                                    e.preventDefault();
+                                    setTerminalPinGenerateEmp(emp);
+                                    setTerminalPinGenerateOpen(true);
+                                  }}
+                                >
+                                  <RefreshCw className="w-4 h-4 mr-2" />{" "}
+                                  {employeeTerminalPinActive(emp as Record<string, unknown>)
+                                    ? "Resetovat / vygenerovat PIN"
+                                    : "Vygenerovat PIN"}
                                 </DropdownMenuItem>
                                 <DropdownMenuItem onClick={() => {
                                   if (!emp.attendanceQrId) generateQrId(emp.id);
@@ -803,9 +957,16 @@ export default function EmployeesPage() {
                                 }}>
                                   <QrCode className="w-4 h-4 mr-2" /> {emp.attendanceQrId ? 'Zobrazit QR kód' : 'Generovat QR kód'}
                                 </DropdownMenuItem>
-                                {emp.attendancePin && (
-                                  <DropdownMenuItem onClick={() => disablePin(emp.id)} className="text-rose-500">
-                                    <Shield className="w-4 h-4 mr-2" /> Zakázat PIN
+                                {employeeTerminalPinActive(emp as Record<string, unknown>) && (
+                                  <DropdownMenuItem
+                                    onSelect={(e) => {
+                                      e.preventDefault();
+                                      setTerminalPinClearEmp(emp);
+                                      setTerminalPinClearOpen(true);
+                                    }}
+                                    className="text-rose-600 focus:text-rose-600"
+                                  >
+                                    <Shield className="w-4 h-4 mr-2" /> Zrušit PIN
                                   </DropdownMenuItem>
                                 )}
                                 <DropdownMenuSeparator />
@@ -986,6 +1147,177 @@ export default function EmployeesPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={terminalPinManualOpen}
+        onOpenChange={(open) => {
+          if (!open) closeTerminalPinManual();
+        }}
+      >
+        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">
+              Nastavit výchozí PIN terminálu
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {terminalPinManualEmp
+                ? `${terminalPinManualEmp.firstName} ${terminalPinManualEmp.lastName}`
+                : ""}
+              <span className="block mt-2">
+                PIN se ukládá pouze jako bezpečný hash. Zaměstnanec si při prvním použití nastaví vlastní PIN v
+                profilu (4–12 číslic).
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={submitTerminalPinManual} className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="terminalPinManual" className={INVITE_LABEL_CLASS}>
+                Nový PIN
+              </Label>
+              <Input
+                id="terminalPinManual"
+                inputMode="numeric"
+                autoComplete="off"
+                value={terminalPinManualValue}
+                onChange={(e) => setTerminalPinManualValue(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                className={INVITE_INPUT_CLASS}
+                placeholder="4–12 číslic"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="terminalPinManualConfirm" className={INVITE_LABEL_CLASS}>
+                Potvrzení PINu
+              </Label>
+              <Input
+                id="terminalPinManualConfirm"
+                inputMode="numeric"
+                autoComplete="off"
+                value={terminalPinManualConfirm}
+                onChange={(e) => setTerminalPinManualConfirm(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                className={INVITE_INPUT_CLASS}
+                placeholder="Zopakujte PIN"
+              />
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-gray-200 bg-white text-black hover:bg-gray-50"
+                onClick={closeTerminalPinManual}
+                disabled={terminalPinManualSaving}
+              >
+                Zrušit
+              </Button>
+              <Button type="submit" disabled={terminalPinManualSaving}>
+                {terminalPinManualSaving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  "Uložit PIN"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={terminalPinGenerateOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTerminalPinGenerateOpen(false);
+            setTerminalPinGenerateEmp(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">
+              Vygenerovat nový PIN
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {terminalPinGenerateEmp
+                ? `${terminalPinGenerateEmp.firstName} ${terminalPinGenerateEmp.lastName}`
+                : ""}
+              <span className="block mt-2">
+                Starý PIN přestane platit. Nový kód se zobrazí jednou v potvrzení — předejte ho zaměstnanci
+                bezpečným kanálem.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-gray-200 bg-white text-black hover:bg-gray-50"
+              onClick={() => {
+                setTerminalPinGenerateOpen(false);
+                setTerminalPinGenerateEmp(null);
+              }}
+              disabled={terminalPinGenerateSaving}
+            >
+              Zrušit
+            </Button>
+            <Button type="button" onClick={() => void runTerminalPinGenerate()} disabled={terminalPinGenerateSaving}>
+              {terminalPinGenerateSaving ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Vygenerovat"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={terminalPinClearOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setTerminalPinClearOpen(false);
+            setTerminalPinClearEmp(null);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">Zrušit PIN terminálu</DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {terminalPinClearEmp
+                ? `${terminalPinClearEmp.firstName} ${terminalPinClearEmp.lastName}`
+                : ""}
+              <span className="block mt-2">
+                Zaměstnanec se již nebude moci přihlásit PINem na terminálu, dokud administrátor PIN znovu
+                nenastaví.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0 sm:justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-gray-200 bg-white text-black hover:bg-gray-50"
+              onClick={() => {
+                setTerminalPinClearOpen(false);
+                setTerminalPinClearEmp(null);
+              }}
+              disabled={terminalPinClearSaving}
+            >
+              Zpět
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={() => void runTerminalPinClear()}
+              disabled={terminalPinClearSaving}
+            >
+              {terminalPinClearSaving ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                "Zrušit PIN"
+              )}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

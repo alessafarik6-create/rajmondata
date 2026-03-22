@@ -164,6 +164,11 @@ service cloud.firestore {
       match /employees/{empId} {
         allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);
         allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+
+        /** Hash PINu terminálu — pouze Admin SDK / API (klient nesmí číst ani zapisovat). */
+        match /private/{docId} {
+          allow read, write: if false;
+        }
       }
 
       match /work_time_blocks/{bid} {
@@ -258,8 +263,10 @@ service cloud.firestore {
 
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
       // Zaměstnanec se sem nedostane (frontend redirect + tyto pravidla).
+      // Výjimka: employees/{id}/private/** je výše explicitně zakázáno; rekurzivní pravidlo by jinak PIN povolilo (OR pravidel).
       match /{document=**} {
-        allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          !request.path.matches('.*/employees/[^/]+/private/.*');
       }
     }
 

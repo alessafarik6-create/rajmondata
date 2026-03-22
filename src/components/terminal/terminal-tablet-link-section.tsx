@@ -14,6 +14,10 @@ import { useToast } from "@/hooks/use-toast";
 import { Copy, RefreshCw, Loader2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { generateTerminalAccessToken } from "@/lib/terminal-access-token";
+import {
+  getTerminalAccessAbsoluteUrl,
+  getTerminalAccessPath,
+} from "@/lib/terminal-access-url";
 
 type Props = {
   companyId: string | undefined;
@@ -46,11 +50,11 @@ export function TerminalTabletLinkSection({ companyId, canManage }: Props) {
   const token = typeof terminalSettings?.token === "string" ? terminalSettings.token : "";
 
   const fullUrl = useMemo(() => {
-    if (typeof window === "undefined" || !token) return "";
-    return `${window.location.origin}/terminal-access/${token}`;
+    if (!token) return "";
+    return getTerminalAccessAbsoluteUrl(token);
   }, [token]);
 
-  const pathOnly = token ? `/terminal-access/${token}` : "";
+  const pathOnly = token ? getTerminalAccessPath(token) : "";
 
   const persistToken = useCallback(
     async (newToken: string) => {

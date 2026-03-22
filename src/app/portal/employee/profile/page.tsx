@@ -24,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Upload, Trash2, AlertCircle } from "lucide-react";
+import { Loader2, Upload, Trash2, AlertCircle, KeyRound } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const DEBUG = process.env.NODE_ENV === "development";
@@ -36,8 +36,19 @@ import {
 } from "@/lib/i18n/employee-ui";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { cn } from "@/lib/utils";
+import { MIN_TERMINAL_PIN_LENGTH } from "@/lib/terminal-pin-validation";
 
 const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
+
+function employeeHasTerminalPinForProfile(
+  emp: Record<string, unknown> | null | undefined
+): boolean {
+  if (!emp) return false;
+  if (emp.terminalPinActive === true) return true;
+  if (emp.terminalPinActive === false) return false;
+  const legacy = emp.attendancePin;
+  return legacy != null && String(legacy).length > 0;
+}
 
 function mapPasswordChangeError(err: unknown): string {
   const code = (err as { code?: string })?.code;
@@ -78,12 +89,27 @@ export default function EmployeeProfilePage() {
   const employeeId = profile?.employeeId as string | undefined;
   const photoUrl = profile?.profileImage || profile?.photoUrl;
 
+  const employeeRowRef = useMemoFirebase(
+    () =>
+      firestore && companyId && employeeId
+        ? doc(firestore, "companies", companyId, "employees", employeeId)
+        : null,
+    [firestore, companyId, employeeId]
+  );
+  const { data: employeeRow, isLoading: employeeRowLoading } =
+    useDoc<Record<string, unknown>>(employeeRowRef);
+
   const [uploading, setUploading] = useState(false);
   const [pwdCurrent, setPwdCurrent] = useState("");
   const [pwdNew, setPwdNew] = useState("");
   const [pwdConfirm, setPwdConfirm] = useState("");
   const [pwdLoading, setPwdLoading] = useState(false);
   const [langSaving, setLangSaving] = useState(false);
+
+  const [tpOld, setTpOld] = useState("");
+  const [tpNew, setTpNew] = useState("");
+  const [tpConfirm, setTpConfirm] = useState("");
+  const [tpSaving, setTpSaving] = useState(false);
 
   const { t, lang: uiLang } = useEmployeeUiLang(profile);
 
@@ -205,6 +231,50 @@ export default function EmployeeProfilePage() {
       });
     } finally {
       setLangSaving(false);
+    }
+  };
+
+  const handleTerminalPinChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user) return;
+    setTpSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/employee/terminal-pin", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          oldPin: tpOld,
+          newPin: tpNew,
+          newPinConfirm: tpConfirm,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Uložení PINu se nezdařilo."
+        );
+      }
+      setTpOld("");
+      setTpNew("");
+      setTpConfirm("");
+      toast({
+        title: "PIN uložen",
+        description:
+          (data as { message?: string }).message ||
+          "PIN docházkového terminálu byl změněn.",
+      });
+    } catch (err: unknown) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: err instanceof Error ? err.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setTpSaving(false);
     }
   };
 
@@ -435,6 +505,98 @@ export default function EmployeeProfilePage() {
             Ovlivňuje rozhraní zaměstnaneckého portálu a jazyk popisu ve výkazu
             práce.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white border border-gray-200 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-black flex items-center gap-2">
+            <KeyRound className="h-5 w-5 text-primary" />
+            PIN pro terminál docházky
+          </CardTitle>
+          <p className="text-sm text-gray-600 font-normal pt-1">
+            PIN použijete na sdíleném docházkovém terminálu (tablet). Ukládá se jen jako zabezpečený hash —
+            nikdy jako čitelný text v databázi.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {employeeRowLoading ? (
+            <div className="flex items-center gap-2 text-sm text-slate-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Načítání stavu PINu…
+            </div>
+          ) : !employeeHasTerminalPinForProfile(employeeRow) ? (
+            <p className="text-sm text-slate-600">
+              Administrátor zatím nenastavil PIN pro terminál. Po obdržení výchozího PINu od administrátora si
+              jej zde můžete změnit na vlastní.
+            </p>
+          ) : (
+            <>
+              {employeeRow?.terminalPinNeedsChange === true && (
+                <Alert className="border-amber-500/50 bg-amber-50/80">
+                  <AlertCircle className="h-4 w-4 text-amber-700" />
+                  <AlertTitle className="text-amber-900">Je potřeba změnit výchozí PIN</AlertTitle>
+                  <AlertDescription className="text-amber-950/90">
+                    Administrátor nastavil nový výchozí PIN. Nastavte si vlastní PIN ({MIN_TERMINAL_PIN_LENGTH}–12
+                    číslic), aby byl účet v terminálu chráněný.
+                  </AlertDescription>
+                </Alert>
+              )}
+              <form onSubmit={handleTerminalPinChange} className="space-y-4 w-full max-w-md">
+                <div className="space-y-2">
+                  <Label htmlFor="tp-old" className={PROFILE_LABEL_CLASS}>
+                    Současný PIN
+                  </Label>
+                  <Input
+                    id="tp-old"
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={tpOld}
+                    onChange={(e) => setTpOld(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                    className={LIGHT_FORM_CONTROL_CLASS}
+                    placeholder="Výchozí nebo aktuální PIN"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tp-new" className={PROFILE_LABEL_CLASS}>
+                    Nový PIN
+                  </Label>
+                  <Input
+                    id="tp-new"
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={tpNew}
+                    onChange={(e) => setTpNew(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                    className={LIGHT_FORM_CONTROL_CLASS}
+                    placeholder={`${MIN_TERMINAL_PIN_LENGTH}–12 číslic`}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tp-c" className={PROFILE_LABEL_CLASS}>
+                    Potvrzení nového PINu
+                  </Label>
+                  <Input
+                    id="tp-c"
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={tpConfirm}
+                    onChange={(e) => setTpConfirm(e.target.value.replace(/\D/g, "").slice(0, 12))}
+                    className={LIGHT_FORM_CONTROL_CLASS}
+                  />
+                </div>
+                <Button type="submit" disabled={tpSaving} className="w-full sm:w-auto">
+                  {tpSaving ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    "Uložit nový PIN"
+                  )}
+                </Button>
+              </form>
+            </>
+          )}
         </CardContent>
       </Card>
 

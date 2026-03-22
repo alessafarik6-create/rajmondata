@@ -66,6 +66,10 @@ import {
   parseAssignedTerminalJobIds,
   chunkArray,
 } from "@/lib/assigned-jobs";
+import {
+  MAX_TERMINAL_PIN_LENGTH,
+  validateTerminalPinFormat,
+} from "@/lib/terminal-pin-validation";
 
 export type AttendanceTerminalProps = {
   /** Veřejný tablet — bez portálové navigace, výchozí režim PIN. */
@@ -117,6 +121,7 @@ export function AttendanceTerminal({
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
   const [pin, setPin] = useState("");
+  const [pinVerifyLoading, setPinVerifyLoading] = useState(false);
   const [activeEmployee, setActiveEmployee] = useState<any | null>(null);
   const [currentTime, setCurrentTime] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState<string | null>(null);
@@ -506,14 +511,101 @@ export function AttendanceTerminal({
     updateAttendanceStatus,
   ]);
 
-  const handlePinPress = (num: string) => {
-    if (pin.length < 4) {
-      const newPin = pin + num;
-      setPin(newPin);
-      if (newPin.length === 4) {
-        lookupEmployeeByPin(newPin);
+  const lookupEmployeeByPin = useCallback(
+    async (code: string) => {
+      try {
+        if (!auth?.currentUser) {
+          toast({
+            variant: "destructive",
+            title: "Chybí přihlášení",
+            description: "Pro ověření PINu musíte být přihlášeni.",
+          });
+          return;
+        }
+        if (!effectiveCompanyId) {
+          toast({
+            variant: "destructive",
+            title: "Chybí firma",
+            description: "Nelze ověřit PIN bez kontextu organizace.",
+          });
+          return;
+        }
+        setPinVerifyLoading(true);
+        const idToken = await auth.currentUser.getIdToken();
+        const res = await fetch("/api/terminal/verify-attendance-pin", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ companyId: effectiveCompanyId, pin: code }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          employeeId?: string;
+          firstName?: string;
+          lastName?: string;
+        };
+        if (!res.ok) {
+          setPin("");
+          toast({
+            variant: "destructive",
+            title: "Neplatný PIN",
+            description:
+              typeof data.error === "string" ? data.error : "Zkuste to znovu.",
+            duration: 2500,
+          });
+          return;
+        }
+        const employeeId = String(data.employeeId ?? "");
+        const firstName = String(data.firstName ?? "");
+        const lastName = String(data.lastName ?? "");
+        const fromList = employees.find((e: any) => e?.id === employeeId);
+        setActiveEmployee(
+          fromList
+            ? fromList
+            : {
+                id: employeeId,
+                firstName,
+                lastName,
+                attendanceQrId: null,
+              }
+        );
+        setPin("");
+        toast({
+          title: `Vítejte, ${firstName}!`,
+          duration: 2000,
+        });
+      } catch (e) {
+        console.error("[AttendanceTerminal] lookupEmployeeByPin:", e);
+        setPin("");
+        toast({
+          variant: "destructive",
+          title: "Chyba ověření PINu",
+        });
+      } finally {
+        setPinVerifyLoading(false);
       }
+    },
+    [auth, effectiveCompanyId, employees, toast]
+  );
+
+  const handlePinPress = (num: string) => {
+    if (pinVerifyLoading) return;
+    setPin((p) => {
+      if (p.length >= MAX_TERMINAL_PIN_LENGTH) return p;
+      return p + num;
+    });
+  };
+
+  const handleConfirmPinEntry = () => {
+    if (pinVerifyLoading) return;
+    const err = validateTerminalPinFormat(pin);
+    if (err) {
+      toast({ variant: "destructive", title: err, duration: 2500 });
+      return;
     }
+    void lookupEmployeeByPin(pin);
   };
 
   const handleClear = () => {
@@ -521,29 +613,6 @@ export function AttendanceTerminal({
     setActiveEmployee(null);
     setLastAction(null);
     void stopScanner();
-  };
-
-  const lookupEmployeeByPin = (code: string) => {
-    try {
-      const emp = employees.find((e: any) => e?.attendancePin === code);
-      if (emp) {
-        setActiveEmployee(emp);
-        toast({
-          title: `Vítejte, ${emp.firstName}!`,
-          duration: 2000,
-        });
-      } else {
-        setPin("");
-        toast({
-          variant: "destructive",
-          title: "Neplatný PIN",
-          duration: 2000,
-        });
-      }
-    } catch (e) {
-      console.error("[AttendanceTerminal] lookupEmployeeByPin:", e);
-      setPin("");
-    }
   };
 
   const lookupEmployeeByQr = (qrId: string) => {
@@ -1180,14 +1249,17 @@ export function AttendanceTerminal({
             </div>
           )}
           <div className="w-full max-w-[280px] space-y-6">
-            <div className="text-center">
+            <div className="text-center space-y-2">
               <h2 className="text-lg font-bold mb-1">Zadejte svůj PIN</h2>
-              <div className="flex justify-center gap-3">
-                {[0, 1, 2, 3].map((i) => (
+              <p className="text-xs text-muted-foreground px-1">
+                4–12 číslic, pak klepněte na Potvrdit
+              </p>
+              <div className="flex flex-wrap justify-center gap-1 max-w-[260px] mx-auto py-1">
+                {Array.from({ length: MAX_TERMINAL_PIN_LENGTH }, (_, i) => (
                   <div
                     key={i}
-                    className={`w-4 h-4 rounded-full border-2 border-primary ${
-                      pin.length > i ? "bg-primary" : "bg-transparent"
+                    className={`w-2 h-2 sm:w-2.5 sm:h-2.5 rounded-full border ${
+                      pin.length > i ? "bg-primary border-primary" : "border-muted-foreground/40"
                     }`}
                   />
                 ))}
@@ -1212,12 +1284,13 @@ export function AttendanceTerminal({
                 <Button
                   key={val}
                   variant={val === "C" || val === "DEL" ? "outline" : "default"}
+                  disabled={pinVerifyLoading}
                   className={`${standalone ? "h-20 min-h-[5rem] text-2xl" : "h-16 text-xl"} font-bold rounded-xl ${
                     val === "DEL" ? "text-rose-500 border-rose-500/20" : ""
                   }`}
                   onClick={() => {
                     if (val === "C") handleClear();
-                    else if (val === "DEL") setPin(pin.slice(0, -1));
+                    else if (val === "DEL") setPin((p) => p.slice(0, -1));
                     else handlePinPress(val);
                   }}
                 >
@@ -1225,6 +1298,19 @@ export function AttendanceTerminal({
                 </Button>
               ))}
             </div>
+
+            <Button
+              type="button"
+              className="w-full min-h-[52px] text-lg font-semibold touch-manipulation"
+              disabled={pinVerifyLoading || pin.length === 0}
+              onClick={handleConfirmPinEntry}
+            >
+              {pinVerifyLoading ? (
+                <Loader2 className="w-6 h-6 animate-spin" />
+              ) : (
+                "Potvrdit PIN"
+              )}
+            </Button>
           </div>
         </div>
       )}
