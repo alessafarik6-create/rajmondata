@@ -84,17 +84,16 @@ export function useCollection<T = any>(
         setData(results);
         setError(null);
         setIsLoading(false);
-        if (typeof window !== 'undefined') {
+        if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
           try {
             const path =
-              (memoizedTargetRefOrQuery as { type?: string }).type ===
-              'collection'
+              (memoizedTargetRefOrQuery as { type?: string }).type === "collection"
                 ? (memoizedTargetRefOrQuery as CollectionReference).path
-                : (memoizedTargetRefOrQuery as unknown as InternalQuery)
-                    ._query?.path?.canonicalString?.() ?? '(query)';
-            console.debug('[useCollection]', path, results.length, 'docs', results);
+                : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query?.path
+                    ?.canonicalString?.() ?? "(query)";
+            console.log("User updated from snapshot", path, results.length, "docs");
           } catch {
-            console.debug('[useCollection]', 'path unknown', results.length, 'docs');
+            console.log("User updated from snapshot", "(path unknown)", results.length, "docs");
           }
         }
       },

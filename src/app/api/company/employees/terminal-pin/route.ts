@@ -139,15 +139,12 @@ export async function POST(request: NextRequest) {
   try {
     if (action === "clear") {
       await privateRef.delete().catch(() => {});
-      await empRef.set(
-        {
-          terminalPinNeedsChange: false,
-          terminalPinActive: false,
-          attendancePin: FieldValue.delete(),
-          updatedAt: now,
-        },
-        { merge: true }
-      );
+      await empRef.update({
+        terminalPinNeedsChange: false,
+        terminalPinActive: false,
+        attendancePin: FieldValue.delete(),
+        updatedAt: now,
+      });
       return NextResponse.json({
         ok: true,
         message: "PIN docházkového terminálu byl zrušen.",
@@ -184,17 +181,14 @@ export async function POST(request: NextRequest) {
       { merge: true }
     );
 
-    await empRef.set(
-      {
-        terminalPinNeedsChange: true,
-        terminalPinActive: true,
-        attendancePin: FieldValue.delete(),
-        updatedAt: now,
-      },
-      { merge: true }
-    );
+    await empRef.update({
+      terminalPinNeedsChange: true,
+      terminalPinActive: true,
+      attendancePin: FieldValue.delete(),
+      updatedAt: now,
+    });
 
-    console.log("Terminal PIN saved successfully");
+    console.log("PIN saved");
 
     return NextResponse.json({
       ok: true,

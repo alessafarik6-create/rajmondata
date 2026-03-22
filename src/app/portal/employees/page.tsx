@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, startTransition } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -534,16 +534,14 @@ export default function EmployeesPage() {
         action: "set",
         pin: pinNorm,
       });
-      console.log("PIN saved successfully");
+      console.log("PIN saved");
       toast({
         title: "PIN uložen",
         description:
           data.message ||
           "Zaměstnanec si při prvním použití nastaví vlastní PIN v profilu.",
       });
-      startTransition(() => {
-        closeTerminalPinManual();
-      });
+      closeTerminalPinManual();
     } catch (error: unknown) {
       console.error("PIN save error", error);
       const msg =
@@ -568,7 +566,7 @@ export default function EmployeesPage() {
           ? normalizeTerminalPin(data.generatedPin)
           : null;
       setTerminalPinGeneratedDisplay(pin);
-      console.log("PIN saved successfully");
+      console.log("PIN saved");
       toast({
         title: "PIN vygenerován",
         description: pin
@@ -600,7 +598,7 @@ export default function EmployeesPage() {
         employeeId: terminalPinClearEmp.id,
         action: "clear",
       });
-      console.log("PIN saved successfully");
+      console.log("PIN saved");
       toast({
         title: "PIN zrušen",
         description: data.message || "Docházkový PIN byl odstraněn.",
