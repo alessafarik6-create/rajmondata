@@ -29,7 +29,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { doc, getDoc } from "firebase/firestore";
 import { describeFirebaseAuthError } from "@/lib/firebase-client-env";
-import { ensureUserFirestoreDocument } from "@/lib/ensure-user-firestore";
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -113,16 +112,8 @@ export default function LoginPage() {
         password
       );
 
-      try {
-        await ensureUserFirestoreDocument(cred.user, firestore);
-      } catch (ensureErr) {
-        console.error("[LoginPage] ensureUserFirestoreDocument failed", ensureErr);
-        toast({
-          variant: "destructive",
-          title: "Profil ve Firestore",
-          description:
-            "Přihlášení proběhlo, ale profil se nepodařilo synchronizovat. Zkuste obnovit stránku.",
-        });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[LoginPage] Auto profile seed disabled — no ensureUserFirestoreDocument after login");
       }
 
       toast({

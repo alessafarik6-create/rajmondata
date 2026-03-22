@@ -9,11 +9,19 @@ import {
   type ReactNode,
 } from "react";
 import { useFirebase } from "@/firebase";
-import { signInWithCustomToken } from "firebase/auth";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AttendanceTerminal } from "@/components/attendance/AttendanceTerminal";
+
+const BOOTSTRAP_TIMEOUT_MS = 8000;
+
+if (typeof window !== "undefined" && process.env.NODE_ENV === "development") {
+  console.log(
+    "[terminal] Auto auth creation disabled — no signInWithCustomToken / no kiosk Firebase user"
+  );
+  console.log("[terminal] Terminal uses PIN session only (JWT), not Firebase Auth session");
+}
 
 type BoundaryProps = { children: ReactNode };
 type BoundaryState = { error: Error | null };
@@ -59,7 +67,7 @@ class AttendanceTerminalErrorBoundary extends Component<BoundaryProps, BoundaryS
 function TerminalFallback() {
   const [showTimeout, setShowTimeout] = useState(false);
   useEffect(() => {
-    const id = window.setTimeout(() => setShowTimeout(true), 12000);
+    const id = window.setTimeout(() => setShowTimeout(true), BOOTSTRAP_TIMEOUT_MS);
     return () => window.clearTimeout(id);
   }, []);
   if (showTimeout) {
@@ -87,12 +95,20 @@ function TerminalFallback() {
 }
 
 function StandaloneTerminalInner() {
-  const { auth, areServicesAvailable, firebaseConfigError } = useFirebase();
+  const { areServicesAvailable, firebaseConfigError } = useFirebase();
 
-  const [phase, setPhase] = useState<"init" | "auth" | "ready" | "error">("init");
+  const [phase, setPhase] = useState<"init" | "loading" | "ready" | "error">("init");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
+  const [companyName, setCompanyName] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
+  const [bootstrapTimedOut, setBootstrapTimedOut] = useState(false);
+
+  useEffect(() => {
+    if (phase !== "loading" && phase !== "init") return;
+    const id = window.setTimeout(() => setBootstrapTimedOut(true), BOOTSTRAP_TIMEOUT_MS);
+    return () => window.clearTimeout(id);
+  }, [phase, retryKey]);
 
   useEffect(() => {
     if (firebaseConfigError) {
@@ -100,43 +116,45 @@ function StandaloneTerminalInner() {
       setPhase("error");
       return;
     }
-    if (!auth || !areServicesAvailable) {
+    if (!areServicesAvailable) {
       setPhase("init");
       return;
     }
 
     let cancelled = false;
-    setPhase("auth");
+    setPhase("loading");
     setErrorMsg(null);
+    setBootstrapTimedOut(false);
 
     void (async () => {
       try {
-        const res = await fetch("/api/terminal/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        });
+        const res = await fetch("/api/terminal/config");
         const data = (await res.json().catch(() => ({}))) as {
           error?: string;
-          customToken?: string;
           companyId?: string;
+          companyName?: string;
         };
         if (cancelled) return;
         if (!res.ok) {
-          setErrorMsg(data?.error || "Terminál nelze spustit.");
+          setErrorMsg(
+            data?.error ||
+              (res.status === 503
+                ? "Firma nebyla nalezena nebo terminál není nakonfigurován."
+                : "Terminál nelze spustit.")
+          );
           setPhase("error");
           return;
         }
-        const customToken = data.customToken;
         const cid = data.companyId?.trim();
-        if (!customToken || !cid) {
+        const cname = typeof data.companyName === "string" ? data.companyName.trim() : "";
+        if (!cid) {
           setErrorMsg("Neplatná odpověď serveru.");
           setPhase("error");
           return;
         }
-        await signInWithCustomToken(auth, customToken);
         if (cancelled) return;
         setCompanyId(cid);
+        setCompanyName(cname || null);
         setPhase("ready");
       } catch (e) {
         console.error("[terminal]", e);
@@ -150,7 +168,7 @@ function StandaloneTerminalInner() {
     return () => {
       cancelled = true;
     };
-  }, [auth, areServicesAvailable, firebaseConfigError, retryKey]);
+  }, [areServicesAvailable, firebaseConfigError, retryKey]);
 
   if (firebaseConfigError && phase !== "ready") {
     return (
@@ -188,7 +206,7 @@ function StandaloneTerminalInner() {
     );
   }
 
-  if (!auth || !areServicesAvailable) {
+  if (!areServicesAvailable) {
     return (
       <div className="flex flex-1 grid place-items-center bg-background p-6">
         <div className="flex flex-col items-center gap-4 text-muted-foreground max-w-sm text-center">
@@ -199,12 +217,27 @@ function StandaloneTerminalInner() {
     );
   }
 
-  if (phase === "auth" || phase === "init") {
+  if ((phase === "loading" || phase === "init") && bootstrapTimedOut) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center p-6 bg-background safe-area-pb gap-4">
+        <Alert variant="destructive" className="max-w-md w-full">
+          <AlertCircle className="h-6 w-6 shrink-0" />
+          <AlertTitle className="text-lg">Načítání trvá příliš dlouho</AlertTitle>
+          <AlertDescription>Zkuste obnovit stránku.</AlertDescription>
+        </Alert>
+        <Button type="button" variant="outline" className="min-h-[48px]" onClick={() => window.location.reload()}>
+          Obnovit stránku
+        </Button>
+      </div>
+    );
+  }
+
+  if (phase === "loading" || phase === "init") {
     return (
       <div className="flex flex-1 grid place-items-center bg-background p-6 safe-area-pb">
         <div className="flex flex-col items-center gap-4 text-muted-foreground max-w-sm text-center">
           <Loader2 className="w-14 h-14 animate-spin text-primary" />
-          <p className="text-lg font-medium leading-snug">Spouštím terminál…</p>
+          <p className="text-lg font-medium leading-snug">Načítání terminálu…</p>
         </div>
       </div>
     );
@@ -217,9 +250,11 @@ function StandaloneTerminalInner() {
           <Suspense fallback={<TerminalFallback />}>
             <AttendanceTerminal
               standalone
-              kioskTokenSession
+              pinSessionOnly
               hidePortalLinks
               companyIdOverride={companyId}
+              serverCompanyName={companyName}
+              publicPinOnly
             />
           </Suspense>
         </AttendanceTerminalErrorBoundary>

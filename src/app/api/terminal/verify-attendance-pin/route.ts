@@ -4,6 +4,8 @@ import type { DecodedIdToken } from "firebase-admin/auth";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyTerminalPinHash } from "@/lib/terminal-pin-crypto";
 import { validateTerminalPinFormat } from "@/lib/terminal-pin-validation";
+import { resolveTerminalCompanyId } from "@/lib/terminal-company-resolve";
+import { signTerminalPinSessionToken } from "@/lib/terminal-session-jwt";
 
 type Body = {
   companyId?: string;
@@ -29,6 +31,9 @@ async function findEmployeeByPin(
 
   for (const doc of snap.docs) {
     const data = doc.data() as Record<string, unknown>;
+    if (data.isActive === false) {
+      continue;
+    }
     const privateSnap = await privateTerminalRef(db, companyId, doc.id).get();
     const hash = privateSnap.exists
       ? ((privateSnap.data() as { terminalPinHash?: string })?.terminalPinHash ?? "")
@@ -59,8 +64,10 @@ async function findEmployeeByPin(
 }
 
 /**
- * Ověří PIN docházkového terminálu v rámci firmy (server-side).
- * Vyžaduje přihlášení: kiosk token (terminalAccess) nebo běžný uživatel stejné firmy.
+ * Ověří PIN docházkového terminálu (server-side).
+ *
+ * - S Firebase ID tokenem: portál / dřívější kiosk — firma z těla, žádný nový auth účet.
+ * - Bez tokenu: veřejný `/terminal` — firma jen ze serveru (`resolveTerminalCompanyId`), vrací JWT relaci PIN (ne Firebase Auth).
  */
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -72,12 +79,66 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  let body: Body;
+  try {
+    body = (await request.json()) as Body;
+  } catch {
+    return NextResponse.json({ error: "Neplatné JSON tělo." }, { status: 400 });
+  }
+
+  const pin = String(body.pin || "").trim();
+  const pinErr = validateTerminalPinFormat(pin);
+  if (pinErr) {
+    return NextResponse.json({ error: pinErr }, { status: 400 });
+  }
+
   const authHeader = request.headers.get("authorization") || "";
-  const idToken = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7).trim()
-    : "";
+  const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+
+  /** Veřejný terminál — bez Firebase Auth; firma jen ze stabilního serverového zdroje. */
   if (!idToken) {
-    return NextResponse.json({ error: "Chybí Authorization Bearer token." }, { status: 401 });
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        "[verify-attendance-pin] Public PIN verify (no Firebase Auth user) — Terminal uses PIN session only"
+      );
+    }
+    try {
+      const companyId = await resolveTerminalCompanyId();
+      if (!companyId) {
+        return NextResponse.json(
+          {
+            error:
+              "Firma pro terminál není nakonfigurována (TERMINAL_COMPANY_ID nebo config/terminal).",
+          },
+          { status: 503 }
+        );
+      }
+      const found = await findEmployeeByPin(db, companyId, pin);
+      if (!found) {
+        return NextResponse.json({ error: "Neplatný PIN." }, { status: 401 });
+      }
+      const terminalSessionToken = await signTerminalPinSessionToken(companyId, found.employeeId);
+      if (!terminalSessionToken) {
+        return NextResponse.json(
+          {
+            error:
+              "Relace terminálu není nakonfigurována (chybí TERMINAL_SESSION_SECRET, min. 32 znaků).",
+          },
+          { status: 503 }
+        );
+      }
+      return NextResponse.json({
+        ok: true,
+        companyId,
+        employeeId: found.employeeId,
+        firstName: found.firstName,
+        lastName: found.lastName,
+        terminalSessionToken,
+      });
+    } catch (e) {
+      console.error("[verify-attendance-pin] public", e);
+      return NextResponse.json({ error: "Ověření se nezdařilo." }, { status: 500 });
+    }
   }
 
   let decoded: DecodedIdToken;
@@ -87,21 +148,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Neplatný token." }, { status: 401 });
   }
 
-  let body: Body;
-  try {
-    body = (await request.json()) as Body;
-  } catch {
-    return NextResponse.json({ error: "Neplatné JSON tělo." }, { status: 400 });
-  }
-
   const companyId = String(body.companyId || "").trim();
-  const pin = String(body.pin || "").trim();
-
-  const pinErr = validateTerminalPinFormat(pin);
-  if (pinErr) {
-    return NextResponse.json({ error: pinErr }, { status: 400 });
-  }
-
   if (!companyId) {
     return NextResponse.json({ error: "Chybí companyId." }, { status: 400 });
   }
@@ -114,7 +161,7 @@ export async function POST(request: NextRequest) {
   const terminalAccess = claims.terminalAccess === true;
 
   if (terminalAccess && tokenCompany === companyId) {
-    // kiosk / tablet — custom token s terminalAccess
+    // legacy kiosk token s terminalAccess — ověření PINu bez nového auth účtu
   } else {
     const userSnap = await db.collection("users").doc(decoded.uid).get();
     const u = userSnap.data() as { companyId?: string } | undefined;

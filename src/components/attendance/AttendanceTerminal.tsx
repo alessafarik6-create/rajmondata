@@ -74,12 +74,16 @@ export type AttendanceTerminalProps = {
   /** Veřejný tablet — bez portálové navigace, výchozí režim PIN. */
   standalone?: boolean;
   /**
-   * Pouze veřejný `/terminal` po bootstrapu přes API (kiosk účet s custom claims).
-   * Portál používá výhradně `users/{uid}.companyId` — nepředávejte override.
+   * Veřejný `/terminal`: firma z `companyIdOverride`, žádný Firebase Auth uživatel — jen JWT relace po PINu.
+   * Auto auth creation disabled (žádný kiosk custom token).
+   */
+  pinSessionOnly?: boolean;
+  /**
+   * @deprecated Dříve kiosk Firebase Auth; nepoužívejte — terminál je bez Firebase Auth session.
    */
   companyIdOverride?: string | null;
   /**
-   * Kiosk relace z API (custom token); v portálu vždy false.
+   * @deprecated Nepoužívané (kiosk odstraněn).
    */
   kioskTokenSession?: boolean;
   /**
@@ -90,6 +94,10 @@ export type AttendanceTerminalProps = {
    * Skrýt odkazy do portálu a přihlášení zaměstnance (standalone tablet).
    */
   hidePortalLinks?: boolean;
+  /** Název firmy z `/api/terminal/config` (server). */
+  serverCompanyName?: string | null;
+  /** Veřejný `/terminal`: primárně PIN; režim QR je vypnutý (tablet). */
+  publicPinOnly?: boolean;
 };
 
 type AttendanceType = "check_in" | "break_start" | "break_end" | "check_out";
@@ -109,10 +117,13 @@ function attendanceTimestampMillis(ts: unknown): number {
 
 export function AttendanceTerminal({
   standalone = false,
+  pinSessionOnly = false,
   companyIdOverride = null,
   kioskTokenSession = false,
   employeeTokenEntry = false,
   hidePortalLinks = false,
+  serverCompanyName = null,
+  publicPinOnly = false,
 }: AttendanceTerminalProps) {
   const { user, isUserLoading, userError } = useUser();
   const auth = useAuth();
@@ -128,6 +139,11 @@ export function AttendanceTerminal({
   const [loginLoading, setLoginLoading] = useState(false);
   const [pin, setPin] = useState("");
   const [pinVerifyLoading, setPinVerifyLoading] = useState(false);
+  /** JWT relace veřejného terminálu (ne Firebase Auth). */
+  const [terminalPinJwt, setTerminalPinJwt] = useState<string | null>(null);
+  const [publicEmployees, setPublicEmployees] = useState<any[]>([]);
+  const [publicEmployeesLoading, setPublicEmployeesLoading] = useState(false);
+  const [publicEmployeesError, setPublicEmployeesError] = useState<Error | null>(null);
   const [activeEmployee, setActiveEmployee] = useState<any | null>(null);
   const [currentTime, setCurrentTime] = useState<string | null>(null);
   const [currentDate, setCurrentDate] = useState<string | null>(null);
@@ -150,10 +166,16 @@ export function AttendanceTerminal({
       setTerminalMode("personal");
       return;
     }
-    if (kioskTokenSession) {
+    if (kioskTokenSession || pinSessionOnly) {
       setTerminalMode("pin");
     }
-  }, [kioskTokenSession, employeeTokenEntry]);
+  }, [kioskTokenSession, pinSessionOnly, employeeTokenEntry]);
+
+  useEffect(() => {
+    if (publicPinOnly && terminalMode === "qr") {
+      setTerminalMode("pin");
+    }
+  }, [publicPinOnly, terminalMode]);
 
   useEffect(() => {
     setIsClient(true);
@@ -193,11 +215,11 @@ export function AttendanceTerminal({
     typeof companyIdOverride === "string" ? companyIdOverride.trim() : "";
   const hasCompanyOverride = override.length > 0;
   const fromProfile = profile?.companyId as string | undefined;
-  const isKioskSession = Boolean(
-    kioskTokenSession && hasCompanyOverride && !employeeTokenEntry
+  const isOverrideCompanySession = Boolean(
+    (kioskTokenSession || pinSessionOnly) && hasCompanyOverride && !employeeTokenEntry
   );
   const companyAccessDenied =
-    !isKioskSession &&
+    !isOverrideCompanySession &&
     Boolean(
       user &&
         profile &&
@@ -243,10 +265,10 @@ export function AttendanceTerminal({
 
   const companyDocRef = useMemoFirebase(
     () =>
-      firestore && effectiveCompanyId
+      firestore && effectiveCompanyId && !pinSessionOnly
         ? doc(firestore, "companies", effectiveCompanyId)
         : null,
-    [firestore, effectiveCompanyId]
+    [firestore, effectiveCompanyId, pinSessionOnly]
   );
   const {
     data: companyDoc,
@@ -254,6 +276,9 @@ export function AttendanceTerminal({
     isLoading: companyDocLoading,
   } = useDoc(companyDocRef);
   const displayCompanyName =
+    (typeof serverCompanyName === "string" && serverCompanyName.trim()
+      ? serverCompanyName.trim()
+      : null) ||
     (companyDoc as { companyName?: string; name?: string } | null)?.companyName ||
     (companyDoc as { name?: string } | null)?.name ||
     PLATFORM_NAME;
@@ -310,57 +335,9 @@ export function AttendanceTerminal({
 
   const [loadTimedOut, setLoadTimedOut] = useState(false);
   useEffect(() => {
-    const id = window.setTimeout(() => setLoadTimedOut(true), 10000);
+    const id = window.setTimeout(() => setLoadTimedOut(true), 8000);
     return () => window.clearTimeout(id);
   }, []);
-
-  useEffect(() => {
-    try {
-      console.log("[AttendanceTerminal] debug", {
-        companyParamFromProp: companyIdOverride ?? null,
-        effectiveOverride: override || null,
-        hasCompanyOverride,
-        effectiveCompanyId: effectiveCompanyId ?? null,
-        authReady: !isUserLoading,
-        hasUser: Boolean(user),
-        userError: userError?.message ?? null,
-        profileReady: !profileLoading,
-        profileError: profileError?.message ?? null,
-        companyDocExists: Boolean(companyDoc),
-        companyDocLoading,
-        companyDocError: companyDocError?.message ?? null,
-        kioskSession: isKioskSession,
-        attendanceQueryStarted: Boolean(personalAttendanceQuery),
-        attendanceLoading,
-        loadTimedOut,
-        finalLoadingFlags: {
-          profileLoading,
-          isUserLoading,
-          companyDocLoading,
-          attendanceLoading,
-        },
-      });
-    } catch (e) {
-      console.error("[AttendanceTerminal] debug log failed", e);
-    }
-  }, [
-    companyIdOverride,
-    override,
-    hasCompanyOverride,
-    effectiveCompanyId,
-    isUserLoading,
-    user,
-    userError,
-    profileLoading,
-    profileError,
-    companyDoc,
-    companyDocLoading,
-    companyDocError,
-    isKioskSession,
-    personalAttendanceQuery,
-    attendanceLoading,
-    loadTimedOut,
-  ]);
 
   useEffect(() => {
     if (!personalAttendanceQuery) {
@@ -436,7 +413,8 @@ export function AttendanceTerminal({
   }, [todayAttendanceRaw, attendanceIndexFallback, profileEmployeeId, user?.uid]);
 
   const employeesQuery = useMemoFirebase(() => {
-    if (!firestore || !effectiveCompanyId || terminalMode === "personal") return null;
+    if (!firestore || !effectiveCompanyId || terminalMode === "personal" || pinSessionOnly)
+      return null;
     try {
       return collection(firestore, "companies", effectiveCompanyId, "employees");
     } catch (e) {
@@ -449,7 +427,7 @@ export function AttendanceTerminal({
       );
       return null;
     }
-  }, [firestore, effectiveCompanyId, terminalMode]);
+  }, [firestore, effectiveCompanyId, terminalMode, pinSessionOnly]);
 
   const {
     data: employeesRaw,
@@ -457,13 +435,61 @@ export function AttendanceTerminal({
     error: employeesError,
   } = useCollection(employeesQuery);
 
-  const employees = useMemo(
-    () => (Array.isArray(employeesRaw) ? employeesRaw : []),
-    [employeesRaw]
-  );
+  const employees = useMemo(() => {
+    const raw = Array.isArray(employeesRaw) ? employeesRaw : [];
+    return raw.filter((e: { isActive?: boolean }) => e?.isActive !== false);
+  }, [employeesRaw]);
+
+  const employeesForPin = useMemo(() => {
+    if (pinSessionOnly) return publicEmployees;
+    return employees;
+  }, [pinSessionOnly, publicEmployees, employees]);
 
   useEffect(() => {
-    if (!firestore || !effectiveCompanyId) {
+    if (!pinSessionOnly || !hasCompanyOverride) return;
+    let cancelled = false;
+    setPublicEmployeesLoading(true);
+    setPublicEmployeesError(null);
+    void fetch("/api/terminal/employees")
+      .then(async (res) => {
+        const data = (await res.json()) as { error?: string; employees?: unknown[] };
+        if (!res.ok) {
+          throw new Error(typeof data.error === "string" ? data.error : "Zaměstnance se nepodařilo načíst.");
+        }
+        if (!cancelled) {
+          setPublicEmployees(Array.isArray(data.employees) ? data.employees : []);
+        }
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setPublicEmployeesError(e instanceof Error ? e : new Error(String(e)));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPublicEmployeesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pinSessionOnly, hasCompanyOverride]);
+
+  const [employeesLoadTimedOut, setEmployeesLoadTimedOut] = useState(false);
+  useEffect(() => {
+    if (terminalMode !== "pin" || !effectiveCompanyId) {
+      setEmployeesLoadTimedOut(false);
+      return;
+    }
+    const loading = pinSessionOnly ? publicEmployeesLoading : employeesLoading;
+    if (!loading) {
+      setEmployeesLoadTimedOut(false);
+      return;
+    }
+    const id = window.setTimeout(() => setEmployeesLoadTimedOut(true), 8000);
+    return () => window.clearTimeout(id);
+  }, [terminalMode, effectiveCompanyId, employeesLoading, pinSessionOnly, publicEmployeesLoading]);
+
+  useEffect(() => {
+    if (!effectiveCompanyId) {
       setTerminalJobOptions([]);
       return;
     }
@@ -472,6 +498,48 @@ export function AttendanceTerminal({
         ? parseAssignedTerminalJobIds(employeeDocSelf)
         : parseAssignedTerminalJobIds(activeEmployee);
     if (ids.length === 0) {
+      setTerminalJobOptions([]);
+      return;
+    }
+    if (pinSessionOnly) {
+      if (!terminalPinJwt) {
+        setTerminalJobOptions([]);
+        return;
+      }
+      let cancelled = false;
+      setTerminalJobsLoading(true);
+      void (async () => {
+        try {
+          const res = await fetch(
+            `/api/terminal/jobs?ids=${encodeURIComponent(ids.join(","))}`,
+            { headers: { Authorization: `Bearer ${terminalPinJwt}` } }
+          );
+          const data = (await res.json()) as {
+            error?: string;
+            jobs?: { id: string; name: string }[];
+          };
+          if (!res.ok) {
+            throw new Error(
+              typeof data.error === "string" ? data.error : "Zakázky se nepodařilo načíst."
+            );
+          }
+          if (!cancelled) setTerminalJobOptions(data.jobs ?? []);
+        } catch (e) {
+          logFirestoreFailure(
+            `companies/${effectiveCompanyId}/jobs`,
+            "getDocs",
+            e
+          );
+          if (!cancelled) setTerminalJobOptions([]);
+        } finally {
+          if (!cancelled) setTerminalJobsLoading(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (!firestore) {
       setTerminalJobOptions([]);
       return;
     }
@@ -517,6 +585,8 @@ export function AttendanceTerminal({
     terminalMode,
     employeeDocSelf,
     activeEmployee,
+    pinSessionOnly,
+    terminalPinJwt,
   ]);
 
   useEffect(() => {
@@ -592,9 +662,107 @@ export function AttendanceTerminal({
     updateAttendanceStatus,
   ]);
 
+  useEffect(() => {
+    if (!pinSessionOnly || !terminalPinJwt || !activeEmployee?.id) return;
+    let cancelled = false;
+    void fetch("/api/terminal/attendance/today", {
+      headers: { Authorization: `Bearer ${terminalPinJwt}` },
+    })
+      .then(async (res) => {
+        const data = (await res.json()) as {
+          events?: { type?: string; millis?: number }[];
+        };
+        if (!res.ok || cancelled) return;
+        const evs = Array.isArray(data.events) ? data.events : [];
+        if (evs.length === 0) return;
+        setLastAction(evs[0].type as AttendanceType);
+        const fakeHistory = evs.map((e) => ({
+          type: e.type,
+          timestamp: { toDate: () => new Date(e.millis ?? 0) },
+        }));
+        updateAttendanceStatus(fakeHistory);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [pinSessionOnly, terminalPinJwt, activeEmployee?.id, updateAttendanceStatus]);
+
   const lookupEmployeeByPin = useCallback(
     async (code: string) => {
       try {
+        if (pinSessionOnly) {
+          if (!effectiveCompanyId) {
+            toast({
+              variant: "destructive",
+              title: "Chybí firma",
+              description: "Terminál není nakonfigurován.",
+            });
+            return;
+          }
+          setPinVerifyLoading(true);
+          try {
+            const res = await fetch("/api/terminal/verify-attendance-pin", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pin: code }),
+            });
+            const data = (await res.json().catch(() => ({}))) as {
+              error?: string;
+              employeeId?: string;
+              firstName?: string;
+              lastName?: string;
+              terminalSessionToken?: string;
+            };
+            if (!res.ok) {
+              setPin("");
+              toast({
+                variant: "destructive",
+                title: "Neplatný PIN",
+                description:
+                  res.status === 401
+                    ? "Neplatný PIN"
+                    : typeof data.error === "string"
+                      ? data.error
+                      : "Zkuste to znovu.",
+                duration: 2500,
+              });
+              return;
+            }
+            const token = data.terminalSessionToken;
+            if (typeof token === "string" && token.length > 0) {
+              setTerminalPinJwt(token);
+            }
+            if (process.env.NODE_ENV === "development") {
+              console.log(
+                "[AttendanceTerminal] Terminal uses PIN session only — JWT relace, žádný Firebase Auth uživatel"
+              );
+            }
+            const employeeId = String(data.employeeId ?? "");
+            const firstName = String(data.firstName ?? "");
+            const lastName = String(data.lastName ?? "");
+            const fromList = employeesForPin.find((e: any) => e?.id === employeeId);
+            setActiveEmployee(
+              fromList
+                ? fromList
+                : {
+                    id: employeeId,
+                    firstName,
+                    lastName,
+                    attendanceQrId: null,
+                  }
+            );
+            setPin("");
+            toast({
+              title: `Vítejte, ${firstName}!`,
+              duration: 2000,
+            });
+          } finally {
+            setPinVerifyLoading(false);
+          }
+          return;
+        }
+
         if (!auth?.currentUser) {
           toast({
             variant: "destructive",
@@ -633,7 +801,11 @@ export function AttendanceTerminal({
             variant: "destructive",
             title: "Neplatný PIN",
             description:
-              typeof data.error === "string" ? data.error : "Zkuste to znovu.",
+              res.status === 401
+                ? "Neplatný PIN"
+                : typeof data.error === "string"
+                  ? data.error
+                  : "Zkuste to znovu.",
             duration: 2500,
           });
           return;
@@ -641,7 +813,7 @@ export function AttendanceTerminal({
         const employeeId = String(data.employeeId ?? "");
         const firstName = String(data.firstName ?? "");
         const lastName = String(data.lastName ?? "");
-        const fromList = employees.find((e: any) => e?.id === employeeId);
+        const fromList = employeesForPin.find((e: any) => e?.id === employeeId);
         setActiveEmployee(
           fromList
             ? fromList
@@ -668,7 +840,7 @@ export function AttendanceTerminal({
         setPinVerifyLoading(false);
       }
     },
-    [auth, effectiveCompanyId, employees, toast]
+    [auth, effectiveCompanyId, employeesForPin, toast, pinSessionOnly]
   );
 
   const handlePinPress = (num: string) => {
@@ -693,12 +865,13 @@ export function AttendanceTerminal({
     setPin("");
     setActiveEmployee(null);
     setLastAction(null);
+    setTerminalPinJwt(null);
     void stopScanner();
   };
 
   const lookupEmployeeByQr = (qrId: string) => {
     try {
-      const emp = employees.find((e: any) => e?.attendanceQrId === qrId);
+      const emp = employeesForPin.find((e: any) => e?.attendanceQrId === qrId);
       if (emp) {
         setActiveEmployee(emp);
         toast({
@@ -774,6 +947,62 @@ export function AttendanceTerminal({
         terminalMode !== "personal"
           ? `${activeEmployee?.firstName} ${activeEmployee?.lastName}`
           : profile?.displayName || user?.email;
+
+      if (pinSessionOnly && terminalPinJwt) {
+        if (!effectiveCompanyId || !activeEmployee?.id) {
+          toast({
+            variant: "destructive",
+            title: "Nelze uložit",
+            description: "Chybí relace terminálu nebo zaměstnanec.",
+          });
+          return;
+        }
+        void (async () => {
+          try {
+            const res = await fetch("/api/terminal/attendance", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${terminalPinJwt}`,
+              },
+              body: JSON.stringify({
+                type,
+                jobId: type === "check_in" ? jobId : undefined,
+                jobName: type === "check_in" ? jobName : undefined,
+                employeeName: `${activeEmployee?.firstName ?? ""} ${activeEmployee?.lastName ?? ""}`.trim(),
+              }),
+            });
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            if (!res.ok) {
+              toast({
+                variant: "destructive",
+                title: "Zápis se nezdařil",
+                description:
+                  typeof data.error === "string" ? data.error : "Zkuste to znovu.",
+              });
+              return;
+            }
+            setLastAction(type);
+            const messages: Record<AttendanceType, string> = {
+              check_in: "Příchod zaznamenán",
+              break_start: "Pauza zahájena",
+              break_end: "Pauza ukončena",
+              check_out: "Odchod zaznamenán",
+            };
+            toast({ title: messages[type], duration: 2000 });
+            if (terminalMode !== "personal") {
+              setTimeout(handleClear, 1500);
+            }
+          } catch (e) {
+            console.error("[AttendanceTerminal] handleAction (terminal API):", e);
+            toast({
+              variant: "destructive",
+              title: "Akci se nepodařilo provést.",
+            });
+          }
+        })();
+        return;
+      }
 
       if (!firestore || !effectiveCompanyId || !targetId) {
         console.warn(
@@ -890,7 +1119,13 @@ export function AttendanceTerminal({
   const waitingForCritical =
     isUserLoading ||
     (!hasCompanyOverride && profileLoading) ||
-    (Boolean(effectiveCompanyId) && companyDocLoading && hasCompanyOverride);
+    (Boolean(effectiveCompanyId) && companyDocLoading && hasCompanyOverride && !pinSessionOnly);
+
+  const allowPublicPinWithoutAuth =
+    standalone && pinSessionOnly && hasCompanyOverride;
+
+  const pinListLoading = pinSessionOnly ? publicEmployeesLoading : employeesLoading;
+  const pinListError = pinSessionOnly ? publicEmployeesError : employeesError;
 
   if (loadTimedOut && waitingForCritical) {
     return (
@@ -926,8 +1161,8 @@ export function AttendanceTerminal({
     );
   }
 
-  if (!user) {
-    if (standalone) {
+  if (!user && !allowPublicPinWithoutAuth) {
+    if (standalone && !kioskTokenSession) {
       return (
         <div className={shellClass}>
           <div className="flex flex-1 flex-col items-center justify-center p-6 w-full max-w-lg mx-auto">
@@ -1043,7 +1278,7 @@ export function AttendanceTerminal({
     );
   }
 
-  if (!isKioskSession && !profileLoading && profile && companyAccessDenied) {
+  if (!isOverrideCompanySession && !profileLoading && profile && companyAccessDenied) {
     return (
       <div
         className={
@@ -1130,7 +1365,7 @@ export function AttendanceTerminal({
     );
   }
 
-  if (profileError && !isKioskSession) {
+  if (profileError && !isOverrideCompanySession) {
     return (
       <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
         <div className="flex items-center gap-3 mb-6">
@@ -1220,7 +1455,8 @@ export function AttendanceTerminal({
     hasCompanyOverride &&
     !companyDocLoading &&
     !companyDocError &&
-    companyDoc === null
+    companyDoc === null &&
+    !pinSessionOnly
   ) {
     return (
       <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
@@ -1237,9 +1473,14 @@ export function AttendanceTerminal({
             Dokument firmy{" "}
             <span className="font-mono text-xs break-all">companies/{effectiveCompanyId}</span> ve
             Firestore neexistuje nebo k němu nemáte přístup.
-            {!hidePortalLinks ? (
-              <span className="block mt-2">Zkontrolujte odkaz nebo otevřete terminál z portálu.</span>
-            ) : null}
+            {hidePortalLinks ? (
+              <span className="block mt-2">
+                Zkontrolujte nastavení serveru (např. <code className="text-xs">TERMINAL_COMPANY_ID</code> nebo
+                dokument <code className="text-xs">config/terminal</code>).
+              </span>
+            ) : (
+              <span className="block mt-2">Otevřete terminál z portálu nebo kontaktujte administrátora.</span>
+            )}
           </AlertDescription>
         </Alert>
         <Button
@@ -1252,13 +1493,13 @@ export function AttendanceTerminal({
               : router.push("/portal/attendance/terminal")
           }
         >
-          {hidePortalLinks ? "Obnovit stránku" : "Otevřít terminál bez parametru"}
+          {hidePortalLinks ? "Obnovit stránku" : "Zpět do portálu"}
         </Button>
       </div>
     );
   }
 
-  if ((!profile || !effectiveCompanyId) && !isKioskSession) {
+  if ((!profile || !effectiveCompanyId) && !isOverrideCompanySession) {
     return (
       <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
         <div className="flex items-center gap-3 mb-6">
@@ -1325,7 +1566,7 @@ export function AttendanceTerminal({
         <div className="flex flex-col items-stretch sm:items-end gap-2">
           {!employeeTokenEntry && (
           <div className="flex gap-1 p-1 rounded-lg border border-border bg-muted/30">
-            {!kioskTokenSession && (
+            {!kioskTokenSession && !pinSessionOnly && (
               <Button
                 variant={terminalMode === "personal" ? "default" : "ghost"}
                 size="sm"
@@ -1352,8 +1593,11 @@ export function AttendanceTerminal({
             <Button
               variant={terminalMode === "qr" ? "default" : "ghost"}
               size="sm"
-              className="min-h-[44px] flex-1 sm:flex-initial sm:h-7 sm:min-h-0 px-2 text-[10px]"
+              disabled={publicPinOnly}
+              title={publicPinOnly ? "Režim QR na veřejném terminálu není k dispozici" : undefined}
+              className="min-h-[44px] flex-1 sm:flex-initial sm:h-7 sm:min-h-0 px-2 text-[10px] disabled:opacity-50"
               onClick={() => {
+                if (publicPinOnly) return;
                 setTerminalMode("qr");
                 handleClear();
               }}
@@ -1435,17 +1679,24 @@ export function AttendanceTerminal({
 
       {terminalMode === "pin" && !activeEmployee && (
         <div className="flex-1 flex flex-col items-center">
-          {employeesError && (
+          {pinListError && (
             <Alert variant="destructive" className="mb-4 w-full max-w-[280px]">
               <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Seznam zaměstnanců není k dispozici</AlertTitle>
+              <AlertTitle>Nelze načíst zaměstnance</AlertTitle>
               <AlertDescription>
-                Načtení zaměstnanců selhalo (např. oprávnění Firestore). Zkuste
-                režim Osobní nebo kontaktujte administrátora.
+                {pinListError.message ||
+                  "Zkontrolujte oprávnění Firestore nebo kontaktujte administrátora."}
               </AlertDescription>
             </Alert>
           )}
-          {employeesLoading && !employeesError && (
+          {employeesLoadTimedOut && pinListLoading && !pinListError && (
+            <Alert variant="destructive" className="mb-4 w-full max-w-[280px]">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Načítání trvá příliš dlouho</AlertTitle>
+              <AlertDescription>Zkuste obnovit stránku.</AlertDescription>
+            </Alert>
+          )}
+          {pinListLoading && !pinListError && !employeesLoadTimedOut && (
             <div className="flex items-center gap-2 text-muted-foreground mb-4">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span className="text-sm">Načítání zaměstnanců…</span>
@@ -1523,11 +1774,8 @@ export function AttendanceTerminal({
           {employeesError && (
             <Alert variant="destructive" className="w-full max-w-[300px]">
               <AlertCircle className="h-4 w-4" />
-              <AlertTitle>Seznam zaměstnanců není k dispozici</AlertTitle>
-              <AlertDescription>
-                Načtení zaměstnanců selhalo (např. oprávnění Firestore). Zkuste
-                režim Osobní nebo kontaktujte administrátora.
-              </AlertDescription>
+              <AlertTitle>Nelze načíst zaměstnance</AlertTitle>
+              <AlertDescription>Zkontrolujte oprávnění Firestore nebo kontaktujte administrátora.</AlertDescription>
             </Alert>
           )}
           {employeesLoading && !employeesError && (
@@ -1579,7 +1827,7 @@ export function AttendanceTerminal({
               <p className="text-sm font-bold truncate">
                 {terminalMode !== "personal"
                   ? `${activeEmployee?.firstName} ${activeEmployee?.lastName}`
-                  : profile?.displayName || user.email}
+                  : profile?.displayName || user?.email}
               </p>
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shrink-0" />

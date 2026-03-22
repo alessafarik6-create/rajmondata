@@ -2,11 +2,10 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useUser, useFirestore, useCompany, useFirebase } from "@/firebase";
+import { useUser, useCompany, useFirebase } from "@/firebase";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
-import { ensureUserFirestoreDocument } from "@/lib/ensure-user-firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
@@ -24,15 +23,10 @@ export default function PortalLayout({
 }) {
   const { user, isUserLoading, userError } = useUser();
   const { areServicesAvailable, firebaseConfigError } = useFirebase();
-  const firestore = useFirestore();
   const router = useRouter();
   const pathname = usePathname();
 
-  const seedStartedRef = useRef(false);
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [seedError, setSeedError] = useState<Error | null>(null);
-  const [isSeeding, setIsSeeding] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authResolved, setAuthResolved] = useState(false);
   const [shellTimedOut, setShellTimedOut] = useState(false);
@@ -62,14 +56,8 @@ export default function PortalLayout({
 
   const isEmployeePortalPath = pathname.startsWith("/portal/employee");
 
-  /**
-   * Čekání na profil: načítání nebo doplnění chybějícího users/{uid} (ensureUserFirestoreDocument).
-   * Bez isSeeding by při chybějícím dokumentu vznikla nekonečná smyčka nebo okamžitá chybová obrazovka.
-   */
-  const waitingForProfileResolution =
-    isProfileLoading ||
-    isSeeding ||
-    (Boolean(user) && profile == null && !seedError);
+  /** Načítání profilu z Firestore — bez automatického doplňování dokumentu (žádný nový auth účet). */
+  const waitingForProfileResolution = isProfileLoading;
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
@@ -78,7 +66,6 @@ export default function PortalLayout({
       mobileMenuOpen,
       isProfileLoading,
       isUserLoading,
-      isSeeding,
       isPortalEmployeeOnly,
       isEmployeePortalPath,
       waitingForProfileResolution,
@@ -90,7 +77,6 @@ export default function PortalLayout({
     mobileMenuOpen,
     isProfileLoading,
     isUserLoading,
-    isSeeding,
     isPortalEmployeeOnly,
     isEmployeePortalPath,
     waitingForProfileResolution,
@@ -189,45 +175,13 @@ export default function PortalLayout({
     waitingForProfileResolution,
   ]);
 
-  /** Chybí users/{uid} — doplnit (merge + případně ensureUserProfile uvnitř ensureUserFirestoreDocument). */
   useEffect(() => {
-    if (!user || !firestore || isProfileLoading || profile != null) {
-      return;
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        "[PortalLayout] Auto auth creation disabled — ensureUserFirestoreDocument removed from portal layout"
+      );
     }
-    if (seedStartedRef.current) {
-      return;
-    }
-
-    seedStartedRef.current = true;
-    setIsSeeding(true);
-    setSeedError(null);
-
-    let cancelled = false;
-
-    ensureUserFirestoreDocument(user, firestore)
-      .then(() => {
-        if (typeof window !== "undefined") {
-          console.debug(
-            "[PortalLayout] ensureUserFirestoreDocument completed, profile will update via useDoc"
-          );
-        }
-      })
-      .catch((err) => {
-        console.error("[PortalLayout] ensureUserFirestoreDocument failed", err);
-        setSeedError(err instanceof Error ? err : new Error("Profil se nepodařilo doplnit"));
-        seedStartedRef.current = false;
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setIsSeeding(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      seedStartedRef.current = false;
-    };
-  }, [user, firestore, isProfileLoading, profile]);
+  }, []);
 
   const shellTimeoutUi = (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4 py-8">
@@ -297,23 +251,6 @@ export default function PortalLayout({
     );
   }
 
-  if (seedError) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Alert variant="destructive" className="max-w-xl border-destructive/60">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Chyba při nastavení účtu</AlertTitle>
-          <AlertDescription>
-            {seedError.message}
-            <span className="block mt-2 text-xs opacity-90">
-              Zkuste obnovit stránku nebo se odhlásit a znovu přihlásit.
-            </span>
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
   if (profileError) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
@@ -336,9 +273,7 @@ export default function PortalLayout({
     if (shellTimedOut) {
       return shellTimeoutUi;
     }
-    return spinner(
-      isSeeding ? "Nastavujeme váš pracovní prostor…" : "Načítání profilu…"
-    );
+    return spinner("Načítání profilu…");
   }
 
   if (!profile) {
