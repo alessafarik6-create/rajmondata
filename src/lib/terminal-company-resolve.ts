@@ -28,11 +28,24 @@ export async function resolveTerminalCompanyId(): Promise<string | null> {
     console.error("[terminal-company] config/terminal.companyId neexistuje ve Firestore:", cfgId);
   }
 
+  const allowFirstCompanyFallback =
+    process.env.NODE_ENV !== "production" ||
+    process.env.TERMINAL_ALLOW_FIRST_COMPANY_FALLBACK === "true";
+  if (!allowFirstCompanyFallback) {
+    console.error(
+      "[terminal-company] V produkci nastavte TERMINAL_COMPANY_ID nebo Firestore config/terminal (companyId), případně TERMINAL_ALLOW_FIRST_COMPANY_FALLBACK=true."
+    );
+    return null;
+  }
+
   const q = await db.collection("companies").orderBy(FieldPath.documentId()).limit(1).get();
   if (q.empty) {
     console.error("[terminal-company] Ve Firestore není žádná firma.");
     return null;
   }
+  console.warn(
+    "[terminal-company] Používám první firmu z Firestore (vývoj / výslovný opt-in). Není vhodné pro produkci."
+  );
   return q.docs[0].id;
 }
 

@@ -1,7 +1,7 @@
 "use client";
 import { Separator } from "@/components/ui/separator";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, startTransition } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -26,6 +26,8 @@ import {
   Eye,
   DownloadCloud,
   Briefcase,
+  AlertTriangle,
+  Link2,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -52,6 +54,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Label } from '@/components/ui/label';
 import { cn } from "@/lib/utils";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 /** Světlý styl polí v modálu „Pozvat člena týmu“ (neovlivní zbytek portálu). */
 const INVITE_INPUT_CLASS =
@@ -158,7 +161,9 @@ export default function EmployeesPage() {
       });
       router.push("/portal/dashboard");
     }
-  }, [profile, canView, userRole, router, toast]);
+    // toast z useToast() má nestabilní referenci — v deps způsobuje zbytečné opakování efektu
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, canView, userRole, router]);
 
   const [invitePassword, setInvitePassword] = useState("");
   const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("");
@@ -185,6 +190,10 @@ export default function EmployeesPage() {
   const [terminalPinClearOpen, setTerminalPinClearOpen] = useState(false);
   const [terminalPinClearEmp, setTerminalPinClearEmp] = useState<any | null>(null);
   const [terminalPinClearSaving, setTerminalPinClearSaving] = useState(false);
+
+  const [terminalCfgCompanyId, setTerminalCfgCompanyId] = useState<string | null>(null);
+  const [terminalCfgLoading, setTerminalCfgLoading] = useState(false);
+  const [terminalBindSaving, setTerminalBindSaving] = useState(false);
 
   const [assignWorklogEmployee, setAssignWorklogEmployee] = useState<any | null>(
     null
@@ -261,6 +270,29 @@ export default function EmployeesPage() {
       jobIdSetsEqual(prev, next) ? prev : next
     );
   }, [terminalEmployeeId, assignTerminalEmployee]);
+
+  useEffect(() => {
+    if (!companyId || !canView) return;
+    let cancelled = false;
+    setTerminalCfgLoading(true);
+    void fetch("/api/terminal/config")
+      .then(async (res) => {
+        const data = (await res.json().catch(() => ({}))) as { companyId?: string };
+        if (cancelled) return;
+        setTerminalCfgCompanyId(
+          typeof data.companyId === "string" ? data.companyId.trim() : null
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setTerminalCfgCompanyId(null);
+      })
+      .finally(() => {
+        if (!cancelled) setTerminalCfgLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, canView]);
 
   const toggleAssignWorklogJob = (jobId: string) => {
     setAssignWorklogJobIds((prev) => {
@@ -465,6 +497,39 @@ export default function EmployeesPage() {
       message?: string;
       generatedPin?: string;
     };
+  };
+
+  const bindTerminalToCompany = async () => {
+    if (!user || !companyId || !canManage) return;
+    setTerminalBindSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/terminal-config", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ companyId }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Propojení terminálu se nezdařilo."
+        );
+      }
+      setTerminalCfgCompanyId(companyId);
+      toast({
+        title: "Terminál propojen",
+        description:
+          "Firestore config/terminal nyní ukazuje na tuto firmu. Ověření PINu na /terminal bude odpovídat administraci.",
+      });
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : "Propojení terminálu se nezdařilo.";
+      toast({ variant: "destructive", title: "Chyba", description: msg });
+    } finally {
+      setTerminalBindSaving(false);
+    }
   };
 
   const closeTerminalPinManual = () => {
@@ -837,6 +902,44 @@ export default function EmployeesPage() {
           )}
         </div>
       </div>
+
+      {canManage &&
+        !terminalCfgLoading &&
+        terminalCfgCompanyId &&
+        companyId &&
+        terminalCfgCompanyId !== companyId && (
+          <Alert variant="destructive" className="max-w-4xl border-amber-500/50 bg-amber-50 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertTitle>Terminál ukazuje na jinou firmu</AlertTitle>
+            <AlertDescription className="space-y-3 text-amber-950/90 dark:text-amber-100/90">
+              <p>
+                Veřejný terminál (/terminal) na serveru používá firmu{" "}
+                <strong className="font-mono">{terminalCfgCompanyId}</strong>, tento portál spravuje firmu{" "}
+                <strong className="font-mono">{companyId}</strong>. PIN uložený zde se na terminálu neověří, dokud
+                nebude shoda konfigurace.
+              </p>
+              <p className="text-xs opacity-90">
+                Proměnná prostředí <code className="rounded bg-black/5 px-1 dark:bg-white/10">TERMINAL_COMPANY_ID</code>{" "}
+                má přednost před Firestore — musí odpovídat této firmě, nebo ji vyjměte a použijte tlačítko níže.
+              </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="gap-2"
+                onClick={() => void bindTerminalToCompany()}
+                disabled={terminalBindSaving}
+              >
+                {terminalBindSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Link2 className="h-4 w-4" />
+                )}
+                Propojit terminál s touto firmou
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
 
       <Card className="bg-surface border-border overflow-hidden">
         <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">

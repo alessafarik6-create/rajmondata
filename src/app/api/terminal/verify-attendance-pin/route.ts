@@ -42,7 +42,7 @@ async function findEmployeeByPin(
   companyId: string,
   pinNormalized: string
 ): Promise<{ employeeId: string; firstName: string; lastName: string } | null> {
-  console.log("[verify-attendance-pin] Looking up employee by terminal PIN", { companyId });
+  console.log("Looking up employee by terminal PIN", { companyId });
 
   const snap = await db.collection("companies").doc(companyId).collection("employees").get();
 
@@ -79,7 +79,7 @@ async function findEmployeeByPin(
         ? normalizeTerminalPin(String(legacyRaw))
         : "";
     if (legacy.length > 0 && legacy === pinNormalized) {
-      console.log("[verify-attendance-pin] Employee found for terminal PIN", {
+      console.log("Employee found for terminal PIN", {
         employeeId: doc.id,
         source: "attendancePin_legacy",
       });
@@ -91,7 +91,7 @@ async function findEmployeeByPin(
     }
   }
 
-  console.log("[verify-attendance-pin] No employee found for terminal PIN", { companyId });
+  console.log("No employee found for terminal PIN", { companyId });
   return null;
 }
 
@@ -130,12 +130,15 @@ export async function POST(request: NextRequest) {
 
   /** Veřejný terminál — bez Firebase Auth; firma jen ze stabilního serverového zdroje. */
   if (!idToken) {
+    console.log("Verifying attendance PIN");
     if (process.env.NODE_ENV === "development") {
+      console.log("Terminal auth creation disabled");
       console.log(
         "[verify-attendance-pin] Public PIN verify (no Firebase Auth user) — Terminal uses PIN session only"
       );
     }
     try {
+      const bodyCompany = String(body.companyId ?? "").trim();
       const companyId = await resolveTerminalCompanyId();
       if (!companyId) {
         return NextResponse.json(
@@ -144,6 +147,20 @@ export async function POST(request: NextRequest) {
               "Firma pro terminál není nakonfigurována (TERMINAL_COMPANY_ID nebo config/terminal).",
           },
           { status: 503 }
+        );
+      }
+      if (bodyCompany && bodyCompany !== companyId) {
+        console.warn("[verify-attendance-pin] Terminal companyId mismatch", {
+          bodyCompany,
+          resolved: companyId,
+        });
+        return NextResponse.json(
+          {
+            error:
+              "Firma terminálu neodpovídá konfiguraci serveru. Obnovte stránku terminálu nebo zkontrolujte TERMINAL_COMPANY_ID / config/terminal.",
+            code: "TERMINAL_COMPANY_MISMATCH",
+          },
+          { status: 400 }
         );
       }
       const found = await findEmployeeByPin(db, companyId, pin);

@@ -165,15 +165,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log("[terminal-pin admin] Generating new terminal PIN for user", {
-      employeeId,
-      companyId: targetCompanyId,
-      adminUid: callerUid,
-      action,
-    });
-    console.log("[terminal-pin admin] Saving generated terminal PIN", {
-      normalizedPinLength: pinPlain.length,
-    });
+    console.log("Saving terminal PIN for user", employeeId);
+    console.log(
+      "Generated terminal PIN",
+      process.env.NODE_ENV === "development" ? pinPlain : { length: pinPlain.length }
+    );
 
     const hash = await hashTerminalPin(pinPlain);
 
@@ -198,7 +194,7 @@ export async function POST(request: NextRequest) {
       { merge: true }
     );
 
-    console.log("[terminal-pin admin] Terminal PIN saved successfully", { employeeId });
+    console.log("Terminal PIN saved successfully");
 
     return NextResponse.json({
       ok: true,

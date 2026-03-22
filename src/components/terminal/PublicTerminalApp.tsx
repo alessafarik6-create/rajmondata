@@ -222,14 +222,14 @@ export function PublicTerminalApp({ companyId, companyName }: Props) {
     }
     const pinNorm = normalizeTerminalPin(pin);
     if (process.env.NODE_ENV === "development") {
-      console.log("[PublicTerminalApp] Looking up employee by terminal PIN");
+      console.log("Looking up employee by terminal PIN");
     }
     setPinVerifyLoading(true);
     try {
       const res = await fetch("/api/terminal/verify-attendance-pin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin: pinNorm }),
+        body: JSON.stringify({ pin: pinNorm, companyId }),
       });
       const data = (await res.json()) as {
         error?: string;
@@ -276,7 +276,7 @@ export function PublicTerminalApp({ companyId, companyName }: Props) {
     } finally {
       setPinVerifyLoading(false);
     }
-  }, [pin, employees, toast, refreshTodayFromServer]);
+  }, [pin, employees, toast, refreshTodayFromServer, companyId]);
 
   const clearTerminalSession = useCallback(() => {
     setPin("");
