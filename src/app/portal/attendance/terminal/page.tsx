@@ -1,10 +1,24 @@
 "use client";
 
-import React, { Component, type ErrorInfo, type ReactNode } from "react";
+import React, {
+  Component,
+  Suspense,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
+import { useSearchParams } from "next/navigation";
+import { doc } from "firebase/firestore";
+import {
+  useUser,
+  useFirestore,
+  useDoc,
+  useMemoFirebase,
+} from "@/firebase";
 import { AttendanceTerminal } from "@/components/attendance/AttendanceTerminal";
+import { TerminalTabletLinkSection } from "@/components/terminal/terminal-tablet-link-section";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, Loader2 } from "lucide-react";
 
 type BoundaryProps = { children: ReactNode };
 type BoundaryState = { error: Error | null };
@@ -56,10 +70,60 @@ class AttendanceTerminalErrorBoundary extends Component<
   }
 }
 
+function PortalAttendanceTerminalInner() {
+  const searchParams = useSearchParams();
+  const companyParam = searchParams.get("company")?.trim() || null;
+
+  const { user } = useUser();
+  const firestore = useFirestore();
+
+  const userRef = useMemoFirebase(
+    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
+    [firestore, user]
+  );
+  const { data: profile } = useDoc(userRef);
+
+  const companyId = profile?.companyId as string | undefined;
+  const role = (profile as { role?: string } | null)?.role ?? "employee";
+  const canManage =
+    role === "owner" ||
+    role === "admin" ||
+    role === "manager" ||
+    role === "accountant";
+
+  return (
+    <div className="min-h-screen bg-background flex flex-col w-full">
+      <div className="w-full max-w-3xl mx-auto px-4 pt-6 pb-4 md:px-8 md:pt-8 shrink-0">
+        <TerminalTabletLinkSection
+          companyId={companyId}
+          canManage={canManage}
+        />
+      </div>
+      <div className="flex-1 flex flex-col w-full max-w-md mx-auto px-4 pb-8 md:px-8 min-h-0">
+        <AttendanceTerminal
+          companyIdOverride={companyParam}
+          kioskTokenSession={Boolean(companyParam)}
+        />
+      </div>
+    </div>
+  );
+}
+
+function TerminalPageFallback() {
+  return (
+    <div className="min-h-[40vh] flex items-center justify-center gap-3 text-muted-foreground">
+      <Loader2 className="w-8 h-8 animate-spin" />
+      <span>Načítání…</span>
+    </div>
+  );
+}
+
 export default function PortalAttendanceTerminalPage() {
   return (
     <AttendanceTerminalErrorBoundary>
-      <AttendanceTerminal />
+      <Suspense fallback={<TerminalPageFallback />}>
+        <PortalAttendanceTerminalInner />
+      </Suspense>
     </AttendanceTerminalErrorBoundary>
   );
 }

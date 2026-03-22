@@ -225,6 +225,11 @@ service cloud.firestore {
         allow update, delete: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
       }
 
+      /** Nastavení terminálu (token pro /terminal-access/…) — jen privilegované role. */
+      match /settings/{docId} {
+        allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       /** Chat zaměstnanec ↔ administrace: companies/{companyId}/chat/{messageId} */
       match /chat/{messageId} {
         allow read: if signedIn() && sameCompany(companyId);
