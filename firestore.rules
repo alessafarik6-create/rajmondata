@@ -251,6 +251,14 @@ service cloud.firestore {
           request.resource.data.text.size() <= 8000 &&
           request.resource.data.read == false &&
           request.resource.data.senderRole in ['employee', 'admin'] &&
+          request.resource.data.senderName is string &&
+          request.resource.data.senderName.size() > 0 &&
+          request.resource.data.senderName.size() <= 200 &&
+          request.resource.data.senderPhotoURL is string &&
+          request.resource.data.senderPhotoURL.size() <= 2000 &&
+          (!('employeeId' in request.resource.data) ||
+            (request.resource.data.employeeId is string &&
+             request.resource.data.employeeId.size() <= 200)) &&
           (
             (request.resource.data.senderRole == 'employee' && canLogOwnWorkTime()) ||
             (request.resource.data.senderRole == 'admin' && isPrivileged())

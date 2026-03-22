@@ -13,13 +13,14 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { Bell, Search, LogOut, User, Menu } from 'lucide-react';
+import { Search, LogOut, User, Menu, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Logo } from '@/components/ui/logo';
 import Link from 'next/link';
 import { signOut } from 'firebase/auth';
 import { doc } from 'firebase/firestore';
+import { useUnreadEmployeeChatCount } from '@/hooks/use-unread-employee-chat';
 
 interface TopHeaderProps {
   onOpenMobileMenu?: () => void;
@@ -39,9 +40,12 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   const { data: profile } = useDoc(userRef);
 
   const { companyName } = useCompany();
+  const { count: unreadChatCount, showBadge: showChatBadge } =
+    useUnreadEmployeeChatCount();
 
   const isAdminArea = pathname?.startsWith('/admin');
   const isEmployeePortal = pathname?.startsWith('/portal/employee');
+  const showCompanyChatShortcut = !isAdminArea && !isEmployeePortal;
   useEffect(() => {
     if (!isAdminArea) return;
     fetch('/api/superadmin/session')
@@ -113,10 +117,23 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-4 shrink-0">
-        <Button variant="ghost" size="icon" className="relative text-slate-600 hover:bg-slate-200 hover:text-slate-900 h-10 w-10 shrink-0" aria-label="Oznámení">
-          <Bell className="w-5 h-5" />
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full"></span>
-        </Button>
+        {showCompanyChatShortcut ? (
+          <Button
+            asChild
+            variant="ghost"
+            size="icon"
+            className="relative text-slate-600 hover:bg-slate-200 hover:text-slate-900 h-10 w-10 shrink-0"
+          >
+            <Link href="/portal/chat" aria-label="Zprávy od zaměstnanců">
+              <MessageSquare className="w-5 h-5" />
+              {showChatBadge && unreadChatCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white shadow-sm">
+                  {unreadChatCount > 99 ? "99+" : unreadChatCount}
+                </span>
+              ) : null}
+            </Link>
+          </Button>
+        ) : null}
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -138,7 +155,12 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
               </div>
               <Avatar className="h-9 w-9 border-2 border-primary/20">
                 <AvatarImage
-                  src={profile?.profileImage || profile?.photoUrl}
+                  src={
+                    profile?.photoURL ||
+                    profile?.profileImage ||
+                    profile?.photoUrl ||
+                    undefined
+                  }
                 />
                 <AvatarFallback className="bg-primary text-white font-bold">
                   {(superadminUsername?.[0] || profile?.displayName?.[0] || user?.email?.[0] || 'U').toUpperCase()}

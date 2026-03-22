@@ -16,6 +16,7 @@ import {
   EmailAuthProvider,
   reauthenticateWithCredential,
   updatePassword,
+  updateProfile,
 } from "firebase/auth";
 import { getStorage, ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -87,7 +88,8 @@ export default function EmployeeProfilePage() {
 
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
-  const photoUrl = profile?.profileImage || profile?.photoUrl;
+  const photoUrl =
+    profile?.photoURL ?? profile?.profileImage ?? profile?.photoUrl;
 
   const employeeRowRef = useMemoFirebase(
     () =>
@@ -138,26 +140,46 @@ export default function EmployeeProfilePage() {
     profileError,
   ]);
 
-  const syncProfileImage = async (url: string | null) => {
-    if (!user || !firestore) return;
+  const syncProfileImage = async (url: string | null): Promise<{ employeeSynced: boolean }> => {
+    if (!user || !firestore) return { employeeSynced: false };
     const uref = doc(firestore, "users", user.uid);
     await updateDoc(uref, {
+      photoURL: url,
       profileImage: url,
       updatedAt: serverTimestamp(),
     });
+    let employeeSynced = !companyId || !employeeId;
     if (companyId && employeeId) {
-      await updateDoc(
-        doc(firestore, "companies", companyId, "employees", employeeId),
-        {
-          profileImage: url,
-          updatedAt: serverTimestamp(),
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch("/api/employee/profile-photo", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({ photoURL: url }),
+        });
+        employeeSynced = res.ok;
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          console.warn("[employee/profile] employee doc photo sync failed", data);
         }
-      );
+      } catch (e) {
+        console.warn("[employee/profile] employee doc photo sync error", e);
+      }
     }
+    if (auth) {
+      try {
+        await updateProfile(user, { photoURL: url ?? "" });
+      } catch {
+        /* Auth profilová fotka je volitelná; Firestore je zdroj pravdy. */
+      }
+    }
+    return { employeeSynced };
   };
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const runPhotoUpload = async (file: File) => {
     if (!file || !user) return;
     if (!file.type.startsWith("image/")) {
       toast({
@@ -173,15 +195,34 @@ export default function EmployeeProfilePage() {
       });
       return;
     }
+    if (!firebaseApp) {
+      toast({
+        variant: "destructive",
+        title: "Aplikace není připravena",
+        description: "Zkuste obnovit stránku.",
+      });
+      return;
+    }
     setUploading(true);
+    console.log("Uploading employee profile photo");
     try {
       const storage = getStorage(firebaseApp);
       const path = `profile_images/${user.uid}/${Date.now()}_${file.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
       const sref = ref(storage, path);
       await uploadBytes(sref, file, { contentType: file.type });
       const url = await getDownloadURL(sref);
-      await syncProfileImage(url);
-      toast({ title: "Fotka nahrána" });
+      const { employeeSynced } = await syncProfileImage(url);
+      console.log("Employee profile photo uploaded successfully");
+      if (employeeSynced) {
+        toast({ title: "Fotka nahrána", description: "Profilová fotka byla uložena." });
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Fotka uložena jen částečně",
+          description:
+            "Účet má fotku, ale záznam zaměstnance (terminál) se nepodařilo aktualizovat. Zkuste to znovu nebo kontaktujte administrátora.",
+        });
+      }
     } catch (err) {
       console.error(err);
       toast({
@@ -191,6 +232,15 @@ export default function EmployeeProfilePage() {
       });
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      await runPhotoUpload(file);
+    } finally {
       e.target.value = "";
     }
   };
@@ -200,8 +250,16 @@ export default function EmployeeProfilePage() {
     setUploading(true);
     try {
       // Volitelně lze doplnit mazání objektu ve Storage (ref z URL závisí na SDK).
-      await syncProfileImage(null);
-      toast({ title: "Profilová fotka odstraněna" });
+      const { employeeSynced } = await syncProfileImage(null);
+      if (employeeSynced) {
+        toast({ title: "Profilová fotka odstraněna" });
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Smazání částečné",
+          description: "Účet byl aktualizován, záznam pro terminál ne.",
+        });
+      }
     } catch (err) {
       console.error(err);
       toast({
@@ -379,7 +437,14 @@ export default function EmployeeProfilePage() {
         </CardHeader>
         <CardContent className="flex flex-col sm:flex-row items-start gap-6">
           <Avatar className="h-28 w-28 border-4 border-primary/20">
-            <AvatarImage src={photoUrl} className="object-cover" />
+            <AvatarImage
+              key={photoUrl ? String(photoUrl).slice(0, 120) : "none"}
+              src={photoUrl ? String(photoUrl) : undefined}
+              className="object-cover"
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = "none";
+              }}
+            />
             <AvatarFallback className="text-2xl bg-primary text-white">
               {displayName?.[0]?.toUpperCase() || "?"}
             </AvatarFallback>
@@ -390,6 +455,14 @@ export default function EmployeeProfilePage() {
               accept="image/*"
               className="hidden"
               id="emp-profile-photo"
+              onChange={handleUpload}
+            />
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              id="emp-profile-photo-camera"
               onChange={handleUpload}
             />
             <div className="flex flex-wrap gap-2">
@@ -408,6 +481,17 @@ export default function EmployeeProfilePage() {
                   <Upload className="w-4 h-4" />
                 )}
                 {photoUrl ? "Změnit fotku" : "Nahrát fotku"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={uploading}
+                className="gap-2 sm:hidden"
+                onClick={() =>
+                  document.getElementById("emp-profile-photo-camera")?.click()
+                }
+              >
+                Vyfoť
               </Button>
               {photoUrl ? (
                 <Button

@@ -453,6 +453,29 @@ export default function CompanyDashboard() {
 
       {showAdminDashboard ? (
         <div className="space-y-6">
+          {!chatDashboardLoading && unreadEmployeeChatCount > 0 ? (
+            <Link
+              href="/portal/chat"
+              className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+            >
+              <Alert className="border-2 border-red-600 bg-red-50 text-red-950 shadow-md dark:border-red-500 dark:bg-red-950/40 dark:text-red-50">
+                <MessageSquare className="h-5 w-5 text-red-600 dark:text-red-400" />
+                <AlertTitle className="text-base font-semibold">
+                  Nepřečtené zprávy od zaměstnanců
+                </AlertTitle>
+                <AlertDescription className="text-sm font-medium text-red-900 dark:text-red-100">
+                  Máte {unreadEmployeeChatCount}{" "}
+                  {unreadEmployeeChatCount === 1
+                    ? "nepřečtenou zprávu"
+                    : unreadEmployeeChatCount < 5
+                      ? "nepřečtené zprávy"
+                      : "nepřečtených zpráv"}
+                  . Klepnutím otevřete firemní chat.
+                </AlertDescription>
+              </Alert>
+            </Link>
+          ) : null}
+
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -542,11 +565,26 @@ export default function CompanyDashboard() {
               </CardContent>
             </Card>
 
-            <Link href="/portal/chat" className="block min-h-[44px] rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-              <Card className="h-full border-border bg-card shadow-sm transition-shadow hover:shadow-md">
+            <Link
+              href="/portal/chat"
+              className="block min-h-[44px] rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Card
+                className={`h-full shadow-sm transition-shadow hover:shadow-md ${
+                  !chatDashboardLoading && unreadEmployeeChatCount > 0
+                    ? "border-2 border-red-600 bg-red-50/90 dark:border-red-500 dark:bg-red-950/30"
+                    : "border-border bg-card"
+                }`}
+              >
                 <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                   <CardTitle className="text-sm font-medium leading-none">Zprávy</CardTitle>
-                  <MessageSquare className="h-4 w-4 shrink-0 text-primary" />
+                  <MessageSquare
+                    className={`h-4 w-4 shrink-0 ${
+                      !chatDashboardLoading && unreadEmployeeChatCount > 0
+                        ? "text-red-600 dark:text-red-400"
+                        : "text-primary"
+                    }`}
+                  />
                 </CardHeader>
                 <CardContent>
                   {chatDashboardLoading ? (
@@ -555,7 +593,13 @@ export default function CompanyDashboard() {
                     </div>
                   ) : (
                     <>
-                      <p className="text-lg font-semibold text-foreground">
+                      <p
+                        className={`text-lg font-semibold ${
+                          unreadEmployeeChatCount > 0
+                            ? "text-red-700 dark:text-red-200"
+                            : "text-foreground"
+                        }`}
+                      >
                         {unreadEmployeeChatCount === 0
                           ? "Žádné nové"
                           : `${unreadEmployeeChatCount} nepřečtených`}
