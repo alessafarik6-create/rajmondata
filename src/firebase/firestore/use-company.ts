@@ -19,6 +19,21 @@ export type CompanyProfile = {
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 
+  /** Globální licence (denormalizace z company_licenses). */
+  platformLicense?: {
+    active?: boolean;
+    status?: string;
+    expiresAt?: string | null;
+    activatedAt?: string | null;
+    activatedBy?: string | null;
+  };
+  moduleEntitlements?: Record<
+    string,
+    { active?: boolean; expiresAt?: string | null; activatedAt?: string | null }
+  >;
+  active?: boolean;
+  isActive?: boolean;
+
   /**
    * Structured company address.
    * Used by "Smlouva o dílo" (Dodavatel) + settings form.

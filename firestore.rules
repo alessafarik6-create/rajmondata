@@ -312,6 +312,33 @@ service cloud.firestore {
       allow read, write: if isSuperAdminFirebase();
     }
 
+    /**
+     * Licence firmy — zápis jen při registraci (pending); úpravy přes Admin SDK (superadmin).
+     * Dokument company_licenses/{companyId} musí mít companyId shodný s ID dokumentu.
+     */
+    match /company_licenses/{companyId} {
+      allow read: if signedIn() && sameCompany(companyId);
+      allow create: if signedIn() &&
+        request.resource.data.companyId == companyId &&
+        request.resource.data.active == false &&
+        request.resource.data.status == 'pending' &&
+        !exists(/databases/$(database)/documents/company_licenses/$(companyId));
+      allow update, delete: if false;
+    }
+
+    /** Globální nastavení platformy — pouze Admin SDK. */
+    match /platform_settings/{docId} {
+      allow read, write: if false;
+    }
+
+    match /platform_modules/{docId} {
+      allow read, write: if false;
+    }
+
+    match /platform_seo/{docId} {
+      allow read, write: if false;
+    }
+
     match /organizations/{orgId} {
       allow read, update: if signedIn();
     }

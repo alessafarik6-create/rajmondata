@@ -1,19 +1,32 @@
 /**
  * Superadmin organization/company service.
- * Reads from Firestore collection "společnosti" (organizations).
- * Normalizes license and enabledModules from existing docs (e.g. enabledModuleIds from register).
+ * Reads from Firestore "společnosti" (organizations) + `company_licenses` + denormalizace do `companies`.
  */
-import type { Firestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
+import type { Firestore } from "firebase-admin/firestore";
 import {
   DEFAULT_LICENSE,
   MODULE_KEYS,
   type LicenseConfig,
   type ModuleKey,
 } from "./license-modules";
-import { ORGANIZATIONS_COLLECTION } from "./firestore-collections";
+import {
+  ORGANIZATIONS_COLLECTION,
+  COMPANIES_COLLECTION,
+  COMPANY_LICENSES_COLLECTION,
+} from "./firestore-collections";
+import type { CompanyLicenseDoc } from "./platform-config";
+import { createPendingCompanyLicense } from "./company-license-record";
+import {
+  applyExpiredLicenseStatus,
+  ensureCompanyLicenseDoc,
+  estimateMonthlyLicenseCzk,
+  mergeCompanyLicenseUpdate,
+  writeCompanyLicenseAndDenorm,
+  type CompanyLicenseUpdatePayload,
+} from "./company-license-admin";
 
 /** @deprecated Use ORGANIZATIONS_COLLECTION from firestore-collections */
-export const COMPANIES_COLLECTION = ORGANIZATIONS_COLLECTION;
+export const COMPANIES_COLLECTION_LEGACY = ORGANIZATIONS_COLLECTION;
 
 export interface CompanyWithLicense {
   id: string;
@@ -27,6 +40,7 @@ export interface CompanyWithLicense {
   updatedAt: string | null;
   licenseId: string;
   license: LicenseConfig & { licenseExpiresAt?: string | null };
+  companyLicense?: CompanyLicenseDoc;
 }
 
 export interface LicenseUpdate {
@@ -43,10 +57,6 @@ function toModuleKey(s: string): ModuleKey | null {
   return MODULE_KEYS.includes(s as ModuleKey) ? (s as ModuleKey) : null;
 }
 
-/**
- * Normalize raw Firestore company document to CompanyWithLicense.
- * Reads from: data.license, data.enabledModuleIds (register flow), data.licenseId.
- */
 export function normalizeCompanyFromFirestore(
   data: Record<string, unknown>,
   id: string
@@ -95,31 +105,6 @@ export function normalizeCompanyFromFirestore(
   };
 }
 
-/**
- * Fetch all companies, sorted by name (in memory to avoid index requirement).
- */
-export async function getCompanies(db: Firestore) {
-  const snapshot = await db.collection(COMPANIES_COLLECTION).get();
-
-  const companies = snapshot.docs.map((doc: any) => {
-    const data = doc.data();
-    return {
-      id: doc.id,
-      ...data,
-    };
-  });
-
-  return companies;
-}
-
-/**
- * Fetch one company by id.
- */
-
-
-/**
- * Build Firestore-updatable license object from API input.
- */
 function buildLicenseForFirestore(update: LicenseUpdate): Record<string, unknown> {
   const expirationDate =
     update.expirationDate ?? update.licenseExpiresAt ?? null;
@@ -137,31 +122,94 @@ function buildLicenseForFirestore(update: LicenseUpdate): Record<string, unknown
     enabledModules,
   };
 }
-export async function getCompany(
-  db: Firestore,
-  id: string
-): Promise<CompanyWithLicense | null> {
 
-  const doc = await db.collection(ORGANIZATIONS_COLLECTION).doc(id).get()
+export async function getCompanies(db: Firestore) {
+  const snapshot = await db.collection(ORGANIZATIONS_COLLECTION).get();
+  const docs = snapshot.docs;
+
+  const licenseSnaps = await Promise.all(
+    docs.map((d) => db.collection(COMPANY_LICENSES_COLLECTION).doc(d.id).get())
+  );
+
+  const employeeCounts = await Promise.all(
+    docs.map((d) =>
+      db
+        .collection(COMPANIES_COLLECTION)
+        .doc(d.id)
+        .collection("employees")
+        .count()
+        .get()
+        .then((c) => c.data().count)
+        .catch(() => 0)
+    )
+  );
+
+  return docs.map((doc, i) => {
+    const data = doc.data() as Record<string, unknown>;
+    let companyLicense: CompanyLicenseDoc = licenseSnaps[i]?.exists
+      ? applyExpiredLicenseStatus(licenseSnaps[i].data() as CompanyLicenseDoc)
+      : createPendingCompanyLicense(doc.id);
+
+    const ec = employeeCounts[i] ?? 0;
+    if (companyLicense.employeePricing.lastEmployeeCount !== ec) {
+      const per = companyLicense.employeePricing.perEmployeeCzk;
+      companyLicense = {
+        ...companyLicense,
+        employeePricing: {
+          ...companyLicense.employeePricing,
+          lastEmployeeCount: ec,
+          monthlyModuleCzk: ec * per,
+        },
+      };
+    }
+
+    const estimatedMonthlyCzk = estimateMonthlyLicenseCzk(companyLicense);
+
+    return {
+      id: doc.id,
+      ...data,
+      name: (data.name as string) ?? (data.companyName as string) ?? "",
+      companyLicense,
+      employeeCount: ec,
+      estimatedMonthlyCzk,
+    };
+  });
+}
+
+export async function getCompany(db: Firestore, id: string): Promise<CompanyWithLicense | null> {
+  const doc = await db.collection(ORGANIZATIONS_COLLECTION).doc(id).get();
 
   if (!doc.exists) {
-    return null
+    return null;
   }
 
-  return normalizeCompanyFromFirestore(doc.data() as any, doc.id)
+  const base = normalizeCompanyFromFirestore(doc.data() as Record<string, unknown>, doc.id);
+  const licSnap = await db.collection(COMPANY_LICENSES_COLLECTION).doc(id).get();
+  const companyLicense = licSnap.exists
+    ? applyExpiredLicenseStatus(licSnap.data() as CompanyLicenseDoc)
+    : createPendingCompanyLicense(id);
+
+  return { ...base, companyLicense };
 }
+
 /**
- * Update company: isActive and/or license. Merges license with existing; sets updatedAt.
+ * Update company: isActive, legacy license, nebo platformní `companyLicense` patch.
  */
 export async function updateCompany(
   db: Firestore,
   id: string,
-  payload: { isActive?: boolean; license?: LicenseUpdate }
+  payload: {
+    isActive?: boolean;
+    license?: LicenseUpdate;
+    companyLicense?: CompanyLicenseUpdatePayload;
+  },
+  options?: { actorLabel?: string }
 ): Promise<void> {
   const updates: Record<string, unknown> = { updatedAt: new Date() };
 
   if (typeof payload.isActive === "boolean") {
     updates.isActive = payload.isActive;
+    updates.active = payload.isActive;
   }
 
   if (payload.license && typeof payload.license === "object") {
@@ -171,6 +219,39 @@ export async function updateCompany(
     updates.enabledModuleIds = license.enabledModules;
   }
 
-  if (Object.keys(updates).length <= 1) return;
-  await db.collection(ORGANIZATIONS_COLLECTION).doc(id).update(updates);
+  if (payload.companyLicense && typeof payload.companyLicense === "object") {
+    const nowIso = new Date().toISOString();
+    const existing = await ensureCompanyLicenseDoc(db, id);
+    let merged = mergeCompanyLicenseUpdate(existing, payload.companyLicense, nowIso);
+    merged = applyExpiredLicenseStatus(merged);
+    if (options?.actorLabel) {
+      merged = { ...merged, activatedBy: merged.activatedBy ?? options.actorLabel };
+    }
+    await writeCompanyLicenseAndDenorm(db, id, merged);
+
+    if (merged.active && existing.status === "pending" && merged.status === "active") {
+      console.info("[Platform]", "Superadmin activated company license", { companyId: id });
+    }
+    if (payload.companyLicense.modules) {
+      for (const code of Object.keys(payload.companyLicense.modules)) {
+        const m = payload.companyLicense.modules[code];
+        if (m?.active || typeof m?.days === "number") {
+          console.info("[Platform]", "Module enabled for company", { companyId: id, moduleCode: code });
+        }
+      }
+    }
+    if (payload.companyLicense.employeePricing?.perEmployeeCzk !== undefined) {
+      console.info("[Platform]", "Employee-based pricing calculated", {
+        companyId: id,
+        perEmployeeCzk: merged.employeePricing.perEmployeeCzk,
+        employees: merged.employeePricing.lastEmployeeCount,
+      });
+    }
+  }
+
+  const hasOrgUpdates = Object.keys(updates).length > 1;
+  if (hasOrgUpdates) {
+    await db.collection(ORGANIZATIONS_COLLECTION).doc(id).update(updates);
+    await db.collection(COMPANIES_COLLECTION).doc(id).update(updates);
+  }
 }

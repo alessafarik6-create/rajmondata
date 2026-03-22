@@ -78,11 +78,21 @@ export async function PATCH(
           }
         : undefined;
 
-    if (isActive === undefined && !license) {
+    const companyLicense =
+      body.companyLicense && typeof body.companyLicense === "object"
+        ? body.companyLicense
+        : undefined;
+
+    if (isActive === undefined && !license && !companyLicense) {
       return NextResponse.json({ error: "Žádné změny." }, { status: 400 });
     }
 
-    await updateCompany(db, id, { isActive, license });
+    await updateCompany(
+      db,
+      id,
+      { isActive, license, companyLicense },
+      { actorLabel: session.username }
+    );
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[superadmin company update]", e);

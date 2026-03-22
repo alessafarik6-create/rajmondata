@@ -1,0 +1,98 @@
+import type { CompanyLicenseDoc, PlatformModuleCode } from "@/lib/platform-config";
+import { COMPANY_LICENSES_COLLECTION } from "@/lib/firestore-collections";
+import type { ModuleKey } from "@/lib/license-modules";
+
+export { COMPANY_LICENSES_COLLECTION };
+
+/** Mapování kódů platformních modulů na legacy klíče v `license-modules` (menu / starší části). */
+export function platformCodesToLegacyModuleKeys(codes: PlatformModuleCode[]): ModuleKey[] {
+  const out: ModuleKey[] = [];
+  for (const c of codes) {
+    if (c === "attendance_payroll") out.push("attendance");
+    else if (c === "invoicing") out.push("invoices");
+    else if (c === "jobs") out.push("jobs");
+  }
+  return [...new Set(out)];
+}
+
+export function createPendingCompanyLicense(companyId: string): CompanyLicenseDoc {
+  return {
+    companyId,
+    active: false,
+    status: "pending",
+    activatedAt: null,
+    expiresAt: null,
+    activatedBy: null,
+    notes: "",
+    enabledModules: [],
+    modules: {},
+    pricingSnapshot: {},
+    employeePricing: {
+      perEmployeeCzk: 49,
+      moduleCode: "attendance_payroll",
+      lastEmployeeCount: 0,
+      monthlyModuleCzk: 0,
+    },
+  };
+}
+
+export function companyDocPlatformFields(license: CompanyLicenseDoc) {
+  const entitlements: Record<
+    string,
+    { active: boolean; expiresAt: string | null; activatedAt: string | null }
+  > = {};
+  for (const [k, v] of Object.entries(license.modules)) {
+    entitlements[k] = {
+      active: v.active,
+      expiresAt: v.expiresAt,
+      activatedAt: v.activatedAt,
+    };
+  }
+  const legacyEnabled = platformCodesToLegacyModuleKeys(license.enabledModules);
+  const legacyStatus =
+    license.status === "pending"
+      ? "suspended"
+      : license.status === "expired"
+        ? "expired"
+        : license.status === "suspended"
+          ? "suspended"
+          : license.active
+            ? "active"
+            : "suspended";
+  return {
+    platformLicense: {
+      active: license.active,
+      status: license.status,
+      expiresAt: license.expiresAt,
+      activatedAt: license.activatedAt,
+      activatedBy: license.activatedBy,
+    },
+    moduleEntitlements: entitlements,
+    enabledModuleIds: legacyEnabled,
+    license: {
+      licenseType: "starter",
+      status: legacyStatus,
+      expirationDate: license.expiresAt,
+      maxUsers: null,
+      enabledModules: legacyEnabled,
+    },
+  };
+}
+
+export function addDaysIso(days: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d.toISOString();
+}
+
+export function emptyModuleEntitlement(
+  code: PlatformModuleCode
+): CompanyLicenseDoc["modules"][string] {
+  return {
+    moduleCode: code,
+    active: false,
+    activatedAt: null,
+    expiresAt: null,
+    customPriceCzk: null,
+  };
+}

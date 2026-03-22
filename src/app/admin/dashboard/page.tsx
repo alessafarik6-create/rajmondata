@@ -23,6 +23,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
+type CompanyLicense = {
+  status?: string;
+  active?: boolean;
+  expiresAt?: string | null;
+};
+
 type Company = {
   id: string;
   name: string;
@@ -30,6 +36,8 @@ type Company = {
   isActive: boolean;
   licenseId: string;
   license?: { enabledModules?: string[] };
+  companyLicense?: CompanyLicense;
+  estimatedMonthlyCzk?: number;
 };
 
 export default function AdminDashboardPage() {
@@ -86,34 +94,33 @@ export default function AdminDashboardPage() {
     };
   }, []);
 
-  const activeCount = companies.filter((company) => company.isActive).length;
-  const totalLicenses = companies.length;
+  const activeCount = companies.filter((c) => c.companyLicense?.status === "active" && c.companyLicense?.active).length;
+  const pendingCount = companies.filter((c) => c.companyLicense?.status === "pending").length;
+  const expiredCount = companies.filter((c) => c.companyLicense?.status === "expired").length;
+  const revenueEstimate = companies.reduce((acc, c) => acc + (c.estimatedMonthlyCzk ?? 0), 0);
 
   const stats = [
     {
-      title: "Celkem organizací",
+      title: "Registrované firmy",
       value: loading ? "—" : String(companies.length),
       icon: Building2,
-      change: "+0%",
+      change: "",
     },
     {
-      title: "Aktivní organizace",
+      title: "Aktivní licence",
       value: loading ? "—" : String(activeCount),
       icon: ShieldCheck,
-      change:
-        totalLicenses > 0
-          ? `${Math.round((activeCount / totalLicenses) * 100)}%`
-          : "—",
+      change: pendingCount > 0 ? `Čeká: ${pendingCount}` : "",
     },
     {
-      title: "Tarify",
-      value: loading ? "—" : "Starter / Pro / Enterprise",
+      title: "Expirované licence",
+      value: loading ? "—" : String(expiredCount),
       icon: CreditCard,
       change: "",
     },
     {
-      title: "Správa",
-      value: "Organizace",
+      title: "Odhad měsíčního výnosu",
+      value: loading ? "—" : `${Math.round(revenueEstimate).toLocaleString("cs-CZ")} Kč`,
       icon: Users,
       change: "",
     },

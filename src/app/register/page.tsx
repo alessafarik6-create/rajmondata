@@ -22,8 +22,16 @@ import {
 } from 'firebase/auth';
 import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
-import { ORGANIZATIONS_COLLECTION, COMPANIES_COLLECTION, USERS_COLLECTION } from '@/lib/firestore-collections';
-import { DEFAULT_LICENSE } from '@/lib/license-modules';
+import {
+  ORGANIZATIONS_COLLECTION,
+  COMPANIES_COLLECTION,
+  USERS_COLLECTION,
+  COMPANY_LICENSES_COLLECTION,
+} from '@/lib/firestore-collections';
+import {
+  createPendingCompanyLicense,
+  companyDocPlatformFields,
+} from '@/lib/company-license-record';
 
 type LookupCompanyAddress = {
   street: string;
@@ -273,7 +281,8 @@ export default function RegisterPage() {
 
       // 3. Minimální metadata firmy — žádné demo záznamy, žádné subkolekce (zakázky, zákazníci, …).
       // Kolekce jako jobs / customers / jobTemplates se vytvoří až při prvním použití.
-      const enabledModules = [...DEFAULT_LICENSE.enabledModules];
+      const pendingLicense = createPendingCompanyLicense(companyId);
+      const platformDenorm = companyDocPlatformFields(pendingLicense);
       const companyPayload = {
         id: companyId,
         companyName: formData.companyName.trim(),
@@ -295,17 +304,10 @@ export default function RegisterPage() {
         establishedAt: formData.establishedAt?.trim() || null,
         ownerId: user.uid,
         ownerUserId: user.uid,
-        active: true,
-        isActive: true,
-        licenseId: DEFAULT_LICENSE.licenseType,
-        license: {
-          licenseType: DEFAULT_LICENSE.licenseType,
-          status: DEFAULT_LICENSE.status,
-          expirationDate: null,
-          maxUsers: DEFAULT_LICENSE.maxUsers,
-          enabledModules,
-        },
-        enabledModuleIds: enabledModules,
+        active: false,
+        isActive: false,
+        licenseId: 'starter',
+        ...platformDenorm,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -315,6 +317,11 @@ export default function RegisterPage() {
       // 4. Stejný dokument pro superadmin (společnosti) a portál (companies) — id = companyId, merge pro idempotenci.
       batch.set(doc(db, ORGANIZATIONS_COLLECTION, companyId), companyPayload, { merge: true });
       batch.set(doc(db, COMPANIES_COLLECTION, companyId), companyPayload, { merge: true });
+      batch.set(doc(db, COMPANY_LICENSES_COLLECTION, companyId), {
+        ...pendingLicense,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
 
       // 5. Uživatel (owner) vázaný na firmu
       batch.set(
@@ -342,11 +349,13 @@ export default function RegisterPage() {
 
       await batch.commit();
 
+      console.info("[Platform]", "Company registered with inactive license", { companyId });
+
       createdUser = null;
 
       toast({
         title: "Registrace úspěšná",
-        description: `Vaše firma byla zaregistrována. Vítejte v ${PLATFORM_NAME}!`
+        description: `Účet byl vytvořen. Licence čeká na aktivaci administrátorem platformy — poté budou dostupné placené moduly. Vítejte v ${PLATFORM_NAME}!`,
       });
 
       router.push('/portal/dashboard');

@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
+import { isCompanyLicenseBlocking } from "@/lib/platform-access";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -44,6 +45,7 @@ export default function PortalLayout({
     profileLoading: isProfileLoading,
     profileError,
     companyId,
+    company,
     isLoading: companyBootstrapLoading,
     companyDocMissing,
     companyError: companyHookError,
@@ -374,6 +376,36 @@ export default function PortalLayout({
     ? EmployeePortalSidebar
     : BizForgeSidebar;
 
+  const licenseNotice = (() => {
+    if (isPortalEmployeeOnly || !company?.platformLicense) return null;
+    const pl = company.platformLicense;
+    if (pl.status === "pending") {
+      return (
+        <Alert className="mb-4 border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-50">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Licence čeká na schválení</AlertTitle>
+          <AlertDescription>
+            Účet firmy zatím nebyl aktivován superadministrátorem. Placené moduly jsou vypnuté, dokud neproběhne
+            aktivace licence.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    if (isCompanyLicenseBlocking(company)) {
+      return (
+        <Alert variant="destructive" className="mb-4 border-destructive/50">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Licence není aktivní</AlertTitle>
+          <AlertDescription>
+            Přístup k placeným modulům je omezený. Pro aktivaci nebo prodloužení kontaktujte podporu nebo
+            administrátora platformy.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    return null;
+  })();
+
   return (
     <div className="flex min-h-screen bg-background text-foreground">
       <aside className="hidden print:hidden lg:block shrink-0">
@@ -413,6 +445,7 @@ export default function PortalLayout({
       >
         <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
         <main className="flex-1 overflow-auto px-4 py-4 print:p-2 md:px-6 md:py-6 lg:px-8 lg:py-8">
+          {licenseNotice}
           {children}
         </main>
       </div>
