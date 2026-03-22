@@ -3,6 +3,8 @@
 import React, {
   Component,
   Suspense,
+  useEffect,
+  useState,
   type ErrorInfo,
   type ReactNode,
 } from "react";
@@ -110,6 +112,27 @@ function PortalAttendanceTerminalInner() {
 }
 
 function TerminalPageFallback() {
+  const [showTimeout, setShowTimeout] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setShowTimeout(true), 12000);
+    return () => window.clearTimeout(id);
+  }, []);
+  if (showTimeout) {
+    return (
+      <div className="min-h-[40vh] flex flex-col items-center justify-center gap-4 p-6 text-muted-foreground max-w-md mx-auto">
+        <Alert variant="destructive" className="w-full">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Načítání stránky trvá příliš dlouho</AlertTitle>
+          <AlertDescription>
+            Zkuste obnovit stránku. Pokud problém přetrvává, zkontrolujte připojení.
+          </AlertDescription>
+        </Alert>
+        <Button type="button" variant="outline" onClick={() => window.location.reload()}>
+          Obnovit stránku
+        </Button>
+      </div>
+    );
+  }
   return (
     <div className="min-h-[40vh] flex items-center justify-center gap-3 text-muted-foreground">
       <Loader2 className="w-8 h-8 animate-spin" />

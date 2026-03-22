@@ -107,7 +107,7 @@ export function AttendanceTerminal({
   kioskTokenSession = false,
   employeeTokenEntry = false,
 }: AttendanceTerminalProps) {
-  const { user } = useUser();
+  const { user, isUserLoading, userError } = useUser();
   const auth = useAuth();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -183,15 +183,19 @@ export function AttendanceTerminal({
     isLoading: profileLoading,
     error: profileError,
   } = useDoc(userRef);
-  const override = companyIdOverride?.trim();
+  const override =
+    typeof companyIdOverride === "string" ? companyIdOverride.trim() : "";
+  const hasCompanyOverride = override.length > 0;
   const fromProfile = profile?.companyId as string | undefined;
-  const isKioskSession = Boolean(kioskTokenSession && override && !employeeTokenEntry);
+  const isKioskSession = Boolean(
+    kioskTokenSession && hasCompanyOverride && !employeeTokenEntry
+  );
   const companyAccessDenied =
     !isKioskSession &&
     Boolean(
       user &&
         profile &&
-        override &&
+        hasCompanyOverride &&
         fromProfile &&
         override !== fromProfile
     ) &&
@@ -238,7 +242,11 @@ export function AttendanceTerminal({
         : null,
     [firestore, effectiveCompanyId]
   );
-  const { data: companyDoc, error: companyDocError } = useDoc(companyDocRef);
+  const {
+    data: companyDoc,
+    error: companyDocError,
+    isLoading: companyDocLoading,
+  } = useDoc(companyDocRef);
   const displayCompanyName =
     (companyDoc as { companyName?: string; name?: string } | null)?.companyName ||
     (companyDoc as { name?: string } | null)?.name ||
@@ -294,6 +302,74 @@ export function AttendanceTerminal({
     isLoading: attendanceLoading,
     error: attendanceError,
   } = useCollection(personalAttendanceQuery);
+
+  const [loadTimedOut, setLoadTimedOut] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setLoadTimedOut(true), 10000);
+    return () => window.clearTimeout(id);
+  }, []);
+
+  useEffect(() => {
+    try {
+      console.log("[AttendanceTerminal] debug", {
+        companyParamFromProp: companyIdOverride ?? null,
+        effectiveOverride: override || null,
+        hasCompanyOverride,
+        effectiveCompanyId: effectiveCompanyId ?? null,
+        authReady: !isUserLoading,
+        hasUser: Boolean(user),
+        userError: userError?.message ?? null,
+        profileReady: !profileLoading,
+        profileError: profileError?.message ?? null,
+        companyDocExists: Boolean(companyDoc),
+        companyDocLoading,
+        companyDocError: companyDocError?.message ?? null,
+        kioskSession: isKioskSession,
+        attendanceQueryStarted: Boolean(personalAttendanceQuery),
+        attendanceLoading,
+        loadTimedOut,
+        finalLoadingFlags: {
+          profileLoading,
+          isUserLoading,
+          companyDocLoading,
+          attendanceLoading,
+        },
+      });
+    } catch (e) {
+      console.error("[AttendanceTerminal] debug log failed", e);
+    }
+  }, [
+    companyIdOverride,
+    override,
+    hasCompanyOverride,
+    effectiveCompanyId,
+    isUserLoading,
+    user,
+    userError,
+    profileLoading,
+    profileError,
+    companyDoc,
+    companyDocLoading,
+    companyDocError,
+    isKioskSession,
+    personalAttendanceQuery,
+    attendanceLoading,
+    loadTimedOut,
+  ]);
+
+  useEffect(() => {
+    if (!personalAttendanceQuery) {
+      return;
+    }
+    console.log("[AttendanceTerminal] attendance query started", {
+      path: effectiveCompanyId
+        ? `companies/${effectiveCompanyId}/attendance`
+        : "(none)",
+    });
+    return () => {
+      console.log("[AttendanceTerminal] attendance query finished (unsubscribed)");
+    };
+  }, [personalAttendanceQuery, effectiveCompanyId]);
 
   useEffect(() => {
     setAttendanceIndexFallback(false);
@@ -806,6 +882,43 @@ export function AttendanceTerminal({
     }
   };
 
+  const waitingForCritical =
+    isUserLoading ||
+    (!hasCompanyOverride && profileLoading) ||
+    (Boolean(effectiveCompanyId) && companyDocLoading && hasCompanyOverride);
+
+  if (loadTimedOut && waitingForCritical) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 max-w-md mx-auto gap-4">
+        <Alert variant="destructive" className="w-full">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Načítání trvalo příliš dlouho</AlertTitle>
+          <AlertDescription>
+            Zkuste obnovit stránku nebo se znovu přihlásit. Pokud problém přetrvává,
+            zkontrolujte připojení k síti.
+          </AlertDescription>
+        </Alert>
+        <div className="flex flex-col gap-2 w-full">
+          <Button
+            type="button"
+            className="w-full min-h-[48px]"
+            onClick={() => window.location.reload()}
+          >
+            Zkusit znovu
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={() => router.push("/login")}
+          >
+            Přihlásit se
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     if (standalone) {
       return (
@@ -866,17 +979,40 @@ export function AttendanceTerminal({
         </div>
       );
     }
+    if (isUserLoading) {
+      return (
+        <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 max-w-md mx-auto">
+          <Loader2 className="w-10 h-10 animate-spin text-muted-foreground mb-4" />
+          <p className="text-sm text-muted-foreground text-center">
+            Ověřování přihlášení…
+          </p>
+          {userError ? (
+            <Alert variant="destructive" className="mt-4 w-full">
+              <AlertTitle>Chyba ověření</AlertTitle>
+              <AlertDescription>{userError.message}</AlertDescription>
+            </Alert>
+          ) : null}
+          <Button
+            variant="link"
+            className="mt-4 text-xs"
+            onClick={() => router.push("/login")}
+          >
+            Přihlásit se
+          </Button>
+        </div>
+      );
+    }
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 max-w-md mx-auto">
-        <Loader2 className="w-10 h-10 animate-spin text-muted-foreground mb-4" />
-        <p className="text-sm text-muted-foreground text-center">
-          Kontrola přihlášení…
-        </p>
-        <Button
-          variant="link"
-          className="mt-4 text-xs"
-          onClick={() => router.push("/login")}
-        >
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center p-6 max-w-md mx-auto gap-4">
+        <Alert className="w-full border-amber-500/40 bg-amber-500/5">
+          <AlertCircle className="h-4 w-4 text-amber-700" />
+          <AlertTitle>Nejste přihlášeni</AlertTitle>
+          <AlertDescription>
+            Pro použití docházkového terminálu v portálu se přihlaste účtem
+            organizace.
+          </AlertDescription>
+        </Alert>
+        <Button className="min-h-[48px] w-full" onClick={() => router.push("/login")}>
           Přihlásit se
         </Button>
       </div>
@@ -921,7 +1057,7 @@ export function AttendanceTerminal({
     );
   }
 
-  if (profileLoading && !(isKioskSession && effectiveCompanyId)) {
+  if (profileLoading && !hasCompanyOverride) {
     return (
       <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
         <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start mb-6">
@@ -1051,6 +1187,44 @@ export function AttendanceTerminal({
             </Button>
           )}
         </div>
+      </div>
+    );
+  }
+
+  if (
+    effectiveCompanyId &&
+    hasCompanyOverride &&
+    !companyDocLoading &&
+    !companyDocError &&
+    companyDoc === null
+  ) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col p-4 md:p-8 max-w-md mx-auto min-w-0">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 shrink-0 bg-primary rounded-lg flex items-center justify-center">
+            <Smartphone className="text-white w-6 h-6" />
+          </div>
+          <h1 className="text-xl font-bold truncate">{PLATFORM_NAME} · terminál</h1>
+        </div>
+        <Alert variant="destructive" className="mb-6">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Firma nebyla nalezena</AlertTitle>
+          <AlertDescription>
+            Parametr v adresním řádku odkazuje na neexistující nebo neplatnou
+            organizaci (
+            <span className="font-mono text-xs break-all">{effectiveCompanyId}</span>
+            ). Zkontrolujte odkaz nebo otevřete terminál bez{" "}
+            <span className="font-mono">?company=</span>.
+          </AlertDescription>
+        </Alert>
+        <Button
+          type="button"
+          variant="outline"
+          className="w-full min-h-[44px]"
+          onClick={() => router.push("/portal/attendance/terminal")}
+        >
+          Otevřít terminál bez parametru
+        </Button>
       </div>
     );
   }
