@@ -30,7 +30,7 @@ export function EmployeePortalSidebar({
   const firestore = useFirestore();
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
-    [firestore, user]
+    [firestore, user?.uid]
   );
   const { data: profile } = useDoc<any>(userRef);
   const { t } = useEmployeeUiLang(profile);

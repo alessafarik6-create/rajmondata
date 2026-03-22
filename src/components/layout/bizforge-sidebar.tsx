@@ -42,7 +42,10 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   const { user } = useUser();
   const firestore = useFirestore();
 
-  const userRef = useMemoFirebase(() => user ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
+  const userRef = useMemoFirebase(
+    () => (user ? doc(firestore, "users", user.uid) : null),
+    [firestore, user?.uid]
+  );
   const { data: userProfile } = useDoc(userRef);
 
   const isSuperAdmin = userProfile?.globalRoles?.includes('super_admin');

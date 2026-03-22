@@ -4,10 +4,8 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import {
   COMPANIES_COLLECTION,
   ORGANIZATIONS_COLLECTION,
-  TERMINAL_LINKS_COLLECTION,
-  TERMINAL_LINK_ACTIVE_FIELD,
-  TERMINAL_LINK_COMPANY_ID_FIELD,
 } from "@/lib/firestore-collections";
+import { loadPublicTerminalConfig } from "@/lib/terminal-config-server";
 
 async function organizationOrCompanyExists(
   db: Firestore,
@@ -23,7 +21,7 @@ async function organizationOrCompanyExists(
  * Jednotný výběr firmy pro veřejný terminál (bez Firebase Auth na klientovi).
  *
  * Pořadí:
- * 1) terminálOdkazy — první dokument s aktivní === true (pole ID společnosti), platnost expiresAt
+ * 1) terminálOdkazy (stejná logika jako GET /api/terminal/config)
  * 2) TERMINAL_COMPANY_ID (volitelný ops fallback)
  * 3) config/terminal.companyId
  * 4) v dev / při TERMINAL_ALLOW_FIRST_COMPANY_FALLBACK — první dokument ve společnosti
@@ -32,39 +30,13 @@ export async function resolveTerminalCompanyId(): Promise<string | null> {
   const db = getAdminFirestore();
   if (!db) return null;
 
-  console.log("Loading terminal config from terminalOdkazy");
+  const fromLinks = await loadPublicTerminalConfig();
+  if (fromLinks.success) {
+    return fromLinks.companyId;
+  }
 
-  try {
-    const linksSnap = await db
-      .collection(TERMINAL_LINKS_COLLECTION)
-      .where(TERMINAL_LINK_ACTIVE_FIELD, "==", true)
-      .limit(1)
-      .get();
-
-    if (!linksSnap.empty) {
-      const d = linksSnap.docs[0].data() as Record<string, unknown>;
-      const exp = d.expiresAt as { toMillis?: () => number } | undefined;
-      if (exp && typeof exp.toMillis === "function" && exp.toMillis() < Date.now()) {
-        console.warn(
-          "[terminal-company] Aktivní záznam v terminálOdkazy má vypršené expiresAt — přeskakuji."
-        );
-      } else {
-        const raw = d[TERMINAL_LINK_COMPANY_ID_FIELD];
-        const cid = typeof raw === "string" ? raw.trim() : "";
-        if (cid) {
-          if (await organizationOrCompanyExists(db, cid)) {
-            console.log("Resolved companyId from terminalOdkazy", { companyId: cid });
-            return cid;
-          }
-          console.error(
-            "[terminal-company] ID společnosti z terminálOdkazy neexistuje ve společnosti ani companies — zkouším další zdroje:",
-            cid
-          );
-        }
-      }
-    }
-  } catch (e) {
-    console.error("[terminal-company] Načtení terminálOdkazy selhalo", e);
+  if (process.env.NODE_ENV === "development") {
+    console.warn("[terminal-company] terminálOdkazy:", fromLinks.error);
   }
 
   const envId = process.env.TERMINAL_COMPANY_ID?.trim();
@@ -95,7 +67,7 @@ export async function resolveTerminalCompanyId(): Promise<string | null> {
     process.env.TERMINAL_ALLOW_FIRST_COMPANY_FALLBACK === "true";
   if (!allowFirstCompanyFallback) {
     console.error(
-      "[terminal-company] Nastavte aktivní záznam v terminálOdkazy (aktivní + ID společnosti), případně TERMINAL_COMPANY_ID, config/terminal, nebo TERMINAL_ALLOW_FIRST_COMPANY_FALLBACK=true."
+      "[terminal-company] Nastavte aktivní záznam v terminálOdkazy, případně TERMINAL_COMPANY_ID nebo config/terminal."
     );
     return null;
   }

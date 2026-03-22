@@ -125,6 +125,7 @@ function StandaloneTerminalInner() {
       try {
         const res = await fetch("/api/terminal/config");
         const data = (await res.json().catch(() => ({}))) as {
+          success?: boolean;
           error?: string;
           companyId?: string;
           companyName?: string;
@@ -132,10 +133,9 @@ function StandaloneTerminalInner() {
         if (cancelled) return;
         if (!res.ok) {
           setErrorMsg(
-            data?.error ||
-              (res.status === 503
-                ? "Firma nebyla nalezena nebo chybí aktivní záznam v terminálOdkazy (případně TERMINAL_COMPANY_ID / config/terminal)."
-                : "Terminál nelze spustit.")
+            typeof data.error === "string" && data.error.trim().length > 0
+              ? data.error
+              : "Terminál nelze spustit. Zkontrolujte terminálOdkazy ve Firestore."
           );
           setPhase("error");
           return;

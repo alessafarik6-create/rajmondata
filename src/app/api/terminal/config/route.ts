@@ -1,34 +1,32 @@
 import { NextResponse } from "next/server";
-import { getAdminFirestore } from "@/lib/firebase-admin";
-import { getCompanyDisplayName, resolveTerminalCompanyId } from "@/lib/terminal-company-resolve";
+import { loadPublicTerminalConfig } from "@/lib/terminal-config-server";
 
 /**
- * Veřejná konfigurace terminálu — bez Firebase Auth.
- * Auto auth creation disabled — žádný kiosk účet.
+ * Veřejná konfigurace terminálu — bez Firebase Auth, bez session.
+ * Čte terminálOdkazy + společnosti (viz loadPublicTerminalConfig).
  */
 export async function GET() {
-  if (process.env.NODE_ENV === "development") {
-    console.log("[terminal/config] Terminal uses PIN session only (no Firebase Auth user)");
-  }
-  const db = getAdminFirestore();
-  if (!db) {
-    return NextResponse.json({ error: "Firebase Admin není nakonfigurován." }, { status: 503 });
-  }
   try {
-    const companyId = await resolveTerminalCompanyId();
-    if (!companyId) {
+    const result = await loadPublicTerminalConfig();
+
+    if (!result.success) {
       return NextResponse.json(
-        {
-          error:
-            "Terminál není nakonfigurován. Vytvořte aktivní záznam v kolekci terminálOdkazy (aktivní = true, pole ID společnosti), případně nastavte TERMINAL_COMPANY_ID nebo config/terminal.",
-        },
-        { status: 503 }
+        { success: false, error: result.error },
+        { status: result.status }
       );
     }
-    const companyName = await getCompanyDisplayName(companyId);
-    return NextResponse.json({ companyId, companyName });
-  } catch (e) {
-    console.error("[terminal/config]", e);
-    return NextResponse.json({ error: "Konfiguraci terminálu se nepodařilo načíst." }, { status: 500 });
+
+    return NextResponse.json({
+      success: true,
+      companyId: result.companyId,
+      companyName: result.companyName,
+      terminalConfig: result.terminalConfig,
+    });
+  } catch (error) {
+    console.error("Terminal config error", error);
+    return NextResponse.json(
+      { success: false, error: "Internal error" },
+      { status: 500 }
+    );
   }
 }
