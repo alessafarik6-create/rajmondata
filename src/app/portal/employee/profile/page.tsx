@@ -265,7 +265,7 @@ export default function EmployeeProfilePage() {
         title: "PIN uložen",
         description:
           (data as { message?: string }).message ||
-          "PIN docházkového terminálu byl změněn.",
+          "PIN docházky byl změněn.",
       });
     } catch (err: unknown) {
       toast({

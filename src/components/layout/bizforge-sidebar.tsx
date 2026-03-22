@@ -21,7 +21,6 @@ import {
   ReceiptText,
   CreditCard as PaymentIcon,
   BarChart3,
-  Smartphone
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -68,7 +67,6 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     { label: 'Zákazníci', href: '/portal/customers', icon: UserCircle, roles: ['owner', 'admin', 'manager', 'accountant'] },
     { label: 'Zakázky', href: '/portal/jobs', icon: Briefcase, roles: ['owner', 'admin', 'manager', 'employee', 'customer'] },
     { label: 'Docházka', href: '/portal/attendance', icon: Clock, roles: ['owner', 'admin', 'manager', 'employee'] },
-    { label: 'Docházka', href: '/portal/attendance', icon: Smartphone, roles: ['owner', 'admin', 'manager', 'employee'] },
     { label: 'Finance', href: '/portal/finance', icon: Wallet, roles: ['owner', 'admin', 'accountant'] },
     { label: 'Faktury', href: '/portal/invoices', icon: ReceiptText, roles: ['owner', 'admin', 'accountant', 'customer'] },
     { label: 'Doklady', href: '/portal/documents', icon: FileText, roles: ['owner', 'admin', 'accountant'] },

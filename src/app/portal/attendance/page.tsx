@@ -78,7 +78,7 @@ export default function AttendancePage() {
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
-    [firestore, user]
+    [firestore, user?.uid]
   );
 
   const { data: profile } = useDoc(userRef);
@@ -117,7 +117,7 @@ export default function AttendancePage() {
       orderBy("timestamp", "desc"),
       limit(100)
     );
-  }, [firestore, companyId, user, isAttendancePrivileged, profileEmployeeId]);
+  }, [firestore, companyId, user?.uid, isAttendancePrivileged, profileEmployeeId]);
 
   const {
     data: historyData = [],
@@ -191,11 +191,9 @@ export default function AttendancePage() {
     <div className="space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
         <div className="min-w-0">
-          <h1 className="portal-page-title text-2xl sm:text-3xl">
-            Docházkový systém
-          </h1>
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Docházka</h1>
           <div className="portal-page-description">
-            Pracovní prostor:{" "}
+            Organizace:{" "}
             <span className="font-semibold text-primary">{orgLabel}</span>
           </div>
         </div>

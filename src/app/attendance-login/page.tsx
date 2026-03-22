@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 type EmployeeRow = {
@@ -42,10 +44,9 @@ function AttendanceLoginContent() {
   const [selectedJob, setSelectedJob] = useState<JobRow | null>(null);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [actionSaving, setActionSaving] = useState(false);
-  const [actionMessage, setActionMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log("Attendance page loaded");
+    console.log("Attendance employee selection page loaded");
   }, []);
 
   useEffect(() => {
@@ -83,8 +84,20 @@ function AttendanceLoginContent() {
     };
   }, [companyId]);
 
+  const resetToSelection = useCallback((opts?: { afterAttendance?: boolean }) => {
+    if (opts?.afterAttendance) {
+      console.log("Resetting attendance login state to employee selection");
+    }
+    setSelected(null);
+    setPin("");
+    setPinError(null);
+    setJobs([]);
+    setSelectedJob(null);
+    setStep("select");
+  }, []);
+
   const selectEmployee = useCallback((emp: EmployeeRow) => {
-    console.log("Employee selected", emp.id);
+    console.log("Employee selected");
     setSelected(emp);
     setPin("");
     setPinError(null);
@@ -98,21 +111,8 @@ function AttendanceLoginContent() {
       setPin("");
       setStep("select");
     } else if (step === "work") {
-      setPin("");
-      setJobs([]);
-      setSelectedJob(null);
-      setStep("pin");
+      resetToSelection();
     }
-  };
-
-  const logout = () => {
-    setSelected(null);
-    setPin("");
-    setPinError(null);
-    setJobs([]);
-    setSelectedJob(null);
-    setActionMessage(null);
-    setStep("select");
   };
 
   const appendDigit = (d: string) => {
@@ -134,7 +134,6 @@ function AttendanceLoginContent() {
     }
     setVerifying(true);
     setPinError(null);
-    console.log("PIN verifying");
     try {
       const res = await fetch("/api/attendance-login/verify-pin", {
         method: "POST",
@@ -150,7 +149,7 @@ function AttendanceLoginContent() {
         setPinError(typeof data.error === "string" ? data.error : "Neplatný PIN");
         return;
       }
-      console.log("PIN success");
+      console.log("PIN verified");
       setJobsLoading(true);
       const jr = await fetch("/api/attendance-login/jobs", {
         method: "POST",
@@ -201,9 +200,9 @@ function AttendanceLoginContent() {
         alert(typeof data.error === "string" ? data.error : "Uložení se nezdařilo.");
         return;
       }
-      setActionMessage(
-        action === "check-in" ? "Příchod byl uložen." : "Odchod byl uložen."
-      );
+      if (action === "check-in") console.log("Check-in saved");
+      else console.log("Check-out saved");
+      resetToSelection({ afterAttendance: true });
     } catch {
       alert("Uložení se nezdařilo.");
     } finally {
@@ -216,8 +215,8 @@ function AttendanceLoginContent() {
     : "";
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-lg flex-col px-4 py-6 pb-10">
-      <header className="mb-6 flex items-center justify-between gap-3">
+    <div className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 py-8 pb-12 sm:px-6">
+      <header className="mb-8 flex items-center justify-between gap-3">
         {step !== "select" ? (
           <Button
             type="button"
@@ -230,65 +229,70 @@ function AttendanceLoginContent() {
             Zpět
           </Button>
         ) : (
-          <span />
+          <span className="w-20" />
         )}
-        <h1 className="text-center text-lg font-semibold tracking-tight text-white">Docházka</h1>
+        <div className="text-center">
+          <p className="text-xs font-medium uppercase tracking-widest text-emerald-400/90">Docházka</p>
+          <h1 className="text-lg font-semibold tracking-tight text-white sm:text-xl">Přihlášení zaměstnance</h1>
+        </div>
         {step === "work" ? (
           <Button
             type="button"
             variant="ghost"
             size="sm"
             className="gap-2 text-slate-300 hover:bg-white/10 hover:text-white"
-            onClick={logout}
+            onClick={() => resetToSelection()}
           >
             <LogOut className="h-4 w-4" />
             Odhlásit
           </Button>
         ) : (
-          <span className="w-[88px]" />
+          <span className="w-20" />
         )}
       </header>
 
       {!companyId && (
-        <p className="rounded-xl border border-amber-500/40 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
-          {loadError}
-        </p>
+        <Card className="border-amber-500/35 bg-amber-950/30">
+          <CardContent className="p-4 text-sm text-amber-100">{loadError}</CardContent>
+        </Card>
       )}
 
       {companyId && loadError && (
-        <p className="rounded-xl border border-red-500/40 bg-red-950/40 px-4 py-3 text-sm text-red-100">{loadError}</p>
+        <Card className="border-red-500/35 bg-red-950/30">
+          <CardContent className="p-4 text-sm text-red-100">{loadError}</CardContent>
+        </Card>
       )}
 
       {companyId && !loadError && step === "select" && (
-        <div className="flex flex-1 flex-col gap-4">
-          <p className="text-center text-sm text-slate-400">Vyberte svůj profil</p>
+        <div className="flex flex-1 flex-col gap-6">
+          <p className="text-center text-base text-slate-400">Vyberte svůj profil</p>
           {loadingList ? (
-            <div className="flex flex-1 items-center justify-center py-20">
-              <Loader2 className="h-10 w-10 animate-spin text-slate-500" />
+            <div className="flex flex-1 items-center justify-center py-24">
+              <Loader2 className="h-12 w-12 animate-spin text-emerald-500/60" />
             </div>
           ) : employees.length === 0 ? (
-            <p className="text-center text-slate-400">Žádní aktivní zaměstnanci.</p>
+            <p className="text-center text-slate-500">Žádní aktivní zaměstnanci.</p>
           ) : (
-            <ul className="grid gap-3">
+            <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {employees.map((emp) => (
                 <li key={emp.id}>
                   <button
                     type="button"
                     onClick={() => selectEmployee(emp)}
                     className={cn(
-                      "flex w-full items-center gap-4 rounded-2xl border border-white/10 bg-white/5 p-4 text-left",
-                      "min-h-[56px] transition hover:bg-white/10 active:scale-[0.99]"
+                      "group flex w-full flex-col items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-center shadow-sm",
+                      "min-h-[140px] transition hover:border-emerald-500/40 hover:bg-white/[0.07] active:scale-[0.99]"
                     )}
                   >
-                    <Avatar className="h-14 w-14 border border-white/10">
+                    <Avatar className="h-20 w-20 border-2 border-white/10 shadow-md ring-2 ring-transparent transition group-hover:ring-emerald-500/30">
                       {emp.photoURL ? (
                         <AvatarImage src={emp.photoURL} alt="" className="object-cover" />
                       ) : null}
-                      <AvatarFallback className="bg-slate-700 text-lg text-white">
+                      <AvatarFallback className="bg-slate-700 text-2xl font-medium text-white">
                         {initials(emp.firstName, emp.lastName)}
                       </AvatarFallback>
                     </Avatar>
-                    <span className="text-lg font-medium text-white">
+                    <span className="text-lg font-semibold leading-tight text-white">
                       {emp.firstName} {emp.lastName}
                     </span>
                   </button>
@@ -300,30 +304,29 @@ function AttendanceLoginContent() {
       )}
 
       {companyId && step === "pin" && selected && (
-        <div className="flex flex-1 flex-col gap-6">
-          <div className="flex flex-col items-center gap-2">
-            <Avatar className="h-20 w-20 border-2 border-white/20">
+        <div className="mx-auto flex w-full max-w-md flex-1 flex-col gap-8">
+          <div className="flex flex-col items-center gap-3">
+            <Avatar className="h-24 w-24 border-2 border-white/15 shadow-lg">
               {selected.photoURL ? (
                 <AvatarImage src={selected.photoURL} alt="" className="object-cover" />
               ) : null}
-              <AvatarFallback className="bg-slate-700 text-xl">
+              <AvatarFallback className="bg-slate-700 text-2xl font-semibold text-white">
                 {initials(selected.firstName, selected.lastName)}
               </AvatarFallback>
             </Avatar>
-            <p className="text-lg font-medium text-white">{fullName}</p>
-            <p className="text-slate-400">Zadejte PIN</p>
+            <p className="text-xl font-semibold text-white">{fullName}</p>
+            <p className="text-sm text-slate-400">Zadejte PIN</p>
           </div>
 
-          <div
-            className="rounded-2xl border border-white/10 bg-black/20 px-4 py-5 text-center font-mono text-3xl tracking-[0.4em] text-white"
-            aria-live="polite"
-          >
-            {pin.replace(/./g, "•")}
-          </div>
+          <Card className="border-white/10 bg-black/25">
+            <CardContent className="px-4 py-6 text-center font-mono text-3xl tracking-[0.35em] text-white sm:text-4xl">
+              {pin ? pin.replace(/./g, "•") : <span className="text-slate-600">••••</span>}
+            </CardContent>
+          </Card>
 
           {pinError && <p className="text-center text-sm text-red-400">{pinError}</p>}
 
-          <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          <div className="grid grid-cols-3 gap-3 sm:gap-4">
             {["1", "2", "3", "4", "5", "6", "7", "8", "9", "", "0", "⌫"].map((k, i) =>
               k === "" ? (
                 <span key={`e-${i}`} />
@@ -332,7 +335,7 @@ function AttendanceLoginContent() {
                   key={k}
                   type="button"
                   variant="secondary"
-                  className="h-14 text-xl font-semibold sm:h-16"
+                  className="h-16 rounded-2xl text-2xl font-semibold shadow-md sm:h-[4.25rem]"
                   onClick={() => (k === "⌫" ? backspace() : appendDigit(k))}
                 >
                   {k}
@@ -343,40 +346,61 @@ function AttendanceLoginContent() {
 
           <Button
             type="button"
-            className="h-14 text-lg"
+            size="lg"
+            className="h-14 rounded-2xl text-lg font-semibold shadow-lg"
             disabled={verifying || !pin}
             onClick={() => void submitPin()}
           >
-            {verifying ? <Loader2 className="h-6 w-6 animate-spin" /> : "Potvrdit"}
+            {verifying ? <Loader2 className="h-7 w-7 animate-spin" /> : "Potvrdit PIN"}
           </Button>
         </div>
       )}
 
       {companyId && step === "work" && selected && (
-        <div className="flex flex-1 flex-col gap-6">
-          <div className="text-center">
-            <p className="text-sm text-slate-400">Přihlášen(a)</p>
-            <p className="text-2xl font-semibold text-white">{fullName}</p>
-          </div>
+        <div className="flex flex-1 flex-col gap-8">
+          <Card
+            className={cn(
+              "overflow-hidden border-2 border-emerald-400/70 bg-gradient-to-br from-emerald-500/20 via-emerald-600/15 to-slate-900/80",
+              "shadow-[0_0_40px_-8px_rgba(16,185,129,0.45)]"
+            )}
+          >
+            <CardContent className="flex flex-col items-center gap-4 p-6 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+              <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-center">
+                <Avatar className="h-20 w-20 border-2 border-emerald-400/60 shadow-md ring-2 ring-emerald-400/40">
+                  {selected.photoURL ? (
+                    <AvatarImage src={selected.photoURL} alt="" className="object-cover" />
+                  ) : null}
+                  <AvatarFallback className="bg-emerald-800 text-2xl font-bold text-white">
+                    {initials(selected.firstName, selected.lastName)}
+                  </AvatarFallback>
+                </Avatar>
+                <div className="text-center sm:text-left">
+                  <Badge className="mb-2 bg-emerald-500 text-white hover:bg-emerald-500">Přihlášen</Badge>
+                  <p className="text-xl font-bold tracking-tight text-white sm:text-2xl">{fullName}</p>
+                  <p className="text-sm text-emerald-100/90">Můžete zaznamenat příchod nebo odchod</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
 
           {jobsLoading ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-8 w-8 animate-spin text-slate-500" />
+            <div className="flex justify-center py-10">
+              <Loader2 className="h-10 w-10 animate-spin text-emerald-500/70" />
             </div>
           ) : jobs.length > 0 ? (
             <div className="space-y-3">
               <p className="text-center text-sm font-medium text-slate-300">Vyberte zakázku</p>
-              <div className="grid max-h-[40vh] gap-2 overflow-y-auto pr-1">
+              <div className="grid max-h-[min(40vh,320px)] gap-2 overflow-y-auto pr-1">
                 {jobs.map((j) => (
                   <button
                     key={j.id}
                     type="button"
                     onClick={() => setSelectedJob(j)}
                     className={cn(
-                      "rounded-xl border px-4 py-3 text-left text-sm transition",
+                      "rounded-2xl border px-4 py-4 text-left text-sm font-medium transition",
                       selectedJob?.id === j.id
-                        ? "border-emerald-500/80 bg-emerald-500/20 text-white"
-                        : "border-white/10 bg-white/5 text-slate-200 hover:bg-white/10"
+                        ? "border-emerald-400/90 bg-emerald-500/25 text-white shadow-md"
+                        : "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
                     )}
                   >
                     {j.name}
@@ -386,30 +410,29 @@ function AttendanceLoginContent() {
             </div>
           ) : null}
 
-          <div className="mt-auto grid gap-3 sm:grid-cols-2">
+          <div className="mt-auto grid gap-4 sm:grid-cols-2">
             <Button
               type="button"
-              className="h-14 text-lg bg-emerald-600 hover:bg-emerald-500"
+              size="lg"
+              className="h-16 rounded-2xl bg-emerald-600 text-lg font-semibold shadow-lg hover:bg-emerald-500"
               disabled={actionSaving || (jobs.length > 0 && !selectedJob)}
               onClick={() => void postAttendance("check-in")}
             >
-              {actionSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : "Příchod do práce"}
+              {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Příchod do práce"}
             </Button>
             <Button
               type="button"
+              size="lg"
               variant="secondary"
-              className="h-14 text-lg border-white/20 bg-white/10 text-white hover:bg-white/20"
+              className="h-16 rounded-2xl border border-white/15 bg-white/10 text-lg font-semibold text-white hover:bg-white/15"
               disabled={actionSaving}
               onClick={() => void postAttendance("check-out")}
             >
-              {actionSaving ? <Loader2 className="h-5 w-5 animate-spin" /> : "Odchod z práce"}
+              {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Odchod z práce"}
             </Button>
           </div>
           {jobs.length > 0 && !selectedJob && (
-            <p className="text-center text-xs text-amber-200/90">Pro příchod vyberte zakázku.</p>
-          )}
-          {actionMessage && (
-            <p className="text-center text-sm text-emerald-300">{actionMessage}</p>
+            <p className="text-center text-sm text-amber-200/90">Pro příchod nejdřív vyberte zakázku.</p>
           )}
         </div>
       )}
@@ -422,7 +445,7 @@ export default function AttendanceLoginPage() {
     <Suspense
       fallback={
         <div className="flex min-h-dvh items-center justify-center">
-          <Loader2 className="h-10 w-10 animate-spin text-slate-500" />
+          <Loader2 className="h-12 w-12 animate-spin text-emerald-500/60" />
         </div>
       }
     >
