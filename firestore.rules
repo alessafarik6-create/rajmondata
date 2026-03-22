@@ -157,7 +157,7 @@ service cloud.firestore {
 
     // --- Firma ---
     match /companies/{companyId} {
-      allow read: if signedIn() && sameCompany(companyId) || terminalCompanyMatches(companyId);
+      allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);
       allow create: if isNewCompanyOwnedByRequester();
       allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
 
@@ -191,8 +191,9 @@ service cloud.firestore {
       }
 
       match /jobs/{jobId} {
-        allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || (canLogOwnWorkTime() && (jobAssignedForWorklog(companyId, jobId) || jobAssignedForTerminal(companyId, jobId))));
+        allow read: if terminalCompanyMatches(companyId) ||
+          (signedIn() && sameCompany(companyId) &&
+            (isPrivileged() || (canLogOwnWorkTime() && (jobAssignedForWorklog(companyId, jobId) || jobAssignedForTerminal(companyId, jobId)))));
         allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

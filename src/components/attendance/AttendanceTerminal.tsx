@@ -304,6 +304,23 @@ export function AttendanceTerminal({
     }
   }, [attendanceError]);
 
+  /** Po nasazení indexu zkusí znovu plný dotaz (focus / viditelnost / interval). */
+  useEffect(() => {
+    if (!attendanceIndexFallback) return;
+    const retryPrimary = () => setAttendanceIndexFallback(false);
+    const onVis = () => {
+      if (document.visibilityState === "visible") retryPrimary();
+    };
+    window.addEventListener("focus", retryPrimary);
+    document.addEventListener("visibilitychange", onVis);
+    const intervalId = window.setInterval(retryPrimary, 5 * 60 * 1000);
+    return () => {
+      window.removeEventListener("focus", retryPrimary);
+      document.removeEventListener("visibilitychange", onVis);
+      window.clearInterval(intervalId);
+    };
+  }, [attendanceIndexFallback]);
+
   const attendanceErrorBlocksUi = useMemo(() => {
     if (!attendanceError) return false;
     if (
@@ -1125,11 +1142,14 @@ export function AttendanceTerminal({
           <AlertCircle className="h-4 w-4 text-amber-600" />
           <AlertTitle>Režim kompatibility</AlertTitle>
           <AlertDescription>
-            Chybí složený index Firestore pro dotaz na docházku. Záznamy se
-            načítají podle data a filtrují v prohlížeči. Pro plný výkon nasaďte
-            index (viz{" "}
-            <code className="text-xs font-mono">firestore.indexes.json</code>
-            ).
+            Složený index Firestore pro docházku ještě není k dispozici (stav
+            BUILDING nebo chybí v projektu). Záznamy se načítají podle data a
+            filtrují v prohlížeči — aplikace nepřestane fungovat. Po nasazení
+            indexu se tato hláška sama zruší (obnovení stránky, návrat na kartu
+            nebo do pár minut). Nasazení:{" "}
+            <code className="text-xs font-mono">firestore.indexes.json</code> +{" "}
+            <code className="text-xs font-mono">firebase deploy --only firestore:indexes</code>
+            .
           </AlertDescription>
         </Alert>
       )}
