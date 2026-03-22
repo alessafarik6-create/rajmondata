@@ -28,6 +28,8 @@ import {
   History,
   Timer,
   Smartphone,
+  LayoutDashboard,
+  FileText,
 } from "lucide-react";
 import {
   useUser,
@@ -59,6 +61,7 @@ export default function AttendancePage() {
   const { toast } = useToast();
   const [currentTime, setCurrentTime] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<AttendanceType | null>(null);
+  const [reviewBusy, setReviewBusy] = useState<string | null>(null);
 
   useEffect(() => {
     const updateTime = () => {
@@ -81,7 +84,7 @@ export default function AttendancePage() {
     [firestore, user?.uid]
   );
 
-  const { data: profile } = useDoc(userRef);
+  const { data: profile, isLoading: profileLoading } = useDoc(userRef);
   const companyId = profile?.companyId;
   const { companyName } = useCompany();
   const orgLabel = companyName || companyId || "vaší organizace";
@@ -124,14 +127,32 @@ export default function AttendancePage() {
     isLoading: isHistoryLoading,
   } = useCollection(attendanceQuery);
 
+  const dailyReportsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !isAttendancePrivileged) return null;
+    return query(
+      collection(firestore, "companies", companyId, "daily_work_reports"),
+      orderBy("updatedAt", "desc"),
+      limit(120)
+    );
+  }, [firestore, companyId, isAttendancePrivileged]);
+
+  const {
+    data: dailyReports = [],
+    isLoading: dailyReportsLoading,
+  } = useCollection(dailyReportsQuery);
+
   useEffect(() => {
-    if (historyData && user) {
-      const myLastAction = historyData.find((a: any) => a.employeeId === user.uid);
-      if (myLastAction) {
-        setLastAction(myLastAction.type as AttendanceType);
-      }
+    if (!historyData || !user) return;
+    const ids = new Set([profileEmployeeId, user.uid].filter(Boolean));
+    const mine = historyData.find((a: { employeeId?: string }) =>
+      a.employeeId && ids.has(a.employeeId)
+    );
+    if (mine) {
+      setLastAction(mine.type as AttendanceType);
+    } else {
+      setLastAction(null);
     }
-  }, [historyData, user]);
+  }, [historyData, user, profileEmployeeId]);
 
   const handleAttendanceAction = (type: AttendanceType) => {
     if (!user || !companyId) return;
@@ -159,10 +180,43 @@ export default function AttendancePage() {
     });
   };
 
-  const isAdmin =
-    profile?.role === "owner" ||
-    profile?.role === "admin" ||
-    profile?.globalRoles?.includes("super_admin");
+  const reviewDailyReport = async (
+    employeeId: string,
+    date: string,
+    action: "approve" | "reject"
+  ) => {
+    if (!user || !companyId) return;
+    const key = `${employeeId}_${date}_${action}`;
+    setReviewBusy(key);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/daily-work-reports/review", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ companyId, employeeId, date, action }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: data.error || "Akci se nepodařilo provést.",
+        });
+        return;
+      }
+      toast({
+        title: action === "approve" ? "Schváleno" : "Zamítnuto",
+        description: "Stav denního výkazu byl uložen.",
+      });
+    } catch {
+      toast({ variant: "destructive", title: "Chyba", description: "Síťová chyba." });
+    } finally {
+      setReviewBusy(null);
+    }
+  };
 
   const getStatusBadge = (type: string) => {
     switch (type) {
@@ -187,9 +241,46 @@ export default function AttendancePage() {
     }
   };
 
+  const reportStatusBadge = (s: string | undefined) => {
+    switch (s) {
+      case "pending":
+        return <Badge className="bg-amber-500">Čeká na schválení</Badge>;
+      case "approved":
+        return <Badge className="bg-emerald-600">Schváleno</Badge>;
+      case "rejected":
+        return <Badge variant="destructive">Zamítnuto</Badge>;
+      default:
+        return <Badge variant="outline">{s || "—"}</Badge>;
+    }
+  };
+
+  const pendingReports = (Array.isArray(dailyReports) ? dailyReports : []).filter(
+    (r: { status?: string }) => r.status === "pending"
+  );
+
+  if (!user) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (profileLoading) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-2">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Načítání profilu…</p>
+      </div>
+    );
+  }
+
+  const tabsKey = isAttendancePrivileged ? "priv" : "emp";
+  const defaultTab = isAttendancePrivileged ? "overview" : "terminal";
+
   return (
     <div className="space-y-6 sm:space-y-8">
-      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-center">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <h1 className="portal-page-title text-2xl sm:text-3xl">Docházka</h1>
           <div className="portal-page-description">
@@ -206,18 +297,18 @@ export default function AttendancePage() {
               target="_blank"
               rel="noopener noreferrer"
             >
-              <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
-                <Smartphone className="w-4 h-4 shrink-0" />
+              <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
+                <Smartphone className="h-4 w-4 shrink-0" />
                 Přihlášení zaměstnance
               </Button>
             </Link>
           ) : null}
 
-          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-right min-w-[180px] hidden sm:block">
-            <p className="text-4xl font-mono font-bold text-primary">
+          <div className="hidden min-w-[180px] rounded-xl border border-slate-200 bg-white p-4 text-right shadow-sm sm:block">
+            <p className="font-mono text-4xl font-bold text-primary">
               {currentTime || "--:--:--"}
             </p>
-            <p className="text-sm text-muted-foreground font-medium">
+            <p className="text-sm font-medium text-muted-foreground">
               {new Date().toLocaleDateString("cs-CZ", {
                 weekday: "long",
                 day: "numeric",
@@ -229,152 +320,205 @@ export default function AttendancePage() {
         </div>
       </div>
 
-      <Tabs defaultValue="terminal" className="w-full overflow-hidden">
-        <TabsList className="bg-white border border-slate-200 mb-4 sm:mb-6 flex flex-wrap h-auto gap-1 p-1">
-          <TabsTrigger
-            value="terminal"
-            className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"
-          >
-            <Timer className="w-4 h-4 shrink-0" />
-            Rychlý záznam
-          </TabsTrigger>
-
-          <TabsTrigger
-            value="history"
-            className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"
-          >
-            <History className="w-4 h-4 shrink-0" />
-            Moje historie
-          </TabsTrigger>
-
-          {isAdmin && (
-            <TabsTrigger
-              value="admin"
-              className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"
-            >
-              <UserCheck className="w-4 h-4 shrink-0" />
-              Přehled týmu
-            </TabsTrigger>
+      <Tabs key={tabsKey} defaultValue={defaultTab} className="w-full overflow-hidden">
+        <TabsList className="mb-4 flex h-auto flex-wrap gap-1 border border-slate-200 bg-white p-1 sm:mb-6">
+          {isAttendancePrivileged ? (
+            <>
+              <TabsTrigger value="overview" className="min-h-[44px] flex-1 gap-2 sm:flex-initial sm:min-h-0">
+                <LayoutDashboard className="h-4 w-4 shrink-0" />
+                Přehled
+              </TabsTrigger>
+              <TabsTrigger value="history" className="min-h-[44px] flex-1 gap-2 sm:flex-initial sm:min-h-0">
+                <History className="h-4 w-4 shrink-0" />
+                Historie docházky
+              </TabsTrigger>
+              <TabsTrigger value="approvals" className="min-h-[44px] flex-1 gap-2 sm:flex-initial sm:min-h-0">
+                <FileText className="h-4 w-4 shrink-0" />
+                Schvalování výkazů
+              </TabsTrigger>
+              <TabsTrigger value="team" className="min-h-[44px] flex-1 gap-2 sm:flex-initial sm:min-h-0">
+                <UserCheck className="h-4 w-4 shrink-0" />
+                Přehled týmu
+              </TabsTrigger>
+            </>
+          ) : (
+            <>
+              <TabsTrigger value="terminal" className="min-h-[44px] flex-1 gap-2 sm:flex-initial sm:min-h-0">
+                <Timer className="h-4 w-4 shrink-0" />
+                Rychlý záznam
+              </TabsTrigger>
+              <TabsTrigger value="history" className="min-h-[44px] flex-1 gap-2 sm:flex-initial sm:min-h-0">
+                <History className="h-4 w-4 shrink-0" />
+                Moje historie
+              </TabsTrigger>
+            </>
           )}
         </TabsList>
 
-        <TabsContent value="terminal">
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
-            <Card className="lg:col-span-2 min-w-0">
-              <CardHeader>
-                <CardTitle>Rychlý záznam (přihlášený účet)</CardTitle>
-                <CardDescription>
-                  Příchod, pauza a odchod z portálu. Veřejné přihlášení jen přes PIN je na stránce Přihlášení zaměstnance.
-                </CardDescription>
-              </CardHeader>
+        {isAttendancePrivileged ? (
+          <TabsContent value="overview">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <Card className="border-border bg-surface">
+                <CardHeader>
+                  <CardTitle>Veřejné přihlášení zaměstnanců</CardTitle>
+                  <CardDescription>
+                    Administrátor se do docházky nepřihlašuje jako zaměstnanec — použijte terminál s PINem.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    Odkaz otevřete na tabletu nebo sdíleném PC. Zaměstnanci se hlásí výběrem profilu a PINem.
+                  </p>
+                  {companyId ? (
+                    <Link
+                      href={`/attendance-login?companyId=${encodeURIComponent(companyId)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
+                        <Smartphone className="h-4 w-4" />
+                        Otevřít /attendance-login
+                      </Button>
+                    </Link>
+                  ) : null}
+                </CardContent>
+              </Card>
 
-              <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4 py-6">
-                <Button
-                  size="lg"
-                  disabled={
-                    lastAction === "check_in" || lastAction === "break_end"
-                  }
-                  className="h-24 text-xl font-bold bg-emerald-600 hover:bg-emerald-700 transition-all gap-3"
-                  onClick={() => handleAttendanceAction("check_in")}
-                >
-                  <Play className="w-6 h-6 fill-white" />
-                  Přihlásit příchod
-                </Button>
+              <Card className="border-border bg-surface">
+                <CardHeader>
+                  <CardTitle>Rychlý přehled</CardTitle>
+                  <CardDescription>Poslední aktivita v docházce (zobrazeno v Historii)</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2 text-sm">
+                  <p>
+                    <span className="font-medium text-foreground">Čekající denní výkazy:</span>{" "}
+                    {dailyReportsLoading ? "…" : pendingReports.length}
+                  </p>
+                  <p className="text-muted-foreground">
+                    Zaměstnanci doplňují denní výkaz v zaměstnaneckém portálu (položka „Denní výkaz“). Schvalujte v záložce Schvalování výkazů.
+                  </p>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        ) : null}
 
-                <Button
-                  size="lg"
-                  variant="outline"
-                  disabled={
-                    lastAction !== "check_in" && lastAction !== "break_end"
-                  }
-                  className="h-24 text-xl font-bold border-amber-500 text-amber-500 hover:bg-amber-500/10 transition-all gap-3"
-                  onClick={() => handleAttendanceAction("break_start")}
-                >
-                  <Coffee className="w-6 h-6" />
-                  Zahájit pauzu
-                </Button>
+        {!isAttendancePrivileged ? (
+          <TabsContent value="terminal">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:gap-8">
+              <Card className="min-w-0 lg:col-span-2">
+                <CardHeader>
+                  <CardTitle>Rychlý záznam (přihlášený účet)</CardTitle>
+                  <CardDescription>
+                    Příchod, pauza a odchod z portálu. Veřejné přihlášení jen přes PIN je na stránce Přihlášení zaměstnance.
+                  </CardDescription>
+                </CardHeader>
 
-                <Button
-                  size="lg"
-                  variant="outline"
-                  disabled={lastAction !== "break_start"}
-                  className="h-24 text-xl font-bold border-blue-500 text-blue-500 hover:bg-blue-500/10 transition-all gap-3"
-                  onClick={() => handleAttendanceAction("break_end")}
-                >
-                  <Clock className="w-6 h-6" />
-                  Ukončit pauzu
-                </Button>
+                <CardContent className="grid grid-cols-1 gap-4 py-6 sm:grid-cols-2">
+                  <Button
+                    size="lg"
+                    disabled={lastAction === "check_in" || lastAction === "break_end"}
+                    className="h-24 gap-3 text-xl font-bold bg-emerald-600 transition-all hover:bg-emerald-700"
+                    onClick={() => handleAttendanceAction("check_in")}
+                  >
+                    <Play className="h-6 w-6 fill-white" />
+                    Přihlásit příchod
+                  </Button>
 
-                <Button
-                  size="lg"
-                  variant="destructive"
-                  disabled={
-                    lastAction === "check_out" ||
-                    !lastAction ||
-                    lastAction === "break_start"
-                  }
-                  className="h-24 text-xl font-bold transition-all gap-3"
-                  onClick={() => handleAttendanceAction("check_out")}
-                >
-                  <Square className="w-6 h-6 fill-white" />
-                  Odhlásit odchod
-                </Button>
-              </CardContent>
-            </Card>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    disabled={lastAction !== "check_in" && lastAction !== "break_end"}
+                    className="h-24 gap-3 border-amber-500 text-xl font-bold text-amber-500 hover:bg-amber-500/10"
+                    onClick={() => handleAttendanceAction("break_start")}
+                  >
+                    <Coffee className="h-6 w-6" />
+                    Zahájit pauzu
+                  </Button>
 
-            <Card className="bg-surface border-border shadow-xl">
-              <CardHeader>
-                <CardTitle>Aktuální stav</CardTitle>
-                <CardDescription>Váš poslední záznam v systému</CardDescription>
-              </CardHeader>
+                  <Button
+                    size="lg"
+                    variant="outline"
+                    disabled={lastAction !== "break_start"}
+                    className="h-24 gap-3 border-blue-500 text-xl font-bold text-blue-500 hover:bg-blue-500/10"
+                    onClick={() => handleAttendanceAction("break_end")}
+                  >
+                    <Clock className="h-6 w-6" />
+                    Ukončit pauzu
+                  </Button>
 
-              <CardContent className="flex flex-col items-center justify-center py-10 space-y-6">
-                <div
-                  className={`w-32 h-32 rounded-full border-4 flex items-center justify-center transition-all ${
-                    lastAction === "check_in" || lastAction === "break_end"
-                      ? "border-emerald-500 shadow-2xl shadow-emerald-500/20 animate-pulse"
-                      : "border-muted"
-                  }`}
-                >
-                  <Clock
-                    className={`w-12 h-12 ${
+                  <Button
+                    size="lg"
+                    variant="destructive"
+                    disabled={
+                      lastAction === "check_out" || !lastAction || lastAction === "break_start"
+                    }
+                    className="h-24 gap-3 text-xl font-bold"
+                    onClick={() => handleAttendanceAction("check_out")}
+                  >
+                    <Square className="h-6 w-6 fill-white" />
+                    Odhlásit odchod
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border bg-surface shadow-xl">
+                <CardHeader>
+                  <CardTitle>Aktuální stav</CardTitle>
+                  <CardDescription>Váš poslední záznam v systému</CardDescription>
+                </CardHeader>
+
+                <CardContent className="flex flex-col items-center justify-center space-y-6 py-10">
+                  <div
+                    className={`flex h-32 w-32 items-center justify-center rounded-full border-4 transition-all ${
                       lastAction === "check_in" || lastAction === "break_end"
-                        ? "text-emerald-500"
-                        : "text-muted"
+                        ? "animate-pulse border-emerald-500 shadow-2xl shadow-emerald-500/20"
+                        : "border-muted"
                     }`}
-                  />
-                </div>
-
-                <div className="text-center">
-                  <h3 className="text-2xl font-bold capitalize">
-                    {lastAction === "check_in"
-                      ? "Pracujete"
-                      : lastAction === "break_start"
-                      ? "Na pauze"
-                      : lastAction === "break_end"
-                      ? "Pracujete"
-                      : lastAction === "check_out"
-                      ? "Mimo službu"
-                      : "Nezahájeno"}
-                  </h3>
-
-                  <div className="text-muted-foreground mt-1">
-                    Poslední akce:{" "}
-                    {lastAction ? getStatusBadge(lastAction) : "Žádná"}
+                  >
+                    <Clock
+                      className={`h-12 w-12 ${
+                        lastAction === "check_in" || lastAction === "break_end"
+                          ? "text-emerald-500"
+                          : "text-muted"
+                      }`}
+                    />
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-        </TabsContent>
+
+                  <div className="text-center">
+                    <h3 className="text-2xl font-bold capitalize">
+                      {lastAction === "check_in"
+                        ? "Pracujete"
+                        : lastAction === "break_start"
+                          ? "Na pauze"
+                          : lastAction === "break_end"
+                            ? "Pracujete"
+                            : lastAction === "check_out"
+                              ? "Mimo službu"
+                              : "Nezahájeno"}
+                    </h3>
+
+                    <div className="mt-1 text-muted-foreground">
+                      Poslední akce: {lastAction ? getStatusBadge(lastAction) : "Žádná"}
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </TabsContent>
+        ) : null}
 
         <TabsContent value="history">
-          <Card className="bg-surface border-border">
+          <Card className="border-border bg-surface">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Moje historie docházky</CardTitle>
+                <CardTitle>
+                  {isAttendancePrivileged ? "Historie docházky (firma)" : "Moje historie docházky"}
+                </CardTitle>
                 <CardDescription>
-                  Záznamy vašich příchodů a odchodů
+                  {isAttendancePrivileged
+                    ? "Poslední záznamy všech zaměstnanců"
+                    : "Záznamy vašich příchodů a odchodů"}
                 </CardDescription>
               </div>
             </CardHeader>
@@ -382,11 +526,69 @@ export default function AttendancePage() {
             <CardContent>
               {isHistoryLoading ? (
                 <div className="flex justify-center p-12">
-                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 </div>
-              ) : historyData &&
-                historyData.filter((a: any) => a.employeeId === user?.uid)
-                  .length > 0 ? (
+              ) : isAttendancePrivileged ? (
+                historyData && historyData.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="border-border">
+                        <TableHead>Zaměstnanec</TableHead>
+                        <TableHead>Datum</TableHead>
+                        <TableHead>Čas</TableHead>
+                        <TableHead>Akce</TableHead>
+                        <TableHead className="text-right">Zdroj</TableHead>
+                      </TableRow>
+                    </TableHeader>
+
+                    <TableBody>
+                      {historyData.slice(0, 40).map((row: Record<string, unknown>, i: number) => (
+                        <TableRow key={i} className="border-border hover:bg-muted/30">
+                          <TableCell className="font-semibold">
+                            {String(row.employeeName || row.employeeId || "")}
+                          </TableCell>
+
+                          <TableCell>
+                            {row.timestamp &&
+                            typeof row.timestamp === "object" &&
+                            "toDate" in row.timestamp &&
+                            typeof (row.timestamp as { toDate: () => Date }).toDate === "function"
+                              ? (row.timestamp as { toDate: () => Date })
+                                  .toDate()
+                                  .toLocaleDateString("cs-CZ")
+                              : "Dnes"}
+                          </TableCell>
+
+                          <TableCell>
+                            {row.timestamp &&
+                            typeof row.timestamp === "object" &&
+                            "toDate" in row.timestamp &&
+                            typeof (row.timestamp as { toDate: () => Date }).toDate === "function"
+                              ? (row.timestamp as { toDate: () => Date })
+                                  .toDate()
+                                  .toLocaleTimeString("cs-CZ", {
+                                    hour: "2-digit",
+                                    minute: "2-digit",
+                                  })
+                              : "--:--"}
+                          </TableCell>
+
+                          <TableCell>{getStatusBadge(String(row.type || ""))}</TableCell>
+
+                          <TableCell className="text-right text-xs text-muted-foreground italic">
+                            {row.source === "attendance-login" ? "PIN" : String(row.terminalId || "Web")}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <div className="py-16 text-center text-muted-foreground">Zatím nejsou záznamy docházky.</div>
+                )
+              ) : (historyData ?? []).filter(
+                  (a: { employeeId?: string }) =>
+                    a.employeeId === user?.uid || a.employeeId === profileEmployeeId
+                ).length > 0 ? (
                 <Table>
                   <TableHeader>
                     <TableRow className="border-border">
@@ -398,131 +600,205 @@ export default function AttendancePage() {
                   </TableHeader>
 
                   <TableBody>
-                    {historyData
-                      .filter((a: any) => a.employeeId === user?.uid)
+                    {(historyData ?? [])
+                      .filter(
+                        (a: { employeeId?: string }) =>
+                          a.employeeId === user?.uid || a.employeeId === profileEmployeeId
+                      )
                       .slice(0, 20)
-                      .map((row: any, i: number) => (
-                        <TableRow
-                          key={i}
-                          className="border-border hover:bg-muted/30"
-                        >
+                      .map((row: Record<string, unknown>, i: number) => (
+                        <TableRow key={i} className="border-border hover:bg-muted/30">
                           <TableCell className="font-medium">
-                            {row.timestamp?.toDate
-                              ? row.timestamp
+                            {row.timestamp &&
+                            typeof row.timestamp === "object" &&
+                            "toDate" in row.timestamp &&
+                            typeof (row.timestamp as { toDate: () => Date }).toDate === "function"
+                              ? (row.timestamp as { toDate: () => Date })
                                   .toDate()
                                   .toLocaleDateString("cs-CZ")
                               : "Dnes"}
                           </TableCell>
 
                           <TableCell>
-                            {row.timestamp?.toDate
-                              ? row.timestamp.toDate().toLocaleTimeString(
-                                  "cs-CZ",
-                                  {
+                            {row.timestamp &&
+                            typeof row.timestamp === "object" &&
+                            "toDate" in row.timestamp &&
+                            typeof (row.timestamp as { toDate: () => Date }).toDate === "function"
+                              ? (row.timestamp as { toDate: () => Date })
+                                  .toDate()
+                                  .toLocaleTimeString("cs-CZ", {
                                     hour: "2-digit",
                                     minute: "2-digit",
-                                  }
-                                )
+                                  })
                               : "--:--"}
                           </TableCell>
 
-                          <TableCell>{getStatusBadge(row.type)}</TableCell>
+                          <TableCell>{getStatusBadge(String(row.type || ""))}</TableCell>
 
-                          <TableCell className="text-right text-muted-foreground text-xs">
-                            {row.source === "attendance-login"
-                              ? "PIN"
-                              : row.terminalId || "Web"}
+                          <TableCell className="text-right text-xs text-muted-foreground">
+                            {row.source === "attendance-login" ? "PIN" : String(row.terminalId || "Web")}
                           </TableCell>
                         </TableRow>
                       ))}
                   </TableBody>
                 </Table>
               ) : (
-                <div className="text-center py-16 text-muted-foreground">
-                  Zatím nemáte žádné záznamy docházky.
-                </div>
+                <div className="py-16 text-center text-muted-foreground">Zatím nemáte žádné záznamy docházky.</div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        {isAdmin && (
-          <TabsContent value="admin">
-            <Card className="bg-surface border-border">
-              <CardHeader>
-                <CardTitle>Celkový přehled týmu</CardTitle>
-                <CardDescription>
-                  Poslední záznamy všech zaměstnanců ({orgLabel})
-                </CardDescription>
-              </CardHeader>
-
-              <CardContent>
-                {isHistoryLoading ? (
-                  <div className="flex justify-center p-12">
-                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                  </div>
-                ) : historyData && historyData.length > 0 ? (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="border-border">
-                        <TableHead>Zaměstnanec</TableHead>
-                        <TableHead>Datum</TableHead>
-                        <TableHead>Čas</TableHead>
-                        <TableHead>Akce</TableHead>
-                        <TableHead className="text-right">Zařízení</TableHead>
-                      </TableRow>
-                    </TableHeader>
-
-                    <TableBody>
-                      {historyData.slice(0, 30).map((row: any, i: number) => (
-                        <TableRow
-                          key={i}
-                          className="border-border hover:bg-muted/30"
-                        >
-                          <TableCell className="font-semibold">
-                            {row.employeeName || row.employeeId}
-                          </TableCell>
-
-                          <TableCell>
-                            {row.timestamp?.toDate
-                              ? row.timestamp
-                                  .toDate()
-                                  .toLocaleDateString("cs-CZ")
-                              : "Dnes"}
-                          </TableCell>
-
-                          <TableCell>
-                            {row.timestamp?.toDate
-                              ? row.timestamp.toDate().toLocaleTimeString(
-                                  "cs-CZ",
-                                  {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                  }
-                                )
-                              : "--:--"}
-                          </TableCell>
-
-                          <TableCell>{getStatusBadge(row.type)}</TableCell>
-
-                          <TableCell className="text-right text-muted-foreground text-xs italic">
-                            {row.source === "attendance-login"
-                              ? "PIN"
-                              : row.terminalId || "Web"}
-                          </TableCell>
+        {isAttendancePrivileged ? (
+          <>
+            <TabsContent value="approvals">
+              <Card className="border-border bg-surface">
+                <CardHeader>
+                  <CardTitle>Denní výkazy práce</CardTitle>
+                  <CardDescription>
+                    Schvalování textových výkazů za den (navázané na docházku). Blokové výkazy zůstávají ve Výkazu práce.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  {dailyReportsLoading ? (
+                    <div className="flex justify-center p-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  ) : Array.isArray(dailyReports) && dailyReports.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Datum</TableHead>
+                          <TableHead>Zaměstnanec</TableHead>
+                          <TableHead>Stav</TableHead>
+                          <TableHead>Popis</TableHead>
+                          <TableHead className="text-right">Akce</TableHead>
                         </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                ) : (
-                  <div className="text-center py-16 text-muted-foreground">
-                    Zatím nejsou záznamy docházky.
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        )}
+                      </TableHeader>
+                      <TableBody>
+                        {(dailyReports as Record<string, unknown>[]).map((row, i) => {
+                          const employeeId = String(row.employeeId || "");
+                          const date = String(row.date || "");
+                          const st = String(row.status || "");
+                          const busyApprove = reviewBusy === `${employeeId}_${date}_approve`;
+                          const busyReject = reviewBusy === `${employeeId}_${date}_reject`;
+                          return (
+                            <TableRow key={`${employeeId}-${date}-${i}`}>
+                              <TableCell className="font-medium whitespace-nowrap">{date}</TableCell>
+                              <TableCell>{String(row.employeeName || employeeId)}</TableCell>
+                              <TableCell>{reportStatusBadge(st)}</TableCell>
+                              <TableCell className="max-w-[min(40vw,320px)] truncate text-sm text-muted-foreground">
+                                {String(row.description || "—")}
+                              </TableCell>
+                              <TableCell className="text-right">
+                                {st === "pending" ? (
+                                  <div className="flex flex-wrap justify-end gap-2">
+                                    <Button
+                                      size="sm"
+                                      className="bg-emerald-600 hover:bg-emerald-500"
+                                      disabled={!!reviewBusy}
+                                      onClick={() => void reviewDailyReport(employeeId, date, "approve")}
+                                    >
+                                      {busyApprove ? <Loader2 className="h-4 w-4 animate-spin" /> : "Schválit"}
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      disabled={!!reviewBusy}
+                                      onClick={() => void reviewDailyReport(employeeId, date, "reject")}
+                                    >
+                                      {busyReject ? <Loader2 className="h-4 w-4 animate-spin" /> : "Zamítnout"}
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                )}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <div className="py-16 text-center text-muted-foreground">Žádné denní výkazy.</div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="team">
+              <Card className="border-border bg-surface">
+                <CardHeader>
+                  <CardTitle>Přehled týmu</CardTitle>
+                  <CardDescription>Poslední záznamy všech zaměstnanců ({orgLabel})</CardDescription>
+                </CardHeader>
+
+                <CardContent>
+                  {isHistoryLoading ? (
+                    <div className="flex justify-center p-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  ) : historyData && historyData.length > 0 ? (
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="border-border">
+                          <TableHead>Zaměstnanec</TableHead>
+                          <TableHead>Datum</TableHead>
+                          <TableHead>Čas</TableHead>
+                          <TableHead>Akce</TableHead>
+                          <TableHead className="text-right">Zařízení</TableHead>
+                        </TableRow>
+                      </TableHeader>
+
+                      <TableBody>
+                        {historyData.slice(0, 30).map((row: Record<string, unknown>, i: number) => (
+                          <TableRow key={i} className="border-border hover:bg-muted/30">
+                            <TableCell className="font-semibold">
+                              {String(row.employeeName || row.employeeId || "")}
+                            </TableCell>
+
+                            <TableCell>
+                              {row.timestamp &&
+                              typeof row.timestamp === "object" &&
+                              "toDate" in row.timestamp &&
+                              typeof (row.timestamp as { toDate: () => Date }).toDate === "function"
+                                ? (row.timestamp as { toDate: () => Date })
+                                    .toDate()
+                                    .toLocaleDateString("cs-CZ")
+                                : "Dnes"}
+                            </TableCell>
+
+                            <TableCell>
+                              {row.timestamp &&
+                              typeof row.timestamp === "object" &&
+                              "toDate" in row.timestamp &&
+                              typeof (row.timestamp as { toDate: () => Date }).toDate === "function"
+                                ? (row.timestamp as { toDate: () => Date })
+                                    .toDate()
+                                    .toLocaleTimeString("cs-CZ", {
+                                      hour: "2-digit",
+                                      minute: "2-digit",
+                                    })
+                                : "--:--"}
+                            </TableCell>
+
+                            <TableCell>{getStatusBadge(String(row.type || ""))}</TableCell>
+
+                            <TableCell className="text-right text-xs italic text-muted-foreground">
+                              {row.source === "attendance-login" ? "PIN" : String(row.terminalId || "Web")}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  ) : (
+                    <div className="py-16 text-center text-muted-foreground">Zatím nejsou záznamy docházky.</div>
+                  )}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </>
+        ) : null}
       </Tabs>
     </div>
   );

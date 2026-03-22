@@ -7,6 +7,7 @@ import {
   LayoutDashboard,
   Clock,
   CalendarDays,
+  FileText,
   UserCircle,
   Wallet,
   MessageSquare,
@@ -43,6 +44,11 @@ export function EmployeePortalSidebar({
         label: t("workReport"),
         href: "/portal/employee/worklogs",
         icon: CalendarDays,
+      },
+      {
+        label: t("dailyReportMenu"),
+        href: "/portal/employee/daily-reports",
+        icon: FileText,
       },
       { label: t("money"), href: "/portal/employee/money", icon: Wallet },
       {

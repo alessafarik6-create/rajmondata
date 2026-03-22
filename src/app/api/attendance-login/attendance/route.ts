@@ -3,6 +3,11 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
+import {
+  loadTodayAttendanceEventsByEmployee,
+  readEmployeeHourlyRate,
+} from "@/lib/attendance-day-server";
+import { durationHoursForClosingCheckOut, isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
 
 type Action = "check-in" | "check-out";
 
@@ -49,6 +54,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Neplatná akce (očekáváno check-in nebo check-out)." }, { status: 400 });
   }
 
+  const todayIso = new Date().toISOString().split("T")[0];
+  const nowMs = Date.now();
+
   try {
     const pinOk = await verifyAttendancePinForEmployee(db, companyId, employeeId, pin);
     if (!pinOk) {
@@ -71,8 +79,25 @@ export async function POST(request: NextRequest) {
         ? body.employeeName.trim()
         : defaultName;
 
+    const byEmp = await loadTodayAttendanceEventsByEmployee(db, companyId, todayIso);
+    const existing = byEmp.get(employeeId) ?? [];
+    const shiftOpen = isShiftOpenFromSorted(existing);
+
+    if (actionRaw === "check-in" && shiftOpen) {
+      return NextResponse.json(
+        { error: "Směna je již zahájena — nelze znovu zaznamenat příchod." },
+        { status: 409 }
+      );
+    }
+    if (actionRaw === "check-out" && !shiftOpen) {
+      return NextResponse.json(
+        { error: "Nemáte otevřenou směnu — nelze zaznamenat odchod." },
+        { status: 409 }
+      );
+    }
+
     const type = mapAction(actionRaw);
-    const date = new Date().toISOString().split("T")[0];
+    const date = todayIso;
 
     const docPayload: Record<string, unknown> = {
       employeeId,
@@ -88,10 +113,20 @@ export async function POST(request: NextRequest) {
       docPayload.jobName = typeof body.jobName === "string" ? body.jobName : "";
     }
 
+    const rate = readEmployeeHourlyRate(ed);
+
+    if (type === "check_out") {
+      const durationHours = durationHoursForClosingCheckOut(existing, nowMs);
+      docPayload.durationHours = durationHours;
+      if (rate != null) {
+        docPayload.hourlyRateSnapshot = rate;
+        docPayload.earningsCzk = Math.round(durationHours * rate * 100) / 100;
+      }
+    }
+
     await db.collection("companies").doc(companyId).collection("attendance").add(docPayload);
 
-    if (type === "check_in") console.log("Check-in saved");
-    else console.log("Check-out saved");
+    console.log("Attendance saved");
 
     return NextResponse.json({ ok: true });
   } catch (e) {

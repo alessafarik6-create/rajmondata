@@ -12,6 +12,7 @@ const translations = {
   cs: {
     login: "Přihlásit se",
     workReport: "Výkaz práce",
+    dailyReportMenu: "Denní výkaz",
     attendance: "Docházka",
     home: "Hlavní stránka",
     money: "Peníze",
@@ -43,6 +44,7 @@ const translations = {
   ua: {
     login: "Увійти",
     workReport: "Звіт роботи",
+    dailyReportMenu: "Щоденний звіт",
     attendance: "Облік часу",
     home: "Головна",
     money: "Гроші",

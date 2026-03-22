@@ -190,6 +190,16 @@ service cloud.firestore {
           (isPrivileged() || workBlockEmployeeCanSelfDelete());
       }
 
+      /**
+       * Denní výkazy práce — zápis přes Admin API; klient jen čte.
+       * companies/{companyId}/daily_work_reports/{docId}
+       */
+      match /daily_work_reports/{reportId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow write: if false;
+      }
+
       match /jobs/{jobId} {
         allow read: if terminalCompanyMatches(companyId) ||
           (signedIn() && sameCompany(companyId) &&

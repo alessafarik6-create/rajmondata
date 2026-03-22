@@ -14,6 +14,9 @@ type EmployeeRow = {
   firstName: string;
   lastName: string;
   photoURL: string | null;
+  inWork?: boolean;
+  todayHoursWorked?: number;
+  todayEarningsEstimate?: number;
 };
 
 type JobRow = { id: string; name: string };
@@ -45,6 +48,42 @@ function AttendanceLoginContent() {
   const [jobsLoading, setJobsLoading] = useState(false);
   const [actionSaving, setActionSaving] = useState(false);
 
+  const [sessionInWork, setSessionInWork] = useState<boolean | null>(null);
+  const [sessionHours, setSessionHours] = useState(0);
+  const [sessionEarnings, setSessionEarnings] = useState(0);
+
+  const loadEmployees = useCallback(
+    async (showSpinner = true) => {
+      if (!companyId) return;
+      if (showSpinner) setLoadingList(true);
+      setLoadError(null);
+      try {
+        const res = await fetch(
+          `/api/attendance-login/employees?companyId=${encodeURIComponent(companyId)}`
+        );
+        const data = (await res.json().catch(() => ({}))) as {
+          employees?: EmployeeRow[];
+          error?: string;
+        };
+        if (!res.ok) {
+          throw new Error(typeof data.error === "string" ? data.error : "Nepodařilo se načíst zaměstnance.");
+        }
+        const list = Array.isArray(data.employees) ? data.employees : [];
+        setEmployees(list);
+        for (const e of list) {
+          console.log(
+            `Employee status resolved: ${e.inWork ? "in work" : "out of work"} (${e.id})`
+          );
+        }
+      } catch (e: unknown) {
+        setLoadError(e instanceof Error ? e.message : "Chyba načtení.");
+      } finally {
+        if (showSpinner) setLoadingList(false);
+      }
+    },
+    [companyId]
+  );
+
   useEffect(() => {
     console.log("Attendance employee selection page loaded");
   }, []);
@@ -55,46 +94,27 @@ function AttendanceLoginContent() {
       setLoadError("Chybí odkaz s ID firmy (companyId). Otevřete stránku z portálu.");
       return;
     }
-    let cancelled = false;
-    setLoadingList(true);
-    setLoadError(null);
-    void fetch(`/api/attendance-login/employees?companyId=${encodeURIComponent(companyId)}`)
-      .then(async (res) => {
-        const data = (await res.json().catch(() => ({}))) as {
-          employees?: EmployeeRow[];
-          error?: string;
-        };
-        if (!res.ok) {
-          throw new Error(typeof data.error === "string" ? data.error : "Nepodařilo se načíst zaměstnance.");
-        }
-        if (!cancelled) {
-          setEmployees(Array.isArray(data.employees) ? data.employees : []);
-        }
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) {
-          setLoadError(e instanceof Error ? e.message : "Chyba načtení.");
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingList(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [companyId]);
+    void loadEmployees(true);
+  }, [companyId, loadEmployees]);
 
-  const resetToSelection = useCallback((opts?: { afterAttendance?: boolean }) => {
-    if (opts?.afterAttendance) {
-      console.log("Resetting attendance login state to employee selection");
-    }
-    setSelected(null);
-    setPin("");
-    setPinError(null);
-    setJobs([]);
-    setSelectedJob(null);
-    setStep("select");
-  }, []);
+  const resetToSelection = useCallback(
+    (opts?: { afterAttendance?: boolean }) => {
+      console.log("Resetting attendance login state");
+      setSelected(null);
+      setPin("");
+      setPinError(null);
+      setJobs([]);
+      setSelectedJob(null);
+      setSessionInWork(null);
+      setSessionHours(0);
+      setSessionEarnings(0);
+      setStep("select");
+      if (opts?.afterAttendance) {
+        void loadEmployees(false);
+      }
+    },
+    [loadEmployees]
+  );
 
   const selectEmployee = useCallback((emp: EmployeeRow) => {
     console.log("Employee selected");
@@ -144,12 +164,25 @@ function AttendanceLoginContent() {
           pin,
         }),
       });
-      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: string;
+        inWork?: boolean;
+        todayHoursWorked?: number;
+        todayEarningsEstimate?: number;
+      };
       if (!res.ok || !data.ok) {
         setPinError(typeof data.error === "string" ? data.error : "Neplatný PIN");
         return;
       }
-      console.log("PIN verified");
+      const inW = data.inWork === true;
+      setSessionInWork(inW);
+      setSessionHours(typeof data.todayHoursWorked === "number" ? data.todayHoursWorked : 0);
+      setSessionEarnings(
+        typeof data.todayEarningsEstimate === "number" ? data.todayEarningsEstimate : 0
+      );
+      console.log(`Employee status resolved: ${inW ? "in work" : "out of work"} (${selected.id})`);
+
       setJobsLoading(true);
       const jr = await fetch("/api/attendance-login/jobs", {
         method: "POST",
@@ -178,6 +211,15 @@ function AttendanceLoginContent() {
     }
   };
 
+  useEffect(() => {
+    if (step !== "work" || sessionInWork === null) return;
+    if (sessionInWork) {
+      console.log("Showing check-out action");
+    } else {
+      console.log("Showing check-in action");
+    }
+  }, [step, sessionInWork]);
+
   const postAttendance = async (action: "check-in" | "check-out") => {
     if (!companyId || !selected) return;
     setActionSaving(true);
@@ -200,8 +242,7 @@ function AttendanceLoginContent() {
         alert(typeof data.error === "string" ? data.error : "Uložení se nezdařilo.");
         return;
       }
-      if (action === "check-in") console.log("Check-in saved");
-      else console.log("Check-out saved");
+      console.log("Attendance saved");
       resetToSelection({ afterAttendance: true });
     } catch {
       alert("Uložení se nezdařilo.");
@@ -213,6 +254,9 @@ function AttendanceLoginContent() {
   const fullName = selected
     ? `${selected.firstName} ${selected.lastName}`.trim() || "Zaměstnanec"
     : "";
+
+  const jobRequired = jobs.length > 0;
+  const canAct = !jobRequired || !!selectedJob;
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 py-8 pb-12 sm:px-6">
@@ -244,7 +288,7 @@ function AttendanceLoginContent() {
             onClick={() => resetToSelection()}
           >
             <LogOut className="h-4 w-4" />
-            Odhlásit
+            Zrušit
           </Button>
         ) : (
           <span className="w-20" />
@@ -274,30 +318,62 @@ function AttendanceLoginContent() {
             <p className="text-center text-slate-500">Žádní aktivní zaměstnanci.</p>
           ) : (
             <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {employees.map((emp) => (
-                <li key={emp.id}>
-                  <button
-                    type="button"
-                    onClick={() => selectEmployee(emp)}
-                    className={cn(
-                      "group flex w-full flex-col items-center gap-4 rounded-2xl border border-white/10 bg-white/[0.04] p-6 text-center shadow-sm",
-                      "min-h-[140px] transition hover:border-emerald-500/40 hover:bg-white/[0.07] active:scale-[0.99]"
-                    )}
-                  >
-                    <Avatar className="h-20 w-20 border-2 border-white/10 shadow-md ring-2 ring-transparent transition group-hover:ring-emerald-500/30">
-                      {emp.photoURL ? (
-                        <AvatarImage src={emp.photoURL} alt="" className="object-cover" />
-                      ) : null}
-                      <AvatarFallback className="bg-slate-700 text-2xl font-medium text-white">
-                        {initials(emp.firstName, emp.lastName)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="text-lg font-semibold leading-tight text-white">
-                      {emp.firstName} {emp.lastName}
-                    </span>
-                  </button>
-                </li>
-              ))}
+              {employees.map((emp) => {
+                const inWork = emp.inWork === true;
+                return (
+                  <li key={emp.id}>
+                    <button
+                      type="button"
+                      onClick={() => selectEmployee(emp)}
+                      className={cn(
+                        "group relative flex w-full flex-col items-center gap-3 rounded-2xl border-4 p-6 text-center shadow-lg transition",
+                        "min-h-[160px] active:scale-[0.99]",
+                        inWork
+                          ? "border-emerald-400/90 bg-gradient-to-br from-emerald-900/50 via-emerald-950/40 to-slate-950/90 ring-2 ring-emerald-500/40"
+                          : "border-rose-500/80 bg-gradient-to-br from-rose-950/50 via-slate-900/60 to-slate-950/90 ring-2 ring-rose-500/35"
+                      )}
+                    >
+                      <Badge
+                        className={cn(
+                          "absolute right-3 top-3 text-xs font-semibold shadow-md",
+                          inWork
+                            ? "border-emerald-300/50 bg-emerald-500 text-white hover:bg-emerald-500"
+                            : "border-rose-300/50 bg-rose-600 text-white hover:bg-rose-600"
+                        )}
+                      >
+                        {inWork ? "V práci" : "Mimo práci"}
+                      </Badge>
+                      <Avatar
+                        className={cn(
+                          "h-20 w-20 border-2 shadow-md",
+                          inWork ? "border-emerald-300/60" : "border-rose-300/50"
+                        )}
+                      >
+                        {emp.photoURL ? (
+                          <AvatarImage src={emp.photoURL} alt="" className="object-cover" />
+                        ) : null}
+                        <AvatarFallback
+                          className={cn(
+                            "text-2xl font-medium text-white",
+                            inWork ? "bg-emerald-800" : "bg-rose-900"
+                          )}
+                        >
+                          {initials(emp.firstName, emp.lastName)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="text-lg font-semibold leading-tight text-white">
+                        {emp.firstName} {emp.lastName}
+                      </span>
+                      <span className="text-xs tabular-nums text-slate-300">
+                        Dnes: {typeof emp.todayHoursWorked === "number" ? `${emp.todayHoursWorked} h` : "—"}
+                        {typeof emp.todayEarningsEstimate === "number" && emp.todayEarningsEstimate > 0
+                          ? ` · ${Math.round(emp.todayEarningsEstimate)} Kč`
+                          : ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
@@ -318,7 +394,7 @@ function AttendanceLoginContent() {
             <p className="text-sm text-slate-400">Zadejte PIN</p>
           </div>
 
-          <Card className="border-white/10 bg-black/25">
+          <Card className="border-white/10 bg-black/25 shadow-inner">
             <CardContent className="px-4 py-6 text-center font-mono text-3xl tracking-[0.35em] text-white sm:text-4xl">
               {pin ? pin.replace(/./g, "•") : <span className="text-slate-600">••••</span>}
             </CardContent>
@@ -356,28 +432,57 @@ function AttendanceLoginContent() {
         </div>
       )}
 
-      {companyId && step === "work" && selected && (
+      {companyId && step === "work" && selected && sessionInWork !== null && (
         <div className="flex flex-1 flex-col gap-8">
           <Card
             className={cn(
-              "overflow-hidden border-2 border-emerald-400/70 bg-gradient-to-br from-emerald-500/20 via-emerald-600/15 to-slate-900/80",
-              "shadow-[0_0_40px_-8px_rgba(16,185,129,0.45)]"
+              "overflow-hidden border-2 shadow-xl",
+              sessionInWork
+                ? "border-emerald-400/80 bg-gradient-to-br from-emerald-600/25 via-emerald-900/30 to-slate-950"
+                : "border-rose-500/70 bg-gradient-to-br from-rose-900/35 via-slate-900/50 to-slate-950"
             )}
           >
-            <CardContent className="flex flex-col items-center gap-4 p-6 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+            <CardContent className="flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-center">
-                <Avatar className="h-20 w-20 border-2 border-emerald-400/60 shadow-md ring-2 ring-emerald-400/40">
+                <Avatar
+                  className={cn(
+                    "h-20 w-20 border-2 shadow-md",
+                    sessionInWork ? "border-emerald-400/70" : "border-rose-400/60"
+                  )}
+                >
                   {selected.photoURL ? (
                     <AvatarImage src={selected.photoURL} alt="" className="object-cover" />
                   ) : null}
-                  <AvatarFallback className="bg-emerald-800 text-2xl font-bold text-white">
+                  <AvatarFallback
+                    className={cn(
+                      "text-2xl font-bold text-white",
+                      sessionInWork ? "bg-emerald-800" : "bg-rose-900"
+                    )}
+                  >
                     {initials(selected.firstName, selected.lastName)}
                   </AvatarFallback>
                 </Avatar>
                 <div className="text-center sm:text-left">
-                  <Badge className="mb-2 bg-emerald-500 text-white hover:bg-emerald-500">Přihlášen</Badge>
+                  <Badge
+                    className={cn(
+                      "mb-2 font-semibold",
+                      sessionInWork
+                        ? "bg-emerald-500 text-white hover:bg-emerald-500"
+                        : "bg-rose-600 text-white hover:bg-rose-600"
+                    )}
+                  >
+                    {sessionInWork ? "V práci" : "Mimo práci"}
+                  </Badge>
                   <p className="text-xl font-bold tracking-tight text-white sm:text-2xl">{fullName}</p>
-                  <p className="text-sm text-emerald-100/90">Můžete zaznamenat příchod nebo odchod</p>
+                  <p className="text-sm text-slate-200">
+                    Dnes: {sessionHours > 0 ? `${sessionHours} h` : "—"}
+                    {sessionEarnings > 0 ? ` · odhad ${Math.round(sessionEarnings)} Kč` : ""}
+                  </p>
+                  <p className="mt-1 text-sm text-slate-300">
+                    {sessionInWork
+                      ? "Zaznamenejte odchod z práce."
+                      : "Zaznamenejte příchod do práce."}
+                  </p>
                 </div>
               </div>
             </CardContent>
@@ -410,29 +515,31 @@ function AttendanceLoginContent() {
             </div>
           ) : null}
 
-          <div className="mt-auto grid gap-4 sm:grid-cols-2">
-            <Button
-              type="button"
-              size="lg"
-              className="h-16 rounded-2xl bg-emerald-600 text-lg font-semibold shadow-lg hover:bg-emerald-500"
-              disabled={actionSaving || (jobs.length > 0 && !selectedJob)}
-              onClick={() => void postAttendance("check-in")}
-            >
-              {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Příchod do práce"}
-            </Button>
-            <Button
-              type="button"
-              size="lg"
-              variant="secondary"
-              className="h-16 rounded-2xl border border-white/15 bg-white/10 text-lg font-semibold text-white hover:bg-white/15"
-              disabled={actionSaving}
-              onClick={() => void postAttendance("check-out")}
-            >
-              {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Odchod z práce"}
-            </Button>
+          <div className="mt-auto">
+            {!sessionInWork ? (
+              <Button
+                type="button"
+                size="lg"
+                className="h-16 w-full rounded-2xl bg-emerald-600 text-lg font-semibold shadow-lg hover:bg-emerald-500"
+                disabled={actionSaving || !canAct}
+                onClick={() => void postAttendance("check-in")}
+              >
+                {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Příchod do práce"}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="lg"
+                className="h-16 w-full rounded-2xl border border-rose-400/50 bg-rose-700 text-lg font-semibold text-white shadow-lg hover:bg-rose-600"
+                disabled={actionSaving || !canAct}
+                onClick={() => void postAttendance("check-out")}
+              >
+                {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Odchod z práce"}
+              </Button>
+            )}
           </div>
-          {jobs.length > 0 && !selectedJob && (
-            <p className="text-center text-sm text-amber-200/90">Pro příchod nejdřív vyberte zakázku.</p>
+          {jobRequired && !selectedJob && (
+            <p className="text-center text-sm text-amber-200/90">Nejdřív vyberte zakázku.</p>
           )}
         </div>
       )}

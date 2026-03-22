@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
+import {
+  employeeDayStats,
+  loadTodayAttendanceEventsByEmployee,
+  readEmployeeHourlyRate,
+} from "@/lib/attendance-day-server";
 
 type Body = {
   companyId?: string;
@@ -10,7 +15,6 @@ type Body = {
 };
 
 export async function POST(request: NextRequest) {
-  console.log("PIN verifying");
   const db = getAdminFirestore();
   if (!db) {
     return NextResponse.json({ error: "Firebase Admin není nakonfigurován." }, { status: 500 });
@@ -32,13 +36,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Chybí companyId, employeeId nebo PIN." }, { status: 400 });
   }
 
+  const todayIso = new Date().toISOString().split("T")[0];
+  const nowMs = Date.now();
+
   try {
     const ok = await verifyAttendancePinForEmployee(db, companyId, employeeId, pin);
-    if (ok) {
-      console.log("PIN success");
-      return NextResponse.json({ ok: true });
+    if (!ok) {
+      return NextResponse.json({ ok: false, error: "Neplatný PIN." }, { status: 401 });
     }
-    return NextResponse.json({ ok: false, error: "Neplatný PIN." }, { status: 401 });
+
+    const empSnap = await db
+      .collection("companies")
+      .doc(companyId)
+      .collection("employees")
+      .doc(employeeId)
+      .get();
+    const ed = empSnap.data() as Record<string, unknown> | undefined;
+    const rate = readEmployeeHourlyRate(ed);
+    const byEmp = await loadTodayAttendanceEventsByEmployee(db, companyId, todayIso);
+    const ev = byEmp.get(employeeId);
+    const { inWork, todayHoursWorked, todayEarningsEstimate } = employeeDayStats(ev, rate, nowMs);
+
+    console.log(
+      `Employee status resolved: ${inWork ? "in work" : "out of work"} (${employeeId})`
+    );
+
+    return NextResponse.json({
+      ok: true,
+      inWork,
+      todayHoursWorked,
+      todayEarningsEstimate,
+    });
   } catch (e) {
     console.error("[attendance-login/verify-pin]", e);
     return NextResponse.json({ error: "Ověření se nezdařilo." }, { status: 500 });
