@@ -17,6 +17,8 @@ export type MeasurementDoc = {
   /** ISO 8601 (UTC nebo lokální uložený jako ISO) */
   scheduledAt: string;
   note: string;
+  /** Interní poznámka (nepovinná), není určena pro zákazníka */
+  internalNote?: string;
   estimatedPrice: number;
   status: MeasurementStatus;
   createdAt?: unknown;
@@ -24,6 +26,15 @@ export type MeasurementDoc = {
   createdBy: string;
   convertedJobId?: string | null;
   convertedAt?: unknown;
+  /** Kdo provedl převod do zakázky */
+  convertedByUid?: string | null;
+  /** Šablona použitá při posledním převodu */
+  selectedTemplateId?: string | null;
+  selectedTemplateName?: string | null;
+  /** Předchozí ID zakázek při opakovaném převodu ze stejného zaměření */
+  previousConvertedJobIds?: string[];
+  /** Soft delete — pokud je nastaveno, záznam se v přehledu nezobrazuje */
+  deletedAt?: unknown;
 };
 
 export const MEASUREMENT_STATUS_LABELS: Record<MeasurementStatus, string> = {
@@ -52,6 +63,13 @@ export function canConvertMeasurement(m: {
   status?: MeasurementStatus;
 }): boolean {
   return m.status === "planned" || m.status === "completed";
+}
+
+/** Druhá zakázka ze stejného zaměření — pouze po potvrzení v UI. */
+export function canCreateAnotherJobFromMeasurement(m: {
+  status?: MeasurementStatus;
+}): boolean {
+  return m.status === "converted";
 }
 
 /** Stejná logika jako oprávnění k zápisu zakázek (privilegované role). */

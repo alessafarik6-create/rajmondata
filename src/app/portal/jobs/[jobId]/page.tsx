@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   useUser,
   useFirestore,
@@ -93,6 +93,11 @@ import {
   deleteContractTemplate,
 } from "@/lib/contract-templates-firestore";
 import {
+  buildClientTextFromJobSnapshot,
+  deriveCustomerDisplayNameFromJob,
+  parseCustomerNameForParty,
+} from "@/lib/job-customer-client";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -107,6 +112,7 @@ import {
   deleteObject,
   getBlob,
 } from "firebase/storage";
+import Link from "next/link";
 
 type DimensionColor = "red" | "yellow" | "white" | "black" | "blue";
 
@@ -246,6 +252,8 @@ function formatCsDateFromFirestore(value: unknown): string {
 export default function JobDetailPage() {
   const { jobId } = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const openedSodFromQueryRef = useRef(false);
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -836,13 +844,34 @@ export default function JobDetailPage() {
         bankAccountForTokens
       );
 
-      const customerName = deriveCustomerDisplayName(customer);
-      const customerAddress = customer?.address || "";
+      const customerName = customer
+        ? deriveCustomerDisplayName(customer)
+        : deriveCustomerDisplayNameFromJob(job as any);
+      const customerAddress =
+        (customer?.address as string | undefined) ||
+        (typeof (job as any)?.customerAddress === "string"
+          ? (job as any).customerAddress
+          : "") ||
+        "";
       const customerIco = customer?.ico || "";
       const customerDicRaw =
         customer?.dic || (customer as any).DIČ || (customer as any).DIC || "";
 
-      const customerAutoText = deriveClientText(customer);
+      const customerAutoText = customer
+        ? deriveClientText(customer)
+        : buildClientTextFromJobSnapshot(job as any);
+
+      const partySplit = parseCustomerNameForParty(customerName);
+      const objednatelJmeno = customer
+        ? String(customer.firstName || "").trim()
+        : partySplit.type === "person"
+          ? partySplit.firstName
+          : "";
+      const objednatelPrijmeni = customer
+        ? String(customer.lastName || "").trim()
+        : partySplit.type === "person"
+          ? partySplit.lastName
+          : "";
 
       const depositPercentage =
         formOverride?.depositPercentage ?? contractForm.depositPercentage;
@@ -923,6 +952,8 @@ export default function JobDetailPage() {
           : "",
 
         "objednatel.nazev": customerName,
+        "objednatel.jmeno": objednatelJmeno,
+        "objednatel.prijmeni": objednatelPrijmeni,
         "objednatel.sidlo": customerAddress,
         "objednatel.ico": customerIco ? String(customerIco) : "",
         "objednatel.dic": customerDicRaw ? String(customerDicRaw) : "",
@@ -963,6 +994,7 @@ export default function JobDetailPage() {
       companyDoc,
       companyNameFromDoc,
       customer,
+      job,
       deriveClientText,
       deriveContractorText,
       deriveCustomerDisplayName,
@@ -1206,7 +1238,9 @@ export default function JobDetailPage() {
   );
 
   const prefillContractFormFromJobAndCustomer = useCallback(() => {
-    const clientText = deriveClientText(customer);
+    const clientText = customer
+      ? deriveClientText(customer)
+      : buildClientTextFromJobSnapshot(job as any);
     const contractorText = deriveContractorText(
       companyDoc,
       companyNameFromDoc,
@@ -1221,6 +1255,7 @@ export default function JobDetailPage() {
     }));
   }, [
     customer,
+    job,
     companyDoc,
     companyNameFromDoc,
     selectedBankAccount,
@@ -1262,7 +1297,9 @@ export default function JobDetailPage() {
     setActiveWorkContractId(newContractId);
     setSelectedWorkContractTemplateId("__new__");
 
-    const autoClientText = deriveClientText(customer);
+    const autoClientText = customer
+      ? deriveClientText(customer)
+      : buildClientTextFromJobSnapshot(job as any);
     const defaultBankAccount = bankAccounts && bankAccounts.length > 0 ? bankAccounts[0] : null;
     const autoContractorText = deriveContractorText(
       companyDoc,
@@ -1292,6 +1329,7 @@ export default function JobDetailPage() {
     jobId,
     toast,
     customer,
+    job,
     companyDoc,
     companyNameFromDoc,
     deriveClientText,
@@ -1302,6 +1340,19 @@ export default function JobDetailPage() {
     companyBankAccountNumber,
     formatCompanyBankAccountNumber,
   ]);
+
+  useEffect(() => {
+    openedSodFromQueryRef.current = false;
+  }, [jobId]);
+
+  useEffect(() => {
+    if (!job || !jobId) return;
+    if (searchParams.get("openSod") !== "1") return;
+    if (openedSodFromQueryRef.current) return;
+    openedSodFromQueryRef.current = true;
+    void openContractDialog();
+    router.replace(`/portal/jobs/${jobId}`, { scroll: false });
+  }, [job, jobId, searchParams, openContractDialog, router]);
 
   const openWorkContract = useCallback(
     async (contractId: string, mode: "view" | "edit") => {
@@ -1605,8 +1656,10 @@ export default function JobDetailPage() {
           "";
         const jmenoZakaznika = customer
           ? deriveCustomerDisplayName(customer)
-          : "";
-        const adresa = customer?.address ? String(customer.address) : "";
+          : deriveCustomerDisplayNameFromJob(job as any);
+        const adresa = customer?.address
+          ? String(customer.address)
+          : String((job as any)?.customerAddress || "");
         const icoCust =
           customer?.ico != null && String(customer.ico).trim() !== ""
             ? String(customer.ico)
@@ -1662,7 +1715,9 @@ export default function JobDetailPage() {
           templateName: tmpl.name || "",
           contractHeader: buildPrefilledContractHeader(),
           mainContractContent: mainBody,
-          client: customer ? deriveClientText(customer) : "",
+          client: customer
+            ? deriveClientText(customer)
+            : buildClientTextFromJobSnapshot(job as any),
           contractor: deriveContractorText(
             companyDoc,
             companyNameFromDoc || nazevFirmy,
@@ -3305,6 +3360,17 @@ export default function JobDetailPage() {
             </Badge>
           </div>
           <p className="text-muted-foreground">Detailní přehled projektu</p>
+          {(job as any)?.sourceMeasurementId ? (
+            <p className="text-sm text-slate-600 mt-1">
+              <Link
+                href="/portal/jobs/measurements"
+                className="text-primary font-medium hover:underline"
+              >
+                Přehled zaměření
+              </Link>
+              <span className="text-slate-500"> · zakázka vznikla ze zaměření</span>
+            </p>
+          ) : null}
         </div>
 
         <div className="flex gap-2 flex-wrap">

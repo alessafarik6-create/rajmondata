@@ -12,6 +12,7 @@ import {
   useDoc,
 } from "@/firebase";
 import {
+  arrayUnion,
   collection,
   doc,
   addDoc,
@@ -39,7 +40,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -59,6 +59,9 @@ import {
   Ruler,
   Briefcase,
   RefreshCw,
+  Pencil,
+  Trash2,
+  FileText,
 } from "lucide-react";
 import {
   MEASUREMENT_STATUS_LABELS,
@@ -67,9 +70,12 @@ import {
   isValidMeasurementPhone,
   parseEstimatedPrice,
   canConvertMeasurement,
+  canCreateAnotherJobFromMeasurement,
   userCanManageMeasurements,
 } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
+import type { JobTemplate, JobTemplateValues } from "@/lib/job-templates";
+import { JobTemplateFormFields } from "@/components/jobs/job-template-form-fields";
 
 function formatMoney(n: number): string {
   return new Intl.NumberFormat("cs-CZ", {
@@ -87,6 +93,25 @@ function formatScheduledDisplay(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+function isoToDatetimeLocalValue(iso: string): string {
+  try {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  } catch {
+    return "";
+  }
+}
+
+function datetimeLocalToIso(local: string): string {
+  return new Date(local).toISOString();
+}
+
+function isDeleted(m: MeasurementDoc & { deletedAt?: unknown }): boolean {
+  return m.deletedAt != null;
 }
 
 export default function JobMeasurementsPage() {
@@ -108,17 +133,41 @@ export default function JobMeasurementsPage() {
     return collection(firestore, "companies", companyId, "measurements");
   }, [firestore, companyId]);
 
+  const templatesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, "jobTemplates");
+  }, [firestore, companyId]);
+
   const { data: rawList, isLoading: listLoading } =
     useCollection<MeasurementDoc>(measurementsQuery);
+  const { data: templatesData } = useCollection<JobTemplate>(templatesQuery);
+
+  const templatesList = useMemo(
+    () =>
+      (Array.isArray(templatesData) ? templatesData : []).filter(
+        (t) => t && t.id
+      ) as JobTemplate[],
+    [templatesData]
+  );
 
   const [statusFilter, setStatusFilter] = useState<MeasurementStatus | "all">(
     "all"
   );
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogMode, setDialogMode] = useState<"create" | "edit">("create");
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  const [deleteTarget, setDeleteTarget] = useState<MeasurementDoc | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const [convertTarget, setConvertTarget] = useState<MeasurementDoc | null>(
     null
   );
+  const [convertReconvert, setConvertReconvert] = useState(false);
+  const [convertTemplateId, setConvertTemplateId] = useState<string>("");
+  const [convertTemplateValues, setConvertTemplateValues] =
+    useState<JobTemplateValues>({});
   const [converting, setConverting] = useState(false);
 
   const [form, setForm] = useState({
@@ -127,6 +176,7 @@ export default function JobMeasurementsPage() {
     address: "",
     scheduledAtLocal: "",
     note: "",
+    internalNote: "",
     estimatedPrice: "",
   });
 
@@ -135,15 +185,21 @@ export default function JobMeasurementsPage() {
     const mapped = list.map((m: any) => ({
       ...m,
       id: String(m?.id ?? ""),
-    })) as MeasurementDoc[];
+    })) as (MeasurementDoc & { deletedAt?: unknown })[];
+    const noDeleted = mapped.filter((m) => !isDeleted(m));
     const filtered =
       statusFilter === "all"
-        ? mapped
-        : mapped.filter((m) => m.status === statusFilter);
+        ? noDeleted
+        : noDeleted.filter((m) => m.status === statusFilter);
     return filtered.sort((a, b) =>
       String(b.scheduledAt || "").localeCompare(String(a.scheduledAt || ""))
     );
   }, [rawList, statusFilter]);
+
+  const selectedConvertTemplate = useMemo(() => {
+    if (!convertTemplateId) return null;
+    return templatesList.find((t) => String(t.id) === convertTemplateId) ?? null;
+  }, [convertTemplateId, templatesList]);
 
   const resetForm = () => {
     setForm({
@@ -152,13 +208,38 @@ export default function JobMeasurementsPage() {
       address: "",
       scheduledAtLocal: "",
       note: "",
+      internalNote: "",
       estimatedPrice: "",
     });
+    setEditingId(null);
+    setDialogMode("create");
   };
 
-  const handleCreate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!companyId || !user) return;
+  const openCreate = () => {
+    resetForm();
+    setDialogMode("create");
+    setDialogOpen(true);
+  };
+
+  const openEdit = (row: MeasurementDoc) => {
+    setDialogMode("edit");
+    setEditingId(row.id);
+    setForm({
+      customerName: row.customerName || "",
+      phone: row.phone || "",
+      address: row.address || "",
+      scheduledAtLocal: row.scheduledAt
+        ? isoToDatetimeLocalValue(row.scheduledAt)
+        : "",
+      note: row.note || "",
+      internalNote: (row as any).internalNote || "",
+      estimatedPrice:
+        row.estimatedPrice != null ? String(row.estimatedPrice) : "",
+    });
+    setDialogOpen(true);
+  };
+
+  const validateForm = (): boolean => {
     const name = form.customerName.trim();
     const phone = form.phone.trim();
     const address = form.address.trim();
@@ -166,9 +247,9 @@ export default function JobMeasurementsPage() {
       toast({
         variant: "destructive",
         title: "Chybí jméno",
-        description: "Vyplňte jméno zákazníka.",
+        description: "Vyplňte jméno zákazníka nebo firmu.",
       });
-      return;
+      return false;
     }
     if (!phone || !isValidMeasurementPhone(phone)) {
       toast({
@@ -176,7 +257,7 @@ export default function JobMeasurementsPage() {
         title: "Neplatný telefon",
         description: "Zadejte platné telefonní číslo (min. 9 číslic).",
       });
-      return;
+      return false;
     }
     if (!address) {
       toast({
@@ -184,7 +265,7 @@ export default function JobMeasurementsPage() {
         title: "Chybí adresa",
         description: "Vyplňte adresu zaměření.",
       });
-      return;
+      return false;
     }
     if (!form.scheduledAtLocal) {
       toast({
@@ -192,7 +273,7 @@ export default function JobMeasurementsPage() {
         title: "Chybí termín",
         description: "Vyberte datum a čas zaměření.",
       });
-      return;
+      return false;
     }
     const price = parseEstimatedPrice(form.estimatedPrice);
     if (price === null) {
@@ -201,32 +282,75 @@ export default function JobMeasurementsPage() {
         title: "Neplatná cena",
         description: "Zadejte nezáporné číslo (předběžná cena).",
       });
-      return;
+      return false;
     }
-    const scheduledIso = new Date(form.scheduledAtLocal).toISOString();
+    return true;
+  };
+
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyId || !user) return;
+    if (!validateForm()) return;
+
+    const name = form.customerName.trim();
+    const phone = form.phone.trim();
+    const address = form.address.trim();
+    const price = parseEstimatedPrice(form.estimatedPrice)!;
+    const scheduledIso = datetimeLocalToIso(form.scheduledAtLocal);
 
     setSubmitting(true);
     try {
-      await addDoc(
-        collection(firestore, "companies", companyId, "measurements"),
-        {
-          companyId,
-          customerName: name,
-          phone,
-          address,
-          scheduledAt: scheduledIso,
-          note: form.note.trim(),
-          estimatedPrice: price,
-          status: "planned" as MeasurementStatus,
-          createdBy: user.uid,
-          createdAt: serverTimestamp(),
+      if (dialogMode === "create") {
+        await addDoc(
+          collection(firestore, "companies", companyId, "measurements"),
+          {
+            companyId,
+            customerName: name,
+            phone,
+            address,
+            scheduledAt: scheduledIso,
+            note: form.note.trim(),
+            internalNote: form.internalNote.trim(),
+            estimatedPrice: price,
+            status: "planned" as MeasurementStatus,
+            createdBy: user.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          }
+        );
+        toast({
+          title: "Zaměření naplánováno",
+          description: "Záznam byl uložen.",
+        });
+      } else if (editingId) {
+        const row = measurements.find((m) => m.id === editingId);
+        const isConverted = row?.status === "converted";
+        const payload: Record<string, unknown> = {
           updatedAt: serverTimestamp(),
+        };
+        if (isConverted) {
+          payload.note = form.note.trim();
+          payload.internalNote = form.internalNote.trim();
+        } else {
+          payload.customerName = name;
+          payload.phone = phone;
+          payload.address = address;
+          payload.scheduledAt = scheduledIso;
+          payload.note = form.note.trim();
+          payload.internalNote = form.internalNote.trim();
+          payload.estimatedPrice = price;
         }
-      );
-      toast({
-        title: "Zaměření naplánováno",
-        description: "Záznam byl uložen. Můžete ho později převést na zakázku.",
-      });
+        await updateDoc(
+          doc(firestore, "companies", companyId, "measurements", editingId),
+          payload as never
+        );
+        toast({
+          title: "Uloženo",
+          description: isConverted
+            ? "Poznámky byly aktualizované. Ostatní údaje u převedeného zaměření nelze měnit."
+            : "Zaměření bylo upraveno.",
+        });
+      }
       setDialogOpen(false);
       resetForm();
     } catch (err) {
@@ -241,11 +365,65 @@ export default function JobMeasurementsPage() {
     }
   };
 
+  const handleSoftDelete = async () => {
+    if (!deleteTarget || !companyId || !user) return;
+    setDeleting(true);
+    try {
+      await updateDoc(
+        doc(firestore, "companies", companyId, "measurements", deleteTarget.id),
+        {
+          deletedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+      toast({
+        title: "Zaměření odstraněno",
+        description: deleteTarget.convertedJobId
+          ? "Záznam byl skrytý. Navázaná zakázka zůstává zachovaná."
+          : "Záznam byl skrytý z přehledu.",
+      });
+      setDeleteTarget(null);
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Smazání se nezdařilo.",
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const openConvertDialog = (row: MeasurementDoc, reconvert: boolean) => {
+    setConvertTarget(row);
+    setConvertReconvert(reconvert);
+    setConvertTemplateValues({});
+    if (templatesList.length > 0) {
+      const first = templatesList[0];
+      setConvertTemplateId(String(first.id));
+    } else {
+      setConvertTemplateId("");
+    }
+  };
+
   const handleConvert = async () => {
     if (!convertTarget || !companyId || !user) return;
+    if (templatesList.length > 0 && !convertTemplateId) {
+      toast({
+        variant: "destructive",
+        title: "Vyberte šablonu",
+        description: "Pro převod je potřeba zvolit šablonu zakázky.",
+      });
+      return;
+    }
     setConverting(true);
     try {
       const m = convertTarget;
+      const tpl = selectedConvertTemplate;
+      const templateId = convertTemplateId || null;
+      const templateName = tpl?.name || "";
+
       const jobPayload: Record<string, unknown> = {
         name: `Zakázka – ${m.customerName}`,
         description: [
@@ -267,31 +445,56 @@ export default function JobMeasurementsPage() {
         customerName: m.customerName,
         customerPhone: m.phone,
         customerEmail: "",
+        customerAddress: m.address,
         sourceMeasurementId: m.id,
+        measurementTemplateId: templateId,
+        measurementTemplateName: templateName || null,
+        convertedFromMeasurementAt: serverTimestamp(),
+        convertedFromMeasurementBy: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
+
+      if (templateId && tpl) {
+        jobPayload.templateId = templateId;
+        jobPayload.templateName = templateName;
+        jobPayload.templateValues = convertTemplateValues;
+      }
 
       const jobRef = await addDoc(
         collection(firestore, "companies", companyId, "jobs"),
         jobPayload
       );
 
+      const prevJobId = m.convertedJobId;
+      const measurementUpdate: Record<string, unknown> = {
+        status: "converted",
+        convertedJobId: jobRef.id,
+        convertedAt: serverTimestamp(),
+        convertedByUid: user.uid,
+        selectedTemplateId: templateId,
+        selectedTemplateName: templateName || null,
+        updatedAt: serverTimestamp(),
+      };
+      if (
+        convertReconvert &&
+        prevJobId &&
+        String(prevJobId) !== String(jobRef.id)
+      ) {
+        measurementUpdate.previousConvertedJobIds = arrayUnion(String(prevJobId));
+      }
+
       await updateDoc(
         doc(firestore, "companies", companyId, "measurements", m.id),
-        {
-          status: "converted",
-          convertedJobId: jobRef.id,
-          convertedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }
+        measurementUpdate as never
       );
 
       toast({
         title: "Převod dokončen",
-        description: `Vznikla zakázka. Pokračujte v detailu projektu.`,
+        description: "Zakázka byla vytvořena. Můžete navázat smlouvou o dílo.",
       });
       setConvertTarget(null);
+      setConvertReconvert(false);
     } catch (err) {
       console.error(err);
       toast({
@@ -303,6 +506,11 @@ export default function JobMeasurementsPage() {
       setConverting(false);
     }
   };
+
+  const editingRowConverted =
+    dialogMode === "edit" &&
+    editingId &&
+    measurements.find((x) => x.id === editingId)?.status === "converted";
 
   if (profileLoading) {
     return (
@@ -347,33 +555,43 @@ export default function JobMeasurementsPage() {
               Zpět na zakázky
             </Link>
           </Button>
-          <h1 className="portal-page-title text-2xl sm:text-3xl">
-            Zaměření
-          </h1>
+          <h1 className="portal-page-title text-2xl sm:text-3xl">Zaměření</h1>
           <p className="portal-page-description max-w-2xl">
             Plánované zaměření u zákazníka je předstupeň klasické zakázky. Po
-            převodu vznikne standardní zakázka a proces pokračuje stejně jako u
-            ostatních projektů — bez ručního přepisování údajů.
+            převodu vznikne standardní zakázka včetně zvolené šablony — proces
+            pokračuje stejně jako u ostatních projektů.
           </p>
         </div>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button
-              type="button"
-              className="gap-2 min-h-[48px] shrink-0 bg-emerald-600 text-white hover:bg-emerald-700 border-0 shadow-md shadow-emerald-600/25"
-            >
-              <Ruler className="h-5 w-5" />
-              Nové zaměření
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-white border-slate-200 text-slate-900">
+        <div className="flex flex-col items-stretch sm:items-end gap-2">
+          <Button
+            type="button"
+            onClick={openCreate}
+            className="gap-2 min-h-[48px] shrink-0 bg-emerald-600 text-white hover:bg-emerald-700 border-0 shadow-md shadow-emerald-600/25 w-full sm:w-auto"
+          >
+            <Ruler className="h-5 w-5" />
+            Nové zaměření
+          </Button>
+          <Dialog
+            open={dialogOpen}
+            onOpenChange={(o) => {
+              setDialogOpen(o);
+              if (!o) resetForm();
+            }}
+          >
+            <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto bg-white border-slate-200 text-slate-900">
             <DialogHeader>
-              <DialogTitle>Naplánovat zaměření</DialogTitle>
+              <DialogTitle>
+                {dialogMode === "create"
+                  ? "Naplánovat zaměření"
+                  : "Upravit zaměření"}
+              </DialogTitle>
               <DialogDescription>
-                Vyplňte údaje o plánované návštěvě / zaměření u zákazníka.
+                {editingRowConverted
+                  ? "U převedeného zaměření lze upravit jen poznámky."
+                  : "Vyplňte údaje o plánované návštěvě / zaměření u zákazníka."}
               </DialogDescription>
             </DialogHeader>
-            <form onSubmit={handleCreate} className="space-y-4 py-2">
+            <form onSubmit={handleSave} className="space-y-4 py-2">
               <div className="space-y-2">
                 <Label htmlFor="m-name">Jméno zákazníka / firma *</Label>
                 <Input
@@ -383,6 +601,7 @@ export default function JobMeasurementsPage() {
                     setForm({ ...form, customerName: e.target.value })
                   }
                   required
+                  disabled={!!editingRowConverted}
                   placeholder="Např. Novák nebo Firma s.r.o."
                 />
               </div>
@@ -392,10 +611,9 @@ export default function JobMeasurementsPage() {
                   id="m-phone"
                   type="tel"
                   value={form.phone}
-                  onChange={(e) =>
-                    setForm({ ...form, phone: e.target.value })
-                  }
+                  onChange={(e) => setForm({ ...form, phone: e.target.value })}
                   required
+                  disabled={!!editingRowConverted}
                   placeholder="+420 …"
                 />
               </div>
@@ -409,6 +627,7 @@ export default function JobMeasurementsPage() {
                   }
                   rows={2}
                   required
+                  disabled={!!editingRowConverted}
                   placeholder="Ulice, město, PSČ"
                 />
               </div>
@@ -422,6 +641,7 @@ export default function JobMeasurementsPage() {
                     setForm({ ...form, scheduledAtLocal: e.target.value })
                   }
                   required
+                  disabled={!!editingRowConverted}
                 />
               </div>
               <div className="space-y-2">
@@ -435,6 +655,18 @@ export default function JobMeasurementsPage() {
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="m-internal">Interní poznámka</Label>
+                <Textarea
+                  id="m-internal"
+                  value={form.internalNote}
+                  onChange={(e) =>
+                    setForm({ ...form, internalNote: e.target.value })
+                  }
+                  rows={2}
+                  placeholder="Pouze pro tým (nepovinné)"
+                />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="m-price">Předběžná cena (Kč)</Label>
                 <Input
                   id="m-price"
@@ -444,13 +676,15 @@ export default function JobMeasurementsPage() {
                   onChange={(e) =>
                     setForm({ ...form, estimatedPrice: e.target.value })
                   }
+                  disabled={!!editingRowConverted}
                   placeholder="0"
                 />
               </div>
-              <DialogFooter className="gap-2 sm:gap-0 pt-2">
+              <DialogFooter className="gap-2 sm:gap-0 pt-2 flex-col sm:flex-row">
                 <Button
                   type="button"
                   variant="outline"
+                  className="w-full sm:w-auto"
                   onClick={() => setDialogOpen(false)}
                 >
                   Zrušit
@@ -458,18 +692,21 @@ export default function JobMeasurementsPage() {
                 <Button
                   type="submit"
                   disabled={submitting}
-                  className="bg-emerald-600 hover:bg-emerald-700"
+                  className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700"
                 >
                   {submitting ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
+                  ) : dialogMode === "create" ? (
                     "Uložit zaměření"
+                  ) : (
+                    "Uložit změny"
                   )}
                 </Button>
               </DialogFooter>
             </form>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+        </div>
       </div>
 
       <Card>
@@ -521,7 +758,9 @@ export default function JobMeasurementsPage() {
                   <TableHead className="min-w-[180px]">Adresa</TableHead>
                   <TableHead className="text-right">Předběžná cena</TableHead>
                   <TableHead>Stav</TableHead>
-                  <TableHead className="text-right">Akce</TableHead>
+                  <TableHead className="text-right min-w-[200px]">
+                    Akce
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -546,29 +785,69 @@ export default function JobMeasurementsPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right">
-                      {canConvertMeasurement(row) ? (
+                      <div className="flex flex-col sm:flex-row gap-1 sm:justify-end sm:items-center flex-wrap">
                         <Button
                           type="button"
+                          variant="outline"
                           size="sm"
-                          variant="default"
-                          className="gap-1 bg-emerald-600 hover:bg-emerald-700"
-                          onClick={() => setConvertTarget(row)}
+                          className="gap-1"
+                          onClick={() => openEdit(row)}
                         >
-                          <Briefcase className="h-4 w-4" />
-                          Převést na zakázku
+                          <Pencil className="h-3.5 w-3.5" />
+                          Upravit
                         </Button>
-                      ) : row.status === "converted" && row.convertedJobId ? (
-                        <Button variant="link" size="sm" asChild>
-                          <Link
-                            href={`/portal/jobs/${row.convertedJobId}`}
-                            className="text-primary"
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-1 text-destructive border-destructive/30"
+                          onClick={() => setDeleteTarget(row)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          Smazat
+                        </Button>
+                        {canConvertMeasurement(row) ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="default"
+                            className="gap-1 bg-emerald-600 hover:bg-emerald-700"
+                            onClick={() => openConvertDialog(row, false)}
                           >
-                            Otevřít zakázku
-                          </Link>
-                        </Button>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">—</span>
-                      )}
+                            <Briefcase className="h-4 w-4" />
+                            Převést
+                          </Button>
+                        ) : null}
+                        {canCreateAnotherJobFromMeasurement(row) ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="gap-1"
+                            onClick={() => openConvertDialog(row, true)}
+                          >
+                            <Briefcase className="h-4 w-4" />
+                            Další zakázka
+                          </Button>
+                        ) : null}
+                        {row.status === "converted" && row.convertedJobId ? (
+                          <div className="flex flex-col items-end gap-1">
+                            <Button variant="link" size="sm" className="h-auto p-0" asChild>
+                              <Link href={`/portal/jobs/${row.convertedJobId}`}>
+                                Otevřít zakázku
+                              </Link>
+                            </Button>
+                            <Button variant="link" size="sm" className="h-auto p-0 gap-1" asChild>
+                              <Link
+                                href={`/portal/jobs/${row.convertedJobId}?openSod=1`}
+                              >
+                                <FileText className="h-3.5 w-3.5" />
+                                Smlouva o dílo
+                              </Link>
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -579,45 +858,144 @@ export default function JobMeasurementsPage() {
       </Card>
 
       <AlertDialog
-        open={!!convertTarget}
-        onOpenChange={(o) => !o && !converting && setConvertTarget(null)}
+        open={!!deleteTarget}
+        onOpenChange={(o) => !o && !deleting && setDeleteTarget(null)}
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Převést zaměření na zakázku?</AlertDialogTitle>
+            <AlertDialogTitle>Skrýt zaměření?</AlertDialogTitle>
             <AlertDialogDescription className="space-y-2 text-left">
-              <span className="block">
-                Vznikne nová zakázka s předvyplněnými údaji (zákazník, telefon,
-                adresa, poznámka, předběžná cena jako rozpočet). Tento krok nelze
-                vrátit — záznam zaměření bude označen jako převedený.
-              </span>
-              {convertTarget ? (
-                <span className="block text-sm font-medium text-slate-800">
-                  {convertTarget.customerName} ·{" "}
-                  {formatScheduledDisplay(convertTarget.scheduledAt)}
+              Záznam bude skrytý z přehledu (soft delete).
+              {deleteTarget?.convertedJobId ? (
+                <span className="block font-medium text-slate-800">
+                  Existuje navázaná zakázka — ta zůstane nedotčená.
                 </span>
               ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={converting}>Zrušit</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting}>Zrušit</AlertDialogCancel>
             <AlertDialogAction
-              className="bg-emerald-600 hover:bg-emerald-700"
-              disabled={converting}
+              className="bg-destructive hover:bg-destructive/90"
+              disabled={deleting}
               onClick={(e) => {
                 e.preventDefault();
-                void handleConvert();
+                void handleSoftDelete();
               }}
             >
-              {converting ? (
+              {deleting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                "Ano, vytvořit zakázku"
+                "Ano, skrýt"
               )}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={!!convertTarget}
+        onOpenChange={(o) => {
+          if (!o && !converting) {
+            setConvertTarget(null);
+            setConvertReconvert(false);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>
+              {convertReconvert
+                ? "Vytvořit další zakázku ze zaměření?"
+                : "Převést zaměření na zakázku"}
+            </DialogTitle>
+            <DialogDescription>
+              {convertReconvert
+                ? "Vznikne nová zakázka vedle stávající. Záznam zaměření zůstane s odkazem na poslední vytvořenou zakázku."
+                : "Vyberte šablonu zakázky (stejná sada šablon jako u nové zakázky). Povinné, pokud firma šablony má."}
+            </DialogDescription>
+          </DialogHeader>
+          {convertTarget ? (
+            <div className="space-y-4 py-2">
+              <p className="text-sm font-medium text-slate-800">
+                {convertTarget.customerName} ·{" "}
+                {formatScheduledDisplay(convertTarget.scheduledAt)}
+              </p>
+              {templatesList.length === 0 ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-950">
+                  <p className="font-medium">Žádná šablona zakázky</p>
+                  <p className="mt-1">
+                    Můžete{" "}
+                    <Link
+                      href="/portal/jobs/templates"
+                      className="underline font-medium"
+                    >
+                      vytvořit šablonu
+                    </Link>{" "}
+                    a převod zopakovat, nebo pokračovat bez šablony.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="conv-tpl">Šablona zakázky *</Label>
+                  <select
+                    id="conv-tpl"
+                    className={NATIVE_SELECT_CLASS}
+                    value={convertTemplateId}
+                    onChange={(e) => {
+                      setConvertTemplateId(e.target.value);
+                      setConvertTemplateValues({});
+                    }}
+                  >
+                    {templatesList.map((t) => (
+                      <option key={String(t.id)} value={String(t.id)}>
+                        {t.name}
+                        {t.productType ? ` (${t.productType})` : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              {selectedConvertTemplate ? (
+                <JobTemplateFormFields
+                  template={selectedConvertTemplate}
+                  values={convertTemplateValues}
+                  onChange={setConvertTemplateValues}
+                />
+              ) : null}
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2 flex-col sm:flex-row">
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full sm:w-auto"
+              disabled={converting}
+              onClick={() => {
+                setConvertTarget(null);
+                setConvertReconvert(false);
+              }}
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              className="w-full sm:w-auto bg-emerald-600 hover:bg-emerald-700"
+              disabled={
+                converting ||
+                (templatesList.length > 0 && !convertTemplateId)
+              }
+              onClick={() => void handleConvert()}
+            >
+              {converting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Vytvořit zakázku"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
