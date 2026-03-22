@@ -15,21 +15,11 @@ const COMPANY_ID_FIELD_ALIASES = [
   "ID společnosti",
   "ID spolecnosti",
   "companyId",
+  "companyID",
+  "idSpolecnosti",
 ] as const;
 
 const SCAN_LIMIT = 200;
-
-/**
- * Kandidáti na název kolekce (překlepy / bez diakritiky).
- * Primární je vždy `terminálOdkazy` z firestore-collections.
- */
-const TERMINAL_LINK_COLLECTION_CANDIDATES = [
-  TERMINAL_LINKS_COLLECTION,
-  "terminalOdkazy",
-  "terminalodkazy",
-  "terminalLinks",
-  "terminal-links",
-] as const;
 
 export function serializeFirestoreData(data: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -59,14 +49,21 @@ export function serializeFirestoreData(data: Record<string, unknown>): Record<st
   return out;
 }
 
-export function isActiveValue(v: unknown): boolean {
-  if (v === true) return true;
-  if (v === 1) return true;
-  if (typeof v === "string") {
-    const s = v.trim().toLowerCase();
+/** Aktivní terminál: true, "true", 1, "1", "ano" (case-insensitive). */
+export function normalizeBooleanValue(value: unknown): boolean {
+  if (value === true) return true;
+  if (value === 1) return true;
+  if (typeof value === "number" && Number.isFinite(value) && value === 1) return true;
+  if (typeof value === "string") {
+    const s = value.trim().toLowerCase();
     return s === "true" || s === "1" || s === "ano";
   }
   return false;
+}
+
+/** Zpětná kompatibilita — stejné jako {@link normalizeBooleanValue}. */
+export function isActiveValue(v: unknown): boolean {
+  return normalizeBooleanValue(v);
 }
 
 function getRawActiveFromDoc(data: Record<string, unknown>): unknown {
@@ -80,7 +77,9 @@ function getRawActiveFromDoc(data: Record<string, unknown>): unknown {
 
 function isDocActive(data: Record<string, unknown>): boolean {
   for (const key of ACTIVE_FIELD_ALIASES) {
-    if (isActiveValue(data[key])) return true;
+    if (Object.prototype.hasOwnProperty.call(data, key) && normalizeBooleanValue(data[key])) {
+      return true;
+    }
   }
   return false;
 }
@@ -91,13 +90,43 @@ function isExpired(data: Record<string, unknown>): boolean {
   return false;
 }
 
-export function extractCompanyIdTolerant(data: Record<string, unknown>): string {
+function isFirestoreDocRefLike(v: unknown): v is { id: string } {
+  return typeof v === "object" && v !== null && "id" in v && typeof (v as { id: unknown }).id === "string";
+}
+
+/** ID firmy z dokumentu terminálOdkazy — tolerantně k názvům polí a typům. */
+export function resolveCompanyId(data: Record<string, unknown>): string {
   for (const key of COMPANY_ID_FIELD_ALIASES) {
     const v = data[key];
     if (typeof v === "string" && v.trim()) return v.trim();
     if (typeof v === "number" && Number.isFinite(v)) return String(v);
+    if (isFirestoreDocRefLike(v) && v.id.trim()) return v.id.trim();
   }
   return "";
+}
+
+/** @deprecated použij {@link resolveCompanyId} */
+export function extractCompanyIdTolerant(data: Record<string, unknown>): string {
+  return resolveCompanyId(data);
+}
+
+function serializeDebugScalar(v: unknown): unknown {
+  if (v == null) return v;
+  if (typeof v === "object" && v !== null && "toDate" in v && typeof (v as { toDate: () => Date }).toDate === "function") {
+    try {
+      return (v as { toDate: () => Date }).toDate().toISOString();
+    } catch {
+      return null;
+    }
+  }
+  if (typeof v === "object" && v !== null && "toMillis" in v && typeof (v as { toMillis: () => number }).toMillis === "function") {
+    try {
+      return new Date((v as { toMillis: () => number }).toMillis()).toISOString();
+    } catch {
+      return null;
+    }
+  }
+  return v;
 }
 
 export type TerminalConfigDebug = {
@@ -116,6 +145,18 @@ export type TerminalConfigDebug = {
   triedCollectionNames?: readonly string[];
   firstDocId?: string | null;
   firstDocKeys?: string[];
+  /** Diagnostika při nesedících polích (první dokument nebo poslední kontrolovaný). */
+  foundKeys?: string[];
+  activeRawValue?: unknown;
+  resolvedCompanyId?: string;
+  docInspections?: Array<{
+    docId: string;
+    keys: string[];
+    rawActive: unknown;
+    resolvedCompanyId: string;
+    isActive: boolean;
+    skipped?: string;
+  }>;
 };
 
 export type TerminalConfigLoadOk = {
@@ -162,7 +203,7 @@ async function buildDebugBase(db: Firestore): Promise<Omit<TerminalConfigDebug, 
 
 /**
  * Veřejná konfigurace terminálu — bez Firebase Auth.
- * Nejprve prosté .limit(10).get() na kandidátech kolekcí, pak výběr aktivního záznamu.
+ * Čte pouze kolekci terminálOdkazy; aktivní záznam hledá ručním průchodem dokumentů.
  */
 export async function loadPublicTerminalConfig(): Promise<TerminalConfigLoadOk | TerminalConfigLoadErr> {
   console.log("Loading terminal config");
@@ -190,9 +231,6 @@ export async function loadPublicTerminalConfig(): Promise<TerminalConfigLoadOk |
     };
   }
 
-  let linkDocId = "";
-  let linkData: Record<string, unknown> = {};
-  let usedCollectionName = "";
   let scanSnapSize = 0;
 
   let debugBase: Awaited<ReturnType<typeof buildDebugBase>> | undefined;
@@ -200,69 +238,13 @@ export async function loadPublicTerminalConfig(): Promise<TerminalConfigLoadOk |
   try {
     debugBase = await buildDebugBase(db);
 
-    let col = db.collection(TERMINAL_LINKS_COLLECTION);
-    let foundNonEmpty = false;
+    const coll = db.collection(TERMINAL_LINKS_COLLECTION);
+    const scanSnap = await coll.limit(SCAN_LIMIT).get();
+    scanSnapSize = scanSnap.size;
 
-    for (const name of TERMINAL_LINK_COLLECTION_CANDIDATES) {
-      col = db.collection(name);
-      const snap10 = await col.limit(10).get();
-      console.log(`[terminal-config] collection("${name}").limit(10).get() -> docs: ${snap10.size}`);
-      if (!snap10.empty) {
-        foundNonEmpty = true;
-        usedCollectionName = name;
-        const first = snap10.docs[0];
-        const raw = first.data() as Record<string, unknown>;
-        console.log("[terminal-config] first document id:", first.id);
-        console.log("[terminal-config] first document keys:", Object.keys(raw));
-        console.log(
-          "[terminal-config] first doc aktivní / aktivni:",
-          raw["aktivní"],
-          raw["aktivni"],
-          "typeof aktivní:",
-          typeof raw["aktivní"]
-        );
-        console.log("[terminal-config] first doc sample (serialized):", JSON.stringify(serializeFirestoreData(raw)));
+    console.log(`[terminal-config] collection("${TERMINAL_LINKS_COLLECTION}").limit(${SCAN_LIMIT}) -> docsCount: ${scanSnapSize}`);
 
-        const scanSnap = await db.collection(name).limit(SCAN_LIMIT).get();
-        scanSnapSize = scanSnap.size;
-        console.log(`[terminal-config] collection("${name}").limit(${SCAN_LIMIT}) -> ${scanSnapSize} docs`);
-
-        /** Query where aktivní */
-        let snap = await db.collection(name).where(TERMINAL_LINK_ACTIVE_CZ, "==", true).limit(1).get();
-        if (snap.empty) {
-          snap = await db.collection(name).where(TERMINAL_LINK_ACTIVE_CZ, "==", "true").limit(1).get();
-        }
-        if (snap.empty) {
-          snap = await db.collection(name).where(TERMINAL_LINK_ACTIVE_CZ, "==", 1).limit(1).get();
-        }
-        if (snap.empty) {
-          snap = await db.collection(name).where("aktivni", "==", true).limit(1).get();
-        }
-        if (snap.empty) {
-          snap = await db.collection(name).where("aktivni", "==", "true").limit(1).get();
-        }
-
-        if (!snap.empty) {
-          linkDocId = snap.docs[0].id;
-          linkData = snap.docs[0].data() as Record<string, unknown>;
-          console.log("[terminal-config] Active link via query", linkDocId);
-        } else {
-          console.log('[terminal-config] query empty — manual scan for aktivní');
-          for (const doc of scanSnap.docs) {
-            const d = doc.data() as Record<string, unknown>;
-            if (!isDocActive(d)) continue;
-            if (isExpired(d)) continue;
-            linkDocId = doc.id;
-            linkData = d;
-            console.log("[terminal-config] Active link via manual scan", linkDocId);
-            break;
-          }
-        }
-        break;
-      }
-    }
-
-    if (!foundNonEmpty) {
+    if (scanSnap.empty) {
       return {
         success: false,
         error:
@@ -270,42 +252,82 @@ export async function loadPublicTerminalConfig(): Promise<TerminalConfigLoadOk |
         status: 400,
         debug: {
           collectionName: TERMINAL_LINKS_COLLECTION,
-          usedCollectionName: undefined,
+          usedCollectionName: TERMINAL_LINKS_COLLECTION,
           docsCount: 0,
-          triedCollectionNames: TERMINAL_LINK_COLLECTION_CANDIDATES,
           ...debugBase,
           projectId: adm.adminAppProjectId ?? adm.envFirebaseProjectId,
         },
       };
     }
 
-    const collectionHasDocs = scanSnapSize > 0;
+    const first = scanSnap.docs[0];
+    const firstData = first.data() as Record<string, unknown>;
+    const firstKeys = Object.keys(firstData);
+    console.log("[terminal-config] first document id:", first.id);
+    console.log("[terminal-config] first document keys:", firstKeys);
+    console.log("[terminal-config] first document data (serialized):", JSON.stringify(serializeFirestoreData(firstData)));
+
+    const docInspections: NonNullable<TerminalConfigDebug["docInspections"]> = [];
+
+    let linkDocId = "";
+    let linkData: Record<string, unknown> = {} as Record<string, unknown>;
+
+    for (const doc of scanSnap.docs) {
+      const d = doc.data() as Record<string, unknown>;
+      const keys = Object.keys(d);
+      const rawActive = getRawActiveFromDoc(d);
+      const cid = resolveCompanyId(d);
+      const active = isDocActive(d);
+      let skipped: string | undefined;
+
+      console.log(`[terminal-config] doc ${doc.id} keys:`, keys);
+      console.log(`[terminal-config] doc ${doc.id} raw aktivní/aktivni:`, serializeDebugScalar(rawActive));
+      console.log(`[terminal-config] doc ${doc.id} resolved companyId:`, cid || "(empty)");
+
+      if (isExpired(d)) {
+        skipped = "expiresAt";
+      } else if (!active) {
+        skipped = "not active";
+      } else if (!cid) {
+        skipped = "missing company id";
+      }
+
+      docInspections.push({
+        docId: doc.id,
+        keys,
+        rawActive: serializeDebugScalar(rawActive),
+        resolvedCompanyId: cid,
+        isActive: active,
+        skipped,
+      });
+
+      if (skipped) continue;
+
+      linkDocId = doc.id;
+      linkData = d;
+      console.log("[terminal-config] matched terminal link document:", linkDocId, "companyId:", cid);
+      break;
+    }
 
     if (!linkDocId) {
-      if (collectionHasDocs) {
-        return {
-          success: false,
-          error:
-            "Konfigurace terminálu existuje, ale nesedí názvy nebo typy polí (aktivní / ID společnosti).",
-          status: 400,
-          debug: {
-            collectionName: TERMINAL_LINKS_COLLECTION,
-            usedCollectionName,
-            docsCount: scanSnapSize,
-            ...debugBase,
-            projectId: adm.adminAppProjectId ?? adm.envFirebaseProjectId,
-            triedCollectionNames: TERMINAL_LINK_COLLECTION_CANDIDATES,
-          },
-        };
-      }
+      const last = docInspections[docInspections.length - 1];
       return {
         success: false,
-        error: "V kolekci terminálOdkazy není žádný dokument.",
+        error:
+          "Konfigurace terminálu existuje, ale žádný dokument není zároveň aktivní (aktivní/aktivni) a nemá platné ID společnosti. Zkontrolujte pole v terminálOdkazy.",
         status: 400,
         debug: {
           collectionName: TERMINAL_LINKS_COLLECTION,
-          docsCount: 0,
+          usedCollectionName: TERMINAL_LINKS_COLLECTION,
+          docsCount: scanSnapSize,
           ...debugBase,
+          projectId: adm.adminAppProjectId ?? adm.envFirebaseProjectId,
+          firstDocId: first.id,
+          firstDocKeys: firstKeys,
+          foundKeys: last?.keys ?? firstKeys,
+          activeRawValue: last ? serializeDebugScalar(last.rawActive) : serializeDebugScalar(getRawActiveFromDoc(firstData)),
+          resolvedCompanyId: last?.resolvedCompanyId ?? resolveCompanyId(firstData),
+          docInspections,
         },
       };
     }
@@ -317,27 +339,7 @@ export async function loadPublicTerminalConfig(): Promise<TerminalConfigLoadOk |
         status: 400,
         debug: {
           collectionName: TERMINAL_LINKS_COLLECTION,
-          usedCollectionName,
-          docsCount: scanSnapSize,
-          ...debugBase,
-        },
-      };
-    }
-
-    const companyId = extractCompanyIdTolerant(linkData);
-    console.log("[terminal-config] resolved companyId:", companyId || "(empty)");
-
-    if (!companyId) {
-      return {
-        success: false,
-        error:
-          collectionHasDocs
-            ? "Konfigurace terminálu existuje, ale nesedí názvy nebo typy polí (chybí ID společnosti / companyId)."
-            : "Chybí ID společnosti v dokumentu terminálOdkazy.",
-        status: 400,
-        debug: {
-          collectionName: TERMINAL_LINKS_COLLECTION,
-          usedCollectionName,
+          usedCollectionName: TERMINAL_LINKS_COLLECTION,
           docsCount: scanSnapSize,
           ...debugBase,
           firstDocKeys: Object.keys(linkData),
@@ -345,18 +347,41 @@ export async function loadPublicTerminalConfig(): Promise<TerminalConfigLoadOk |
       };
     }
 
+    const companyId = resolveCompanyId(linkData);
+    console.log("[terminal-config] final resolved companyId:", companyId || "(empty)");
+
+    if (!companyId) {
+      return {
+        success: false,
+        error: "Chybí ID společnosti v aktivním dokumentu terminálOdkazy.",
+        status: 400,
+        debug: {
+          collectionName: TERMINAL_LINKS_COLLECTION,
+          usedCollectionName: TERMINAL_LINKS_COLLECTION,
+          docsCount: scanSnapSize,
+          ...debugBase,
+          foundKeys: Object.keys(linkData),
+          activeRawValue: serializeDebugScalar(getRawActiveFromDoc(linkData)),
+          resolvedCompanyId: "",
+          docInspections,
+        },
+      };
+    }
+
     const orgSnap = await db.collection(ORGANIZATIONS_COLLECTION).doc(companyId).get();
     const compSnap = await db.collection(COMPANIES_COLLECTION).doc(companyId).get();
+
     if (!orgSnap.exists && !compSnap.exists) {
       return {
         success: false,
-        error: `Firma s ID „${companyId}“ neexistuje ve společnosti ani v companies.`,
+        error: `Firma s ID „${companyId}“ neexistuje v kolekci společnosti ani v companies.`,
         status: 404,
         debug: {
           collectionName: TERMINAL_LINKS_COLLECTION,
-          usedCollectionName,
+          usedCollectionName: TERMINAL_LINKS_COLLECTION,
           docsCount: scanSnapSize,
           projectId: adm.adminAppProjectId ?? adm.envFirebaseProjectId,
+          resolvedCompanyId: companyId,
         },
       };
     }
