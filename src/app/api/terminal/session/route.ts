@@ -1,12 +1,33 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { FieldPath } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { kioskAuthUidForCompany } from "@/lib/terminal-kiosk";
-import { FieldValue } from "firebase-admin/firestore";
 
-const TOKEN_MIN = 32;
-const TOKEN_MAX = 128;
+/**
+ * Veřejný bootstrap terminálu na `/terminal` — bez tokenu v URL.
+ * Firma: `TERMINAL_COMPANY_ID` (env), jinak první dokument v `companies` (řazení podle ID).
+ */
+async function resolveTerminalCompanyId(): Promise<string | null> {
+  const db = getAdminFirestore();
+  if (!db) return null;
 
-export async function POST(request: NextRequest) {
+  const envId = process.env.TERMINAL_COMPANY_ID?.trim();
+  if (envId) {
+    const snap = await db.collection("companies").doc(envId).get();
+    if (snap.exists) return envId;
+    console.error("[terminal/session] TERMINAL_COMPANY_ID neexistuje ve Firestore:", envId);
+    return null;
+  }
+
+  const q = await db.collection("companies").orderBy(FieldPath.documentId()).limit(1).get();
+  if (q.empty) {
+    console.error("[terminal/session] Ve Firestore není žádná firma.");
+    return null;
+  }
+  return q.docs[0].id;
+}
+
+export async function POST() {
   const db = getAdminFirestore();
   const auth = getAdminAuth();
   if (!db || !auth) {
@@ -16,28 +37,16 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  let body: { token?: string };
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "Neplatný požadavek." }, { status: 400 });
-  }
-
-  const token = typeof body.token === "string" ? body.token.trim() : "";
-  if (!token || token.length < TOKEN_MIN || token.length > TOKEN_MAX || !/^[a-fA-F0-9]+$/.test(token)) {
-    return NextResponse.json({ error: "Neplatný odkaz terminálu." }, { status: 400 });
-  }
-
-  try {
-    const linkRef = db.collection("terminalLinks").doc(token);
-    const snap = await linkRef.get();
-    if (!snap.exists) {
-      return NextResponse.json({ error: "Odkaz neexistuje nebo byl zrušen." }, { status: 404 });
-    }
-    const data = snap.data() as { companyId?: string; active?: boolean };
-    const companyId = typeof data.companyId === "string" ? data.companyId.trim() : "";
-    if (!companyId || data.active !== true) {
-      return NextResponse.json({ error: "Terminál není aktivní." }, { status: 403 });
+    const companyId = await resolveTerminalCompanyId();
+    if (!companyId) {
+      return NextResponse.json(
+        {
+          error:
+            "Terminál není nakonfigurován. Nastavte TERMINAL_COMPANY_ID nebo přidejte firmu do databáze.",
+        },
+        { status: 503 }
+      );
     }
 
     const uid = kioskAuthUidForCompany(companyId);
@@ -59,13 +68,6 @@ export async function POST(request: NextRequest) {
       companyId,
       terminalAccess: true,
     });
-
-    await linkRef.set(
-      {
-        lastUsedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
 
     return NextResponse.json({
       customToken,

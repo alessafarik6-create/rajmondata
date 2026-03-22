@@ -9,10 +9,9 @@ const nextConfig: NextConfig = {
         destination: "/portal/employee/worklogs",
         permanent: false,
       },
-      /** Špatná relativní cesta z /portal/attendance/terminal → oprava na veřejný /terminal-access/:token */
       {
         source: "/portal/attendance/terminal-access/:token",
-        destination: "/terminal-access/:token",
+        destination: "/terminal",
         permanent: false,
       },
     ];

@@ -74,7 +74,7 @@ export type AttendanceTerminalProps = {
   /** Veřejný tablet — bez portálové navigace, výchozí režim PIN. */
   standalone?: boolean;
   /**
-   * Pouze mimo portál: `/terminal-access/[token]`, `/terminal/[token]` (kiosk účet).
+   * Pouze veřejný `/terminal` po bootstrapu přes API (kiosk účet s custom claims).
    * Portál používá výhradně `users/{uid}.companyId` — nepředávejte override.
    */
   companyIdOverride?: string | null;
@@ -83,11 +83,11 @@ export type AttendanceTerminalProps = {
    */
   kioskTokenSession?: boolean;
   /**
-   * Odkaz `/terminal/[token]` — ověření firmy tokenem, přihlášení e-mailem/heslem, bez PIN/QR.
+   * Režim vstupu e-mailem/heslem místo PIN/QR (volitelné).
    */
   employeeTokenEntry?: boolean;
   /**
-   * `/terminal-access/[token]` — žádné odkazy do portálu ani na přihlášení zaměstnance.
+   * Skrýt odkazy do portálu a přihlášení zaměstnance (standalone tablet).
    */
   hidePortalLinks?: boolean;
 };

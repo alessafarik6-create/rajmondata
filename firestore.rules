@@ -150,11 +150,6 @@ service cloud.firestore {
       }
     }
 
-    // --- Odkazy na tablet terminál (pouze Admin SDK) ---
-    match /terminalLinks/{tokenId} {
-      allow read, write: if false;
-    }
-
     // --- Firma ---
     match /companies/{companyId} {
       allow read: if (signedIn() && sameCompany(companyId)) || terminalCompanyMatches(companyId);

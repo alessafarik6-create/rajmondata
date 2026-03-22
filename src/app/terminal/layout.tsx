@@ -12,7 +12,7 @@ export default function TerminalRouteLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-dvh min-h-screen w-full bg-background text-foreground antialiased">
+    <div className="min-h-dvh h-dvh min-h-screen w-full flex flex-col overflow-hidden bg-background text-foreground antialiased touch-manipulation">
       {children}
     </div>
   );
