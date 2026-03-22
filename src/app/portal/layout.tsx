@@ -9,18 +9,20 @@ import { TopHeader } from "@/components/layout/top-header";
 import { doc } from "firebase/firestore";
 import { ensureUserProfile } from "@/lib/seed-firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 
 const REDIRECT_GRACE_MS = 2500;
+const SHELL_LOADING_TIMEOUT_MS = 8000;
 
 export default function PortalLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { user, isUserLoading } = useUser();
+  const { user, isUserLoading, userError } = useUser();
   const firestore = useFirestore();
   const router = useRouter();
   const pathname = usePathname();
@@ -32,6 +34,7 @@ export default function PortalLayout({
   const [isSeeding, setIsSeeding] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [authResolved, setAuthResolved] = useState(false);
+  const [shellTimedOut, setShellTimedOut] = useState(false);
 
   /** Po změně route zavřít mobilní menu a uvolnit případné zámky od Radix modalu. */
   useEffect(() => {
@@ -45,7 +48,11 @@ export default function PortalLayout({
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
   );
-  const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
+  const {
+    data: profile,
+    isLoading: isProfileLoading,
+    error: profileError,
+  } = useDoc(userRef);
 
   const isPortalEmployeeOnly =
     profile?.role === "employee" &&
@@ -53,6 +60,22 @@ export default function PortalLayout({
       profile.globalRoles.includes("super_admin"));
 
   const isEmployeePortalPath = pathname.startsWith("/portal/employee");
+
+  /** Automatický seed profilu jen ve vývoji — v produkci vzniká firma výhradně přes registraci (žádné náhodné demo). */
+  const enableDevProfileSeed =
+    typeof process !== "undefined" && process.env.NODE_ENV === "development";
+
+  /**
+   * Čekání na profil: načítání, seed, nebo (dev) krátké okno před spuštěním seedu.
+   * Nikdy jen „!profile“ bez toho — v produkci by to bylo nekonečné, když dokument users/{uid} neexistuje.
+   */
+  const waitingForProfileResolution =
+    isProfileLoading ||
+    isSeeding ||
+    (Boolean(user) &&
+      profile == null &&
+      enableDevProfileSeed &&
+      !seedError);
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
@@ -64,6 +87,9 @@ export default function PortalLayout({
       isSeeding,
       isPortalEmployeeOnly,
       isEmployeePortalPath,
+      waitingForProfileResolution,
+      hasProfile: !!profile,
+      profileError: profileError?.message ?? null,
     });
   }, [
     pathname,
@@ -73,6 +99,9 @@ export default function PortalLayout({
     isSeeding,
     isPortalEmployeeOnly,
     isEmployeePortalPath,
+    waitingForProfileResolution,
+    profile,
+    profileError,
   ]);
 
   useEffect(() => {
@@ -130,10 +159,13 @@ export default function PortalLayout({
     };
   }, [user, isUserLoading, router]);
 
-  /** Automatický seed profilu jen ve vývoji — v produkci vzniká firma výhradně přes registraci (žádné náhodné demo). */
-  const enableDevProfileSeed =
-    typeof process !== "undefined" && process.env.NODE_ENV === "development";
+  /** Globální timeout obalu portálu — žádný nekonečný spinner. */
+  useEffect(() => {
+    const t = window.setTimeout(() => setShellTimedOut(true), SHELL_LOADING_TIMEOUT_MS);
+    return () => window.clearTimeout(t);
+  }, []);
 
+  /** Automatický seed profilu jen ve vývoji */
   useEffect(() => {
     if (
       !enableDevProfileSeed ||
@@ -174,27 +206,70 @@ export default function PortalLayout({
     profile,
   ]);
 
-  if (isUserLoading || (!authResolved && !user)) {
+  const shellTimeoutUi = (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4 py-8">
+      <Alert variant="destructive" className="max-w-lg w-full border-destructive/60">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Načítání trvá příliš dlouho</AlertTitle>
+        <AlertDescription>
+          Zkuste obnovit stránku nebo se znovu přihlásit. Pokud problém přetrvává, zkontrolujte připojení
+          a oprávnění účtu ve Firestore.
+        </AlertDescription>
+      </Alert>
+      <div className="flex flex-col sm:flex-row gap-2 w-full max-w-lg">
+        <Button type="button" className="min-h-11 flex-1" onClick={() => window.location.reload()}>
+          Obnovit stránku
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11 flex-1 border-border"
+          onClick={() => router.replace("/login")}
+        >
+          Přihlásit se
+        </Button>
+      </div>
+    </div>
+  );
+
+  const spinner = (label: string) => (
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4">
+      <div
+        className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"
+        aria-label={label}
+      />
+      <p className="text-sm text-muted-foreground text-center max-w-sm">{label}</p>
+    </div>
+  );
+
+  if (userError) {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div
-          className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"
-          aria-label="Načítání"
-        />
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Alert variant="destructive" className="max-w-xl border-destructive/60">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Chyba ověření účtu</AlertTitle>
+          <AlertDescription>{userError.message}</AlertDescription>
+        </Alert>
       </div>
     );
   }
 
+  if (isUserLoading || (!authResolved && !user)) {
+    if (shellTimedOut) {
+      return shellTimeoutUi;
+    }
+    return spinner("Ověřování přihlášení…");
+  }
+
   if (!user) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
-        <div
-          className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"
-          aria-hidden
-        />
-        <p className="text-sm text-muted-foreground">
-          Ověřujeme přihlášení…
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4">
+        <p className="text-sm text-muted-foreground text-center">
+          Nejste přihlášeni. Přesměrování na přihlášení…
         </p>
+        <Button type="button" variant="outline" className="min-h-11" onClick={() => router.replace("/login")}>
+          Přihlásit se
+        </Button>
       </div>
     );
   }
@@ -202,12 +277,12 @@ export default function PortalLayout({
   if (seedError) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Alert variant="destructive" className="max-w-xl">
+        <Alert variant="destructive" className="max-w-xl border-destructive/60">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Chyba při nastavení účtu</AlertTitle>
           <AlertDescription>
             {seedError.message}
-            <span className="block mt-2 text-xs">
+            <span className="block mt-2 text-xs opacity-90">
               Zkuste obnovit stránku nebo se odhlásit a znovu přihlásit.
             </span>
           </AlertDescription>
@@ -216,32 +291,68 @@ export default function PortalLayout({
     );
   }
 
-  if (isProfileLoading || isSeeding || !profile) {
+  if (profileError) {
     return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
-        <div
-          className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"
-          aria-hidden
-        />
-        <p className="text-sm text-muted-foreground">
-          {isSeeding ? "Nastavujeme váš pracovní prostor…" : "Načítání…"}
-        </p>
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Alert variant="destructive" className="max-w-xl border-destructive/60">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Profil se nepodařilo načíst</AlertTitle>
+          <AlertDescription>
+            Firestore odmítl přístup k dokumentu uživatele nebo došlo k chybě:{" "}
+            {profileError.message}
+            <span className="block mt-2 text-xs opacity-90">
+              Zkontrolujte pravidla Firestore a přihlášení.
+            </span>
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (waitingForProfileResolution) {
+    if (shellTimedOut) {
+      return shellTimeoutUi;
+    }
+    return spinner(
+      isSeeding ? "Nastavujeme váš pracovní prostor…" : "Načítání profilu…"
+    );
+  }
+
+  if (!profile) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-4">
+        <Alert className="max-w-xl border-amber-500/50 bg-amber-500/10 text-amber-950 dark:text-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10">
+          <AlertCircle className="h-4 w-4 text-amber-700 dark:text-amber-400" />
+          <AlertTitle>Uživatelský profil neexistuje</AlertTitle>
+          <AlertDescription className="text-amber-950/90 dark:text-amber-50/90">
+            V databázi chybí dokument{" "}
+            <code className="text-xs rounded bg-background/80 dark:bg-background/30 px-1 py-0.5">
+              users/{user.uid}
+            </code>
+            . Účet je v přihlášení, ale záznam ve Firestore nebyl vytvořen (např. nedokončená registrace).
+            <span className="block mt-3 text-sm">
+              Odhlaste se a přihlaste znovu, nebo kontaktujte administrátora.
+            </span>
+          </AlertDescription>
+        </Alert>
       </div>
     );
   }
 
   if (isPortalEmployeeOnly && !isEmployeePortalPath) {
-    return (
-      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4">
-        <div
-          className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin"
-          aria-hidden
-        />
-        <p className="text-sm text-muted-foreground">
-          Otevírám zaměstnanecký portál…
-        </p>
-      </div>
-    );
+    if (shellTimedOut) {
+      return (
+        <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4">
+          <p className="text-sm text-muted-foreground text-center">
+            Přesměrování na zaměstnanecký portál se nepodařilo dokončit.
+          </p>
+          <Button type="button" onClick={() => router.replace("/portal/employee")}>
+            Otevřít zaměstnanecký portál
+          </Button>
+        </div>
+      );
+    }
+    return spinner("Otevírám zaměstnanecký portál…");
   }
 
   const SidebarComponent = isPortalEmployeeOnly
@@ -254,7 +365,6 @@ export default function PortalLayout({
         <SidebarComponent />
       </aside>
 
-      {/* Sheet jen když je menu otevřené — jinak žádný portal/overlay v DOM (řeší „uvíznutý“ tmavý backdrop). */}
       {mobileMenuOpen ? (
         <Sheet
           open
@@ -283,7 +393,7 @@ export default function PortalLayout({
       ) : null}
 
       <div
-        className="flex-1 flex flex-col min-w-0 min-h-screen bg-slate-100 text-slate-900"
+        className="flex-1 flex flex-col min-w-0 min-h-screen bg-slate-100 text-slate-900 dark:bg-background dark:text-foreground"
         data-portal-content
       >
         <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
