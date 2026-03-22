@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   Users,
   Briefcase,
@@ -22,21 +22,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   useUser,
   useFirestore,
-  useDoc,
   useMemoFirebase,
   useCollection,
   useCompany,
 } from "@/firebase";
-import {
-  doc,
-  collection,
-  query,
-  orderBy,
-  limit,
-  where,
-} from "firebase/firestore";
+import { collection, query, orderBy, limit, where } from "firebase/firestore";
 import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
+import { useRouter } from "next/navigation";
 
 type ProfileData = {
   displayName?: string;
@@ -54,22 +47,23 @@ type JobData = {
 };
 
 export default function CompanyDashboard() {
-  const { user } = useUser();
+  const { user, isUserLoading } = useUser();
+  const router = useRouter();
   const firestore = useFirestore();
 
-  const userRef = useMemoFirebase(
-    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
-    [firestore, user]
-  );
-
   const {
-    data: profile,
-    isLoading: isProfileLoading,
-    error: profileError,
-  } = useDoc(userRef);
+    userProfile: profile,
+    profileLoading: isProfileLoading,
+    profileError,
+    companyId: companyIdFromProfile,
+    companyName,
+    isLoading: companyContextLoading,
+    companyDocMissing,
+    companyError: companyLoadError,
+  } = useCompany();
 
   const typedProfile = (profile as ProfileData | null) ?? null;
-  const companyId = typedProfile?.companyId;
+  const companyId = companyIdFromProfile ?? typedProfile?.companyId;
   const role = typedProfile?.role || "employee";
 
   const isManagement = ["owner", "admin", "manager"].includes(role);
@@ -142,9 +136,16 @@ export default function CompanyDashboard() {
   const { data: financeRows = [] } = useCollection(financeQuery);
   const { data: attendanceRows = [] } = useCollection(attendanceQuery);
 
-  const { companyName } = useCompany();
-
   const typedJobs: JobData[] = ((allJobs as JobData[] | undefined) ?? []);
+
+  const profileOrCompanyLoading =
+    isProfileLoading || (Boolean(companyId) && companyContextLoading);
+
+  useEffect(() => {
+    if (!isUserLoading && !user) {
+      router.replace("/login");
+    }
+  }, [isUserLoading, user, router]);
 
   const jobs = typedJobs.filter((job) => {
     if (isManagement || isAccountant) return true;
@@ -196,7 +197,7 @@ export default function CompanyDashboard() {
     return sum;
   }, [financeRows]);
 
-  if (isProfileLoading) {
+  if (isUserLoading || profileOrCompanyLoading) {
     return (
       <div
         className="flex min-h-[320px] items-center justify-center"
@@ -205,6 +206,48 @@ export default function CompanyDashboard() {
       >
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
       </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="flex min-h-[240px] items-center justify-center text-sm text-muted-foreground">
+        Přesměrování na přihlášení…
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert variant="destructive" className="max-w-2xl">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Chybí přiřazení k firmě</AlertTitle>
+        <AlertDescription>
+          V profilu není nastavené <code className="text-xs">companyId</code>. Kontaktujte administrátora.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (companyDocMissing) {
+    return (
+      <Alert variant="destructive" className="max-w-2xl">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Firma neexistuje</AlertTitle>
+        <AlertDescription>
+          Dokument firmy v databázi nebyl nalezen. Kontaktujte administrátora.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  if (companyLoadError) {
+    return (
+      <Alert variant="destructive" className="max-w-2xl">
+        <AlertCircle className="h-4 w-4" />
+        <AlertTitle>Firmu nelze načíst</AlertTitle>
+        <AlertDescription>{companyLoadError.message}</AlertDescription>
+      </Alert>
     );
   }
 

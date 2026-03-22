@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useUser, useFirestore, useCompany } from "@/firebase";
+import { useUser, useFirestore, useCompany, useFirebase } from "@/firebase";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
@@ -14,7 +14,8 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 
 const REDIRECT_GRACE_MS = 2500;
-const SHELL_LOADING_TIMEOUT_MS = 8000;
+/** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
+const SHELL_LOADING_TIMEOUT_MS = 30000;
 
 export default function PortalLayout({
   children,
@@ -22,6 +23,7 @@ export default function PortalLayout({
   children: React.ReactNode;
 }) {
   const { user, isUserLoading, userError } = useUser();
+  const { areServicesAvailable, firebaseConfigError } = useFirebase();
   const firestore = useFirestore();
   const router = useRouter();
   const pathname = usePathname();
@@ -151,11 +153,41 @@ export default function PortalLayout({
     };
   }, [user, isUserLoading, router]);
 
-  /** Globální timeout obalu portálu — žádný nekonečný spinner. */
+  /**
+   * Timeout až po připravení Firebase klienta — jinak 8–30 s „mrtvý“ stav jen kvůli pomalé inicializaci.
+   * Při chybě env (firebaseConfigError) timer stejně poběží, aby šlo uniknout z rozbitého stavu.
+   */
   useEffect(() => {
+    if (!firebaseConfigError && !areServicesAvailable) {
+      setShellTimedOut(false);
+      return;
+    }
     const t = window.setTimeout(() => setShellTimedOut(true), SHELL_LOADING_TIMEOUT_MS);
     return () => window.clearTimeout(t);
-  }, []);
+  }, [areServicesAvailable, firebaseConfigError, pathname]);
+
+  /** Po úspěšném načtení obalu resetovat příznak timeoutu (uživatel nemá „zaseknutý“ shell). */
+  useEffect(() => {
+    if (
+      user &&
+      profile &&
+      companyId &&
+      !isUserLoading &&
+      !isProfileLoading &&
+      !companyBootstrapLoading &&
+      !waitingForProfileResolution
+    ) {
+      setShellTimedOut(false);
+    }
+  }, [
+    user,
+    profile,
+    companyId,
+    isUserLoading,
+    isProfileLoading,
+    companyBootstrapLoading,
+    waitingForProfileResolution,
+  ]);
 
   /** Chybí users/{uid} — doplnit (merge + případně ensureUserProfile uvnitř ensureUserFirestoreDocument). */
   useEffect(() => {

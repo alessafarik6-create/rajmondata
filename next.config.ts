@@ -2,6 +2,7 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   async redirects() {
     return [
+      { source: "/dashboard", destination: "/portal/dashboard", permanent: false },
       { source: "/employee", destination: "/portal/employee", permanent: false },
       { source: "/employee/:path*", destination: "/portal/employee/:path*", permanent: false },
       {

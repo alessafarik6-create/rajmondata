@@ -5,7 +5,7 @@ import { kioskAuthUidForCompany } from "@/lib/terminal-kiosk";
 
 /**
  * Veřejný bootstrap terminálu na `/terminal` — bez tokenu v URL.
- * Firma: `TERMINAL_COMPANY_ID` (env), jinak první dokument v `companies` (řazení podle ID).
+ * Pořadí: `TERMINAL_COMPANY_ID` (env) → `config/terminal` (`companyId`) → první firma v `companies`.
  */
 async function resolveTerminalCompanyId(): Promise<string | null> {
   const db = getAdminFirestore();
@@ -17,6 +17,17 @@ async function resolveTerminalCompanyId(): Promise<string | null> {
     if (snap.exists) return envId;
     console.error("[terminal/session] TERMINAL_COMPANY_ID neexistuje ve Firestore:", envId);
     return null;
+  }
+
+  const cfgSnap = await db.collection("config").doc("terminal").get();
+  const cfgId =
+    cfgSnap.exists && typeof cfgSnap.data()?.companyId === "string"
+      ? (cfgSnap.data() as { companyId: string }).companyId.trim()
+      : "";
+  if (cfgId) {
+    const companySnap = await db.collection("companies").doc(cfgId).get();
+    if (companySnap.exists) return cfgId;
+    console.error("[terminal/session] config/terminal.companyId neexistuje ve Firestore:", cfgId);
   }
 
   const q = await db.collection("companies").orderBy(FieldPath.documentId()).limit(1).get();
@@ -43,7 +54,7 @@ export async function POST() {
       return NextResponse.json(
         {
           error:
-            "Terminál není nakonfigurován. Nastavte TERMINAL_COMPANY_ID nebo přidejte firmu do databáze.",
+            "Terminál není nakonfigurován. Nastavte TERMINAL_COMPANY_ID, dokument config/terminal (pole companyId), nebo přidejte firmu do databáze.",
         },
         { status: 503 }
       );
