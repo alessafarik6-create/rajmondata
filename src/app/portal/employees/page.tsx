@@ -239,6 +239,11 @@ export default function EmployeesPage() {
   const worklogEmployeeId = assignWorklogEmployee?.id ?? null;
   const terminalEmployeeId = assignTerminalEmployee?.id ?? null;
 
+  /**
+   * Sync výběru zakázek z aktuálního Firestore snapshotu.
+   * Nepoužívat celý objekt zaměstnance v deps — při každém onSnapshot má novou referenci
+   * a efekt by se opakoval spolu s setState → zbytečné re-rendery / riziko zamrznutí UI.
+   */
   useEffect(() => {
     if (!worklogEmployeeId) {
       setAssignWorklogJobIds((prev) => {
@@ -247,12 +252,11 @@ export default function EmployeesPage() {
       });
       return;
     }
-    if (!assignWorklogEmployee) return;
-    const next = new Set(parseAssignedWorklogJobIds(assignWorklogEmployee));
-    setAssignWorklogJobIds((prev) =>
-      jobIdSetsEqual(prev, next) ? prev : next
-    );
-  }, [worklogEmployeeId, assignWorklogEmployee]);
+    const fresh = employees?.find((e) => e.id === worklogEmployeeId);
+    if (!fresh) return;
+    const next = new Set(parseAssignedWorklogJobIds(fresh));
+    setAssignWorklogJobIds((prev) => (jobIdSetsEqual(prev, next) ? prev : next));
+  }, [worklogEmployeeId, employees]);
 
   useEffect(() => {
     if (!terminalEmployeeId) {
@@ -262,12 +266,11 @@ export default function EmployeesPage() {
       });
       return;
     }
-    if (!assignTerminalEmployee) return;
-    const next = new Set(parseAssignedTerminalJobIds(assignTerminalEmployee));
-    setAssignTerminalJobIds((prev) =>
-      jobIdSetsEqual(prev, next) ? prev : next
-    );
-  }, [terminalEmployeeId, assignTerminalEmployee]);
+    const fresh = employees?.find((e) => e.id === terminalEmployeeId);
+    if (!fresh) return;
+    const next = new Set(parseAssignedTerminalJobIds(fresh));
+    setAssignTerminalJobIds((prev) => (jobIdSetsEqual(prev, next) ? prev : next));
+  }, [terminalEmployeeId, employees]);
 
   const toggleAssignWorklogJob = (jobId: string) => {
     setAssignWorklogJobIds((prev) => {
