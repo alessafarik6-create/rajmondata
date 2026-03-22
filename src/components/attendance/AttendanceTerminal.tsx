@@ -28,7 +28,6 @@ import {
   useMemoFirebase,
   useCollection,
   useAuth,
-  useCompany,
 } from "@/firebase";
 import {
   doc,
@@ -84,6 +83,10 @@ export type AttendanceTerminalProps = {
    * Odkaz `/terminal/[token]` — ověření firmy tokenem, přihlášení e-mailem/heslem, bez PIN/QR.
    */
   employeeTokenEntry?: boolean;
+  /**
+   * `/terminal-access/[token]` — žádné odkazy do portálu ani na přihlášení zaměstnance.
+   */
+  hidePortalLinks?: boolean;
 };
 
 type AttendanceType = "check_in" | "break_start" | "break_end" | "check_out";
@@ -106,13 +109,13 @@ export function AttendanceTerminal({
   companyIdOverride = null,
   kioskTokenSession = false,
   employeeTokenEntry = false,
+  hidePortalLinks = false,
 }: AttendanceTerminalProps) {
   const { user, isUserLoading, userError } = useUser();
   const auth = useAuth();
   const firestore = useFirestore();
   const { toast } = useToast();
   const router = useRouter();
-  const { companyName } = useCompany();
 
   const [terminalMode, setTerminalMode] = useState<TerminalMode>(() =>
     standalone ? "pin" : "personal"
@@ -250,7 +253,6 @@ export function AttendanceTerminal({
   const displayCompanyName =
     (companyDoc as { companyName?: string; name?: string } | null)?.companyName ||
     (companyDoc as { name?: string } | null)?.name ||
-    companyName ||
     PLATFORM_NAME;
 
   const personalAttendanceQuery = useMemoFirebase(() => {
@@ -906,14 +908,16 @@ export function AttendanceTerminal({
           >
             Zkusit znovu
           </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full"
-            onClick={() => router.push("/login")}
-          >
-            Přihlásit se
-          </Button>
+          {!hidePortalLinks ? (
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full"
+              onClick={() => router.push("/login")}
+            >
+              Přihlásit se
+            </Button>
+          ) : null}
         </div>
       </div>
     );
@@ -992,13 +996,23 @@ export function AttendanceTerminal({
               <AlertDescription>{userError.message}</AlertDescription>
             </Alert>
           ) : null}
-          <Button
-            variant="link"
-            className="mt-4 text-xs"
-            onClick={() => router.push("/login")}
-          >
-            Přihlásit se
-          </Button>
+          {!hidePortalLinks ? (
+            <Button
+              variant="link"
+              className="mt-4 text-xs"
+              onClick={() => router.push("/login")}
+            >
+              Přihlásit se
+            </Button>
+          ) : (
+            <Button
+              variant="link"
+              className="mt-4 text-xs"
+              onClick={() => window.location.reload()}
+            >
+              Obnovit stránku
+            </Button>
+          )}
         </div>
       );
     }
@@ -1008,13 +1022,20 @@ export function AttendanceTerminal({
           <AlertCircle className="h-4 w-4 text-amber-700" />
           <AlertTitle>Nejste přihlášeni</AlertTitle>
           <AlertDescription>
-            Pro použití docházkového terminálu v portálu se přihlaste účtem
-            organizace.
+            {hidePortalLinks
+              ? "Relace terminálu vypršela. Obnovte stránku nebo použijte platný odkaz."
+              : "Pro použití docházkového terminálu v portálu se přihlaste účtem organizace."}
           </AlertDescription>
         </Alert>
-        <Button className="min-h-[48px] w-full" onClick={() => router.push("/login")}>
-          Přihlásit se
-        </Button>
+        {!hidePortalLinks ? (
+          <Button className="min-h-[48px] w-full" onClick={() => router.push("/login")}>
+            Přihlásit se
+          </Button>
+        ) : (
+          <Button className="min-h-[48px] w-full" onClick={() => window.location.reload()}>
+            Obnovit stránku
+          </Button>
+        )}
       </div>
     );
   }
@@ -1043,7 +1064,7 @@ export function AttendanceTerminal({
           >
             <LogOut className="w-5 h-5" /> Odhlásit se
           </Button>
-          {!standalone && !employeeTokenEntry && (
+          {!standalone && !employeeTokenEntry && !hidePortalLinks && (
             <Button
               variant="link"
               onClick={() => router.push("/portal/dashboard")}
@@ -1092,7 +1113,7 @@ export function AttendanceTerminal({
             <p className="text-sm font-medium">Načítání profilu…</p>
           </div>
         </div>
-        {!standalone && !employeeTokenEntry && (
+        {!standalone && !employeeTokenEntry && !hidePortalLinks && (
           <Button
             variant="link"
             onClick={() => router.push("/portal/dashboard")}
@@ -1133,7 +1154,7 @@ export function AttendanceTerminal({
           >
             <LogOut className="w-4 h-4" /> Odhlásit se
           </Button>
-          {!standalone && (
+          {!standalone && !hidePortalLinks && (
             <Button
               variant="link"
               onClick={() => router.push("/portal/dashboard")}
@@ -1177,7 +1198,7 @@ export function AttendanceTerminal({
           >
             <LogOut className="w-4 h-4" /> Odhlásit se
           </Button>
-          {!standalone && (
+          {!standalone && !hidePortalLinks && (
             <Button
               variant="link"
               onClick={() => router.push("/portal/dashboard")}
@@ -1221,9 +1242,13 @@ export function AttendanceTerminal({
           type="button"
           variant="outline"
           className="w-full min-h-[44px]"
-          onClick={() => router.push("/portal/attendance/terminal")}
+          onClick={() =>
+            hidePortalLinks
+              ? window.location.reload()
+              : router.push("/portal/attendance/terminal")
+          }
         >
-          Otevřít terminál bez parametru
+          {hidePortalLinks ? "Obnovit stránku" : "Otevřít terminál bez parametru"}
         </Button>
       </div>
     );
@@ -1257,7 +1282,7 @@ export function AttendanceTerminal({
           >
             <LogOut className="w-4 h-4" /> Odhlásit se
           </Button>
-          {!standalone && !employeeTokenEntry && (
+          {!standalone && !employeeTokenEntry && !hidePortalLinks && (
             <Button
               variant="link"
               onClick={() => router.push("/portal/dashboard")}
@@ -1693,7 +1718,7 @@ export function AttendanceTerminal({
         </DialogContent>
       </Dialog>
 
-      {terminalMode === "personal" && !standalone && !employeeTokenEntry && (
+      {terminalMode === "personal" && !standalone && !employeeTokenEntry && !hidePortalLinks && (
         <Button
           variant="link"
           onClick={() => router.push("/portal/dashboard")}

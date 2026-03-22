@@ -1,32 +1,130 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { useAuth } from "@/firebase";
+import {
+  Component,
+  Suspense,
+  useEffect,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
+import { useParams } from "next/navigation";
+import { useFirebase } from "@/firebase";
 import { signInWithCustomToken } from "firebase/auth";
 import { Loader2, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { AttendanceTerminal } from "@/components/attendance/AttendanceTerminal";
 
-export default function TerminalAccessPage() {
+type BoundaryProps = { children: ReactNode };
+type BoundaryState = { error: Error | null };
+
+class AttendanceTerminalErrorBoundary extends Component<
+  BoundaryProps,
+  BoundaryState
+> {
+  constructor(props: BoundaryProps) {
+    super(props);
+    this.state = { error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): BoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error(
+      "[terminal-access] render error:",
+      error.message,
+      info.componentStack
+    );
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="min-h-full flex flex-col items-center justify-center p-6 max-w-lg mx-auto">
+          <Alert variant="destructive" className="w-full">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Terminál se nepodařilo zobrazit</AlertTitle>
+            <AlertDescription className="break-words">
+              {this.state.error.message}
+            </AlertDescription>
+          </Alert>
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-6 min-h-[44px]"
+            onClick={() => this.setState({ error: null })}
+          >
+            Zkusit znovu
+          </Button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function TerminalFallback() {
+  const [showTimeout, setShowTimeout] = useState(false);
+  useEffect(() => {
+    const id = window.setTimeout(() => setShowTimeout(true), 12000);
+    return () => window.clearTimeout(id);
+  }, []);
+  if (showTimeout) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 p-6 text-muted-foreground max-w-md mx-auto">
+        <Alert variant="destructive" className="w-full">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Načítání trvá příliš dlouho</AlertTitle>
+          <AlertDescription>
+            Zkuste obnovit stránku. Pokud problém přetrvává, zkontrolujte připojení.
+          </AlertDescription>
+        </Alert>
+        <Button type="button" variant="outline" onClick={() => window.location.reload()}>
+          Obnovit stránku
+        </Button>
+      </div>
+    );
+  }
+  return (
+    <div className="flex flex-1 items-center justify-center gap-3 text-muted-foreground p-6">
+      <Loader2 className="w-8 h-8 animate-spin" />
+      <span>Načítání…</span>
+    </div>
+  );
+}
+
+function TerminalAccessInner() {
   const params = useParams();
-  const router = useRouter();
-  const auth = useAuth();
+  const { auth, areServicesAvailable, firebaseConfigError } = useFirebase();
   const token = typeof params?.token === "string" ? params.token.trim() : "";
 
-  const [state, setState] = useState<"loading" | "error" | "done">("loading");
+  const [phase, setPhase] = useState<"init" | "auth" | "ready" | "error">("init");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [companyId, setCompanyId] = useState<string | null>(null);
   const [retryKey, setRetryKey] = useState(0);
 
   useEffect(() => {
     if (!token) {
-      setErrorMsg("Neplatný terminálový odkaz");
-      setState("error");
+      setErrorMsg("Neplatný odkaz");
+      setPhase("error");
       return;
     }
-    if (!auth) return;
+    if (firebaseConfigError) {
+      setErrorMsg(firebaseConfigError);
+      setPhase("error");
+      return;
+    }
+    if (!auth || !areServicesAvailable) {
+      setPhase("init");
+      return;
+    }
 
     let cancelled = false;
+    setPhase("auth");
+    setErrorMsg(null);
 
     void (async () => {
       try {
@@ -42,28 +140,30 @@ export default function TerminalAccessPage() {
         };
         if (cancelled) return;
         if (!res.ok) {
-          setErrorMsg(data?.error || "Neplatný terminálový odkaz");
-          setState("error");
+          setErrorMsg(
+            data?.error === "TOKEN_EXPIRED"
+              ? "Odkaz vypršel nebo byl zneplatněn."
+              : "Neplatný odkaz"
+          );
+          setPhase("error");
           return;
         }
         const customToken = data.customToken;
-        const companyId = data.companyId?.trim();
-        if (!customToken || !companyId) {
-          setErrorMsg("Neplatný terminálový odkaz");
-          setState("error");
+        const cid = data.companyId?.trim();
+        if (!customToken || !cid) {
+          setErrorMsg("Neplatný odkaz");
+          setPhase("error");
           return;
         }
         await signInWithCustomToken(auth, customToken);
         if (cancelled) return;
-        setState("done");
-        router.replace(
-          `/portal/attendance/terminal?company=${encodeURIComponent(companyId)}`
-        );
+        setCompanyId(cid);
+        setPhase("ready");
       } catch (e) {
         console.error("[terminal-access]", e);
         if (!cancelled) {
-          setErrorMsg("Přihlášení se nezdařilo. Zkuste to znovu.");
-          setState("error");
+          setErrorMsg("Připojení k terminálu se nezdařilo. Zkuste to znovu.");
+          setPhase("error");
         }
       }
     })();
@@ -71,14 +171,14 @@ export default function TerminalAccessPage() {
     return () => {
       cancelled = true;
     };
-  }, [token, auth, router, retryKey]);
+  }, [token, auth, areServicesAvailable, firebaseConfigError, retryKey]);
 
   if (!token) {
     return (
-      <div className="min-h-dvh flex flex-col items-center justify-center p-6 bg-background">
+      <div className="flex flex-1 flex-col items-center justify-center p-6 bg-background">
         <Alert variant="destructive" className="max-w-md w-full">
           <AlertCircle className="h-6 w-6 shrink-0" />
-          <AlertTitle className="text-lg">Neplatný terminálový odkaz</AlertTitle>
+          <AlertTitle className="text-lg">Neplatný odkaz</AlertTitle>
           <AlertDescription className="text-base">
             V adrese chybí platný token.
           </AlertDescription>
@@ -87,36 +187,23 @@ export default function TerminalAccessPage() {
     );
   }
 
-  if (!auth) {
+  if (firebaseConfigError && phase !== "ready") {
     return (
-      <div className="min-h-dvh grid place-items-center bg-background p-6">
-        <div className="flex flex-col items-center gap-4 text-muted-foreground max-w-sm text-center">
-          <Loader2 className="w-14 h-14 animate-spin text-primary" />
-          <p className="text-lg font-medium">Připojování…</p>
-        </div>
+      <div className="flex flex-1 flex-col items-center justify-center p-6">
+        <Alert variant="destructive" className="max-w-md w-full">
+          <AlertTitle>Chyba konfigurace</AlertTitle>
+          <AlertDescription>{firebaseConfigError}</AlertDescription>
+        </Alert>
       </div>
     );
   }
 
-  if (state === "loading") {
+  if (phase === "error") {
     return (
-      <div className="min-h-dvh grid place-items-center bg-background p-6 safe-area-pb">
-        <div className="flex flex-col items-center gap-4 text-muted-foreground max-w-sm text-center">
-          <Loader2 className="w-14 h-14 animate-spin text-primary" />
-          <p className="text-lg font-medium leading-snug">
-            Přihlašuji docházkový terminál…
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (state === "error") {
-    return (
-      <div className="min-h-dvh flex flex-col items-center justify-center p-6 bg-background safe-area-pb">
+      <div className="flex flex-1 flex-col items-center justify-center p-6 bg-background safe-area-pb">
         <Alert variant="destructive" className="max-w-md w-full">
           <AlertCircle className="h-6 w-6 shrink-0" />
-          <AlertTitle className="text-lg">Neplatný terminálový odkaz</AlertTitle>
+          <AlertTitle className="text-lg">Neplatný odkaz</AlertTitle>
           <AlertDescription className="text-base">
             {errorMsg || "Odkaz není platný nebo byl zneplatněn."}
           </AlertDescription>
@@ -125,7 +212,7 @@ export default function TerminalAccessPage() {
           type="button"
           className="mt-8 min-h-[52px] w-full max-w-md text-base touch-manipulation"
           onClick={() => {
-            setState("loading");
+            setPhase("init");
             setErrorMsg(null);
             setRetryKey((k) => k + 1);
           }}
@@ -136,9 +223,58 @@ export default function TerminalAccessPage() {
     );
   }
 
+  if (!auth || !areServicesAvailable) {
+    return (
+      <div className="flex flex-1 grid place-items-center bg-background p-6">
+        <div className="flex flex-col items-center gap-4 text-muted-foreground max-w-sm text-center">
+          <Loader2 className="w-14 h-14 animate-spin text-primary" />
+          <p className="text-lg font-medium">Připojování…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "auth" || phase === "init") {
+    return (
+      <div className="flex flex-1 grid place-items-center bg-background p-6 safe-area-pb">
+        <div className="flex flex-col items-center gap-4 text-muted-foreground max-w-sm text-center">
+          <Loader2 className="w-14 h-14 animate-spin text-primary" />
+          <p className="text-lg font-medium leading-snug">
+            Ověřuji odkaz a spouštím terminál…
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (phase === "ready" && companyId) {
+    return (
+      <div className="flex flex-1 flex-col min-h-0 w-full overflow-hidden">
+        <AttendanceTerminalErrorBoundary>
+          <Suspense fallback={<TerminalFallback />}>
+            <AttendanceTerminal
+              standalone
+              kioskTokenSession
+              hidePortalLinks
+              companyIdOverride={companyId}
+            />
+          </Suspense>
+        </AttendanceTerminalErrorBoundary>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-dvh grid place-items-center bg-background p-6">
+    <div className="flex flex-1 grid place-items-center bg-background p-6">
       <Loader2 className="w-12 h-12 animate-spin text-primary" />
     </div>
+  );
+}
+
+export default function TerminalAccessTokenPage() {
+  return (
+    <Suspense fallback={<TerminalFallback />}>
+      <TerminalAccessInner />
+    </Suspense>
   );
 }
