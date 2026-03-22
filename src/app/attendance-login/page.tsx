@@ -251,12 +251,6 @@ function AttendanceLoginContent() {
             setSelectedJob(null);
             setSelectedTariff(null);
           }
-        } else if (jd.jobs.length === 1 && tlist.length === 0) {
-          setSelectedJob(jd.jobs[0]!);
-          setSelectedTariff(null);
-        } else if (jd.jobs.length === 0 && tlist.length === 1) {
-          setSelectedTariff(tlist[0]!);
-          setSelectedJob(null);
         } else {
           setSelectedJob(null);
           setSelectedTariff(null);
@@ -312,17 +306,57 @@ function AttendanceLoginContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        activeSegment?: ActiveSegment | null;
+      };
       if (!res.ok) {
         alert(typeof data.error === "string" ? data.error : "Uložení se nezdařilo.");
         return;
       }
       console.log("Attendance saved");
-      resetToSelection({ afterAttendance: true });
+      if (action === "check-in") {
+        setSessionInWork(true);
+        if (data.activeSegment) {
+          setActiveSegment(data.activeSegment);
+        } else {
+          setActiveSegment(null);
+        }
+      } else {
+        resetToSelection({ afterAttendance: true });
+      }
     } catch {
       alert("Uložení se nezdařilo.");
     } finally {
       setActionSaving(false);
+    }
+  };
+
+  const endActiveSegment = async () => {
+    if (!companyId || !selected) return;
+    setSwitching(true);
+    try {
+      const res = await fetch("/api/attendance-login/end-segment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          companyId,
+          employeeId: selected.id,
+          pin,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        alert(typeof data.error === "string" ? data.error : "Ukončení se nezdařilo.");
+        return;
+      }
+      setActiveSegment(null);
+      setSelectedJob(null);
+      setSelectedTariff(null);
+    } catch {
+      alert("Ukončení se nezdařilo.");
+    } finally {
+      setSwitching(false);
     }
   };
 
@@ -372,7 +406,6 @@ function AttendanceLoginContent() {
     : "";
 
   const hasChoice = jobs.length > 0 || tariffs.length > 0;
-  const canCheckIn = !hasChoice || !!selectedJob || !!selectedTariff;
   const canCheckOut = true;
 
   const pickJob = (j: JobRow) => {
@@ -607,7 +640,7 @@ function AttendanceLoginContent() {
                   <p className="text-xl font-bold tracking-tight text-white sm:text-2xl">{fullName}</p>
                   <p className="mt-1 text-sm text-slate-300">
                     {sessionInWork
-                      ? "Zaznamenejte odchod nebo změňte zakázku / tarif."
+                      ? "Směna běží. Můžete pracovat na zakázce nebo tarifu, nebo zůstat obecně v práci až do odchodu."
                       : "Zaznamenejte příchod do práce."}
                   </p>
                 </div>
@@ -625,93 +658,115 @@ function AttendanceLoginContent() {
             </div>
           )}
 
-          {jobsLoading ? (
-            <div className="flex justify-center py-10">
-              <Loader2 className="h-10 w-10 animate-spin text-emerald-500/70" />
-            </div>
-          ) : hasChoice ? (
-            <div className="space-y-4">
-              <p className="text-center text-sm font-medium text-slate-200">Na čem právě pracujete</p>
-              <p className="text-center text-xs text-slate-500">
-                {sessionInWork
-                  ? "Klepnutím přepnete úsek — směna zůstane otevřená."
-                  : "Vyberte zakázku nebo interní tarif před příchodem."}
+          {sessionInWork && activeSegment && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-center text-sm text-slate-300 sm:text-left">
+                Ukončíte jen práci na zakázce / tarifu — směna zůstane otevřená.
               </p>
-
-              {jobs.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Zakázky</p>
-                  <div className="grid max-h-[min(32vh,280px)] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-                    {jobs.map((j) => {
-                      const activeCard =
-                        sessionInWork && segmentMatchesCard(activeSegment, "job", j.id);
-                      const selectedIn =
-                        !sessionInWork && selectedJob?.id === j.id;
-                      return (
-                        <button
-                          key={j.id}
-                          type="button"
-                          disabled={switching || actionSaving}
-                          onClick={() => pickJob(j)}
-                          className={cn(
-                            "rounded-2xl border px-4 py-4 text-left text-sm font-medium transition",
-                            activeCard || selectedIn
-                              ? "border-emerald-400/90 bg-emerald-500/25 text-white shadow-md"
-                              : "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
-                          )}
-                        >
-                          {j.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {tariffs.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                    Interní tarify
-                  </p>
-                  <div className="grid max-h-[min(28vh,240px)] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
-                    {tariffs.map((t) => {
-                      const activeCard =
-                        sessionInWork && segmentMatchesCard(activeSegment, "tariff", t.id);
-                      const selectedIn =
-                        !sessionInWork && selectedTariff?.id === t.id;
-                      return (
-                        <button
-                          key={t.id}
-                          type="button"
-                          disabled={switching || actionSaving}
-                          onClick={() => pickTariff(t)}
-                          className={cn(
-                            "rounded-2xl border px-4 py-4 text-left text-sm font-medium transition",
-                            activeCard || selectedIn
-                              ? "border-amber-400/90 bg-amber-500/20 text-white shadow-md"
-                              : "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
-                          )}
-                        >
-                          <span className="block">{t.name}</span>
-                          {t.hourlyRateCzk != null && (
-                            <span className="mt-1 block text-xs text-slate-400">
-                              {t.hourlyRateCzk} Kč / hod
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {(switching || actionSaving) && (
-                <p className="text-center text-xs text-slate-400">
-                  {switching ? "Přepínám…" : "Ukládám…"}
-                </p>
-              )}
+              <Button
+                type="button"
+                variant="secondary"
+                className="h-12 shrink-0 rounded-xl border-amber-400/40 bg-amber-950/40 text-amber-foreground hover:bg-amber-900/50"
+                disabled={switching || actionSaving}
+                onClick={() => void endActiveSegment()}
+              >
+                {switching ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  "Ukončit práci na zakázce / tarifu"
+                )}
+              </Button>
             </div>
-          ) : null}
+          )}
+
+          {sessionInWork &&
+            (jobsLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="h-10 w-10 animate-spin text-emerald-500/70" />
+              </div>
+            ) : hasChoice ? (
+              <div className="space-y-4">
+                <p className="text-center text-sm font-medium text-slate-200">Na čem právě pracujete</p>
+                <p className="text-center text-xs text-slate-500">
+                  Klepnutím přepnete úsek — směna zůstane otevřená. Nebo ukončete aktivní zakázku / tarif
+                  výše.
+                </p>
+
+                {jobs.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Zakázky</p>
+                    <div className="grid max-h-[min(32vh,280px)] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                      {jobs.map((j) => {
+                        const activeCard =
+                          sessionInWork && segmentMatchesCard(activeSegment, "job", j.id);
+                        return (
+                          <button
+                            key={j.id}
+                            type="button"
+                            disabled={switching || actionSaving}
+                            onClick={() => pickJob(j)}
+                            className={cn(
+                              "rounded-2xl border px-4 py-4 text-left text-sm font-medium transition",
+                              activeCard
+                                ? "border-emerald-400/90 bg-emerald-500/25 text-white shadow-md"
+                                : "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                            )}
+                          >
+                            {j.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {tariffs.length > 0 && (
+                  <div className="space-y-2">
+                    <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                      Interní tarify
+                    </p>
+                    <div className="grid max-h-[min(28vh,240px)] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                      {tariffs.map((t) => {
+                        const activeCard =
+                          sessionInWork && segmentMatchesCard(activeSegment, "tariff", t.id);
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            disabled={switching || actionSaving}
+                            onClick={() => pickTariff(t)}
+                            className={cn(
+                              "rounded-2xl border px-4 py-4 text-left text-sm font-medium transition",
+                              activeCard
+                                ? "border-amber-400/90 bg-amber-500/20 text-white shadow-md"
+                                : "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
+                            )}
+                          >
+                            <span className="block">{t.name}</span>
+                            {t.hourlyRateCzk != null && (
+                              <span className="mt-1 block text-xs text-slate-400">
+                                {t.hourlyRateCzk} Kč / hod
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {(switching || actionSaving) && (
+                  <p className="text-center text-xs text-slate-400">
+                    {switching ? "Přepínám…" : "Ukládám…"}
+                  </p>
+                )}
+              </div>
+            ) : (
+              <p className="text-center text-sm text-slate-400">
+                Žádné zakázky ani tarify k výběru — jste v práci bez zakázkového úseku. Po přiřazení v
+                administraci se zobrazí zde.
+              </p>
+            ))}
 
           <div className="mt-auto">
             {!sessionInWork ? (
@@ -719,7 +774,7 @@ function AttendanceLoginContent() {
                 type="button"
                 size="lg"
                 className="h-16 w-full rounded-2xl bg-emerald-600 text-lg font-semibold shadow-lg hover:bg-emerald-500"
-                disabled={actionSaving || !canCheckIn}
+                disabled={actionSaving}
                 onClick={() => void postAttendance("check-in")}
               >
                 {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Příchod do práce"}
@@ -736,9 +791,6 @@ function AttendanceLoginContent() {
               </Button>
             )}
           </div>
-          {!sessionInWork && hasChoice && !selectedJob && !selectedTariff && (
-            <p className="text-center text-sm text-amber-200/90">Nejdřív vyberte zakázku nebo tarif.</p>
-          )}
         </div>
       )}
     </div>

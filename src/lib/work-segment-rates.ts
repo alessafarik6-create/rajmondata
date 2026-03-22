@@ -10,6 +10,9 @@ export function resolveEmployeeDefaultHourlyRate(
   return parseHourlyRate(employee?.hourlyRate);
 }
 
+/** Alias — výchozí hodinová sazba zaměstnance (mimo zakázku / tarif). */
+export const resolveEmployeeHourlyRate = resolveEmployeeDefaultHourlyRate;
+
 /** Zakázka: vlastní laborHourlyRate / hourlyLaborRate, jinak výchozí sazba zaměstnance. */
 export function resolveJobHourlyRate(
   job: Record<string, unknown> | undefined,

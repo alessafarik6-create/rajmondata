@@ -9,9 +9,7 @@ import {
   Building2, 
   Users, 
   Briefcase, 
-  Clock, 
   Wallet, 
-  DollarSign,
   MessageSquare, 
   FileText, 
   ShieldCheck, 
@@ -63,10 +61,9 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   const portalLinks = [
     { label: 'Přehled', href: '/portal/dashboard', icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'accountant', 'employee', 'customer'] },
     { label: 'Zaměstnanci', href: '/portal/employees', icon: Users, roles: ['owner', 'admin', 'manager'] },
-    { label: 'Výplaty a výkazy', href: '/portal/employees/payroll', icon: DollarSign, roles: ['owner', 'admin', 'manager', 'accountant'] },
+    { label: 'Práce a mzdy', href: '/portal/labor/dochazka', icon: Wallet, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'] },
     { label: 'Zákazníci', href: '/portal/customers', icon: UserCircle, roles: ['owner', 'admin', 'manager', 'accountant'] },
     { label: 'Zakázky', href: '/portal/jobs', icon: Briefcase, roles: ['owner', 'admin', 'manager', 'employee', 'customer'] },
-    { label: 'Docházka', href: '/portal/attendance', icon: Clock, roles: ['owner', 'admin', 'manager', 'employee'] },
     { label: 'Finance', href: '/portal/finance', icon: Wallet, roles: ['owner', 'admin', 'accountant'] },
     { label: 'Faktury', href: '/portal/invoices', icon: ReceiptText, roles: ['owner', 'admin', 'accountant', 'customer'] },
     { label: 'Doklady', href: '/portal/documents', icon: FileText, roles: ['owner', 'admin', 'accountant'] },
@@ -83,6 +80,9 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     if (href === "/portal/dashboard" || href === "/admin/dashboard") return false;
     /** „Zaměstnanci“ jen přesná shoda — podstránky (např. payroll) mají vlastní položku. */
     if (href === "/portal/employees") return false;
+    if (href === "/portal/labor/dochazka") {
+      return pathname.startsWith("/portal/labor");
+    }
     return pathname.startsWith(`${href}/`);
   };
 

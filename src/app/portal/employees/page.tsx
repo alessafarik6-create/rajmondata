@@ -189,6 +189,10 @@ export default function EmployeesPage() {
   const [terminalPinClearEmp, setTerminalPinClearEmp] = useState<any | null>(null);
   const [terminalPinClearSaving, setTerminalPinClearSaving] = useState(false);
 
+  const [hourlyRateEmp, setHourlyRateEmp] = useState<any | null>(null);
+  const [hourlyRateInput, setHourlyRateInput] = useState("");
+  const [hourlyRateSaving, setHourlyRateSaving] = useState(false);
+
   const [assignWorklogEmployee, setAssignWorklogEmployee] = useState<any | null>(
     null
   );
@@ -420,6 +424,35 @@ export default function EmployeesPage() {
       });
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const saveHourlyRate = async () => {
+    if (!canManage || !companyId || !hourlyRateEmp?.id || !firestore) return;
+    const raw = hourlyRateInput.trim();
+    let hourlyRateValue: number | null = null;
+    if (raw !== "") {
+      const parsed = Number(raw.replace(",", "."));
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        toast({ variant: "destructive", title: "Neplatná sazba." });
+        return;
+      }
+      hourlyRateValue = parsed;
+    }
+    setHourlyRateSaving(true);
+    try {
+      await updateDoc(doc(firestore, "companies", companyId, "employees", hourlyRateEmp.id), {
+        hourlyRate: hourlyRateValue,
+        updatedAt: serverTimestamp(),
+      });
+      console.log("Employee hourly rate updated", { employeeId: hourlyRateEmp.id });
+      toast({ title: "Hodinová sazba uložena" });
+      setHourlyRateEmp(null);
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Uložení se nezdařilo." });
+    } finally {
+      setHourlyRateSaving(false);
     }
   };
 
@@ -1004,13 +1037,28 @@ export default function EmployeesPage() {
                                 <DropdownMenuItem
                                   onClick={() =>
                                     router.push(
-                                      `/portal/employees/payroll?employee=${encodeURIComponent(emp.id)}`
+                                      `/portal/labor/vyplaty?employee=${encodeURIComponent(emp.id)}`
                                     )
                                   }
                                 >
                                   <DollarSign className="w-4 h-4 mr-2" /> Výplaty
                                   a výkazy
                                 </DropdownMenuItem>
+                                {canManage && (
+                                  <DropdownMenuItem
+                                    onSelect={(e) => {
+                                      e.preventDefault();
+                                      setHourlyRateEmp(emp);
+                                      setHourlyRateInput(
+                                        emp.hourlyRate != null && emp.hourlyRate !== ""
+                                          ? String(emp.hourlyRate)
+                                          : ""
+                                      );
+                                    }}
+                                  >
+                                    <Edit2 className="w-4 h-4 mr-2" /> Hodinová sazba
+                                  </DropdownMenuItem>
+                                )}
                                 {canManage && (
                                   <>
                                     <DropdownMenuItem
@@ -1076,6 +1124,55 @@ export default function EmployeesPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog
+        open={!!hourlyRateEmp}
+        onOpenChange={(open) => {
+          if (!open) {
+            setHourlyRateEmp(null);
+            setHourlyRateInput("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">Hodinová sazba</DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {hourlyRateEmp
+                ? `${hourlyRateEmp.firstName} ${hourlyRateEmp.lastName} — výchozí Kč za hodinu (zakázka bez vlastní sazby, obecná práce).`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="hourly-rate-edit" className={INVITE_LABEL_CLASS}>
+              Kč / hod
+            </Label>
+            <Input
+              id="hourly-rate-edit"
+              className={INVITE_INPUT_CLASS}
+              inputMode="decimal"
+              value={hourlyRateInput}
+              onChange={(e) => setHourlyRateInput(e.target.value)}
+              placeholder="např. 250"
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setHourlyRateEmp(null);
+                setHourlyRateInput("");
+              }}
+            >
+              Zrušit
+            </Button>
+            <Button type="button" disabled={hourlyRateSaving} onClick={() => void saveHourlyRate()}>
+              {hourlyRateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={!!pwdResetEmployee}

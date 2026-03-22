@@ -316,7 +316,7 @@ export default function SettingsPage() {
               </div>
             </div>
             <Button asChild variant="outline" className="shrink-0">
-              <Link href="/portal/settings/work-tariffs">Spravovat tarify</Link>
+              <Link href="/portal/labor/tarify">Spravovat tarify</Link>
             </Button>
           </CardContent>
         </Card>

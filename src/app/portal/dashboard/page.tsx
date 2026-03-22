@@ -429,7 +429,7 @@ export default function CompanyDashboard() {
 
         <div className="flex flex-wrap gap-2 sm:gap-3">
           {!isCustomer && (
-            <Link href="/portal/attendance" className="min-w-[44px]">
+            <Link href="/portal/labor/dochazka" className="min-w-[44px]">
               <Button
                 variant="outlineLight"
                 className="min-h-[44px] w-full gap-2 sm:w-auto"
@@ -780,7 +780,7 @@ export default function CompanyDashboard() {
                 <CardTitle>Rychlé akce</CardTitle>
               </CardHeader>
               <CardContent className="grid gap-2">
-                <Link href="/portal/attendance">
+                <Link href="/portal/labor/dochazka">
                   <Button
                     variant="outlineLight"
                     className="min-h-[44px] w-full justify-start"

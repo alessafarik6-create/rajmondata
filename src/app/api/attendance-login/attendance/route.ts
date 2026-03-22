@@ -10,7 +10,6 @@ import {
   closeWorkSegment,
   createWorkSegment,
   findOpenWorkSegment,
-  loadActiveWorkTariffs,
   loadEmployeeAndRatesForSegment,
   type WorkSegmentSource,
 } from "@/lib/work-segment-server";
@@ -111,8 +110,6 @@ export async function POST(request: NextRequest) {
     const shiftOpen = isShiftOpenFromSorted(existing);
 
     const assignedJobIds = await getAssignedTerminalJobIds(db, companyId, employeeId);
-    const tariffs = await loadActiveWorkTariffs(db, companyId);
-    const hasChoice = assignedJobIds.length > 0 || tariffs.length > 0;
 
     const sourceType: WorkSegmentSource | null =
       body.sourceType === "tariff" ? "tariff" : body.sourceType === "job" ? "job" : null;
@@ -130,36 +127,29 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (actionRaw === "check-in" && hasChoice) {
-      if (!sourceType) {
-        return NextResponse.json(
-          { error: "Vyberte zakázku nebo interní tarif (činnost)." },
-          { status: 400 }
-        );
+    if (actionRaw === "check-in" && sourceType === "job") {
+      const jid = String(body.jobId || "").trim();
+      if (!jid || !assignedJobIds.includes(jid)) {
+        return NextResponse.json({ error: "Neplatná nebo nepřiřazená zakázka." }, { status: 400 });
       }
-      if (sourceType === "job") {
-        const jid = String(body.jobId || "").trim();
-        if (!jid || !assignedJobIds.includes(jid)) {
-          return NextResponse.json({ error: "Neplatná nebo nepřiřazená zakázka." }, { status: 400 });
-        }
-        const tSnap = await db.collection("companies").doc(companyId).collection("jobs").doc(jid).get();
-        if (!tSnap.exists) {
-          return NextResponse.json({ error: "Zakázka neexistuje." }, { status: 400 });
-        }
-      } else {
-        const tid = String(body.tariffId || "").trim();
-        if (!tid) {
-          return NextResponse.json({ error: "Vyberte tarif." }, { status: 400 });
-        }
-        const tr = await db.collection("companies").doc(companyId).collection("work_tariffs").doc(tid).get();
-        const td = tr.data() as { active?: boolean } | undefined;
-        if (!tr.exists || td?.active !== true) {
-          return NextResponse.json({ error: "Tarif neexistuje nebo není aktivní." }, { status: 400 });
-        }
+      const tSnap = await db.collection("companies").doc(companyId).collection("jobs").doc(jid).get();
+      if (!tSnap.exists) {
+        return NextResponse.json({ error: "Zakázka neexistuje." }, { status: 400 });
+      }
+    }
+    if (actionRaw === "check-in" && sourceType === "tariff") {
+      const tid = String(body.tariffId || "").trim();
+      if (!tid) {
+        return NextResponse.json({ error: "Vyberte tarif." }, { status: 400 });
+      }
+      const tr = await db.collection("companies").doc(companyId).collection("work_tariffs").doc(tid).get();
+      const td = tr.data() as { active?: boolean } | undefined;
+      if (!tr.exists || td?.active !== true) {
+        return NextResponse.json({ error: "Tarif neexistuje nebo není aktivní." }, { status: 400 });
       }
     }
 
-    if (actionRaw === "check-in" && hasChoice && sourceType) {
+    if (actionRaw === "check-in" && sourceType) {
       const jobId = sourceType === "job" ? String(body.jobId || "").trim() : null;
       const tariffId = sourceType === "tariff" ? String(body.tariffId || "").trim() : null;
       const meta = await loadEmployeeAndRatesForSegment(
@@ -232,12 +222,46 @@ export async function POST(request: NextRequest) {
 
     await db.collection("companies").doc(companyId).collection("attendance").add(docPayload);
 
+    if (type === "check_in") {
+      console.log("Employee checked in", { employeeId });
+    }
     console.log("Attendance saved");
     if (type === "check_out") {
+      console.log("Employee checked out", { employeeId });
       console.log("Attendance session closed");
     }
 
-    return NextResponse.json({ ok: true });
+    let activeSegment: {
+      sourceType: "job" | "tariff";
+      jobId: string | null;
+      jobName: string;
+      tariffId: string | null;
+      tariffName: string;
+      displayName: string;
+    } | null = null;
+    if (actionRaw === "check-in") {
+      const openAfter = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
+      if (openAfter) {
+        const d = openAfter.data() as {
+          sourceType?: string;
+          jobId?: string | null;
+          jobName?: string;
+          tariffId?: string | null;
+          tariffName?: string;
+          displayName?: string;
+        };
+        activeSegment = {
+          sourceType: d.sourceType === "tariff" ? "tariff" : "job",
+          jobId: typeof d.jobId === "string" ? d.jobId : null,
+          jobName: typeof d.jobName === "string" ? d.jobName : "",
+          tariffId: typeof d.tariffId === "string" ? d.tariffId : null,
+          tariffName: typeof d.tariffName === "string" ? d.tariffName : "",
+          displayName: typeof d.displayName === "string" ? d.displayName : "",
+        };
+      }
+    }
+
+    return NextResponse.json({ ok: true, activeSegment });
   } catch (e) {
     console.error("[attendance-login/attendance]", e);
     return NextResponse.json({ error: "Zápis docházky se nezdařil." }, { status: 500 });

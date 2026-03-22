@@ -45,7 +45,6 @@ export async function closeWorkSegment(
   nowMs: number,
   hourlyRateUsed: number | null
 ): Promise<{ durationHours: number; totalAmountCzk: number }> {
-  console.log("Closing previous work segment");
   const snap = await segmentRef.get();
   const data = snap.data() as
     | {
@@ -74,6 +73,7 @@ export async function closeWorkSegment(
     updatedAt: FieldValue.serverTimestamp(),
   });
 
+  console.log("Work segment ended", { durationHours, totalAmountCzk });
   console.log("Computed segment amount", { durationHours, totalAmountCzk });
   return { durationHours, totalAmountCzk };
 }
@@ -135,6 +135,7 @@ export async function createWorkSegment(params: {
   });
 
   console.log("Opening new work segment", { id: ref.id, sourceType, displayName });
+  console.log("Work segment started", { segmentId: ref.id, sourceType, displayName });
   return ref.id;
 }
 

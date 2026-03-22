@@ -39,7 +39,7 @@ export function EmployeePortalSidebar({
   const links = useMemo(
     () => [
       { label: t("home"), href: "/portal/employee", icon: LayoutDashboard },
-      { label: t("attendance"), href: "/portal/attendance", icon: Clock },
+      { label: t("attendance"), href: "/portal/labor/dochazka", icon: Clock },
       {
         label: t("workReport"),
         href: "/portal/employee/worklogs",
