@@ -21,6 +21,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { ensureUserFirestoreDocument } from '@/lib/ensure-user-firestore';
 import { useToast } from '@/hooks/use-toast';
 import { ORGANIZATIONS_COLLECTION, COMPANIES_COLLECTION, USERS_COLLECTION } from '@/lib/firestore-collections';
 import { DEFAULT_LICENSE } from '@/lib/license-modules';
@@ -317,15 +318,22 @@ export default function RegisterPage() {
       batch.set(doc(db, COMPANIES_COLLECTION, companyId), companyPayload);
 
       // 5. Uživatel (owner) vázaný na firmu
-      batch.set(doc(db, USERS_COLLECTION, user.uid), {
-        id: user.uid,
-        email: normalizedEmail,
-        displayName: formData.adminName,
-        companyId,
-        role: 'owner',
-        globalRoles: [],
-        createdAt: serverTimestamp(),
-      });
+      batch.set(
+        doc(db, USERS_COLLECTION, user.uid),
+        {
+          uid: user.uid,
+          id: user.uid,
+          email: normalizedEmail,
+          name: formData.adminName.trim(),
+          displayName: formData.adminName.trim(),
+          companyId,
+          role: "owner",
+          globalRoles: [],
+          language: "cs",
+          createdAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
 
       // 6. Role owner pro tuto organizaci
       batch.set(doc(db, USERS_COLLECTION, user.uid, 'company_roles', companyId), {
@@ -334,6 +342,15 @@ export default function RegisterPage() {
       });
 
       await batch.commit();
+
+      try {
+        await ensureUserFirestoreDocument(user, db);
+      } catch (ensureErr) {
+        console.error(
+          "[register] ensureUserFirestoreDocument after batch failed (non-fatal)",
+          ensureErr
+        );
+      }
 
       createdUser = null;
 

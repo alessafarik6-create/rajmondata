@@ -97,16 +97,22 @@ export async function ensureUserProfile(
     nameFallback: labelFromAuthUser(user),
   });
 
-  await setDoc(userRef, {
-    id: user.uid,
-    email: user.email ?? '',
-    displayName: user.displayName ?? null,
-    role: 'owner',
-    companyId,
-    globalRoles: [],
-    language: 'cs',
-    createdAt: serverTimestamp(),
-  });
+  await setDoc(
+    userRef,
+    {
+      uid: user.uid,
+      id: user.uid,
+      email: user.email ?? '',
+      name: labelFromAuthUser(user),
+      displayName: user.displayName ?? null,
+      role: "owner",
+      companyId,
+      globalRoles: [],
+      language: "cs",
+      createdAt: serverTimestamp(),
+    },
+    { merge: true }
+  );
 
   const roleRef = doc(firestore, 'users', user.uid, 'company_roles', companyId);
   await setDoc(roleRef, {

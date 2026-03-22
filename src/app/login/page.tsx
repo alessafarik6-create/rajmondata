@@ -29,6 +29,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { doc, getDoc } from "firebase/firestore";
 import { describeFirebaseAuthError } from "@/lib/firebase-client-env";
+import { ensureUserFirestoreDocument } from "@/lib/ensure-user-firestore";
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -88,7 +89,7 @@ export default function LoginPage() {
       return;
     }
 
-    if (!auth || !areServicesAvailable) {
+    if (!auth || !firestore || !areServicesAvailable) {
       toast({
         variant: "destructive",
         title: "Přihlášení není připravené",
@@ -112,30 +113,40 @@ export default function LoginPage() {
         password
       );
 
+      try {
+        await ensureUserFirestoreDocument(cred.user, firestore);
+      } catch (ensureErr) {
+        console.error("[LoginPage] ensureUserFirestoreDocument failed", ensureErr);
+        toast({
+          variant: "destructive",
+          title: "Profil ve Firestore",
+          description:
+            "Přihlášení proběhlo, ale profil se nepodařilo synchronizovat. Zkuste obnovit stránku.",
+        });
+      }
+
       toast({
         title: "Přihlášení úspěšné",
         description: `Vítejte zpět v ${PLATFORM_NAME}.`,
       });
 
       let target = "/portal/dashboard";
-      if (firestore && cred.user) {
-        try {
-          const snap = await getDoc(doc(firestore, "users", cred.user.uid));
-          if (snap.exists()) {
-            const d = snap.data();
-            const globalRoles = Array.isArray(d.globalRoles)
-              ? d.globalRoles
-              : [];
-            if (
-              d.role === "employee" &&
-              !globalRoles.includes("super_admin")
-            ) {
-              target = "/portal/employee";
-            }
+      try {
+        const snap = await getDoc(doc(firestore, "users", cred.user.uid));
+        if (snap.exists()) {
+          const d = snap.data();
+          const globalRoles = Array.isArray(d.globalRoles)
+            ? d.globalRoles
+            : [];
+          if (
+            d.role === "employee" &&
+            !globalRoles.includes("super_admin")
+          ) {
+            target = "/portal/employee";
           }
-        } catch (profileErr) {
-          console.warn("[LoginPage] profile redirect check failed", profileErr);
         }
+      } catch (profileErr) {
+        console.warn("[LoginPage] profile redirect check failed", profileErr);
       }
 
       window.location.assign(target);

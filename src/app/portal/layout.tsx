@@ -7,7 +7,7 @@ import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
 import { doc } from "firebase/firestore";
-import { ensureUserProfile } from "@/lib/seed-firestore";
+import { ensureUserFirestoreDocument } from "@/lib/ensure-user-firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
@@ -61,21 +61,14 @@ export default function PortalLayout({
 
   const isEmployeePortalPath = pathname.startsWith("/portal/employee");
 
-  /** Automatický seed profilu jen ve vývoji — v produkci vzniká firma výhradně přes registraci (žádné náhodné demo). */
-  const enableDevProfileSeed =
-    typeof process !== "undefined" && process.env.NODE_ENV === "development";
-
   /**
-   * Čekání na profil: načítání, seed, nebo (dev) krátké okno před spuštěním seedu.
-   * Nikdy jen „!profile“ bez toho — v produkci by to bylo nekonečné, když dokument users/{uid} neexistuje.
+   * Čekání na profil: načítání nebo doplnění chybějícího users/{uid} (ensureUserFirestoreDocument).
+   * Bez isSeeding by při chybějícím dokumentu vznikla nekonečná smyčka nebo okamžitá chybová obrazovka.
    */
   const waitingForProfileResolution =
     isProfileLoading ||
     isSeeding ||
-    (Boolean(user) &&
-      profile == null &&
-      enableDevProfileSeed &&
-      !seedError);
+    (Boolean(user) && profile == null && !seedError);
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
@@ -165,16 +158,12 @@ export default function PortalLayout({
     return () => window.clearTimeout(t);
   }, []);
 
-  /** Automatický seed profilu jen ve vývoji */
+  /** Chybí users/{uid} — doplnit (merge + případně ensureUserProfile uvnitř ensureUserFirestoreDocument). */
   useEffect(() => {
-    if (
-      !enableDevProfileSeed ||
-      !user ||
-      !firestore ||
-      isProfileLoading ||
-      profile != null ||
-      seedStartedRef.current
-    ) {
+    if (!user || !firestore || isProfileLoading || profile != null) {
+      return;
+    }
+    if (seedStartedRef.current) {
       return;
     }
 
@@ -182,29 +171,32 @@ export default function PortalLayout({
     setIsSeeding(true);
     setSeedError(null);
 
-    ensureUserProfile(user, firestore)
+    let cancelled = false;
+
+    ensureUserFirestoreDocument(user, firestore)
       .then(() => {
         if (typeof window !== "undefined") {
           console.debug(
-            "[PortalLayout] Dev seed completed, profile will update via useDoc"
+            "[PortalLayout] ensureUserFirestoreDocument completed, profile will update via useDoc"
           );
         }
       })
       .catch((err) => {
-        console.error("[PortalLayout] Dev seed failed", err);
-        setSeedError(err instanceof Error ? err : new Error("Seed failed"));
+        console.error("[PortalLayout] ensureUserFirestoreDocument failed", err);
+        setSeedError(err instanceof Error ? err : new Error("Profil se nepodařilo doplnit"));
         seedStartedRef.current = false;
       })
       .finally(() => {
-        setIsSeeding(false);
+        if (!cancelled) {
+          setIsSeeding(false);
+        }
       });
-  }, [
-    enableDevProfileSeed,
-    user,
-    firestore,
-    isProfileLoading,
-    profile,
-  ]);
+
+    return () => {
+      cancelled = true;
+      seedStartedRef.current = false;
+    };
+  }, [user, firestore, isProfileLoading, profile]);
 
   const shellTimeoutUi = (
     <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4 py-8">
