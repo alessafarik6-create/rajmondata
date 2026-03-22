@@ -12,9 +12,13 @@ const nextConfig: NextConfig = {
       },
       {
         source: "/portal/attendance/terminal-access/:token",
-        destination: "/terminal",
+        destination: "/portal/attendance",
         permanent: false,
       },
+      { source: "/terminal", destination: "/portal/attendance", permanent: false },
+      { source: "/companies/:companyId/terminal", destination: "/portal/attendance", permanent: false },
+      { source: "/portal/attendance/terminal", destination: "/portal/attendance", permanent: false },
+      { source: "/portal/attendance/terminal/settings", destination: "/portal/attendance", permanent: false },
     ];
   },
   eslint: {

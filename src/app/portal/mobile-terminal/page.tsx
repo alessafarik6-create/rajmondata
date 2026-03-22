@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-/** Alias URL — stejný obsah jako /portal/attendance/terminal */
-export default function MobileTerminalAliasPage() {
-  redirect("/portal/attendance/terminal");
+/** Přesměrování staré URL — veřejná docházka je na /attendance-login (s companyId z portálu). */
+export default function MobileTerminalRedirectPage() {
+  redirect("/portal/attendance");
 }

@@ -13,7 +13,7 @@ function getPublicOrigin(request: NextRequest): string {
 }
 
 /**
- * Docházkový terminál je na pevné cestě `/terminal` (bez tokenů v URL).
+ * Veřejná docházka je na `/attendance-login?companyId=…` (PIN, bez Firebase Auth na klientovi).
  */
 export async function GET(
   request: NextRequest,
@@ -41,7 +41,7 @@ export async function GET(
     }
 
     const origin = getPublicOrigin(request);
-    const path = "/terminal";
+    const path = `/attendance-login?companyId=${encodeURIComponent(companyId)}`;
     const url = origin ? `${origin}${path}` : path;
 
     return NextResponse.json({

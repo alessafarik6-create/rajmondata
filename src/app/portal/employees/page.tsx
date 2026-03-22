@@ -1,5 +1,4 @@
 "use client";
-import { Separator } from "@/components/ui/separator";
 
 import React, { useState, useEffect, useMemo, startTransition } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -22,9 +21,7 @@ import {
   DollarSign,
   KeyRound,
   RefreshCw,
-  QrCode,
   Eye,
-  DownloadCloud,
   Briefcase,
   AlertTriangle,
   Link2,
@@ -54,8 +51,6 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Label } from '@/components/ui/label';
 import { cn } from "@/lib/utils";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-
 /** Světlý styl polí v modálu „Pozvat člena týmu“ (neovlivní zbytek portálu). */
 const INVITE_INPUT_CLASS =
   "flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-base text-black ring-offset-0 placeholder:text-gray-400 focus-visible:border-orange-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:ring-offset-0 md:text-sm disabled:opacity-70";
@@ -96,7 +91,7 @@ function jobIdSetsEqual(a: Set<string>, b: Set<string>): boolean {
   return true;
 }
 
-/** PIN terminálu aktivní (hash v private nebo legacy pole attendancePin). */
+/** PIN docházky aktivní (hash v private nebo legacy pole attendancePin). */
 function employeeTerminalPinActive(emp: Record<string, unknown>): boolean {
   if (emp.terminalPinActive === true) return true;
   if (emp.terminalPinActive === false) return false;
@@ -194,10 +189,6 @@ export default function EmployeesPage() {
   const [terminalPinClearEmp, setTerminalPinClearEmp] = useState<any | null>(null);
   const [terminalPinClearSaving, setTerminalPinClearSaving] = useState(false);
 
-  const [terminalCfgCompanyId, setTerminalCfgCompanyId] = useState<string | null>(null);
-  const [terminalCfgLoading, setTerminalCfgLoading] = useState(false);
-  const [terminalBindSaving, setTerminalBindSaving] = useState(false);
-
   const [assignWorklogEmployee, setAssignWorklogEmployee] = useState<any | null>(
     null
   );
@@ -274,29 +265,6 @@ export default function EmployeesPage() {
     );
   }, [terminalEmployeeId, assignTerminalEmployee]);
 
-  useEffect(() => {
-    if (!companyId || !canView) return;
-    let cancelled = false;
-    setTerminalCfgLoading(true);
-    void fetch("/api/terminal/config")
-      .then(async (res) => {
-        const data = (await res.json().catch(() => ({}))) as { companyId?: string };
-        if (cancelled) return;
-        setTerminalCfgCompanyId(
-          typeof data.companyId === "string" ? data.companyId.trim() : null
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setTerminalCfgCompanyId(null);
-      })
-      .finally(() => {
-        if (!cancelled) setTerminalCfgLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [companyId, canView]);
-
   const toggleAssignWorklogJob = (jobId: string) => {
     setAssignWorklogJobIds((prev) => {
       const next = new Set(prev);
@@ -364,7 +332,7 @@ export default function EmployeesPage() {
       );
       toast({
         title: "Uloženo",
-        description: "Zakázky pro docházkový terminál byly aktualizovány.",
+        description: "Zakázky pro veřejné přihlášení docházky byly aktualizovány.",
       });
       setAssignTerminalEmployee(null);
     } catch {
@@ -502,39 +470,6 @@ export default function EmployeesPage() {
     };
   };
 
-  const bindTerminalToCompany = async () => {
-    if (!user || !companyId || !canManage) return;
-    setTerminalBindSaving(true);
-    try {
-      const idToken = await user.getIdToken();
-      const res = await fetch("/api/company/terminal-config", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${idToken}`,
-        },
-        body: JSON.stringify({ companyId }),
-      });
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        throw new Error(
-          typeof data.error === "string" ? data.error : "Propojení terminálu se nezdařilo."
-        );
-      }
-      setTerminalCfgCompanyId(companyId);
-      toast({
-        title: "Terminál propojen",
-        description:
-          "Záznam terminálOdkazy (a config/terminal) nyní ukazuje na tuto firmu. Ověření PINu na /terminal bude odpovídat administraci.",
-      });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : "Propojení terminálu se nezdařilo.";
-      toast({ variant: "destructive", title: "Chyba", description: msg });
-    } finally {
-      setTerminalBindSaving(false);
-    }
-  };
-
   const closeTerminalPinManual = () => {
     setTerminalPinManualOpen(false);
     setTerminalPinManualEmp(null);
@@ -646,18 +581,6 @@ export default function EmployeesPage() {
       toast({ variant: "destructive", title: "Chyba", description: msg });
     } finally {
       setTerminalPinClearSaving(false);
-    }
-  };
-
-  const generateQrId = async (employeeId: string) => {
-    if (!canManage || !companyId) return;
-    const newQrId = `QR-${Math.random().toString(36).substring(2, 15)}`;
-    try {
-      const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
-      await updateDoc(docRef, { attendanceQrId: newQrId });
-      toast({ title: "QR ID vygenerováno", description: "Nový identifikátor pro QR docházku byl vytvořen." });
-    } catch (error) {
-      toast({ variant: "destructive", title: "Chyba" });
     }
   };
 
@@ -918,47 +841,6 @@ export default function EmployeesPage() {
         </div>
       </div>
 
-      {canManage &&
-        !terminalCfgLoading &&
-        terminalCfgCompanyId &&
-        companyId &&
-        terminalCfgCompanyId !== companyId && (
-          <Alert variant="destructive" className="max-w-4xl border-amber-500/50 bg-amber-50 text-amber-950 dark:bg-amber-950/30 dark:text-amber-100">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertTitle>Terminál ukazuje na jinou firmu</AlertTitle>
-            <AlertDescription className="space-y-3 text-amber-950/90 dark:text-amber-100/90">
-              <p>
-                Veřejný terminál (/terminal) na serveru používá firmu{" "}
-                <strong className="font-mono">{terminalCfgCompanyId}</strong>, tento portál spravuje firmu{" "}
-                <strong className="font-mono">{companyId}</strong>. PIN uložený zde se na terminálu neověří, dokud
-                nebude shoda konfigurace.
-              </p>
-              <p className="text-xs opacity-90">
-                Primárně se firma pro terminál bere z kolekce{" "}
-                <code className="rounded bg-black/5 px-1 dark:bg-white/10">terminálOdkazy</code> (aktivní + ID
-                společnosti). Proměnná{" "}
-                <code className="rounded bg-black/5 px-1 dark:bg-white/10">TERMINAL_COMPANY_ID</code> ji může přebít —
-                musí odpovídat této firmě, nebo ji vyjměte a použijte tlačítko níže.
-              </p>
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                className="gap-2"
-                onClick={() => void bindTerminalToCompany()}
-                disabled={terminalBindSaving}
-              >
-                {terminalBindSaving ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Link2 className="h-4 w-4" />
-                )}
-                Propojit terminál s touto firmou
-              </Button>
-            </AlertDescription>
-          </Alert>
-        )}
-
       <Card className="bg-surface border-border overflow-hidden">
         <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">
           <div className="relative w-80">
@@ -985,7 +867,7 @@ export default function EmployeesPage() {
                 <TableRow className="border-border hover:bg-transparent">
                   <TableHead className="pl-6">Zaměstnanec</TableHead>
                   <TableHead>Role</TableHead>
-                  <TableHead>Identifikace (PIN/QR)</TableHead>
+                  <TableHead>PIN docházky</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="pr-6 text-right">Akce</TableHead>
                 </TableRow>
@@ -1024,18 +906,6 @@ export default function EmployeesPage() {
                             >
                               Změnit v profilu
                             </Badge>
-                          )}
-                          <Separator orientation="vertical" className="h-3 mx-1" />
-                          {emp.attendanceQrId ? (
-                            <Button 
-                              variant="ghost" 
-                              className="h-auto p-0 text-[10px] text-primary font-bold uppercase gap-1"
-                              onClick={() => setQrEmployee(emp)}
-                            >
-                              <QrCode className="w-3 h-3" /> QR aktivní
-                            </Button>
-                          ) : (
-                            <span className="text-[10px] text-muted-foreground uppercase">Bez QR</span>
                           )}
                         </div>
                         <span className="font-mono text-[10px] text-muted-foreground">
@@ -1087,12 +957,6 @@ export default function EmployeesPage() {
                                   {employeeTerminalPinActive(emp as Record<string, unknown>)
                                     ? "Resetovat / vygenerovat PIN"
                                     : "Vygenerovat PIN"}
-                                </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => {
-                                  if (!emp.attendanceQrId) generateQrId(emp.id);
-                                  setQrEmployee(emp);
-                                }}>
-                                  <QrCode className="w-4 h-4 mr-2" /> {emp.attendanceQrId ? 'Zobrazit QR kód' : 'Generovat QR kód'}
                                 </DropdownMenuItem>
                                 {employeeTerminalPinActive(emp as Record<string, unknown>) && (
                                   <DropdownMenuItem
@@ -1171,7 +1035,7 @@ export default function EmployeesPage() {
                                       }}
                                     >
                                       <Briefcase className="w-4 h-4 mr-2" /> Zakázky
-                                      pro docházkový terminál
+                                      pro veřejné přihlášení docházky
                                     </DropdownMenuItem>
                                   </>
                                 )}
@@ -1296,7 +1160,7 @@ export default function EmployeesPage() {
         <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
-              Nastavit výchozí PIN terminálu
+              Nastavit PIN docházky
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
               {terminalPinManualEmp
@@ -1370,7 +1234,7 @@ export default function EmployeesPage() {
         <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
-              {terminalPinGeneratedDisplay ? "Nový PIN terminálu" : "Vygenerovat nový PIN"}
+              {terminalPinGeneratedDisplay ? "Nový PIN docházky" : "Vygenerovat nový PIN"}
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
               {terminalPinGenerateEmp
@@ -1441,13 +1305,13 @@ export default function EmployeesPage() {
       >
         <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
           <DialogHeader>
-            <DialogTitle className="text-lg font-semibold text-black">Zrušit PIN terminálu</DialogTitle>
+            <DialogTitle className="text-lg font-semibold text-black">Zrušit PIN docházky</DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
               {terminalPinClearEmp
                 ? `${terminalPinClearEmp.firstName} ${terminalPinClearEmp.lastName}`
                 : ""}
               <span className="block mt-2">
-                Zaměstnanec se již nebude moci přihlásit PINem na terminálu, dokud administrátor PIN znovu
+                Zaměstnanec se již nebude moci přihlásit PINem na veřejné docházce, dokud administrátor PIN znovu
                 nenastaví.
               </span>
             </DialogDescription>
@@ -1570,13 +1434,13 @@ export default function EmployeesPage() {
         <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
-              Zakázky pro docházkový terminál
+              Zakázky pro veřejné přihlášení docházky
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
               {assignTerminalEmployee
                 ? `${assignTerminalEmployee.firstName} ${assignTerminalEmployee.lastName}`
                 : ""}{" "}
-              uvidí při příchodu na terminálu jen tyto zakázky (odděleně od výkazu práce).
+              uvidí při příchodu na veřejné docházce jen tyto zakázky (odděleně od výkazu práce).
             </DialogDescription>
           </DialogHeader>
           <div className="max-h-[50vh] space-y-2 overflow-y-auto py-2">
@@ -1635,33 +1499,6 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* QR Code Dialog */}
-      <Dialog open={!!qrEmployee} onOpenChange={() => setQrEmployee(null)}>
-        <DialogContent className="bg-surface border-border max-w-xs sm:max-w-sm">
-          <DialogHeader>
-            <DialogTitle>Docházkový QR kód</DialogTitle>
-            <DialogDescription>
-              Zaměstnanec: {qrEmployee?.firstName} {qrEmployee?.lastName}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col items-center justify-center p-6 bg-white rounded-xl space-y-4">
-            {qrEmployee?.attendanceQrId && (
-              <QRCodeSVG 
-                value={qrEmployee.attendanceQrId} 
-                size={200}
-                level="H"
-                includeMargin={true}
-              />
-            )}
-            <p className="text-black font-mono text-[10px] select-all">{qrEmployee?.attendanceQrId}</p>
-          </div>
-          <DialogFooter className="sm:justify-center">
-            <Button className="w-full gap-2" onClick={() => window.print()}>
-              <DownloadCloud className="w-4 h-4" /> Vytisknout kartu
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

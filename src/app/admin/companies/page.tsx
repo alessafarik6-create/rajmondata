@@ -153,7 +153,9 @@ export default function AdminCompaniesPage() {
 
   useEffect(() => {
     if (terminalFor && typeof window !== "undefined") {
-      setTerminalPublicUrl(`${window.location.origin}/terminal`);
+      setTerminalPublicUrl(
+        `${window.location.origin}/attendance-login?companyId=${encodeURIComponent(terminalFor.id)}`
+      );
     } else {
       setTerminalPublicUrl("");
     }
@@ -428,12 +430,10 @@ export default function AdminCompaniesPage() {
       >
         <DialogContent className="max-w-lg bg-white border-slate-200 text-slate-900" data-portal-dialog>
           <DialogHeader>
-            <DialogTitle>Docházkový terminál – {terminalFor?.name}</DialogTitle>
+            <DialogTitle>Veřejná docházka – {terminalFor?.name}</DialogTitle>
             <DialogDescription>
-              Veřejná cesta <code className="text-xs bg-slate-100 px-1 rounded">/terminal</code> — po otevření se tablet
-              přihlásí jako kiosk. Která firma se použije, určuje server (proměnná{" "}
-              <code className="text-xs bg-slate-100 px-1 rounded">TERMINAL_COMPANY_ID</code> nebo první firma v
-              databázi). Zaměstnanci se identifikují PINem nebo QR kódem.
+              Odkaz vede na <code className="text-xs bg-slate-100 px-1 rounded">/attendance-login</code> s ID této
+              firmy. Zaměstnanci vybírají profil a zadávají PIN (bez přihlášení do portálu).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -443,7 +443,7 @@ export default function AdminCompaniesPage() {
                 <Input
                   readOnly
                   value={terminalPublicUrl}
-                  placeholder="/terminal"
+                  placeholder="/attendance-login?companyId=…"
                   className="font-mono text-xs bg-slate-50 border-slate-200"
                 />
                 <Button
@@ -460,7 +460,7 @@ export default function AdminCompaniesPage() {
             <DialogFooter className="flex-col sm:flex-row gap-2 pt-2">
               <Button type="button" variant="default" onClick={() => openTerminalInNewTab()} disabled={!terminalPublicUrl}>
                 <ExternalLink className="w-4 h-4 mr-2" />
-                Otevřít terminál
+                Otevřít docházku
               </Button>
             </DialogFooter>
           </div>

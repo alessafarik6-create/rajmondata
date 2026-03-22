@@ -28,7 +28,6 @@ import {
   History,
   Timer,
   Smartphone,
-  Settings,
 } from "lucide-react";
 import {
   useUser,
@@ -202,25 +201,19 @@ export default function AttendancePage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          {isAdmin && (
-            <Link href="/portal/attendance/terminal/settings">
-              <Button
-                variant="outlineLight"
-                size="icon"
-                className="h-11 w-11 shrink-0"
-                title="Nastavení terminálů"
-              >
-                <Settings className="w-4 h-4" />
+          {companyId ? (
+            <Link
+              href={`/attendance-login?companyId=${encodeURIComponent(companyId)}`}
+              className="min-w-0"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
+                <Smartphone className="w-4 h-4 shrink-0" />
+                Přihlášení zaměstnance
               </Button>
             </Link>
-          )}
-
-          <Link href="/portal/attendance/terminal" className="min-w-0">
-            <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
-              <Smartphone className="w-4 h-4 shrink-0" />
-              Mobilní terminál
-            </Button>
-          </Link>
+          ) : null}
 
           <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm text-right min-w-[180px] hidden sm:block">
             <p className="text-4xl font-mono font-bold text-primary">
@@ -245,7 +238,7 @@ export default function AttendancePage() {
             className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"
           >
             <Timer className="w-4 h-4 shrink-0" />
-            Terminál
+            Rychlý záznam
           </TabsTrigger>
 
           <TabsTrigger
@@ -271,10 +264,9 @@ export default function AttendancePage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:gap-8">
             <Card className="lg:col-span-2 min-w-0">
               <CardHeader>
-                <CardTitle>Docházkový terminál</CardTitle>
+                <CardTitle>Rychlý záznam (přihlášený účet)</CardTitle>
                 <CardDescription>
-                  Zaznamenejte svůj příchod, pauzu nebo odchod kliknutím na
-                  příslušné tlačítko.
+                  Příchod, pauza a odchod z portálu. Veřejné přihlášení jen přes PIN je na stránce Přihlášení zaměstnance.
                 </CardDescription>
               </CardHeader>
 
@@ -403,7 +395,7 @@ export default function AttendancePage() {
                       <TableHead>Datum</TableHead>
                       <TableHead>Čas</TableHead>
                       <TableHead>Typ akce</TableHead>
-                      <TableHead className="text-right">Terminál</TableHead>
+                      <TableHead className="text-right">Zdroj</TableHead>
                     </TableRow>
                   </TableHeader>
 
@@ -439,7 +431,9 @@ export default function AttendancePage() {
                           <TableCell>{getStatusBadge(row.type)}</TableCell>
 
                           <TableCell className="text-right text-muted-foreground text-xs">
-                            {row.terminalId || "Web"}
+                            {row.source === "attendance-login"
+                              ? "PIN"
+                              : row.terminalId || "Web"}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -514,7 +508,9 @@ export default function AttendancePage() {
                           <TableCell>{getStatusBadge(row.type)}</TableCell>
 
                           <TableCell className="text-right text-muted-foreground text-xs italic">
-                            {row.terminalId || "Web"}
+                            {row.source === "attendance-login"
+                              ? "PIN"
+                              : row.terminalId || "Web"}
                           </TableCell>
                         </TableRow>
                       ))}

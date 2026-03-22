@@ -68,7 +68,7 @@ export function getAdminAuth(): Auth | null {
   }
 }
 
-/** Pro diagnostiku API (např. /api/terminal/config) — žádné tajné klíče. */
+/** Pro diagnostiku (env vs Admin app) — žádné tajné klíče. */
 export function getFirebaseAdminDebugSummary(): {
   envFirebaseProjectId: string | null;
   envNextPublicFirebaseProjectId: string | null;
