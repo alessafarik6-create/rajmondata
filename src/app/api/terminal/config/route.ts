@@ -11,7 +11,11 @@ export async function GET() {
 
     if (!result.success) {
       return NextResponse.json(
-        { success: false, error: result.error },
+        {
+          success: false,
+          error: result.error,
+          ...(result.debug ? { debug: result.debug } : {}),
+        },
         { status: result.status }
       );
     }
