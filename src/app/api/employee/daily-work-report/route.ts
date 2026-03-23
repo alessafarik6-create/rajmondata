@@ -21,6 +21,8 @@ type Body = {
   segmentJobSplits?: Array<{ segmentId?: string; jobId?: string; hours?: number }>;
   /** Volitelné poznámky k řádkům hlavního denního formuláře (odpovídají pořadí řádků u odemčených úseků). */
   dayWorkLines?: Array<{ lineNote?: string }>;
+  /** Poznámky k uzamčeným úsekům (segmentId → text), např. tarif nebo zakázka z terminálu. */
+  segmentLineNotes?: Record<string, string>;
   /** `draft` = rozpracováno, `submit` = odeslat ke schválení */
   mode?: "draft" | "submit";
 };
@@ -148,6 +150,21 @@ export async function POST(request: NextRequest) {
         }))
       : null;
 
+    let segmentLineNotesPayload: Record<string, string> | undefined;
+    if (
+      body.segmentLineNotes !== undefined &&
+      body.segmentLineNotes !== null &&
+      typeof body.segmentLineNotes === "object" &&
+      !Array.isArray(body.segmentLineNotes)
+    ) {
+      segmentLineNotesPayload = Object.fromEntries(
+        Object.entries(body.segmentLineNotes as Record<string, unknown>).map(([k, v]) => [
+          String(k).trim(),
+          typeof v === "string" ? v.trim() : "",
+        ])
+      );
+    }
+
     const rawSplits =
       Array.isArray(body.segmentJobSplits) && body.segmentJobSplits.length > 0
         ? body.segmentJobSplits
@@ -202,6 +219,7 @@ export async function POST(request: NextRequest) {
       segmentAllocations,
       segmentJobSplits,
       ...(dayWorkLines !== null ? { dayWorkLines } : {}),
+      ...(segmentLineNotesPayload !== undefined ? { segmentLineNotes: segmentLineNotesPayload } : {}),
       hoursFromAttendance,
       hoursConfirmed,
       estimatedLaborFromSegmentsCzk:

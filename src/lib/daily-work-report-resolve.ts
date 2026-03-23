@@ -5,6 +5,10 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 import {
+  NO_JOB_SEGMENT_JOB_ID,
+  isNoJobSegmentJobId,
+} from "@/lib/daily-work-report-constants";
+import {
   computeSegmentAmount,
   resolveEmployeeDefaultHourlyRate,
   resolveJobHourlyRate,
@@ -90,10 +94,10 @@ export async function resolveSegmentJobSplits(
   const bySegment = new Map<string, Array<{ jobId: string; hours: number }>>();
   for (const row of list) {
     const sid = String(row.segmentId || "").trim();
-    const jid = String(row.jobId || "").trim();
+    let jid = String(row.jobId ?? "").trim();
     const hr = Number(row.hours);
-    if (!sid || !jid) {
-      throw new Error("Každý řádek musí mít úsek docházky a zakázku.");
+    if (!sid) {
+      throw new Error("Každý řádek musí mít úsek docházky.");
     }
     if (!Number.isFinite(hr) || hr <= 0) {
       throw new Error("Počet hodin musí být kladné číslo.");
@@ -112,11 +116,26 @@ export async function resolveSegmentJobSplits(
     }
 
     const { locked, mode: lockMode, termJobId } = segmentLockedFromTerminalData(d);
-    if (
-      !assigned.has(jid) &&
-      !(locked && lockMode === "job_terminal" && jid === termJobId)
-    ) {
-      throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
+
+    if (isNoJobSegmentJobId(jid)) {
+      if (lockMode === "job_terminal") {
+        throw new Error(
+          "U úseku s vybranou zakázkou v terminálu musí být ve výkazu uvedena stejná zakázka."
+        );
+      }
+      if (lockMode === "tariff_terminal" || lockMode === null) {
+        jid = NO_JOB_SEGMENT_JOB_ID;
+      }
+    } else {
+      if (lockMode === "tariff_terminal") {
+        throw new Error("U tarifového úseku z terminálu nelze přiřadit zakázku — pouze popis práce.");
+      }
+      if (
+        !assigned.has(jid) &&
+        !(locked && lockMode === "job_terminal" && jid === termJobId)
+      ) {
+        throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
+      }
     }
 
     const dh =
@@ -202,10 +221,18 @@ export async function resolveSegmentJobSplits(
     hoursSum += sum;
 
     for (const r of rows) {
-      const jobSnap = await db.collection("companies").doc(companyId).collection("jobs").doc(r.jobId).get();
-      const jobName = jobSnap.exists
-        ? String((jobSnap.data() as { name?: string })?.name || "").trim() || null
-        : null;
+      let jobName: string | null = null;
+      if (!isNoJobSegmentJobId(r.jobId)) {
+        const jobSnap = await db
+          .collection("companies")
+          .doc(companyId)
+          .collection("jobs")
+          .doc(r.jobId)
+          .get();
+        jobName = jobSnap.exists
+          ? String((jobSnap.data() as { name?: string })?.name || "").trim() || null
+          : null;
+      }
 
       segmentJobSplits.push({
         segmentId: id,
@@ -230,12 +257,14 @@ export async function resolveSegmentJobSplits(
     }
   }
 
+  const firstWithJob = segmentJobSplits.find((s) => !isNoJobSegmentJobId(s.jobId));
+
   return {
     hoursSum: hoursRounded,
     segmentJobSplits,
     segmentAllocations,
-    primaryJobId: segmentJobSplits[0]?.jobId ?? null,
-    primaryJobName: segmentJobSplits[0]?.jobName ?? null,
+    primaryJobId: firstWithJob?.jobId ?? null,
+    primaryJobName: firstWithJob?.jobName ?? null,
   };
 }
 
@@ -249,6 +278,10 @@ export async function estimateLaborFromJobSplits(
   const empDefault = resolveEmployeeDefaultHourlyRate(emp);
   let total = 0;
   for (const s of splits) {
+    if (isNoJobSegmentJobId(s.jobId)) {
+      total += computeSegmentAmount(s.hours, empDefault);
+      continue;
+    }
     const jobSnap = await db.collection("companies").doc(companyId).collection("jobs").doc(s.jobId).get();
     const jd = jobSnap.data() as Record<string, unknown> | undefined;
     const rate = resolveJobHourlyRate(jd, empDefault);

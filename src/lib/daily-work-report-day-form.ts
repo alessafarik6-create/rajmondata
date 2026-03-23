@@ -3,6 +3,7 @@
  * a zpětné rozložení na segmentJobSplits pro API (sekvenční čerpání v čase úseků).
  */
 
+import { NO_JOB_SEGMENT_JOB_ID, isNoJobSegmentJobId } from "@/lib/daily-work-report-constants";
 import type { WorkSegmentClient } from "@/lib/work-segment-client";
 import {
   getTerminalSegmentLockKind,
@@ -64,28 +65,6 @@ export function sumClosedSegmentHours(segments: WorkSegmentClient[]): number {
   return Math.round(s * 100) / 100;
 }
 
-/** Vyplnění zakázky u tarifových úseků z uloženého výkazu. */
-export function initTariffJobSelectionsFromReport(
-  lockedSegments: WorkSegmentClient[],
-  report: Record<string, unknown> | null | undefined
-): Record<string, string> {
-  const out: Record<string, string> = {};
-  const saved = report?.segmentJobSplits;
-  const bySeg = new Map<string, string>();
-  if (Array.isArray(saved)) {
-    for (const item of saved as { segmentId?: string; jobId?: string }[]) {
-      const sid = String(item.segmentId || "").trim();
-      const jid = String(item.jobId || "").trim();
-      if (sid && jid && !bySeg.has(sid)) bySeg.set(sid, jid);
-    }
-  }
-  for (const seg of lockedSegments) {
-    if (getTerminalSegmentLockKind(seg) !== "tariff_terminal") continue;
-    out[seg.id] = bySeg.get(seg.id) || "";
-  }
-  return out;
-}
-
 /**
  * Z uloženého výkazu složí jednu řadu řádků pro odemčené úseky (pořadí podle začátku úseku).
  */
@@ -98,9 +77,10 @@ export function mergeUnlockedRowsFromReport(
   if (Array.isArray(saved) && saved.length > 0) {
     for (const item of saved as { segmentId?: string; jobId?: string; hours?: number }[]) {
       const sid = String(item.segmentId || "").trim();
-      const jid = String(item.jobId || "").trim();
+      const rawJid = String(item.jobId || "").trim();
+      const jid = isNoJobSegmentJobId(rawJid) ? "" : rawJid;
       const hr = typeof item.hours === "number" && Number.isFinite(item.hours) ? item.hours : 0;
-      if (!sid || !jid || hr <= 0) continue;
+      if (!sid || hr <= 0) continue;
       if (!bySeg.has(sid)) bySeg.set(sid, []);
       bySeg.get(sid)!.push({
         rowId: `load-${sid}-${bySeg.get(sid)!.length}`,
@@ -171,9 +151,10 @@ export function sequentialFillUnlockedSegments(
   type QueueItem = { jobId: string; hours: number };
   const queue: QueueItem[] = [];
   for (const r of rows) {
-    const jid = String(r.jobId || "").trim();
+    const jidRaw = String(r.jobId || "").trim();
+    const jid = jidRaw ? jidRaw : NO_JOB_SEGMENT_JOB_ID;
     const h = parseHours(r.hoursStr);
-    if (!jid || h == null) continue;
+    if (h == null) continue;
     queue.push({ jobId: jid, hours: Math.round(h * 100) / 100 });
   }
 
@@ -209,8 +190,7 @@ export function sequentialFillUnlockedSegments(
 
 /** Uzamčené úseky z terminálu (tarif / zakázka) → řádky pro API. */
 export function buildLockedTerminalSplits(
-  lockedSegments: WorkSegmentClient[],
-  tariffJobBySegmentId: Record<string, string>
+  lockedSegments: WorkSegmentClient[]
 ): Array<{ segmentId: string; jobId: string; hours: number }> {
   const sorted = sortSegmentsByStart(lockedSegments);
   const out: Array<{ segmentId: string; jobId: string; hours: number }> = [];
@@ -222,8 +202,7 @@ export function buildLockedTerminalSplits(
       const termJid = String(seg.jobId || "").trim();
       if (termJid) out.push({ segmentId: seg.id, jobId: termJid, hours: dur });
     } else if (k === "tariff_terminal") {
-      const jid = String(tariffJobBySegmentId[seg.id] || "").trim();
-      if (jid) out.push({ segmentId: seg.id, jobId: jid, hours: dur });
+      out.push({ segmentId: seg.id, jobId: NO_JOB_SEGMENT_JOB_ID, hours: dur });
     }
   }
   return out;
@@ -233,11 +212,10 @@ export function buildLockedTerminalSplits(
 export function buildFullSegmentJobSplits(
   closedSegments: WorkSegmentClient[],
   dayFormRows: DayFormRow[],
-  tariffJobBySegmentId: Record<string, string>,
   parseHours: ParseHours
 ): Array<{ segmentId: string; jobId: string; hours: number }> {
   const { locked, unlocked } = effectiveLockedUnlocked(closedSegments);
-  const head = buildLockedTerminalSplits(locked, tariffJobBySegmentId);
+  const head = buildLockedTerminalSplits(locked);
   if (unlocked.length === 0) return head;
   const tail = sequentialFillUnlockedSegments(unlocked, dayFormRows, parseHours);
   return [...head, ...tail];
