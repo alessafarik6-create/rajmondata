@@ -12,6 +12,7 @@ import {
   computeSegmentAmount,
   resolveEmployeeDefaultHourlyRate,
   resolveJobHourlyRate,
+  resolveTariffHourlyRate,
 } from "@/lib/work-segment-rates";
 
 const EPS = 0.02;
@@ -295,7 +296,7 @@ export async function resolveSegmentJobSplits(
   };
 }
 
-/** Orientační výše mzdy z rozdělení podle sazeb zakázek (ne z částky terminálového segmentu). */
+/** Orientační výše mzdy: tarify podle ceníku tarifu, jinak zakázka / výchozí sazba zaměstnance. */
 export async function estimateLaborFromJobSplits(
   db: Firestore,
   companyId: string,
@@ -303,8 +304,44 @@ export async function estimateLaborFromJobSplits(
   splits: SegmentJobSplitOut[]
 ): Promise<number> {
   const empDefault = resolveEmployeeDefaultHourlyRate(emp);
+  const segCol = db.collection("companies").doc(companyId).collection("work_segments");
+  const tariffCol = db.collection("companies").doc(companyId).collection("work_tariffs");
+
+  const segmentById = new Map<string, Record<string, unknown>>();
+  const tariffRateById = new Map<string, number | null>();
+
+  for (const s of splits) {
+    const sid = s.segmentId;
+    if (!segmentById.has(sid)) {
+      const snap = await segCol.doc(sid).get();
+      segmentById.set(sid, snap.exists ? (snap.data() as Record<string, unknown>) : {});
+    }
+  }
+
+  for (const [, d] of segmentById) {
+    if (String(d.sourceType || "") !== "tariff") continue;
+    const tid = String(d.tariffId || "").trim();
+    if (!tid || tariffRateById.has(tid)) continue;
+    const tr = await tariffCol.doc(tid).get();
+    tariffRateById.set(tid, resolveTariffHourlyRate(tr.data() as Record<string, unknown> | undefined));
+  }
+
   let total = 0;
   for (const s of splits) {
+    const segData = segmentById.get(s.segmentId) ?? {};
+    if (String(segData.sourceType || "") === "tariff") {
+      const tid = String(segData.tariffId || "").trim();
+      let rate = tid ? tariffRateById.get(tid) ?? null : null;
+      if (rate == null && typeof segData.totalAmountCzk === "number" && Number.isFinite(segData.totalAmountCzk)) {
+        const dh = segmentDurationFromDoc(segData);
+        if (dh > EPS) {
+          rate = Math.round((segData.totalAmountCzk / dh) * 100) / 100;
+        }
+      }
+      total += computeSegmentAmount(s.hours, rate);
+      continue;
+    }
+
     if (isNoJobSegmentJobId(s.jobId)) {
       total += computeSegmentAmount(s.hours, empDefault);
       continue;

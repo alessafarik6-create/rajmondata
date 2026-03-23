@@ -80,24 +80,14 @@ function sumDayFormHours(rows: DayFormRow[]): number {
 function validateDayForm(
   closedSegments: WorkSegmentClient[],
   dayFormRows: DayFormRow[],
-  tariffLineNotes: Record<string, string>,
   mode: "draft" | "submit",
   assignedJobIds: string[],
   dayWorkedCap: number,
   lockedSum: number
 ): string | null {
   const assigned = new Set(assignedJobIds);
-  const { locked, unlocked } = effectiveLockedUnlocked(closedSegments);
+  const { unlocked } = effectiveLockedUnlocked(closedSegments);
   const unlockedSum = sumClosedSegmentHours(unlocked);
-  const tariffSegs = locked.filter((s) => getTerminalSegmentLockKind(s) === "tariff_terminal");
-
-  if (mode === "submit") {
-    for (const seg of tariffSegs) {
-      if (!String(tariffLineNotes[seg.id] ?? "").trim()) {
-        return `Doplňte popis práce u tarifu z terminálu (${segmentTimeRangeLabel(seg)}).`;
-      }
-    }
-  }
 
   for (const r of dayFormRows) {
     const h = parseHoursInput(r.hoursStr);
@@ -112,6 +102,11 @@ function validateDayForm(
       const h = parseHoursInput(r.hoursStr);
       const jid = String(r.jobId || "").trim();
       const note = String(r.lineNote || "").trim();
+      const hasAny =
+        String(r.hoursStr || "").trim() || jid || note;
+      if (mode === "submit" && hasAny && (h == null || h <= 0)) {
+        return "U každého vyplněného řádku zadejte kladný počet hodin (bez nuly).";
+      }
       if (h != null && h > 0 && !jid && !note) {
         return "U každého řádku s hodinami vyberte zakázku nebo doplňte popis práce (např. interní úkol).";
       }
@@ -293,9 +288,7 @@ export default function EmployeeDailyReportsPage() {
   const [note, setNote] = useState("");
   /** Jeden hlavní formulář pro odemčené úseky (čas → zakázky / popis v pořadí úseků). */
   const [dayFormRows, setDayFormRows] = useState<DayFormRow[]>([]);
-  /** Popis práce u tarifových úseků z terminálu (bez zakázky). */
-  const [tariffLineNotes, setTariffLineNotes] = useState<Record<string, string>>({});
-  /** Volitelný popis u úseků se zakázkou z terminálu. */
+  /** Volitelný popis u úseků se zakázkou z terminálu (tarify bez formuláře). */
   const [jobTerminalLineNotes, setJobTerminalLineNotes] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
@@ -312,7 +305,6 @@ export default function EmployeeDailyReportsPage() {
   useEffect(() => {
     if (!closedSegments.length) {
       setDayFormRows([]);
-      setTariffLineNotes({});
       setJobTerminalLineNotes({});
       return;
     }
@@ -331,15 +323,12 @@ export default function EmployeeDailyReportsPage() {
     }
     setDayFormRows(merged);
     const sn = (existingReport?.segmentLineNotes as Record<string, string> | undefined) ?? {};
-    const tariff: Record<string, string> = {};
     const jobT: Record<string, string> = {};
     for (const s of locked) {
       const k = getTerminalSegmentLockKind(s);
       const note = sn[s.id] ?? "";
-      if (k === "tariff_terminal") tariff[s.id] = note;
       if (k === "job_terminal") jobT[s.id] = note;
     }
-    setTariffLineNotes(tariff);
     setJobTerminalLineNotes(jobT);
   }, [existingReport, dayKey, closedSegmentIdsKey, closedSegments]);
 
@@ -397,7 +386,6 @@ export default function EmployeeDailyReportsPage() {
     const splitErr = validateDayForm(
       closedSegments,
       dayFormRows,
-      tariffLineNotes,
       mode,
       assignedJobIds,
       dayWorkedCapPost,
@@ -420,7 +408,7 @@ export default function EmployeeDailyReportsPage() {
         parseHoursInput
       );
       const dayWorkLines = dayFormRows.map((r) => ({ lineNote: r.lineNote.trim() }));
-      const segmentLineNotes = { ...tariffLineNotes, ...jobTerminalLineNotes };
+      const segmentLineNotes = { ...jobTerminalLineNotes };
       const res = await fetch("/api/employee/daily-work-report", {
         method: "POST",
         headers: {
@@ -480,6 +468,11 @@ export default function EmployeeDailyReportsPage() {
       lockedFromTerminal.filter((s) => getTerminalSegmentLockKind(s) === "job_terminal"),
     [lockedFromTerminal]
   );
+  const tariffSum = useMemo(() => sumClosedSegmentHours(tariffSegments), [tariffSegments]);
+  const jobTerminalSumOnly = useMemo(
+    () => sumClosedSegmentHours(jobTerminalSegments),
+    [jobTerminalSegments]
+  );
   const segmentTotal = useMemo(() => sumClosedSegmentHours(closedSegments), [closedSegments]);
   const lockedSum = useMemo(() => sumClosedSegmentHours(lockedFromTerminal), [lockedFromTerminal]);
   const unlockedSum = useMemo(() => sumClosedSegmentHours(unlockedSegments), [unlockedSegments]);
@@ -497,6 +490,11 @@ export default function EmployeeDailyReportsPage() {
     attendanceHours != null &&
     Number.isFinite(attendanceHours) &&
     segmentTotal > attendanceHours + SPLIT_EPS;
+  /** Odpracováno − tarif (informace; ve formuláři jen část bez tarifu a uzamčených zakázek). */
+  const dostupnýPoTarifu = Math.max(
+    0,
+    Math.round((dayWorkedCap - tariffSum) * 100) / 100
+  );
   const allocatedUnlocked = sumDayFormHours(dayFormRows);
   const rozdělenoCelkem = Math.round((lockedSum + allocatedUnlocked) * 100) / 100;
   const zbýváCap = Math.round((dayWorkedCap - rozdělenoCelkem) * 100) / 100;
@@ -671,7 +669,9 @@ export default function EmployeeDailyReportsPage() {
                     const lockHint =
                       lk === "none"
                         ? "Úsek lze rozvrhnout ve výkazu"
-                        : "Uzamčeno z terminálu — v hlavním formuláři se nevyplňuje";
+                        : lk === "tariff_terminal"
+                          ? "Tarif — automaticky, bez formuláře"
+                          : "Uzamčeno z terminálu — v hlavním formuláři se nevyplňuje";
                     return (
                       <li
                         key={seg.id}
@@ -692,15 +692,6 @@ export default function EmployeeDailyReportsPage() {
                   })}
                 </ul>
               )}
-              {typeof existingReport?.estimatedLaborFromSegmentsCzk === "number" &&
-                existingReport.estimatedLaborFromSegmentsCzk > 0 && (
-                  <p className="border-t border-neutral-950 pt-3 text-xs text-neutral-900">
-                    Odhad z uzavřených segmentů (výkaz):{" "}
-                    <span className="font-semibold tabular-nums text-neutral-950">
-                      {formatKc(existingReport.estimatedLaborFromSegmentsCzk)}
-                    </span>
-                  </p>
-                )}
             </CardContent>
           </Card>
 
@@ -751,18 +742,18 @@ export default function EmployeeDailyReportsPage() {
                 <p className="font-medium text-neutral-950">Jak funguje výkaz za den</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
                   <li>
-                    <strong className="text-neutral-950">Nahoře</strong> je jen přehled úseků z terminálu
-                    (čas, typ).
+                    <strong className="text-neutral-950">Úseky z terminálu</strong> jsou jen informativní
+                    přehled (včetně tarifů).
                   </li>
                   <li>
-                    <strong className="text-neutral-950">Uzamčené úseky</strong> (tarif nebo zakázka v
-                    terminálu) se do výkazu promítnou automaticky — u tarifu jen textový popis (bez zakázky),
-                    u zakázky z terminálu je zakázka dána terminálem.
+                    <strong className="text-neutral-950">Tarif</strong> z terminálu se započte automaticky,
+                    odečte se z času pro výkaz a <strong className="text-neutral-950">nevyplňuje se</strong> —
+                    oceňuje se podle ceníku tarifu.
                   </li>
                   <li>
-                    <strong className="text-neutral-950">Hlavní formulář</strong> slouží k rozvržení
-                    zbývajícího času mezi zakázky podle skutečnosti (řádky se v pořadí čerpají na úseky bez
-                    výběru v terminálu).
+                    <strong className="text-neutral-950">Hlavní formulář</strong> pod tím slouží jen k
+                    rozdělení zbývajícího času (bez tarifů): hodiny, popis, volitelná zakázka; řádky se
+                    čerpají na úseky bez výběru v terminálu.
                   </li>
                 </ul>
               </div>
@@ -796,53 +787,17 @@ export default function EmployeeDailyReportsPage() {
                     </p>
                   ) : null}
 
-                  {lockedSum > 0 ? (
+                  {tariffSum > 0 ? (
                     <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
-                      Z terminálu je automaticky započteno{" "}
-                      <span className="font-semibold tabular-nums">{lockedSum} h</span> (uzamčený tarif
-                      nebo zakázka z terminálu). Níže doplňte jen rozvržení zbývajícího času u odemčených
-                      úseků.
+                      <span className="font-semibold tabular-nums">{tariffSum} h</span> z tarifu z terminálu
+                      se započítá automaticky (needitovatelné) a odečte se z času pro výkaz níže.
                     </p>
                   ) : null}
-
-                  {tariffSegments.length > 0 ? (
-                    <div className="space-y-3 rounded-lg border-2 border-neutral-950 bg-white p-4">
-                      <p className="text-sm font-medium text-neutral-950">
-                        Tarif z terminálu — popis práce (bez zakázky)
-                      </p>
-                      <p className="text-xs text-neutral-900">
-                        U tarifu nelze přiřadit zakázku. U každého úseku uveďte, co jste dělali.
-                      </p>
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        {tariffSegments.map((seg) => {
-                          const dur = segmentDurationHours(seg);
-                          const label =
-                            typeof seg.displayName === "string"
-                              ? seg.displayName
-                              : String(seg.tariffName || "Tarif");
-                          return (
-                            <div key={seg.id} className="space-y-1.5">
-                              <Label className="text-xs text-neutral-900">
-                                {label} · {segmentTimeRangeLabel(seg)} · {dur > 0 ? `${dur} h` : "—"}
-                              </Label>
-                              <Textarea
-                                rows={3}
-                                className="min-h-[88px] border-2 border-neutral-950 text-neutral-950"
-                                placeholder="Stručně popište vykonanou práci…"
-                                value={tariffLineNotes[seg.id] ?? ""}
-                                onChange={(e) =>
-                                  setTariffLineNotes((prev) => ({
-                                    ...prev,
-                                    [seg.id]: e.target.value,
-                                  }))
-                                }
-                                disabled={formLocked || dailyWorkLogOff}
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+                  {jobTerminalSumOnly > 0 ? (
+                    <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
+                      <span className="font-semibold tabular-nums">{jobTerminalSumOnly} h</span> je uzamčeno
+                      zakázkou vybranou v terminálu — výběr zakázky ve formuláři se netýká těchto úseků.
+                    </p>
                   ) : null}
 
                   {jobTerminalSegments.length > 0 ? (
@@ -893,7 +848,7 @@ export default function EmployeeDailyReportsPage() {
 
                   <div
                     className={cn(
-                      "grid grid-cols-1 gap-3 rounded-lg border-2 px-3 py-3 text-sm sm:grid-cols-3",
+                      "grid grid-cols-1 gap-3 rounded-lg border-2 px-3 py-3 text-sm sm:grid-cols-2 lg:grid-cols-5",
                       overCap || overUnlocked
                         ? "border-red-600 bg-red-50"
                         : "border-neutral-950 bg-white"
@@ -904,23 +859,27 @@ export default function EmployeeDailyReportsPage() {
                       <p className="font-semibold tabular-nums text-neutral-950">
                         {dayWorkedCap > 0 ? `${dayWorkedCap} h` : "—"}
                       </p>
-                      {attendanceHours != null ? (
-                        <p className="text-xs text-neutral-900">
-                          Strop pro výkaz (docházka a úseky terminálu)
-                        </p>
-                      ) : null}
+                      <p className="text-xs text-neutral-900">Strop z docházky a úseků</p>
+                    </div>
+                    <div>
+                      <span className="font-medium text-neutral-950">Čas v tarifech</span>
+                      <p className="font-semibold tabular-nums text-neutral-950">
+                        {tariffSum > 0 ? `${tariffSum} h` : "—"}
+                      </p>
+                      <p className="text-xs text-neutral-900">Automaticky, bez formuláře</p>
+                    </div>
+                    <div>
+                      <span className="font-medium text-neutral-950">Dostupný pro výkaz</span>
+                      <p className="font-semibold tabular-nums text-neutral-950">
+                        {dayWorkedCap > 0 ? `${dostupnýPoTarifu} h` : "—"}
+                      </p>
+                      <p className="text-xs text-neutral-900">Odpracováno − tarif</p>
                     </div>
                     <div>
                       <span className="font-medium text-neutral-950">Rozděleno</span>
-                      <p className="font-semibold tabular-nums text-neutral-950">{rozdělenoCelkem} h</p>
+                      <p className="font-semibold tabular-nums text-neutral-950">{allocatedUnlocked} h</p>
                       <p className="text-xs text-neutral-900">
-                        {lockedSum > 0 ? (
-                          <>
-                            Terminál (uzamčeno) {lockedSum} h + výkaz {allocatedUnlocked} h
-                          </>
-                        ) : (
-                          <>Z výkazu {allocatedUnlocked} h</>
-                        )}
+                        Ve formuláři · celkem s terminálem {rozdělenoCelkem} h
                       </p>
                     </div>
                     <div>
@@ -933,8 +892,17 @@ export default function EmployeeDailyReportsPage() {
                       >
                         {overCap ? "—" : `${zbýváCap} h`}
                       </p>
+                      <p className="text-xs text-neutral-900">Do stropu odpracování</p>
                     </div>
                   </div>
+                  {typeof existingReport?.estimatedLaborFromSegmentsCzk === "number" &&
+                  existingReport.estimatedLaborFromSegmentsCzk > 0 ? (
+                    <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-2 text-xs text-neutral-900">
+                      <strong className="text-neutral-950">Odhad výdělku z uloženého výkazu:</strong>{" "}
+                      {formatKc(existingReport.estimatedLaborFromSegmentsCzk as number)} (tarify podle ceníku
+                      tarifu, zakázky a interní práce podle sazeb a vaší výchozí sazby).
+                    </p>
+                  ) : null}
                   {(overCap || overUnlocked) && (
                     <p className="text-sm font-medium text-red-700">
                       Součet hodin překračuje dostupný čas — upravte řádky ve výkazu.
@@ -943,8 +911,9 @@ export default function EmployeeDailyReportsPage() {
 
                   {unlockedSegments.length === 0 ? (
                     <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
-                      Všechny úseky z tohoto dne jsou z terminálu uzamčené — hodiny se zapíší samy. Vyplňte
-                      popis u tarifu nebo u zakázky z terminálu výše a celkový popis dne níže.
+                      Pro tento den není žádný čas k rozdělení ve formuláři (tarify a uzamčené zakázky z
+                      terminálu se započítají samy). Volitelně doplňte popis u zakázky z terminálu výše a celkový
+                      popis dne níže.
                     </p>
                   ) : (
                     <div className="space-y-3">
@@ -960,8 +929,42 @@ export default function EmployeeDailyReportsPage() {
                         {dayFormRows.map((row) => (
                           <div
                             key={row.rowId}
-                            className="flex flex-col gap-3 rounded-lg border-2 border-neutral-950 bg-white p-3 lg:grid lg:grid-cols-[minmax(0,1fr)_100px_1fr_auto] lg:items-end lg:gap-3"
+                            className="flex flex-col gap-3 rounded-lg border-2 border-neutral-950 bg-white p-3 lg:grid lg:grid-cols-[100px_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-3"
                           >
+                            <div className="w-full space-y-1.5 lg:w-auto">
+                              <Label className="text-xs font-medium text-neutral-950">Hodiny *</Label>
+                              <Input
+                                inputMode="decimal"
+                                className="h-11 min-h-[44px] border-2 border-neutral-950 tabular-nums text-neutral-950"
+                                placeholder="např. 1,5"
+                                value={row.hoursStr}
+                                onChange={(e) =>
+                                  setDayFormRows((prev) =>
+                                    prev.map((x) =>
+                                      x.rowId === row.rowId ? { ...x, hoursStr: e.target.value } : x
+                                    )
+                                  )
+                                }
+                                disabled={formLocked || dailyWorkLogOff}
+                              />
+                            </div>
+                            <div className="min-w-0 space-y-1.5">
+                              <Label className="text-xs font-medium text-neutral-950">Popis práce</Label>
+                              <Textarea
+                                rows={2}
+                                className="min-h-[72px] border-2 border-neutral-950 text-neutral-950"
+                                placeholder="Co jste dělali (povinné u řádku bez zakázky)…"
+                                value={row.lineNote}
+                                onChange={(e) =>
+                                  setDayFormRows((prev) =>
+                                    prev.map((x) =>
+                                      x.rowId === row.rowId ? { ...x, lineNote: e.target.value } : x
+                                    )
+                                  )
+                                }
+                                disabled={formLocked || dailyWorkLogOff}
+                              />
+                            </div>
                             <div className="min-w-0 space-y-1.5">
                               <Label className="text-xs font-medium text-neutral-950">
                                 Zakázka (volitelné)
@@ -985,42 +988,6 @@ export default function EmployeeDailyReportsPage() {
                                   </option>
                                 ))}
                               </select>
-                            </div>
-                            <div className="w-full space-y-1.5 lg:w-auto">
-                              <Label className="text-xs font-medium text-neutral-950">Hodiny *</Label>
-                              <Input
-                                inputMode="decimal"
-                                className="h-11 min-h-[44px] border-2 border-neutral-950 tabular-nums text-neutral-950"
-                                placeholder="např. 1,5"
-                                value={row.hoursStr}
-                                onChange={(e) =>
-                                  setDayFormRows((prev) =>
-                                    prev.map((x) =>
-                                      x.rowId === row.rowId ? { ...x, hoursStr: e.target.value } : x
-                                    )
-                                  )
-                                }
-                                disabled={formLocked || dailyWorkLogOff}
-                              />
-                            </div>
-                            <div className="min-w-0 space-y-1.5 lg:col-span-1">
-                              <Label className="text-xs font-medium text-neutral-950">
-                                Popis práce
-                              </Label>
-                              <Textarea
-                                rows={2}
-                                className="min-h-[72px] border-2 border-neutral-950 text-neutral-950"
-                                placeholder="Co jste dělali (povinné u řádku bez zakázky)…"
-                                value={row.lineNote}
-                                onChange={(e) =>
-                                  setDayFormRows((prev) =>
-                                    prev.map((x) =>
-                                      x.rowId === row.rowId ? { ...x, lineNote: e.target.value } : x
-                                    )
-                                  )
-                                }
-                                disabled={formLocked || dailyWorkLogOff}
-                              />
                             </div>
                             <div className="flex justify-end lg:justify-center">
                               <Button
