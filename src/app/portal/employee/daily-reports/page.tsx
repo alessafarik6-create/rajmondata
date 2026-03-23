@@ -88,6 +88,14 @@ function validateDayForm(
   const assigned = new Set(assignedJobIds);
   const { unlocked } = effectiveLockedUnlocked(closedSegments);
   const unlockedSum = sumClosedSegmentHours(unlocked);
+  /** Max. hodiny ve formuláři: nesmí překročit odpracovaný čas po odečtení uzamčených úseků (tarif + zakázka z terminálu). */
+  const formCap =
+    unlocked.length === 0
+      ? 0
+      : Math.min(
+          unlockedSum,
+          Math.max(0, Math.round((dayWorkedCap - lockedSum) * 100) / 100)
+        );
 
   for (const r of dayFormRows) {
     const h = parseHoursInput(r.hoursStr);
@@ -115,11 +123,14 @@ function validateDayForm(
 
   const sum = sumDayFormHours(dayFormRows);
   if (unlocked.length > 0) {
-    if (sum > unlockedSum + SPLIT_EPS) {
-      return `Součet hodin v řádcích (${sum} h) překračuje čas odemčených úseků (${unlockedSum} h).`;
+    if (formCap + SPLIT_EPS < unlockedSum) {
+      return "Nesoulad docházky a úseků terminálu — nelze bezpečně rozvrhnout čas. Kontaktujte administrátora.";
     }
-    if (sum < unlockedSum - SPLIT_EPS) {
-      return `Rozdělte celých ${unlockedSum} h (zbývá ${Math.round((unlockedSum - sum) * 100) / 100} h).`;
+    if (sum > formCap + SPLIT_EPS) {
+      return `Součet hodin v řádcích (${sum} h) překračuje dostupný čas pro výkaz (${formCap} h, bez tarifů a uzamčených zakázek z terminálu).`;
+    }
+    if (sum < formCap - SPLIT_EPS) {
+      return `Rozdělte celých ${formCap} h (zbývá ${Math.round((formCap - sum) * 100) / 100} h).`;
     }
   }
 
@@ -309,14 +320,25 @@ export default function EmployeeDailyReportsPage() {
       return;
     }
     const { locked, unlocked } = effectiveLockedUnlocked(closedSegments);
+    const lockedSumInit = sumClosedSegmentHours(locked);
     const unlockedSumInit = sumClosedSegmentHours(unlocked);
+    const segmentTotalInit = sumClosedSegmentHours(closedSegments);
+    const att = daySummary?.hoursWorked ?? null;
+    const dayCapInit =
+      att != null && Number.isFinite(att) && segmentTotalInit > 0
+        ? Math.min(att, segmentTotalInit)
+        : att ?? segmentTotalInit;
+    const formCapInit = Math.min(
+      unlockedSumInit,
+      Math.max(0, Math.round((dayCapInit - lockedSumInit) * 100) / 100)
+    );
     let merged = mergeUnlockedRowsFromReport(unlocked, existingReport);
-    if (merged.length === 0 && unlockedSumInit > SPLIT_EPS) {
+    if (merged.length === 0 && formCapInit > SPLIT_EPS) {
       merged = [
         {
           rowId: newSplitRowId(),
           jobId: "",
-          hoursStr: String(unlockedSumInit).replace(".", ","),
+          hoursStr: String(formCapInit).replace(".", ","),
           lineNote: "",
         },
       ];
@@ -330,7 +352,7 @@ export default function EmployeeDailyReportsPage() {
       if (k === "job_terminal") jobT[s.id] = note;
     }
     setJobTerminalLineNotes(jobT);
-  }, [existingReport, dayKey, closedSegmentIdsKey, closedSegments]);
+  }, [existingReport, dayKey, closedSegmentIdsKey, closedSegments, daySummary]);
 
   const postReport = async (mode: "draft" | "submit") => {
     if (!user || !companyId || !dayKey) return;
@@ -495,11 +517,20 @@ export default function EmployeeDailyReportsPage() {
     0,
     Math.round((dayWorkedCap - tariffSum) * 100) / 100
   );
+  /** Strop hodin v hlavním formuláři (řádky) — odpovídá př. 4 h odpracováno − 1 h tarif = max. 3 h ve formuláři, pokud jde o neuzamčený čas. */
+  const formHoursCap = useMemo(() => {
+    if (unlockedSegments.length === 0) return 0;
+    return Math.min(
+      unlockedSum,
+      Math.max(0, Math.round((dayWorkedCap - lockedSum) * 100) / 100)
+    );
+  }, [unlockedSegments.length, unlockedSum, dayWorkedCap, lockedSum]);
   const allocatedUnlocked = sumDayFormHours(dayFormRows);
   const rozdělenoCelkem = Math.round((lockedSum + allocatedUnlocked) * 100) / 100;
   const zbýváCap = Math.round((dayWorkedCap - rozdělenoCelkem) * 100) / 100;
+  const zbýváVeFormuláři = Math.round((formHoursCap - allocatedUnlocked) * 100) / 100;
   const overCap = rozdělenoCelkem > dayWorkedCap + SPLIT_EPS;
-  const overUnlocked = allocatedUnlocked > unlockedSum + SPLIT_EPS;
+  const overUnlocked = allocatedUnlocked > formHoursCap + SPLIT_EPS;
   const capMismatch =
     attendanceHours != null &&
     Number.isFinite(attendanceHours) &&
@@ -879,7 +910,8 @@ export default function EmployeeDailyReportsPage() {
                       <span className="font-medium text-neutral-950">Rozděleno</span>
                       <p className="font-semibold tabular-nums text-neutral-950">{allocatedUnlocked} h</p>
                       <p className="text-xs text-neutral-900">
-                        Ve formuláři · celkem s terminálem {rozdělenoCelkem} h
+                        Ve formuláři · celkem s terminálem {rozdělenoCelkem} h · zbývá ve formuláři{" "}
+                        {zbýváVeFormuláři} h
                       </p>
                     </div>
                     <div>
@@ -918,12 +950,13 @@ export default function EmployeeDailyReportsPage() {
                   ) : (
                     <div className="space-y-3">
                       <p className="text-sm font-medium text-neutral-950">
-                        Rozvržení času ({unlockedSum} h u úseků bez výběru v terminálu)
+                        Rozvržení času (až {formHoursCap} h — bez tarifů z terminálu)
                       </p>
                       <p className="text-xs text-neutral-900">
                         Řádky se v tomto pořadí čerpají na úseky z terminálu (od prvního časově po další).
-                        Součet hodin musí přesně odpovídat {unlockedSum} h. U každého řádku vyberte zakázku
-                        nebo nechte prázdné a doplňte popis (např. interní práce).
+                        Součet hodin musí přesně odpovídat {formHoursCap} h (příklad: 4 h odpracováno − 1 h
+                        tarif = až 3 h zde, pokud jde o neuzamčený čas). U každého řádku doplňte popis a
+                        volitelně zakázku z přiřazení.
                       </p>
                       <div className="space-y-3">
                         {dayFormRows.map((row) => (
