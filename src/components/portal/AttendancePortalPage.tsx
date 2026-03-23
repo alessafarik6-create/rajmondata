@@ -31,7 +31,9 @@ import {
   Smartphone,
   LayoutDashboard,
   FileText,
+  Copy,
 } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   useUser,
   useFirestore,
@@ -56,6 +58,95 @@ import Link from "next/link";
 import { formatKc } from "@/lib/employee-money";
 
 type AttendanceType = "check_in" | "break_start" | "break_end" | "check_out";
+
+/** Veřejná cesta terminálu — pouze z kanonického companyId (žádná jiná adresa do QR). */
+function buildAttendanceTerminalPath(companyId: string): string {
+  return `/attendance-login?companyId=${encodeURIComponent(companyId)}`;
+}
+
+function AttendanceTerminalQrSection({
+  terminalPath,
+  qrSize = 200,
+  className,
+}: {
+  terminalPath: string;
+  qrSize?: number;
+  className?: string;
+}) {
+  const { toast } = useToast();
+  const [origin, setOrigin] = useState<string | null>(null);
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  const fullUrl =
+    origin &&
+    terminalPath.startsWith("/attendance-login?companyId=") &&
+    !terminalPath.includes("://")
+      ? `${origin}${terminalPath}`
+      : "";
+
+  const copyUrl = () => {
+    if (!fullUrl) return;
+    void navigator.clipboard.writeText(fullUrl).then(
+      () =>
+        toast({
+          title: "Zkopírováno",
+          description: "Odkaz na terminál docházky je ve schránce.",
+        }),
+      () =>
+        toast({
+          variant: "destructive",
+          title: "Kopírování se nezdařilo",
+          description: "Zkopírujte adresu ručně z řádku prohlížeče.",
+        })
+    );
+  };
+
+  return (
+    <div
+      className={
+        className ??
+        "flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+      }
+    >
+      <p className="text-sm text-muted-foreground leading-snug max-w-[min(100%,320px)]">
+        Naskenujte pro otevření terminálu v telefonu nebo tabletu
+      </p>
+      {fullUrl ? (
+        <>
+          <div className="inline-flex rounded-lg border border-slate-100 bg-white p-3 shadow-inner">
+            <QRCodeSVG
+              value={fullUrl}
+              size={qrSize}
+              level="M"
+              includeMargin
+              className="h-auto w-full max-h-[min(70vw,320px)] max-w-[min(100%,320px)]"
+            />
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-fit min-h-[44px] gap-2"
+            onClick={copyUrl}
+          >
+            <Copy className="h-4 w-4 shrink-0" />
+            Kopírovat odkaz
+          </Button>
+        </>
+      ) : (
+        <div
+          className="flex aspect-square max-h-[min(70vw,320px)] max-w-[min(100%,320px)] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50"
+          style={{ minHeight: Math.min(qrSize, 280) }}
+        >
+          <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function AttendancePortalPage() {
   const { user } = useUser();
@@ -91,6 +182,11 @@ export function AttendancePortalPage() {
   const companyId = profile?.companyId;
   const { companyName } = useCompany();
   const orgLabel = companyName || companyId || "vaší organizace";
+
+  const terminalPath = useMemo(
+    () => (companyId ? buildAttendanceTerminalPath(companyId) : ""),
+    [companyId]
+  );
 
   const role = (profile as { role?: string } | null)?.role ?? "employee";
   const profileEmployeeId = (profile as { employeeId?: string } | null)?.employeeId;
@@ -321,22 +417,27 @@ export function AttendancePortalPage() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:gap-4">
-          {companyId ? (
-            <Link
-              href={`/attendance-login?companyId=${encodeURIComponent(companyId)}`}
-              className="min-w-0"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
-                <Smartphone className="h-4 w-4 shrink-0" />
-                Přihlášení zaměstnance
-              </Button>
-            </Link>
+        <div className="flex w-full flex-wrap items-start gap-4 sm:gap-6 lg:flex-1 lg:justify-end">
+          {terminalPath ? (
+            <div className="flex w-full min-w-0 flex-col gap-4 sm:max-w-md lg:flex-row lg:items-start lg:gap-6">
+              <div className="min-w-0 shrink-0">
+                <Link
+                  href={terminalPath}
+                  className="inline-flex min-w-0"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
+                    <Smartphone className="h-4 w-4 shrink-0" />
+                    Přihlášení zaměstnance
+                  </Button>
+                </Link>
+              </div>
+              <AttendanceTerminalQrSection terminalPath={terminalPath} qrSize={192} />
+            </div>
           ) : null}
 
-          <div className="hidden min-w-[180px] rounded-xl border border-slate-200 bg-white p-4 text-right shadow-sm sm:block">
+          <div className="hidden min-w-[180px] rounded-xl border border-slate-200 bg-white p-4 text-right shadow-sm sm:ml-auto sm:block lg:ml-0">
             <p className="font-mono text-4xl font-bold text-primary">
               {currentTime || "--:--:--"}
             </p>
@@ -405,17 +506,26 @@ export function AttendancePortalPage() {
                   <p className="text-sm text-muted-foreground">
                     Odkaz otevřete na tabletu nebo sdíleném PC. Zaměstnanci se hlásí výběrem profilu a PINem.
                   </p>
-                  {companyId ? (
-                    <Link
-                      href={`/attendance-login?companyId=${encodeURIComponent(companyId)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
-                        <Smartphone className="h-4 w-4" />
-                        Otevřít /attendance-login
-                      </Button>
-                    </Link>
+                  {terminalPath ? (
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
+                      <div className="min-w-0 shrink-0">
+                        <Link
+                          href={terminalPath}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
+                            <Smartphone className="h-4 w-4" />
+                            Otevřít /attendance-login
+                          </Button>
+                        </Link>
+                      </div>
+                      <AttendanceTerminalQrSection
+                        terminalPath={terminalPath}
+                        qrSize={220}
+                        className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4"
+                      />
+                    </div>
                   ) : null}
                 </CardContent>
               </Card>
