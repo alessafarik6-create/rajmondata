@@ -128,7 +128,9 @@ service cloud.firestore {
         (
           (!('description_translated' in request.resource.data) && !('description_translated' in resource.data)) ||
           request.resource.data.description_translated == resource.data.description_translated
-        );
+        ) &&
+        (!('attendanceSegmentId' in resource.data) ||
+          request.resource.data.attendanceSegmentId == resource.data.attendanceSegmentId);
     }
 
     /** Kiosk terminál po custom tokenu (claim terminalAccess + companyId). */
@@ -181,7 +183,10 @@ service cloud.firestore {
           (!('description_translated' in request.resource.data) ||
             request.resource.data.description_translated == null) &&
           (!('language' in request.resource.data) ||
-            request.resource.data.language in ['cs', 'ua']);
+            request.resource.data.language in ['cs', 'ua']) &&
+          (!('attendanceSegmentId' in request.resource.data) ||
+            (request.resource.data.attendanceSegmentId is string &&
+              request.resource.data.attendanceSegmentId.size() > 0));
         allow update: if signedIn() && sameCompany(companyId) && (
           isPrivileged() ||
           (canLogOwnWorkTime() && workBlockOwnPending() && employeeWorkBlockUpdateValid(companyId))

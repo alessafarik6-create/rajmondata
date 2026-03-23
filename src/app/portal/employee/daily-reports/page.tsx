@@ -34,6 +34,13 @@ import { parseAssignedWorklogJobIds, chunkArray } from "@/lib/assigned-jobs";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { cn } from "@/lib/utils";
 import { formatKc } from "@/lib/employee-money";
+import { isDailyWorkLogEnabled } from "@/lib/employee-report-flags";
+import {
+  type WorkSegmentClient,
+  closedTerminalSegmentsForDay,
+  segmentTimeRangeLabel,
+  sortSegmentsByStart,
+} from "@/lib/work-segment-client";
 
 export default function EmployeeDailyReportsPage() {
   const { user, isUserLoading } = useUser();
@@ -147,6 +154,20 @@ export default function EmployeeDailyReportsPage() {
 
   const { data: workSegmentsRaw = [], isLoading: segmentsLoading } = useCollection<any>(workSegmentsQuery);
 
+  const closedSegments = useMemo(() => {
+    const raw = Array.isArray(workSegmentsRaw) ? workSegmentsRaw : [];
+    const withId = raw.map((s: Record<string, unknown> & { id?: string }) => ({
+      ...s,
+      id: String(s.id ?? ""),
+    })) as WorkSegmentClient[];
+    return sortSegmentsByStart(closedTerminalSegmentsForDay(withId, dayKey));
+  }, [workSegmentsRaw, dayKey]);
+
+  const closedSegmentIdsKey = useMemo(
+    () => closedSegments.map((s) => s.id).join("|"),
+    [closedSegments]
+  );
+
   const daySummary = useMemo(() => {
     const rows = Array.isArray(attendanceRows) ? attendanceRows : [];
     const summaries = summarizeAttendanceByDay(rows as any[], {
@@ -158,31 +179,49 @@ export default function EmployeeDailyReportsPage() {
 
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
-  const [jobId, setJobId] = useState("");
-  const [hoursConfirmed, setHoursConfirmed] = useState<string>("");
+  /** segmentId → jobId pro uzavřené úseky z terminálu */
+  const [segmentJobById, setSegmentJobById] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (existingReport) {
       setDescription(String(existingReport.description ?? ""));
       setNote(String(existingReport.note ?? ""));
-      setJobId(typeof existingReport.jobId === "string" ? existingReport.jobId : "");
-      setHoursConfirmed(
-        typeof existingReport.hoursConfirmed === "number"
-          ? String(existingReport.hoursConfirmed)
-          : ""
-      );
       return;
     }
     setDescription("");
     setNote("");
-    setJobId("");
-    const h = daySummary?.hoursWorked;
-    setHoursConfirmed(h != null ? String(h) : "");
-  }, [existingReport, dayKey, daySummary?.hoursWorked]);
+  }, [existingReport, dayKey]);
+
+  useEffect(() => {
+    const next: Record<string, string> = {};
+    const alloc = existingReport?.segmentAllocations;
+    if (Array.isArray(alloc)) {
+      for (const a of alloc as { segmentId?: string; jobId?: string }[]) {
+        const sid = String(a.segmentId || "").trim();
+        const jid = String(a.jobId || "").trim();
+        if (sid && jid) next[sid] = jid;
+      }
+    }
+    const legacyJob =
+      typeof existingReport?.jobId === "string" ? existingReport.jobId.trim() : "";
+    for (const seg of closedSegments) {
+      if (!next[seg.id] && legacyJob) next[seg.id] = legacyJob;
+      if (!next[seg.id]) next[seg.id] = "";
+    }
+    setSegmentJobById(next);
+  }, [existingReport, dayKey, closedSegmentIdsKey]);
 
   const postReport = async (mode: "draft" | "submit") => {
     if (!user || !companyId || !dayKey) return;
+    if (!isDailyWorkLogEnabled(employeeDoc)) {
+      toast({
+        variant: "destructive",
+        title: "Funkce je vypnutá",
+        description: "Administrátor vypnul denní výkaz práce pro váš účet.",
+      });
+      return;
+    }
     if (privileged) {
       toast({
         variant: "destructive",
@@ -191,6 +230,26 @@ export default function EmployeeDailyReportsPage() {
       });
       return;
     }
+    if (closedSegments.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Nelze uložit výkaz",
+        description:
+          "Pro tento den nejsou žádné uzavřené úseky z docházkového terminálu. Bez docházky nelze vytvořit výkaz.",
+      });
+      return;
+    }
+    for (const seg of closedSegments) {
+      const jid = String(segmentJobById[seg.id] || "").trim();
+      if (!jid) {
+        toast({
+          variant: "destructive",
+          title: "Chybí zakázka",
+          description: "U každého úseku z docházky vyberte zakázku z vašeho přiřazení.",
+        });
+        return;
+      }
+    }
     if (mode === "submit" && !description.trim()) {
       toast({ variant: "destructive", title: "Chybí popis", description: "Vyplňte, co jste dělali." });
       return;
@@ -198,8 +257,10 @@ export default function EmployeeDailyReportsPage() {
     setSaving(true);
     try {
       const idToken = await user.getIdToken();
-      const job = assignedJobs.find((j) => j.id === jobId);
-      const hNum = Number(hoursConfirmed.replace(",", "."));
+      const segmentAllocations = closedSegments.map((seg) => ({
+        segmentId: seg.id,
+        jobId: String(segmentJobById[seg.id] || "").trim(),
+      }));
       const res = await fetch("/api/employee/daily-work-report", {
         method: "POST",
         headers: {
@@ -211,11 +272,7 @@ export default function EmployeeDailyReportsPage() {
           date: dayKey,
           description: description.trim(),
           note: note.trim(),
-          jobId: jobId || null,
-          jobName: job?.name ?? null,
-          hoursFromAttendance:
-            typeof daySummary?.hoursWorked === "number" ? daySummary.hoursWorked : null,
-          hoursConfirmed: Number.isFinite(hNum) ? hNum : null,
+          segmentAllocations,
           mode,
         }),
       });
@@ -285,6 +342,7 @@ export default function EmployeeDailyReportsPage() {
 
   const status = existingReport?.status as string | undefined;
   const formLocked = status === "approved" || status === "pending";
+  const dailyWorkLogOff = !isDailyWorkLogEnabled(employeeDoc);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6">
@@ -302,6 +360,16 @@ export default function EmployeeDailyReportsPage() {
           <AlertDescription>
             Denní výkaz vyplňují zaměstnanci. Jste přihlášeni jako {role} — uložení je vypnuto.
             Schvalování je v <strong>Docházka → Schvalování výkazů</strong>.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {dailyWorkLogOff && !privileged ? (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Denní výkaz práce je vypnutý</AlertTitle>
+          <AlertDescription>
+            Administrátor vypnul tuto funkci pro váš účet. Kontaktujte vedení firmy, pokud jde o omyl.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -370,40 +438,41 @@ export default function EmployeeDailyReportsPage() {
                 <p className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" /> Načítám segmenty…
                 </p>
-              ) : !Array.isArray(workSegmentsRaw) || workSegmentsRaw.length === 0 ? (
-                <p className="text-muted-foreground">Žádné úseky za tento den.</p>
+              ) : closedSegments.length === 0 ? (
+                <p className="text-muted-foreground">
+                  Žádné uzavřené úseky z terminálu za tento den — bez nich nelze sestavit denní výkaz.
+                </p>
               ) : (
                 <ul className="space-y-2">
-                  {[...workSegmentsRaw]
-                    .sort((a, b) => String(a.id).localeCompare(String(b.id)))
-                    .map((seg: Record<string, unknown>) => {
-                      const st = seg.sourceType === "tariff" ? "Tarif" : "Zakázka";
-                      const name =
-                        typeof seg.displayName === "string"
-                          ? seg.displayName
-                          : String(seg.jobName || seg.tariffName || "—");
-                      const h =
-                        typeof seg.durationHours === "number" ? `${seg.durationHours} h` : "probíhá…";
-                      const amt =
-                        typeof seg.totalAmountCzk === "number"
-                          ? formatKc(seg.totalAmountCzk)
-                          : "—";
-                      return (
-                        <li
-                          key={String(seg.id)}
-                          className="flex flex-wrap items-baseline justify-between gap-2 rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40"
-                        >
-                          <div>
-                            <span className="text-xs font-medium text-muted-foreground">{st}</span>
-                            <p className="font-medium text-slate-900 dark:text-slate-100">{name}</p>
-                          </div>
-                          <div className="text-right text-xs tabular-nums">
-                            <p>{h}</p>
-                            <p className="text-muted-foreground">{amt}</p>
-                          </div>
-                        </li>
-                      );
-                    })}
+                  {closedSegments.map((seg) => {
+                    const st = seg.sourceType === "tariff" ? "Tarif" : "Zakázka";
+                    const name =
+                      typeof seg.displayName === "string"
+                        ? seg.displayName
+                        : String(seg.jobName || seg.tariffName || "—");
+                    const h =
+                      typeof seg.durationHours === "number" ? `${seg.durationHours} h` : "—";
+                    const amt =
+                      typeof seg.totalAmountCzk === "number"
+                        ? formatKc(seg.totalAmountCzk)
+                        : "—";
+                    return (
+                      <li
+                        key={seg.id}
+                        className="flex flex-wrap items-baseline justify-between gap-2 rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/40"
+                      >
+                        <div>
+                          <span className="text-xs font-medium text-muted-foreground">{st}</span>
+                          <p className="font-medium text-slate-900 dark:text-slate-100">{name}</p>
+                          <p className="text-xs text-muted-foreground">{segmentTimeRangeLabel(seg)}</p>
+                        </div>
+                        <div className="text-right text-xs tabular-nums">
+                          <p>{h}</p>
+                          <p className="text-muted-foreground">{amt}</p>
+                        </div>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               {typeof existingReport?.estimatedLaborFromSegmentsCzk === "number" &&
@@ -459,38 +528,68 @@ export default function EmployeeDailyReportsPage() {
               ) : null}
             </CardHeader>
             <CardContent className="space-y-4">
-              {assignedJobs.length > 0 ? (
-                <div className="space-y-2">
-                  <Label>Zakázka</Label>
-                  <select
-                    className="flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
-                    value={jobId}
-                    onChange={(e) => setJobId(e.target.value)}
-                    disabled={formLocked || jobsLoading}
-                  >
-                    <option value="">— volitelně —</option>
-                    {assignedJobs.map((j) => (
-                      <option key={j.id} value={j.id}>
-                        {j.name || j.id}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              ) : null}
+              <p className="text-sm text-muted-foreground">
+                Hodiny výkazu se počítají z uzavřených úseků docházky. U každého úseku zvolte{" "}
+                <strong>zakázku</strong> z přiřazení administrátorem.
+              </p>
 
-              <div className="space-y-2">
-                <Label htmlFor="dr-hours">Potvrzené hodiny (volitelné)</Label>
-                <input
-                  id="dr-hours"
-                  type="text"
-                  inputMode="decimal"
-                  className="flex h-11 w-full max-w-[12rem] rounded-md border border-input bg-background px-3 text-sm tabular-nums"
-                  value={hoursConfirmed}
-                  onChange={(e) => setHoursConfirmed(e.target.value)}
-                  disabled={formLocked}
-                  placeholder="např. 8"
-                />
-              </div>
+              {segmentsLoading ? (
+                <p className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" /> Načítám úseky…
+                </p>
+              ) : closedSegments.length === 0 ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  Pro tento den nejsou žádné uzavřené úseky z docházkového terminálu. Výkaz nelze uložit,
+                  dokud nebudou k dispozici uzavřené segmenty (příchod / výběr činnosti / odchod).
+                </p>
+              ) : assignedJobs.length === 0 ? (
+                <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm">
+                  Nemáte přiřazenou žádnou zakázku pro výkaz. Požádejte administrátora o přiřazení zakázek.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {closedSegments.map((seg) => {
+                    const st = seg.sourceType === "tariff" ? "Tarif" : "Zakázka";
+                    const terminalLabel =
+                      typeof seg.displayName === "string"
+                        ? seg.displayName
+                        : String(seg.jobName || seg.tariffName || "Úsek");
+                    return (
+                      <div
+                        key={seg.id}
+                        className="rounded-md border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-900/30"
+                      >
+                        <div className="mb-2 text-xs text-muted-foreground">
+                          {st} · {segmentTimeRangeLabel(seg)}
+                          {typeof seg.durationHours === "number" ? ` · ${seg.durationHours} h` : ""}
+                        </div>
+                        <p className="mb-1 text-sm font-medium text-slate-900 dark:text-slate-100">
+                          {terminalLabel}
+                        </p>
+                        <Label className="text-xs">Zakázka ve výkazu *</Label>
+                        <select
+                          className="mt-1 flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
+                          value={segmentJobById[seg.id] ?? ""}
+                          onChange={(e) =>
+                            setSegmentJobById((prev) => ({
+                              ...prev,
+                              [seg.id]: e.target.value,
+                            }))
+                          }
+                          disabled={formLocked || jobsLoading || dailyWorkLogOff}
+                        >
+                          <option value="">— vyberte zakázku —</option>
+                          {assignedJobs.map((j) => (
+                            <option key={j.id} value={j.id}>
+                              {j.name || j.id}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label htmlFor="dr-desc">Co jste dělali {status !== "draft" && !formLocked ? "*" : ""}</Label>
@@ -527,7 +626,14 @@ export default function EmployeeDailyReportsPage() {
                   type="button"
                   variant="secondary"
                   className="min-h-[44px] w-full sm:w-auto"
-                  disabled={saving || privileged || formLocked}
+                  disabled={
+                    saving ||
+                    privileged ||
+                    formLocked ||
+                    dailyWorkLogOff ||
+                    closedSegments.length === 0 ||
+                    assignedJobs.length === 0
+                  }
                   onClick={() => void postReport("draft")}
                 >
                   {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : "Uložit rozpracováno"}
@@ -535,7 +641,14 @@ export default function EmployeeDailyReportsPage() {
                 <Button
                   type="button"
                   className="min-h-[44px] w-full sm:w-auto"
-                  disabled={saving || privileged || formLocked}
+                  disabled={
+                    saving ||
+                    privileged ||
+                    formLocked ||
+                    dailyWorkLogOff ||
+                    closedSegments.length === 0 ||
+                    assignedJobs.length === 0
+                  }
                   onClick={() => void postReport("submit")}
                 >
                   {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : "Odeslat ke schválení"}

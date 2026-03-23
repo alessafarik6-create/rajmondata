@@ -95,6 +95,14 @@ import {
 } from "@/lib/assigned-jobs";
 import { normalizeEmployeeUiLang } from "@/lib/i18n/employee-ui";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
+import { isWorkLogEnabled } from "@/lib/employee-report-flags";
+import {
+  type WorkSegmentClient,
+  closedTerminalSegmentsForDay,
+  segmentClockHmRange,
+  segmentTimeRangeLabel,
+  sortSegmentsByStart,
+} from "@/lib/work-segment-client";
 import {
   buildWorklogDescriptionPayload,
   getWorklogDescriptionOriginal,
@@ -132,6 +140,8 @@ type WorkBlock = {
   authUserId?: string;
   jobId?: string;
   jobName?: string;
+  /** Uzavřený úsek z docházkového terminálu — čas bloku nelze měnit ručně. */
+  attendanceSegmentId?: string;
   description_original?: string;
   description_translated?: string;
   language?: string;
@@ -341,8 +351,6 @@ export default function EmployeeWorklogsPage() {
 
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(new Date());
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [newStart, setNewStart] = useState("09:00");
-  const [newEnd, setNewEnd] = useState("10:00");
   const [newDesc, setNewDesc] = useState("");
   const [newJobId, setNewJobId] = useState("");
   const [saving, setSaving] = useState(false);
@@ -356,6 +364,7 @@ export default function EmployeeWorklogsPage() {
   const [editSaving, setEditSaving] = useState(false);
   const [newBlockLang, setNewBlockLang] = useState<WorklogTextLanguage>("cs");
   const [editLang, setEditLang] = useState<WorklogTextLanguage>("cs");
+  const [newSegmentId, setNewSegmentId] = useState("");
 
   useEffect(() => {
     setNewBlockLang(
@@ -446,6 +455,54 @@ export default function EmployeeWorklogsPage() {
     [selectedDay]
   );
 
+  const workSegmentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId || !dayKey) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", employeeId),
+      where("date", "==", dayKey)
+    );
+  }, [firestore, companyId, employeeId, dayKey]);
+
+  const { data: workSegmentsRaw = [], isLoading: segmentsDayLoading } =
+    useCollection<any>(workSegmentsQuery);
+
+  const closedSegmentsDay = useMemo(() => {
+    const raw = Array.isArray(workSegmentsRaw) ? workSegmentsRaw : [];
+    const withId = raw.map((s: Record<string, unknown> & { id?: string }) => ({
+      ...s,
+      id: String(s.id ?? ""),
+    })) as WorkSegmentClient[];
+    return sortSegmentsByStart(closedTerminalSegmentsForDay(withId, dayKey));
+  }, [workSegmentsRaw, dayKey]);
+
+  const usedAttendanceSegmentIds = useMemo(() => {
+    const u = new Set<string>();
+    for (const b of dayBlocks) {
+      const sid = String(b.attendanceSegmentId || "").trim();
+      if (sid) u.add(sid);
+    }
+    return u;
+  }, [dayBlocks]);
+
+  const segmentsAvailableForNewBlock = useMemo(
+    () => closedSegmentsDay.filter((s) => !usedAttendanceSegmentIds.has(s.id)),
+    [closedSegmentsDay, usedAttendanceSegmentIds]
+  );
+
+  const workLogFeatureOn = isWorkLogEnabled(employeeDoc);
+
+  useEffect(() => {
+    setNewSegmentId("");
+  }, [dayKey]);
+
+  const mergeSelectionHasAttSegment = useMemo(() => {
+    const ids = Object.keys(mergeIds).filter((k) => mergeIds[k]);
+    return ids.some((id) =>
+      Boolean(dayBlocks.find((b) => b.id === id)?.attendanceSegmentId)
+    );
+  }, [mergeIds, dayBlocks]);
+
   useEffect(() => {
     if (!DEBUG) return;
     console.log("[employee/worklogs]", {
@@ -492,6 +549,14 @@ export default function EmployeeWorklogsPage() {
 
   const handleAddBlock = async () => {
     if (!user || !companyId || !employeeId || !dayKey) return;
+    if (!workLogFeatureOn) {
+      toast({
+        variant: "destructive",
+        title: "Funkce je vypnutá",
+        description: "Administrátor vypnul výkaz práce v portálu.",
+      });
+      return;
+    }
     if (dayLocked) {
       toast({
         variant: "destructive",
@@ -517,29 +582,74 @@ export default function EmployeeWorklogsPage() {
       });
       return;
     }
-    if (!parseHmStrict(newStart) || !parseHmStrict(newEnd)) {
+    if (!newSegmentId.trim()) {
       toast({
         variant: "destructive",
-        title: "Neplatný čas",
-        description: "Zkontrolujte čas od a do (formát HH:mm).",
+        title: "Vyberte úsek docházky",
+        description:
+          "Čas bloku se bere z uzavřeného úseku docházkového terminálu — nelze zadat ručně.",
       });
       return;
     }
-    const h = hoursBetween(newStart, newEnd);
+    const seg = closedSegmentsDay.find((s) => s.id === newSegmentId);
+    if (!seg) {
+      toast({
+        variant: "destructive",
+        title: "Neplatný úsek",
+        description: "Úsek nebyl nalezen. Zkuste znovu vybrat den.",
+      });
+      return;
+    }
+    if (dayBlocks.some((b) => b.attendanceSegmentId === newSegmentId)) {
+      toast({
+        variant: "destructive",
+        title: "Úsek je obsazený",
+        description: "Pro tento úsek docházky už máte záznam výkazu.",
+      });
+      return;
+    }
+    const range = segmentClockHmRange(seg);
+    if (!range) {
+      toast({
+        variant: "destructive",
+        title: "Neplatný úsek",
+        description: "U segmentu chybí čas začátku a konce.",
+      });
+      return;
+    }
+    const blockStart = range.startHm;
+    const blockEnd = range.endHm;
+    if (!parseHmStrict(blockStart) || !parseHmStrict(blockEnd)) {
+      toast({
+        variant: "destructive",
+        title: "Neplatný čas",
+        description: "Zkontrolujte úsek docházky.",
+      });
+      return;
+    }
+    const h = hoursBetween(blockStart, blockEnd);
     if (h <= 0) {
       toast({
         variant: "destructive",
         title: "Neplatný čas",
-        description: "Čas „od“ musí být před časem „do“.",
+        description: "Úsek docházky má nulovou délku.",
       });
       return;
     }
-    if (blockOverlapsExisting(newStart, newEnd, dayBlocks)) {
+    if (blockOverlapsExisting(blockStart, blockEnd, dayBlocks)) {
       toast({
         variant: "destructive",
         title: "Překryv bloků",
         description:
           "V tomto čase už máte jiný záznam. Upravte časy nebo sloučte bloky.",
+      });
+      return;
+    }
+    if (!newJobId.trim() || !isJobIdAssigned(assignedJobIds, newJobId)) {
+      toast({
+        variant: "destructive",
+        title: "Vyberte zakázku",
+        description: "Zvolte zakázku přiřazenou administrátorem.",
       });
       return;
     }
@@ -559,8 +669,8 @@ export default function EmployeeWorklogsPage() {
           employeeName: employeeDisplayName,
           authUserId: user.uid,
           date: dayKey,
-          startTime: newStart,
-          endTime: newEnd,
+          startTime: blockStart,
+          endTime: blockEnd,
           hours: h,
           originalHours: h,
           approvedHours: h,
@@ -568,6 +678,7 @@ export default function EmployeeWorklogsPage() {
           ...descPayload,
           jobId: newJobId,
           jobName,
+          attendanceSegmentId: newSegmentId,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         }
@@ -578,6 +689,7 @@ export default function EmployeeWorklogsPage() {
       });
       setNewDesc("");
       setNewJobId("");
+      setNewSegmentId("");
     } catch (e) {
       console.error(e);
       toast({
@@ -645,6 +757,15 @@ export default function EmployeeWorklogsPage() {
     }
     const chosen = dayBlocks.filter((b) => ids.includes(b.id));
     if (chosen.length < 2) return;
+    if (chosen.some((b) => b.attendanceSegmentId)) {
+      toast({
+        variant: "destructive",
+        title: "Nelze sloučit",
+        description:
+          "Bloky vázané na úseky docházky nelze sloučit — každý odpovídá jednomu uzavřenému úseku.",
+      });
+      return;
+    }
     if (
       chosen.some(
         (b) => b.reviewStatus === "approved" || b.reviewStatus === "adjusted"
@@ -808,7 +929,10 @@ export default function EmployeeWorklogsPage() {
       });
       return;
     }
-    if (!parseHmStrict(editStart) || !parseHmStrict(editEnd)) {
+    const timeLocked = Boolean(editBlock.attendanceSegmentId);
+    const useStart = timeLocked ? (editBlock.startTime || "00:00") : editStart;
+    const useEnd = timeLocked ? (editBlock.endTime || "00:00") : editEnd;
+    if (!parseHmStrict(useStart) || !parseHmStrict(useEnd)) {
       toast({
         variant: "destructive",
         title: "Neplatný čas",
@@ -816,7 +940,7 @@ export default function EmployeeWorklogsPage() {
       });
       return;
     }
-    const h = hoursBetween(editStart, editEnd);
+    const h = hoursBetween(useStart, useEnd);
     if (h <= 0) {
       toast({
         variant: "destructive",
@@ -826,7 +950,7 @@ export default function EmployeeWorklogsPage() {
       return;
     }
     const others = dayBlocks.filter((b) => b.id !== editBlock.id);
-    if (blockOverlapsExisting(editStart, editEnd, others)) {
+    if (blockOverlapsExisting(useStart, useEnd, others)) {
       toast({
         variant: "destructive",
         title: "Překryv bloků",
@@ -854,8 +978,8 @@ export default function EmployeeWorklogsPage() {
           editBlock.id
         ),
         {
-          startTime: editStart,
-          endTime: editEnd,
+          startTime: useStart,
+          endTime: useEnd,
           hours: h,
           originalHours: h,
           approvedHours: h,
@@ -975,6 +1099,16 @@ export default function EmployeeWorklogsPage() {
           <AlertDescription className="text-slate-900">
             Nemůžete zapisovat výkaz, dokud vám administrátor nepřiřadí alespoň jednu zakázku
             (správa zaměstnanců → Přiřazené zakázky).
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {!workLogFeatureOn && employeeDoc ? (
+        <Alert variant="destructive">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Výkaz práce je vypnutý</AlertTitle>
+          <AlertDescription>
+            Administrátor vypnul tuto funkci pro váš účet. Kontaktujte vedení firmy, pokud jde o omyl.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -1204,7 +1338,7 @@ export default function EmployeeWorklogsPage() {
                         className="h-12 min-h-[48px] w-full text-base sm:w-auto"
                         variant="secondary"
                         onClick={handleMerge}
-                        disabled={saving || dayLocked}
+                        disabled={saving || dayLocked || mergeSelectionHasAttSegment}
                       >
                         <Merge className="mr-2 h-5 w-5" /> Spojit vybrané
                       </Button>
@@ -1457,22 +1591,58 @@ export default function EmployeeWorklogsPage() {
                   <Label className="text-lg font-bold text-black">
                     Nový blok
                   </Label>
-                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                    <DigitalTimePair
-                      label="Čas od"
-                      valueHm={newStart}
-                      onChange={setNewStart}
-                      disabled={dayLocked || saving}
-                      idPrefix="new-start"
-                    />
-                    <DigitalTimePair
-                      label="Čas do"
-                      valueHm={newEnd}
-                      onChange={setNewEnd}
-                      disabled={dayLocked || saving}
-                      idPrefix="new-end"
-                    />
+                  <p className="text-sm text-slate-700">
+                    Čas se bere z <strong>uzavřeného úseku docházkového terminálu</strong>. Bez uzavřené docházky
+                    za tento den nelze přidat záznam.
+                  </p>
+                  <div className="space-y-2">
+                    <Label
+                      htmlFor="worklog-segment"
+                      className="text-sm font-semibold text-black"
+                    >
+                      Úsek docházky <span className="text-red-600">*</span>
+                    </Label>
+                    <select
+                      id="worklog-segment"
+                      className={selectBaseClass}
+                      value={newSegmentId}
+                      onChange={(e) => setNewSegmentId(e.target.value)}
+                      disabled={
+                        dayLocked ||
+                        saving ||
+                        segmentsDayLoading ||
+                        !workLogFeatureOn ||
+                        segmentsAvailableForNewBlock.length === 0
+                      }
+                      aria-label="Úsek docházky"
+                    >
+                      <option value="">
+                        {segmentsDayLoading
+                          ? "Načítám úseky…"
+                          : segmentsAvailableForNewBlock.length === 0
+                            ? "— žádný volný uzavřený úsek —"
+                            : "— vyberte úsek —"}
+                      </option>
+                      {segmentsAvailableForNewBlock.map((seg) => (
+                        <option key={seg.id} value={seg.id}>
+                          {segmentTimeRangeLabel(seg)}
+                          {typeof seg.durationHours === "number"
+                            ? ` (${seg.durationHours} h)`
+                            : ""}
+                        </option>
+                      ))}
+                    </select>
                   </div>
+                  {newSegmentId ? (
+                    <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+                      Čas bloku:{" "}
+                      <span className="font-semibold tabular-nums">
+                        {segmentTimeRangeLabel(
+                          closedSegmentsDay.find((s) => s.id === newSegmentId) as WorkSegmentClient
+                        )}
+                      </span>
+                    </p>
+                  ) : null}
                   <div className="space-y-2">
                     <Label
                       htmlFor="worklog-job"
@@ -1489,7 +1659,8 @@ export default function EmployeeWorklogsPage() {
                         dayLocked ||
                         saving ||
                         jobsLoading ||
-                        assignedJobIds.length === 0
+                        assignedJobIds.length === 0 ||
+                        !workLogFeatureOn
                       }
                       aria-label="Zakázka"
                     >
@@ -1583,7 +1754,11 @@ export default function EmployeeWorklogsPage() {
                   saving ||
                   dayLocked ||
                   blocksLoading ||
-                  assignedJobIds.length === 0
+                  assignedJobIds.length === 0 ||
+                  !workLogFeatureOn ||
+                  segmentsDayLoading ||
+                  segmentsAvailableForNewBlock.length === 0 ||
+                  !newSegmentId.trim()
                 }
               >
                 {saving ? (
@@ -1610,7 +1785,9 @@ export default function EmployeeWorklogsPage() {
           <DialogHeader>
             <DialogTitle>Upravit blok výkazu</DialogTitle>
             <DialogDescription className="text-slate-700">
-              Změňte čas, zakázku nebo popis. U schválených záznamů kontaktujte administrátora.
+              {editBlock?.attendanceSegmentId
+                ? "Čas je vázán na úsek docházky — lze měnit zakázku a popis. U schválených záznamů kontaktujte administrátora."
+                : "Změňte čas, zakázku nebo popis. U schválených záznamů kontaktujte administrátora."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-2">
@@ -1618,14 +1795,14 @@ export default function EmployeeWorklogsPage() {
               label="Čas od"
               valueHm={editStart}
               onChange={setEditStart}
-              disabled={dayLocked || editSaving}
+              disabled={dayLocked || editSaving || !!editBlock?.attendanceSegmentId}
               idPrefix="edit-start"
             />
             <DigitalTimePair
               label="Čas do"
               valueHm={editEnd}
               onChange={setEditEnd}
-              disabled={dayLocked || editSaving}
+              disabled={dayLocked || editSaving || !!editBlock?.attendanceSegmentId}
               idPrefix="edit-end"
             />
             <div className="space-y-2">

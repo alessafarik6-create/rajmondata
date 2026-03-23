@@ -17,6 +17,7 @@ import { Logo } from "@/components/ui/logo";
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
+import { isDailyWorkLogEnabled, isWorkLogEnabled } from "@/lib/employee-report-flags";
 
 export type EmployeePortalSidebarProps = {
   mobileSheetClose?: () => void;
@@ -36,8 +37,23 @@ export function EmployeePortalSidebar({
   const { data: profile } = useDoc<any>(userRef);
   const { t } = useEmployeeUiLang(profile);
 
-  const links = useMemo(
-    () => [
+  const employeeRef = useMemoFirebase(
+    () =>
+      firestore && profile?.companyId && profile?.employeeId
+        ? doc(
+            firestore,
+            "companies",
+            String(profile.companyId),
+            "employees",
+            String(profile.employeeId)
+          )
+        : null,
+    [firestore, profile?.companyId, profile?.employeeId]
+  );
+  const { data: employeeDoc } = useDoc<any>(employeeRef);
+
+  const links = useMemo(() => {
+    const all = [
       { label: t("home"), href: "/portal/employee", icon: LayoutDashboard },
       { label: t("attendance"), href: "/portal/labor/dochazka", icon: Clock },
       {
@@ -57,9 +73,14 @@ export function EmployeePortalSidebar({
         icon: MessageSquare,
       },
       { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
-    ],
-    [t]
-  );
+    ];
+    return all.filter((l) => {
+      if (l.href === "/portal/employee/worklogs") return isWorkLogEnabled(employeeDoc);
+      if (l.href === "/portal/employee/daily-reports")
+        return isDailyWorkLogEnabled(employeeDoc);
+      return true;
+    });
+  }, [t, employeeDoc]);
 
   const linkClass = (href: string) =>
     cn(

@@ -50,6 +50,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from '@/components/ui/label';
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 /** Světlý styl polí v modálu „Pozvat člena týmu“ (neovlivní zbytek portálu). */
 const INVITE_INPUT_CLASS =
@@ -201,6 +202,9 @@ export default function EmployeesPage() {
   );
   const [savingAssignedWorklogJobs, setSavingAssignedWorklogJobs] =
     useState(false);
+  /** V dialogu „Zakázky pro výkaz práce“ — funkce portálu (výchozí zapnuto). */
+  const [enableDailyWorkLogToggle, setEnableDailyWorkLogToggle] = useState(true);
+  const [enableWorkLogToggle, setEnableWorkLogToggle] = useState(true);
 
   const [assignTerminalEmployee, setAssignTerminalEmployee] = useState<any | null>(
     null
@@ -256,6 +260,20 @@ export default function EmployeesPage() {
     if (!fresh) return;
     const next = new Set(parseAssignedWorklogJobIds(fresh));
     setAssignWorklogJobIds((prev) => (jobIdSetsEqual(prev, next) ? prev : next));
+  }, [worklogEmployeeId, employees]);
+
+  useEffect(() => {
+    if (!worklogEmployeeId) {
+      setEnableDailyWorkLogToggle(true);
+      setEnableWorkLogToggle(true);
+      return;
+    }
+    const fresh = employees?.find((e) => e.id === worklogEmployeeId) as
+      | Record<string, unknown>
+      | undefined;
+    if (!fresh) return;
+    setEnableDailyWorkLogToggle(fresh.enableDailyWorkLog !== false);
+    setEnableWorkLogToggle(fresh.enableWorkLog !== false);
   }, [worklogEmployeeId, employees]);
 
   useEffect(() => {
@@ -1464,6 +1482,40 @@ export default function EmployeesPage() {
               uvidí při zápisu výkazu jen tyto zakázky (odděleně od terminálu docházky).
             </DialogDescription>
           </DialogHeader>
+          <div className="space-y-4 rounded-md border border-gray-200 bg-gray-50/80 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 space-y-0.5">
+                <Label htmlFor="toggle-daily-work-log" className="text-sm font-medium text-black">
+                  Denní výkaz práce
+                </Label>
+                <p className="text-xs text-gray-600">
+                  Zapnutí sekce denního výkazu a ukládání vázaného na docházku.
+                </p>
+              </div>
+              <Switch
+                id="toggle-daily-work-log"
+                checked={enableDailyWorkLogToggle}
+                onCheckedChange={setEnableDailyWorkLogToggle}
+                disabled={!canManage}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 space-y-0.5">
+                <Label htmlFor="toggle-work-log" className="text-sm font-medium text-black">
+                  Výkaz práce
+                </Label>
+                <p className="text-xs text-gray-600">
+                  Zapnutí zápisu bloků výkazu práce v portálu zaměstnance.
+                </p>
+              </div>
+              <Switch
+                id="toggle-work-log"
+                checked={enableWorkLogToggle}
+                onCheckedChange={setEnableWorkLogToggle}
+                disabled={!canManage}
+              />
+            </div>
+          </div>
           <div className="max-h-[50vh] space-y-2 overflow-y-auto py-2">
             {companyJobsLoading ? (
               <div className="flex justify-center py-8">
