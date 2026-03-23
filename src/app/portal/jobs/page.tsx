@@ -38,7 +38,6 @@ import {
   useMemoFirebase,
   useUser,
   useDoc,
-  useCompany,
 } from "@/firebase";
 import {
   collection,
@@ -154,8 +153,6 @@ function JobsPageContent() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const { company } = useCompany();
-
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
@@ -950,7 +947,7 @@ function JobsPageContent() {
       <LeadRequestsDialog
         open={leadRequestsDialogOpen}
         onOpenChange={setLeadRequestsDialogOpen}
-        importUrl={company?.poptavkyImportUrl ?? undefined}
+        companyId={companyId}
       />
     </div>
   );
