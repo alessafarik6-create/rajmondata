@@ -690,25 +690,45 @@ export default function EmployeeDailyReportsPage() {
     setSaving(true);
     try {
       const idToken = await user.getIdToken();
-      const segmentJobSplits = segmentJobSplitsBuilt;
-      const dayWorkLines = dayFormRows.map((r) => ({ lineNote: r.lineNote.trim() }));
-      const segmentLineNotes = { ...jobTerminalLineNotes };
+      const segmentJobSplits = segmentJobSplitsBuilt.map((s) => {
+        const h =
+          typeof s.hours === "number" && Number.isFinite(s.hours)
+            ? Math.round(s.hours * 100) / 100
+            : (() => {
+                const t = String(s.hours ?? "").trim().replace(",", ".");
+                const n = Number(t);
+                return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+              })();
+        return {
+          segmentId: String(s.segmentId),
+          jobId: s.jobId != null && String(s.jobId).trim() !== "" ? String(s.jobId) : null,
+          hours: h,
+        };
+      });
+      const dayWorkLines = dayFormRows.map((r) => ({
+        lineNote: String(r.lineNote ?? "").trim(),
+      }));
+      const segmentLineNotes = Object.fromEntries(
+        Object.entries(jobTerminalLineNotes).map(([k, v]) => [k, String(v ?? "").trim()])
+      );
+      const payload = {
+        companyId,
+        date: dayKey,
+        description: descriptionPayload,
+        note: String(note ?? "").trim(),
+        segmentJobSplits,
+        dayWorkLines,
+        segmentLineNotes,
+        mode,
+      };
+      console.log("[daily-reports] POST /api/employee/daily-work-report", JSON.stringify(payload));
       const res = await fetch("/api/employee/daily-work-report", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({
-          companyId,
-          date: dayKey,
-          description: descriptionPayload,
-          note: note.trim(),
-          segmentJobSplits,
-          dayWorkLines,
-          segmentLineNotes,
-          mode,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {

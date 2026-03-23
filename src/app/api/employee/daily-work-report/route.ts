@@ -21,7 +21,9 @@ type Body = {
   /** @deprecated použijte segmentJobSplits */
   segmentAllocations?: Array<{ segmentId?: string; jobId?: string }>;
   /** Rozdělení hodin mezi zakázky po uzavřených úsecích terminálu. */
-  segmentJobSplits?: Array<{ segmentId?: string; jobId?: string; hours?: number }>;
+  segmentJobSplits?: Array<{ segmentId?: string; jobId?: string; hours?: unknown }>;
+  /** Alias pro segmentJobSplits (stejný formát). */
+  rows?: Array<{ segmentId?: string; jobId?: string; hours?: unknown }>;
   /** Volitelné poznámky k řádkům hlavního denního formuláře (odpovídají pořadí řádků u odemčených úseků). */
   dayWorkLines?: Array<{ lineNote?: string }>;
   /** Poznámky k uzamčeným úsekům (segmentId → text), např. tarif nebo zakázka z terminálu. */
@@ -29,6 +31,82 @@ type Body = {
   /** `draft` = rozpracováno, `submit` = odeslat ke schválení */
   mode?: "draft" | "submit";
 };
+
+type NormalizedSplitRow = { segmentId: string; jobId: string; hours: number };
+
+/** Hodiny z klienta: číslo, řetězec „1,5“ / „1.5“; Firestore nesmí dostat NaN ani undefined. */
+function parseHoursField(raw: unknown): number {
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string") {
+    const n = Number(raw.trim().replace(",", "."));
+    return Number.isFinite(n) ? n : NaN;
+  }
+  return NaN;
+}
+
+/**
+ * Sjednotí řádky výkazu před validací (segmentJobSplits nebo alias rows).
+ */
+function normalizeSegmentJobSplitsFromBody(raw: unknown, label: string): NormalizedSplitRow[] {
+  if (!Array.isArray(raw) || raw.length === 0) {
+    throw new Error(
+      `Chybí pole ${label} — očekává se neprázdné pole řádků (segmentId, jobId, hours).`
+    );
+  }
+  const out: NormalizedSplitRow[] = [];
+  for (let i = 0; i < raw.length; i++) {
+    const item = raw[i];
+    if (!item || typeof item !== "object") {
+      throw new Error(`Řádek ${i + 1}: neplatná struktura (očekává se objekt).`);
+    }
+    const row = item as Record<string, unknown>;
+    const segmentId = String(row.segmentId ?? "").trim();
+    const jobIdRaw = row.jobId;
+    const jobId =
+      jobIdRaw === null || jobIdRaw === undefined ? "" : String(jobIdRaw).trim();
+    const hoursNum = parseHoursField(row.hours);
+    if (!segmentId) {
+      throw new Error(`Řádek ${i + 1}: chybí segmentId (úsek docházky / virtuální řádek).`);
+    }
+    if (!Number.isFinite(hoursNum) || hoursNum <= 0) {
+      throw new Error(
+        `Řádek ${i + 1}: neplatný počet hodin — zadejte kladné číslo (např. 1,5 nebo 1.5).`
+      );
+    }
+    out.push({
+      segmentId,
+      jobId,
+      hours: Math.round(hoursNum * 100) / 100,
+    });
+  }
+  return out;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (value === null || typeof value !== "object") return false;
+  if (Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/** Firestore Admin SDK odmítá hodnoty `undefined`; FieldValue neprochází rekurzí. */
+function stripUndefinedDeep<T>(value: T): T {
+  if (value === undefined) return value;
+  if (value === null) return value;
+  if (value instanceof FieldValue) return value;
+  if (Array.isArray(value)) {
+    return value.map((x) => stripUndefinedDeep(x)) as T;
+  }
+  if (isPlainObject(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      if (v === undefined) continue;
+      out[k] = stripUndefinedDeep(v);
+    }
+    return out as T;
+  }
+  return value;
+}
 
 function reportDocId(employeeId: string, date: string) {
   return `${employeeId}__${date}`;
@@ -183,23 +261,31 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const rawSplits =
+    const splitsSource =
       Array.isArray(body.segmentJobSplits) && body.segmentJobSplits.length > 0
         ? body.segmentJobSplits
-        : null;
+        : Array.isArray(body.rows) && body.rows.length > 0
+          ? body.rows
+          : null;
 
-    if (!rawSplits) {
-      return NextResponse.json(
-        {
-          error:
-            "Chybí rozdělení času (segmentJobSplits). Aktualizujte prosím stránku denního výkazu.",
-        },
-        { status: 400 }
+    let normalizedSplits: NormalizedSplitRow[];
+    try {
+      if (!splitsSource) {
+        throw new Error(
+          "Chybí rozdělení času (segmentJobSplits nebo rows). Aktualizujte prosím stránku denního výkazu."
+        );
+      }
+      normalizedSplits = normalizeSegmentJobSplitsFromBody(
+        splitsSource,
+        splitsSource === body.rows ? "rows" : "segmentJobSplits"
       );
+    } catch (normErr) {
+      const msg = normErr instanceof Error ? normErr.message : "Neplatné řádky výkazu.";
+      return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    const isManualOnly = rawSplits.every(
-      (r) => String((r as { segmentId?: string }).segmentId || "").trim() === MANUAL_ATTENDANCE_SEGMENT_ID
+    const isManualOnly = normalizedSplits.every(
+      (r) => r.segmentId === MANUAL_ATTENDANCE_SEGMENT_ID
     );
 
     let resolved: Awaited<ReturnType<typeof resolveSegmentJobSplits>>;
@@ -212,11 +298,19 @@ export async function POST(request: NextRequest) {
           callerUid,
           date,
           emp,
-          rawSplits,
+          normalizedSplits,
           mode
         );
       } else {
-        resolved = await resolveSegmentJobSplits(db, companyId, employeeId, date, emp, rawSplits, mode);
+        resolved = await resolveSegmentJobSplits(
+          db,
+          companyId,
+          employeeId,
+          date,
+          emp,
+          normalizedSplits,
+          mode
+        );
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Neplatná data výkazu.";
@@ -235,12 +329,25 @@ export async function POST(request: NextRequest) {
       hourlyRateSnapshot: FieldValue.delete(),
     };
 
-    const estimatedLaborFromSegmentsCzk = await estimateLaborFromJobSplits(
-      db,
-      companyId,
-      emp,
-      segmentJobSplits
-    );
+    let estimatedLaborFromSegmentsCzk = 0;
+    try {
+      estimatedLaborFromSegmentsCzk = await estimateLaborFromJobSplits(
+        db,
+        companyId,
+        emp,
+        segmentJobSplits
+      );
+    } catch (laborErr) {
+      console.error("[employee/daily-work-report] estimateLaborFromJobSplits failed", {
+        message: laborErr instanceof Error ? laborErr.message : String(laborErr),
+        stack: laborErr instanceof Error ? laborErr.stack : undefined,
+        companyId,
+        employeeId,
+        date,
+        rid,
+      });
+      estimatedLaborFromSegmentsCzk = 0;
+    }
 
     const payloadBase = {
       companyId,
@@ -266,35 +373,101 @@ export async function POST(request: NextRequest) {
       adminNote: null,
     };
 
+    console.info("[employee/daily-work-report] saving", {
+      rid,
+      companyId,
+      employeeId,
+      callerUid,
+      date,
+      mode,
+      statusTarget: mode === "draft" ? "draft" : "pending",
+      normalizedSplits,
+      resolvedSegmentJobSplits: segmentJobSplits,
+      dayWorkLinesCount: dayWorkLines?.length ?? 0,
+      segmentLineNotesKeyCount: segmentLineNotesPayload
+        ? Object.keys(segmentLineNotesPayload).length
+        : 0,
+      descriptionLen: descriptionRaw.length,
+      noteLen: note.length,
+    });
+
     if (mode === "draft") {
-      await ref.set(
-        {
-          ...payloadBase,
-          status: "draft",
-          updatedAt: FieldValue.serverTimestamp(),
-          submittedAt: FieldValue.delete(),
-        },
-        { merge: true }
-      );
-      console.log("Daily work report draft saved");
+      try {
+        await ref.set(
+          stripUndefinedDeep({
+            ...payloadBase,
+            status: "draft",
+            updatedAt: FieldValue.serverTimestamp(),
+            submittedAt: FieldValue.delete(),
+          }),
+          { merge: true }
+        );
+      } catch (writeErr) {
+        console.error("[employee/daily-work-report] Firestore set (draft) failed", {
+          message: writeErr instanceof Error ? writeErr.message : String(writeErr),
+          stack: writeErr instanceof Error ? writeErr.stack : undefined,
+          rid,
+          companyId,
+          employeeId,
+          date,
+        });
+        return NextResponse.json(
+          {
+            error:
+              writeErr instanceof Error
+                ? `Uložení konceptu se nezdařilo: ${writeErr.message}`
+                : "Uložení konceptu se nezdařilo.",
+          },
+          { status: 500 }
+        );
+      }
+      console.log("[employee/daily-work-report] draft saved", { rid });
       return NextResponse.json({ ok: true, id: rid });
     }
 
-    await ref.set(
-      {
-        ...payloadBase,
-        status: "pending",
-        submittedAt: FieldValue.serverTimestamp(),
-        updatedAt: FieldValue.serverTimestamp(),
-      },
-      { merge: true }
-    );
+    try {
+      await ref.set(
+        stripUndefinedDeep({
+          ...payloadBase,
+          status: "pending",
+          submittedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        }),
+        { merge: true }
+      );
+    } catch (writeErr) {
+      console.error("[employee/daily-work-report] Firestore set (submit) failed", {
+        message: writeErr instanceof Error ? writeErr.message : String(writeErr),
+        stack: writeErr instanceof Error ? writeErr.stack : undefined,
+        rid,
+        companyId,
+        employeeId,
+        date,
+      });
+      return NextResponse.json(
+        {
+          error:
+            writeErr instanceof Error
+              ? `Odeslání výkazu se nezdařilo: ${writeErr.message}`
+              : "Odeslání výkazu se nezdařilo.",
+        },
+        { status: 500 }
+      );
+    }
 
-    console.log("Daily work report submitted");
+    console.log("[employee/daily-work-report] submitted", { rid });
 
     return NextResponse.json({ ok: true, id: rid });
   } catch (e) {
-    console.error("[employee/daily-work-report]", e);
-    return NextResponse.json({ error: "Uložení se nezdařilo." }, { status: 500 });
+    const err = e instanceof Error ? e : new Error(String(e));
+    console.error("[employee/daily-work-report] unhandled", {
+      message: err.message,
+      stack: err.stack,
+      name: err.name,
+    });
+    return NextResponse.json(
+      { error: err.message || "Uložení se nezdařilo." },
+      { status: 500 }
+    );
   }
 }
