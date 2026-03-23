@@ -83,10 +83,23 @@ export function sortSegmentsByStart(
   });
 }
 
+/** Typ uzamčení úseku z terminálu pro denní výkaz. */
+export type TerminalSegmentLockKind = "none" | "job_terminal" | "tariff_terminal";
+
 /**
- * Úsek je „uzamčený“ pro ruční rozdělení v denním výkazu, pokud v terminálu vznikl
- * jako práce na konkrétní zakázce (typ job + vyplněné jobId). Tarif / úsek bez zakázky lze dál dělit.
+ * Úsek z terminálu je uzamčený pro rozdělení času, pokud byl zvolen tarif,
+ * nebo zakázka (job + jobId). Rozdělení je povoleno jen u úseků „job“ bez vybrané zakázky.
  */
+export function getTerminalSegmentLockKind(
+  seg: WorkSegmentClient
+): TerminalSegmentLockKind {
+  if (seg.sourceType === "tariff") return "tariff_terminal";
+  if (seg.sourceType === "job" && Boolean(String(seg.jobId || "").trim())) {
+    return "job_terminal";
+  }
+  return "none";
+}
+
 export function isSegmentLockedFromTerminal(seg: WorkSegmentClient): boolean {
-  return seg.sourceType === "job" && Boolean(String(seg.jobId || "").trim());
+  return getTerminalSegmentLockKind(seg) !== "none";
 }

@@ -39,7 +39,7 @@ import { isDailyWorkLogEnabled } from "@/lib/employee-report-flags";
 import {
   type WorkSegmentClient,
   closedTerminalSegmentsForDay,
-  isSegmentLockedFromTerminal,
+  getTerminalSegmentLockKind,
   segmentTimeRangeLabel,
   sortSegmentsByStart,
 } from "@/lib/work-segment-client";
@@ -105,14 +105,33 @@ function buildInitialSplitRows(
   const legacyJob = typeof report?.jobId === "string" ? report.jobId.trim() : "";
 
   for (const seg of segments) {
+    const dur =
+      typeof seg.durationHours === "number" && seg.durationHours > 0 ? seg.durationHours : 0;
+    const lockKind = getTerminalSegmentLockKind(seg);
     const termJid = String(seg.jobId || "").trim();
-    if (isSegmentLockedFromTerminal(seg) && termJid) {
-      const dur =
-        typeof seg.durationHours === "number" && seg.durationHours > 0 ? seg.durationHours : 0;
+
+    if (lockKind === "job_terminal" && termJid) {
       out[seg.id] = [
         {
           rowId: newSplitRowId(),
           jobId: termJid,
+          hoursStr: dur > 0 ? String(dur).replace(".", ",") : "",
+        },
+      ];
+      continue;
+    }
+
+    if (lockKind === "tariff_terminal") {
+      const fromTariffSaved = bySegSaved.get(seg.id);
+      let jid = "";
+      if (fromTariffSaved && fromTariffSaved.length > 0) {
+        jid = String(fromTariffSaved[0].jobId || "").trim();
+      }
+      if (!jid) jid = byAlloc.get(seg.id) || legacyJob;
+      out[seg.id] = [
+        {
+          rowId: newSplitRowId(),
+          jobId: jid,
           hoursStr: dur > 0 ? String(dur).replace(".", ",") : "",
         },
       ];
@@ -125,8 +144,6 @@ function buildInitialSplitRows(
       continue;
     }
 
-    const dur =
-      typeof seg.durationHours === "number" && seg.durationHours > 0 ? seg.durationHours : 0;
     const jid = byAlloc.get(seg.id) || legacyJob;
     out[seg.id] = [
       {
@@ -142,8 +159,10 @@ function buildInitialSplitRows(
 function validateSplitsForSubmit(
   segments: WorkSegmentClient[],
   rowsBySegment: Record<string, SplitRow[]>,
-  mode: "draft" | "submit"
+  mode: "draft" | "submit",
+  assignedJobIds: string[]
 ): string | null {
+  const assigned = new Set(assignedJobIds);
   for (const seg of segments) {
     const dur =
       typeof seg.durationHours === "number" && Number.isFinite(seg.durationHours)
@@ -153,10 +172,10 @@ function validateSplitsForSubmit(
       return `Úsek ${segmentTimeRangeLabel(seg)} nemá platnou délku — nelze uložit.`;
     }
     const rows = rowsBySegment[seg.id] ?? [];
+    const lockKind = getTerminalSegmentLockKind(seg);
     const termJid = String(seg.jobId || "").trim();
-    const locked = isSegmentLockedFromTerminal(seg) && Boolean(termJid);
 
-    if (locked) {
+    if (lockKind === "job_terminal") {
       if (rows.length !== 1) {
         return `U úseku ${segmentTimeRangeLabel(seg)} byla v terminálu vybrána zakázka — rozdělení času není povoleno (očekává se jeden řádek).`;
       }
@@ -168,6 +187,25 @@ function validateSplitsForSubmit(
       }
       if (h == null || Math.abs(h - dur) > SPLIT_EPS) {
         return `U úseku z terminálu s vybranou zakázkou musí být uvedeno přesně ${dur} h.`;
+      }
+      continue;
+    }
+
+    if (lockKind === "tariff_terminal") {
+      if (rows.length !== 1) {
+        return `U úseku ${segmentTimeRangeLabel(seg)} byl v terminálu zvolen tarif — nelze rozdělit čas (očekává se jeden řádek).`;
+      }
+      const r = rows[0];
+      const jid = String(r.jobId || "").trim();
+      const h = parseHoursInput(r.hoursStr);
+      if (!jid) {
+        return `U tarifového úseku ${segmentTimeRangeLabel(seg)} vyberte zakázku z přiřazení.`;
+      }
+      if (!assigned.has(jid)) {
+        return `U tarifového úseku ${segmentTimeRangeLabel(seg)} vyberte zakázku z vašeho přiřazení.`;
+      }
+      if (h == null || Math.abs(h - dur) > SPLIT_EPS) {
+        return `U tarifového úseku z terminálu musí být uvedeno přesně ${dur} h.`;
       }
       continue;
     }
@@ -381,7 +419,12 @@ export default function EmployeeDailyReportsPage() {
       });
       return;
     }
-    const splitErr = validateSplitsForSubmit(closedSegments, segmentSplitRows, mode);
+    const splitErr = validateSplitsForSubmit(
+      closedSegments,
+      segmentSplitRows,
+      mode,
+      assignedJobIds
+    );
     if (splitErr) {
       toast({ variant: "destructive", title: "Nelze uložit výkaz", description: splitErr });
       return;
@@ -442,11 +485,14 @@ export default function EmployeeDailyReportsPage() {
     }
   };
 
-  const hasUnlockedSegment = useMemo(
-    () => closedSegments.some((s) => !isSegmentLockedFromTerminal(s)),
-    [closedSegments]
-  );
-  const needsAssignedJobsForSave = hasUnlockedSegment && assignedJobs.length === 0;
+  /** Úseky, kde musí být zakázka z přiřazení (bez výběru zakázky v terminálu, nebo tarif z terminálu). */
+  const needsAssignedJobsForSave = useMemo(() => {
+    if (assignedJobs.length > 0) return false;
+    return closedSegments.some((s) => {
+      const k = getTerminalSegmentLockKind(s);
+      return k === "none" || k === "tariff_terminal";
+    });
+  }, [closedSegments, assignedJobs.length]);
 
   if (isUserLoading || !user) {
     return (
@@ -689,12 +735,16 @@ export default function EmployeeDailyReportsPage() {
                 <p className="font-medium text-neutral-950">Jak funguje přiřazení zakázek</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
                   <li>
-                    <strong className="text-neutral-950">Zakázka vybraná v terminálu</strong> — čas úseku je
-                    pevný a nelze ho rozdělovat ve výkazu (odpovídá záznamu z terminálu).
+                    <strong className="text-neutral-950">Zakázka vybraná v terminálu</strong> — čas ani
+                    zakázku nelze měnit; rozdělení není povoleno.
                   </li>
                   <li>
-                    <strong className="text-neutral-950">Bez zakázky v terminálu</strong> (tarif / úsek bez
-                    zakázky) — můžete čas rozdělit na více řádků a zakázky doplnit ručně.
+                    <strong className="text-neutral-950">Tarif zvolený v terminálu</strong> — čas nelze
+                    rozdělit; vyberte jednu zakázku z vašeho přiřazení pro výkaz.
+                  </li>
+                  <li>
+                    <strong className="text-neutral-950">Úsek typu zakázka bez výběru v terminálu</strong> —
+                    můžete reálný čas rozdělit na více řádků a přiřadit zakázky.
                   </li>
                 </ul>
               </div>
@@ -712,9 +762,9 @@ export default function EmployeeDailyReportsPage() {
                 <div className="space-y-5">
                   {needsAssignedJobsForSave ? (
                     <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm font-medium text-neutral-950">
-                      Nemáte přiřazenou žádnou zakázku pro úseky, kde je potřeba doplnit zakázku ručně.
-                      Požádejte administrátora o přiřazení zakázek — jinak nelze uložit výkaz (úseky se
-                      zakázkou z terminálu můžete stále zkontrolovat níže).
+                      Nemáte přiřazenou žádnou zakázku. Je potřeba u úseků bez zakázky v terminálu, u tarifu
+                      z terminálu a při rozdělení času. Požádejte administrátora o přiřazení — úsek pouze se
+                      zakázkou vybranou v terminálu lze uložit i bez přiřazení dalších zakázek.
                     </p>
                   ) : null}
                   {closedSegments.map((seg) => {
@@ -737,7 +787,10 @@ export default function EmployeeDailyReportsPage() {
                     );
                     const remaining = Math.round((dur - allocated) * 100) / 100;
                     const over = allocated > dur + SPLIT_EPS;
-                    const locked = isSegmentLockedFromTerminal(seg);
+                    const lockKind = getTerminalSegmentLockKind(seg);
+                    const locked = lockKind !== "none";
+                    const jobLocked = lockKind === "job_terminal";
+                    const tariffLocked = lockKind === "tariff_terminal";
                     const termJid = String(seg.jobId || "").trim();
                     const jobOptions = (() => {
                       const base = [...assignedJobs];
@@ -753,12 +806,7 @@ export default function EmployeeDailyReportsPage() {
                     return (
                       <div
                         key={seg.id}
-                        className={cn(
-                          "rounded-xl border-2 p-4 sm:p-5",
-                          locked
-                            ? "border-neutral-800 bg-neutral-50"
-                            : "border-neutral-950 bg-white"
-                        )}
+                        className="rounded-xl border-2 border-neutral-950 bg-white p-4 sm:p-5"
                       >
                         <div className="mb-4 space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
@@ -771,7 +819,7 @@ export default function EmployeeDailyReportsPage() {
                                 className="border-2 border-neutral-950 bg-white text-neutral-950"
                               >
                                 <Lock className="mr-1 h-3 w-3" aria-hidden />
-                                Zamčeno
+                                Uzamčeno – terminál
                               </Badge>
                             ) : (
                               <Badge
@@ -789,10 +837,16 @@ export default function EmployeeDailyReportsPage() {
                           </div>
                           <p className="text-base font-semibold text-neutral-950">{terminalLabel}</p>
                           <p className="text-sm text-neutral-900">{segmentTimeRangeLabel(seg)}</p>
-                          {locked ? (
-                            <p className="rounded-md border border-neutral-950 bg-white px-3 py-2 text-sm text-neutral-950">
-                              Zakázka byla vybrána v terminálu – nelze upravit rozdělení času ani zakázku u
-                              tohoto úseku.
+                          {jobLocked ? (
+                            <p className="rounded-md border-2 border-neutral-950 bg-white px-3 py-2 text-sm text-neutral-950">
+                              V terminálu byla vybrána konkrétní zakázka — nelze měnit zakázku ani rozdělovat
+                              čas u tohoto úseku.
+                            </p>
+                          ) : null}
+                          {tariffLocked ? (
+                            <p className="rounded-md border-2 border-neutral-950 bg-white px-3 py-2 text-sm text-neutral-950">
+                              V terminálu byl zvolen tarif — čas nelze rozdělit; vyberte zakázku z vašeho
+                              přiřazení pro výkaz.
                             </p>
                           ) : null}
                           <div
@@ -984,8 +1038,8 @@ export default function EmployeeDailyReportsPage() {
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
                 <Button
                   type="button"
-                  variant="secondary"
-                  className="min-h-[44px] w-full border-2 border-neutral-950 bg-white text-neutral-950 hover:bg-neutral-100 sm:w-auto"
+                  variant="default"
+                  className="min-h-[48px] w-full sm:w-auto"
                   disabled={
                     saving ||
                     privileged ||
@@ -1000,7 +1054,8 @@ export default function EmployeeDailyReportsPage() {
                 </Button>
                 <Button
                   type="button"
-                  className="min-h-[44px] w-full border-2 border-neutral-950 bg-neutral-950 text-white hover:bg-neutral-800 sm:w-auto"
+                  variant="success"
+                  className="min-h-[48px] w-full sm:w-auto"
                   disabled={
                     saving ||
                     privileged ||

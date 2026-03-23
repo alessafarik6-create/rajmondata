@@ -317,10 +317,10 @@ export default function EmployeeHomePage() {
       >
         <Avatar className="h-24 w-24 shrink-0 border-2 border-neutral-950">
           <AvatarImage src={photoUrl || undefined} alt="" className="object-cover" />
-          <AvatarFallback className="text-2xl bg-neutral-950 text-white">
-            {(displayName && displayName[0]
+          <AvatarFallback className="text-2xl font-semibold bg-orange-500 text-white">
+            {displayName && displayName[0]
               ? displayName[0].toUpperCase()
-              : "?")}
+              : "?"}
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0">
@@ -478,12 +478,7 @@ export default function EmployeeHomePage() {
           <CardTitle className="text-base font-semibold text-neutral-950">
             Denní výkazy a částky
           </CardTitle>
-          <Button
-            variant="outline"
-            size="sm"
-            asChild
-            className="w-full border-2 border-neutral-950 bg-white text-neutral-950 hover:bg-neutral-100 sm:w-auto"
-          >
+          <Button variant="default" size="lg" asChild className="w-full min-h-[48px] sm:w-auto">
             <Link href="/portal/employee/daily-reports">Upravit výkazy</Link>
           </Button>
         </CardHeader>

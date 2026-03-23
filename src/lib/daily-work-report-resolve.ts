@@ -27,11 +27,18 @@ function roundHours(h: number): number {
 
 function segmentLockedFromTerminalData(d: Record<string, unknown>): {
   locked: boolean;
+  mode: "job_terminal" | "tariff_terminal" | null;
   termJobId: string;
 } {
+  const st = String(d.sourceType || "");
   const termJobId = String(d.jobId || "").trim();
-  const locked = d.sourceType === "job" && termJobId !== "";
-  return { locked, termJobId };
+  if (st === "tariff") {
+    return { locked: true, mode: "tariff_terminal", termJobId: "" };
+  }
+  if (st === "job" && termJobId !== "") {
+    return { locked: true, mode: "job_terminal", termJobId };
+  }
+  return { locked: false, mode: null, termJobId: "" };
 }
 
 /**
@@ -104,8 +111,11 @@ export async function resolveSegmentJobSplits(
       throw new Error("Lze použít jen uzavřené úseky z docházky.");
     }
 
-    const { locked, termJobId } = segmentLockedFromTerminalData(d);
-    if (!assigned.has(jid) && !(locked && jid === termJobId)) {
+    const { locked, mode: lockMode, termJobId } = segmentLockedFromTerminalData(d);
+    if (
+      !assigned.has(jid) &&
+      !(locked && lockMode === "job_terminal" && jid === termJobId)
+    ) {
       throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
     }
 
@@ -133,9 +143,10 @@ export async function resolveSegmentJobSplits(
     const duration =
       typeof d.durationHours === "number" && Number.isFinite(d.durationHours) ? d.durationHours : 0;
 
-    const { locked: lockedFromTerminal, termJobId } = segmentLockedFromTerminalData(d);
+    const { locked: lockedFromTerminal, mode: lockMode, termJobId } =
+      segmentLockedFromTerminalData(d);
 
-    if (lockedFromTerminal) {
+    if (lockedFromTerminal && lockMode === "job_terminal") {
       if (rows.length !== 1) {
         throw new Error(
           "U úseku byla v terminálu vybrána zakázka — čas nelze rozdělovat. Očekává se jeden řádek odpovídající záznamu z terminálu."
@@ -150,6 +161,23 @@ export async function resolveSegmentJobSplits(
       if (Math.abs(only.hours - duration) > EPS) {
         throw new Error(
           `U úseku z terminálu s vybranou zakázkou musí být přiřazeno přesně ${duration} h (délka úseku).`
+        );
+      }
+    }
+
+    if (lockedFromTerminal && lockMode === "tariff_terminal") {
+      if (rows.length !== 1) {
+        throw new Error(
+          "U úseku byl v terminálu zvolen tarif — čas nelze rozdělovat. Použijte jeden řádek se zakázkou z přiřazení."
+        );
+      }
+      const only = rows[0];
+      if (!assigned.has(only.jobId)) {
+        throw new Error("U tarifového úseku vyberte zakázku z vašeho přiřazení.");
+      }
+      if (Math.abs(only.hours - duration) > EPS) {
+        throw new Error(
+          `U tarifového úseku z terminálu musí být uvedeno přesně ${duration} h (délka úseku).`
         );
       }
     }
