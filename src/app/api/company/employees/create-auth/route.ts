@@ -178,6 +178,9 @@ export async function POST(request: NextRequest) {
     profileImage: null,
     isActive: true,
     visibleInAttendanceTerminal,
+    /** Výchozí zapnuto; admin může vypnout v dialogu „Zakázky pro výkaz práce“. */
+    enableDailyWorkLog: true,
+    enableWorkLog: true,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
     hireDate: new Date().toISOString().split("T")[0],

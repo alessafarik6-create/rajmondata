@@ -79,6 +79,10 @@ import {
   isVisibleInAttendanceTerminal,
   parseEmployeeOrgRole,
 } from "@/lib/employee-organization";
+import {
+  isDailyWorkLogEnabled,
+  isWorkLogEnabled,
+} from "@/lib/employee-report-flags";
 
 function releaseModalLocksAfterDismiss() {
   releaseDocumentModalLocks();
@@ -279,11 +283,15 @@ export default function EmployeesPage() {
       return;
     }
     const fresh = employees?.find((e) => e.id === worklogEmployeeId) as
-      | Record<string, unknown>
+      | {
+          enableDailyWorkLog?: boolean;
+          enableWorkLog?: boolean;
+        }
       | undefined;
     if (!fresh) return;
-    setEnableDailyWorkLogToggle(fresh.enableDailyWorkLog !== false);
-    setEnableWorkLogToggle(fresh.enableWorkLog !== false);
+    /** Stejná sémantika jako v aplikaci: uložené `false` zůstane vypnuté; chybějící pole = výchozí zapnuto. */
+    setEnableDailyWorkLogToggle(isDailyWorkLogEnabled(fresh));
+    setEnableWorkLogToggle(isWorkLogEnabled(fresh));
   }, [worklogEmployeeId, employees]);
 
   useEffect(() => {
@@ -332,6 +340,8 @@ export default function EmployeesPage() {
         ),
         {
           assignedWorklogJobIds: Array.from(assignWorklogJobIds),
+          enableDailyWorkLog: Boolean(enableDailyWorkLogToggle),
+          enableWorkLog: Boolean(enableWorkLogToggle),
           updatedAt: serverTimestamp(),
         }
       );
