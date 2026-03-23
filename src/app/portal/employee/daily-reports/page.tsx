@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { format, startOfMonth, endOfMonth } from "date-fns";
+import { format, startOfMonth, endOfMonth, min, max } from "date-fns";
 import { cs } from "date-fns/locale";
 import {
   useUser,
@@ -30,6 +30,7 @@ import { formatKc } from "@/lib/employee-money";
 import { isDailyWorkLogEnabled } from "@/lib/employee-report-flags";
 import {
   type WorkSegmentClient,
+  buildWorkDayId,
   closedTerminalSegmentsForDay,
   getTerminalSegmentLockKind,
   segmentDateIsoKey,
@@ -172,7 +173,9 @@ export default function EmployeeDailyReportsPage() {
     firestore,
     companyId,
     employeeDoc ?? undefined,
-    employeeRowLoading
+    employeeRowLoading,
+    user?.uid,
+    employeeId
   );
 
   const attendanceQuery = useMemoFirebase(() => {
@@ -208,28 +211,63 @@ export default function EmployeeDailyReportsPage() {
   const { data: monthlyDailyReportsRaw = [] } = useCollection(dailyReportsQuery);
 
   /**
-   * Jedna query jen podle employeeId + limit — nevyžaduje složený index (employeeId + date).
-   * Filtrování podle dne/měsíce probíhá v klientovi.
+   * Rozsah workDayId = employeeId__YYYY-MM-DD — jedno pole, bez složeného indexu s employeeId+date.
+   * Pokrývá měsíc kalendáře i měsíc vybraného dne (mohou se lišit při listování).
    */
-  const workSegmentsEmployeeQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !employeeId) return null;
+  const workSegmentsRangeQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId || !calendarMonth || !selectedDay) return null;
+    const rangeStart = min([startOfMonth(calendarMonth), startOfMonth(selectedDay)]);
+    const rangeEnd = max([endOfMonth(calendarMonth), endOfMonth(selectedDay)]);
+    const dMin = format(rangeStart, "yyyy-MM-dd");
+    const dMax = format(rangeEnd, "yyyy-MM-dd");
+    const minId = buildWorkDayId(employeeId, dMin);
+    const maxId = buildWorkDayId(employeeId, dMax);
     return query(
       collection(firestore, "companies", companyId, "work_segments"),
-      where("employeeId", "==", employeeId),
-      limit(2500)
+      where("workDayId", ">=", minId),
+      where("workDayId", "<=", maxId),
+      limit(5000)
     );
-  }, [firestore, companyId, employeeId]);
+  }, [firestore, companyId, employeeId, calendarMonth, selectedDay]);
 
   const {
     data: workSegmentsAllData,
     isLoading: segmentsLoading,
     error: segmentsQueryError,
-  } = useCollection<WorkSegmentClient>(workSegmentsEmployeeQuery);
+  } = useCollection<WorkSegmentClient>(workSegmentsRangeQuery);
+
+  /**
+   * Záložní dotaz jen pro vybraný den: employeeId + date (index v projektu).
+   * Doplní segmenty bez pole workDayId nebo když rozsah workDayId selže.
+   */
+  const workSegmentsDayAltQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId || !selectedDay) return null;
+    const dk = format(selectedDay, "yyyy-MM-dd");
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", employeeId),
+      where("date", "==", dk),
+      limit(300)
+    );
+  }, [firestore, companyId, employeeId, selectedDay]);
+
+  const {
+    data: workSegmentsDayAltData,
+    isLoading: segmentsDayAltLoading,
+    error: segmentsDayAltError,
+  } = useCollection<WorkSegmentClient>(workSegmentsDayAltQuery);
 
   const workSegmentsAll = useMemo(() => {
     if (workSegmentsAllData == null) return [] as WorkSegmentClient[];
-    return Array.isArray(workSegmentsAllData) ? workSegmentsAllData : [];
-  }, [workSegmentsAllData]);
+    const raw = Array.isArray(workSegmentsAllData) ? workSegmentsAllData : [];
+    if (!employeeId) return raw;
+    return raw.filter(
+      (s) =>
+        !s.employeeId ||
+        s.employeeId === employeeId ||
+        (user?.uid && s.employeeId === user.uid)
+    );
+  }, [workSegmentsAllData, employeeId, user?.uid]);
 
   const reportsByDate = useMemo(() => {
     const raw = Array.isArray(monthlyDailyReportsRaw) ? monthlyDailyReportsRaw : [];
@@ -332,10 +370,24 @@ export default function EmployeeDailyReportsPage() {
   const dayKey = selectedDay ? format(selectedDay, "yyyy-MM-dd") : "";
   const selectedDayMarker = dayKey ? markerMap.get(dayKey) : undefined;
 
+  /** Sloučení rozsahu workDayId + záložního dotazu employeeId+date pro stejný den. */
   const workSegmentsForDay = useMemo(() => {
     if (!dayKey) return [] as WorkSegmentClient[];
-    return workSegmentsAll.filter((s) => segmentDateIsoKey(s) === dayKey);
-  }, [workSegmentsAll, dayKey]);
+    const fromRange = workSegmentsAll.filter((s) => segmentDateIsoKey(s) === dayKey);
+    const alt = Array.isArray(workSegmentsDayAltData) ? workSegmentsDayAltData : [];
+    const byId = new Map<string, WorkSegmentClient>();
+    for (const s of fromRange) {
+      const id = String(s.id ?? "");
+      byId.set(id, { ...s, id });
+    }
+    for (const s of alt) {
+      const id = String(s.id ?? "");
+      if (!byId.has(id)) {
+        byId.set(id, { ...s, id });
+      }
+    }
+    return [...byId.values()];
+  }, [workSegmentsAll, workSegmentsDayAltData, dayKey]);
 
   const reportRef = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId || !dayKey) return null;
@@ -371,48 +423,17 @@ export default function EmployeeDailyReportsPage() {
     return summaries.find((s) => s.date === dayKey) ?? null;
   }, [attendanceBlocks, dayKey, employeeId, user?.uid]);
 
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "development") return;
-    const hours = daySummary?.hoursWorked ?? null;
-    const segH = sumClosedSegmentHours(closedSegments);
-    const att = daySummary?.hoursWorked ?? null;
-    const lockedFromTerminal = effectiveLockedUnlocked(closedSegments).locked;
-    const lockedSumDebug = sumClosedSegmentHours(lockedFromTerminal);
-    const tariffOnly = closedSegments
-      .filter((s) => getTerminalSegmentLockKind(s) === "tariff_terminal")
-      .reduce((a, s) => a + segmentDurationHours(s), 0);
-    const availGuess =
-      att != null && Number.isFinite(att)
-        ? Math.max(0, Math.round((att - tariffOnly) * 100) / 100)
-        : null;
-    console.log("[daily-reports debug]", {
-      selectedDate: dayKey,
-      employeeAssignedJobIds: assignedJobIds,
-      loadedJobs: assignedJobs,
-      segmentsAllCount: workSegmentsAll.length,
-      segmentsForDayCount: workSegmentsForDay.length,
-      closedSegmentsCount: closedSegments.length,
-      segmentsQueryError: segmentsQueryError?.message ?? null,
-      daySummaryHours: hours,
-      sumClosedSegmentHours: segH,
-      availableTimeHint: availGuess,
-      lockedTerminalSum: lockedSumDebug,
-    });
-  }, [
-    daySummary,
-    closedSegments,
-    dayKey,
-    assignedJobIds,
-    assignedJobs,
-    workSegmentsAll.length,
-    workSegmentsForDay.length,
-    segmentsQueryError,
-  ]);
-
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
   /** Jeden hlavní formulář pro odemčené úseky (čas → zakázky / popis v pořadí úseků). */
-  const [dayFormRows, setDayFormRows] = useState<DayFormRow[]>([]);
+  const [dayFormRows, setDayFormRows] = useState<DayFormRow[]>(() => [
+    {
+      rowId: "init-row",
+      jobId: "",
+      hoursStr: "",
+      lineNote: "",
+    },
+  ]);
   /** Volitelný popis u úseků se zakázkou z terminálu (tarify bez formuláře). */
   const [jobTerminalLineNotes, setJobTerminalLineNotes] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
@@ -427,10 +448,23 @@ export default function EmployeeDailyReportsPage() {
     setNote("");
   }, [existingReport, dayKey]);
 
+  const assignedJobIdsKey = useMemo(() => assignedJobIds.join("|"), [assignedJobIds]);
+
+  const segmentsDayLoading = segmentsLoading || segmentsDayAltLoading;
+
   useEffect(() => {
+    if (!dayKey) return;
+    if (segmentsDayLoading) return;
     if (!closedSegments.length) {
-      setDayFormRows([]);
       setJobTerminalLineNotes({});
+      setDayFormRows([
+        {
+          rowId: `placeholder-${dayKey}`,
+          jobId: "",
+          hoursStr: "",
+          lineNote: "",
+        },
+      ]);
       return;
     }
     const { locked, unlocked } = effectiveLockedUnlocked(closedSegments);
@@ -457,6 +491,16 @@ export default function EmployeeDailyReportsPage() {
         },
       ];
     }
+    if (merged.length === 0) {
+      merged = [
+        {
+          rowId: newSplitRowId(),
+          jobId: "",
+          hoursStr: "",
+          lineNote: "",
+        },
+      ];
+    }
     setDayFormRows(merged);
     const sn = (existingReport?.segmentLineNotes as Record<string, string> | undefined) ?? {};
     const jobT: Record<string, string> = {};
@@ -466,7 +510,16 @@ export default function EmployeeDailyReportsPage() {
       if (k === "job_terminal") jobT[s.id] = note;
     }
     setJobTerminalLineNotes(jobT);
-  }, [existingReport, dayKey, closedSegmentIdsKey, closedSegments, daySummary]);
+  }, [
+    existingReport,
+    dayKey,
+    closedSegmentIdsKey,
+    closedSegments,
+    daySummary,
+    segmentsDayLoading,
+    assignedJobIdsKey,
+    assignedJobIds.length,
+  ]);
 
   const postReport = async (mode: "draft" | "submit") => {
     if (!user || !companyId || !dayKey) return;
@@ -660,6 +713,16 @@ export default function EmployeeDailyReportsPage() {
       Math.max(0, Math.round((dayWorkedCap - lockedSum) * 100) / 100)
     );
   }, [unlockedSegments.length, unlockedSum, dayWorkedCap, lockedSum]);
+  /** Hodiny lze vyplnit jen pokud existuje odemčený čas z terminálu; výběr zakázky zůstává dostupný i bez toho. */
+  const canEditHours =
+    closedSegments.length > 0 && formHoursCap > SPLIT_EPS && !dailyWorkLogOff;
+  const hoursDisabled = effectiveFormLocked || !canEditHours;
+  const jobSelectDisabled = effectiveFormLocked || dailyWorkLogOff;
+  const segmentsFetchFailed =
+    !segmentsDayLoading &&
+    Boolean(segmentsQueryError) &&
+    Boolean(segmentsDayAltError) &&
+    closedSegments.length === 0;
   const allocatedUnlocked = sumDayFormHours(dayFormRows);
   const rozdělenoCelkem = Math.round((lockedSum + allocatedUnlocked) * 100) / 100;
   const zbýváCap = Math.round((dayWorkedCap - rozdělenoCelkem) * 100) / 100;
@@ -671,6 +734,37 @@ export default function EmployeeDailyReportsPage() {
     Number.isFinite(attendanceHours) &&
     Math.abs(attendanceHours - segmentTotal) > SPLIT_EPS &&
     !dataAttendanceTooLow;
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    console.log("[daily-reports debug]", {
+      selectedDate: dayKey,
+      employeeAssignedJobIds: assignedJobIds,
+      loadedJobs: assignedJobs,
+      loadedWorkSegmentsCount: workSegmentsAll.length,
+      segmentsForDayCount: workSegmentsForDay.length,
+      closedSegmentsCount: closedSegments.length,
+      segmentsQueryError: segmentsQueryError?.message ?? null,
+      computedAvailableTime: formHoursCap,
+      dayWorkedCap,
+      daySummaryHours: daySummary?.hoursWorked ?? null,
+      tariffSum,
+      lockedSum,
+    });
+  }, [
+    dayKey,
+    assignedJobIds,
+    assignedJobs,
+    workSegmentsAll.length,
+    workSegmentsForDay.length,
+    closedSegments.length,
+    segmentsQueryError,
+    formHoursCap,
+    dayWorkedCap,
+    daySummary,
+    tariffSum,
+    lockedSum,
+  ]);
 
   if (isUserLoading || !user) {
     return (
@@ -749,18 +843,30 @@ export default function EmployeeDailyReportsPage() {
         </Alert>
       ) : null}
 
-      {segmentsQueryError ? (
+      {segmentsFetchFailed ? (
         <Alert variant="destructive" className="border-2 border-neutral-950">
           <AlertCircle className="h-4 w-4" />
           <AlertTitle>Úseky z terminálu se nenačetly</AlertTitle>
           <AlertDescription className="text-neutral-900">
-            Načtení úseků práce z databáze selhalo — docházka a výkaz mohou být neúplné. Zkuste obnovit stránku.
-            Pokud problém přetrvává, kontaktujte administrátora (může jít o chybějící index Firestore nebo oprávnění).
-            {process.env.NODE_ENV === "development" && segmentsQueryError.message ? (
+            Obě dotazy na úseky práce selhaly — zkuste obnovit stránku. Kontaktujte administrátora (index
+            Firestore nebo oprávnění).
+            {process.env.NODE_ENV === "development" && segmentsQueryError?.message ? (
               <span className="mt-2 block font-mono text-xs">
-                {segmentsQueryError.message}
+                {segmentsQueryError.message} / {segmentsDayAltError?.message ?? ""}
               </span>
             ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {!segmentsDayLoading &&
+      closedSegments.length === 0 &&
+      (segmentsQueryError || segmentsDayAltError) &&
+      !segmentsFetchFailed ? (
+        <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+          <AlertCircle className="h-4 w-4 text-amber-700" />
+          <AlertTitle>Část dat o úsecích se načetla záložní cestou</AlertTitle>
+          <AlertDescription>
+            Jedna z dotazů na úseky selhala, druhá vrátila data. Pokud něco chybí, zkuste obnovit stránku.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -909,7 +1015,7 @@ export default function EmployeeDailyReportsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-neutral-900">
-              {segmentsLoading ? (
+              {segmentsDayLoading ? (
                 <p className="flex items-center gap-2">
                   <Loader2 className="h-4 w-4 animate-spin" /> Načítám segmenty…
                 </p>
@@ -1047,27 +1153,30 @@ export default function EmployeeDailyReportsPage() {
                 )}
               </div>
 
-              {segmentsLoading ? (
+              {segmentsDayLoading ? (
                 <p className="flex items-center gap-2 text-sm text-neutral-900">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Načítám úseky…
+                  <Loader2 className="h-4 w-4 animate-spin" /> Načítám úseky pro výkaz…
                 </p>
-              ) : closedSegments.length === 0 ? (
+              ) : null}
+
+              {!segmentsDayLoading && closedSegments.length === 0 ? (
                 <div className="space-y-2 rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
                   <p>
-                    Pro tento den nejsou žádné uzavřené úseky z docházkového terminálu — výkaz zatím nelze
-                    uložit (čeká se na uzavření činností v terminálu).
+                    Za tento den nejsou k dispozici žádné uzavřené úseky z terminálu — uložení času výkazu bude
+                    možné až po jejich uzavření v docházce.
                   </p>
                   {daySummary != null &&
                   daySummary.hoursWorked != null &&
                   daySummary.hoursWorked > 0 && (
                     <p className="text-xs text-amber-900">
                       V docházce vidíte odpracovaný čas ({daySummary.hoursWorked} h), ale chybí odpovídající
-                      úseky z terminálu. Až administrátor nebo synchronizace doplní segmenty, zobrazí se zde
-                      formulář pro rozdělení práce.
+                      úseky z terminálu.
                     </p>
                   )}
                 </div>
-              ) : (
+              ) : null}
+
+              {closedSegments.length > 0 ? (
                 <div className="space-y-5">
                   {dataAttendanceTooLow ? (
                     <p className="rounded-lg border-2 border-red-600 bg-red-50 px-4 py-3 text-sm font-medium text-red-900">
@@ -1201,159 +1310,158 @@ export default function EmployeeDailyReportsPage() {
 
                   {unlockedSegments.length === 0 ? (
                     <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
-                      Pro tento den není žádný čas k rozdělení ve formuláři (tarify a uzamčené zakázky z
-                      terminálu se započítají samy). Volitelně doplňte popis u zakázky z terminálu výše a celkový
-                      popis dne níže.
+                      Pro tento den není žádný čas k rozdělení do řádků níže (tarify a uzamčené zakázky z
+                      terminálu se započítají samy). V sekci „Hlavní řádky výkazu“ můžete vybrat zakázku nebo
+                      doplnit popis.
                     </p>
-                  ) : (
-                    <div className="space-y-3">
-                      <p className="text-sm font-medium text-neutral-950">
-                        Rozvržení času (až {formHoursCap} h — bez tarifů z terminálu)
-                      </p>
-                      <p className="text-xs text-neutral-900">
-                        Řádky se v tomto pořadí čerpají na úseky z terminálu (od prvního časově po další).
-                        Součet hodin musí přesně odpovídat {formHoursCap} h (příklad: 4 h odpracováno − 1 h
-                        tarif = až 3 h zde, pokud jde o neuzamčený čas). U každého řádku vyplňte hodiny, popis
-                        práce a volitelně zakázku z vašeho přiřazení (nezávislé na terminálu).
-                      </p>
-                      {jobsLoading ? (
-                        <p className="flex items-center gap-2 text-xs text-neutral-900">
-                          <Loader2 className="h-4 w-4 animate-spin text-neutral-950" />
-                          Načítání přiřazených zakázek…
-                        </p>
-                      ) : assignedJobIds.length === 0 ? (
-                        <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-2 text-xs text-neutral-900">
-                          Nemáte přiřazené žádné zakázky — řádky můžete vyplnit jako interní práci (bez zakázky).
-                          Přiřazení zakázek nastaví administrátor.
-                        </p>
-                      ) : (
-                        <p className="text-xs text-neutral-900">
-                          Ve výběru zakázky jsou jen zakázky přiřazené k vašemu účtu (správa u administrátora,
-                          nezávisle na terminálu docházky).
-                        </p>
-                      )}
-                      <div className="space-y-3">
-                        {dayFormRows.map((row) => (
-                          <div
-                            key={row.rowId}
-                            className="flex flex-col gap-3 rounded-lg border-2 border-neutral-950 bg-white p-3 lg:grid lg:grid-cols-[100px_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-3"
-                          >
-                            <div className="w-full space-y-1.5 lg:w-auto">
-                              <Label className="text-xs font-medium text-neutral-950">
-                                Hodiny <span className="text-red-700">*</span>
-                              </Label>
-                              <Input
-                                inputMode="decimal"
-                                className="h-11 min-h-[44px] border-2 border-neutral-950 tabular-nums text-neutral-950"
-                                placeholder="např. 1,5"
-                                value={row.hoursStr}
-                                onChange={(e) =>
-                                  setDayFormRows((prev) =>
-                                    prev.map((x) =>
-                                      x.rowId === row.rowId ? { ...x, hoursStr: e.target.value } : x
-                                    )
-                                  )
-                                }
-                                disabled={effectiveFormLocked || dailyWorkLogOff}
-                              />
-                            </div>
-                            <div className="min-w-0 space-y-1.5">
-                              <Label className="text-xs font-medium text-neutral-950">Popis práce</Label>
-                              <Textarea
-                                rows={2}
-                                className="min-h-[72px] border-2 border-neutral-950 text-neutral-950"
-                                placeholder="Co jste dělali (povinné u řádku bez zakázky)…"
-                                value={row.lineNote}
-                                onChange={(e) =>
-                                  setDayFormRows((prev) =>
-                                    prev.map((x) =>
-                                      x.rowId === row.rowId ? { ...x, lineNote: e.target.value } : x
-                                    )
-                                  )
-                                }
-                                disabled={effectiveFormLocked || dailyWorkLogOff}
-                              />
-                            </div>
-                            <div className="min-w-0 space-y-1.5">
-                              <Label className="text-xs font-medium text-neutral-950">Zakázka</Label>
-                              <p className="text-[10px] leading-tight text-neutral-800">volitelné</p>
-                              <select
-                                className="mt-1 flex h-11 min-h-[44px] w-full rounded-md border-2 border-neutral-950 bg-white px-3 text-sm text-neutral-950"
-                                value={row.jobId}
-                                onChange={(e) =>
-                                  setDayFormRows((prev) =>
-                                    prev.map((x) =>
-                                      x.rowId === row.rowId ? { ...x, jobId: e.target.value } : x
-                                    )
-                                  )
-                                }
-                                disabled={effectiveFormLocked || dailyWorkLogOff}
-                              >
-                                <option value="">Bez zakázky / interní práce</option>
-                                {assignedJobs.map((j) => (
-                                  <option key={j.id} value={j.id}>
-                                    {j.name || j.id}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                            <div className="flex justify-end lg:justify-center">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="icon"
-                                className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 border-2 border-neutral-950 bg-white"
-                                disabled={
-                                  effectiveFormLocked || dailyWorkLogOff || dayFormRows.length <= 1
-                                }
-                                onClick={() =>
-                                  setDayFormRows((prev) => {
-                                    const next = prev.filter((x) => x.rowId !== row.rowId);
-                                    return next.length > 0
-                                      ? next
-                                      : [
-                                          {
-                                            rowId: newSplitRowId(),
-                                            jobId: "",
-                                            hoursStr: "",
-                                            lineNote: "",
-                                          },
-                                        ];
-                                  })
-                                }
-                                aria-label="Smazat řádek"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        size="sm"
-                        className="min-h-[44px] w-full border-2 border-neutral-950 bg-white text-neutral-950 hover:bg-neutral-100 sm:w-auto"
-                        disabled={effectiveFormLocked || dailyWorkLogOff}
-                        onClick={() =>
-                          setDayFormRows((prev) => [
-                            ...prev,
-                            {
-                              rowId: newSplitRowId(),
-                              jobId: "",
-                              hoursStr: "",
-                              lineNote: "",
-                            },
-                          ])
-                        }
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        Přidat řádek
-                      </Button>
-                    </div>
-                  )}
+                  ) : null}
                 </div>
-              )}
+              ) : null}
+
+              <div className="space-y-3 rounded-lg border-2 border-neutral-950 bg-white p-4">
+                <p className="text-sm font-medium text-neutral-950">
+                  Hlavní řádky výkazu — hodiny, popis, zakázka
+                </p>
+                <p className="text-xs text-neutral-900">
+                  {closedSegments.length === 0
+                    ? "Bez úseků z terminálu zatím nevyplňujte hodiny. Zakázku a popis můžete připravit — uložení času bude možné po uzavření úseků."
+                    : formHoursCap > SPLIT_EPS
+                      ? `Řádky se čerpají na úseky z terminálu v čase. Součet hodin musí odpovídat až ${formHoursCap} h (bez tarifů a uzamčených zakázek z terminálu).`
+                      : "Hodiny jsou uzamčeny (jen tarify nebo zakázka z terminálu). Popis a výběr zakázky můžete upravit."}
+                </p>
+                {jobsLoading ? (
+                  <p className="flex items-center gap-2 text-xs text-neutral-900">
+                    <Loader2 className="h-4 w-4 animate-spin text-neutral-950" />
+                    Načítání přiřazených zakázek…
+                  </p>
+                ) : assignedJobIds.length === 0 ? (
+                  <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-2 text-xs text-neutral-900">
+                    Nemáte přiřazené žádné zakázky — v rozbalovacím poli je jen „Bez zakázky / interní práce“.
+                  </p>
+                ) : (
+                  <p className="text-xs text-neutral-900">
+                    Vyberte zakázku nebo ponechte „Bez zakázky / interní práce“ (nezávisle na terminálu).
+                  </p>
+                )}
+                <div className="space-y-3">
+                  {dayFormRows.map((row) => (
+                    <div
+                      key={row.rowId}
+                      className="flex flex-col gap-3 rounded-lg border-2 border-neutral-950 bg-white p-3 lg:grid lg:grid-cols-[100px_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-3"
+                    >
+                      <div className="w-full space-y-1.5 lg:w-auto">
+                        <Label className="text-xs font-medium text-neutral-950">
+                          Hodiny <span className="text-red-700">*</span>
+                        </Label>
+                        <Input
+                          inputMode="decimal"
+                          className="h-11 min-h-[44px] border-2 border-neutral-950 tabular-nums text-neutral-950"
+                          placeholder="např. 1,5"
+                          value={row.hoursStr}
+                          onChange={(e) =>
+                            setDayFormRows((prev) =>
+                              prev.map((x) =>
+                                x.rowId === row.rowId ? { ...x, hoursStr: e.target.value } : x
+                              )
+                            )
+                          }
+                          disabled={hoursDisabled}
+                        />
+                      </div>
+                      <div className="min-w-0 space-y-1.5">
+                        <Label className="text-xs font-medium text-neutral-950">Popis práce</Label>
+                        <Textarea
+                          rows={2}
+                          className="min-h-[72px] border-2 border-neutral-950 text-neutral-950"
+                          placeholder="Co jste dělali (povinné u řádku bez zakázky)…"
+                          value={row.lineNote}
+                          onChange={(e) =>
+                            setDayFormRows((prev) =>
+                              prev.map((x) =>
+                                x.rowId === row.rowId ? { ...x, lineNote: e.target.value } : x
+                              )
+                            )
+                          }
+                          disabled={effectiveFormLocked || dailyWorkLogOff}
+                        />
+                      </div>
+                      <div className="min-w-0 space-y-1.5">
+                        <Label className="text-xs font-medium text-neutral-950">Zakázka</Label>
+                        <p className="text-[10px] leading-tight text-neutral-800">volitelné</p>
+                        <select
+                          className="mt-1 flex h-11 min-h-[44px] w-full rounded-md border-2 border-neutral-950 bg-white px-3 text-sm text-neutral-950"
+                          value={row.jobId}
+                          onChange={(e) =>
+                            setDayFormRows((prev) =>
+                              prev.map((x) =>
+                                x.rowId === row.rowId ? { ...x, jobId: e.target.value } : x
+                              )
+                            )
+                          }
+                          disabled={jobSelectDisabled}
+                        >
+                          <option value="">Bez zakázky / interní práce</option>
+                          {assignedJobs.map((j) => (
+                            <option key={j.id} value={j.id}>
+                              {j.name || j.id}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex justify-end lg:justify-center">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 border-2 border-neutral-950 bg-white"
+                          disabled={
+                            effectiveFormLocked || dailyWorkLogOff || dayFormRows.length <= 1
+                          }
+                          onClick={() =>
+                            setDayFormRows((prev) => {
+                              const next = prev.filter((x) => x.rowId !== row.rowId);
+                              return next.length > 0
+                                ? next
+                                : [
+                                    {
+                                      rowId: newSplitRowId(),
+                                      jobId: "",
+                                      hoursStr: "",
+                                      lineNote: "",
+                                    },
+                                  ];
+                            })
+                          }
+                          aria-label="Smazat řádek"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="min-h-[44px] w-full border-2 border-neutral-950 bg-white text-neutral-950 hover:bg-neutral-100 sm:w-auto"
+                  disabled={hoursDisabled}
+                  onClick={() =>
+                    setDayFormRows((prev) => [
+                      ...prev,
+                      {
+                        rowId: newSplitRowId(),
+                        jobId: "",
+                        hoursStr: "",
+                        lineNote: "",
+                      },
+                    ])
+                  }
+                >
+                  <Plus className="mr-2 h-4 w-4" />
+                  Přidat řádek
+                </Button>
+              </div>
 
               <div className="space-y-2 rounded-lg border-2 border-neutral-950 bg-white p-4">
                 <Label htmlFor="dr-desc" className="text-neutral-950">

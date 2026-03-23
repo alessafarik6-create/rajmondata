@@ -5,6 +5,11 @@
 import { format } from "date-fns";
 import { formatHm } from "./work-time-block";
 
+/** Stejné jako server `workDayId` — jednoznačný klíč zaměstnanec + den (YYYY-MM-DD). */
+export function buildWorkDayId(employeeId: string, dateIso: string): string {
+  return `${employeeId}__${dateIso}`;
+}
+
 export type WorkSegmentClient = {
   id: string;
   employeeId?: string;

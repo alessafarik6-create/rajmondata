@@ -111,7 +111,9 @@ export default function EmployeeProfilePage() {
     firestore,
     companyId,
     employeeRow ?? undefined,
-    employeeRowLoading
+    employeeRowLoading,
+    user?.uid,
+    employeeId
   );
 
   const [uploading, setUploading] = useState(false);
