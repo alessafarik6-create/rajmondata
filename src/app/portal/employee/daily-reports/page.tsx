@@ -32,6 +32,7 @@ import {
   type WorkSegmentClient,
   closedTerminalSegmentsForDay,
   getTerminalSegmentLockKind,
+  segmentDateIsoKey,
   segmentTimeRangeLabel,
   sortSegmentsByStart,
 } from "@/lib/work-segment-client";
@@ -194,7 +195,6 @@ export default function EmployeeDailyReportsPage() {
 
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(new Date());
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date());
-  const monthSegmentKey = format(calendarMonth, "yyyy-MM");
 
   const dailyReportsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId) return null;
@@ -207,20 +207,29 @@ export default function EmployeeDailyReportsPage() {
 
   const { data: monthlyDailyReportsRaw = [] } = useCollection(dailyReportsQuery);
 
-  const workSegmentsMonthQuery = useMemoFirebase(() => {
+  /**
+   * Jedna query jen podle employeeId + limit — nevyžaduje složený index (employeeId + date).
+   * Filtrování podle dne/měsíce probíhá v klientovi.
+   */
+  const workSegmentsEmployeeQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId) return null;
-    const ms = format(startOfMonth(calendarMonth), "yyyy-MM-dd");
-    const me = format(endOfMonth(calendarMonth), "yyyy-MM-dd");
     return query(
       collection(firestore, "companies", companyId, "work_segments"),
       where("employeeId", "==", employeeId),
-      where("date", ">=", ms),
-      where("date", "<=", me),
-      limit(500)
+      limit(2500)
     );
-  }, [firestore, companyId, employeeId, monthSegmentKey]);
+  }, [firestore, companyId, employeeId]);
 
-  const { data: workSegmentsMonthRaw = [] } = useCollection(workSegmentsMonthQuery);
+  const {
+    data: workSegmentsAllData,
+    isLoading: segmentsLoading,
+    error: segmentsQueryError,
+  } = useCollection<WorkSegmentClient>(workSegmentsEmployeeQuery);
+
+  const workSegmentsAll = useMemo(() => {
+    if (workSegmentsAllData == null) return [] as WorkSegmentClient[];
+    return Array.isArray(workSegmentsAllData) ? workSegmentsAllData : [];
+  }, [workSegmentsAllData]);
 
   const reportsByDate = useMemo(() => {
     const raw = Array.isArray(monthlyDailyReportsRaw) ? monthlyDailyReportsRaw : [];
@@ -233,12 +242,21 @@ export default function EmployeeDailyReportsPage() {
     return m;
   }, [monthlyDailyReportsRaw]);
 
+  const workSegmentsMonthRaw = useMemo(() => {
+    const ms = format(startOfMonth(calendarMonth), "yyyy-MM-dd");
+    const me = format(endOfMonth(calendarMonth), "yyyy-MM-dd");
+    return workSegmentsAll.filter((s) => {
+      const d = segmentDateIsoKey(s);
+      return d.length >= 10 && d >= ms && d <= me;
+    });
+  }, [workSegmentsAll, calendarMonth]);
+
   const segmentsByDate = useMemo(() => {
-    const raw = Array.isArray(workSegmentsMonthRaw) ? workSegmentsMonthRaw : [];
+    const raw = workSegmentsMonthRaw;
     const m = new Map<string, WorkSegmentClient[]>();
     for (const s of raw) {
-      const row = s as Record<string, unknown> & { id?: string };
-      const dk = String(row.date ?? "").trim();
+      const row = s as WorkSegmentClient;
+      const dk = segmentDateIsoKey(row);
       if (!dk) continue;
       const arr = m.get(dk) ?? [];
       arr.push({ ...row, id: String(row.id ?? "") } as WorkSegmentClient);
@@ -314,6 +332,11 @@ export default function EmployeeDailyReportsPage() {
   const dayKey = selectedDay ? format(selectedDay, "yyyy-MM-dd") : "";
   const selectedDayMarker = dayKey ? markerMap.get(dayKey) : undefined;
 
+  const workSegmentsForDay = useMemo(() => {
+    if (!dayKey) return [] as WorkSegmentClient[];
+    return workSegmentsAll.filter((s) => segmentDateIsoKey(s) === dayKey);
+  }, [workSegmentsAll, dayKey]);
+
   const reportRef = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId || !dayKey) return null;
     return doc(
@@ -327,25 +350,13 @@ export default function EmployeeDailyReportsPage() {
 
   const { data: existingReport, isLoading: reportLoading } = useDoc<any>(reportRef);
 
-  const workSegmentsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !employeeId || !dayKey) return null;
-    return query(
-      collection(firestore, "companies", companyId, "work_segments"),
-      where("employeeId", "==", employeeId),
-      where("date", "==", dayKey)
-    );
-  }, [firestore, companyId, employeeId, dayKey]);
-
-  const { data: workSegmentsRaw = [], isLoading: segmentsLoading } = useCollection<any>(workSegmentsQuery);
-
   const closedSegments = useMemo(() => {
-    const raw = Array.isArray(workSegmentsRaw) ? workSegmentsRaw : [];
-    const withId = raw.map((s: Record<string, unknown> & { id?: string }) => ({
+    const withId = workSegmentsForDay.map((s) => ({
       ...s,
       id: String(s.id ?? ""),
     })) as WorkSegmentClient[];
     return sortSegmentsByStart(closedTerminalSegmentsForDay(withId, dayKey));
-  }, [workSegmentsRaw, dayKey]);
+  }, [workSegmentsForDay, dayKey]);
 
   const closedSegmentIdsKey = useMemo(
     () => closedSegments.map((s: WorkSegmentClient) => s.id).join("|"),
@@ -364,10 +375,39 @@ export default function EmployeeDailyReportsPage() {
     if (process.env.NODE_ENV !== "development") return;
     const hours = daySummary?.hoursWorked ?? null;
     const segH = sumClosedSegmentHours(closedSegments);
-    console.log("[daily-reports] attendanceBlocks.length", attendanceBlocks.length);
-    console.log("[daily-reports] daySummary.hoursWorked", hours);
-    console.log("[daily-reports] closedSegments sum", segH);
-  }, [attendanceBlocks, daySummary, closedSegments]);
+    const att = daySummary?.hoursWorked ?? null;
+    const lockedFromTerminal = effectiveLockedUnlocked(closedSegments).locked;
+    const lockedSumDebug = sumClosedSegmentHours(lockedFromTerminal);
+    const tariffOnly = closedSegments
+      .filter((s) => getTerminalSegmentLockKind(s) === "tariff_terminal")
+      .reduce((a, s) => a + segmentDurationHours(s), 0);
+    const availGuess =
+      att != null && Number.isFinite(att)
+        ? Math.max(0, Math.round((att - tariffOnly) * 100) / 100)
+        : null;
+    console.log("[daily-reports debug]", {
+      selectedDate: dayKey,
+      employeeAssignedJobIds: assignedJobIds,
+      loadedJobs: assignedJobs,
+      segmentsAllCount: workSegmentsAll.length,
+      segmentsForDayCount: workSegmentsForDay.length,
+      closedSegmentsCount: closedSegments.length,
+      segmentsQueryError: segmentsQueryError?.message ?? null,
+      daySummaryHours: hours,
+      sumClosedSegmentHours: segH,
+      availableTimeHint: availGuess,
+      lockedTerminalSum: lockedSumDebug,
+    });
+  }, [
+    daySummary,
+    closedSegments,
+    dayKey,
+    assignedJobIds,
+    assignedJobs,
+    workSegmentsAll.length,
+    workSegmentsForDay.length,
+    segmentsQueryError,
+  ]);
 
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
@@ -709,6 +749,22 @@ export default function EmployeeDailyReportsPage() {
         </Alert>
       ) : null}
 
+      {segmentsQueryError ? (
+        <Alert variant="destructive" className="border-2 border-neutral-950">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Úseky z terminálu se nenačetly</AlertTitle>
+          <AlertDescription className="text-neutral-900">
+            Načtení úseků práce z databáze selhalo — docházka a výkaz mohou být neúplné. Zkuste obnovit stránku.
+            Pokud problém přetrvává, kontaktujte administrátora (může jít o chybějící index Firestore nebo oprávnění).
+            {process.env.NODE_ENV === "development" && segmentsQueryError.message ? (
+              <span className="mt-2 block font-mono text-xs">
+                {segmentsQueryError.message}
+              </span>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       {isLockedBy24h && !formLocked ? (
         <Alert className="border-2 border-neutral-950 bg-slate-100 text-neutral-950">
           <Lock className="h-4 w-4 text-neutral-950" />
@@ -858,7 +914,11 @@ export default function EmployeeDailyReportsPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /> Načítám segmenty…
                 </p>
               ) : closedSegments.length === 0 ? (
-                <p>Žádné uzavřené úseky z terminálu za tento den — bez nich nelze sestavit denní výkaz.</p>
+                <p>
+                  Za tento den nejsou k dispozici žádné uzavřené úseky z terminálu — bez nich nelze sestavit denní
+                  výkaz. Pokud jste v terminálu práci uzavřeli a úseky zde chybí, zkuste později nebo kontaktujte
+                  administrátora.
+                </p>
               ) : (
                 <ul className="space-y-3">
                   {closedSegments.map((seg: WorkSegmentClient) => {
@@ -964,6 +1024,27 @@ export default function EmployeeDailyReportsPage() {
                     čerpají na úseky bez výběru v terminálu.
                   </li>
                 </ul>
+              </div>
+
+              <div className="rounded-lg border-2 border-neutral-950 bg-white p-4 text-sm text-neutral-900">
+                <p className="font-medium text-neutral-950">Ruční výběr zakázky</p>
+                <p className="mt-1 text-xs leading-relaxed text-neutral-800">
+                  Zakázky níže jsou přiřazené k vašemu účtu v systému — nezávisle na tom, co jste vybrali na
+                  terminálu docházky.
+                </p>
+                {jobsLoading ? (
+                  <p className="mt-2 flex items-center gap-2 text-xs text-neutral-900">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Načítání přiřazených zakázek…
+                  </p>
+                ) : assignedJobIds.length === 0 ? (
+                  <p className="mt-2 text-sm font-medium text-neutral-950">Nemáte přiřazené žádné zakázky.</p>
+                ) : (
+                  <p className="mt-2 text-sm text-neutral-900">
+                    U každého řádku hlavního výkazu je pole <strong className="text-neutral-950">Zakázka</strong>{" "}
+                    ({assignedJobs.length} přiřazených) — můžete zvolit zakázku nebo „Bez zakázky / interní práce“.
+                  </p>
+                )}
               </div>
 
               {segmentsLoading ? (

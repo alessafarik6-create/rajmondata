@@ -15,10 +15,17 @@ export function parseAssignedJobIds(raw: unknown): string[] {
 export function parseAssignedWorklogJobIds(employeeData: {
   assignedWorklogJobIds?: unknown;
   assignedJobIds?: unknown;
+  /** Další legacy / alternativní názvy v datech */
+  jobsIds?: unknown;
+  assignedJobs?: unknown;
 } | null | undefined): string[] {
   const next = parseAssignedJobIds(employeeData?.assignedWorklogJobIds);
   if (next.length > 0) return next;
-  return parseAssignedJobIds(employeeData?.assignedJobIds);
+  const legacy = parseAssignedJobIds(employeeData?.assignedJobIds);
+  if (legacy.length > 0) return legacy;
+  const jids = parseAssignedJobIds(employeeData?.jobsIds);
+  if (jids.length > 0) return jids;
+  return parseAssignedJobIds(employeeData?.assignedJobs);
 }
 
 /** Zakázky pro docházkový terminál. */

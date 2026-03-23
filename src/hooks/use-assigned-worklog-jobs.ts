@@ -67,8 +67,12 @@ export function useAssignedWorklogJobs(
           );
           const snap = await getDocs(q);
           snap.forEach((d) => {
-            const data = d.data() as { name?: string };
-            acc.push({ id: d.id, name: data.name });
+            const data = d.data() as { name?: string; title?: string };
+            const label =
+              (typeof data.name === "string" && data.name.trim()) ||
+              (typeof data.title === "string" && data.title.trim()) ||
+              undefined;
+            acc.push({ id: d.id, name: label });
           });
         }
         if (!cancelled) {

@@ -2,6 +2,7 @@
  * Klientské pomůcky pro dokumenty work_segments (docházkový terminál).
  */
 
+import { format } from "date-fns";
 import { formatHm } from "./work-time-block";
 
 export type WorkSegmentClient = {
@@ -56,6 +57,26 @@ export function formatTimeHm(d: Date): string {
   return d.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" });
 }
 
+/**
+ * Den úseku jako YYYY-MM-DD — pole `date` může být řetězec nebo Firestore Timestamp.
+ */
+export function segmentDateIsoKey(seg: { date?: unknown }): string {
+  const d = seg?.date;
+  if (d == null) return "";
+  if (typeof d === "string") return d.slice(0, 10);
+  if (d instanceof Date && !Number.isNaN(d.getTime())) {
+    return format(d, "yyyy-MM-dd");
+  }
+  if (typeof (d as { toDate?: () => Date }).toDate === "function") {
+    try {
+      return format((d as { toDate: () => Date }).toDate(), "yyyy-MM-dd");
+    } catch {
+      return "";
+    }
+  }
+  return "";
+}
+
 /** Uzavřené segmenty z terminálu pro daný den. */
 export function closedTerminalSegmentsForDay(
   segments: WorkSegmentClient[] | null | undefined,
@@ -65,7 +86,7 @@ export function closedTerminalSegmentsForDay(
   return list.filter(
     (s) =>
       s.closed === true &&
-      String(s.date || "") === dayIso &&
+      segmentDateIsoKey(s) === dayIso &&
       (s.sourceType === "job" || s.sourceType === "tariff")
   );
 }
