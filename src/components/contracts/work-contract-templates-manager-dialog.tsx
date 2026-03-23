@@ -17,6 +17,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useCollection, useMemoFirebase } from "@/firebase";
 import { Plus } from "lucide-react";
@@ -96,6 +97,7 @@ export function WorkContractTemplatesManagerDialog({
     string | null
   >(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [copyingId, setCopyingId] = useState<string | null>(null);
 
   useEffect(() => {
     if (templatesError) {
@@ -119,6 +121,7 @@ export function WorkContractTemplatesManagerDialog({
       resetForm();
       setTemplatePendingDelete(null);
       setIsDeleting(false);
+      setCopyingId(null);
     }
   }, [open, resetForm]);
 
@@ -127,6 +130,7 @@ export function WorkContractTemplatesManagerDialog({
       if (!next) {
         setTemplatePendingDelete(null);
         setIsDeleting(false);
+        setCopyingId(null);
       }
       onOpenChange(next);
     },
@@ -170,6 +174,59 @@ export function WorkContractTemplatesManagerDialog({
     setFormName(template.name || "");
     setFormContent(template.content || "");
   }, []);
+
+  const handleDuplicateTemplate = useCallback(
+    async (template: ContractTemplateFirestoreDoc) => {
+      if (!firestore || !companyId) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: "Chybí připojení k databázi nebo firma.",
+        });
+        return;
+      }
+      if (template.companyId !== companyId) return;
+
+      setCopyingId(template.id);
+      try {
+        const baseName = (template.name || "Bez názvu").trim();
+        const copyName = `Kopie - ${baseName}`;
+        const newId = await createContractTemplate(firestore, {
+          companyId,
+          name: copyName,
+          content: template.content ?? "",
+          createdBy: userId ?? null,
+        });
+        const newDoc: ContractTemplateFirestoreDoc = {
+          id: newId,
+          companyId,
+          name: copyName,
+          content: template.content ?? "",
+        };
+        setTemplates((prev) =>
+          [...prev.filter((t) => t.id !== newId), newDoc].sort((a, b) =>
+            (a.name || "").localeCompare(b.name || "", "cs")
+          )
+        );
+        startEdit(newDoc);
+        toast({
+          title: "Šablona zkopírována",
+          description: `Byla vytvořena nová šablona „${copyName}“. Můžete ji upravit a uložit.`,
+        });
+      } catch (error: unknown) {
+        console.error("[WorkContractTemplatesManager] copy failed", error);
+        const err = error as { message?: string };
+        toast({
+          variant: "destructive",
+          title: "Kopírování se nezdařilo",
+          description: err?.message || "Zkuste to prosím znovu.",
+        });
+      } finally {
+        setCopyingId(null);
+      }
+    },
+    [companyId, firestore, startEdit, toast, userId]
+  );
 
   const handleSave = async () => {
     if (!firestore || !companyId) {
@@ -240,7 +297,7 @@ export function WorkContractTemplatesManagerDialog({
 
   return (
     <Dialog open={open} onOpenChange={handleMainOpenChange}>
-      <DialogContent className="fixed left-1/2 top-1/2 z-50 w-full max-w-[calc(100vw-2rem)] sm:max-w-5xl max-h-[90vh] min-h-0 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-0 overflow-y-auto overflow-x-hidden rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl">
+      <DialogContent className="fixed left-1/2 top-1/2 z-50 w-full max-w-[calc(100vw-1rem)] sm:max-w-6xl lg:max-w-[88rem] max-h-[92vh] min-h-0 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-0 overflow-y-auto overflow-x-hidden rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl">
         <DialogHeader className="shrink-0 px-6 pt-6 pb-4 border-b border-slate-200">
           <DialogTitle className="text-xl text-black">Šablony SOD</DialogTitle>
           <DialogDescription className="text-slate-600">
@@ -250,48 +307,50 @@ export function WorkContractTemplatesManagerDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
-          <div className="lg:w-[280px] shrink-0 border-b lg:border-b-0 lg:border-r border-slate-200 flex flex-col min-h-[200px] lg:min-h-0">
-            <div className="p-4 flex items-center justify-between gap-2 border-b border-slate-100">
-              <span className="text-sm font-semibold text-black">
-                Vaše šablony
-              </span>
-              <Button
-                type="button"
-                size="sm"
-                className="gap-1 bg-orange-500 hover:bg-orange-600 text-white"
-                onClick={startCreate}
-                disabled={disabled}
-              >
-                <Plus className="h-4 w-4" /> Nová šablona
-              </Button>
+        <TooltipProvider delayDuration={0}>
+          <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
+            <div className="flex min-h-[200px] shrink-0 flex-col border-b border-slate-200 lg:min-h-0 lg:w-[min(100%,320px)] lg:border-b-0 lg:border-r xl:w-[340px]">
+              <div className="flex items-center justify-between gap-2 border-b border-slate-100 p-4">
+                <span className="text-sm font-semibold text-black">Vaše šablony</span>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="shrink-0 gap-1 bg-orange-500 text-white hover:bg-orange-600"
+                  onClick={startCreate}
+                  disabled={disabled || copyingId !== null}
+                >
+                  <Plus className="h-4 w-4" /> Nová šablona
+                </Button>
+              </div>
+              <WorkContractTemplatesList
+                templates={templates}
+                loading={templatesLoading}
+                editingId={editingId}
+                templatePendingDelete={templatePendingDelete}
+                isDeleting={isDeleting}
+                copyingId={copyingId}
+                disabled={disabled || isDeleting}
+                onEdit={startEdit}
+                onDuplicate={(t) => void handleDuplicateTemplate(t)}
+                onBeginDelete={setTemplatePendingDelete}
+                onConfirmDelete={(id) => void handleDeleteTemplate(id)}
+                onCancelPendingDelete={() => setTemplatePendingDelete(null)}
+              />
             </div>
-            <WorkContractTemplatesList
-              templates={templates}
-              loading={templatesLoading}
+
+            <WorkContractTemplateForm
+              disabled={disabled}
               editingId={editingId}
-              templatePendingDelete={templatePendingDelete}
-              isDeleting={isDeleting}
-              disabled={disabled || isDeleting}
-              onEdit={startEdit}
-              onBeginDelete={setTemplatePendingDelete}
-              onConfirmDelete={(id) => void handleDeleteTemplate(id)}
-              onCancelPendingDelete={() => setTemplatePendingDelete(null)}
+              name={formName}
+              content={formContent}
+              onNameChange={setFormName}
+              onContentChange={setFormContent}
+              onSubmit={handleSave}
+              saving={saving}
+              onCancel={cancelOrCloseForm}
             />
           </div>
-
-          <WorkContractTemplateForm
-            disabled={disabled}
-            editingId={editingId}
-            name={formName}
-            content={formContent}
-            onNameChange={setFormName}
-            onContentChange={setFormContent}
-            onSubmit={handleSave}
-            saving={saving}
-            onCancel={cancelOrCloseForm}
-          />
-        </div>
+        </TooltipProvider>
       </DialogContent>
     </Dialog>
   );
