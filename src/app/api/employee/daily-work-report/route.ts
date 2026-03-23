@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
-import { sumClosedSegmentAmountsForWorkDay } from "@/lib/work-segment-server";
-import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
+import {
+  estimateLaborFromJobSplits,
+  resolveSegmentJobSplits,
+} from "@/lib/daily-work-report-resolve";
 
 type Body = {
   companyId?: string;
@@ -13,115 +15,16 @@ type Body = {
   jobName?: string | null;
   hoursFromAttendance?: number | null;
   hoursConfirmed?: number | null;
-  /** Přiřazení zakázky ke každému uzavřenému segmentu z terminálu (povinné). */
+  /** @deprecated použijte segmentJobSplits */
   segmentAllocations?: Array<{ segmentId?: string; jobId?: string }>;
+  /** Rozdělení hodin mezi zakázky po uzavřených úsecích terminálu. */
+  segmentJobSplits?: Array<{ segmentId?: string; jobId?: string; hours?: number }>;
   /** `draft` = rozpracováno, `submit` = odeslat ke schválení */
   mode?: "draft" | "submit";
 };
 
-type SegmentAllocOut = { segmentId: string; jobId: string; jobName: string | null };
-
 function reportDocId(employeeId: string, date: string) {
   return `${employeeId}__${date}`;
-}
-
-async function resolveSegmentAllocations(
-  db: NonNullable<ReturnType<typeof getAdminFirestore>>,
-  companyId: string,
-  employeeId: string,
-  date: string,
-  emp: Record<string, unknown>,
-  raw: Array<{ segmentId?: string; jobId?: string }> | undefined
-): Promise<{
-  hoursSum: number;
-  segmentAllocations: SegmentAllocOut[];
-  primaryJobId: string | null;
-  primaryJobName: string | null;
-}> {
-  const assigned = new Set(parseAssignedWorklogJobIds(emp));
-  const list = Array.isArray(raw) ? raw : [];
-  if (list.length === 0) {
-    throw new Error("Chybí přiřazení segmentů docházky — výkaz musí vycházet z uzavřených úseků terminálu.");
-  }
-
-  const segSnap = await db
-    .collection("companies")
-    .doc(companyId)
-    .collection("work_segments")
-    .where("employeeId", "==", employeeId)
-    .where("date", "==", date)
-    .get();
-
-  const byId = new Map(segSnap.docs.map((d) => [d.id, d]));
-  const closedIds = new Set(
-    segSnap.docs
-      .filter((d) => (d.data() as { closed?: boolean }).closed === true)
-      .map((d) => d.id)
-  );
-
-  if (closedIds.size === 0) {
-    throw new Error(
-      "Pro tento den nejsou žádné uzavřené úseky z docházkového terminálu — nelze uložit výkaz."
-    );
-  }
-
-  const seen = new Set<string>();
-  let hoursSum = 0;
-  const segmentAllocations: SegmentAllocOut[] = [];
-
-  for (const a of list) {
-    const sid = String(a.segmentId || "").trim();
-    const jid = String(a.jobId || "").trim();
-    if (!sid || !jid) {
-      throw new Error("Každý segment musí mít segmentId a jobId.");
-    }
-    if (seen.has(sid)) {
-      throw new Error("Duplicitní segment ve výkazu.");
-    }
-    seen.add(sid);
-    if (!assigned.has(jid)) {
-      throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
-    }
-
-    const docSnap = byId.get(sid);
-    if (!docSnap) {
-      throw new Error(`Segment ${sid} neexistuje nebo nepatří k tomuto dni.`);
-    }
-    const d = docSnap.data() as Record<string, unknown>;
-    if (String(d.employeeId || "") !== employeeId || String(d.date || "") !== date) {
-      throw new Error("Neplatný segment.");
-    }
-    if (d.closed !== true) {
-      throw new Error("Lze použít jen uzavřené úseky z docházky.");
-    }
-
-    const dh = typeof d.durationHours === "number" && Number.isFinite(d.durationHours) ? d.durationHours : 0;
-    hoursSum += dh;
-
-    const jobSnap = await db.collection("companies").doc(companyId).collection("jobs").doc(jid).get();
-    const jobName = jobSnap.exists
-      ? String((jobSnap.data() as { name?: string })?.name || "").trim() || null
-      : null;
-
-    segmentAllocations.push({ segmentId: sid, jobId: jid, jobName });
-  }
-
-  if (seen.size !== closedIds.size) {
-    throw new Error("Výkaz musí obsahovat přesně všechny uzavřené úseky docházky za tento den.");
-  }
-  for (const id of closedIds) {
-    if (!seen.has(id)) {
-      throw new Error("Chybí přiřazení zakázky u některého uzavřeného úseku docházky.");
-    }
-  }
-
-  const hoursRounded = Math.round(hoursSum * 100) / 100;
-  return {
-    hoursSum: hoursRounded,
-    segmentAllocations,
-    primaryJobId: segmentAllocations[0]?.jobId ?? null,
-    primaryJobName: segmentAllocations[0]?.jobName ?? null,
-  };
 }
 
 /**
@@ -235,22 +138,30 @@ export async function POST(request: NextRequest) {
 
     const note = typeof body.note === "string" ? body.note.trim() : "";
 
-    let resolved: Awaited<ReturnType<typeof resolveSegmentAllocations>>;
-    try {
-      resolved = await resolveSegmentAllocations(
-        db,
-        companyId,
-        employeeId,
-        date,
-        emp,
-        body.segmentAllocations
+    const rawSplits =
+      Array.isArray(body.segmentJobSplits) && body.segmentJobSplits.length > 0
+        ? body.segmentJobSplits
+        : null;
+
+    if (!rawSplits) {
+      return NextResponse.json(
+        {
+          error:
+            "Chybí rozdělení času (segmentJobSplits). Aktualizujte prosím stránku denního výkazu.",
+        },
+        { status: 400 }
       );
+    }
+
+    let resolved: Awaited<ReturnType<typeof resolveSegmentJobSplits>>;
+    try {
+      resolved = await resolveSegmentJobSplits(db, companyId, employeeId, date, emp, rawSplits, mode);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Neplatná data výkazu.";
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    const { hoursSum, segmentAllocations, primaryJobId, primaryJobName } = resolved;
+    const { hoursSum, segmentJobSplits, segmentAllocations, primaryJobId, primaryJobName } = resolved;
     const jobId = primaryJobId;
     const jobName = primaryJobName;
     const hoursFromAttendance: number | null = hoursSum;
@@ -262,40 +173,42 @@ export async function POST(request: NextRequest) {
       hourlyRateSnapshot: FieldValue.delete(),
     };
 
-    const estimatedLaborFromSegmentsCzk = await sumClosedSegmentAmountsForWorkDay(
+    const estimatedLaborFromSegmentsCzk = await estimateLaborFromJobSplits(
       db,
       companyId,
-      employeeId,
-      date
+      emp,
+      segmentJobSplits
     );
-    if (estimatedLaborFromSegmentsCzk > 0) {
-      console.log("Estimated labor cost added to report", { estimatedLaborFromSegmentsCzk });
-    }
+
+    const payloadBase = {
+      companyId,
+      employeeId,
+      employeeName,
+      date,
+      description: descriptionRaw,
+      note,
+      jobId,
+      jobName,
+      segmentAllocations,
+      segmentJobSplits,
+      hoursFromAttendance,
+      hoursConfirmed,
+      estimatedLaborFromSegmentsCzk:
+        estimatedLaborFromSegmentsCzk > 0 ? estimatedLaborFromSegmentsCzk : FieldValue.delete(),
+      ...clearPayable,
+      reviewedAt: null,
+      reviewedByUid: null,
+      reviewedByName: null,
+      adminNote: null,
+    };
 
     if (mode === "draft") {
       await ref.set(
         {
-          companyId,
-          employeeId,
-          employeeName,
-          date,
-          description: descriptionRaw,
-          note,
-          jobId,
-          jobName,
-          segmentAllocations,
-          hoursFromAttendance,
-          hoursConfirmed,
-          estimatedLaborFromSegmentsCzk:
-            estimatedLaborFromSegmentsCzk > 0 ? estimatedLaborFromSegmentsCzk : FieldValue.delete(),
+          ...payloadBase,
           status: "draft",
           updatedAt: FieldValue.serverTimestamp(),
           submittedAt: FieldValue.delete(),
-          ...clearPayable,
-          reviewedAt: null,
-          reviewedByUid: null,
-          reviewedByName: null,
-          adminNote: null,
         },
         { merge: true }
       );
@@ -305,27 +218,10 @@ export async function POST(request: NextRequest) {
 
     await ref.set(
       {
-        companyId,
-        employeeId,
-        employeeName,
-        date,
-        description: descriptionRaw,
-        note,
-        jobId,
-        jobName,
-        segmentAllocations,
-        hoursFromAttendance,
-        hoursConfirmed,
-        estimatedLaborFromSegmentsCzk:
-          estimatedLaborFromSegmentsCzk > 0 ? estimatedLaborFromSegmentsCzk : FieldValue.delete(),
+        ...payloadBase,
         status: "pending",
         submittedAt: FieldValue.serverTimestamp(),
         updatedAt: FieldValue.serverTimestamp(),
-        ...clearPayable,
-        reviewedAt: null,
-        reviewedByUid: null,
-        reviewedByName: null,
-        adminNote: null,
       },
       { merge: true }
     );

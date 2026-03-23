@@ -29,7 +29,7 @@ import {
 } from "@/lib/employee-attendance";
 import { formatKc } from "@/lib/employee-money";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
-import { Calendar, Clock, Loader2, AlertCircle } from "lucide-react";
+import { Calendar, Clock, Loader2, AlertCircle, CircleDollarSign, BadgeCheck } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 
@@ -90,6 +90,37 @@ export default function EmployeeHomePage() {
       String(b.date || "").localeCompare(String(a.date || ""))
     );
   }, [dailyReportsRaw]);
+
+  /** Součet orientačních částek z výkazů (evidence práce; není to závazná výplata). */
+  const totalEstimatedPayCzk = useMemo(() => {
+    let s = 0;
+    for (const row of dailyReportsSorted as Record<string, unknown>[]) {
+      const st = String(row.status || "");
+      if (st === "rejected") continue;
+      const n = row.estimatedLaborFromSegmentsCzk;
+      if (typeof n === "number" && Number.isFinite(n)) s += n;
+    }
+    return Math.round(s * 100) / 100;
+  }, [dailyReportsSorted]);
+
+  /** Součet částek potvrzených administrátorem (schválené výkazy). */
+  const totalApprovedPayCzk = useMemo(() => {
+    let s = 0;
+    for (const row of dailyReportsSorted as Record<string, unknown>[]) {
+      if (String(row.status) !== "approved") continue;
+      const n = row.payableAmountCzk;
+      if (typeof n === "number" && Number.isFinite(n)) s += n;
+    }
+    return Math.round(s * 100) / 100;
+  }, [dailyReportsSorted]);
+
+  const hasApprovedReport = useMemo(
+    () =>
+      dailyReportsSorted.some(
+        (row: Record<string, unknown>) => String(row.status) === "approved"
+      ),
+    [dailyReportsSorted]
+  );
 
   const safeRows = Array.isArray(rawRows) ? rawRows : [];
 
@@ -250,7 +281,7 @@ export default function EmployeeHomePage() {
   };
 
   return (
-    <div className="space-y-6 sm:space-y-8 max-w-4xl">
+    <div className="space-y-6 sm:space-y-8 max-w-5xl">
       {attendanceError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -296,6 +327,65 @@ export default function EmployeeHomePage() {
             ) : null}
           </p>
         </div>
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card className="border border-amber-200/80 bg-gradient-to-br from-amber-50/90 to-white shadow-sm dark:border-amber-900/40 dark:from-amber-950/30 dark:to-slate-950">
+          <CardHeader className="pb-2 space-y-1">
+            <CardTitle className="text-base flex items-center gap-2">
+              <CircleDollarSign className="w-4 h-4 shrink-0 text-amber-700 dark:text-amber-400" />
+              Orientační částka
+            </CardTitle>
+            <p className="text-xs text-amber-900/80 dark:text-amber-200/80 leading-snug">
+              Odhad z evidované práce a sazeb — pouze orientační hodnota,{" "}
+              <strong>ještě nebyla schválena</strong> administrátorem.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {dailyReportsLoading ? (
+              <p className="text-sm text-slate-500 flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Načítám výkazy…
+              </p>
+            ) : (
+              <p className="text-2xl sm:text-3xl font-bold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
+                {formatKc(totalEstimatedPayCzk)}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card className="border border-emerald-200/80 bg-gradient-to-br from-emerald-50/90 to-white shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/25 dark:to-slate-950">
+          <CardHeader className="pb-2 space-y-1">
+            <CardTitle className="text-base flex items-center gap-2">
+              <BadgeCheck className="w-4 h-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+              Schválená částka
+            </CardTitle>
+            <p className="text-xs text-emerald-900/80 dark:text-emerald-200/80 leading-snug">
+              Částka <strong>potvrzená administrátorem</strong> jako podklad k výplatě (součet
+              schválených denních výkazů).
+            </p>
+          </CardHeader>
+          <CardContent>
+            {dailyReportsLoading ? (
+              <p className="text-sm text-slate-500 flex items-center gap-2">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Načítám výkazy…
+              </p>
+            ) : hasApprovedReport ? (
+              <p className="text-2xl sm:text-3xl font-bold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
+                {formatKc(totalApprovedPayCzk)}
+              </p>
+            ) : (
+              <div className="space-y-1">
+                <p className="text-lg font-semibold text-slate-600 dark:text-slate-400">
+                  Zatím neschváleno
+                </p>
+                <p className="text-xs text-slate-500">Žádný denní výkaz zatím nemá stav Schváleno.</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

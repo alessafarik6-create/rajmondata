@@ -26,7 +26,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, AlertCircle } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { Loader2, AlertCircle, Plus, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
@@ -41,6 +42,135 @@ import {
   segmentTimeRangeLabel,
   sortSegmentsByStart,
 } from "@/lib/work-segment-client";
+
+const SPLIT_EPS = 0.02;
+
+type SplitRow = { rowId: string; jobId: string; hoursStr: string };
+
+function newSplitRowId() {
+  return typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `r-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function parseHoursInput(str: string): number | null {
+  const t = String(str ?? "").trim().replace(",", ".");
+  if (!t) return null;
+  const n = Number(t);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100) / 100;
+}
+
+function sumSplitHours(rows: SplitRow[]): number {
+  let s = 0;
+  for (const r of rows) {
+    const h = parseHoursInput(r.hoursStr);
+    if (h != null) s += h;
+  }
+  return Math.round(s * 100) / 100;
+}
+
+function buildInitialSplitRows(
+  segments: WorkSegmentClient[],
+  report: Record<string, unknown> | null | undefined
+): Record<string, SplitRow[]> {
+  const out: Record<string, SplitRow[]> = {};
+  const saved = report?.segmentJobSplits;
+  if (Array.isArray(saved) && saved.length > 0) {
+    const bySeg = new Map<string, SplitRow[]>();
+    for (const item of saved as { segmentId?: string; jobId?: string; hours?: number }[]) {
+      const sid = String(item.segmentId || "").trim();
+      const jid = String(item.jobId || "").trim();
+      const hr = typeof item.hours === "number" && Number.isFinite(item.hours) ? item.hours : 0;
+      if (!sid || !jid || hr <= 0) continue;
+      if (!bySeg.has(sid)) bySeg.set(sid, []);
+      const list = bySeg.get(sid)!;
+      list.push({
+        rowId: newSplitRowId(),
+        jobId: jid,
+        hoursStr: String(hr).replace(".", ","),
+      });
+    }
+    for (const seg of segments) {
+      const rows = bySeg.get(seg.id);
+      out[seg.id] =
+        rows && rows.length > 0
+          ? rows
+          : [
+              {
+                rowId: newSplitRowId(),
+                jobId: "",
+                hoursStr:
+                  typeof seg.durationHours === "number" && seg.durationHours > 0
+                    ? String(seg.durationHours).replace(".", ",")
+                    : "",
+              },
+            ];
+    }
+    return out;
+  }
+
+  const alloc = report?.segmentAllocations;
+  const byAlloc = new Map<string, string>();
+  if (Array.isArray(alloc)) {
+    for (const a of alloc as { segmentId?: string; jobId?: string }[]) {
+      const sid = String(a.segmentId || "").trim();
+      const jid = String(a.jobId || "").trim();
+      if (sid && jid) byAlloc.set(sid, jid);
+    }
+  }
+  const legacyJob = typeof report?.jobId === "string" ? report.jobId.trim() : "";
+
+  for (const seg of segments) {
+    const dur = typeof seg.durationHours === "number" && seg.durationHours > 0 ? seg.durationHours : 0;
+    const jid = byAlloc.get(seg.id) || legacyJob;
+    out[seg.id] = [
+      {
+        rowId: newSplitRowId(),
+        jobId: jid,
+        hoursStr: dur > 0 ? String(dur).replace(".", ",") : "",
+      },
+    ];
+  }
+  return out;
+}
+
+function validateSplitsForSubmit(
+  segments: WorkSegmentClient[],
+  rowsBySegment: Record<string, SplitRow[]>,
+  mode: "draft" | "submit"
+): string | null {
+  for (const seg of segments) {
+    const dur =
+      typeof seg.durationHours === "number" && Number.isFinite(seg.durationHours)
+        ? seg.durationHours
+        : 0;
+    if (dur <= 0) {
+      return `Úsek ${segmentTimeRangeLabel(seg)} nemá platnou délku — nelze uložit.`;
+    }
+    const rows = rowsBySegment[seg.id] ?? [];
+    const filled = rows.filter((r) => {
+      const jid = String(r.jobId || "").trim();
+      const h = parseHoursInput(r.hoursStr);
+      return jid && h != null;
+    });
+    if (filled.length === 0) {
+      return `U úseku ${segmentTimeRangeLabel(seg)} přidejte alespoň jeden řádek se zakázkou a hodinami.`;
+    }
+    let sum = 0;
+    for (const r of filled) {
+      sum += parseHoursInput(r.hoursStr)!;
+    }
+    sum = Math.round(sum * 100) / 100;
+    if (sum > dur + SPLIT_EPS) {
+      return `U úseku ${segmentTimeRangeLabel(seg)} je součet hodin (${sum} h) větší než odpracovaný čas (${dur} h).`;
+    }
+    if (mode === "submit" && sum < dur - SPLIT_EPS) {
+      return `U úseku ${segmentTimeRangeLabel(seg)} musí být rozvrženo celých ${dur} h (zbývá ${Math.round((dur - sum) * 100) / 100} h).`;
+    }
+  }
+  return null;
+}
 
 export default function EmployeeDailyReportsPage() {
   const { user, isUserLoading } = useUser();
@@ -179,8 +309,8 @@ export default function EmployeeDailyReportsPage() {
 
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
-  /** segmentId → jobId pro uzavřené úseky z terminálu */
-  const [segmentJobById, setSegmentJobById] = useState<Record<string, string>>({});
+  /** Rozdělení hodin mezi zakázky po řádcích pro každý uzavřený úsek terminálu */
+  const [segmentSplitRows, setSegmentSplitRows] = useState<Record<string, SplitRow[]>>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -194,23 +324,12 @@ export default function EmployeeDailyReportsPage() {
   }, [existingReport, dayKey]);
 
   useEffect(() => {
-    const next: Record<string, string> = {};
-    const alloc = existingReport?.segmentAllocations;
-    if (Array.isArray(alloc)) {
-      for (const a of alloc as { segmentId?: string; jobId?: string }[]) {
-        const sid = String(a.segmentId || "").trim();
-        const jid = String(a.jobId || "").trim();
-        if (sid && jid) next[sid] = jid;
-      }
+    if (!closedSegments.length) {
+      setSegmentSplitRows({});
+      return;
     }
-    const legacyJob =
-      typeof existingReport?.jobId === "string" ? existingReport.jobId.trim() : "";
-    for (const seg of closedSegments) {
-      if (!next[seg.id] && legacyJob) next[seg.id] = legacyJob;
-      if (!next[seg.id]) next[seg.id] = "";
-    }
-    setSegmentJobById(next);
-  }, [existingReport, dayKey, closedSegmentIdsKey]);
+    setSegmentSplitRows(buildInitialSplitRows(closedSegments, existingReport));
+  }, [existingReport, dayKey, closedSegmentIdsKey, closedSegments]);
 
   const postReport = async (mode: "draft" | "submit") => {
     if (!user || !companyId || !dayKey) return;
@@ -239,16 +358,10 @@ export default function EmployeeDailyReportsPage() {
       });
       return;
     }
-    for (const seg of closedSegments) {
-      const jid = String(segmentJobById[seg.id] || "").trim();
-      if (!jid) {
-        toast({
-          variant: "destructive",
-          title: "Chybí zakázka",
-          description: "U každého úseku z docházky vyberte zakázku z vašeho přiřazení.",
-        });
-        return;
-      }
+    const splitErr = validateSplitsForSubmit(closedSegments, segmentSplitRows, mode);
+    if (splitErr) {
+      toast({ variant: "destructive", title: "Nelze uložit výkaz", description: splitErr });
+      return;
     }
     if (mode === "submit" && !description.trim()) {
       toast({ variant: "destructive", title: "Chybí popis", description: "Vyplňte, co jste dělali." });
@@ -257,10 +370,16 @@ export default function EmployeeDailyReportsPage() {
     setSaving(true);
     try {
       const idToken = await user.getIdToken();
-      const segmentAllocations = closedSegments.map((seg) => ({
-        segmentId: seg.id,
-        jobId: String(segmentJobById[seg.id] || "").trim(),
-      }));
+      const segmentJobSplits: Array<{ segmentId: string; jobId: string; hours: number }> = [];
+      for (const seg of closedSegments) {
+        const rows = segmentSplitRows[seg.id] ?? [];
+        for (const r of rows) {
+          const jid = String(r.jobId || "").trim();
+          const h = parseHoursInput(r.hoursStr);
+          if (!jid || h == null) continue;
+          segmentJobSplits.push({ segmentId: seg.id, jobId: jid, hours: h });
+        }
+      }
       const res = await fetch("/api/employee/daily-work-report", {
         method: "POST",
         headers: {
@@ -272,7 +391,7 @@ export default function EmployeeDailyReportsPage() {
           date: dayKey,
           description: description.trim(),
           note: note.trim(),
-          segmentAllocations,
+          segmentJobSplits,
           mode,
         }),
       });
@@ -345,7 +464,7 @@ export default function EmployeeDailyReportsPage() {
   const dailyWorkLogOff = !isDailyWorkLogEnabled(employeeDoc);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6">
+    <div className="mx-auto max-w-5xl space-y-6 sm:space-y-8 px-1 sm:px-0">
       <div>
         <h1 className="portal-page-title text-2xl sm:text-3xl">Denní výkaz práce</h1>
         <p className="portal-page-description mt-1">
@@ -529,8 +648,9 @@ export default function EmployeeDailyReportsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <p className="text-sm text-muted-foreground">
-                Hodiny výkazu se počítají z uzavřených úseků docházky. U každého úseku zvolte{" "}
-                <strong>zakázku</strong> z přiřazení administrátorem.
+                Čas bere systém jen z <strong>uzavřených úseků terminálu</strong>. Každý úsek můžete rozdělit
+                na více řádků a ke každému přiřadit zakázku z vašeho přiřazení — součet hodin nesmí překročit
+                délku úseku.
               </p>
 
               {segmentsLoading ? (
@@ -547,44 +667,186 @@ export default function EmployeeDailyReportsPage() {
                   Nemáte přiřazenou žádnou zakázku pro výkaz. Požádejte administrátora o přiřazení zakázek.
                 </p>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {closedSegments.map((seg) => {
                     const st = seg.sourceType === "tariff" ? "Tarif" : "Zakázka";
                     const terminalLabel =
                       typeof seg.displayName === "string"
                         ? seg.displayName
                         : String(seg.jobName || seg.tariffName || "Úsek");
+                    const dur =
+                      typeof seg.durationHours === "number" && Number.isFinite(seg.durationHours)
+                        ? seg.durationHours
+                        : 0;
+                    const rows = segmentSplitRows[seg.id] ?? [];
+                    const allocated = sumSplitHours(
+                      rows.filter((r) => {
+                        const jid = String(r.jobId || "").trim();
+                        const h = parseHoursInput(r.hoursStr);
+                        return Boolean(jid && h != null);
+                      })
+                    );
+                    const remaining = Math.round((dur - allocated) * 100) / 100;
+                    const over = allocated > dur + SPLIT_EPS;
+
                     return (
                       <div
                         key={seg.id}
-                        className="rounded-md border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-900/30"
+                        className="rounded-xl border border-slate-200 bg-slate-50/90 p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900/40"
                       >
-                        <div className="mb-2 text-xs text-muted-foreground">
-                          {st} · {segmentTimeRangeLabel(seg)}
-                          {typeof seg.durationHours === "number" ? ` · ${seg.durationHours} h` : ""}
+                        <div className="mb-3 space-y-1">
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                              {st}
+                            </span>
+                            {dur > 0 ? (
+                              <span className="text-xs font-semibold tabular-nums text-slate-700 dark:text-slate-200">
+                                Úsek {dur} h
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">
+                            {terminalLabel}
+                          </p>
+                          <p className="text-xs text-muted-foreground">{segmentTimeRangeLabel(seg)}</p>
+                          <div
+                            className={cn(
+                              "mt-2 grid grid-cols-1 gap-2 rounded-lg border px-3 py-2 text-xs sm:grid-cols-3 sm:gap-3",
+                              over
+                                ? "border-destructive/50 bg-destructive/5"
+                                : "border-slate-200 bg-white/80 dark:border-slate-600 dark:bg-slate-950/30"
+                            )}
+                          >
+                            <div>
+                              <span className="text-muted-foreground">Odpracováno (úsek)</span>
+                              <p className="font-semibold tabular-nums">{dur > 0 ? `${dur} h` : "—"}</p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Rozděleno</span>
+                              <p className="font-semibold tabular-nums">{allocated} h</p>
+                            </div>
+                            <div>
+                              <span className="text-muted-foreground">Zbývá</span>
+                              <p
+                                className={cn(
+                                  "font-semibold tabular-nums",
+                                  remaining < -SPLIT_EPS && "text-destructive",
+                                  remaining >= -SPLIT_EPS &&
+                                    remaining <= SPLIT_EPS &&
+                                    "text-emerald-700 dark:text-emerald-400"
+                                )}
+                              >
+                                {over ? "—" : `${remaining} h`}
+                              </p>
+                            </div>
+                          </div>
+                          {over ? (
+                            <p className="text-xs font-medium text-destructive">
+                              Součet řádků překračuje délku úseku — upravte hodiny.
+                            </p>
+                          ) : null}
                         </div>
-                        <p className="mb-1 text-sm font-medium text-slate-900 dark:text-slate-100">
-                          {terminalLabel}
-                        </p>
-                        <Label className="text-xs">Zakázka ve výkazu *</Label>
-                        <select
-                          className="mt-1 flex h-11 w-full rounded-md border border-input bg-background px-3 text-sm"
-                          value={segmentJobById[seg.id] ?? ""}
-                          onChange={(e) =>
-                            setSegmentJobById((prev) => ({
-                              ...prev,
-                              [seg.id]: e.target.value,
-                            }))
-                          }
-                          disabled={formLocked || jobsLoading || dailyWorkLogOff}
-                        >
-                          <option value="">— vyberte zakázku —</option>
-                          {assignedJobs.map((j) => (
-                            <option key={j.id} value={j.id}>
-                              {j.name || j.id}
-                            </option>
+
+                        <div className="space-y-3">
+                          {rows.map((row) => (
+                            <div
+                              key={row.rowId}
+                              className="flex flex-col gap-3 rounded-lg border border-slate-200/80 bg-white p-3 dark:border-slate-600 dark:bg-slate-950/50 sm:flex-row sm:items-end sm:gap-3"
+                            >
+                              <div className="min-w-0 flex-1 space-y-1.5">
+                                <Label className="text-xs">Zakázka *</Label>
+                                <select
+                                  className="flex h-11 min-h-[44px] w-full rounded-md border border-input bg-background px-3 text-sm"
+                                  value={row.jobId}
+                                  onChange={(e) =>
+                                    setSegmentSplitRows((prev) => {
+                                      const list = [...(prev[seg.id] ?? [])];
+                                      const i = list.findIndex((x) => x.rowId === row.rowId);
+                                      if (i < 0) return prev;
+                                      list[i] = { ...list[i], jobId: e.target.value };
+                                      return { ...prev, [seg.id]: list };
+                                    })
+                                  }
+                                  disabled={formLocked || jobsLoading || dailyWorkLogOff}
+                                >
+                                  <option value="">— vyberte —</option>
+                                  {assignedJobs.map((j) => (
+                                    <option key={j.id} value={j.id}>
+                                      {j.name || j.id}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="w-full space-y-1.5 sm:w-28">
+                                <Label className="text-xs">Hodiny *</Label>
+                                <Input
+                                  inputMode="decimal"
+                                  className="h-11 min-h-[44px] tabular-nums"
+                                  placeholder="např. 1,5"
+                                  value={row.hoursStr}
+                                  onChange={(e) =>
+                                    setSegmentSplitRows((prev) => {
+                                      const list = [...(prev[seg.id] ?? [])];
+                                      const i = list.findIndex((x) => x.rowId === row.rowId);
+                                      if (i < 0) return prev;
+                                      list[i] = { ...list[i], hoursStr: e.target.value };
+                                      return { ...prev, [seg.id]: list };
+                                    })
+                                  }
+                                  disabled={formLocked || dailyWorkLogOff}
+                                />
+                              </div>
+                              <div className="flex shrink-0 gap-2 sm:pb-0.5">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0"
+                                  disabled={
+                                    formLocked ||
+                                    dailyWorkLogOff ||
+                                    rows.length <= 1
+                                  }
+                                  onClick={() =>
+                                    setSegmentSplitRows((prev) => {
+                                      const list = [...(prev[seg.id] ?? [])].filter(
+                                        (x) => x.rowId !== row.rowId
+                                      );
+                                      return {
+                                        ...prev,
+                                        [seg.id]:
+                                          list.length > 0
+                                            ? list
+                                            : [{ rowId: newSplitRowId(), jobId: "", hoursStr: "" }],
+                                      };
+                                    })
+                                  }
+                                  aria-label="Smazat řádek"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </div>
                           ))}
-                        </select>
+                        </div>
+
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="mt-3 min-h-[44px] w-full sm:w-auto"
+                          disabled={formLocked || dailyWorkLogOff}
+                          onClick={() =>
+                            setSegmentSplitRows((prev) => {
+                              const list = [...(prev[seg.id] ?? [])];
+                              list.push({ rowId: newSplitRowId(), jobId: "", hoursStr: "" });
+                              return { ...prev, [seg.id]: list };
+                            })
+                          }
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Přidat řádek
+                        </Button>
                       </div>
                     );
                   })}
