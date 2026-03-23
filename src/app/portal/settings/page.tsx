@@ -55,6 +55,7 @@ export default function SettingsPage() {
   const [phoneInput, setPhoneInput] = useState('');
   const [webInput, setWebInput] = useState('');
   const [publicProfile, setPublicProfile] = useState(false);
+  const [enableDailyReport24hLock, setEnableDailyReport24hLock] = useState(false);
   const [isSavingCompany, setIsSavingCompany] = useState(false);
 
   const [addrStreetAndNumber, setAddrStreetAndNumber] = useState('');
@@ -103,6 +104,9 @@ export default function SettingsPage() {
       setPhoneInput((company as any).phone || '');
       setWebInput((company as any).web || '');
       setPublicProfile(Boolean(company.publicProfile));
+      setEnableDailyReport24hLock(
+        Boolean((company as { enableDailyReport24hLock?: boolean }).enableDailyReport24hLock)
+      );
 
       // Prefer structured address; fallback to legacy registeredOfficeAddress.
       const street = (company as any).companyAddressStreetAndNumber;
@@ -149,6 +153,7 @@ export default function SettingsPage() {
       setPhoneInput('');
       setWebInput('');
       setPublicProfile(false);
+      setEnableDailyReport24hLock(false);
       setAddrStreetAndNumber('');
       setAddrCity('');
       setAddrPostalCode('');
@@ -255,6 +260,7 @@ export default function SettingsPage() {
         address: fullAddressBlock,
         bankAccountNumber: legacyBankAccountNumber,
         publicProfile,
+        enableDailyReport24hLock: Boolean(enableDailyReport24hLock),
         updatedAt: serverTimestamp(),
       };
 
@@ -483,6 +489,24 @@ export default function SettingsPage() {
                     <p className="text-xs text-muted-foreground">Umožněte ostatním najít vaši organizaci na platformě.</p>
                   </div>
                   <Switch checked={publicProfile} onCheckedChange={setPublicProfile} />
+                </div>
+
+                <Separator className="bg-border" />
+
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border/80 bg-muted/30 p-4">
+                  <div className="space-y-1 min-w-0">
+                    <Label htmlFor="daily-report-24h-lock">Uzamknout denní výkaz po 24 hodinách</Label>
+                    <p className="text-xs text-muted-foreground max-w-prose">
+                      Po 24 hodinách od pracovního dne již zaměstnanec nemůže výkaz upravit ani odeslat — zůstane jen
+                      ke čtení. Vypnutím se zápis po 24 hodinách nezamyká.
+                    </p>
+                  </div>
+                  <Switch
+                    id="daily-report-24h-lock"
+                    checked={enableDailyReport24hLock}
+                    onCheckedChange={setEnableDailyReport24hLock}
+                    className="shrink-0"
+                  />
                 </div>
 
                 <Separator className="bg-border" />

@@ -4,7 +4,7 @@
  * Výkaz práce — jediná kanonická route: /portal/employee/worklogs
  */
 import React, { useEffect, useMemo, useState, useRef } from "react";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { cs as csFns } from "date-fns/locale";
 import { cs } from "react-day-picker/locale";
@@ -95,7 +95,7 @@ import {
 } from "@/lib/assigned-jobs";
 import { normalizeEmployeeUiLang } from "@/lib/i18n/employee-ui";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
-import { isWorkLogEnabled } from "@/lib/employee-report-flags";
+import { isDailyWorkLogEnabled, isWorkLogEnabled } from "@/lib/employee-report-flags";
 import {
   type WorkSegmentClient,
   closedTerminalSegmentsForDay,
@@ -237,6 +237,7 @@ function DigitalTimePair({
 
 export default function EmployeeWorklogsPage() {
   const pathname = usePathname();
+  const router = useRouter();
   const { user, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -262,6 +263,13 @@ export default function EmployeeWorklogsPage() {
     [firestore, companyId, employeeId]
   );
   const { data: employeeDoc } = useDoc<any>(employeeRef);
+
+  useEffect(() => {
+    if (!employeeDoc) return;
+    if (isDailyWorkLogEnabled(employeeDoc)) {
+      router.replace("/portal/employee/daily-reports");
+    }
+  }, [employeeDoc, router]);
 
   const assignedJobIds = useMemo(
     () => parseAssignedWorklogJobIds(employeeDoc),

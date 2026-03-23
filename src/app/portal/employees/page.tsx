@@ -216,9 +216,9 @@ export default function EmployeesPage() {
   );
   const [savingAssignedWorklogJobs, setSavingAssignedWorklogJobs] =
     useState(false);
-  /** V dialogu „Zakázky pro výkaz práce“ — funkce portálu (výchozí zapnuto). */
-  const [enableDailyWorkLogToggle, setEnableDailyWorkLogToggle] = useState(true);
-  const [enableWorkLogToggle, setEnableWorkLogToggle] = useState(true);
+  /** V dialogu „Zakázky pro výkaz práce“ — jeden přepínač pro denní výkaz i legacy výkaz (stejná hodnota). */
+  const [enableUnifiedWorkReportToggle, setEnableUnifiedWorkReportToggle] =
+    useState(true);
 
   const [assignTerminalEmployee, setAssignTerminalEmployee] = useState<any | null>(
     null
@@ -278,8 +278,7 @@ export default function EmployeesPage() {
 
   useEffect(() => {
     if (!worklogEmployeeId) {
-      setEnableDailyWorkLogToggle(true);
-      setEnableWorkLogToggle(true);
+      setEnableUnifiedWorkReportToggle(true);
       return;
     }
     const fresh = employees?.find((e) => e.id === worklogEmployeeId) as
@@ -289,9 +288,9 @@ export default function EmployeesPage() {
         }
       | undefined;
     if (!fresh) return;
-    /** Stejná sémantika jako v aplikaci: uložené `false` zůstane vypnuté; chybějící pole = výchozí zapnuto. */
-    setEnableDailyWorkLogToggle(isDailyWorkLogEnabled(fresh));
-    setEnableWorkLogToggle(isWorkLogEnabled(fresh));
+    const unified =
+      isDailyWorkLogEnabled(fresh) || isWorkLogEnabled(fresh);
+    setEnableUnifiedWorkReportToggle(unified);
   }, [worklogEmployeeId, employees]);
 
   useEffect(() => {
@@ -340,8 +339,8 @@ export default function EmployeesPage() {
         ),
         {
           assignedWorklogJobIds: Array.from(assignWorklogJobIds),
-          enableDailyWorkLog: Boolean(enableDailyWorkLogToggle),
-          enableWorkLog: Boolean(enableWorkLogToggle),
+          enableDailyWorkLog: Boolean(enableUnifiedWorkReportToggle),
+          enableWorkLog: Boolean(enableUnifiedWorkReportToggle),
           updatedAt: serverTimestamp(),
         }
       );
@@ -1674,33 +1673,18 @@ export default function EmployeesPage() {
           <div className="space-y-4 rounded-md border border-gray-200 bg-gray-50/80 p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0 space-y-0.5">
-                <Label htmlFor="toggle-daily-work-log" className="text-sm font-medium text-black">
-                  Denní výkaz práce
-                </Label>
-                <p className="text-xs text-gray-600">
-                  Zapnutí sekce denního výkazu a ukládání vázaného na docházku.
-                </p>
-              </div>
-              <Switch
-                id="toggle-daily-work-log"
-                checked={enableDailyWorkLogToggle}
-                onCheckedChange={setEnableDailyWorkLogToggle}
-                disabled={!canManage}
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0 space-y-0.5">
-                <Label htmlFor="toggle-work-log" className="text-sm font-medium text-black">
+                <Label htmlFor="toggle-unified-work-report" className="text-sm font-medium text-black">
                   Výkaz práce
                 </Label>
                 <p className="text-xs text-gray-600">
-                  Zapnutí zápisu bloků výkazu práce v portálu zaměstnance.
+                  Zapne denní výkaz vázaný na terminál a docházku (sekce Výkaz práce v portálu). Vypnutím skryjete
+                  výkazování u tohoto zaměstnance.
                 </p>
               </div>
               <Switch
-                id="toggle-work-log"
-                checked={enableWorkLogToggle}
-                onCheckedChange={setEnableWorkLogToggle}
+                id="toggle-unified-work-report"
+                checked={enableUnifiedWorkReportToggle}
+                onCheckedChange={setEnableUnifiedWorkReportToggle}
                 disabled={!canManage}
               />
             </div>

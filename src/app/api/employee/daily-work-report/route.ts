@@ -5,6 +5,7 @@ import {
   estimateLaborFromJobSplits,
   resolveSegmentJobSplits,
 } from "@/lib/daily-work-report-resolve";
+import { isDailyReportPastEditDeadline } from "@/lib/daily-report-24h-lock";
 
 type Body = {
   companyId?: string;
@@ -137,6 +138,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Výkaz čeká na schválení. Úpravy jsou možné až po vrácení nebo zamítnutí." },
         { status: 409 }
+      );
+    }
+
+    const companySnap = await db.collection("companies").doc(companyId).get();
+    const enableDailyReport24hLock =
+      (companySnap.data() as { enableDailyReport24hLock?: boolean } | undefined)
+        ?.enableDailyReport24hLock === true;
+    if (
+      enableDailyReport24hLock &&
+      prevStatus !== "returned" &&
+      isDailyReportPastEditDeadline(date)
+    ) {
+      return NextResponse.json(
+        { error: "Zápis je uzamčen po 24 hodinách." },
+        { status: 403 }
       );
     }
 

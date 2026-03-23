@@ -35,6 +35,11 @@ export type CompanyProfile = {
   isActive?: boolean;
 
   /**
+   * Po 24 h od konce pracovního dne zamknout úpravy denního výkazu (zaměstnanec jen čte).
+   */
+  enableDailyReport24hLock?: boolean;
+
+  /**
    * Structured company address.
    * Used by "Smlouva o dílo" (Dodavatel) + settings form.
    */

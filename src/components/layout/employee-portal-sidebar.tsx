@@ -7,7 +7,6 @@ import {
   LayoutDashboard,
   Clock,
   CalendarDays,
-  FileText,
   UserCircle,
   Wallet,
   MessageSquare,
@@ -53,19 +52,28 @@ export function EmployeePortalSidebar({
   const { data: employeeDoc } = useDoc<any>(employeeRef);
 
   const links = useMemo(() => {
+    const showDaily = isDailyWorkLogEnabled(employeeDoc);
+    const showLegacyWorklog = !showDaily && isWorkLogEnabled(employeeDoc);
     const all = [
       { label: t("home"), href: "/portal/employee", icon: LayoutDashboard },
       { label: t("attendance"), href: "/portal/labor/dochazka", icon: Clock },
-      {
-        label: t("workReport"),
-        href: "/portal/employee/worklogs",
-        icon: CalendarDays,
-      },
-      {
-        label: t("dailyReportMenu"),
-        href: "/portal/employee/daily-reports",
-        icon: FileText,
-      },
+      ...(showDaily
+        ? [
+            {
+              label: t("workReport"),
+              href: "/portal/employee/daily-reports",
+              icon: CalendarDays,
+            },
+          ]
+        : showLegacyWorklog
+          ? [
+              {
+                label: t("workReport"),
+                href: "/portal/employee/worklogs",
+                icon: CalendarDays,
+              },
+            ]
+          : []),
       { label: t("money"), href: "/portal/employee/money", icon: Wallet },
       {
         label: t("messages"),
@@ -74,12 +82,7 @@ export function EmployeePortalSidebar({
       },
       { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
     ];
-    return all.filter((l) => {
-      if (l.href === "/portal/employee/worklogs") return isWorkLogEnabled(employeeDoc);
-      if (l.href === "/portal/employee/daily-reports")
-        return isDailyWorkLogEnabled(employeeDoc);
-      return true;
-    });
+    return all;
   }, [t, employeeDoc]);
 
   const linkClass = (href: string) =>

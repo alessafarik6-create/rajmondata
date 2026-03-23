@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
+import { format, startOfMonth, endOfMonth } from "date-fns";
 import { cs } from "date-fns/locale";
 import {
   useUser,
@@ -27,7 +27,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Calendar } from "@/components/ui/calendar";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Loader2, AlertCircle, Plus, Trash2 } from "lucide-react";
+import { Loader2, AlertCircle, Plus, Trash2, Lock } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
@@ -51,6 +51,8 @@ import {
   segmentDurationHours,
   sumClosedSegmentHours,
 } from "@/lib/daily-work-report-day-form";
+import { isDailyReportLockedBy24hRule } from "@/lib/daily-report-24h-lock";
+import { buildDayCalendarMarkerMap } from "@/lib/daily-report-calendar-state";
 
 const SPLIT_EPS = 0.02;
 
@@ -151,7 +153,7 @@ export default function EmployeeDailyReportsPage() {
   const { user, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
-  const { companyName } = useCompany();
+  const { companyName, company } = useCompany();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -238,7 +240,126 @@ export default function EmployeeDailyReportsPage() {
   );
 
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(new Date());
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date());
+  const monthSegmentKey = format(calendarMonth, "yyyy-MM");
+
+  const dailyReportsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "daily_work_reports"),
+      where("employeeId", "==", employeeId),
+      limit(500)
+    );
+  }, [firestore, companyId, employeeId]);
+
+  const { data: monthlyDailyReportsRaw = [] } = useCollection(dailyReportsQuery);
+
+  const workSegmentsMonthQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    const ms = format(startOfMonth(calendarMonth), "yyyy-MM-dd");
+    const me = format(endOfMonth(calendarMonth), "yyyy-MM-dd");
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", employeeId),
+      where("date", ">=", ms),
+      where("date", "<=", me),
+      limit(500)
+    );
+  }, [firestore, companyId, employeeId, monthSegmentKey]);
+
+  const { data: workSegmentsMonthRaw = [] } = useCollection(workSegmentsMonthQuery);
+
+  const reportsByDate = useMemo(() => {
+    const raw = Array.isArray(monthlyDailyReportsRaw) ? monthlyDailyReportsRaw : [];
+    const m = new Map<string, Record<string, unknown>>();
+    for (const r of raw) {
+      const row = r as Record<string, unknown>;
+      const dk = String(row.date ?? "").trim();
+      if (dk) m.set(dk, row);
+    }
+    return m;
+  }, [monthlyDailyReportsRaw]);
+
+  const segmentsByDate = useMemo(() => {
+    const raw = Array.isArray(workSegmentsMonthRaw) ? workSegmentsMonthRaw : [];
+    const m = new Map<string, WorkSegmentClient[]>();
+    for (const s of raw) {
+      const row = s as Record<string, unknown> & { id?: string };
+      const dk = String(row.date ?? "").trim();
+      if (!dk) continue;
+      const arr = m.get(dk) ?? [];
+      arr.push({ ...row, id: String(row.id ?? "") } as WorkSegmentClient);
+      m.set(dk, arr);
+    }
+    return m;
+  }, [workSegmentsMonthRaw]);
+
+  const lock24hEnabled = company?.enableDailyReport24hLock === true;
+
+  const markerMap = useMemo(
+    () =>
+      buildDayCalendarMarkerMap(calendarMonth, {
+        attendanceBlocks,
+        employeeId,
+        authUid: user?.uid,
+        segmentsByDate,
+        reportsByDate,
+        lock24hEnabled,
+        now: new Date(),
+      }),
+    [
+      calendarMonth,
+      attendanceBlocks,
+      employeeId,
+      user?.uid,
+      segmentsByDate,
+      reportsByDate,
+      lock24hEnabled,
+      selectedDay,
+    ]
+  );
+
+  const calendarModifiers = useMemo(() => {
+    const mk =
+      (pred: (st: string) => boolean) =>
+      (d: Date) => {
+        const key = format(d, "yyyy-MM-dd");
+        const st = markerMap.get(key);
+        return st != null && pred(st);
+      };
+    return {
+      calNoShift: mk((s) => s === "no_shift"),
+      calWorkNoReport: mk((s) => s === "work_no_report"),
+      calDraft: mk((s) => s === "draft"),
+      calPending: mk((s) => s === "pending"),
+      calApproved: mk((s) => s === "approved"),
+      calReturned: mk((s) => s === "returned"),
+      calRejected: mk((s) => s === "rejected"),
+      calLocked: mk((s) => s === "locked_timeout"),
+    };
+  }, [markerMap]);
+
+  const calendarModifiersClassNames = {
+    calNoShift:
+      "border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-100 rounded-md",
+    calWorkNoReport:
+      "border-2 border-amber-600 bg-amber-100 text-amber-950 hover:bg-amber-100 rounded-md",
+    calDraft:
+      "border-2 border-orange-600 bg-orange-100 text-neutral-950 hover:bg-orange-100 rounded-md",
+    calPending:
+      "border-2 border-amber-800 bg-amber-200 text-neutral-950 hover:bg-amber-200 rounded-md",
+    calApproved:
+      "border-2 border-emerald-700 bg-emerald-100 text-emerald-950 hover:bg-emerald-100 rounded-md",
+    calReturned:
+      "border-2 border-violet-700 bg-violet-100 text-violet-950 hover:bg-violet-100 rounded-md",
+    calRejected:
+      "border-2 border-red-700 bg-red-100 text-red-950 hover:bg-red-100 rounded-md",
+    calLocked:
+      "border-2 border-neutral-950 bg-slate-200 text-neutral-950 hover:bg-slate-200 rounded-md ring-2 ring-neutral-950/30",
+  };
+
   const dayKey = selectedDay ? format(selectedDay, "yyyy-MM-dd") : "";
+  const selectedDayMarker = dayKey ? markerMap.get(dayKey) : undefined;
 
   const reportRef = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId || !dayKey) return null;
@@ -372,6 +493,20 @@ export default function EmployeeDailyReportsPage() {
       });
       return;
     }
+    if (
+      selectedDay &&
+      isDailyReportLockedBy24hRule(selectedDay, {
+        lockEnabled: lock24hEnabled,
+        reportStatus: existingReport?.status as string | undefined,
+      })
+    ) {
+      toast({
+        variant: "destructive",
+        title: "Uzamčeno",
+        description: "Zápis je uzamčen po 24 hodinách.",
+      });
+      return;
+    }
     if (closedSegments.length === 0) {
       toast({
         variant: "destructive",
@@ -474,6 +609,13 @@ export default function EmployeeDailyReportsPage() {
 
   const status = existingReport?.status as string | undefined;
   const formLocked = status === "approved" || status === "pending";
+  const isLockedBy24h =
+    selectedDay != null &&
+    isDailyReportLockedBy24hRule(selectedDay, {
+      lockEnabled: lock24hEnabled,
+      reportStatus: status,
+    });
+  const effectiveFormLocked = formLocked || isLockedBy24h;
   const dailyWorkLogOff = !isDailyWorkLogEnabled(employeeDoc);
 
   const { locked: lockedFromTerminal, unlocked: unlockedSegments } = useMemo(
@@ -586,11 +728,11 @@ export default function EmployeeDailyReportsPage() {
     <div className="mx-auto max-w-5xl space-y-6 sm:space-y-8 px-2 sm:px-0">
       <div className="rounded-xl border-2 border-neutral-950 bg-white p-4 sm:p-6">
         <h1 className="text-2xl font-bold tracking-tight text-neutral-950 sm:text-3xl">
-          Denní výkaz práce
+          Výkaz práce
         </h1>
         <p className="mt-2 text-sm leading-relaxed text-neutral-900 sm:text-base">
-          Ke každému dni doplňte popis práce — navazuje na docházku (příchod / odchod).{" "}
-          {companyName ? <span className="font-semibold">{companyName}</span> : null}
+          Jeden denní zápis: docházka z terminálu, tarify a rozdělení zbývajícího času do řádků (hodiny, popis,
+          volitelná zakázka). {companyName ? <span className="font-semibold">{companyName}</span> : null}
         </p>
       </div>
 
@@ -614,20 +756,102 @@ export default function EmployeeDailyReportsPage() {
         </Alert>
       ) : null}
 
+      {isLockedBy24h && !formLocked ? (
+        <Alert className="border-2 border-neutral-950 bg-slate-100 text-neutral-950">
+          <Lock className="h-4 w-4 text-neutral-950" />
+          <AlertTitle>Zápis je uzamčen po 24 hodinách</AlertTitle>
+          <AlertDescription className="text-neutral-900">
+            Tento den již nelze upravovat ani odesílat. Záznam je k dispozici jen ke čtení.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
       <div className="grid gap-6 lg:grid-cols-[minmax(0,280px)_1fr]">
         <Card className={cn(cardBox, "overflow-hidden")}>
           <CardHeader className="space-y-1 pb-2">
             <CardTitle className={cardTitle}>Den</CardTitle>
             <CardDescription className={cardDesc}>Vyberte pracovní den</CardDescription>
           </CardHeader>
-          <CardContent className="flex justify-center p-3 sm:p-4">
-            <Calendar
-              mode="single"
-              selected={selectedDay}
-              onSelect={(d) => d && setSelectedDay(d)}
-              locale={cs}
-              className="rounded-lg border-2 border-neutral-950 bg-white p-2"
-            />
+          <CardContent className="flex flex-col items-stretch p-3 sm:p-4">
+            <div className="flex justify-center">
+              <Calendar
+                mode="single"
+                month={calendarMonth}
+                onMonthChange={setCalendarMonth}
+                selected={selectedDay}
+                onSelect={(d) => {
+                  if (d) {
+                    setSelectedDay(d);
+                    setCalendarMonth(d);
+                  }
+                }}
+                locale={cs}
+                modifiers={calendarModifiers}
+                modifiersClassNames={calendarModifiersClassNames}
+                className="rounded-lg border-2 border-neutral-950 bg-white p-2"
+              />
+            </div>
+            {selectedDayMarker ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2 border-t-2 border-neutral-950 pt-3 text-xs text-neutral-900">
+                <span className="font-semibold text-neutral-950">Stav dne:</span>
+                <Badge variant="outline" className="border-2 border-neutral-950 bg-white text-neutral-950">
+                  {selectedDayMarker === "no_shift"
+                    ? "Bez docházky"
+                    : selectedDayMarker === "work_no_report"
+                      ? "Čeká výkaz"
+                      : selectedDayMarker === "draft"
+                        ? "Rozpracováno"
+                        : selectedDayMarker === "pending"
+                          ? "Odesláno ke schválení"
+                          : selectedDayMarker === "approved"
+                            ? "Schváleno"
+                            : selectedDayMarker === "returned"
+                              ? "K úpravě"
+                              : selectedDayMarker === "rejected"
+                                ? "Zamítnuto"
+                                : selectedDayMarker === "locked_timeout"
+                                  ? "Uzamčeno (24 h)"
+                                  : "—"}
+                </Badge>
+              </div>
+            ) : null}
+            <div className="mt-4 space-y-2 border-t-2 border-neutral-950 pt-3 text-[11px] leading-snug text-neutral-900">
+              <p className="font-semibold text-neutral-950">Legenda kalendáře</p>
+              <ul className="grid gap-1.5 sm:grid-cols-2">
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border border-neutral-400 bg-neutral-100" />{" "}
+                  Bez docházky
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-amber-600 bg-amber-100" />{" "}
+                  Čeká výkaz
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-orange-600 bg-orange-100" />{" "}
+                  Rozpracováno
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-amber-800 bg-amber-200" />{" "}
+                  Ke schválení
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-emerald-700 bg-emerald-100" />{" "}
+                  Schváleno
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-violet-700 bg-violet-100" />{" "}
+                  K úpravě
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-red-700 bg-red-100" />{" "}
+                  Zamítnuto
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-neutral-950 bg-slate-200" />{" "}
+                  Uzamčeno (24 h)
+                </li>
+              </ul>
+            </div>
           </CardContent>
         </Card>
 
@@ -860,7 +1084,7 @@ export default function EmployeeDailyReportsPage() {
                                     [seg.id]: e.target.value,
                                   }))
                                 }
-                                disabled={formLocked || dailyWorkLogOff}
+                                disabled={effectiveFormLocked || dailyWorkLogOff}
                               />
                             </div>
                           );
@@ -978,7 +1202,7 @@ export default function EmployeeDailyReportsPage() {
                                     )
                                   )
                                 }
-                                disabled={formLocked || dailyWorkLogOff}
+                                disabled={effectiveFormLocked || dailyWorkLogOff}
                               />
                             </div>
                             <div className="min-w-0 space-y-1.5">
@@ -995,7 +1219,7 @@ export default function EmployeeDailyReportsPage() {
                                     )
                                   )
                                 }
-                                disabled={formLocked || dailyWorkLogOff}
+                                disabled={effectiveFormLocked || dailyWorkLogOff}
                               />
                             </div>
                             <div className="min-w-0 space-y-1.5">
@@ -1012,7 +1236,7 @@ export default function EmployeeDailyReportsPage() {
                                     )
                                   )
                                 }
-                                disabled={formLocked || jobsLoading || dailyWorkLogOff}
+                                disabled={effectiveFormLocked || jobsLoading || dailyWorkLogOff}
                               >
                                 <option value="">— bez zakázky / interní —</option>
                                 {assignedJobs.map((j) => (
@@ -1029,7 +1253,7 @@ export default function EmployeeDailyReportsPage() {
                                 size="icon"
                                 className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 border-2 border-neutral-950 bg-white"
                                 disabled={
-                                  formLocked || dailyWorkLogOff || dayFormRows.length <= 1
+                                  effectiveFormLocked || dailyWorkLogOff || dayFormRows.length <= 1
                                 }
                                 onClick={() =>
                                   setDayFormRows((prev) => {
@@ -1059,7 +1283,7 @@ export default function EmployeeDailyReportsPage() {
                         variant="secondary"
                         size="sm"
                         className="min-h-[44px] w-full border-2 border-neutral-950 bg-white text-neutral-950 hover:bg-neutral-100 sm:w-auto"
-                        disabled={formLocked || dailyWorkLogOff}
+                        disabled={effectiveFormLocked || dailyWorkLogOff}
                         onClick={() =>
                           setDayFormRows((prev) => [
                             ...prev,
@@ -1082,13 +1306,13 @@ export default function EmployeeDailyReportsPage() {
 
               <div className="space-y-2 rounded-lg border-2 border-neutral-950 bg-white p-4">
                 <Label htmlFor="dr-desc" className="text-neutral-950">
-                  Co jste dělali {status !== "draft" && !formLocked ? "*" : ""}
+                  Co jste dělali {status !== "draft" && !effectiveFormLocked ? "*" : ""}
                 </Label>
                 <Textarea
                   id="dr-desc"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  disabled={formLocked}
+                  disabled={effectiveFormLocked}
                   rows={4}
                   placeholder="Stručný popis úkolů…"
                   className="border-2 border-neutral-950 text-neutral-950"
@@ -1103,7 +1327,7 @@ export default function EmployeeDailyReportsPage() {
                   id="dr-note"
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
-                  disabled={formLocked}
+                  disabled={effectiveFormLocked}
                   rows={2}
                   className="border-2 border-neutral-950 text-neutral-950"
                 />
@@ -1124,7 +1348,7 @@ export default function EmployeeDailyReportsPage() {
                   disabled={
                     saving ||
                     privileged ||
-                    formLocked ||
+                    effectiveFormLocked ||
                     dailyWorkLogOff ||
                     closedSegments.length === 0 ||
                     dataAttendanceTooLow
@@ -1140,7 +1364,7 @@ export default function EmployeeDailyReportsPage() {
                   disabled={
                     saving ||
                     privileged ||
-                    formLocked ||
+                    effectiveFormLocked ||
                     dailyWorkLogOff ||
                     closedSegments.length === 0 ||
                     dataAttendanceTooLow
