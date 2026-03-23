@@ -96,6 +96,7 @@ import {
   buildClientTextFromJobSnapshot,
   deriveCustomerDisplayNameFromJob,
   parseCustomerNameForParty,
+  pickEntityDic,
 } from "@/lib/job-customer-client";
 import {
   Dialog,
@@ -683,10 +684,8 @@ export default function JobDetailPage() {
     const name = deriveCustomerDisplayName(c);
     const address = c.address || "";
     const ico = c.ico ? `IČO: ${c.ico}` : "";
-    const dic =
-      c.dic || (c as any).DIČ || (c as any).DIC
-        ? `DIČ: ${c.dic || (c as any).DIČ || (c as any).DIC}`
-        : "";
+    const dicRaw = pickEntityDic(c);
+    const dic = dicRaw ? `DIČ: ${dicRaw}` : "";
     const email = c.email ? `Email: ${c.email}` : "";
     const phone = c.phone ? `Telefon: ${c.phone}` : "";
     return [name, address, ico, dic, email, phone].filter(Boolean).join("\n");
@@ -768,12 +767,7 @@ export default function JobDetailPage() {
     const name = coName || co?.companyName || co?.name || "";
     const address = buildFullCompanyAddress(co);
     const ico = co?.ico ? `IČO: ${co.ico}` : "";
-    const dicRaw =
-      co?.dic ||
-      (co as any).DIČ ||
-      (co as any).DIC ||
-      (co as any)["dič"] ||
-      "";
+    const dicRaw = pickEntityDic(co);
     const dic = dicRaw ? `DIČ: ${dicRaw}` : "";
     const email = co?.email ? `Email: ${co.email}` : "";
     const phone = co?.phone ? `Telefon: ${co.phone}` : "";
@@ -817,6 +811,13 @@ export default function JobDetailPage() {
     ): string => {
       const today = new Intl.DateTimeFormat("cs-CZ").format(new Date());
 
+      console.log("[WorkContract] template context — customer, companyDoc", {
+        customer,
+        companyDoc,
+        customerDic: pickEntityDic(customer),
+        supplierDic: pickEntityDic(companyDoc),
+      });
+
       const supplierName =
         companyNameFromDoc ||
         companyDoc?.companyName ||
@@ -824,12 +825,7 @@ export default function JobDetailPage() {
         "";
       const supplierAddress = buildFullCompanyAddress(companyDoc as any);
       const supplierIco = companyDoc?.ico || "";
-      const supplierDicRaw =
-        (companyDoc as any)?.dic ||
-        (companyDoc as any).DIČ ||
-        (companyDoc as any).DIC ||
-        (companyDoc as any)["dič"] ||
-        "";
+      const supplierDicRaw = pickEntityDic(companyDoc);
 
       const bankAccountForTokens =
         formOverride?.bankAccountId
@@ -854,8 +850,7 @@ export default function JobDetailPage() {
           : "") ||
         "";
       const customerIco = customer?.ico || "";
-      const customerDicRaw =
-        customer?.dic || (customer as any).DIČ || (customer as any).DIC || "";
+      const customerDicRaw = pickEntityDic(customer);
 
       const customerAutoText = customer
         ? deriveClientText(customer)
@@ -922,7 +917,7 @@ export default function JobDetailPage() {
         "smlouva.datum": contractDateForTokens,
         nazev_firmy: supplierName,
         ico: supplierIco ? String(supplierIco) : "",
-        dic: supplierDicRaw ? String(supplierDicRaw) : "",
+        dic: supplierDicRaw ? String(supplierDicRaw) : "—",
         adresa: supplierAddress,
         cislo_uctu_firmy: companyProfileBankAccountDisplay,
         variabilni_symbol: contractNo,
@@ -932,7 +927,7 @@ export default function JobDetailPage() {
         "dodavatel.nazev": supplierName,
         "dodavatel.sidlo": supplierAddress,
         "dodavatel.ico": supplierIco ? String(supplierIco) : "",
-        "dodavatel.dic": supplierDicRaw ? String(supplierDicRaw) : "",
+        "dodavatel.dic": supplierDicRaw ? String(supplierDicRaw) : "—",
         dodavatel: supplierAutoText,
         "dodavatel.email": companyDoc?.email
           ? String(companyDoc.email)
@@ -956,7 +951,7 @@ export default function JobDetailPage() {
         "objednatel.prijmeni": objednatelPrijmeni,
         "objednatel.sidlo": customerAddress,
         "objednatel.ico": customerIco ? String(customerIco) : "",
-        "objednatel.dic": customerDicRaw ? String(customerDicRaw) : "",
+        "objednatel.dic": customerDicRaw || "—",
         objednatel: customerAutoText,
 
         "zakazka.nazev": job?.name || "",
@@ -1013,6 +1008,26 @@ export default function JobDetailPage() {
       jobBudgetKc,
     ]
   );
+
+  /** Chybějící základní údaje pro smlouvu (bez pádu při generování). */
+  const getWorkContractPartyDataIssues = useCallback((): string[] => {
+    const issues: string[] = [];
+    const supplierName =
+      companyNameFromDoc ||
+      companyDoc?.companyName ||
+      (companyDoc as { name?: string } | null)?.name ||
+      "";
+    if (!String(supplierName).trim()) {
+      issues.push("Název firmy (dodavatele)");
+    }
+    const customerLabel = customer
+      ? deriveCustomerDisplayName(customer)
+      : deriveCustomerDisplayNameFromJob(job as any);
+    if (!String(customerLabel).trim()) {
+      issues.push("Zákazník (objednatel)");
+    }
+    return issues;
+  }, [companyNameFromDoc, companyDoc, customer, job]);
 
   const buildContractHtmlForForm = useCallback(
     (form: WorkContractForm) => {
@@ -2198,6 +2213,16 @@ export default function JobDetailPage() {
       return;
     }
 
+    const partyIssues = getWorkContractPartyDataIssues();
+    if (partyIssues.length) {
+      toast({
+        variant: "destructive",
+        title: "Nelze vytvořit PDF",
+        description: `Chybí: ${partyIssues.join(", ")}`,
+      });
+      return;
+    }
+
     const depErrPdf = validateWorkContractDeposit({
       depositAmountStr: contractForm.depositAmount,
       depositPercentStr: contractForm.depositPercentage,
@@ -2268,6 +2293,7 @@ export default function JobDetailPage() {
     buildContractHtmlForForm,
     openPrintableWindow,
     jobBudgetKc,
+    getWorkContractPartyDataIssues,
   ]);
 
   const previewWorkContractDocument = useCallback(() => {
@@ -2284,6 +2310,16 @@ export default function JobDetailPage() {
         variant: "destructive",
         title: "Nelze zobrazit náhled",
         description: `Chybí: ${missing.join(", ")}`,
+      });
+      return;
+    }
+
+    const partyIssuesPrev = getWorkContractPartyDataIssues();
+    if (partyIssuesPrev.length) {
+      toast({
+        variant: "destructive",
+        title: "Nelze zobrazit náhled",
+        description: `Chybí: ${partyIssuesPrev.join(", ")}`,
       });
       return;
     }
@@ -2318,6 +2354,7 @@ export default function JobDetailPage() {
     openContractPreviewWindow,
     toast,
     jobBudgetKc,
+    getWorkContractPartyDataIssues,
   ]);
 
   useEffect(() => {

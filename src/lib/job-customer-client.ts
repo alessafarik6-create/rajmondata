@@ -3,6 +3,19 @@
  * když zakázka nemá navázaný dokument zákazníka (např. vznikla ze zaměření).
  */
 
+/**
+ * Bezpečně vrátí DIČ z objektu firmy / zákazníka (Firestore, ARES apod. používají
+ * různé klíče: dic, DIČ, …). Při null/undefined nebo chybějícím poli vrátí "".
+ */
+export function pickEntityDic(entity: unknown): string {
+  if (entity == null || typeof entity !== "object") return "";
+  const o = entity as Record<string, unknown>;
+  const raw = o.dic ?? o.DIČ ?? o.DIC ?? o["dič"];
+  if (raw == null) return "";
+  const s = String(raw).trim();
+  return s;
+}
+
 export function deriveCustomerDisplayNameFromJob(job: {
   customerName?: string | null;
 }): string {
