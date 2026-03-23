@@ -56,6 +56,8 @@ export default function SettingsPage() {
   const [webInput, setWebInput] = useState('');
   const [publicProfile, setPublicProfile] = useState(false);
   const [enableDailyReport24hLock, setEnableDailyReport24hLock] = useState(false);
+  const [poptavkyImportUrlInput, setPoptavkyImportUrlInput] = useState('');
+  const [isSavingPoptavkyUrl, setIsSavingPoptavkyUrl] = useState(false);
   const [isSavingCompany, setIsSavingCompany] = useState(false);
 
   const [addrStreetAndNumber, setAddrStreetAndNumber] = useState('');
@@ -107,6 +109,9 @@ export default function SettingsPage() {
       setEnableDailyReport24hLock(
         Boolean((company as { enableDailyReport24hLock?: boolean }).enableDailyReport24hLock)
       );
+      setPoptavkyImportUrlInput(
+        String((company as { poptavkyImportUrl?: string | null }).poptavkyImportUrl ?? '').trim()
+      );
 
       // Prefer structured address; fallback to legacy registeredOfficeAddress.
       const street = (company as any).companyAddressStreetAndNumber;
@@ -154,6 +159,7 @@ export default function SettingsPage() {
       setWebInput('');
       setPublicProfile(false);
       setEnableDailyReport24hLock(false);
+      setPoptavkyImportUrlInput('');
       setAddrStreetAndNumber('');
       setAddrCity('');
       setAddrPostalCode('');
@@ -299,6 +305,43 @@ export default function SettingsPage() {
       });
     } finally {
       setIsSavingCompany(false);
+    }
+  };
+
+  const handleSavePoptavkyImportUrl = async () => {
+    if (!firestore || !companyId) {
+      toast({
+        variant: 'destructive',
+        title: 'Organizace nenalezena',
+        description: 'Nepodařilo se najít vaši organizaci.',
+      });
+      return;
+    }
+    if (!isAdmin) return;
+    try {
+      setIsSavingPoptavkyUrl(true);
+      const trimmed = poptavkyImportUrlInput.trim();
+      const payload = {
+        poptavkyImportUrl: trimmed || null,
+        updatedAt: serverTimestamp(),
+      };
+      await Promise.all([
+        setDoc(doc(firestore, COMPANIES_COLLECTION, companyId), payload, { merge: true }),
+        setDoc(doc(firestore, ORGANIZATIONS_COLLECTION, companyId), payload, { merge: true }),
+      ]);
+      toast({
+        title: 'Uloženo',
+        description: 'URL pro import poptávek byla uložena.',
+      });
+    } catch (error: unknown) {
+      console.error('Failed to save poptavky import URL', error);
+      toast({
+        variant: 'destructive',
+        title: 'Chyba při ukládání',
+        description: error instanceof Error ? error.message : 'URL se nepodařilo uložit.',
+      });
+    } finally {
+      setIsSavingPoptavkyUrl(false);
     }
   };
 
@@ -507,6 +550,39 @@ export default function SettingsPage() {
                     onCheckedChange={setEnableDailyReport24hLock}
                     className="shrink-0"
                   />
+                </div>
+
+                <Separator className="bg-border" />
+
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <h2 className="text-base font-semibold">Import poptávek</h2>
+                    <p className="text-xs text-muted-foreground">
+                      JSON endpoint pro zobrazení poptávek na stránce Zakázky (tlačítko Poptávky).
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-3">
+                    <div className="space-y-2 flex-1 min-w-0">
+                      <Label htmlFor="poptavky-import-url">Import poptávek (URL)</Label>
+                      <Input
+                        id="poptavky-import-url"
+                        value={poptavkyImportUrlInput}
+                        onChange={(e) => setPoptavkyImportUrlInput(e.target.value)}
+                        placeholder="https://…"
+                        className="bg-background"
+                        type="url"
+                        autoComplete="off"
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      className="min-h-[44px] shrink-0 w-full sm:w-auto"
+                      onClick={handleSavePoptavkyImportUrl}
+                      disabled={isSavingPoptavkyUrl || !companyId}
+                    >
+                      {isSavingPoptavkyUrl ? 'Ukládám…' : 'Uložit'}
+                    </Button>
+                  </div>
                 </div>
 
                 <Separator className="bg-border" />

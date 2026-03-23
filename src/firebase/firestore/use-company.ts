@@ -35,6 +35,11 @@ export type CompanyProfile = {
   isActive?: boolean;
 
   /**
+   * Externí JSON endpoint pro import poptávek (Zakázky → Poptávky).
+   */
+  poptavkyImportUrl?: string | null;
+
+  /**
    * Po 24 h od konce pracovního dne zamknout úpravy denního výkazu (zaměstnanec jen čte).
    */
   enableDailyReport24hLock?: boolean;
