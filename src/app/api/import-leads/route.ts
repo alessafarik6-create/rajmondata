@@ -116,17 +116,6 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  if (!isAllowedImportUrl(importUrl)) {
-    return NextResponse.json(
-      {
-        ok: false,
-        error: "URL pro import musí začínat http:// nebo https://",
-        code: "invalid_url",
-      },
-      { status: 400 }
-    );
-  }
-
   const logSafeUrl = (() => {
     try {
       const u = new URL(importUrl);
@@ -135,6 +124,22 @@ export async function GET(request: NextRequest) {
       return "(neplatná URL)";
     }
   })();
+
+  if (!isAllowedImportUrl(importUrl)) {
+    console.warn("[import-leads] invalid URL (not http/https), fetch skipped", {
+      companyId,
+      importUrl: logSafeUrl,
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: "Neplatná URL",
+        code: "invalid_url",
+        importUrlDebug: logSafeUrl,
+      },
+      { status: 400 }
+    );
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -153,24 +158,36 @@ export async function GET(request: NextRequest) {
 
     const contentType = upstream.headers.get("content-type") || "";
     const status = upstream.status;
+    const statusText = upstream.statusText || "";
 
-    console.info("[import-leads]", {
+    console.info("[import-leads] upstream response", {
       companyId,
       importUrl: logSafeUrl,
-      importUrlPresent: true,
-      httpStatus: status,
+      responseStatus: status,
+      responseStatusText: statusText,
       contentType: contentType.split(";")[0]?.trim() || contentType,
     });
 
     if (!upstream.ok) {
       const msg =
         status >= 500
-          ? "Externí server je dočasně nedostupný (chyba serveru)."
+          ? "Chyba serveru zdroje poptávek"
           : status === 404
-            ? "Importní URL nebyla nalezena (404)."
+            ? "Importní URL neexistuje (404)"
             : `Externí zdroj vrátil chybu (HTTP ${status}).`;
+      console.warn("[import-leads] upstream not ok", {
+        importUrl: logSafeUrl,
+        responseStatus: status,
+        responseStatusText: statusText,
+      });
       return NextResponse.json(
-        { ok: false, error: msg, code: "upstream_http", details: { status } },
+        {
+          ok: false,
+          error: msg,
+          code: "upstream_http",
+          details: { status, statusText },
+          importUrlDebug: logSafeUrl,
+        },
         { status: 502 }
       );
     }
@@ -196,6 +213,7 @@ export async function GET(request: NextRequest) {
           error:
             "Odpověď není JSON (očekává se pole nebo objekt). Zkontrolujte URL v nastavení organizace.",
           code: "invalid_format",
+          importUrlDebug: logSafeUrl,
         },
         { status: 422 }
       );
@@ -210,6 +228,7 @@ export async function GET(request: NextRequest) {
           ok: false,
           error: "Odpověď vypadá jako JSON, ale nelze ji parsovat.",
           code: "invalid_json",
+          importUrlDebug: logSafeUrl,
         },
         { status: 422 }
       );
@@ -233,13 +252,13 @@ export async function GET(request: NextRequest) {
     const aborted = e instanceof Error && e.name === "AbortError";
     const message = aborted
       ? "Časový limit při stahování importu (zkuste znovu nebo zkontrolujte URL)."
-      : e instanceof Error && "cause" in e
-        ? "Externí server je nedostupný nebo síť odmítla spojení."
-        : "Nepodařilo se stáhnout data z externí URL.";
+      : "Nelze se připojit k URL";
 
     console.error("[import-leads] fetch failed", {
       companyId,
       importUrl: logSafeUrl,
+      responseStatus: null,
+      responseStatusText: null,
       aborted,
       err: e instanceof Error ? e.message : String(e),
     });
@@ -249,6 +268,7 @@ export async function GET(request: NextRequest) {
         ok: false,
         error: message,
         code: aborted ? "timeout" : "upstream_network",
+        importUrlDebug: logSafeUrl,
       },
       { status: 502 }
     );

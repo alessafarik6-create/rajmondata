@@ -32,6 +32,9 @@ type ApiErrorBody = {
   ok?: false;
   error?: string;
   code?: string;
+  /** Bez query řetězců — host + cesta (pro dočasné zobrazení v UI). */
+  importUrlDebug?: string;
+  details?: { status?: number; statusText?: string };
 };
 
 type ApiSuccessBody = {
@@ -54,8 +57,10 @@ function messageForApiError(
       return "Neplatný požadavek (zkontrolujte nastavení organizace).";
     case 503:
       return "Služba je dočasně nedostupná.";
+    case 502:
+      return "Import poptávek selhal (zkontrolujte zprávu výše nebo nastavení URL).";
     default:
-      return `Nepodařilo se načíst poptávky (HTTP ${httpStatus}).`;
+      return `Import poptávek selhal (HTTP ${httpStatus}).`;
   }
 }
 
@@ -67,6 +72,7 @@ export function LeadRequestsDialog({
   const { user, isUserLoading } = useUser();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorDebugUrl, setErrorDebugUrl] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [rows, setRows] = useState<LeadImportRow[]>([]);
 
@@ -145,6 +151,11 @@ export function LeadRequestsDialog({
         }
 
         if (!res.ok) {
+          const dbg =
+            typeof body.importUrlDebug === "string" && body.importUrlDebug.trim()
+              ? body.importUrlDebug.trim()
+              : null;
+          setErrorDebugUrl(dbg);
           setError(messageForApiError(body, res.status));
           setRows([]);
           return;
@@ -210,8 +221,15 @@ export function LeadRequestsDialog({
             </div>
           ) : error ? (
             <Alert variant="destructive">
-              <AlertTitle>Nepodařilo se načíst poptávky</AlertTitle>
-              <AlertDescription className="break-words">{error}</AlertDescription>
+              <AlertTitle>Chyba importu</AlertTitle>
+              <AlertDescription className="space-y-2 break-words">
+                <span className="block">{error}</span>
+                {errorDebugUrl ? (
+                  <span className="block text-xs font-mono text-slate-700 opacity-90">
+                    Volaná URL (bez parametrů): {errorDebugUrl}
+                  </span>
+                ) : null}
+              </AlertDescription>
             </Alert>
           ) : (
             <>
