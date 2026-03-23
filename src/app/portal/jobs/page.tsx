@@ -70,7 +70,7 @@ import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-
 import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
-import { LeadRequestsDialog } from "@/components/jobs/lead-requests-dialog";
+import { LeadRequestsSection } from "@/components/jobs/lead-requests-section";
 
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
@@ -233,7 +233,7 @@ function JobsPageContent() {
   const [workContractTemplatesManagerOpen, setWorkContractTemplatesManagerOpen] =
     useState(false);
   const [tasksDialogOpen, setTasksDialogOpen] = useState(false);
-  const [leadRequestsDialogOpen, setLeadRequestsDialogOpen] = useState(false);
+  const [leadRequestsSectionOpen, setLeadRequestsSectionOpen] = useState(false);
 
   useEffect(() => {
     if (!isAdmin && workContractTemplatesManagerOpen) {
@@ -817,9 +817,9 @@ function JobsPageContent() {
           )}
           <Button
             type="button"
-            variant="outlineLight"
+            variant={leadRequestsSectionOpen ? "default" : "outlineLight"}
             className="gap-2 min-h-[44px]"
-            onClick={() => setLeadRequestsDialogOpen(true)}
+            onClick={() => setLeadRequestsSectionOpen((v) => !v)}
           >
             <Inbox className="w-4 h-4" /> Poptávky
           </Button>
@@ -835,6 +835,12 @@ function JobsPageContent() {
           )}
         </div>
       </div>
+
+      <LeadRequestsSection
+        companyId={companyId}
+        active={leadRequestsSectionOpen}
+        canScheduleMeasurement={userCanManageMeasurements(profile)}
+      />
 
       <Card className="overflow-hidden">
         <CardContent className="p-0 overflow-x-auto">
@@ -944,11 +950,6 @@ function JobsPageContent() {
         />
       ) : null}
 
-      <LeadRequestsDialog
-        open={leadRequestsDialogOpen}
-        onOpenChange={setLeadRequestsDialogOpen}
-        companyId={companyId}
-      />
     </div>
   );
 }

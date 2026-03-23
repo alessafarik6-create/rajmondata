@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import { cs } from "date-fns/locale";
@@ -114,10 +115,13 @@ function isDeleted(m: MeasurementDoc & { deletedAt?: unknown }): boolean {
   return m.deletedAt != null;
 }
 
-export default function JobMeasurementsPage() {
+function JobMeasurementsPageContent() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const prefillFromLeadAppliedRef = useRef(false);
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -179,6 +183,30 @@ export default function JobMeasurementsPage() {
     internalNote: "",
     estimatedPrice: "",
   });
+
+  useEffect(() => {
+    if (prefillFromLeadAppliedRef.current) return;
+    const cn = searchParams.get("prefillCustomerName");
+    const ph = searchParams.get("prefillPhone");
+    const ad = searchParams.get("prefillAddress");
+    const nt = searchParams.get("prefillNote");
+    if (!cn && !ph && !ad && !nt) return;
+    prefillFromLeadAppliedRef.current = true;
+
+    setForm({
+      customerName: cn?.trim() ?? "",
+      phone: ph?.trim() ?? "",
+      address: ad?.trim() ?? "",
+      scheduledAtLocal: "",
+      note: nt?.trim() ?? "",
+      internalNote: "",
+      estimatedPrice: "",
+    });
+    setDialogMode("create");
+    setEditingId(null);
+    setDialogOpen(true);
+    router.replace("/portal/jobs/measurements", { scroll: false });
+  }, [searchParams, router]);
 
   const measurements = useMemo(() => {
     const list = Array.isArray(rawList) ? rawList : [];
@@ -997,5 +1025,19 @@ export default function JobMeasurementsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function JobMeasurementsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <JobMeasurementsPageContent />
+    </Suspense>
   );
 }
