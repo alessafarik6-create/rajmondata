@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { MANUAL_ATTENDANCE_SEGMENT_ID } from "@/lib/daily-work-report-constants";
 import {
   estimateLaborFromJobSplits,
+  resolveAttendanceOnlyJobSplits,
   resolveSegmentJobSplits,
 } from "@/lib/daily-work-report-resolve";
 import { isDailyReportPastEditDeadline } from "@/lib/daily-report-24h-lock";
@@ -196,9 +198,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const isManualOnly = rawSplits.every(
+      (r) => String((r as { segmentId?: string }).segmentId || "").trim() === MANUAL_ATTENDANCE_SEGMENT_ID
+    );
+
     let resolved: Awaited<ReturnType<typeof resolveSegmentJobSplits>>;
     try {
-      resolved = await resolveSegmentJobSplits(db, companyId, employeeId, date, emp, rawSplits, mode);
+      if (isManualOnly) {
+        resolved = await resolveAttendanceOnlyJobSplits(
+          db,
+          companyId,
+          employeeId,
+          callerUid,
+          date,
+          emp,
+          rawSplits,
+          mode
+        );
+      } else {
+        resolved = await resolveSegmentJobSplits(db, companyId, employeeId, date, emp, rawSplits, mode);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Neplatná data výkazu.";
       return NextResponse.json({ error: msg }, { status: 400 });

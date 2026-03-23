@@ -5,9 +5,11 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 import {
+  MANUAL_ATTENDANCE_SEGMENT_ID,
   NO_JOB_SEGMENT_JOB_ID,
   isNoJobSegmentJobId,
 } from "@/lib/daily-work-report-constants";
+import { summarizeAttendanceByDay, type AttendanceRow } from "@/lib/employee-attendance";
 import {
   computeSegmentAmount,
   resolveEmployeeDefaultHourlyRate,
@@ -289,6 +291,138 @@ export async function resolveSegmentJobSplits(
 
   return {
     hoursSum: hoursRounded,
+    segmentJobSplits,
+    segmentAllocations,
+    primaryJobId: firstWithJob?.jobId ?? null,
+    primaryJobName: firstWithJob?.jobName ?? null,
+  };
+}
+
+async function fetchAttendanceWorkedHoursForDay(
+  db: Firestore,
+  companyId: string,
+  employeeId: string,
+  callerUid: string,
+  date: string
+): Promise<number | null> {
+  const col = db.collection("companies").doc(companyId).collection("attendance");
+  const rows: AttendanceRow[] = [];
+  const ids = [employeeId, callerUid].filter((x, i, a) => Boolean(x) && a.indexOf(x) === i) as string[];
+  for (const eid of ids) {
+    const snap = await col.where("employeeId", "==", eid).limit(500).get();
+    snap.docs.forEach((d) => rows.push({ id: d.id, ...d.data() } as AttendanceRow));
+  }
+  const summaries = summarizeAttendanceByDay(rows, { employeeId, authUid: callerUid });
+  const s = summaries.find((x) => x.date === date);
+  return s?.hoursWorked ?? null;
+}
+
+/**
+ * Výkaz bez uzavřených úseků terminálu — jen rozdělení odpracovaných hodin z docházky.
+ */
+export async function resolveAttendanceOnlyJobSplits(
+  db: Firestore,
+  companyId: string,
+  employeeId: string,
+  callerUid: string,
+  date: string,
+  emp: Record<string, unknown>,
+  rawSplits: Array<{ segmentId?: string; jobId?: string; hours?: unknown }>,
+  mode: "draft" | "submit"
+): Promise<{
+  hoursSum: number;
+  segmentJobSplits: SegmentJobSplitOut[];
+  segmentAllocations: SegmentAllocOut[];
+  primaryJobId: string | null;
+  primaryJobName: string | null;
+}> {
+  const list = Array.isArray(rawSplits) ? rawSplits : [];
+  if (list.length === 0) {
+    throw new Error("Chybí rozdělení času podle zakázek — doplňte alespoň jeden řádek.");
+  }
+  if (
+    !list.every((r) => String(r.segmentId || "").trim() === MANUAL_ATTENDANCE_SEGMENT_ID)
+  ) {
+    throw new Error("Neplatný segment výkazu (očekává se výkaz jen z docházky).");
+  }
+
+  const attendanceHours = await fetchAttendanceWorkedHoursForDay(
+    db,
+    companyId,
+    employeeId,
+    callerUid,
+    date
+  );
+  if (attendanceHours == null || attendanceHours <= EPS) {
+    throw new Error(
+      "Pro tento den není v docházce žádný odpracovaný čas — výkaz nelze uložit."
+    );
+  }
+
+  const assigned = new Set(parseAssignedWorklogJobIds(emp));
+  let sum = 0;
+  const segmentJobSplits: SegmentJobSplitOut[] = [];
+
+  for (const row of list) {
+    let jid = String(row.jobId ?? "").trim();
+    const hr = Number(row.hours);
+    if (!Number.isFinite(hr) || hr <= 0) {
+      throw new Error("Počet hodin musí být kladné číslo.");
+    }
+    if (isNoJobSegmentJobId(jid)) {
+      jid = NO_JOB_SEGMENT_JOB_ID;
+    } else if (!assigned.has(jid)) {
+      throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
+    }
+    const hoursRounded = roundHours(hr);
+    sum += hoursRounded;
+
+    let jobName: string | null = null;
+    if (!isNoJobSegmentJobId(jid)) {
+      const jobSnap = await db
+        .collection("companies")
+        .doc(companyId)
+        .collection("jobs")
+        .doc(jid)
+        .get();
+      jobName = jobSnap.exists
+        ? String((jobSnap.data() as { name?: string })?.name || "").trim() || null
+        : null;
+    }
+
+    segmentJobSplits.push({
+      segmentId: MANUAL_ATTENDANCE_SEGMENT_ID,
+      jobId: jid,
+      jobName,
+      hours: hoursRounded,
+    });
+  }
+
+  sum = roundHours(sum);
+  if (sum > attendanceHours + EPS) {
+    throw new Error(
+      `Součet hodin v řádcích (${sum} h) překračuje odpracovaný čas z docházky (${attendanceHours} h).`
+    );
+  }
+  if (mode === "submit" && sum < attendanceHours - EPS) {
+    throw new Error(
+      `Rozdělte celých ${attendanceHours} h z docházky (zbývá ${roundHours(attendanceHours - sum)} h).`
+    );
+  }
+
+  const firstWithJob = segmentJobSplits.find((s) => !isNoJobSegmentJobId(s.jobId));
+  const segmentAllocations: SegmentAllocOut[] = [];
+  if (segmentJobSplits.length > 0) {
+    const h = segmentJobSplits[0]!;
+    segmentAllocations.push({
+      segmentId: MANUAL_ATTENDANCE_SEGMENT_ID,
+      jobId: h.jobId,
+      jobName: h.jobName,
+    });
+  }
+
+  return {
+    hoursSum: sum,
     segmentJobSplits,
     segmentAllocations,
     primaryJobId: firstWithJob?.jobId ?? null,

@@ -3,7 +3,11 @@
  * a zpětné rozložení na segmentJobSplits pro API (sekvenční čerpání v čase úseků).
  */
 
-import { NO_JOB_SEGMENT_JOB_ID, isNoJobSegmentJobId } from "@/lib/daily-work-report-constants";
+import {
+  MANUAL_ATTENDANCE_SEGMENT_ID,
+  NO_JOB_SEGMENT_JOB_ID,
+  isNoJobSegmentJobId,
+} from "@/lib/daily-work-report-constants";
 import type { WorkSegmentClient } from "@/lib/work-segment-client";
 import {
   effectiveSegmentDurationHours,
@@ -219,4 +223,60 @@ export function buildFullSegmentJobSplits(
   if (unlocked.length === 0) return head;
   const tail = sequentialFillUnlockedSegments(unlocked, dayFormRows, parseHours);
   return [...head, ...tail];
+}
+
+/** Výkaz pouze z odpracované docházky — bez úseků z terminálu (virtuální segment). */
+export function buildAttendanceOnlySplits(
+  dayFormRows: DayFormRow[],
+  parseHours: ParseHours
+): Array<{ segmentId: string; jobId: string; hours: number }> {
+  const out: Array<{ segmentId: string; jobId: string; hours: number }> = [];
+  for (const r of dayFormRows) {
+    const h = parseHours(r.hoursStr);
+    if (h == null || h <= 0) continue;
+    const jidRaw = String(r.jobId || "").trim();
+    const jid = jidRaw ? jidRaw : NO_JOB_SEGMENT_JOB_ID;
+    out.push({
+      segmentId: MANUAL_ATTENDANCE_SEGMENT_ID,
+      jobId: jid,
+      hours: Math.round(h * 100) / 100,
+    });
+  }
+  return out;
+}
+
+/** Obnoví řádky z uloženého výkazu uloženého jen přes docházku (bez terminálových úseků). */
+export function mergeAttendanceOnlyRowsFromReport(
+  report: Record<string, unknown> | null | undefined
+): DayFormRow[] {
+  const saved = report?.segmentJobSplits as
+    | Array<{ segmentId?: string; jobId?: string; hours?: number }>
+    | undefined;
+  if (!saved?.length) return [];
+  if (!saved.every((s) => String(s.segmentId || "").trim() === MANUAL_ATTENDANCE_SEGMENT_ID)) {
+    return [];
+  }
+  const notes = Array.isArray(report?.dayWorkLines)
+    ? (report.dayWorkLines as { lineNote?: string }[])
+    : [];
+  const out: DayFormRow[] = [];
+  let noteIdx = 0;
+  let rowCounter = 0;
+  for (const item of saved) {
+    const hr = typeof item.hours === "number" && Number.isFinite(item.hours) ? item.hours : 0;
+    if (hr <= 0) continue;
+    const rawJid = String(item.jobId || "").trim();
+    const jid = isNoJobSegmentJobId(rawJid) ? "" : rawJid;
+    const rawLine = notes[noteIdx];
+    const note =
+      rawLine && typeof rawLine.lineNote === "string" ? rawLine.lineNote : "";
+    noteIdx += 1;
+    out.push({
+      rowId: `load-manual-${rowCounter++}`,
+      jobId: jid,
+      hoursStr: String(hr).replace(".", ","),
+      lineNote: note,
+    });
+  }
+  return out;
 }
