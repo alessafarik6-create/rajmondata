@@ -37,11 +37,16 @@ export function DashboardOpenTasks({
     return collection(firestore, "companies", companyId, "employees");
   }, [firestore, companyId]);
 
-  const { data: employeesRaw = [] } = useCollection(employeesQuery);
+  const { data: employeesRaw } = useCollection(employeesQuery);
+  const employeesList = Array.isArray(employeesRaw) ? employeesRaw : [];
 
   const employeeNameById = useMemo(() => {
     const m = new Map<string, string>();
-    for (const e of employeesRaw as { id?: string; firstName?: string; lastName?: string }[]) {
+    for (const e of employeesList as {
+      id?: string;
+      firstName?: string;
+      lastName?: string;
+    }[]) {
       const id = String(e?.id ?? "");
       if (!id) continue;
       m.set(id, `${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() || id);
@@ -54,14 +59,15 @@ export function DashboardOpenTasks({
     return query(collection(firestore, "companies", companyId, "tasks"), limit(300));
   }, [firestore, companyId]);
 
-  const { data: tasksRaw = [], isLoading } = useCollection<any>(tasksQuery);
+  const { data: tasksRaw, isLoading } = useCollection<any>(tasksQuery);
+  const tasksList = Array.isArray(tasksRaw) ? tasksRaw : [];
 
   const tasks = useMemo(() => {
-    const list = (Array.isArray(tasksRaw) ? tasksRaw : []).map(
+    const list = tasksList.map(
       (t) => ({ ...t, id: String(t?.id ?? "") }) as OrganizationTask
     );
     return list.filter((t) => isTaskOpen(t));
-  }, [tasksRaw]);
+  }, [tasksList]);
 
   const visible = useMemo(() => {
     if (isPrivileged) return tasks;

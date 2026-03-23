@@ -126,6 +126,16 @@ type JobRow = {
   assignedEmployeeIds?: string[];
 };
 
+function jobAssignsToUser(
+  j: JobRow,
+  userUid: string
+): boolean {
+  const raw = j?.assignedEmployeeIds;
+  if (Array.isArray(raw)) return raw.includes(userUid);
+  if (typeof raw === "string") return raw === userUid;
+  return false;
+}
+
 function normalizeJobsList(
   allJobs: JobRow[] | null | undefined,
   isAdmin: boolean,
@@ -134,7 +144,7 @@ function normalizeJobsList(
   const list = Array.isArray(allJobs) ? allJobs : [];
   if (isAdmin) return list;
   const uid = userUid ?? "";
-  return list.filter((j) => j?.assignedEmployeeIds?.includes(uid));
+  return list.filter((j) => jobAssignsToUser(j, uid));
 }
 
 function JobsPageContent() {

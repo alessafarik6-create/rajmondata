@@ -73,29 +73,35 @@ export function OrganizationTasksDialog({
     return collection(firestore, "companies", companyId, "employees");
   }, [firestore, companyId]);
 
-  const { data: employeesRaw = [] } = useCollection(employeesQuery);
+  const { data: employeesRaw } = useCollection(employeesQuery);
+  const employeesList = Array.isArray(employeesRaw) ? employeesRaw : [];
 
   const employeeNameById = useMemo(() => {
     const m = new Map<string, string>();
-    for (const e of employeesRaw as { id?: string; firstName?: string; lastName?: string }[]) {
+    for (const e of employeesList as {
+      id?: string;
+      firstName?: string;
+      lastName?: string;
+    }[]) {
       const id = String(e?.id ?? "");
       if (!id) continue;
       const nm = `${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() || id;
       m.set(id, nm);
     }
     return m;
-  }, [employeesRaw]);
+  }, [employeesList]);
 
   const tasksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return query(collection(firestore, "companies", companyId, "tasks"), limit(300));
   }, [firestore, companyId]);
 
-  const { data: tasksRaw = [], isLoading: tasksLoading } =
+  const { data: tasksRaw, isLoading: tasksLoading } =
     useCollection<any>(tasksQuery);
+  const tasksList = Array.isArray(tasksRaw) ? tasksRaw : [];
 
   const tasks = useMemo(() => {
-    const list = (Array.isArray(tasksRaw) ? tasksRaw : []).map(
+    const list = tasksList.map(
       (t) =>
         ({
           ...t,
@@ -308,7 +314,7 @@ export function OrganizationTasksDialog({
                 onChange={(e) => setAssignedTo(e.target.value)}
               >
                 <option value="">— bez přiřazení —</option>
-                {(employeesRaw as { id?: string; firstName?: string; lastName?: string }[])
+                {(employeesList as { id?: string; firstName?: string; lastName?: string }[])
                   .filter((e) => e?.id)
                   .map((e) => (
                     <option key={String(e.id)} value={String(e.id)}>
