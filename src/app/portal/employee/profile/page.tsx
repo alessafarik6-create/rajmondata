@@ -25,7 +25,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Upload, Trash2, AlertCircle, KeyRound } from "lucide-react";
+import { Loader2, Upload, Trash2, AlertCircle, KeyRound, Briefcase } from "lucide-react";
+import Link from "next/link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const DEBUG = process.env.NODE_ENV === "development";
@@ -38,6 +39,7 @@ import {
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { cn } from "@/lib/utils";
 import { MIN_TERMINAL_PIN_LENGTH, normalizeTerminalPin } from "@/lib/terminal-pin-validation";
+import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
 
 const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
 
@@ -100,6 +102,17 @@ export default function EmployeeProfilePage() {
   );
   const { data: employeeRow, isLoading: employeeRowLoading } =
     useDoc<Record<string, unknown>>(employeeRowRef);
+
+  const {
+    assignedJobIds,
+    jobs: assignedWorklogJobs,
+    jobsLoading: assignedWorklogJobsLoading,
+  } = useAssignedWorklogJobs(
+    firestore,
+    companyId,
+    employeeRow ?? undefined,
+    employeeRowLoading
+  );
 
   const [uploading, setUploading] = useState(false);
   const [pwdCurrent, setPwdCurrent] = useState("");
@@ -555,6 +568,48 @@ export default function EmployeeProfilePage() {
           <p className="text-xs text-slate-500 pt-2">
             Změnu jména, pozice a sazby řeší administrátor firmy.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card className="bg-white border-slate-200 shadow-sm">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-black">
+            <Briefcase className="h-5 w-5 shrink-0 text-primary" />
+            Výkaz práce — přiřazené zakázky
+          </CardTitle>
+          <p className="text-sm text-slate-600 font-normal pt-1">
+            Zakázky níže máte přiřazené v systému (správa u administrátora). Ve výkazu práce je u každého řádku
+            můžete ručně vybrat k popisu práce — nezávisle na tom, co jste případně vybrali na terminálu docházky.
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {!companyId || !employeeId ? (
+            <p className="text-sm text-slate-600">Pro zobrazení zakázek musíte mít propojený účet zaměstnance.</p>
+          ) : assignedWorklogJobsLoading ? (
+            <div className="flex items-center gap-2 text-sm text-slate-600">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Načítání přiřazených zakázek…
+            </div>
+          ) : assignedJobIds.length === 0 ? (
+            <p className="text-sm text-slate-800 rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
+              Nemáte přiřazené žádné zakázky. Ve výkazu můžete zapisovat interní práci bez zakázky; přiřazení
+              zakázek řeší administrátor.
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {assignedWorklogJobs.map((j) => (
+                <li
+                  key={j.id}
+                  className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                >
+                  <span className="font-medium">{j.name?.trim() || j.id}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Button asChild variant="default" className="w-full sm:w-auto">
+            <Link href="/portal/employee/daily-reports">Otevřít výkaz práce</Link>
+          </Button>
         </CardContent>
       </Card>
 

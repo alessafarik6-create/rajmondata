@@ -11,15 +11,7 @@ import {
   useMemoFirebase,
   useCompany,
 } from "@/firebase";
-import {
-  doc,
-  collection,
-  query,
-  where,
-  limit,
-  getDocs,
-  documentId,
-} from "firebase/firestore";
+import { doc, collection, query, where, limit } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -31,8 +23,8 @@ import { Loader2, AlertCircle, Plus, Trash2, Lock } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
-import { parseAssignedWorklogJobIds, chunkArray } from "@/lib/assigned-jobs";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
+import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
 import { cn } from "@/lib/utils";
 import { formatKc } from "@/lib/employee-money";
 import { isDailyWorkLogEnabled } from "@/lib/employee-report-flags";
@@ -174,52 +166,13 @@ export default function EmployeeDailyReportsPage() {
         : null,
     [firestore, companyId, employeeId]
   );
-  const { data: employeeDoc } = useDoc<any>(employeeRef);
-
-  const assignedJobIds = useMemo(() => parseAssignedWorklogJobIds(employeeDoc), [employeeDoc]);
-  const assignedJobIdsKey = useMemo(() => assignedJobIds.slice().sort().join("|"), [assignedJobIds]);
-
-  const [assignedJobs, setAssignedJobs] = useState<{ id: string; name?: string }[]>([]);
-  const [jobsLoading, setJobsLoading] = useState(false);
-
-  useEffect(() => {
-    if (!firestore || !companyId || assignedJobIds.length === 0) {
-      setAssignedJobs([]);
-      setJobsLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setJobsLoading(true);
-    void (async () => {
-      try {
-        const chunks = chunkArray(assignedJobIds, 10);
-        const acc: { id: string; name?: string }[] = [];
-        for (const chunk of chunks) {
-          const q = query(
-            collection(firestore, "companies", companyId, "jobs"),
-            where(documentId(), "in", chunk)
-          );
-          const snap = await getDocs(q);
-          snap.forEach((d) => {
-            const data = d.data() as { name?: string };
-            acc.push({ id: d.id, name: data.name });
-          });
-        }
-        if (!cancelled) {
-          acc.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, "cs"));
-          setAssignedJobs(acc);
-        }
-      } catch (e) {
-        console.error("[daily-reports] jobs", e);
-        if (!cancelled) setAssignedJobs([]);
-      } finally {
-        if (!cancelled) setJobsLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [firestore, companyId, assignedJobIdsKey]);
+  const { data: employeeDoc, isLoading: employeeRowLoading } = useDoc<any>(employeeRef);
+  const { assignedJobIds, jobs: assignedJobs, jobsLoading } = useAssignedWorklogJobs(
+    firestore,
+    companyId,
+    employeeDoc ?? undefined,
+    employeeRowLoading
+  );
 
   const attendanceQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !user) return null;
@@ -1179,9 +1132,25 @@ export default function EmployeeDailyReportsPage() {
                       <p className="text-xs text-neutral-900">
                         Řádky se v tomto pořadí čerpají na úseky z terminálu (od prvního časově po další).
                         Součet hodin musí přesně odpovídat {formHoursCap} h (příklad: 4 h odpracováno − 1 h
-                        tarif = až 3 h zde, pokud jde o neuzamčený čas). U každého řádku doplňte popis a
-                        volitelně zakázku z přiřazení.
+                        tarif = až 3 h zde, pokud jde o neuzamčený čas). U každého řádku vyplňte hodiny, popis
+                        práce a volitelně zakázku z vašeho přiřazení (nezávislé na terminálu).
                       </p>
+                      {jobsLoading ? (
+                        <p className="flex items-center gap-2 text-xs text-neutral-900">
+                          <Loader2 className="h-4 w-4 animate-spin text-neutral-950" />
+                          Načítání přiřazených zakázek…
+                        </p>
+                      ) : assignedJobIds.length === 0 ? (
+                        <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-2 text-xs text-neutral-900">
+                          Nemáte přiřazené žádné zakázky — řádky můžete vyplnit jako interní práci (bez zakázky).
+                          Přiřazení zakázek nastaví administrátor.
+                        </p>
+                      ) : (
+                        <p className="text-xs text-neutral-900">
+                          Ve výběru zakázky jsou jen zakázky přiřazené k vašemu účtu (správa u administrátora,
+                          nezávisle na terminálu docházky).
+                        </p>
+                      )}
                       <div className="space-y-3">
                         {dayFormRows.map((row) => (
                           <div
@@ -1189,7 +1158,9 @@ export default function EmployeeDailyReportsPage() {
                             className="flex flex-col gap-3 rounded-lg border-2 border-neutral-950 bg-white p-3 lg:grid lg:grid-cols-[100px_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-3"
                           >
                             <div className="w-full space-y-1.5 lg:w-auto">
-                              <Label className="text-xs font-medium text-neutral-950">Hodiny *</Label>
+                              <Label className="text-xs font-medium text-neutral-950">
+                                Hodiny <span className="text-red-700">*</span>
+                              </Label>
                               <Input
                                 inputMode="decimal"
                                 className="h-11 min-h-[44px] border-2 border-neutral-950 tabular-nums text-neutral-950"
@@ -1223,11 +1194,10 @@ export default function EmployeeDailyReportsPage() {
                               />
                             </div>
                             <div className="min-w-0 space-y-1.5">
-                              <Label className="text-xs font-medium text-neutral-950">
-                                Zakázka (volitelné)
-                              </Label>
+                              <Label className="text-xs font-medium text-neutral-950">Zakázka</Label>
+                              <p className="text-[10px] leading-tight text-neutral-800">volitelné</p>
                               <select
-                                className="flex h-11 min-h-[44px] w-full rounded-md border-2 border-neutral-950 bg-white px-3 text-sm text-neutral-950"
+                                className="mt-1 flex h-11 min-h-[44px] w-full rounded-md border-2 border-neutral-950 bg-white px-3 text-sm text-neutral-950"
                                 value={row.jobId}
                                 onChange={(e) =>
                                   setDayFormRows((prev) =>
@@ -1236,9 +1206,9 @@ export default function EmployeeDailyReportsPage() {
                                     )
                                   )
                                 }
-                                disabled={effectiveFormLocked || jobsLoading || dailyWorkLogOff}
+                                disabled={effectiveFormLocked || dailyWorkLogOff}
                               >
-                                <option value="">— bez zakázky / interní —</option>
+                                <option value="">Bez zakázky / interní práce</option>
                                 {assignedJobs.map((j) => (
                                   <option key={j.id} value={j.id}>
                                     {j.name || j.id}
