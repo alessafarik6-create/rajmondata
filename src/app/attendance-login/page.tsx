@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { ArrowLeft, Loader2, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,6 +8,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import { useToast } from "@/hooks/use-toast";
+
+const RETURN_TO_SELECTION_MS = 1500;
 
 type EmployeeRow = {
   id: string;
@@ -52,7 +55,9 @@ function segmentMatchesCard(seg: ActiveSegment | null, kind: "job" | "tariff", i
 
 function AttendanceLoginContent() {
   const searchParams = useSearchParams();
+  const { toast } = useToast();
   const companyId = searchParams.get("companyId")?.trim() ?? "";
+  const returnToSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [step, setStep] = useState<Step>("select");
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
@@ -74,6 +79,17 @@ function AttendanceLoginContent() {
   const [switching, setSwitching] = useState(false);
 
   const [sessionInWork, setSessionInWork] = useState<boolean | null>(null);
+  /** Po úspěšné akci čekáme na návrat na výběr zaměstnance — blokace dvojkliku a interakce. */
+  const [awaitingReturnToSelect, setAwaitingReturnToSelect] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (returnToSelectTimerRef.current) {
+        clearTimeout(returnToSelectTimerRef.current);
+        returnToSelectTimerRef.current = null;
+      }
+    };
+  }, []);
 
   const loadEmployees = useCallback(
     async (showSpinner = true) => {
@@ -123,6 +139,11 @@ function AttendanceLoginContent() {
   const resetToSelection = useCallback(
     (opts?: { afterAttendance?: boolean }) => {
       console.log("Resetting attendance login state");
+      if (returnToSelectTimerRef.current) {
+        clearTimeout(returnToSelectTimerRef.current);
+        returnToSelectTimerRef.current = null;
+      }
+      setAwaitingReturnToSelect(false);
       setSelected(null);
       setPin("");
       setPinError(null);
@@ -138,6 +159,33 @@ function AttendanceLoginContent() {
       }
     },
     [loadEmployees]
+  );
+
+  /** Po úspěšné akci: potvrzení a návrat na výběr zaměstnance (připraveno pro dalšího člověka). */
+  const scheduleReturnToSelection = useCallback(
+    (payload: {
+      title: string;
+      description?: string;
+      afterAttendance?: boolean;
+      delayMs?: number;
+    }) => {
+      toast({
+        title: payload.title,
+        description:
+          payload.description ??
+          `Za ${Math.round((payload.delayMs ?? RETURN_TO_SELECTION_MS) / 100) / 10} s se terminál vrátí na výběr zaměstnance.`,
+      });
+      setAwaitingReturnToSelect(true);
+      if (returnToSelectTimerRef.current) {
+        clearTimeout(returnToSelectTimerRef.current);
+      }
+      const delay = payload.delayMs ?? RETURN_TO_SELECTION_MS;
+      returnToSelectTimerRef.current = setTimeout(() => {
+        returnToSelectTimerRef.current = null;
+        resetToSelection({ afterAttendance: payload.afterAttendance !== false });
+      }, delay);
+    },
+    [resetToSelection, toast]
   );
 
   const selectEmployee = useCallback((emp: EmployeeRow) => {
@@ -311,22 +359,34 @@ function AttendanceLoginContent() {
         activeSegment?: ActiveSegment | null;
       };
       if (!res.ok) {
-        alert(typeof data.error === "string" ? data.error : "Uložení se nezdařilo.");
+        toast({
+          variant: "destructive",
+          title: "Uložení se nezdařilo",
+          description:
+            typeof data.error === "string" ? data.error : "Zkuste to znovu nebo kontaktujte administrátora.",
+        });
         return;
       }
       console.log("Attendance saved");
       if (action === "check-in") {
-        setSessionInWork(true);
-        if (data.activeSegment) {
-          setActiveSegment(data.activeSegment);
-        } else {
-          setActiveSegment(null);
-        }
+        scheduleReturnToSelection({
+          title: "Příchod zaznamenán",
+          description: "Uloženo. Terminál se vrací na výběr zaměstnance.",
+          afterAttendance: true,
+        });
       } else {
-        resetToSelection({ afterAttendance: true });
+        scheduleReturnToSelection({
+          title: "Odchod zaznamenán",
+          description: "Uloženo. Terminál se vrací na výběr zaměstnance.",
+          afterAttendance: true,
+        });
       }
     } catch {
-      alert("Uložení se nezdařilo.");
+      toast({
+        variant: "destructive",
+        title: "Uložení se nezdařilo",
+        description: "Zkontrolujte připojení a zkuste to znovu.",
+      });
     } finally {
       setActionSaving(false);
     }
@@ -347,14 +407,25 @@ function AttendanceLoginContent() {
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
-        alert(typeof data.error === "string" ? data.error : "Ukončení se nezdařilo.");
+        toast({
+          variant: "destructive",
+          title: "Ukončení se nezdařilo",
+          description:
+            typeof data.error === "string" ? data.error : "Zkuste to znovu nebo kontaktujte administrátora.",
+        });
         return;
       }
-      setActiveSegment(null);
-      setSelectedJob(null);
-      setSelectedTariff(null);
+      scheduleReturnToSelection({
+        title: "Uloženo",
+        description: "Práce na zakázce / tarifu byla ukončena. Terminál se vrací na výběr zaměstnance.",
+        afterAttendance: true,
+      });
     } catch {
-      alert("Ukončení se nezdařilo.");
+      toast({
+        variant: "destructive",
+        title: "Ukončení se nezdařilo",
+        description: "Zkontrolujte připojení a zkuste to znovu.",
+      });
     } finally {
       setSwitching(false);
     }
@@ -388,14 +459,31 @@ function AttendanceLoginContent() {
         activeSegment?: ActiveSegment;
       };
       if (!res.ok) {
-        alert(typeof data.error === "string" ? data.error : "Přepnutí se nezdařilo.");
+        toast({
+          variant: "destructive",
+          title: "Přepnutí se nezdařilo",
+          description:
+            typeof data.error === "string" ? data.error : "Zkuste to znovu nebo kontaktujte administrátora.",
+        });
         return;
       }
-      if (data.activeSegment) {
-        setActiveSegment(data.activeSegment);
-      }
+      const seg = data.activeSegment;
+      const segLabel =
+        seg?.displayName ||
+        (kind === "job" ? (row as JobRow).name : (row as TariffRow).name);
+      scheduleReturnToSelection({
+        title: "Zaznamenáno",
+        description: segLabel
+          ? `Úsek „${segLabel}“ byl uložen. Terminál se vrací na výběr zaměstnance.`
+          : "Úsek byl uložen. Terminál se vrací na výběr zaměstnance.",
+        afterAttendance: true,
+      });
     } catch {
-      alert("Přepnutí se nezdařilo.");
+      toast({
+        variant: "destructive",
+        title: "Přepnutí se nezdařilo",
+        description: "Zkontrolujte připojení a zkuste to znovu.",
+      });
     } finally {
       setSwitching(false);
     }
@@ -437,6 +525,7 @@ function AttendanceLoginContent() {
             variant="ghost"
             size="sm"
             className="gap-2 text-slate-300 hover:bg-white/10 hover:text-white"
+            disabled={awaitingReturnToSelect}
             onClick={goBack}
           >
             <ArrowLeft className="h-4 w-4" />
@@ -455,6 +544,7 @@ function AttendanceLoginContent() {
             variant="ghost"
             size="sm"
             className="gap-2 text-slate-300 hover:bg-white/10 hover:text-white"
+            disabled={awaitingReturnToSelect}
             onClick={() => resetToSelection()}
           >
             <LogOut className="h-4 w-4" />
@@ -597,7 +687,18 @@ function AttendanceLoginContent() {
       )}
 
       {companyId && step === "work" && selected && sessionInWork !== null && (
-        <div className="flex flex-1 flex-col gap-8">
+        <div className="relative flex flex-1 flex-col gap-8">
+          {awaitingReturnToSelect ? (
+            <div
+              className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 rounded-2xl bg-slate-950/80 px-6 text-center backdrop-blur-sm"
+              role="status"
+              aria-live="polite"
+            >
+              <Loader2 className="h-10 w-10 animate-spin text-emerald-400" />
+              <p className="text-base font-medium text-white">Návrat na výběr zaměstnance…</p>
+              <p className="text-sm text-slate-400">Počkejte prosím chvíli.</p>
+            </div>
+          ) : null}
           <Card
             className={cn(
               "overflow-hidden border-2 shadow-xl",
@@ -667,7 +768,7 @@ function AttendanceLoginContent() {
                 type="button"
                 variant="secondary"
                 className="h-12 shrink-0 rounded-xl border-amber-400/40 bg-amber-950/40 text-amber-foreground hover:bg-amber-900/50"
-                disabled={switching || actionSaving}
+                disabled={switching || actionSaving || awaitingReturnToSelect}
                 onClick={() => void endActiveSegment()}
               >
                 {switching ? (
@@ -703,7 +804,7 @@ function AttendanceLoginContent() {
                           <button
                             key={j.id}
                             type="button"
-                            disabled={switching || actionSaving}
+                            disabled={switching || actionSaving || awaitingReturnToSelect}
                             onClick={() => pickJob(j)}
                             className={cn(
                               "rounded-2xl border px-4 py-4 text-left text-sm font-medium transition",
@@ -733,7 +834,7 @@ function AttendanceLoginContent() {
                           <button
                             key={t.id}
                             type="button"
-                            disabled={switching || actionSaving}
+                            disabled={switching || actionSaving || awaitingReturnToSelect}
                             onClick={() => pickTariff(t)}
                             className={cn(
                               "rounded-2xl border px-4 py-4 text-left text-sm font-medium transition",
@@ -755,9 +856,13 @@ function AttendanceLoginContent() {
                   </div>
                 )}
 
-                {(switching || actionSaving) && (
+                {(switching || actionSaving || awaitingReturnToSelect) && (
                   <p className="text-center text-xs text-slate-400">
-                    {switching ? "Přepínám…" : "Ukládám…"}
+                    {awaitingReturnToSelect
+                      ? "Ukládám a vracím terminál…"
+                      : switching
+                        ? "Přepínám…"
+                        : "Ukládám…"}
                   </p>
                 )}
               </div>
@@ -774,7 +879,7 @@ function AttendanceLoginContent() {
                 type="button"
                 size="lg"
                 className="h-16 w-full rounded-2xl bg-emerald-600 text-lg font-semibold shadow-lg hover:bg-emerald-500"
-                disabled={actionSaving}
+                disabled={actionSaving || awaitingReturnToSelect}
                 onClick={() => void postAttendance("check-in")}
               >
                 {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Příchod do práce"}
@@ -784,7 +889,7 @@ function AttendanceLoginContent() {
                 type="button"
                 size="lg"
                 className="h-16 w-full rounded-2xl border border-rose-400/50 bg-rose-700 text-lg font-semibold text-white shadow-lg hover:bg-rose-600"
-                disabled={actionSaving || !canCheckOut}
+                disabled={actionSaving || !canCheckOut || awaitingReturnToSelect}
                 onClick={() => void postAttendance("check-out")}
               >
                 {actionSaving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Odchod z práce"}
