@@ -25,6 +25,15 @@ function roundHours(h: number): number {
   return Math.round(h * 100) / 100;
 }
 
+function segmentLockedFromTerminalData(d: Record<string, unknown>): {
+  locked: boolean;
+  termJobId: string;
+} {
+  const termJobId = String(d.jobId || "").trim();
+  const locked = d.sourceType === "job" && termJobId !== "";
+  return { locked, termJobId };
+}
+
 /**
  * Rozdělení času mezi zakázky (podle uzavřených segmentů).
  * Součet hodin na segment nesmí překročit durationHours; při odeslání ke schválení musí být celý čas rozvržen.
@@ -82,9 +91,6 @@ export async function resolveSegmentJobSplits(
     if (!Number.isFinite(hr) || hr <= 0) {
       throw new Error("Počet hodin musí být kladné číslo.");
     }
-    if (!assigned.has(jid)) {
-      throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
-    }
 
     const docSnap = byId.get(sid);
     if (!docSnap) {
@@ -96,6 +102,11 @@ export async function resolveSegmentJobSplits(
     }
     if (d.closed !== true) {
       throw new Error("Lze použít jen uzavřené úseky z docházky.");
+    }
+
+    const { locked, termJobId } = segmentLockedFromTerminalData(d);
+    if (!assigned.has(jid) && !(locked && jid === termJobId)) {
+      throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
     }
 
     const dh =
@@ -121,6 +132,27 @@ export async function resolveSegmentJobSplits(
     const d = docSnap.data() as Record<string, unknown>;
     const duration =
       typeof d.durationHours === "number" && Number.isFinite(d.durationHours) ? d.durationHours : 0;
+
+    const { locked: lockedFromTerminal, termJobId } = segmentLockedFromTerminalData(d);
+
+    if (lockedFromTerminal) {
+      if (rows.length !== 1) {
+        throw new Error(
+          "U úseku byla v terminálu vybrána zakázka — čas nelze rozdělovat. Očekává se jeden řádek odpovídající záznamu z terminálu."
+        );
+      }
+      const only = rows[0];
+      if (only.jobId !== termJobId) {
+        throw new Error(
+          "Zakázka ve výkazu musí odpovídat zakázce vybrané v terminálu u tohoto úseku."
+        );
+      }
+      if (Math.abs(only.hours - duration) > EPS) {
+        throw new Error(
+          `U úseku z terminálu s vybranou zakázkou musí být přiřazeno přesně ${duration} h (délka úseku).`
+        );
+      }
+    }
 
     let sum = 0;
     for (const r of rows) {

@@ -82,3 +82,11 @@ export function sortSegmentsByStart(
     return String(x.id).localeCompare(String(y.id));
   });
 }
+
+/**
+ * Úsek je „uzamčený“ pro ruční rozdělení v denním výkazu, pokud v terminálu vznikl
+ * jako práce na konkrétní zakázce (typ job + vyplněné jobId). Tarif / úsek bez zakázky lze dál dělit.
+ */
+export function isSegmentLockedFromTerminal(seg: WorkSegmentClient): boolean {
+  return seg.sourceType === "job" && Boolean(String(seg.jobId || "").trim());
+}

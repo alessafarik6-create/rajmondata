@@ -29,7 +29,15 @@ import {
 } from "@/lib/employee-attendance";
 import { formatKc } from "@/lib/employee-money";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
-import { Calendar, Clock, Loader2, AlertCircle, CircleDollarSign, BadgeCheck } from "lucide-react";
+import {
+  Calendar,
+  Clock,
+  Loader2,
+  AlertCircle,
+  CircleDollarSign,
+  BadgeCheck,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 
@@ -280,8 +288,11 @@ export default function EmployeeHomePage() {
     }
   };
 
+  const panel =
+    "border-2 border-neutral-950 bg-white text-neutral-950 shadow-sm rounded-xl";
+
   return (
-    <div className="space-y-6 sm:space-y-8 max-w-5xl">
+    <div className="mx-auto max-w-5xl space-y-6 sm:space-y-8 px-2 sm:px-0">
       {attendanceError ? (
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
@@ -299,89 +310,89 @@ export default function EmployeeHomePage() {
         isPrivileged={false}
       />
 
-      <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
-        <Avatar className="h-24 w-24 border-4 border-primary/20 shrink-0">
+      <div
+        className={cn(
+          "flex flex-col gap-4 rounded-xl border-2 border-neutral-950 bg-white p-4 sm:flex-row sm:items-center sm:gap-6 sm:p-6"
+        )}
+      >
+        <Avatar className="h-24 w-24 shrink-0 border-2 border-neutral-950">
           <AvatarImage src={photoUrl || undefined} alt="" className="object-cover" />
-          <AvatarFallback className="text-2xl bg-primary text-white">
+          <AvatarFallback className="text-2xl bg-neutral-950 text-white">
             {(displayName && displayName[0]
               ? displayName[0].toUpperCase()
               : "?")}
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0">
-          <h1 className="portal-page-title text-2xl sm:text-3xl">
+          <h1 className="text-2xl font-bold tracking-tight text-neutral-950 sm:text-3xl">
             {t("goodDay")}, {greetingName}!
           </h1>
-          <p className="portal-page-description mt-1">
+          <p className="mt-2 text-base leading-relaxed text-neutral-950">
             {profile?.jobTitle ? (
-              <span className="font-semibold text-slate-800">
-                {profile.jobTitle}
-              </span>
+              <span className="font-semibold">{profile.jobTitle}</span>
             ) : (
               <span>Pracovní pozice není vyplněná.</span>
             )}
             {companyName && companyName !== "Organization" ? (
-              <span className="block text-sm text-slate-600 mt-1">
-                {companyName}
-              </span>
+              <span className="mt-1 block text-sm font-medium text-neutral-900">{companyName}</span>
             ) : null}
           </p>
         </div>
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Card className="border border-amber-200/80 bg-gradient-to-br from-amber-50/90 to-white shadow-sm dark:border-amber-900/40 dark:from-amber-950/30 dark:to-slate-950">
-          <CardHeader className="pb-2 space-y-1">
-            <CardTitle className="text-base flex items-center gap-2">
-              <CircleDollarSign className="w-4 h-4 shrink-0 text-amber-700 dark:text-amber-400" />
+        <Card className={cn(panel)}>
+          <CardHeader className="space-y-2 pb-2">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
+              <CircleDollarSign className="h-4 w-4 shrink-0" aria-hidden />
               Orientační částka
             </CardTitle>
-            <p className="text-xs text-amber-900/80 dark:text-amber-200/80 leading-snug">
+            <p className="text-xs leading-relaxed text-neutral-900">
               Odhad z evidované práce a sazeb — pouze orientační hodnota,{" "}
-              <strong>ještě nebyla schválena</strong> administrátorem.
+              <strong className="text-neutral-950">ještě nebyla schválena</strong> administrátorem.
             </p>
           </CardHeader>
           <CardContent>
             {dailyReportsLoading ? (
-              <p className="text-sm text-slate-500 flex items-center gap-2">
+              <p className="flex items-center gap-2 text-sm text-neutral-900">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Načítám výkazy…
               </p>
             ) : (
-              <p className="text-2xl sm:text-3xl font-bold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
+              <p className="text-2xl font-bold tabular-nums tracking-tight text-neutral-950 sm:text-3xl">
                 {formatKc(totalEstimatedPayCzk)}
               </p>
             )}
           </CardContent>
         </Card>
 
-        <Card className="border border-emerald-200/80 bg-gradient-to-br from-emerald-50/90 to-white shadow-sm dark:border-emerald-900/40 dark:from-emerald-950/25 dark:to-slate-950">
-          <CardHeader className="pb-2 space-y-1">
-            <CardTitle className="text-base flex items-center gap-2">
-              <BadgeCheck className="w-4 h-4 shrink-0 text-emerald-700 dark:text-emerald-400" />
+        <Card className={cn(panel)}>
+          <CardHeader className="space-y-2 pb-2">
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
+              <BadgeCheck className="h-4 w-4 shrink-0" aria-hidden />
               Schválená částka
             </CardTitle>
-            <p className="text-xs text-emerald-900/80 dark:text-emerald-200/80 leading-snug">
-              Částka <strong>potvrzená administrátorem</strong> jako podklad k výplatě (součet
-              schválených denních výkazů).
+            <p className="text-xs leading-relaxed text-neutral-900">
+              Částka <strong className="text-neutral-950">potvrzená administrátorem</strong> jako podklad
+              k výplatě (součet schválených denních výkazů).
             </p>
           </CardHeader>
           <CardContent>
             {dailyReportsLoading ? (
-              <p className="text-sm text-slate-500 flex items-center gap-2">
+              <p className="flex items-center gap-2 text-sm text-neutral-900">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Načítám výkazy…
               </p>
             ) : hasApprovedReport ? (
-              <p className="text-2xl sm:text-3xl font-bold tabular-nums tracking-tight text-slate-900 dark:text-slate-100">
+              <p className="text-2xl font-bold tabular-nums tracking-tight text-neutral-950 sm:text-3xl">
                 {formatKc(totalApprovedPayCzk)}
               </p>
             ) : (
               <div className="space-y-1">
-                <p className="text-lg font-semibold text-slate-600 dark:text-slate-400">
-                  Zatím neschváleno
+                <p className="text-lg font-semibold text-neutral-950">Zatím neschváleno</p>
+                <p className="text-sm text-neutral-900">
+                  Žádný denní výkaz zatím nemá stav Schváleno.
                 </p>
-                <p className="text-xs text-slate-500">Žádný denní výkaz zatím nemá stav Schváleno.</p>
               </div>
             )}
           </CardContent>
@@ -389,30 +400,30 @@ export default function EmployeeHomePage() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
-        <Card className="bg-white border-slate-200 shadow-sm">
+        <Card className={cn(panel)}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Clock className="w-4 h-4 text-primary" />
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
+              <Clock className="h-4 w-4" aria-hidden />
               Hodiny
             </CardTitle>
           </CardHeader>
-          <CardContent className="space-y-2 text-slate-700">
+          <CardContent className="space-y-3 text-sm text-neutral-900">
             {attendanceLoading ? (
-              <p className="text-sm text-slate-500 flex items-center gap-2">
+              <p className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Načítám docházku…
               </p>
             ) : (
               <>
-                <div className="flex justify-between">
-                  <span>{t("today")}</span>
-                  <span className="font-semibold tabular-nums">
+                <div className="flex justify-between gap-4">
+                  <span className="font-medium text-neutral-950">{t("today")}</span>
+                  <span className="font-semibold tabular-nums text-neutral-950">
                     {today > 0 ? `${today} h` : "—"}
                   </span>
                 </div>
-                <div className="flex justify-between">
-                  <span>Tento týden (po–dnes)</span>
-                  <span className="font-semibold tabular-nums">
+                <div className="flex justify-between gap-4">
+                  <span className="font-medium text-neutral-950">Tento týden (po–dnes)</span>
+                  <span className="font-semibold tabular-nums text-neutral-950">
                     {week > 0 ? `${week} h` : "—"}
                   </span>
                 </div>
@@ -421,73 +432,80 @@ export default function EmployeeHomePage() {
           </CardContent>
         </Card>
 
-        <Card className="bg-white border-slate-200 shadow-sm">
+        <Card className={cn(panel)}>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-primary" />
+            <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
+              <Calendar className="h-4 w-4" aria-hidden />
               {t("dayOverview")} ({todayIso})
             </CardTitle>
           </CardHeader>
-          <CardContent className="text-sm text-slate-700 space-y-1">
+          <CardContent className="space-y-2 text-sm text-neutral-900">
             {attendanceLoading ? (
-              <p className="text-slate-500 flex items-center gap-2">
+              <p className="flex items-center gap-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Načítám…
               </p>
             ) : todaySummary ? (
               <>
                 <p>
-                  <span className="text-slate-500">Příchod:</span>{" "}
+                  <span className="font-medium text-neutral-950">Příchod:</span>{" "}
                   {todaySummary.checkIn ?? "—"}
                 </p>
                 <p>
-                  <span className="text-slate-500">Odchod:</span>{" "}
+                  <span className="font-medium text-neutral-950">Odchod:</span>{" "}
                   {todaySummary.checkOut ?? "—"}
                 </p>
                 <p>
-                  <span className="text-slate-500">Odpracováno:</span>{" "}
+                  <span className="font-medium text-neutral-950">Odpracováno:</span>{" "}
                   {todaySummary.hoursWorked != null
                     ? `${todaySummary.hoursWorked} h`
                     : "—"}
                 </p>
                 <p>
-                  <span className="text-slate-500">Stav:</span>{" "}
+                  <span className="font-medium text-neutral-950">Stav:</span>{" "}
                   {todaySummary.statusLabel}
                 </p>
               </>
             ) : (
-              <p className="text-slate-500">{t("noAttendanceToday")}</p>
+              <p className="text-neutral-900">{t("noAttendanceToday")}</p>
             )}
           </CardContent>
         </Card>
       </div>
 
-      <Card className="border-slate-200 bg-white shadow-sm">
-        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pb-2">
-          <CardTitle className="text-base">Denní výkazy a částky</CardTitle>
-          <Button variant="outline" size="sm" asChild className="w-full sm:w-auto">
+      <Card className={cn(panel)}>
+        <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between">
+          <CardTitle className="text-base font-semibold text-neutral-950">
+            Denní výkazy a částky
+          </CardTitle>
+          <Button
+            variant="outline"
+            size="sm"
+            asChild
+            className="w-full border-2 border-neutral-950 bg-white text-neutral-950 hover:bg-neutral-100 sm:w-auto"
+          >
             <Link href="/portal/employee/daily-reports">Upravit výkazy</Link>
           </Button>
         </CardHeader>
-        <CardContent className="text-sm text-slate-700">
+        <CardContent className="text-sm text-neutral-900">
           {dailyReportsLoading ? (
-            <p className="flex items-center gap-2 text-slate-500">
+            <p className="flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" />
               Načítám výkazy…
             </p>
           ) : dailyReportsSorted.length === 0 ? (
-            <p className="text-slate-500">
+            <p>
               Zatím nemáte žádný denní výkaz. Částka se započte až po schválení administrátorem.
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-md border border-slate-200">
+            <div className="overflow-x-auto rounded-lg border-2 border-neutral-950">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead>Datum</TableHead>
-                    <TableHead>Hodiny</TableHead>
-                    <TableHead>Částka (po schv.)</TableHead>
-                    <TableHead>Stav</TableHead>
+                  <TableRow className="border-b-2 border-neutral-950 bg-white hover:bg-white">
+                    <TableHead className="font-semibold text-neutral-950">Datum</TableHead>
+                    <TableHead className="font-semibold text-neutral-950">Hodiny</TableHead>
+                    <TableHead className="font-semibold text-neutral-950">Částka (po schv.)</TableHead>
+                    <TableHead className="font-semibold text-neutral-950">Stav</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -504,17 +522,20 @@ export default function EmployeeHomePage() {
                           ? Number(row.hoursFromAttendance)
                           : null;
                     return (
-                      <TableRow key={`${String(row.date)}-${idx}`}>
-                        <TableCell className="font-medium whitespace-nowrap">
+                      <TableRow
+                        key={`${String(row.date)}-${idx}`}
+                        className="border-b border-neutral-950/20"
+                      >
+                        <TableCell className="whitespace-nowrap font-medium text-neutral-950">
                           {String(row.date || "—")}
                         </TableCell>
-                        <TableCell className="tabular-nums">
+                        <TableCell className="tabular-nums text-neutral-950">
                           {h != null && Number.isFinite(h) ? `${h} h` : "—"}
                         </TableCell>
-                        <TableCell className="tabular-nums">
+                        <TableCell className="tabular-nums text-neutral-950">
                           {amt > 0 ? formatKc(amt) : "—"}
                         </TableCell>
-                        <TableCell>{dailyReportStatusLabel(st)}</TableCell>
+                        <TableCell className="text-neutral-950">{dailyReportStatusLabel(st)}</TableCell>
                       </TableRow>
                     );
                   })}
@@ -522,7 +543,7 @@ export default function EmployeeHomePage() {
               </Table>
             </div>
           )}
-          <p className="mt-3 text-xs text-slate-500">
+          <p className="mt-4 text-xs leading-relaxed text-neutral-900">
             Do výplaty se započítávají jen schválené denní výkazy. Docházka sama o sobě peníze nevyplácí.
           </p>
         </CardContent>
