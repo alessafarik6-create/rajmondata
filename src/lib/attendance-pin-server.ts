@@ -5,6 +5,7 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { verifyTerminalPinHash } from "@/lib/terminal-pin-crypto";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
+import { isVisibleInAttendanceTerminal } from "@/lib/employee-organization";
 
 export function privateAttendancePinRef(db: Firestore, companyId: string, employeeId: string) {
   return db
@@ -38,6 +39,7 @@ export async function verifyAttendancePinForEmployee(
   if (!empSnap.exists) return false;
   const data = empSnap.data() as Record<string, unknown>;
   if (data.isActive === false) return false;
+  if (!isVisibleInAttendanceTerminal(data)) return false;
 
   const privateSnap = await privateAttendancePinRef(db, companyId, employeeId).get();
   const privateData = privateSnap.exists

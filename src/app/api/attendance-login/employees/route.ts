@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
 import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
+import { isVisibleInAttendanceTerminal } from "@/lib/employee-organization";
 
 /**
  * Veřejný seznam zaměstnanců pro /attendance-login (bez Auth).
@@ -29,6 +30,9 @@ export async function GET(request: NextRequest) {
       .map((d) => {
         const data = d.data() as Record<string, unknown>;
         if (data.isActive === false) return null;
+        if (!isVisibleInAttendanceTerminal(data as { visibleInAttendanceTerminal?: boolean })) {
+          return null;
+        }
         const photoURL =
           typeof data.photoURL === "string" && data.photoURL.trim()
             ? data.photoURL.trim()

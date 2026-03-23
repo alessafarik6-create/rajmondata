@@ -65,6 +65,7 @@ const ROLE_LABEL_CS: Record<string, string> = {
   admin: "Administrátor",
   manager: "Manažer",
   employee: "Zaměstnanec",
+  orgAdmin: "Administrátor organizace",
   accountant: "Účetní",
   customer: "Zákazník",
 };

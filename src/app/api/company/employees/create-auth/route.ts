@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore, getAdminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { passwordPolicyError } from "@/lib/employee-password-policy";
+import { userPortalRoleForEmployeeDocRole, type EmployeeOrgRole } from "@/lib/employee-organization";
 
 type Body = {
   firstName?: string;
@@ -10,6 +11,9 @@ type Body = {
   password?: string;
   jobTitle?: string;
   hourlyRate?: number | null;
+  /** Role v organizaci: employee | orgAdmin */
+  role?: string;
+  visibleInAttendanceTerminal?: boolean;
 };
 
 function normalizeEmail(email: string): string {
@@ -80,6 +84,11 @@ export async function POST(request: NextRequest) {
     body.hourlyRate != null && !Number.isNaN(Number(body.hourlyRate))
       ? Number(body.hourlyRate)
       : null;
+
+  const rawOrgRole = String(body.role || "employee").trim();
+  const orgRole: EmployeeOrgRole =
+    rawOrgRole === "orgAdmin" ? "orgAdmin" : "employee";
+  const visibleInAttendanceTerminal = body.visibleInAttendanceTerminal !== false;
 
   if (!firstName || !lastName || !email || !password) {
     return NextResponse.json(
@@ -153,11 +162,13 @@ export async function POST(request: NextRequest) {
 
   const batch = db.batch();
 
+  const portalRole = userPortalRoleForEmployeeDocRole(orgRole);
+
   batch.set(employeeRef, {
     firstName,
     lastName,
     email,
-    role: "employee",
+    role: orgRole,
     jobTitle,
     hourlyRate,
     companyId,
@@ -166,6 +177,7 @@ export async function POST(request: NextRequest) {
     authUserId: newUid,
     profileImage: null,
     isActive: true,
+    visibleInAttendanceTerminal,
     createdAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
     hireDate: new Date().toISOString().split("T")[0],
@@ -178,7 +190,7 @@ export async function POST(request: NextRequest) {
     displayName: `${firstName} ${lastName}`.trim(),
     firstName,
     lastName,
-    role: "employee",
+    role: portalRole,
     companyId,
     employeeId,
     jobTitle,

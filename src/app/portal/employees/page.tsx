@@ -75,6 +75,10 @@ import {
   normalizeTerminalPin,
   validateTerminalPinFormat,
 } from "@/lib/terminal-pin-validation";
+import {
+  isVisibleInAttendanceTerminal,
+  parseEmployeeOrgRole,
+} from "@/lib/employee-organization";
 
 function releaseModalLocksAfterDismiss() {
   releaseDocumentModalLocks();
@@ -138,11 +142,17 @@ export default function EmployeesPage() {
     firstName: '',
     lastName: '',
     email: '',
-    role: 'employee',
+    orgRole: 'employee' as 'employee' | 'orgAdmin',
+    visibleInAttendanceTerminal: true,
     jobTitle: '',
     hourlyRate: ''
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const [orgSettingsEmp, setOrgSettingsEmp] = useState<any | null>(null);
+  const [orgSettingsRole, setOrgSettingsRole] = useState<'employee' | 'orgAdmin'>('employee');
+  const [orgSettingsTerminalVisible, setOrgSettingsTerminalVisible] = useState(true);
+  const [orgSettingsSaving, setOrgSettingsSaving] = useState(false);
   
   const [qrEmployee, setQrEmployee] = useState<any | null>(null);
 
@@ -409,6 +419,8 @@ export default function EmployeesPage() {
           jobTitle: inviteData.jobTitle.trim(),
           hourlyRate:
             hourlyRate != null && !Number.isNaN(hourlyRate) ? hourlyRate : null,
+          role: inviteData.orgRole,
+          visibleInAttendanceTerminal: inviteData.visibleInAttendanceTerminal,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -429,7 +441,8 @@ export default function EmployeesPage() {
         firstName: "",
         lastName: "",
         email: "",
-        role: "employee",
+        orgRole: "employee",
+        visibleInAttendanceTerminal: true,
         jobTitle: "",
         hourlyRate: "",
       });
@@ -718,14 +731,41 @@ export default function EmployeesPage() {
     }
   };
 
-  const changeRole = async (employeeId: string, newRole: string) => {
-    if (!canManage || !companyId) return;
+  const saveOrgSettings = async () => {
+    if (!canManage || !user || !orgSettingsEmp?.id) return;
+    setOrgSettingsSaving(true);
     try {
-      const docRef = doc(firestore, 'companies', companyId, 'employees', employeeId);
-      await updateDoc(docRef, { role: newRole });
-      toast({ title: "Role změněna", description: `Nová role: ${newRole}` });
-    } catch (error) {
-      toast({ variant: "destructive", title: "Chyba při změně role" });
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/employees/update-org", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          employeeId: orgSettingsEmp.id,
+          role: orgSettingsRole,
+          visibleInAttendanceTerminal: orgSettingsTerminalVisible,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Uložení se nezdařilo."
+        );
+      }
+      toast({
+        title: "Uloženo",
+        description: "Role a viditelnost v terminálu docházky byly aktualizovány.",
+      });
+      setOrgSettingsEmp(null);
+    } catch (error: unknown) {
+      const msg =
+        error instanceof Error ? error.message : "Uložení se nezdařilo.";
+      toast({ variant: "destructive", title: "Chyba", description: msg });
+    } finally {
+      setOrgSettingsSaving(false);
+      releaseModalLocksAfterDismiss();
     }
   };
 
@@ -815,9 +855,46 @@ export default function EmployeesPage() {
                       }
                       className={INVITE_INPUT_CLASS}
                     />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="invite-org-role" className={INVITE_LABEL_CLASS}>
+                      Role v organizaci
+                    </Label>
+                    <select
+                      id="invite-org-role"
+                      className={INVITE_SELECT_TRIGGER_CLASS}
+                      value={inviteData.orgRole}
+                      onChange={(e) =>
+                        setInviteData({
+                          ...inviteData,
+                          orgRole: e.target.value === "orgAdmin" ? "orgAdmin" : "employee",
+                        })
+                      }
+                    >
+                      <option value="employee">Běžný zaměstnanec</option>
+                      <option value="orgAdmin">Administrátor organizace</option>
+                    </select>
                     <p className="text-[10px] text-gray-500">
-                      Účet v aplikaci má roli <strong>zaměstnanec</strong> (vlastní portál, bez přístupu k administraci firmy).
+                      Administrátor organizace spravuje tuto firmu v portálu (zaměstnanci, zakázky, docházka…), bez
+                      přístupu ke globální správě platformy.
                     </p>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+                    <div className="min-w-0 space-y-0.5">
+                      <Label htmlFor="invite-terminal-visible" className={INVITE_LABEL_CLASS}>
+                        Zobrazit v terminálu docházky
+                      </Label>
+                      <p className="text-[10px] text-gray-500">
+                        Vypnutí skryje zaměstnance na veřejné docházce — nelze ho vybrat ani přihlásit PINem.
+                      </p>
+                    </div>
+                    <Switch
+                      id="invite-terminal-visible"
+                      checked={inviteData.visibleInAttendanceTerminal}
+                      onCheckedChange={(v) =>
+                        setInviteData({ ...inviteData, visibleInAttendanceTerminal: v })
+                      }
+                    />
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="space-y-2">
@@ -893,6 +970,84 @@ export default function EmployeesPage() {
         </div>
       </div>
 
+      <Dialog
+        open={!!orgSettingsEmp}
+        onOpenChange={(open) => {
+          if (!open) {
+            setOrgSettingsEmp(null);
+            releaseModalLocksAfterDismiss();
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">
+              Role a terminál docházky
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {orgSettingsEmp
+                ? `${orgSettingsEmp.firstName} ${orgSettingsEmp.lastName}`
+                : ""}{" "}
+              — oprávnění v rámci vaší organizace a viditelnost na veřejné docházce.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="org-settings-role" className={INVITE_LABEL_CLASS}>
+                Role v organizaci
+              </Label>
+              <select
+                id="org-settings-role"
+                className={INVITE_SELECT_TRIGGER_CLASS}
+                value={orgSettingsRole}
+                onChange={(e) =>
+                  setOrgSettingsRole(e.target.value === "orgAdmin" ? "orgAdmin" : "employee")
+                }
+              >
+                <option value="employee">Běžný zaměstnanec</option>
+                <option value="orgAdmin">Administrátor organizace</option>
+              </select>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+              <div className="min-w-0 space-y-0.5">
+                <Label htmlFor="org-settings-terminal" className={INVITE_LABEL_CLASS}>
+                  Zobrazit v terminálu docházky
+                </Label>
+                <p className="text-[10px] text-gray-500">
+                  Vypnuto = zaměstnanec se nezobrazí v seznamu a nelze se přihlásit PINem.
+                </p>
+              </div>
+              <Switch
+                id="org-settings-terminal"
+                checked={orgSettingsTerminalVisible}
+                onCheckedChange={setOrgSettingsTerminalVisible}
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-gray-200 bg-white text-black"
+              onClick={() => {
+                setOrgSettingsEmp(null);
+                releaseModalLocksAfterDismiss();
+              }}
+              disabled={orgSettingsSaving}
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void saveOrgSettings()}
+              disabled={orgSettingsSaving || !canManage}
+            >
+              {orgSettingsSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Card className="bg-surface border-border overflow-hidden">
         <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">
           <div className="relative w-80">
@@ -919,6 +1074,7 @@ export default function EmployeesPage() {
                 <TableRow className="border-border hover:bg-transparent">
                   <TableHead className="pl-6">Zaměstnanec</TableHead>
                   <TableHead>Role</TableHead>
+                  <TableHead>Terminál</TableHead>
                   <TableHead>PIN docházky</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="pr-6 text-right">Akce</TableHead>
@@ -933,13 +1089,26 @@ export default function EmployeesPage() {
                         <span className="text-xs text-muted-foreground font-normal">{emp.email}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="capitalize">
+                    <TableCell>
                       <Badge variant="outline" className="border-primary/30 text-primary">
-                        {emp.role === 'owner' ? 'Majitel' : 
-                         emp.role === 'admin' ? 'Administrátor' : 
-                         emp.role === 'manager' ? 'Manažer' : 
-                         emp.role === 'accountant' ? 'Účetní' : 'Zaměstnanec'}
+                        {parseEmployeeOrgRole(emp as { role?: unknown }) === "orgAdmin"
+                          ? "Administrátor organizace"
+                          : "Zaměstnanec"}
                       </Badge>
+                    </TableCell>
+                    <TableCell>
+                      {isVisibleInAttendanceTerminal(
+                        emp as { visibleInAttendanceTerminal?: boolean }
+                      ) ? (
+                        <Badge
+                          variant="outline"
+                          className="border-emerald-300 text-emerald-900"
+                        >
+                          Ano
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary">Ne</Badge>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex flex-col gap-1">
@@ -1111,10 +1280,20 @@ export default function EmployeesPage() {
                             {canManage ? (
                               <>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Změnit roli</DropdownMenuLabel>
-                                <DropdownMenuItem onClick={() => changeRole(emp.id, 'admin')}>Administrátor</DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => changeRole(emp.id, 'manager')}>Manažer</DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => changeRole(emp.id, 'employee')}>Zaměstnanec</DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={(e) => {
+                                    e.preventDefault();
+                                    setOrgSettingsEmp(emp);
+                                    setOrgSettingsRole(parseEmployeeOrgRole(emp as { role?: unknown }));
+                                    setOrgSettingsTerminalVisible(
+                                      isVisibleInAttendanceTerminal(
+                                        emp as { visibleInAttendanceTerminal?: boolean }
+                                      )
+                                    );
+                                  }}
+                                >
+                                  <Edit2 className="w-4 h-4 mr-2" /> Role a terminál docházky
+                                </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>
                                   <Trash2 className="w-4 h-4 mr-2" /> Odstranit
