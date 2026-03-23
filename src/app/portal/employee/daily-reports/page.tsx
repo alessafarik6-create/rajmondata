@@ -48,7 +48,16 @@ import {
 import { isDailyReportLockedBy24hRule } from "@/lib/daily-report-24h-lock";
 import { buildDayCalendarMarkerMap } from "@/lib/daily-report-calendar-state";
 
-const SPLIT_EPS = 0.02;
+/** Tolerance pro srovnání součtu řádků s interním stropem (bez falešných překročení kvůli float). */
+const SUM_COMPARE_EPS = 1e-6;
+/** Rozdíl docházka vs. úseky terminálu — hrubější tolerance (minuty). */
+const ATTENDANCE_SEG_EPS = 0.02;
+/** Zobrazení hodin (2 des. místa). */
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+type AssignedJobOption = { id: string; name?: string };
 
 function newSplitRowId() {
   return typeof crypto !== "undefined" && crypto.randomUUID
@@ -62,6 +71,29 @@ function parseHoursInput(str: string): number | null {
   const n = Number(t);
   if (!Number.isFinite(n) || n <= 0) return null;
   return Math.round(n * 100) / 100;
+}
+
+/** Popis pro API / Firestore — z řádků (popis práce nebo název zakázky), bez duplicitního pole „Co jste dělali“. */
+function buildDescriptionFromDayRows(
+  rows: DayFormRow[],
+  assignedJobs: AssignedJobOption[]
+): string {
+  const lines: string[] = [];
+  for (const r of rows) {
+    const h = parseHoursInput(r.hoursStr);
+    if (h == null || h <= 0) continue;
+    const note = String(r.lineNote ?? "").trim();
+    if (note) {
+      lines.push(note);
+      continue;
+    }
+    const jid = String(r.jobId ?? "").trim();
+    if (jid) {
+      const j = assignedJobs.find((x) => x.id === jid);
+      lines.push(j?.name ? `Zakázka: ${j.name}` : `Zakázka (${jid})`);
+    }
+  }
+  return lines.join("\n\n").trim();
 }
 
 function sumDayFormHours(rows: DayFormRow[]): number {
@@ -84,14 +116,11 @@ function validateDayForm(
   const assigned = new Set(assignedJobIds);
   const { unlocked } = effectiveLockedUnlocked(closedSegments);
   const unlockedSum = sumClosedSegmentHours(unlocked);
-  /** Max. hodiny ve formuláři: nesmí překročit odpracovaný čas po odečtení uzamčených úseků (tarif + zakázka z terminálu). */
+  /** availableHours = max(0, odpracováno − tarif − zakázka z terminálu); bez zaokrouhlení před min(). */
+  const availableHoursRaw = Math.max(0, dayWorkedCap - lockedSum);
+  /** Max. hodiny ve formuláři: min(odemčené úseky, dostupný čas po uzamčených úsecích). */
   const formCap =
-    unlocked.length === 0
-      ? 0
-      : Math.min(
-          unlockedSum,
-          Math.max(0, Math.round((dayWorkedCap - lockedSum) * 100) / 100)
-        );
+    unlocked.length === 0 ? 0 : Math.min(unlockedSum, availableHoursRaw);
 
   for (const r of dayFormRows) {
     const h = parseHoursInput(r.hoursStr);
@@ -119,19 +148,16 @@ function validateDayForm(
 
   const sum = sumDayFormHours(dayFormRows);
   if (unlocked.length > 0) {
-    if (formCap + SPLIT_EPS < unlockedSum) {
-      return "Nesoulad docházky a úseků terminálu — nelze bezpečně rozvrhnout čas. Kontaktujte administrátora.";
+    if (sum > formCap + SUM_COMPARE_EPS) {
+      return `Součet hodin v řádcích (${sum} h) překračuje dostupný čas pro výkaz (${round2(formCap)} h, bez tarifů a uzamčených zakázek z terminálu).`;
     }
-    if (sum > formCap + SPLIT_EPS) {
-      return `Součet hodin v řádcích (${sum} h) překračuje dostupný čas pro výkaz (${formCap} h, bez tarifů a uzamčených zakázek z terminálu).`;
-    }
-    if (sum < formCap - SPLIT_EPS) {
-      return `Rozdělte celých ${formCap} h (zbývá ${Math.round((formCap - sum) * 100) / 100} h).`;
+    if (sum < formCap - SUM_COMPARE_EPS) {
+      return `Rozdělte celkem ${round2(formCap)} h (zbývá ${round2(formCap - sum)} h).`;
     }
   }
 
   const rozděleno = lockedSum + sum;
-  if (rozděleno > dayWorkedCap + SPLIT_EPS) {
+  if (rozděleno > dayWorkedCap + SUM_COMPARE_EPS) {
     return `Součet hodin (${rozděleno} h) překračuje odpracovaný čas z docházky a terminálu (${dayWorkedCap} h).`;
   }
 
@@ -423,7 +449,6 @@ export default function EmployeeDailyReportsPage() {
     return summaries.find((s) => s.date === dayKey) ?? null;
   }, [attendanceBlocks, dayKey, employeeId, user?.uid]);
 
-  const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
   /** Jeden hlavní formulář pro odemčené úseky (čas → zakázky / popis v pořadí úseků). */
   const [dayFormRows, setDayFormRows] = useState<DayFormRow[]>(() => [
@@ -440,11 +465,9 @@ export default function EmployeeDailyReportsPage() {
 
   useEffect(() => {
     if (existingReport) {
-      setDescription(String(existingReport.description ?? ""));
       setNote(String(existingReport.note ?? ""));
       return;
     }
-    setDescription("");
     setNote("");
   }, [existingReport, dayKey]);
 
@@ -476,12 +499,11 @@ export default function EmployeeDailyReportsPage() {
       att != null && Number.isFinite(att) && segmentTotalInit > 0
         ? Math.min(att, segmentTotalInit)
         : att ?? segmentTotalInit;
-    const formCapInit = Math.min(
-      unlockedSumInit,
-      Math.max(0, Math.round((dayCapInit - lockedSumInit) * 100) / 100)
-    );
+    const availableInit = Math.max(0, dayCapInit - lockedSumInit);
+    const formCapInit =
+      unlocked.length === 0 ? 0 : Math.min(unlockedSumInit, availableInit);
     let merged = mergeUnlockedRowsFromReport(unlocked, existingReport);
-    if (merged.length === 0 && formCapInit > SPLIT_EPS) {
+    if (merged.length === 0 && formCapInit > SUM_COMPARE_EPS) {
       merged = [
         {
           rowId: newSplitRowId(),
@@ -567,7 +589,7 @@ export default function EmployeeDailyReportsPage() {
     if (
       attPost != null &&
       Number.isFinite(attPost) &&
-      segTotPost > attPost + SPLIT_EPS
+      segTotPost > attPost + ATTENDANCE_SEG_EPS
     ) {
       toast({
         variant: "destructive",
@@ -598,8 +620,13 @@ export default function EmployeeDailyReportsPage() {
       toast({ variant: "destructive", title: "Nelze uložit výkaz", description: splitErr });
       return;
     }
-    if (mode === "submit" && !description.trim()) {
-      toast({ variant: "destructive", title: "Chybí popis", description: "Vyplňte, co jste dělali." });
+    const descriptionPayload = buildDescriptionFromDayRows(dayFormRows, assignedJobs);
+    if (mode === "submit" && !descriptionPayload.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Chybí popis práce",
+        description: "U řádků s hodinami doplňte popis práce nebo vyberte zakázku.",
+      });
       return;
     }
     setSaving(true);
@@ -621,7 +648,7 @@ export default function EmployeeDailyReportsPage() {
         body: JSON.stringify({
           companyId,
           date: dayKey,
-          description: description.trim(),
+          description: descriptionPayload,
           note: note.trim(),
           segmentJobSplits,
           dayWorkLines,
@@ -699,23 +726,21 @@ export default function EmployeeDailyReportsPage() {
   const dataAttendanceTooLow =
     attendanceHours != null &&
     Number.isFinite(attendanceHours) &&
-    segmentTotal > attendanceHours + SPLIT_EPS;
-  /** Odpracováno − tarif (informace; ve formuláři jen část bez tarifu a uzamčených zakázek). */
-  const dostupnýPoTarifu = Math.max(
-    0,
-    Math.round((dayWorkedCap - tariffSum) * 100) / 100
+    segmentTotal > attendanceHours + ATTENDANCE_SEG_EPS;
+  /** Odpracováno − tarif − zakázka z terminálu (stejné jako dostupný čas pro ruční řádky). */
+  const availableHoursRaw = useMemo(
+    () => Math.max(0, dayWorkedCap - lockedSum),
+    [dayWorkedCap, lockedSum]
   );
-  /** Strop hodin v hlavním formuláři (řádky) — odpovídá př. 4 h odpracováno − 1 h tarif = max. 3 h ve formuláři, pokud jde o neuzamčený čas. */
+  const dostupnýProŘádkyZobrazení = round2(availableHoursRaw);
+  /** Strop hodin v hlavním formuláři — min(odemčené úseky, dostupný čas); interně bez zaokrouhlení před porovnáním. */
   const formHoursCap = useMemo(() => {
     if (unlockedSegments.length === 0) return 0;
-    return Math.min(
-      unlockedSum,
-      Math.max(0, Math.round((dayWorkedCap - lockedSum) * 100) / 100)
-    );
-  }, [unlockedSegments.length, unlockedSum, dayWorkedCap, lockedSum]);
-  /** Hodiny lze vyplnit jen pokud existuje odemčený čas z terminálu; výběr zakázky zůstává dostupný i bez toho. */
+    return Math.min(unlockedSum, availableHoursRaw);
+  }, [unlockedSegments.length, unlockedSum, availableHoursRaw]);
+  /** Hodiny lze vyplnit, pokud je reálně dostupný čas pro ruční výkaz (> 0). */
   const canEditHours =
-    closedSegments.length > 0 && formHoursCap > SPLIT_EPS && !dailyWorkLogOff;
+    closedSegments.length > 0 && formHoursCap > SUM_COMPARE_EPS && !dailyWorkLogOff;
   const hoursDisabled = effectiveFormLocked || !canEditHours;
   const jobSelectDisabled = effectiveFormLocked || dailyWorkLogOff;
   const segmentsFetchFailed =
@@ -727,43 +752,42 @@ export default function EmployeeDailyReportsPage() {
   const rozdělenoCelkem = Math.round((lockedSum + allocatedUnlocked) * 100) / 100;
   const zbýváCap = Math.round((dayWorkedCap - rozdělenoCelkem) * 100) / 100;
   const zbýváVeFormuláři = Math.round((formHoursCap - allocatedUnlocked) * 100) / 100;
-  const overCap = rozdělenoCelkem > dayWorkedCap + SPLIT_EPS;
-  const overUnlocked = allocatedUnlocked > formHoursCap + SPLIT_EPS;
+  const overCap = rozdělenoCelkem > dayWorkedCap + SUM_COMPARE_EPS;
+  const overUnlocked = allocatedUnlocked > formHoursCap + SUM_COMPARE_EPS;
   const capMismatch =
     attendanceHours != null &&
     Number.isFinite(attendanceHours) &&
-    Math.abs(attendanceHours - segmentTotal) > SPLIT_EPS &&
+    Math.abs(attendanceHours - segmentTotal) > ATTENDANCE_SEG_EPS &&
     !dataAttendanceTooLow;
+  const noTimeLeftToSplit = availableHoursRaw <= SUM_COMPARE_EPS;
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
     console.log("[daily-reports debug]", {
       selectedDate: dayKey,
-      employeeAssignedJobIds: assignedJobIds,
-      loadedJobs: assignedJobs,
-      loadedWorkSegmentsCount: workSegmentsAll.length,
-      segmentsForDayCount: workSegmentsForDay.length,
-      closedSegmentsCount: closedSegments.length,
-      segmentsQueryError: segmentsQueryError?.message ?? null,
-      computedAvailableTime: formHoursCap,
-      dayWorkedCap,
-      daySummaryHours: daySummary?.hoursWorked ?? null,
-      tariffSum,
-      lockedSum,
+      workedHours: dayWorkedCap,
+      tariffHours: tariffSum,
+      lockedTerminalJobHours: jobTerminalSumOnly,
+      lockedSumTerminal: lockedSum,
+      availableHours: availableHoursRaw,
+      formHoursCap,
+      unlockedSegmentsCount: unlockedSegments.length,
+      manualRowsTotal: allocatedUnlocked,
+      hoursInputsDisabled: hoursDisabled,
+      isLockedEffective: effectiveFormLocked,
     });
   }, [
     dayKey,
-    assignedJobIds,
-    assignedJobs,
-    workSegmentsAll.length,
-    workSegmentsForDay.length,
-    closedSegments.length,
-    segmentsQueryError,
-    formHoursCap,
     dayWorkedCap,
-    daySummary,
     tariffSum,
+    jobTerminalSumOnly,
     lockedSum,
+    availableHoursRaw,
+    formHoursCap,
+    unlockedSegments.length,
+    allocatedUnlocked,
+    hoursDisabled,
+    effectiveFormLocked,
   ]);
 
   if (isUserLoading || !user) {
@@ -1269,9 +1293,9 @@ export default function EmployeeDailyReportsPage() {
                     <div>
                       <span className="font-medium text-neutral-950">Dostupný pro výkaz</span>
                       <p className="font-semibold tabular-nums text-neutral-950">
-                        {dayWorkedCap > 0 ? `${dostupnýPoTarifu} h` : "—"}
+                        {dayWorkedCap > 0 ? `${dostupnýProŘádkyZobrazení} h` : "—"}
                       </p>
-                      <p className="text-xs text-neutral-900">Odpracováno − tarif</p>
+                      <p className="text-xs text-neutral-900">Odpracováno − tarif − zakázka z terminálu</p>
                     </div>
                     <div>
                       <span className="font-medium text-neutral-950">Rozděleno</span>
@@ -1286,7 +1310,7 @@ export default function EmployeeDailyReportsPage() {
                       <p
                         className={cn(
                           "font-semibold tabular-nums",
-                          (overCap || zbýváCap < -SPLIT_EPS) && "text-red-700"
+                          (overCap || zbýváCap < -SUM_COMPARE_EPS) && "text-red-700"
                         )}
                       >
                         {overCap ? "—" : `${zbýváCap} h`}
@@ -1308,11 +1332,10 @@ export default function EmployeeDailyReportsPage() {
                     </p>
                   )}
 
-                  {unlockedSegments.length === 0 ? (
+                  {noTimeLeftToSplit ? (
                     <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
-                      Pro tento den není žádný čas k rozdělení do řádků níže (tarify a uzamčené zakázky z
-                      terminálu se započítají samy). V sekci „Hlavní řádky výkazu“ můžete vybrat zakázku nebo
-                      doplnit popis.
+                      Pro tento den není žádný čas k rozdělení do řádků níže — tarify a uzamčené zakázky z
+                      terminálu pokrývají celé odpracované hodiny.
                     </p>
                   ) : null}
                 </div>
@@ -1325,9 +1348,11 @@ export default function EmployeeDailyReportsPage() {
                 <p className="text-xs text-neutral-900">
                   {closedSegments.length === 0
                     ? "Bez úseků z terminálu zatím nevyplňujte hodiny. Zakázku a popis můžete připravit — uložení času bude možné po uzavření úseků."
-                    : formHoursCap > SPLIT_EPS
-                      ? `Řádky se čerpají na úseky z terminálu v čase. Součet hodin musí odpovídat až ${formHoursCap} h (bez tarifů a uzamčených zakázek z terminálu).`
-                      : "Hodiny jsou uzamčeny (jen tarify nebo zakázka z terminálu). Popis a výběr zakázky můžete upravit."}
+                    : formHoursCap > SUM_COMPARE_EPS
+                      ? `Řádky se čerpají na úseky z terminálu v čase. Součet hodin musí odpovídat až ${round2(formHoursCap)} h (bez tarifů a uzamčených zakázek z terminálu).`
+                      : noTimeLeftToSplit
+                        ? "Žádné hodiny k ručnímu rozvržení — zůstaly jen tarify a zakázky uzamčené z terminálu."
+                        : "Hodiny nelze upravit (např. funkce vypnutá nebo uzamčení výkazu). Popis a zakázku lze měnit jen pokud to stav dovolí."}
                 </p>
                 {jobsLoading ? (
                   <p className="flex items-center gap-2 text-xs text-neutral-900">
@@ -1461,21 +1486,6 @@ export default function EmployeeDailyReportsPage() {
                   <Plus className="mr-2 h-4 w-4" />
                   Přidat řádek
                 </Button>
-              </div>
-
-              <div className="space-y-2 rounded-lg border-2 border-neutral-950 bg-white p-4">
-                <Label htmlFor="dr-desc" className="text-neutral-950">
-                  Co jste dělali {status !== "draft" && !effectiveFormLocked ? "*" : ""}
-                </Label>
-                <Textarea
-                  id="dr-desc"
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  disabled={effectiveFormLocked}
-                  rows={4}
-                  placeholder="Stručný popis úkolů…"
-                  className="border-2 border-neutral-950 text-neutral-950"
-                />
               </div>
 
               <div className="space-y-2 rounded-lg border-2 border-neutral-950 bg-white p-4">

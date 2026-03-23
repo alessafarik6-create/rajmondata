@@ -11,7 +11,10 @@ import {
   sortSegmentsByStart,
 } from "@/lib/work-segment-client";
 
-const EPS = 0.02;
+/** Minimální délka úseku pro výpočty uzamčení/odemčení (0.02 h = 1,2 min vyřadilo reálné krátké úseky). */
+const FILTER_MIN_DURATION = 0.0001;
+/** Epsilon pro sekvenční čerpání fronty (ne 0.02 — u úseků < 0.02 h by se nic nerozdělilo). */
+const LOOP_EPS = 1e-9;
 
 export type DayFormRow = {
   rowId: string;
@@ -46,7 +49,7 @@ export function effectiveLockedUnlocked(segments: WorkSegmentClient[]): {
   unlocked: WorkSegmentClient[];
 } {
   const { locked, unlocked } = splitLockedUnlocked(segments);
-  const pos = (s: WorkSegmentClient) => segmentDurationHours(s) > EPS;
+  const pos = (s: WorkSegmentClient) => segmentDurationHours(s) > FILTER_MIN_DURATION;
   return {
     locked: locked.filter(pos),
     unlocked: unlocked.filter(pos),
@@ -160,7 +163,7 @@ export function sequentialFillUnlockedSegments(
   for (const seg of unlockedSegments) {
     let need = segmentDurationHours(seg);
     if (need <= 0) continue;
-    while (need > EPS) {
+    while (need > LOOP_EPS) {
       if (queue.length === 0) {
         throw new Error(
           "Nedostatek hodin v řádcích — součet musí pokrýt odemčené úseky z terminálu (v pořadí času)."
@@ -172,12 +175,12 @@ export function sequentialFillUnlockedSegments(
       out.push({ segmentId: seg.id, jobId: head.jobId, hours: rounded });
       need = Math.round((need - rounded) * 100) / 100;
       head.hours = Math.round((head.hours - rounded) * 100) / 100;
-      if (head.hours <= EPS) queue.shift();
+      if (head.hours <= LOOP_EPS) queue.shift();
     }
   }
 
   const leftover = queue.reduce((s, q) => s + q.hours, 0);
-  if (leftover > EPS) {
+  if (leftover > LOOP_EPS) {
     throw new Error(
       `Součet hodin v řádcích (${Math.round(leftover * 100) / 100} h) překračuje součet délek odemčených úseků.`
     );
