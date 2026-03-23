@@ -29,6 +29,7 @@ import {
   FileStack,
   FileText,
   Ruler,
+  ListTodo,
 } from "lucide-react";
 import {
   useFirestore,
@@ -67,6 +68,7 @@ import { JobTemplateFormFields } from "@/components/jobs/job-template-form-field
 import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-contract-templates-manager-dialog";
 import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
+import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
 
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
@@ -152,6 +154,16 @@ function JobsPageContent() {
     profile?.role === "admin" ||
     profile?.globalRoles?.includes("super_admin");
 
+  const canManageTasks =
+    profile?.role === "owner" ||
+    profile?.role === "admin" ||
+    profile?.role === "manager" ||
+    profile?.role === "accountant" ||
+    profile?.globalRoles?.includes("super_admin");
+
+  const showTasksButton =
+    !!companyId && profile?.role !== "customer";
+
   const customersQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return collection(firestore, "companies", companyId, "customers");
@@ -209,6 +221,7 @@ function JobsPageContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [workContractTemplatesManagerOpen, setWorkContractTemplatesManagerOpen] =
     useState(false);
+  const [tasksDialogOpen, setTasksDialogOpen] = useState(false);
 
   useEffect(() => {
     if (!isAdmin && workContractTemplatesManagerOpen) {
@@ -230,6 +243,12 @@ function JobsPageContent() {
       setIsNewJobOpen(true);
     }
   }, [searchParams, templatesList]);
+
+  useEffect(() => {
+    if (searchParams.get("tasks") === "1") {
+      setTasksDialogOpen(true);
+    }
+  }, [searchParams]);
 
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -469,6 +488,16 @@ function JobsPageContent() {
                   <FileStack className="w-4 h-4" /> Šablony
                 </Button>
               </Link>
+              {showTasksButton && (
+                <Button
+                  type="button"
+                  variant="outlineLight"
+                  className="gap-2 min-h-[44px]"
+                  onClick={() => setTasksDialogOpen(true)}
+                >
+                  <ListTodo className="w-4 h-4" /> Úkoly
+                </Button>
+              )}
               <Button
                 type="button"
                 className="gap-2 min-h-[44px] bg-orange-500 hover:bg-orange-600 text-white border-0 shadow-md shadow-orange-500/25"
@@ -774,6 +803,16 @@ function JobsPageContent() {
               </Dialog>
             </>
           )}
+          {!isAdmin && showTasksButton && (
+            <Button
+              type="button"
+              variant="outlineLight"
+              className="gap-2 min-h-[44px]"
+              onClick={() => setTasksDialogOpen(true)}
+            >
+              <ListTodo className="w-4 h-4" /> Úkoly
+            </Button>
+          )}
         </div>
       </div>
 
@@ -874,6 +913,16 @@ function JobsPageContent() {
         companyId={companyId}
         userId={user?.uid}
       />
+
+      {companyId ? (
+        <OrganizationTasksDialog
+          open={tasksDialogOpen}
+          onOpenChange={setTasksDialogOpen}
+          companyId={companyId}
+          canManage={canManageTasks}
+          employeeId={profile?.employeeId as string | undefined}
+        />
+      ) : null}
     </div>
   );
 }

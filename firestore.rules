@@ -212,6 +212,38 @@ service cloud.firestore {
         allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
+      /**
+       * Úkoly organizace (task manager): companies/{companyId}/tasks/{taskId}
+       */
+      match /tasks/{taskId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() ||
+            resource.data.assignedTo == null ||
+            resource.data.assignedTo == ownEmployeeId());
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.organizationId == companyId &&
+          request.resource.data.createdBy == request.auth.uid &&
+          request.resource.data.title is string &&
+          request.resource.data.title.size() > 0 &&
+          request.resource.data.title.size() <= 500 &&
+          request.resource.data.status == 'open' &&
+          (!('description' in request.resource.data) ||
+            request.resource.data.description == null ||
+            (request.resource.data.description is string &&
+              request.resource.data.description.size() <= 8000)) &&
+          (!('assignedTo' in request.resource.data) ||
+            request.resource.data.assignedTo == null ||
+            (request.resource.data.assignedTo is string &&
+              request.resource.data.assignedTo.size() > 0));
+        allow update: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() ||
+          (ownEmployeeId() != null &&
+            (resource.data.assignedTo == ownEmployeeId() ||
+              resource.data.assignedTo == null))
+        );
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       /** Plánovaná zaměření před zakázkou: companies/{companyId}/measurements/{measurementId} */
       match /measurements/{measurementId} {
         allow read, write: if signedIn() && sameCompany(companyId) && isPrivileged();

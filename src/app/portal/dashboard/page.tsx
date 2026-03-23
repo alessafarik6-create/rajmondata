@@ -39,6 +39,7 @@ import {
   sumMoneyForApprovedDailyReports,
   type DailyWorkReportMoney,
 } from "@/lib/employee-money";
+import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 
 type ProfileData = {
   displayName?: string;
@@ -450,6 +451,14 @@ export default function CompanyDashboard() {
           )}
         </div>
       </div>
+
+      {!isCustomer && companyId ? (
+        <DashboardOpenTasks
+          companyId={companyId}
+          employeeId={typedProfile?.employeeId}
+          isPrivileged={isManagement || isAccountant}
+        />
+      ) : null}
 
       {showAdminDashboard ? (
         <div className="space-y-6">

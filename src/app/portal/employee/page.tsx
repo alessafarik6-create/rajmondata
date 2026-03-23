@@ -31,6 +31,7 @@ import { formatKc } from "@/lib/employee-money";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { Calendar, Clock, Loader2, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 
 const DEBUG_EMPLOYEE_HOME = process.env.NODE_ENV === "development";
 
@@ -260,6 +261,12 @@ export default function EmployeeHomePage() {
           </AlertDescription>
         </Alert>
       ) : null}
+
+      <DashboardOpenTasks
+        companyId={companyId}
+        employeeId={employeeId}
+        isPrivileged={false}
+      />
 
       <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
         <Avatar className="h-24 w-24 border-4 border-primary/20 shrink-0">
