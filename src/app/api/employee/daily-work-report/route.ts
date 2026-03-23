@@ -19,6 +19,8 @@ type Body = {
   segmentAllocations?: Array<{ segmentId?: string; jobId?: string }>;
   /** Rozdělení hodin mezi zakázky po uzavřených úsecích terminálu. */
   segmentJobSplits?: Array<{ segmentId?: string; jobId?: string; hours?: number }>;
+  /** Volitelné poznámky k řádkům hlavního denního formuláře (odpovídají pořadí řádků u odemčených úseků). */
+  dayWorkLines?: Array<{ lineNote?: string }>;
   /** `draft` = rozpracováno, `submit` = odeslat ke schválení */
   mode?: "draft" | "submit";
 };
@@ -137,6 +139,14 @@ export async function POST(request: NextRequest) {
     }
 
     const note = typeof body.note === "string" ? body.note.trim() : "";
+    const dayWorkLines = Array.isArray(body.dayWorkLines)
+      ? body.dayWorkLines.map((x) => ({
+          lineNote:
+            typeof (x as { lineNote?: string }).lineNote === "string"
+              ? String((x as { lineNote?: string }).lineNote).trim()
+              : "",
+        }))
+      : null;
 
     const rawSplits =
       Array.isArray(body.segmentJobSplits) && body.segmentJobSplits.length > 0
@@ -191,6 +201,7 @@ export async function POST(request: NextRequest) {
       jobName,
       segmentAllocations,
       segmentJobSplits,
+      ...(dayWorkLines !== null ? { dayWorkLines } : {}),
       hoursFromAttendance,
       hoursConfirmed,
       estimatedLaborFromSegmentsCzk:
