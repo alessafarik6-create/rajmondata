@@ -29,6 +29,29 @@ function tsToDate(v: unknown): Date | null {
   return null;
 }
 
+const DUR_EPS = 0.001;
+
+/**
+ * Délka úseku v hodinách: nejdřív `durationHours`, jinak rozdíl začátek/konec.
+ * Bez toho často zmizí „odemčené“ úseky z výkazu (duration 0 → prázdný formulář).
+ */
+export function effectiveSegmentDurationHours(seg: WorkSegmentClient): number {
+  const d =
+    typeof seg.durationHours === "number" && Number.isFinite(seg.durationHours)
+      ? seg.durationHours
+      : 0;
+  if (d > DUR_EPS) {
+    return Math.round(d * 100) / 100;
+  }
+  const a = tsToDate(seg.startAt);
+  const b = tsToDate(seg.endAt);
+  if (a && b && b > a) {
+    const h = (b.getTime() - a.getTime()) / 36e5;
+    return Math.round(h * 100) / 100;
+  }
+  return 0;
+}
+
 export function formatTimeHm(d: Date): string {
   return d.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" });
 }

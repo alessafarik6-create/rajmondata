@@ -225,6 +225,11 @@ export default function EmployeeDailyReportsPage() {
   }, [firestore, companyId, employeeId, user]);
 
   const { data: attendanceRows = [], isLoading: attendanceLoading } = useCollection(attendanceQuery);
+  /** Zaručené pole — useCollection může někdy vrátit nearray, což rozbije agregaci docházky. */
+  const attendanceBlocks = useMemo(
+    () => (Array.isArray(attendanceRows) ? attendanceRows : []) as Record<string, unknown>[],
+    [attendanceRows]
+  );
 
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(new Date());
   const dayKey = selectedDay ? format(selectedDay, "yyyy-MM-dd") : "";
@@ -268,13 +273,21 @@ export default function EmployeeDailyReportsPage() {
   );
 
   const daySummary = useMemo(() => {
-    const rows = Array.isArray(attendanceRows) ? attendanceRows : [];
-    const summaries = summarizeAttendanceByDay(rows as any[], {
+    const summaries = summarizeAttendanceByDay(attendanceBlocks as any[], {
       employeeId,
       authUid: user?.uid,
     });
     return summaries.find((s) => s.date === dayKey) ?? null;
-  }, [attendanceRows, dayKey, employeeId, user?.uid]);
+  }, [attendanceBlocks, dayKey, employeeId, user?.uid]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const hours = daySummary?.hoursWorked ?? null;
+    const segH = sumClosedSegmentHours(closedSegments);
+    console.log("[daily-reports] attendanceBlocks.length", attendanceBlocks.length);
+    console.log("[daily-reports] daySummary.hoursWorked", hours);
+    console.log("[daily-reports] closedSegments sum", segH);
+  }, [attendanceBlocks, daySummary, closedSegments]);
 
   const [description, setDescription] = useState("");
   const [note, setNote] = useState("");
@@ -304,7 +317,19 @@ export default function EmployeeDailyReportsPage() {
       return;
     }
     const { locked, unlocked } = effectiveLockedUnlocked(closedSegments);
-    setDayFormRows(mergeUnlockedRowsFromReport(unlocked, existingReport));
+    const unlockedSumInit = sumClosedSegmentHours(unlocked);
+    let merged = mergeUnlockedRowsFromReport(unlocked, existingReport);
+    if (merged.length === 0 && unlockedSumInit > SPLIT_EPS) {
+      merged = [
+        {
+          rowId: newSplitRowId(),
+          jobId: "",
+          hoursStr: String(unlockedSumInit).replace(".", ","),
+          lineNote: "",
+        },
+      ];
+    }
+    setDayFormRows(merged);
     const sn = (existingReport?.segmentLineNotes as Record<string, string> | undefined) ?? {};
     const tariff: Record<string, string> = {};
     const jobT: Record<string, string> = {};
@@ -636,8 +661,8 @@ export default function EmployeeDailyReportsPage() {
                       typeof seg.displayName === "string"
                         ? seg.displayName
                         : String(seg.jobName || seg.tariffName || "—");
-                    const h =
-                      typeof seg.durationHours === "number" ? `${seg.durationHours} h` : "—";
+                    const dh = segmentDurationHours(seg);
+                    const h = dh > 0 ? `${dh} h` : "—";
                     const amt =
                       typeof seg.totalAmountCzk === "number"
                         ? formatKc(seg.totalAmountCzk)
@@ -747,10 +772,21 @@ export default function EmployeeDailyReportsPage() {
                   <Loader2 className="h-4 w-4 animate-spin" /> Načítám úseky…
                 </p>
               ) : closedSegments.length === 0 ? (
-                <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
-                  Pro tento den nejsou žádné uzavřené úseky z docházkového terminálu. Výkaz nelze uložit,
-                  dokud nebudou k dispozici uzavřené segmenty (příchod / výběr činnosti / odchod).
-                </p>
+                <div className="space-y-2 rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
+                  <p>
+                    Pro tento den nejsou žádné uzavřené úseky z docházkového terminálu — výkaz zatím nelze
+                    uložit (čeká se na uzavření činností v terminálu).
+                  </p>
+                  {daySummary != null &&
+                  daySummary.hoursWorked != null &&
+                  daySummary.hoursWorked > 0 && (
+                    <p className="text-xs text-amber-900">
+                      V docházce vidíte odpracovaný čas ({daySummary.hoursWorked} h), ale chybí odpovídající
+                      úseky z terminálu. Až administrátor nebo synchronizace doplní segmenty, zobrazí se zde
+                      formulář pro rozdělení práce.
+                    </p>
+                  )}
+                </div>
               ) : (
                 <div className="space-y-5">
                   {dataAttendanceTooLow ? (

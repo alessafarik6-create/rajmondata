@@ -61,6 +61,15 @@ export default function EmployeeHomePage() {
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
 
+  const employeeRef = useMemoFirebase(
+    () =>
+      firestore && companyId && employeeId
+        ? doc(firestore, "companies", companyId, "employees", employeeId)
+        : null,
+    [firestore, companyId, employeeId]
+  );
+  const { data: employeeDoc } = useDoc<any>(employeeRef);
+
   const attendanceQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !user) return null;
     const ids = [...new Set([employeeId, user.uid].filter(Boolean))] as string[];
@@ -98,18 +107,6 @@ export default function EmployeeHomePage() {
       String(b.date || "").localeCompare(String(a.date || ""))
     );
   }, [dailyReportsRaw]);
-
-  /** Součet orientačních částek z výkazů (evidence práce; není to závazná výplata). */
-  const totalEstimatedPayCzk = useMemo(() => {
-    let s = 0;
-    for (const row of dailyReportsSorted as Record<string, unknown>[]) {
-      const st = String(row.status || "");
-      if (st === "rejected") continue;
-      const n = row.estimatedLaborFromSegmentsCzk;
-      if (typeof n === "number" && Number.isFinite(n)) s += n;
-    }
-    return Math.round(s * 100) / 100;
-  }, [dailyReportsSorted]);
 
   /** Součet částek potvrzených administrátorem (schválené výkazy). */
   const totalApprovedPayCzk = useMemo(() => {
@@ -149,6 +146,29 @@ export default function EmployeeHomePage() {
     [summaries]
   );
 
+  /** Součet odpracovaných hodin z docházky (kompletní dny). */
+  const totalHoursFromAttendance = useMemo(() => {
+    let s = 0;
+    for (const x of summaries) {
+      const h = x.hoursWorked;
+      if (h != null && Number.isFinite(h)) s += h;
+    }
+    return Math.round(s * 100) / 100;
+  }, [summaries]);
+
+  const hourlyRateEmployee = useMemo(() => {
+    const raw = employeeDoc?.hourlyRate ?? profile?.hourlyRate;
+    if (raw == null || raw === "") return 0;
+    const n =
+      typeof raw === "number" ? raw : Number(String(raw).replace(/\s/g, "").replace(",", "."));
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }, [employeeDoc?.hourlyRate, profile?.hourlyRate]);
+
+  const orientacniVydelekKc = useMemo(
+    () => Math.round(totalHoursFromAttendance * hourlyRateEmployee * 100) / 100,
+    [totalHoursFromAttendance, hourlyRateEmployee]
+  );
+
   const todayIso = new Date().toISOString().split("T")[0];
   const todaySummary = summaries.find((s) => s.date === todayIso);
 
@@ -161,6 +181,11 @@ export default function EmployeeHomePage() {
   const photoUrl = profile?.profileImage || profile?.photoUrl;
 
   useEffect(() => {
+    if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+      console.log("[employee/page] attendanceBlocks", safeRows.length);
+      console.log("[employee/page] totalHours", totalHoursFromAttendance);
+      console.log("[employee/page] employee.hourlyRate", employeeDoc?.hourlyRate ?? profile?.hourlyRate);
+    }
     if (DEBUG_EMPLOYEE_HOME && typeof window !== "undefined") {
       console.log("[employee/page]", {
         route: pathname,
@@ -195,6 +220,9 @@ export default function EmployeeHomePage() {
     attendanceLoading,
     profileError,
     attendanceError,
+    safeRows,
+    totalHoursFromAttendance,
+    employeeDoc,
   ]);
 
   if (isUserLoading || !user) {
@@ -345,23 +373,37 @@ export default function EmployeeHomePage() {
           <CardHeader className="space-y-2 pb-2">
             <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
               <CircleDollarSign className="h-4 w-4 shrink-0" aria-hidden />
-              Orientační částka
+              Orientační výdělek
             </CardTitle>
             <p className="text-xs leading-relaxed text-neutral-900">
-              Odhad z evidované práce a sazeb — pouze orientační hodnota,{" "}
-              <strong className="text-neutral-950">ještě nebyla schválena</strong> administrátorem.
+              Odhad jako <strong className="text-neutral-950">odpracované hodiny × vaše hodinová sazba</strong> z
+              profilu — pouze orientace,{" "}
+              <strong className="text-neutral-950">ne závazná výplata</strong>.
             </p>
           </CardHeader>
           <CardContent>
-            {dailyReportsLoading ? (
+            {attendanceLoading ? (
               <p className="flex items-center gap-2 text-sm text-neutral-900">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                Načítám výkazy…
+                Načítám docházku…
               </p>
+            ) : hourlyRateEmployee > 0 ? (
+              <div className="space-y-1">
+                <p className="text-2xl font-bold tabular-nums tracking-tight text-neutral-950 sm:text-3xl">
+                  {formatKc(orientacniVydelekKc)}
+                </p>
+                <p className="text-xs text-neutral-900">
+                  {totalHoursFromAttendance} h × {hourlyRateEmployee} Kč/h
+                </p>
+              </div>
             ) : (
-              <p className="text-2xl font-bold tabular-nums tracking-tight text-neutral-950 sm:text-3xl">
-                {formatKc(totalEstimatedPayCzk)}
-              </p>
+              <div className="space-y-1">
+                <p className="text-lg font-semibold text-neutral-950">nenastaveno</p>
+                <p className="text-xs text-neutral-900">
+                  V profilu zaměstnance není nastavená hodinová sazba — administrátor může doplnit sazbu v evidenci
+                  lidí.
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>

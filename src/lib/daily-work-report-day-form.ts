@@ -6,6 +6,7 @@
 import { NO_JOB_SEGMENT_JOB_ID, isNoJobSegmentJobId } from "@/lib/daily-work-report-constants";
 import type { WorkSegmentClient } from "@/lib/work-segment-client";
 import {
+  effectiveSegmentDurationHours,
   getTerminalSegmentLockKind,
   sortSegmentsByStart,
 } from "@/lib/work-segment-client";
@@ -20,11 +21,7 @@ export type DayFormRow = {
 };
 
 export function segmentDurationHours(seg: WorkSegmentClient): number {
-  const d =
-    typeof seg.durationHours === "number" && Number.isFinite(seg.durationHours)
-      ? seg.durationHours
-      : 0;
-  return d > 0 ? d : 0;
+  return effectiveSegmentDurationHours(seg);
 }
 
 export function splitLockedUnlocked(segments: WorkSegmentClient[]): {

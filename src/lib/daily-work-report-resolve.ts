@@ -29,6 +29,28 @@ function roundHours(h: number): number {
   return Math.round(h * 100) / 100;
 }
 
+function tsToDate(v: unknown): Date | null {
+  if (!v) return null;
+  if (v instanceof Date) return v;
+  if (typeof (v as { toDate?: () => Date }).toDate === "function") {
+    return (v as { toDate: () => Date }).toDate();
+  }
+  return null;
+}
+
+/** Délka úseku z dokumentu (durationHours nebo rozdíl start/end). */
+function segmentDurationFromDoc(d: Record<string, unknown>): number {
+  const dh =
+    typeof d.durationHours === "number" && Number.isFinite(d.durationHours) ? d.durationHours : 0;
+  if (dh > EPS) return roundHours(dh);
+  const a = tsToDate(d.startAt);
+  const b = tsToDate(d.endAt);
+  if (a && b && b > a) {
+    return roundHours((b.getTime() - a.getTime()) / 36e5);
+  }
+  return 0;
+}
+
 function segmentLockedFromTerminalData(d: Record<string, unknown>): {
   locked: boolean;
   mode: "job_terminal" | "tariff_terminal" | null;
@@ -138,10 +160,9 @@ export async function resolveSegmentJobSplits(
       }
     }
 
-    const dh =
-      typeof d.durationHours === "number" && Number.isFinite(d.durationHours) ? d.durationHours : 0;
+    const dh = segmentDurationFromDoc(d);
     if (dh <= 0) {
-      throw new Error(`Úsek ${sid} nemá platnou délku.`);
+      throw new Error(`Úsek ${sid} nemá platnou délku (chybí durationHours i čas začátku/konce).`);
     }
 
     if (!bySegment.has(sid)) bySegment.set(sid, []);
@@ -159,8 +180,12 @@ export async function resolveSegmentJobSplits(
 
     const docSnap = byId.get(id)!;
     const d = docSnap.data() as Record<string, unknown>;
-    const duration =
-      typeof d.durationHours === "number" && Number.isFinite(d.durationHours) ? d.durationHours : 0;
+    const duration = segmentDurationFromDoc(d);
+    if (duration <= 0) {
+      throw new Error(
+        `Úsek ${id} nemá platnou délku (chybí durationHours i čas začátku/konce).`
+      );
+    }
 
     const { locked: lockedFromTerminal, mode: lockMode, termJobId } =
       segmentLockedFromTerminalData(d);
@@ -187,12 +212,14 @@ export async function resolveSegmentJobSplits(
     if (lockedFromTerminal && lockMode === "tariff_terminal") {
       if (rows.length !== 1) {
         throw new Error(
-          "U úseku byl v terminálu zvolen tarif — čas nelze rozdělovat. Použijte jeden řádek se zakázkou z přiřazení."
+          "U úseku byl v terminálu zvolen tarif — čas nelze rozdělovat. Použijte jeden řádek bez zakázky (pouze popis práce)."
         );
       }
       const only = rows[0];
-      if (!assigned.has(only.jobId)) {
-        throw new Error("U tarifového úseku vyberte zakázku z vašeho přiřazení.");
+      if (!isNoJobSegmentJobId(only.jobId)) {
+        throw new Error(
+          "U tarifového úseku z terminálu nelze přiřadit zakázku — pouze textový popis práce."
+        );
       }
       if (Math.abs(only.hours - duration) > EPS) {
         throw new Error(
