@@ -325,6 +325,56 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      /**
+       * Štítky / stavy poptávek (import) — companies/{companyId}/lead_tags/{tagId}
+       */
+      match /lead_tags/{tagId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'];
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0 &&
+          request.resource.data.name.size() <= 120 &&
+          request.resource.data.sortOrder is number;
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0 &&
+          request.resource.data.name.size() <= 120 &&
+          request.resource.data.sortOrder is number;
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /**
+       * Přiřazení štítku k importované poptávce (klíč = stabilní id z importu).
+       * companies/{companyId}/import_lead_overlays/{leadKey}
+       */
+      match /import_lead_overlays/{leadKey} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'];
+        allow create: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.importLeadId is string &&
+          request.resource.data.importLeadId.size() > 0 &&
+          request.resource.data.updatedByUid == request.auth.uid &&
+          (!('tagId' in request.resource.data) ||
+            request.resource.data.tagId == null ||
+            (request.resource.data.tagId is string && request.resource.data.tagId.size() > 0));
+        allow update: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.importLeadId == resource.data.importLeadId &&
+          request.resource.data.updatedByUid == request.auth.uid &&
+          (!('tagId' in request.resource.data) ||
+            request.resource.data.tagId == null ||
+            (request.resource.data.tagId is string && request.resource.data.tagId.size() > 0));
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
       // Zaměstnanec se sem nedostane (frontend redirect + tyto pravidla).
       // Výjimka: employees/{id}/private/** je výše explicitně zakázáno; rekurzivní pravidlo by jinak PIN povolilo (OR pravidel).

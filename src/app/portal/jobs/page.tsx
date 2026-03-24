@@ -30,7 +30,6 @@ import {
   FileText,
   Ruler,
   ListTodo,
-  Inbox,
 } from "lucide-react";
 import {
   useFirestore,
@@ -70,8 +69,6 @@ import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-
 import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
-import { LeadRequestsSection } from "@/components/jobs/lead-requests-section";
-
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
 
@@ -233,8 +230,6 @@ function JobsPageContent() {
   const [workContractTemplatesManagerOpen, setWorkContractTemplatesManagerOpen] =
     useState(false);
   const [tasksDialogOpen, setTasksDialogOpen] = useState(false);
-  const [leadRequestsSectionOpen, setLeadRequestsSectionOpen] = useState(false);
-
   useEffect(() => {
     if (!isAdmin && workContractTemplatesManagerOpen) {
       setWorkContractTemplatesManagerOpen(false);
@@ -815,14 +810,6 @@ function JobsPageContent() {
               </Dialog>
             </>
           )}
-          <Button
-            type="button"
-            variant={leadRequestsSectionOpen ? "default" : "outlineLight"}
-            className="gap-2 min-h-[44px]"
-            onClick={() => setLeadRequestsSectionOpen((v) => !v)}
-          >
-            <Inbox className="w-4 h-4" /> Poptávky
-          </Button>
           {!isAdmin && showTasksButton && (
             <Button
               type="button"
@@ -835,12 +822,6 @@ function JobsPageContent() {
           )}
         </div>
       </div>
-
-      <LeadRequestsSection
-        companyId={companyId}
-        active={leadRequestsSectionOpen}
-        canScheduleMeasurement={userCanManageMeasurements(profile)}
-      />
 
       <Card className="overflow-hidden">
         <CardContent className="p-0 overflow-x-auto">

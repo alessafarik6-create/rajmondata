@@ -130,7 +130,7 @@ export function portalPathsForModule(code: PlatformModuleCode): string[] {
     case "invoicing":
       return ["/portal/invoices"];
     case "jobs":
-      return ["/portal/jobs"];
+      return ["/portal/jobs", "/portal/leads"];
     case "warehouse":
       return ["/portal/warehouse"];
     default:
