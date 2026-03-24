@@ -79,10 +79,14 @@ export function useDoc<T = any>(
         setIsLoading(false);
       },
       (error: FirestoreError) => {
-        logFirestoreFailure(memoizedDocRef.path, 'listen-doc', error);
+        const docPath =
+          typeof memoizedDocRef.path === "string" && memoizedDocRef.path.length > 0
+            ? memoizedDocRef.path
+            : "(unknown-doc-path)";
+        logFirestoreFailure(docPath, 'listen-doc', error);
         const contextualError = new FirestorePermissionError({
           operation: 'get',
-          path: memoizedDocRef.path,
+          path: docPath,
         })
 
         setError(contextualError)

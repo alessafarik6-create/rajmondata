@@ -112,6 +112,7 @@ import {
   getDownloadURL,
   deleteObject,
   getBlob,
+  type UploadResult,
 } from "firebase/storage";
 import { FirebaseError } from "firebase/app";
 import Link from "next/link";
@@ -215,9 +216,15 @@ type PhotoDoc = {
   imageUrl?: string;
   originalImageUrl?: string;
   annotatedImageUrl?: string;
+  /** Firebase Storage fullPath (primární pro mazání / anotace). */
   storagePath?: string;
   annotatedStoragePath?: string;
+  path?: string;
+  fullPath?: string;
+  url?: string;
+  downloadURL?: string;
   fileName?: string;
+  name?: string;
   createdAt?: any;
   createdBy?: string;
   uploadedBy?: string;
@@ -225,10 +232,65 @@ type PhotoDoc = {
   jobId?: string;
 };
 
+function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) out[k] = v;
+  }
+  return out as T;
+}
+
+/** Firebase `UploadResult` používá `ref.fullPath`, ne `path`. */
+function resolveStorageFullPathFromUploadResult(
+  uploadResult: UploadResult,
+  fallbackFullPath: string
+): string {
+  const fromRef = uploadResult?.ref?.fullPath;
+  if (typeof fromRef === "string" && fromRef.length > 0) return fromRef;
+  if (typeof fallbackFullPath === "string" && fallbackFullPath.length > 0) {
+    return fallbackFullPath;
+  }
+  throw new Error(
+    "Úložiště nevrátilo platnou cestu k souboru (chybí ref.fullPath po uploadu)."
+  );
+}
+
+function getPhotoPreviewUrl(p: PhotoDoc): string {
+  const raw = p as PhotoDoc & Record<string, unknown>;
+  const candidates = [
+    raw.annotatedImageUrl,
+    raw.imageUrl,
+    raw.url,
+    raw.downloadURL,
+  ];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  return "";
+}
+
+function getPhotoStorageFullPath(p: PhotoDoc): string {
+  const raw = p as PhotoDoc & Record<string, unknown>;
+  const candidates = [raw.storagePath, raw.path, raw.fullPath];
+  for (const c of candidates) {
+    if (typeof c === "string" && c.trim()) return c.trim();
+  }
+  return "";
+}
+
+function isUsablePhotoRow(p: unknown): p is PhotoDoc & { id: string } {
+  if (!p || typeof p !== "object") return false;
+  const id = (p as { id?: unknown }).id;
+  return typeof id === "string" && id.length > 0;
+}
+
 const MAX_JOB_PHOTO_BYTES = 20 * 1024 * 1024;
 
 function jobPhotoUploadErrorMessage(err: unknown): string {
   if (err instanceof FirebaseError) {
+    if (err.code === "permission-denied") {
+      return "Operace byla zamítnuta (Firestore pravidla nebo úložiště).";
+    }
     if (err.code === "storage/unauthorized") {
       return "Nemáte oprávnění nahrát soubor do úložiště.";
     }
@@ -251,10 +313,7 @@ function jobPhotoUploadErrorMessage(err: unknown): string {
 
 function JobPhotoThumbnail(p: PhotoDoc) {
   const [broken, setBroken] = useState(false);
-  const src =
-    (typeof p.annotatedImageUrl === "string" && p.annotatedImageUrl.trim()) ||
-    (typeof p.imageUrl === "string" && p.imageUrl.trim()) ||
-    "";
+  const src = getPhotoPreviewUrl(p);
 
   if (!src || broken) {
     return (
@@ -610,12 +669,17 @@ export default function JobDetailPage() {
   const annotationSource = useMemo(() => {
     if (!photoToEdit) return null;
 
+    const pe = photoToEdit as PhotoDoc;
     return (
-      photoToEdit.originalImageUrl ||
-      photoToEdit.imageUrl ||
-      photoToEdit.annotatedImageUrl ||
-      photoToEdit.storagePath ||
-      photoToEdit.annotatedStoragePath ||
+      pe.originalImageUrl ||
+      pe.imageUrl ||
+      pe.annotatedImageUrl ||
+      pe.url ||
+      pe.downloadURL ||
+      pe.storagePath ||
+      pe.path ||
+      pe.fullPath ||
+      pe.annotatedStoragePath ||
       null
     );
   }, [photoToEdit]);
@@ -2436,9 +2500,11 @@ export default function JobDetailPage() {
 
         // Prefer Storage SDK blob -> objectUrl to avoid CORS/tainted canvas.
         let resolvedUrl = await resolveAnnotationImageUrl(annotationSource);
-        if (photoToEdit?.storagePath || photoToEdit?.annotatedStoragePath) {
+        if (photoToEdit) {
           const storagePath =
-            photoToEdit.annotatedStoragePath || photoToEdit.storagePath;
+            photoToEdit.annotatedStoragePath ||
+            photoToEdit.storagePath ||
+            getPhotoStorageFullPath(photoToEdit);
           if (storagePath) {
             const blob = await getBlob(ref(storage, storagePath));
             const objectUrl = URL.createObjectURL(blob);
@@ -2960,7 +3026,12 @@ export default function JobDetailPage() {
     setDragLastPoint(null);
   };
 
-  const handlePhotoUpload = async (file: File) => {
+  const handlePhotoUpload = async (
+    file: File,
+    uploadOpts?: { skipUploadingFlag?: boolean }
+  ) => {
+    const manageUploadingFlag = !uploadOpts?.skipUploadingFlag;
+
     if (!file || file.size === 0) {
       toast({
         variant: "destructive",
@@ -2997,49 +3068,84 @@ export default function JobDetailPage() {
       return;
     }
 
-    setIsUploading(true);
+    if (manageUploadingFlag) {
+      setIsUploading(true);
+    }
 
-    const safeBaseName = file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
+    const safeBaseName =
+      file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
     const storagePath = `job-photos/${companyId}/${jobId}/${Date.now()}-${safeBaseName}`;
 
     if (process.env.NODE_ENV === "development") {
-      console.log("[JobDetailPage] photo upload: file", {
+      console.log("[JobDetailPage] photo upload: selected file", {
         name: file.name,
         size: file.size,
         type: file.type,
       });
-      console.log("[JobDetailPage] photo upload: storagePath", storagePath);
+      console.log("[JobDetailPage] photo upload: intended storagePath", storagePath);
     }
 
     try {
-      const storageRef = ref(storage, storagePath);
+      let storageRef: ReturnType<typeof ref>;
+      try {
+        storageRef = ref(storage, storagePath);
+      } catch (refErr) {
+        throw new Error(
+          `Nelze vytvořit odkaz v úložišti: ${
+            refErr instanceof Error ? refErr.message : String(refErr)
+          }`
+        );
+      }
 
-      const uploadResult = await uploadBytes(storageRef, file);
+      const uploadResult: UploadResult = await uploadBytes(storageRef, file);
+
       if (process.env.NODE_ENV === "development") {
-        console.log("[JobDetailPage] photo upload: uploadBytes result", {
-          refFullPath: uploadResult.ref?.fullPath,
-          metadataName: uploadResult.metadata?.name,
+        console.log("[JobDetailPage] photo upload: uploadResult (raw)", {
+          hasRef: !!uploadResult?.ref,
+          refFullPath: uploadResult?.ref?.fullPath,
+          metadataName: uploadResult?.metadata?.name,
         });
       }
 
+      if (!uploadResult?.ref) {
+        throw new Error(
+          "Upload skončil bez platné reference do úložiště (uploadBytes nevrátil ref)."
+        );
+      }
+
+      const resolvedFullPath = resolveStorageFullPathFromUploadResult(
+        uploadResult,
+        storagePath
+      );
+
       const imageUrl = await getDownloadURL(storageRef);
-      if (!imageUrl) {
-        throw new Error("Úložiště nevrátilo adresu ke stažení (download URL).");
+      if (typeof imageUrl !== "string" || !imageUrl.trim()) {
+        throw new Error("Úložiště nevrátilo platnou adresu ke stažení (download URL).");
       }
 
       const photoDocRef = doc(photosColRef);
-      const photoPayload = {
+      const photoPayload = omitUndefinedFields({
         id: photoDocRef.id,
         companyId,
         jobId: jobId as string,
-        imageUrl,
-        originalImageUrl: imageUrl,
-        storagePath,
+        imageUrl: imageUrl.trim(),
+        url: imageUrl.trim(),
+        originalImageUrl: imageUrl.trim(),
+        storagePath: resolvedFullPath,
+        path: resolvedFullPath,
         fileName: safeBaseName,
+        name: safeBaseName,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
         uploadedBy: user.uid,
-      };
+      });
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[JobDetailPage] photo upload: normalized payload (bez serverTimestamp serializace)", {
+          ...photoPayload,
+          createdAt: "[serverTimestamp]",
+        });
+      }
 
       try {
         await setDoc(photoDocRef, photoPayload);
@@ -3051,13 +3157,9 @@ export default function JobDetailPage() {
           description:
             metaErr instanceof FirebaseError
               ? metaErr.message
-              : "Záznam fotky se nepodařilo uložit do databáze.",
+              : "Záznam fotky se nepodařilo uložit do databáze (zkontrolujte oprávnění Firestore).",
         });
         return;
-      }
-
-      if (process.env.NODE_ENV === "development") {
-        console.log("[JobDetailPage] photo upload: saved doc", photoPayload);
       }
 
       toast({
@@ -3066,13 +3168,16 @@ export default function JobDetailPage() {
       });
     } catch (err: unknown) {
       console.error("[JobDetailPage] photo upload failed", err);
+      const msg = jobPhotoUploadErrorMessage(err);
       toast({
         variant: "destructive",
         title: "Chyba při nahrávání fotografie",
-        description: jobPhotoUploadErrorMessage(err),
+        description: msg,
       });
     } finally {
-      setIsUploading(false);
+      if (manageUploadingFlag) {
+        setIsUploading(false);
+      }
     }
   };
 
@@ -3233,7 +3338,8 @@ export default function JobDetailPage() {
       const blob = await canvasToBlob(exportCanvas);
 
       const annotatedPath = `${
-        photoToEdit.storagePath || `job-photos/${companyId}/${jobId}/${photoToEdit.id}`
+        getPhotoStorageFullPath(photoToEdit) ||
+        `job-photos/${companyId}/${jobId}/${photoToEdit.id}`
       }-annotated.png`;
 
       const annotatedRef = ref(storage, annotatedPath);
@@ -3296,9 +3402,14 @@ export default function JobDetailPage() {
       for (const docSnap of snap.docs) {
         const data = docSnap.data() as any;
 
-        if (data.storagePath) {
+        const baseStoragePath =
+          (typeof data.storagePath === "string" && data.storagePath) ||
+          (typeof data.path === "string" && data.path) ||
+          (typeof data.fullPath === "string" && data.fullPath) ||
+          "";
+        if (baseStoragePath) {
           try {
-            await deleteObject(ref(storage, data.storagePath));
+            await deleteObject(ref(storage, baseStoragePath));
           } catch {}
         }
 
@@ -3897,7 +4008,9 @@ export default function JobDetailPage() {
                     multiple
                     className="hidden"
                     onChange={(e) => {
-                      const files = Array.from(e.target.files || []);
+                      const files = Array.from(e.target.files || []).filter(
+                        (f) => f && f.size > 0
+                      );
                       if (files.length === 0) {
                         toast({
                           variant: "destructive",
@@ -3907,11 +4020,27 @@ export default function JobDetailPage() {
                         e.target.value = "";
                         return;
                       }
+                      if (process.env.NODE_ENV === "development") {
+                        console.log(
+                          "[JobDetailPage] photo upload: selectedFiles",
+                          files.map((f) => ({ name: f.name, size: f.size, type: f.type }))
+                        );
+                      }
+                      setIsUploading(true);
                       void (async () => {
-                        for (const f of files) {
-                          await handlePhotoUpload(f);
+                        for (let i = 0; i < files.length; i++) {
+                          try {
+                            await handlePhotoUpload(files[i], { skipUploadingFlag: true });
+                          } catch (batchErr) {
+                            console.error(
+                              "[JobDetailPage] photo upload: batch item failed",
+                              i,
+                              batchErr
+                            );
+                          }
                         }
                       })().finally(() => {
+                        setIsUploading(false);
                         e.target.value = "";
                       });
                     }}
@@ -3960,12 +4089,12 @@ export default function JobDetailPage() {
 
               {photos && photos.length > 0 ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {photos.map((p: any) => (
+                  {photos.filter(isUsablePhotoRow).map((p) => (
                     <div
                       key={p.id}
                       className="relative group rounded-lg overflow-hidden border border-border/40 bg-background"
                     >
-                      <JobPhotoThumbnail {...(p as PhotoDoc)} />
+                      <JobPhotoThumbnail {...p} />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                         <Button
                           size="sm"
