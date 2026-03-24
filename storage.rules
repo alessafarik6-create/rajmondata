@@ -9,9 +9,16 @@ service firebase.storage {
     }
 
     /**
-     * Fotodokumentace zakázek (klient: `job-photos/{companyId}/{jobId}/...`).
-     * Firestore stále určuje, kdo může zapisovat metadata; Storage zde vyžaduje přihlášení.
-     * Přísnější vazbu na firmu lze doplnit přes custom claim `companyId` na ID tokenu.
+     * Fotodokumentace zakázek — kanonická cesta (klient):
+     * `companies/{companyId}/jobs/{jobId}/photos/...`
+     */
+    match /companies/{companyId}/jobs/{jobId}/photos/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
+    /**
+     * Starší cesta (zpětná kompatibilita pro již nahrané soubory).
      */
     match /job-photos/{companyId}/{jobId}/{allPaths=**} {
       allow read: if request.auth != null;

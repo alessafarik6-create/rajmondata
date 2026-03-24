@@ -11,7 +11,10 @@ import {
   useCompany,
 } from "@/firebase";
 import { getFirebaseStorage } from "@/firebase/storage";
-import { firebaseConfig } from "@/firebase/config";
+import {
+  uploadJobPhotoFileViaFirebaseSdk,
+  uploadJobPhotoBlobViaFirebaseSdk,
+} from "@/lib/job-photo-upload";
 import {
   doc,
   collection,
@@ -114,14 +117,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
-import {
-  ref,
-  uploadBytes,
-  getDownloadURL,
-  deleteObject,
-  getBlob,
-  type UploadResult,
-} from "firebase/storage";
+import { ref, getDownloadURL, deleteObject, getBlob } from "firebase/storage";
 import { FirebaseError } from "firebase/app";
 import Link from "next/link";
 
@@ -250,21 +246,6 @@ function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
   return out as T;
 }
 
-/** Firebase `UploadResult` používá `ref.fullPath`, ne `path`. */
-function resolveStorageFullPathFromUploadResult(
-  uploadResult: UploadResult,
-  fallbackFullPath: string
-): string {
-  const fromRef = uploadResult?.ref?.fullPath;
-  if (typeof fromRef === "string" && fromRef.length > 0) return fromRef;
-  if (typeof fallbackFullPath === "string" && fallbackFullPath.length > 0) {
-    return fallbackFullPath;
-  }
-  throw new Error(
-    "Úložiště nevrátilo platnou cestu k souboru (chybí ref.fullPath po uploadu)."
-  );
-}
-
 function getPhotoPreviewUrl(p: PhotoDoc): string {
   const raw = p as PhotoDoc & Record<string, unknown>;
   const candidates = [
@@ -328,10 +309,10 @@ function jobPhotoUploadErrorTitle(err: unknown): string {
       err.code === "storage/bucket-not-found" ||
       err.code === "storage/project-not-found"
     ) {
-      return "Chyba konfigurace Firebase Storage";
+      return "Chybná konfigurace Storage bucketu";
     }
   }
-  return "Nepodařilo se nahrát fotku do úložiště";
+  return "Nepodařilo se nahrát fotku do Firebase Storage";
 }
 
 function jobPhotoUploadErrorMessage(err: unknown): string {
@@ -375,8 +356,9 @@ function describeStorageUploadFailure(err: unknown): string {
   ) {
     return (
       base +
-      " Pokud jde o CORS: používá se oficiální Firebase SDK (uploadBytes). Ověřte v Firebase Console, že je zapnuté Storage, " +
-      "že NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET odpovídá bucketu projektu a zkuste vypnout blokující rozšíření prohlížeče."
+      " U oficiálního SDK jde často o zamítnutí Storage rules (nasadit firebase deploy --only storage), " +
+      "nebo o NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET, který neodpovídá bucketu projektu v Firebase Console. " +
+      "Zkuste vypnout blokující rozšíření prohlížeče."
     );
   }
   if (
@@ -3119,7 +3101,7 @@ export default function JobDetailPage() {
     if (!file || file.size === 0) {
       toast({
         variant: "destructive",
-        title: "Nelze nahrát fotografii",
+        title: "Soubor nebyl vybrán",
         description: "Nebyl vybrán žádný soubor nebo je soubor prázdný.",
       });
       return;
@@ -3158,78 +3140,22 @@ export default function JobDetailPage() {
 
     const safeBaseName =
       file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
-    const storagePath = `job-photos/${companyId}/${jobId}/${Date.now()}-${safeBaseName}`;
-
-    if (process.env.NODE_ENV === "development") {
-      console.log("[JobDetailPage] photo upload: firebase storageBucket", firebaseConfig.storageBucket ?? "(default z initializeApp)");
-      console.log("[JobDetailPage] photo upload: companyId, jobId", { companyId, jobId });
-      console.log("[JobDetailPage] photo upload: selected file", {
-        name: file.name,
-        size: file.size,
-        type: file.type,
-      });
-      console.log("[JobDetailPage] photo upload: generated storage path", storagePath);
-      console.log("[JobDetailPage] photo upload: upload start");
-    }
 
     try {
-      let storageRef: ReturnType<typeof ref>;
-      try {
-        storageRef = ref(getFirebaseStorage(), storagePath);
-      } catch (refErr) {
-        throw new Error(
-          `Nelze vytvořit odkaz v úložišti: ${
-            refErr instanceof Error ? refErr.message : String(refErr)
-          }`
-        );
-      }
-
-      const uploadResult: UploadResult = await promiseWithTimeout(
-        uploadBytes(storageRef, file),
-        JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
-        "Nahrávání souboru do Firebase Storage"
+      const { resolvedFullPath, downloadURL } = await uploadJobPhotoFileViaFirebaseSdk(
+        file,
+        companyId,
+        jobId as string
       );
-
-      if (process.env.NODE_ENV === "development") {
-        console.log("[JobDetailPage] photo upload: upload success (uploadBytes)", {
-          hasRef: !!uploadResult?.ref,
-          refFullPath: uploadResult?.ref?.fullPath,
-          metadataName: uploadResult?.metadata?.name,
-        });
-      }
-
-      if (!uploadResult?.ref) {
-        throw new Error(
-          "Upload skončil bez platné reference do úložiště (uploadBytes nevrátil ref)."
-        );
-      }
-
-      const resolvedFullPath = resolveStorageFullPathFromUploadResult(
-        uploadResult,
-        storagePath
-      );
-
-      const imageUrl = await promiseWithTimeout(
-        getDownloadURL(storageRef),
-        JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
-        "Získání download URL z Firebase Storage"
-      );
-      if (typeof imageUrl !== "string" || !imageUrl.trim()) {
-        throw new Error("Úložiště nevrátilo platnou adresu ke stažení (download URL).");
-      }
-
-      if (process.env.NODE_ENV === "development") {
-        console.log("[JobDetailPage] photo upload: downloadURL", imageUrl.trim());
-      }
 
       const photoDocRef = doc(photosColRef);
       const photoPayload = omitUndefinedFields({
         id: photoDocRef.id,
         companyId,
         jobId: jobId as string,
-        imageUrl: imageUrl.trim(),
-        url: imageUrl.trim(),
-        originalImageUrl: imageUrl.trim(),
+        imageUrl: downloadURL,
+        url: downloadURL,
+        originalImageUrl: downloadURL,
         storagePath: resolvedFullPath,
         path: resolvedFullPath,
         fileName: safeBaseName,
@@ -3266,11 +3192,7 @@ export default function JobDetailPage() {
         description: safeBaseName,
       });
     } catch (err: unknown) {
-      if (process.env.NODE_ENV === "development") {
-        console.error("[JobDetailPage] photo upload: upload error", err);
-      } else {
-        console.error("[JobDetailPage] photo upload failed", err);
-      }
+      console.error("[JobPhotoUpload] upload error", err);
       toast({
         variant: "destructive",
         title: jobPhotoUploadErrorTitle(err),
@@ -3439,22 +3361,13 @@ export default function JobDetailPage() {
     try {
       const blob = await canvasToBlob(exportCanvas);
 
-      const annotatedPath = `${
-        getPhotoStorageFullPath(photoToEdit) ||
-        `job-photos/${companyId}/${jobId}/${photoToEdit.id}`
-      }-annotated.png`;
-
-      const annotatedRef = ref(getFirebaseStorage(), annotatedPath);
-      await promiseWithTimeout(
-        uploadBytes(annotatedRef, blob),
-        JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
-        "Nahrání anotované fotografie do Firebase Storage"
-      );
-      const annotatedUrl = await promiseWithTimeout(
-        getDownloadURL(annotatedRef),
-        JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
-        "Získání URL anotované fotografie"
-      );
+      const { storagePath: annotatedPath, downloadURL: annotatedUrl } =
+        await uploadJobPhotoBlobViaFirebaseSdk(
+          blob,
+          companyId,
+          jobId as string,
+          `${photoToEdit.id}-annotated.png`
+        );
 
       await updateDoc(
         doc(
