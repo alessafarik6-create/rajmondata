@@ -320,13 +320,27 @@ function promiseWithTimeout<T>(promise: Promise<T>, ms: number, label: string): 
   });
 }
 
+function jobPhotoUploadErrorTitle(err: unknown): string {
+  if (err instanceof FirebaseError) {
+    if (
+      err.code === "storage/invalid-argument" ||
+      err.code === "storage/no-default-bucket" ||
+      err.code === "storage/bucket-not-found" ||
+      err.code === "storage/project-not-found"
+    ) {
+      return "Chyba konfigurace Firebase Storage";
+    }
+  }
+  return "Nepodařilo se nahrát fotku do úložiště";
+}
+
 function jobPhotoUploadErrorMessage(err: unknown): string {
   if (err instanceof FirebaseError) {
     if (err.code === "permission-denied") {
-      return "Operace byla zamítnuta (Firestore pravidla nebo úložiště).";
+      return "Operace byla zamítnuta (pravidla Firestore nebo Storage). Zkontrolujte nasazení storage.rules.";
     }
     if (err.code === "storage/unauthorized") {
-      return "Nemáte oprávnění nahrát soubor do úložiště.";
+      return "Nemáte oprávnění nahrát soubor do úložiště (zkontrolujte pravidla Storage).";
     }
     if (err.code === "storage/canceled") {
       return "Nahrávání bylo zrušeno.";
@@ -3147,12 +3161,15 @@ export default function JobDetailPage() {
     const storagePath = `job-photos/${companyId}/${jobId}/${Date.now()}-${safeBaseName}`;
 
     if (process.env.NODE_ENV === "development") {
+      console.log("[JobDetailPage] photo upload: firebase storageBucket", firebaseConfig.storageBucket ?? "(default z initializeApp)");
+      console.log("[JobDetailPage] photo upload: companyId, jobId", { companyId, jobId });
       console.log("[JobDetailPage] photo upload: selected file", {
         name: file.name,
         size: file.size,
         type: file.type,
       });
-      console.log("[JobDetailPage] photo upload: intended storagePath", storagePath);
+      console.log("[JobDetailPage] photo upload: generated storage path", storagePath);
+      console.log("[JobDetailPage] photo upload: upload start");
     }
 
     try {
@@ -3167,10 +3184,14 @@ export default function JobDetailPage() {
         );
       }
 
-      const uploadResult: UploadResult = await uploadBytes(storageRef, file);
+      const uploadResult: UploadResult = await promiseWithTimeout(
+        uploadBytes(storageRef, file),
+        JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
+        "Nahrávání souboru do Firebase Storage"
+      );
 
       if (process.env.NODE_ENV === "development") {
-        console.log("[JobDetailPage] photo upload: uploadResult (raw)", {
+        console.log("[JobDetailPage] photo upload: upload success (uploadBytes)", {
           hasRef: !!uploadResult?.ref,
           refFullPath: uploadResult?.ref?.fullPath,
           metadataName: uploadResult?.metadata?.name,
@@ -3188,9 +3209,17 @@ export default function JobDetailPage() {
         storagePath
       );
 
-      const imageUrl = await getDownloadURL(storageRef);
+      const imageUrl = await promiseWithTimeout(
+        getDownloadURL(storageRef),
+        JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
+        "Získání download URL z Firebase Storage"
+      );
       if (typeof imageUrl !== "string" || !imageUrl.trim()) {
         throw new Error("Úložiště nevrátilo platnou adresu ke stažení (download URL).");
+      }
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[JobDetailPage] photo upload: downloadURL", imageUrl.trim());
       }
 
       const photoDocRef = doc(photosColRef);
@@ -3237,12 +3266,15 @@ export default function JobDetailPage() {
         description: safeBaseName,
       });
     } catch (err: unknown) {
-      console.error("[JobDetailPage] photo upload failed", err);
-      const msg = jobPhotoUploadErrorMessage(err);
+      if (process.env.NODE_ENV === "development") {
+        console.error("[JobDetailPage] photo upload: upload error", err);
+      } else {
+        console.error("[JobDetailPage] photo upload failed", err);
+      }
       toast({
         variant: "destructive",
-        title: "Chyba při nahrávání fotografie",
-        description: msg,
+        title: jobPhotoUploadErrorTitle(err),
+        description: describeStorageUploadFailure(err),
       });
     } finally {
       if (manageUploadingFlag) {
@@ -3413,8 +3445,16 @@ export default function JobDetailPage() {
       }-annotated.png`;
 
       const annotatedRef = ref(getFirebaseStorage(), annotatedPath);
-      await uploadBytes(annotatedRef, blob);
-      const annotatedUrl = await getDownloadURL(annotatedRef);
+      await promiseWithTimeout(
+        uploadBytes(annotatedRef, blob),
+        JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
+        "Nahrání anotované fotografie do Firebase Storage"
+      );
+      const annotatedUrl = await promiseWithTimeout(
+        getDownloadURL(annotatedRef),
+        JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
+        "Získání URL anotované fotografie"
+      );
 
       await updateDoc(
         doc(
@@ -3446,10 +3486,8 @@ export default function JobDetailPage() {
       console.error("[JobDetailPage] saving annotated photo failed", err);
       toast({
         variant: "destructive",
-        title: "Chyba",
-        description:
-          err?.message ||
-          "Upravenou fotografii se nepodařilo uložit (možný CORS/canvas problém).",
+        title: jobPhotoUploadErrorTitle(err),
+        description: describeStorageUploadFailure(err),
       });
     }
   };
