@@ -348,6 +348,48 @@ service cloud.firestore {
       }
 
       /**
+       * Naplánované schůzky k poptávkám — companies/{companyId}/lead_meetings/{meetingId}
+       */
+      match /lead_meetings/{meetingId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'];
+        allow create: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.importLeadId is string &&
+          request.resource.data.importLeadId.size() > 0 &&
+          request.resource.data.leadKey is string &&
+          request.resource.data.leadKey.size() > 0 &&
+          request.resource.data.customerName is string &&
+          request.resource.data.customerName.size() > 0 &&
+          request.resource.data.customerName.size() <= 300 &&
+          request.resource.data.createdBy == request.auth.uid &&
+          request.resource.data.scheduledAt is timestamp &&
+          (!('phone' in request.resource.data) || request.resource.data.phone is string) &&
+          (!('email' in request.resource.data) || request.resource.data.email is string) &&
+          (!('note' in request.resource.data) ||
+            (request.resource.data.note is string && request.resource.data.note.size() <= 8000)) &&
+          (!('place' in request.resource.data) ||
+            (request.resource.data.place is string && request.resource.data.place.size() <= 500));
+        allow update: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.importLeadId == resource.data.importLeadId &&
+          request.resource.data.leadKey == resource.data.leadKey &&
+          request.resource.data.createdBy == resource.data.createdBy &&
+          (!('phone' in request.resource.data) || request.resource.data.phone is string) &&
+          (!('email' in request.resource.data) || request.resource.data.email is string) &&
+          (!('note' in request.resource.data) ||
+            (request.resource.data.note is string && request.resource.data.note.size() <= 8000)) &&
+          (!('place' in request.resource.data) ||
+            (request.resource.data.place is string && request.resource.data.place.size() <= 500)) &&
+          request.resource.data.scheduledAt is timestamp;
+        allow delete: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.createdBy == request.auth.uid);
+      }
+
+      /**
        * Přiřazení štítku k importované poptávce (klíč = stabilní id z importu).
        * companies/{companyId}/import_lead_overlays/{leadKey}
        */
@@ -362,7 +404,10 @@ service cloud.firestore {
           request.resource.data.updatedByUid == request.auth.uid &&
           (!('tagId' in request.resource.data) ||
             request.resource.data.tagId == null ||
-            (request.resource.data.tagId is string && request.resource.data.tagId.size() > 0));
+            (request.resource.data.tagId is string && request.resource.data.tagId.size() > 0)) &&
+          (!('internalNote' in request.resource.data) ||
+            (request.resource.data.internalNote is string &&
+              request.resource.data.internalNote.size() <= 12000));
         allow update: if signedIn() && sameCompany(companyId) &&
           userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
           resource.data.companyId == companyId &&
@@ -371,7 +416,10 @@ service cloud.firestore {
           request.resource.data.updatedByUid == request.auth.uid &&
           (!('tagId' in request.resource.data) ||
             request.resource.data.tagId == null ||
-            (request.resource.data.tagId is string && request.resource.data.tagId.size() > 0));
+            (request.resource.data.tagId is string && request.resource.data.tagId.size() > 0)) &&
+          (!('internalNote' in request.resource.data) ||
+            (request.resource.data.internalNote is string &&
+              request.resource.data.internalNote.size() <= 12000));
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

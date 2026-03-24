@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Banknote,
   PieChart,
+  Calendar,
 } from "lucide-react";
 import {
   Card,
@@ -30,6 +31,9 @@ import {
   useCompany,
 } from "@/firebase";
 import { collection, query, orderBy, limit, where } from "firebase/firestore";
+import { format } from "date-fns";
+import { cs } from "date-fns/locale";
+import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
 import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 import { useRouter } from "next/navigation";
@@ -158,6 +162,15 @@ export default function CompanyDashboard() {
     );
   }, [firestore, companyId, showAdminDashboard]);
 
+  const leadMeetingsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return query(
+      collection(firestore, "companies", companyId, "lead_meetings"),
+      orderBy("scheduledAt", "asc"),
+      limit(120)
+    );
+  }, [firestore, companyId, showAdminDashboard]);
+
   const { data: employees } = useCollection(employeesQuery);
   const {
     data: allJobs,
@@ -174,6 +187,10 @@ export default function CompanyDashboard() {
     data: dashboardChatMessages = [],
     isLoading: chatDashboardLoading,
   } = useCollection(chatDashboardQuery);
+  const {
+    data: leadMeetingsRaw = [],
+    isLoading: leadMeetingsLoading,
+  } = useCollection(leadMeetingsQuery);
 
   const typedJobs: JobData[] = ((allJobs as JobData[] | undefined) ?? []);
 
@@ -253,6 +270,44 @@ export default function CompanyDashboard() {
       : [];
     return sumMoneyForApprovedDailyReports(rows);
   }, [dashboardDailyReports]);
+
+  const upcomingLeadMeetings = useMemo(() => {
+    const list = Array.isArray(leadMeetingsRaw) ? leadMeetingsRaw : [];
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const cutoff = startOfToday.getTime();
+    type Row = {
+      id: string;
+      customerName: string;
+      phone?: string;
+      email?: string;
+      importLeadId?: string;
+      leadKey?: string;
+      place?: string;
+      note?: string;
+      at: Date;
+    };
+    const out: Row[] = [];
+    for (const raw of list as Record<string, unknown>[]) {
+      const id = String(raw?.id ?? "");
+      if (!id) continue;
+      const at = parseFirestoreScheduledAt(raw.scheduledAt);
+      if (!at || at.getTime() < cutoff) continue;
+      out.push({
+        id,
+        customerName: String(raw.customerName ?? "—"),
+        phone: typeof raw.phone === "string" ? raw.phone : undefined,
+        email: typeof raw.email === "string" ? raw.email : undefined,
+        importLeadId: typeof raw.importLeadId === "string" ? raw.importLeadId : undefined,
+        leadKey: typeof raw.leadKey === "string" ? raw.leadKey : undefined,
+        place: typeof raw.place === "string" ? raw.place : undefined,
+        note: typeof raw.note === "string" ? raw.note : undefined,
+        at,
+      });
+    }
+    out.sort((a, b) => a.at.getTime() - b.at.getTime());
+    return out.slice(0, 18);
+  }, [leadMeetingsRaw]);
 
   const unreadEmployeeChatCount = useMemo(() => {
     const rows = Array.isArray(dashboardChatMessages)
@@ -484,6 +539,71 @@ export default function CompanyDashboard() {
               </Alert>
             </Link>
           ) : null}
+
+          <Card className="overflow-hidden border-2 border-amber-400/90 bg-gradient-to-br from-amber-50 via-white to-orange-50/90 shadow-lg ring-1 ring-amber-200/70 dark:border-amber-500/60 dark:from-amber-950/50 dark:via-slate-950 dark:to-orange-950/30 dark:ring-amber-800/40">
+            <CardHeader className="border-b border-amber-200/60 bg-amber-100/40 pb-3 dark:border-amber-800/40 dark:bg-amber-950/30">
+              <CardTitle className="flex items-center gap-2 text-lg text-amber-950 dark:text-amber-50">
+                <Calendar className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                Naplánované schůzky
+              </CardTitle>
+              <CardDescription className="text-amber-900/80 dark:text-amber-200/90">
+                Obchodní schůzky naplánované z poptávek — od dnešního dne podle termínu.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {leadMeetingsLoading ? (
+                <div className="flex justify-center py-10">
+                  <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-amber-600 border-t-transparent" />
+                </div>
+              ) : upcomingLeadMeetings.length === 0 ? (
+                <p className="text-sm text-slate-600 dark:text-slate-400">
+                  Žádné nadcházející schůzky. Naplánujte je v sekci{" "}
+                  <Link href="/portal/leads" className="font-medium text-primary underline-offset-2 hover:underline">
+                    Poptávky
+                  </Link>
+                  .
+                </p>
+              ) : (
+                <ul className="space-y-3">
+                  {upcomingLeadMeetings.map((m) => (
+                    <li
+                      key={m.id}
+                      className="rounded-xl border border-amber-200/90 bg-white/95 p-4 shadow-sm dark:border-amber-800/50 dark:bg-slate-900/60"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0 space-y-1">
+                          <p className="font-semibold text-slate-900 dark:text-slate-100">{m.customerName}</p>
+                          <p className="text-xs font-medium tabular-nums text-amber-800 dark:text-amber-300">
+                            {format(m.at, "EEEE d. M. yyyy · HH:mm", { locale: cs })}
+                          </p>
+                          <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-sm text-slate-600 dark:text-slate-400">
+                            {m.phone ? <span>Tel. {m.phone}</span> : null}
+                            {m.email ? <span className="break-all">{m.email}</span> : null}
+                          </div>
+                          {m.place ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-500">Místo: {m.place}</p>
+                          ) : null}
+                          {m.note ? (
+                            <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">{m.note}</p>
+                          ) : null}
+                          <p className="text-[11px] text-slate-400 dark:text-slate-500">
+                            Poptávka ID: {m.importLeadId ?? "—"}
+                            {m.leadKey ? ` · klíč: ${m.leadKey}` : ""}
+                          </p>
+                        </div>
+                        <Link
+                          href="/portal/leads"
+                          className="shrink-0 text-sm font-medium text-primary hover:underline"
+                        >
+                          Poptávky →
+                        </Link>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md">

@@ -12,7 +12,10 @@ import {
   Pencil,
   Trash2,
   Plus,
+  Calendar,
 } from "lucide-react";
+import { format } from "date-fns";
+import { cs } from "date-fns/locale";
 import {
   useUser,
   useFirestore,
@@ -28,11 +31,16 @@ import {
   deleteDoc,
   setDoc,
   serverTimestamp,
+  query,
+  orderBy,
+  limit,
+  Timestamp,
 } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -64,6 +72,8 @@ import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
 import { buildMeasurementPrefillHref } from "@/lib/measurement-prefill-from-lead";
 import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
+import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
+import { cn } from "@/lib/utils";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -79,6 +89,7 @@ type LeadOverlayRow = {
   companyId?: string;
   importLeadId?: string;
   tagId?: string | null;
+  internalNote?: string;
 };
 
 type ApiImportBody = {
@@ -129,8 +140,18 @@ export default function PortalLeadsPage() {
     return collection(firestore, "companies", companyId, "import_lead_overlays");
   }, [firestore, companyId]);
 
+  const meetingsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "lead_meetings"),
+      orderBy("scheduledAt", "asc"),
+      limit(500)
+    );
+  }, [firestore, companyId]);
+
   const { data: tagsRaw, isLoading: tagsLoading } = useCollection(tagsQuery);
   const { data: overlaysRaw } = useCollection(overlaysQuery);
+  const { data: meetingsRaw } = useCollection(meetingsQuery);
 
   const tags = useMemo(() => {
     const list = Array.isArray(tagsRaw) ? (tagsRaw as LeadTagRow[]) : [];
@@ -149,6 +170,22 @@ export default function PortalLeadsPage() {
     return m;
   }, [overlaysRaw]);
 
+  /** Nejbližší budoucí schůzka na leadKey (pro zobrazení u řádku). */
+  const nextMeetingByLeadKey = useMemo(() => {
+    const map = new Map<string, Date>();
+    const list = Array.isArray(meetingsRaw) ? meetingsRaw : [];
+    const now = Date.now();
+    for (const raw of list as Record<string, unknown>[]) {
+      const lk = typeof raw.leadKey === "string" ? raw.leadKey : "";
+      const t = parseFirestoreScheduledAt(raw.scheduledAt);
+      if (!lk || !t) continue;
+      if (t.getTime() < now - 120_000) continue;
+      const prev = map.get(lk);
+      if (!prev || t.getTime() < prev.getTime()) map.set(lk, t);
+    }
+    return map;
+  }, [meetingsRaw]);
+
   const [rows, setRows] = useState<LeadImportRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -163,6 +200,18 @@ export default function PortalLeadsPage() {
   const [newTagName, setNewTagName] = useState("");
   const [editingTag, setEditingTag] = useState<{ id: string; name: string } | null>(null);
   const [savingTag, setSavingTag] = useState(false);
+
+  const [meetingLead, setMeetingLead] = useState<LeadImportRow | null>(null);
+  const [meetingCustomerName, setMeetingCustomerName] = useState("");
+  const [meetingDateStr, setMeetingDateStr] = useState("");
+  const [meetingHour, setMeetingHour] = useState("9");
+  const [meetingMinute, setMeetingMinute] = useState("0");
+  const [meetingPlace, setMeetingPlace] = useState("");
+  const [meetingNote, setMeetingNote] = useState("");
+  const [savingMeeting, setSavingMeeting] = useState(false);
+
+  const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
+  const [savingNoteKey, setSavingNoteKey] = useState<string | null>(null);
 
   const loadLeads = useCallback(async () => {
     const cid = (companyId ?? "").trim();
@@ -342,6 +391,97 @@ export default function PortalLeadsPage() {
     } catch (e) {
       console.error(e);
       toast({ variant: "destructive", title: "Smazání se nezdařilo." });
+    }
+  };
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+
+  const openMeetingDialog = (lead: LeadImportRow) => {
+    setMeetingLead(lead);
+    setMeetingCustomerName(String(lead.jmeno ?? "").trim());
+    setMeetingDateStr(format(new Date(), "yyyy-MM-dd"));
+    setMeetingHour("9");
+    setMeetingMinute("0");
+    setMeetingPlace("");
+    setMeetingNote("");
+  };
+
+  const handleSaveMeeting = async () => {
+    if (!meetingLead || !firestore || !companyId || !user) return;
+    const h = Math.min(23, Math.max(0, parseInt(meetingHour, 10) || 0));
+    const mi = Math.min(59, Math.max(0, parseInt(meetingMinute, 10) || 0));
+    if (!meetingDateStr?.trim()) {
+      toast({ variant: "destructive", title: "Vyberte datum" });
+      return;
+    }
+    const d = new Date(`${meetingDateStr.trim()}T${pad2(h)}:${pad2(mi)}:00`);
+    if (Number.isNaN(d.getTime())) {
+      toast({ variant: "destructive", title: "Neplatný datum a čas" });
+      return;
+    }
+    setSavingMeeting(true);
+    try {
+      const leadKey = stableImportLeadDocumentId(meetingLead);
+      await addDoc(collection(firestore, "companies", companyId, "lead_meetings"), {
+        companyId,
+        leadKey,
+        importLeadId: meetingLead.id,
+        customerName: meetingCustomerName.trim() || String(meetingLead.jmeno ?? "").trim() || "—",
+        phone: String(meetingLead.telefon ?? "").trim(),
+        email: String(meetingLead.email ?? "").trim(),
+        place: meetingPlace.trim(),
+        note: meetingNote.trim(),
+        scheduledAt: Timestamp.fromDate(d),
+        createdBy: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+      toast({
+        title: "Schůzka naplánována",
+        description: format(d, "d. M. yyyy HH:mm", { locale: cs }),
+      });
+      setMeetingLead(null);
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Schůzku se nepodařilo uložit." });
+    } finally {
+      setSavingMeeting(false);
+    }
+  };
+
+  const getNoteValue = (key: string, ov: LeadOverlayRow | undefined) => {
+    if (key in noteDraft) return noteDraft[key];
+    return ov?.internalNote ?? "";
+  };
+
+  const saveInternalNote = async (lead: LeadImportRow) => {
+    if (!firestore || !companyId || !user) return;
+    const key = stableImportLeadDocumentId(lead);
+    const text = getNoteValue(key, overlayByDocId.get(key));
+    setSavingNoteKey(key);
+    try {
+      await setDoc(
+        doc(firestore, "companies", companyId, "import_lead_overlays", key),
+        {
+          companyId,
+          importLeadId: lead.id,
+          internalNote: text.trim(),
+          updatedAt: serverTimestamp(),
+          updatedByUid: user.uid,
+        },
+        { merge: true }
+      );
+      toast({ title: "Interní poznámka uložena" });
+      setNoteDraft((prev) => {
+        const n = { ...prev };
+        delete n[key];
+        return n;
+      });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Poznámku se nepodařilo uložit." });
+    } finally {
+      setSavingNoteKey(null);
     }
   };
 
@@ -559,6 +699,105 @@ export default function PortalLeadsPage() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!meetingLead} onOpenChange={(o) => !o && setMeetingLead(null)}>
+        <DialogContent className="sm:max-w-md bg-white border-slate-200 max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5 text-primary" />
+              Naplánovat schůzku
+            </DialogTitle>
+            <DialogDescription>
+              Obchodní nebo úvodní schůzka s klientem. Termín uvidíte na přehledu firmy.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="meet-name">Jméno klienta</Label>
+              <Input
+                id="meet-name"
+                value={meetingCustomerName}
+                onChange={(e) => setMeetingCustomerName(e.target.value)}
+                placeholder="Jméno nebo firma"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="meet-date">Den</Label>
+              <Input
+                id="meet-date"
+                type="date"
+                value={meetingDateStr}
+                onChange={(e) => setMeetingDateStr(e.target.value)}
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Hodina</Label>
+                <select
+                  className={NATIVE_SELECT_CLASS}
+                  value={meetingHour}
+                  onChange={(e) => setMeetingHour(e.target.value)}
+                >
+                  {Array.from({ length: 24 }, (_, i) => (
+                    <option key={i} value={String(i)}>
+                      {pad2(i)} h
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>Minuta</Label>
+                <select
+                  className={NATIVE_SELECT_CLASS}
+                  value={meetingMinute}
+                  onChange={(e) => setMeetingMinute(e.target.value)}
+                >
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const m = i * 5;
+                    return (
+                      <option key={m} value={String(m)}>
+                        {pad2(m)}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="meet-place">Místo schůzky (volitelné)</Label>
+              <Input
+                id="meet-place"
+                value={meetingPlace}
+                onChange={(e) => setMeetingPlace(e.target.value)}
+                placeholder="Adresa nebo poznámka k místu"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="meet-note">Poznámka ke schůzce (volitelné)</Label>
+              <Textarea
+                id="meet-note"
+                rows={3}
+                value={meetingNote}
+                onChange={(e) => setMeetingNote(e.target.value)}
+                placeholder="Co projednat, připomenutí…"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 flex-col sm:flex-row">
+            <Button type="button" variant="outline" onClick={() => setMeetingLead(null)}>
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => void handleSaveMeeting()}
+              disabled={savingMeeting}
+            >
+              {savingMeeting ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit schůzku"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Card className="overflow-hidden border-slate-200 shadow-sm">
         <CardContent className="p-0">
           {loading && rows.length === 0 ? (
@@ -599,24 +838,33 @@ export default function PortalLeadsPage() {
                   <div className="hidden md:block overflow-x-auto">
                     <Table>
                       <TableHeader>
-                        <TableRow className="bg-slate-50 hover:bg-slate-50">
-                          <TableHead className="min-w-[100px]">Typ</TableHead>
-                          <TableHead className="min-w-[120px]">Jméno</TableHead>
-                          <TableHead className="min-w-[110px]">Telefon</TableHead>
-                          <TableHead className="min-w-[160px]">E-mail</TableHead>
-                          <TableHead className="min-w-[160px] hidden lg:table-cell">Adresa</TableHead>
-                          <TableHead className="min-w-[140px]">Štítek</TableHead>
-                          <TableHead className="min-w-[180px] hidden xl:table-cell">Zpráva</TableHead>
-                          <TableHead className="w-[120px] text-right">Akce</TableHead>
+                        <TableRow className="bg-slate-100/90 hover:bg-slate-100/90 border-b border-slate-200">
+                          <TableHead className="min-w-[88px]">Typ</TableHead>
+                          <TableHead className="min-w-[110px]">Jméno</TableHead>
+                          <TableHead className="min-w-[100px]">Telefon</TableHead>
+                          <TableHead className="min-w-[140px]">E-mail</TableHead>
+                          <TableHead className="min-w-[140px] hidden lg:table-cell">Adresa</TableHead>
+                          <TableHead className="min-w-[130px]">Štítek</TableHead>
+                          <TableHead className="min-w-[120px] hidden lg:table-cell">Schůzka</TableHead>
+                          <TableHead className="min-w-[160px] hidden xl:table-cell">Zpráva</TableHead>
+                          <TableHead className="min-w-[180px]">Interní pozn.</TableHead>
+                          <TableHead className="min-w-[150px] text-right">Akce</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredRows.map((r) => {
+                        {filteredRows.map((r, idx) => {
                           const key = stableImportLeadDocumentId(r);
                           const ov = overlayByDocId.get(key);
                           const currentTag = ov?.tagId ?? "";
+                          const nextMt = nextMeetingByLeadKey.get(key);
                           return (
-                            <TableRow key={`${key}-${r.id}`} className="border-slate-200">
+                            <TableRow
+                              key={`${key}-${r.id}`}
+                              className={cn(
+                                "border-slate-200",
+                                idx % 2 === 1 ? "bg-slate-50/85" : "bg-white"
+                              )}
+                            >
                               <TableCell className="align-top text-sm">
                                 {r.typ?.trim() ? (
                                   <Badge variant="secondary" className="font-normal">
@@ -631,10 +879,10 @@ export default function PortalLeadsPage() {
                               </TableCell>
                               <TableCell className="align-top text-sm tabular-nums">{r.telefon || "—"}</TableCell>
                               <TableCell className="align-top text-sm break-all">{r.email || "—"}</TableCell>
-                              <TableCell className="align-top text-sm whitespace-pre-wrap text-slate-700 hidden lg:table-cell max-w-[220px]">
+                              <TableCell className="align-top text-sm whitespace-pre-wrap text-slate-700 hidden lg:table-cell max-w-[200px]">
                                 {r.adresa || "—"}
                               </TableCell>
-                              <TableCell className="align-top min-w-[160px]">
+                              <TableCell className="align-top min-w-[150px]">
                                 <Select
                                   value={currentTag || "__none__"}
                                   onValueChange={(v) =>
@@ -657,24 +905,68 @@ export default function PortalLeadsPage() {
                                   <p className="text-[10px] text-amber-700 mt-1">Štítek byl smazán — vyberte nový.</p>
                                 ) : null}
                               </TableCell>
-                              <TableCell className="align-top text-sm text-slate-600 hidden xl:table-cell max-w-xs whitespace-pre-wrap">
+                              <TableCell className="align-top text-xs text-slate-600 hidden lg:table-cell max-w-[130px]">
+                                {nextMt ? (
+                                  <span className="font-medium text-emerald-800">
+                                    {format(nextMt, "d. M. HH:mm", { locale: cs })}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
+                              </TableCell>
+                              <TableCell className="align-top text-sm text-slate-600 hidden xl:table-cell max-w-[200px] whitespace-pre-wrap">
                                 {r.zprava || "—"}
                               </TableCell>
+                              <TableCell className="align-top min-w-[180px] max-w-[240px]">
+                                <Textarea
+                                  rows={2}
+                                  className="text-xs min-h-[52px] resize-y"
+                                  value={getNoteValue(key, ov)}
+                                  onChange={(e) =>
+                                    setNoteDraft((d) => ({ ...d, [key]: e.target.value }))
+                                  }
+                                  placeholder="Interní poznámka…"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="secondary"
+                                  size="sm"
+                                  className="mt-1 h-7 text-xs"
+                                  onClick={() => void saveInternalNote(r)}
+                                  disabled={savingNoteKey === key}
+                                >
+                                  {savingNoteKey === key ? (
+                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                  ) : (
+                                    "Uložit pozn."
+                                  )}
+                                </Button>
+                              </TableCell>
                               <TableCell className="align-top text-right">
-                                {canMeasure ? (
+                                <div className="flex flex-col gap-2 items-end">
+                                  {canMeasure ? (
+                                    <Button
+                                      asChild
+                                      size="sm"
+                                      className="min-h-[36px] w-full min-w-[128px] bg-orange-500 hover:bg-orange-600 text-white border-0"
+                                    >
+                                      <Link href={buildMeasurementPrefillHref(r)}>
+                                        <Ruler className="w-4 h-4 mr-1 inline" />
+                                        Zaměřit
+                                      </Link>
+                                    </Button>
+                                  ) : null}
                                   <Button
-                                    asChild
+                                    type="button"
                                     size="sm"
-                                    className="min-h-[40px] bg-orange-500 hover:bg-orange-600 text-white border-0"
+                                    variant="outline"
+                                    className="min-h-[36px] w-full min-w-[128px] border-emerald-600/40 text-emerald-800 hover:bg-emerald-50"
+                                    onClick={() => openMeetingDialog(r)}
                                   >
-                                    <Link href={buildMeasurementPrefillHref(r)}>
-                                      <Ruler className="w-4 h-4 mr-1 inline" />
-                                      Zaměřit
-                                    </Link>
+                                    <Calendar className="w-4 h-4 mr-1 inline" />
+                                    Naplánovat schůzku
                                   </Button>
-                                ) : (
-                                  <span className="text-xs text-slate-500">—</span>
-                                )}
+                                </div>
                               </TableCell>
                             </TableRow>
                           );
@@ -684,12 +976,19 @@ export default function PortalLeadsPage() {
                   </div>
 
                   <div className="md:hidden divide-y divide-slate-200">
-                    {filteredRows.map((r) => {
+                    {filteredRows.map((r, idx) => {
                       const key = stableImportLeadDocumentId(r);
                       const ov = overlayByDocId.get(key);
                       const currentTag = ov?.tagId ?? "";
+                      const nextMt = nextMeetingByLeadKey.get(key);
                       return (
-                        <div key={`${key}-${r.id}`} className="p-4 space-y-3 bg-white">
+                        <div
+                          key={`${key}-${r.id}`}
+                          className={cn(
+                            "p-4 space-y-3",
+                            idx % 2 === 1 ? "bg-slate-50/90" : "bg-white"
+                          )}
+                        >
                           <div className="flex flex-wrap gap-2 items-center">
                             {r.typ?.trim() ? (
                               <Badge variant="secondary">{r.typ}</Badge>
@@ -697,6 +996,11 @@ export default function PortalLeadsPage() {
                             {currentTag ? (
                               <Badge variant="outline" className="text-xs">
                                 {tags.find((x) => x.id === currentTag)?.name || "Štítek"}
+                              </Badge>
+                            ) : null}
+                            {nextMt ? (
+                              <Badge className="text-xs bg-emerald-100 text-emerald-900 border-emerald-200">
+                                Schůzka {format(nextMt, "d. M. HH:mm", { locale: cs })}
                               </Badge>
                             ) : null}
                           </div>
@@ -736,14 +1040,51 @@ export default function PortalLeadsPage() {
                               </SelectContent>
                             </Select>
                           </div>
-                          {canMeasure ? (
-                            <Button asChild className="w-full min-h-[44px] bg-orange-500 hover:bg-orange-600">
-                              <Link href={buildMeasurementPrefillHref(r)}>
-                                <Ruler className="w-4 h-4 mr-2" />
-                                Zaměřit
-                              </Link>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-600">Interní poznámka</Label>
+                            <Textarea
+                              rows={2}
+                              className="text-sm"
+                              value={getNoteValue(key, ov)}
+                              onChange={(e) =>
+                                setNoteDraft((d) => ({ ...d, [key]: e.target.value }))
+                              }
+                              placeholder="Poznámka jen pro váš tým…"
+                            />
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => void saveInternalNote(r)}
+                              disabled={savingNoteKey === key}
+                            >
+                              {savingNoteKey === key ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                "Uložit poznámku"
+                              )}
                             </Button>
-                          ) : null}
+                          </div>
+                          <div className="flex flex-col gap-2">
+                            {canMeasure ? (
+                              <Button asChild className="w-full min-h-[44px] bg-orange-500 hover:bg-orange-600">
+                                <Link href={buildMeasurementPrefillHref(r)}>
+                                  <Ruler className="w-4 h-4 mr-2" />
+                                  Zaměřit
+                                </Link>
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="w-full min-h-[44px] border-emerald-600/50 text-emerald-900 hover:bg-emerald-50"
+                              onClick={() => openMeetingDialog(r)}
+                            >
+                              <Calendar className="w-4 h-4 mr-2" />
+                              Naplánovat schůzku
+                            </Button>
+                          </div>
                         </div>
                       );
                     })}
