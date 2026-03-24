@@ -413,7 +413,8 @@ service cloud.firestore {
             (request.resource.data.tagId is string && request.resource.data.tagId.size() > 0)) &&
           (!('internalNote' in request.resource.data) ||
             (request.resource.data.internalNote is string &&
-              request.resource.data.internalNote.size() <= 12000));
+              request.resource.data.internalNote.size() <= 12000)) &&
+          (!('receivedAt' in request.resource.data) || request.resource.data.receivedAt is timestamp);
         allow update: if signedIn() && sameCompany(companyId) &&
           userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
           resource.data.companyId == companyId &&
@@ -425,7 +426,10 @@ service cloud.firestore {
             (request.resource.data.tagId is string && request.resource.data.tagId.size() > 0)) &&
           (!('internalNote' in request.resource.data) ||
             (request.resource.data.internalNote is string &&
-              request.resource.data.internalNote.size() <= 12000));
+              request.resource.data.internalNote.size() <= 12000)) &&
+          (!('receivedAt' in request.resource.data) || request.resource.data.receivedAt is timestamp) &&
+          (!('receivedAt' in resource.data) ||
+            request.resource.data.receivedAt == resource.data.receivedAt);
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

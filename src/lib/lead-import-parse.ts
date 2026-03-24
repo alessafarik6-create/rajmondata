@@ -11,6 +11,11 @@ export type LeadImportRow = {
   zprava: string;
   /** Typ / kategorie poptávky z importu (volitelné — záleží na zdroji JSON). */
   typ: string;
+  /**
+   * Datum přijetí / vytvoření ze zdrojového JSON (ISO), pokud ho parser našel.
+   * Jinak se doplní při prvním zobrazení do Firestore (`import_lead_overlays.receivedAt`).
+   */
+  receivedAtIso?: string;
 };
 
 function str(v: unknown): string {
@@ -64,6 +69,71 @@ export function extractLeadRecords(json: unknown): unknown[] {
 /**
  * Typ poptávky — mapování běžných názvů polí ze zdrojového JSON.
  */
+/** Pokus o datum z běžných názvů polí v importním JSON. */
+function parseUnknownDate(v: unknown): Date | null {
+  if (v == null) return null;
+  if (typeof v === "number" && Number.isFinite(v)) {
+    const ms = v < 1e12 ? v * 1000 : v;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (!s) return null;
+    const parsed = Date.parse(s);
+    if (!Number.isNaN(parsed)) return new Date(parsed);
+    const m = /^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
+    if (m) {
+      const d = new Date(
+        Number(m[3]),
+        Number(m[2]) - 1,
+        Number(m[1]),
+        m[4] != null ? Number(m[4]) : 0,
+        m[5] != null ? Number(m[5]) : 0,
+        m[6] != null ? Number(m[6]) : 0
+      );
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+  }
+  if (typeof v === "object" && v !== null && "_seconds" in v) {
+    const sec = (v as { _seconds?: unknown })._seconds;
+    if (typeof sec === "number" && Number.isFinite(sec)) {
+      const d = new Date(sec * 1000);
+      return Number.isNaN(d.getTime()) ? null : d;
+    }
+  }
+  return null;
+}
+
+function receivedAtIsoFromRow(o: Record<string, unknown>): string | undefined {
+  const keys = [
+    "createdAt",
+    "created_at",
+    "datum",
+    "date",
+    "Datum",
+    "datumVytvoreni",
+    "datum_vytvoreni",
+    "datumPrijeti",
+    "datum_prijeti",
+    "prijato",
+    "receivedAt",
+    "received_at",
+    "timestamp",
+    "time",
+    "cas",
+    "created",
+    "importedAt",
+    "importDate",
+  ];
+  for (const k of keys) {
+    if (!(k in o)) continue;
+    const d = parseUnknownDate(o[k]);
+    if (d) return d.toISOString();
+  }
+  return undefined;
+}
+
 function typFromRow(o: Record<string, unknown>): string {
   return str(
     o.typ ??
@@ -95,6 +165,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
   const adresa = str(o.adresa ?? o.address);
   const zprava = str(o.zprava ?? o.message ?? o.zpráva);
   const typ = typFromRow(o);
+  const receivedAtIso = receivedAtIsoFromRow(o);
 
   if (!idFromSource) {
     const synth = syntheticIdFromRow(o);
@@ -107,6 +178,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
       adresa,
       zprava,
       typ,
+      ...(receivedAtIso ? { receivedAtIso } : {}),
     };
   }
 
@@ -118,6 +190,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
     adresa,
     zprava,
     typ,
+    ...(receivedAtIso ? { receivedAtIso } : {}),
   };
 }
 

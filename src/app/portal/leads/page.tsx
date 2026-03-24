@@ -35,6 +35,7 @@ import {
   orderBy,
   limit,
   Timestamp,
+  getDoc,
 } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -120,7 +121,35 @@ type LeadOverlayRow = {
   importLeadId?: string;
   tagId?: string | null;
   internalNote?: string;
+  /** Datum přijetí (import nebo první zobrazení v aplikaci). */
+  receivedAt?: unknown;
 };
+
+function overlayReceivedDate(ov: LeadOverlayRow | undefined): Date | null {
+  if (!ov) return null;
+  const r = ov.receivedAt;
+  if (
+    r &&
+    typeof r === "object" &&
+    "toDate" in r &&
+    typeof (r as Timestamp).toDate === "function"
+  ) {
+    return (r as Timestamp).toDate();
+  }
+  return null;
+}
+
+function leadReceivedDate(lead: LeadImportRow, ov: LeadOverlayRow | undefined): Date | null {
+  if (lead.receivedAtIso) {
+    const d = new Date(lead.receivedAtIso);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return overlayReceivedDate(ov);
+}
+
+function formatReceivedDay(d: Date): string {
+  return format(d, "d. M. yyyy", { locale: cs });
+}
 
 type ApiImportBody = {
   ok?: boolean;
@@ -140,6 +169,7 @@ function leadSearchBlob(r: LeadImportRow): string {
     r.zprava,
     r.typ,
     r.id,
+    r.receivedAtIso,
   ]
     .map((x) => String(x ?? "").toLowerCase())
     .join(" ");
@@ -233,6 +263,7 @@ export default function PortalLeadsPage() {
   const [search, setSearch] = useState("");
   const [filterTyp, setFilterTyp] = useState<string>("");
   const [filterTag, setFilterTag] = useState<string>("");
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
 
   const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -351,6 +382,69 @@ export default function PortalLeadsPage() {
     return list;
   }, [rows, search, filterTyp, filterTag, overlayByDocId]);
 
+  const sortedFilteredRows = useMemo(() => {
+    const list = [...filteredRows];
+    const getTs = (r: LeadImportRow) => {
+      const key = stableImportLeadDocumentId(r);
+      const ov = overlayByDocId.get(key);
+      const d = leadReceivedDate(r, ov);
+      return d ? d.getTime() : 0;
+    };
+    list.sort((a, b) => {
+      const ta = getTs(a);
+      const tb = getTs(b);
+      return sortOrder === "newest" ? tb - ta : ta - tb;
+    });
+    return list;
+  }, [filteredRows, overlayByDocId, sortOrder]);
+
+  const rowsKey = useMemo(
+    () => rows.map((r) => stableImportLeadDocumentId(r)).join("|"),
+    [rows]
+  );
+
+  /** Doplní `receivedAt` v overlay (importní datum nebo čas prvního načtení). */
+  useEffect(() => {
+    if (!firestore || !companyId || !user || !rowsKey) return;
+    let cancelled = false;
+    const run = async () => {
+      const chunkSize = 15;
+      for (let i = 0; i < rows.length; i += chunkSize) {
+        if (cancelled) return;
+        const chunk = rows.slice(i, i + chunkSize);
+        await Promise.all(
+          chunk.map(async (lead) => {
+            if (cancelled) return;
+            const key = stableImportLeadDocumentId(lead);
+            const ref = doc(firestore, "companies", companyId, "import_lead_overlays", key);
+            const snap = await getDoc(ref);
+            if (cancelled) return;
+            if (snap.exists() && snap.data()?.receivedAt != null) return;
+            const payload: Record<string, unknown> = {
+              companyId,
+              importLeadId: lead.id,
+              updatedAt: serverTimestamp(),
+              updatedByUid: user.uid,
+            };
+            if (lead.receivedAtIso) {
+              const d = new Date(lead.receivedAtIso);
+              payload.receivedAt = Timestamp.fromDate(
+                Number.isNaN(d.getTime()) ? new Date() : d
+              );
+            } else {
+              payload.receivedAt = serverTimestamp();
+            }
+            await setDoc(ref, payload, { merge: true });
+          })
+        );
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [rowsKey, rows, firestore, companyId, user]);
+
   const canMeasure = userCanManageMeasurements(profile);
   const canManageTags =
     role === "owner" || role === "admin" || role === "manager" || role === "accountant";
@@ -389,11 +483,13 @@ export default function PortalLeadsPage() {
       await addDoc(collection(firestore, "companies", companyId, "lead_tags"), {
         companyId,
         name,
+        color: normalizeLeadTagColor(newTagColor),
         sortOrder: Date.now(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
       setNewTagName("");
+      setNewTagColor("#0ea5e9");
       toast({ title: "Štítek vytvořen" });
     } catch (e) {
       console.error(e);
@@ -620,6 +716,17 @@ export default function PortalLeadsPage() {
                     {t.name || t.id}
                   </option>
                 ))}
+              </select>
+            </div>
+            <div className="w-full sm:w-[200px] space-y-1.5">
+              <Label className="text-xs text-slate-600">Řazení podle data přijetí</Label>
+              <select
+                className={NATIVE_SELECT_CLASS}
+                value={sortOrder}
+                onChange={(e) => setSortOrder(e.target.value as "newest" | "oldest")}
+              >
+                <option value="newest">Nejnovější nahoře</option>
+                <option value="oldest">Nejstarší nahoře</option>
               </select>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -964,36 +1071,74 @@ export default function PortalLeadsPage() {
               ) : (
                 <>
                   <div className="hidden md:block overflow-x-auto">
-                    <Table>
+                    <Table className="w-full min-w-0 text-sm lg:text-sm">
                       <TableHeader>
-                        <TableRow className="bg-slate-100/90 hover:bg-slate-100/90 border-b border-slate-200">
-                          <TableHead className="min-w-[88px]">Typ</TableHead>
-                          <TableHead className="min-w-[110px]">Jméno</TableHead>
-                          <TableHead className="min-w-[100px]">Telefon</TableHead>
-                          <TableHead className="min-w-[140px]">E-mail</TableHead>
-                          <TableHead className="min-w-[140px] hidden lg:table-cell">Adresa</TableHead>
-                          <TableHead className="min-w-[130px]">Štítek</TableHead>
-                          <TableHead className="min-w-[120px] hidden lg:table-cell">Schůzka</TableHead>
-                          <TableHead className="min-w-[160px] hidden xl:table-cell">Zpráva</TableHead>
-                          <TableHead className="min-w-[180px]">Interní pozn.</TableHead>
-                          <TableHead className="min-w-[150px] text-right">Akce</TableHead>
+                        <TableRow className="border-b border-slate-200 bg-slate-100/90 hover:bg-slate-100/90">
+                          <TableHead className="px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
+                            Jméno
+                          </TableHead>
+                          <TableHead className="px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
+                            Telefon
+                          </TableHead>
+                          <TableHead className="hidden px-2 py-3 font-semibold text-slate-900 lg:table-cell lg:px-3 lg:py-3.5">
+                            E-mail
+                          </TableHead>
+                          <TableHead className="px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
+                            Typ
+                          </TableHead>
+                          <TableHead className="whitespace-nowrap px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
+                            Přijato
+                          </TableHead>
+                          <TableHead className="min-w-0 px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
+                            Štítek
+                          </TableHead>
+                          <TableHead className="hidden px-2 py-3 font-semibold text-slate-900 lg:table-cell lg:px-3 lg:py-3.5">
+                            Schůzka
+                          </TableHead>
+                          <TableHead className="hidden px-2 py-3 font-semibold text-slate-900 xl:table-cell xl:px-3">
+                            Adresa
+                          </TableHead>
+                          <TableHead className="hidden px-2 py-3 font-semibold text-slate-900 xl:table-cell xl:px-3">
+                            Zpráva
+                          </TableHead>
+                          <TableHead className="min-w-0 px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
+                            Interní pozn.
+                          </TableHead>
+                          <TableHead className="px-2 py-3 text-right font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
+                            Akce
+                          </TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {filteredRows.map((r, idx) => {
+                        {sortedFilteredRows.map((r, idx) => {
                           const key = stableImportLeadDocumentId(r);
                           const ov = overlayByDocId.get(key);
                           const currentTag = ov?.tagId ?? "";
                           const nextMt = nextMeetingByLeadKey.get(key);
+                          const received = leadReceivedDate(r, ov);
                           return (
                             <TableRow
                               key={`${key}-${r.id}`}
                               className={cn(
                                 "border-slate-200",
-                                idx % 2 === 1 ? "bg-slate-50/85" : "bg-white"
+                                idx % 2 === 1 ? "bg-slate-50/90" : "bg-white"
                               )}
                             >
-                              <TableCell className="align-top text-sm">
+                              <TableCell className="align-top px-2 py-3 text-slate-900 md:px-2 lg:px-3 lg:py-4">
+                                <div className="space-y-0.5">
+                                  <p className="font-medium leading-snug">{r.jmeno || "—"}</p>
+                                  <p className="break-all text-xs text-slate-600 lg:hidden">
+                                    {r.email || "—"}
+                                  </p>
+                                </div>
+                              </TableCell>
+                              <TableCell className="align-top px-2 py-3 tabular-nums text-slate-800 md:px-2 lg:px-3 lg:py-4">
+                                {r.telefon || "—"}
+                              </TableCell>
+                              <TableCell className="hidden align-top break-all px-2 py-3 text-slate-800 lg:table-cell lg:px-3 lg:py-4">
+                                {r.email || "—"}
+                              </TableCell>
+                              <TableCell className="align-top px-2 py-3 md:px-2 lg:px-3 lg:py-4">
                                 {r.typ?.trim() ? (
                                   <Badge variant="secondary" className="font-normal">
                                     {r.typ}
@@ -1002,16 +1147,15 @@ export default function PortalLeadsPage() {
                                   <span className="text-slate-400">—</span>
                                 )}
                               </TableCell>
-                              <TableCell className="align-top text-sm font-medium text-slate-900">
-                                {r.jmeno || "—"}
+                              <TableCell className="align-top whitespace-nowrap px-2 py-3 text-slate-800 md:px-2 lg:px-3 lg:py-4">
+                                {received ? (
+                                  <span className="tabular-nums">{formatReceivedDay(received)}</span>
+                                ) : (
+                                  <span className="text-slate-400">—</span>
+                                )}
                               </TableCell>
-                              <TableCell className="align-top text-sm tabular-nums">{r.telefon || "—"}</TableCell>
-                              <TableCell className="align-top text-sm break-all">{r.email || "—"}</TableCell>
-                              <TableCell className="align-top text-sm whitespace-pre-wrap text-slate-700 hidden lg:table-cell max-w-[200px]">
-                                {r.adresa || "—"}
-                              </TableCell>
-                              <TableCell className="align-top min-w-[150px]">
-                                <div className="space-y-1.5">
+                              <TableCell className="align-top px-2 py-3 md:px-2 lg:px-3 lg:py-4">
+                                <div className="max-w-[min(100%,14rem)] space-y-1.5">
                                   {currentTag && tagById.get(currentTag) ? (
                                     <LeadTagBadge
                                       label={tagById.get(currentTag)?.name ?? "Štítek"}
@@ -1053,7 +1197,7 @@ export default function PortalLeadsPage() {
                                   ) : null}
                                 </div>
                               </TableCell>
-                              <TableCell className="align-top text-xs text-slate-600 hidden lg:table-cell max-w-[130px]">
+                              <TableCell className="hidden align-top px-2 py-3 text-xs text-slate-600 lg:table-cell lg:px-3 lg:py-4">
                                 {nextMt ? (
                                   <span className="font-medium text-emerald-800">
                                     {format(nextMt, "d. M. HH:mm", { locale: cs })}
@@ -1062,13 +1206,16 @@ export default function PortalLeadsPage() {
                                   <span className="text-slate-400">—</span>
                                 )}
                               </TableCell>
-                              <TableCell className="align-top text-sm text-slate-600 hidden xl:table-cell max-w-[200px] whitespace-pre-wrap">
+                              <TableCell className="hidden align-top whitespace-pre-wrap px-2 py-3 text-slate-700 xl:table-cell xl:max-w-[12rem] xl:px-3 xl:py-4">
+                                {r.adresa || "—"}
+                              </TableCell>
+                              <TableCell className="hidden align-top whitespace-pre-wrap px-2 py-3 text-slate-600 xl:table-cell xl:max-w-[14rem] xl:px-3 xl:py-4">
                                 {r.zprava || "—"}
                               </TableCell>
-                              <TableCell className="align-top min-w-[180px] max-w-[240px]">
+                              <TableCell className="align-top px-2 py-3 md:min-w-[10rem] md:px-2 lg:px-3 lg:py-4">
                                 <Textarea
                                   rows={2}
-                                  className="text-xs min-h-[52px] resize-y"
+                                  className="min-h-[52px] resize-y text-xs"
                                   value={getNoteValue(key, ov)}
                                   onChange={(e) =>
                                     setNoteDraft((d) => ({ ...d, [key]: e.target.value }))
@@ -1090,16 +1237,16 @@ export default function PortalLeadsPage() {
                                   )}
                                 </Button>
                               </TableCell>
-                              <TableCell className="align-top text-right">
-                                <div className="flex flex-col gap-2 items-end">
+                              <TableCell className="align-top px-2 py-3 text-right md:px-2 lg:px-3 lg:py-4">
+                                <div className="flex flex-col items-end gap-2">
                                   {canMeasure ? (
                                     <Button
                                       asChild
                                       size="sm"
-                                      className="min-h-[36px] w-full min-w-[128px] bg-orange-500 hover:bg-orange-600 text-white border-0"
+                                      className="min-h-10 w-full min-w-[7.5rem] max-w-[11rem] border-0 bg-orange-500 text-white hover:bg-orange-600"
                                     >
                                       <Link href={buildMeasurementPrefillHref(r)}>
-                                        <Ruler className="w-4 h-4 mr-1 inline" />
+                                        <Ruler className="mr-1 inline h-4 w-4" />
                                         Zaměřit
                                       </Link>
                                     </Button>
@@ -1108,10 +1255,10 @@ export default function PortalLeadsPage() {
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    className="min-h-[36px] w-full min-w-[128px] border-emerald-600/40 text-emerald-800 hover:bg-emerald-50"
+                                    className="min-h-10 w-full min-w-[7.5rem] max-w-[11rem] border-emerald-600/40 text-emerald-800 hover:bg-emerald-50"
                                     onClick={() => openMeetingDialog(r)}
                                   >
-                                    <Calendar className="w-4 h-4 mr-1 inline" />
+                                    <Calendar className="mr-1 inline h-4 w-4" />
                                     Naplánovat schůzku
                                   </Button>
                                 </div>
@@ -1123,125 +1270,147 @@ export default function PortalLeadsPage() {
                     </Table>
                   </div>
 
-                  <div className="md:hidden divide-y divide-slate-200">
-                    {filteredRows.map((r, idx) => {
+                  <div className="flex flex-col gap-4 p-3 sm:p-4 md:hidden">
+                    {sortedFilteredRows.map((r, idx) => {
                       const key = stableImportLeadDocumentId(r);
                       const ov = overlayByDocId.get(key);
                       const currentTag = ov?.tagId ?? "";
                       const nextMt = nextMeetingByLeadKey.get(key);
+                      const received = leadReceivedDate(r, ov);
                       return (
-                        <div
+                        <Card
                           key={`${key}-${r.id}`}
                           className={cn(
-                            "p-4 space-y-3",
-                            idx % 2 === 1 ? "bg-slate-50/90" : "bg-white"
+                            "overflow-hidden border-slate-200 shadow-sm",
+                            idx % 2 === 1 ? "bg-slate-50/95" : "bg-white"
                           )}
                         >
-                          <div className="flex flex-wrap gap-2 items-center">
-                            {r.typ?.trim() ? (
-                              <Badge variant="secondary">{r.typ}</Badge>
+                          <CardContent className="space-y-4 p-4 text-base sm:p-5">
+                            <div className="space-y-1">
+                              <p className="text-lg font-semibold leading-snug text-slate-900">
+                                {r.jmeno || "—"}
+                              </p>
+                              <p className="text-sm text-slate-600">
+                                Přijato:{" "}
+                                <span className="font-medium tabular-nums text-slate-900">
+                                  {received ? formatReceivedDay(received) : "—"}
+                                </span>
+                              </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              {r.typ?.trim() ? (
+                                <Badge variant="secondary" className="text-sm">
+                                  {r.typ}
+                                </Badge>
+                              ) : null}
+                              {currentTag && tagById.get(currentTag) ? (
+                                <LeadTagBadge
+                                  label={tagById.get(currentTag)?.name ?? "Štítek"}
+                                  color={tagById.get(currentTag)?.color}
+                                />
+                              ) : null}
+                              {nextMt ? (
+                                <Badge className="border border-emerald-200 bg-emerald-100 text-sm text-emerald-900">
+                                  Schůzka {format(nextMt, "d. M. HH:mm", { locale: cs })}
+                                </Badge>
+                              ) : null}
+                            </div>
+                            <div className="grid gap-3 text-base text-slate-800 sm:gap-3.5">
+                              <p>
+                                <span className="text-slate-500">Tel. </span>
+                                <span className="tabular-nums">{r.telefon || "—"}</span>
+                              </p>
+                              <p className="break-words">
+                                <span className="text-slate-500">E-mail </span>
+                                {r.email || "—"}
+                              </p>
+                            </div>
+                            {r.adresa ? (
+                              <p className="whitespace-pre-wrap text-base text-slate-700">{r.adresa}</p>
                             ) : null}
-                            {currentTag ? (
-                              <Badge variant="outline" className="text-xs">
-                                {tags.find((x) => x.id === currentTag)?.name || "Štítek"}
-                              </Badge>
+                            {r.zprava ? (
+                              <p className="whitespace-pre-wrap border-t border-slate-200 pt-3 text-base text-slate-600">
+                                {r.zprava}
+                              </p>
                             ) : null}
-                            {nextMt ? (
-                              <Badge className="text-xs bg-emerald-100 text-emerald-900 border-emerald-200">
-                                Schůzka {format(nextMt, "d. M. HH:mm", { locale: cs })}
-                              </Badge>
-                            ) : null}
-                          </div>
-                          <p className="font-semibold text-slate-900">{r.jmeno || "—"}</p>
-                          <p className="text-sm text-slate-700">
-                            <span className="text-slate-500">Tel. </span>
-                            {r.telefon || "—"}
-                          </p>
-                          <p className="text-sm break-all">
-                            <span className="text-slate-500">E-mail </span>
-                            {r.email || "—"}
-                          </p>
-                          {r.adresa ? (
-                            <p className="text-sm whitespace-pre-wrap text-slate-700">{r.adresa}</p>
-                          ) : null}
-                          {r.zprava ? (
-                            <p className="text-sm text-slate-600 whitespace-pre-wrap border-t border-slate-100 pt-2">
-                              {r.zprava}
-                            </p>
-                          ) : null}
-                          <div className="space-y-1.5">
-                            <Label className="text-xs text-slate-600">Štítek</Label>
-                            <Select
-                              value={currentTag || "__none__"}
-                              onValueChange={(v) => void handleTagChange(r, v === "__none__" ? null : v)}
-                            >
-                              <SelectTrigger className="h-9 text-left">
-                                <SelectValue placeholder="Změnit štítek" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="__none__">Bez štítku</SelectItem>
-                                {tags.map((t) => (
-                                  <SelectItem key={t.id} value={t.id!}>
-                                    <span className="flex items-center gap-2">
-                                      <span
-                                        className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/10"
-                                        style={{
-                                          backgroundColor: normalizeLeadTagColor(t.color),
-                                        }}
-                                      />
-                                      {t.name}
-                                    </span>
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                          <div className="space-y-1.5">
-                            <Label className="text-xs text-slate-600">Interní poznámka</Label>
-                            <Textarea
-                              rows={2}
-                              className="text-sm"
-                              value={getNoteValue(key, ov)}
-                              onChange={(e) =>
-                                setNoteDraft((d) => ({ ...d, [key]: e.target.value }))
-                              }
-                              placeholder="Poznámka jen pro váš tým…"
-                            />
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              className="w-full"
-                              onClick={() => void saveInternalNote(r)}
-                              disabled={savingNoteKey === key}
-                            >
-                              {savingNoteKey === key ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                              ) : (
-                                "Uložit poznámku"
-                              )}
-                            </Button>
-                          </div>
-                          <div className="flex flex-col gap-2">
-                            {canMeasure ? (
-                              <Button asChild className="w-full min-h-[44px] bg-orange-500 hover:bg-orange-600">
-                                <Link href={buildMeasurementPrefillHref(r)}>
-                                  <Ruler className="w-4 h-4 mr-2" />
-                                  Zaměřit
-                                </Link>
+                            <div className="space-y-2 border-t border-slate-200 pt-3">
+                              <Label className="text-sm text-slate-600">Štítek</Label>
+                              <Select
+                                value={currentTag || "__none__"}
+                                onValueChange={(v) =>
+                                  void handleTagChange(r, v === "__none__" ? null : v)
+                                }
+                              >
+                                <SelectTrigger className="h-12 min-h-[48px] text-left text-base">
+                                  <SelectValue placeholder="Změnit štítek" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">Bez štítku</SelectItem>
+                                  {tags.map((t) => (
+                                    <SelectItem key={t.id} value={t.id!}>
+                                      <span className="flex items-center gap-2">
+                                        <span
+                                          className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/10"
+                                          style={{
+                                            backgroundColor: normalizeLeadTagColor(t.color),
+                                          }}
+                                        />
+                                        {t.name}
+                                      </span>
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2 border-t border-slate-200 pt-3">
+                              <Label className="text-sm text-slate-600">Interní poznámka</Label>
+                              <Textarea
+                                rows={3}
+                                className="min-h-[5rem] text-base"
+                                value={getNoteValue(key, ov)}
+                                onChange={(e) =>
+                                  setNoteDraft((d) => ({ ...d, [key]: e.target.value }))
+                                }
+                                placeholder="Poznámka jen pro váš tým…"
+                              />
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                className="h-12 min-h-[48px] w-full text-base"
+                                onClick={() => void saveInternalNote(r)}
+                                disabled={savingNoteKey === key}
+                              >
+                                {savingNoteKey === key ? (
+                                  <Loader2 className="h-5 w-5 animate-spin" />
+                                ) : (
+                                  "Uložit poznámku"
+                                )}
                               </Button>
-                            ) : null}
-                            <Button
-                              type="button"
-                              variant="outline"
-                              className="w-full min-h-[44px] border-emerald-600/50 text-emerald-900 hover:bg-emerald-50"
-                              onClick={() => openMeetingDialog(r)}
-                            >
-                              <Calendar className="w-4 h-4 mr-2" />
-                              Naplánovat schůzku
-                            </Button>
-                          </div>
-                        </div>
+                            </div>
+                            <div className="flex flex-col gap-3 border-t border-slate-200 pt-4">
+                              {canMeasure ? (
+                                <Button
+                                  asChild
+                                  className="h-12 min-h-[48px] w-full text-base bg-orange-500 hover:bg-orange-600"
+                                >
+                                  <Link href={buildMeasurementPrefillHref(r)}>
+                                    <Ruler className="mr-2 h-5 w-5" />
+                                    Zaměřit
+                                  </Link>
+                                </Button>
+                              ) : null}
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="h-12 min-h-[48px] w-full border-2 border-emerald-600/50 text-base text-emerald-900 hover:bg-emerald-50"
+                                onClick={() => openMeetingDialog(r)}
+                              >
+                                <Calendar className="mr-2 h-5 w-5" />
+                                Naplánovat schůzku
+                              </Button>
+                            </div>
+                          </CardContent>
+                        </Card>
                       );
                     })}
                   </div>
