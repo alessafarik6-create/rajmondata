@@ -113,6 +113,7 @@ import {
   deleteObject,
   getBlob,
 } from "firebase/storage";
+import { FirebaseError } from "firebase/app";
 import Link from "next/link";
 
 type DimensionColor = "red" | "yellow" | "white" | "black" | "blue";
@@ -219,7 +220,59 @@ type PhotoDoc = {
   fileName?: string;
   createdAt?: any;
   createdBy?: string;
+  uploadedBy?: string;
+  companyId?: string;
+  jobId?: string;
 };
+
+const MAX_JOB_PHOTO_BYTES = 20 * 1024 * 1024;
+
+function jobPhotoUploadErrorMessage(err: unknown): string {
+  if (err instanceof FirebaseError) {
+    if (err.code === "storage/unauthorized") {
+      return "Nemáte oprávnění nahrát soubor do úložiště.";
+    }
+    if (err.code === "storage/canceled") {
+      return "Nahrávání bylo zrušeno.";
+    }
+    if (err.code === "storage/quota-exceeded") {
+      return "Byla překročena kvóta úložiště.";
+    }
+    if (err.code === "storage/invalid-checksum") {
+      return "Soubor se při přenosu poškodil, zkuste to znovu.";
+    }
+    return err.message || "Chyba úložiště.";
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return "Fotografii se nepodařilo nahrát.";
+}
+
+function JobPhotoThumbnail(p: PhotoDoc) {
+  const [broken, setBroken] = useState(false);
+  const src =
+    (typeof p.annotatedImageUrl === "string" && p.annotatedImageUrl.trim()) ||
+    (typeof p.imageUrl === "string" && p.imageUrl.trim()) ||
+    "";
+
+  if (!src || broken) {
+    return (
+      <div className="w-full h-32 flex items-center justify-center bg-muted text-xs text-muted-foreground text-center px-2">
+        {!src ? "Chybí odkaz na obrázek" : "Náhled se nepodařilo načíst"}
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt={p.fileName || p.id}
+      className="w-full h-32 object-cover"
+      onError={() => setBroken(true)}
+    />
+  );
+}
 
 type CompanyBankAccountDoc = {
   id: string;
@@ -458,6 +511,8 @@ export default function JobDetailPage() {
   const [photoToEdit, setPhotoToEdit] = useState<PhotoDoc | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const photoGalleryFileInputRef = useRef<HTMLInputElement>(null);
+  const photoCameraFileInputRef = useRef<HTMLInputElement>(null);
   const [canvasReady, setCanvasReady] = useState(false);
   const [imageForCanvas, setImageForCanvas] = useState<HTMLImageElement | null>(null);
   const [baseImageLoaded, setBaseImageLoaded] = useState(false);
@@ -2906,7 +2961,34 @@ export default function JobDetailPage() {
   };
 
   const handlePhotoUpload = async (file: File) => {
-    if (!companyId || !jobId || !photosColRef || !user) {
+    if (!file || file.size === 0) {
+      toast({
+        variant: "destructive",
+        title: "Nelze nahrát fotografii",
+        description: "Nebyl vybrán žádný soubor nebo je soubor prázdný.",
+      });
+      return;
+    }
+
+    if (!file.type.startsWith("image/")) {
+      toast({
+        variant: "destructive",
+        title: "Nepodporovaný soubor",
+        description: "Vyberte obrázek (např. JPG nebo PNG).",
+      });
+      return;
+    }
+
+    if (file.size > MAX_JOB_PHOTO_BYTES) {
+      toast({
+        variant: "destructive",
+        title: "Soubor je příliš velký",
+        description: `Maximální velikost je ${Math.round(MAX_JOB_PHOTO_BYTES / (1024 * 1024))} MB.`,
+      });
+      return;
+    }
+
+    if (!companyId || !jobId || !photosColRef || !user || !firestore) {
       toast({
         variant: "destructive",
         title: "Nelze nahrát fotografii",
@@ -2917,34 +2999,77 @@ export default function JobDetailPage() {
 
     setIsUploading(true);
 
+    const safeBaseName = file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
+    const storagePath = `job-photos/${companyId}/${jobId}/${Date.now()}-${safeBaseName}`;
+
+    if (process.env.NODE_ENV === "development") {
+      console.log("[JobDetailPage] photo upload: file", {
+        name: file.name,
+        size: file.size,
+        type: file.type,
+      });
+      console.log("[JobDetailPage] photo upload: storagePath", storagePath);
+    }
+
     try {
-      const storagePath = `job-photos/${companyId}/${jobId}/${Date.now()}-${file.name}`;
       const storageRef = ref(storage, storagePath);
 
-      await uploadBytes(storageRef, file);
+      const uploadResult = await uploadBytes(storageRef, file);
+      if (process.env.NODE_ENV === "development") {
+        console.log("[JobDetailPage] photo upload: uploadBytes result", {
+          refFullPath: uploadResult.ref?.fullPath,
+          metadataName: uploadResult.metadata?.name,
+        });
+      }
+
       const imageUrl = await getDownloadURL(storageRef);
+      if (!imageUrl) {
+        throw new Error("Úložiště nevrátilo adresu ke stažení (download URL).");
+      }
 
       const photoDocRef = doc(photosColRef);
-      await setDoc(photoDocRef, {
+      const photoPayload = {
         id: photoDocRef.id,
+        companyId,
+        jobId: jobId as string,
         imageUrl,
         originalImageUrl: imageUrl,
         storagePath,
-        fileName: file.name,
+        fileName: safeBaseName,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
-      });
+        uploadedBy: user.uid,
+      };
+
+      try {
+        await setDoc(photoDocRef, photoPayload);
+      } catch (metaErr) {
+        console.error("[JobDetailPage] photo metadata save failed", metaErr);
+        toast({
+          variant: "destructive",
+          title: "Nelze uložit metadata fotky",
+          description:
+            metaErr instanceof FirebaseError
+              ? metaErr.message
+              : "Záznam fotky se nepodařilo uložit do databáze.",
+        });
+        return;
+      }
+
+      if (process.env.NODE_ENV === "development") {
+        console.log("[JobDetailPage] photo upload: saved doc", photoPayload);
+      }
 
       toast({
         title: "Fotografie nahrána",
-        description: file.name,
+        description: safeBaseName,
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("[JobDetailPage] photo upload failed", err);
       toast({
         variant: "destructive",
         title: "Chyba při nahrávání fotografie",
-        description: err?.message || "Fotografii se nepodařilo nahrát.",
+        description: jobPhotoUploadErrorMessage(err),
       });
     } finally {
       setIsUploading(false);
@@ -3766,13 +3891,29 @@ export default function JobDetailPage() {
               <div className="flex flex-col sm:flex-row gap-2">
                 <label className="flex-1">
                   <Input
+                    ref={photoGalleryFileInputRef}
                     type="file"
                     accept="image/*"
                     multiple
                     className="hidden"
                     onChange={(e) => {
                       const files = Array.from(e.target.files || []);
-                      files.forEach((f) => handlePhotoUpload(f));
+                      if (files.length === 0) {
+                        toast({
+                          variant: "destructive",
+                          title: "Žádný soubor",
+                          description: "Vyberte alespoň jeden obrázek.",
+                        });
+                        e.target.value = "";
+                        return;
+                      }
+                      void (async () => {
+                        for (const f of files) {
+                          await handlePhotoUpload(f);
+                        }
+                      })().finally(() => {
+                        e.target.value = "";
+                      });
                     }}
                   />
                   <Button type="button" className="w-full justify-center gap-2 min-h-[44px]" asChild>
@@ -3784,13 +3925,25 @@ export default function JobDetailPage() {
 
                 <label className="flex-1 sm:flex-none">
                   <Input
+                    ref={photoCameraFileInputRef}
                     type="file"
                     accept="image/*"
                     capture="environment"
                     className="hidden"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
-                      if (file) handlePhotoUpload(file);
+                      if (!file) {
+                        toast({
+                          variant: "destructive",
+                          title: "Žádný soubor",
+                          description: "Nebyla pořízena žádná fotografie.",
+                        });
+                        e.target.value = "";
+                        return;
+                      }
+                      void handlePhotoUpload(file).finally(() => {
+                        e.target.value = "";
+                      });
                     }}
                   />
                   <Button type="button" className="w-full justify-center gap-2 min-h-[44px]" asChild>
@@ -3812,11 +3965,7 @@ export default function JobDetailPage() {
                       key={p.id}
                       className="relative group rounded-lg overflow-hidden border border-border/40 bg-background"
                     >
-                      <img
-                        src={p.annotatedImageUrl || p.imageUrl}
-                        alt={p.fileName}
-                        className="w-full h-32 object-cover"
-                      />
+                      <JobPhotoThumbnail {...(p as PhotoDoc)} />
                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
                         <Button
                           size="sm"

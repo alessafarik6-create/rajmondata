@@ -31,11 +31,27 @@ export interface UseCollectionResult<T> {
   https://github.com/firebase/firebase-js-sdk/blob/c5f08a9bc5da0d2b0207802c972d53724ccef055/packages/firestore/src/lite-api/reference.ts#L143
 */
 export interface InternalQuery extends Query<DocumentData> {
-  _query: {
-    path: {
+  _query?: {
+    path?: {
       canonicalString(): string;
       toString(): string;
+    };
+  };
+}
+
+/** Safe path string for logging / permission errors (never throws). */
+function getFirestoreListenerDebugPath(
+  target: CollectionReference<DocumentData> | Query<DocumentData>,
+): string {
+  try {
+    const asCol = target as CollectionReference<DocumentData>;
+    if (typeof asCol.path === "string" && asCol.path.length > 0) {
+      return asCol.path;
     }
+    const internal = target as unknown as InternalQuery;
+    return internal._query?.path?.canonicalString?.() ?? "(query)";
+  } catch {
+    return "(unknown-path)";
   }
 }
 
@@ -85,28 +101,12 @@ export function useCollection<T = any>(
         setError(null);
         setIsLoading(false);
         if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
-          try {
-            const path =
-              (memoizedTargetRefOrQuery as { type?: string }).type === "collection"
-                ? (memoizedTargetRefOrQuery as CollectionReference).path
-                : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query?.path
-                    ?.canonicalString?.() ?? "(query)";
-            console.log("User updated from snapshot", path, results.length, "docs");
-          } catch {
-            console.log("User updated from snapshot", "(path unknown)", results.length, "docs");
-          }
+          const path = getFirestoreListenerDebugPath(memoizedTargetRefOrQuery);
+          console.log("User updated from snapshot", path, results.length, "docs");
         }
       },
       (error: FirestoreError) => {
-        let path = '(unknown-query)';
-        try {
-          path =
-            memoizedTargetRefOrQuery.type === 'collection'
-              ? (memoizedTargetRefOrQuery as CollectionReference).path
-              : (memoizedTargetRefOrQuery as unknown as InternalQuery)._query.path.canonicalString();
-        } catch {
-          path = '(query-path-unavailable)';
-        }
+        const path = getFirestoreListenerDebugPath(memoizedTargetRefOrQuery);
         logFirestoreFailure(path, 'listen-query', error);
 
         if (error.code === 'failed-precondition') {
