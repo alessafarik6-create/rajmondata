@@ -11,6 +11,7 @@ import {
   useCompany,
 } from "@/firebase";
 import { getFirebaseStorage } from "@/firebase/storage";
+import { firebaseConfig } from "@/firebase/config";
 import {
   doc,
   collection,
@@ -285,6 +286,30 @@ function isUsablePhotoRow(p: unknown): p is PhotoDoc & { id: string } {
 }
 
 const MAX_JOB_PHOTO_BYTES = 20 * 1024 * 1024;
+/** Fail-safe: pokud SDK visí (síť/CORS), UI se stejně uvolní. */
+const JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS = 3 * 60 * 1000;
+const JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS = 60 * 1000;
+
+function promiseWithTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => {
+      reject(
+        new Error(
+          `${label}: překročen čas ${Math.round(ms / 1000)} s (zkontrolujte síť, Firebase Storage a pravidla).`
+        )
+      );
+    }, ms);
+    promise
+      .then((v) => {
+        clearTimeout(t);
+        resolve(v);
+      })
+      .catch((e) => {
+        clearTimeout(t);
+        reject(e);
+      });
+  });
+}
 
 function jobPhotoUploadErrorMessage(err: unknown): string {
   if (err instanceof FirebaseError) {
@@ -309,6 +334,40 @@ function jobPhotoUploadErrorMessage(err: unknown): string {
     return err.message;
   }
   return "Fotografii se nepodařilo nahrát.";
+}
+
+function describeStorageUploadFailure(err: unknown): string {
+  const base = jobPhotoUploadErrorMessage(err);
+  const raw =
+    err instanceof Error
+      ? err.message
+      : typeof err === "string"
+        ? err
+        : String(err);
+  const lower = raw.toLowerCase();
+  if (
+    lower.includes("cors") ||
+    lower.includes("access-control") ||
+    lower.includes("access-control-allow-origin")
+  ) {
+    return (
+      base +
+      " Pokud jde o CORS: používá se oficiální Firebase SDK (uploadBytes). Ověřte v Firebase Console, že je zapnuté Storage, " +
+      "že NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET odpovídá bucketu projektu a zkuste vypnout blokující rozšíření prohlížeče."
+    );
+  }
+  if (
+    lower.includes("failed to fetch") ||
+    lower.includes("networkerror") ||
+    lower.includes("network request failed") ||
+    lower.includes("load failed")
+  ) {
+    return (
+      base +
+      " Zkontrolujte připojení k internetu a dostupnost Firebase Storage pro tento projekt."
+    );
+  }
+  return base;
 }
 
 function JobPhotoThumbnail(p: PhotoDoc) {
