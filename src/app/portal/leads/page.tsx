@@ -13,6 +13,7 @@ import {
   Trash2,
   Plus,
   Calendar,
+  ChevronDown,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cs } from "date-fns/locale";
@@ -44,14 +45,6 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -287,6 +280,11 @@ export default function PortalLeadsPage() {
 
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
   const [savingNoteKey, setSavingNoteKey] = useState<string | null>(null);
+  const [expandedLeadKeys, setExpandedLeadKeys] = useState<Record<string, boolean>>({});
+
+  const toggleLeadExpanded = useCallback((key: string) => {
+    setExpandedLeadKeys((prev) => ({ ...prev, [key]: !prev[key] }));
+  }, []);
 
   const loadLeads = useCallback(async () => {
     const cid = (companyId ?? "").trim();
@@ -770,7 +768,8 @@ export default function PortalLeadsPage() {
           <DialogHeader>
             <DialogTitle>Štítky poptávek</DialogTitle>
             <DialogDescription>
-              Vytvářejte vlastní štítky pro firmu. Každou poptávku můžete označit v tabulce níže.
+              Vytvářejte vlastní štítky pro firmu. Každou poptávku můžete označit v rozbaleném detailu u
+              záznamu níže.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
@@ -1070,348 +1069,232 @@ export default function PortalLeadsPage() {
                   Žádné záznamy neodpovídají filtru.
                 </p>
               ) : (
-                <>
-                  <div className="hidden md:block overflow-x-auto">
-                    <Table className="w-full min-w-0 text-sm lg:text-sm">
-                      <TableHeader>
-                        <TableRow className="border-b border-slate-200 bg-slate-100/90 hover:bg-slate-100/90">
-                          <TableHead className="px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
-                            Jméno
-                          </TableHead>
-                          <TableHead className="px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
-                            Telefon
-                          </TableHead>
-                          <TableHead className="hidden px-2 py-3 font-semibold text-slate-900 lg:table-cell lg:px-3 lg:py-3.5">
-                            E-mail
-                          </TableHead>
-                          <TableHead className="px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
-                            Typ
-                          </TableHead>
-                          <TableHead className="min-w-0 px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
-                            Štítek
-                          </TableHead>
-                          <TableHead className="hidden px-2 py-3 font-semibold text-slate-900 lg:table-cell lg:px-3 lg:py-3.5">
-                            Schůzka
-                          </TableHead>
-                          <TableHead className="hidden px-2 py-3 font-semibold text-slate-900 xl:table-cell xl:px-3">
-                            Adresa
-                          </TableHead>
-                          <TableHead className="hidden px-2 py-3 font-semibold text-slate-900 xl:table-cell xl:px-3">
-                            Zpráva
-                          </TableHead>
-                          <TableHead className="min-w-0 px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
-                            Interní pozn.
-                          </TableHead>
-                          <TableHead className="px-2 py-3 text-right font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
-                            Akce
-                          </TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {sortedFilteredRows.map((r, idx) => {
-                          const key = stableImportLeadDocumentId(r);
-                          const ov = overlayByDocId.get(key);
-                          const currentTag = ov?.tagId ?? "";
-                          const nextMt = nextMeetingByLeadKey.get(key);
-                          const received = leadReceivedDate(r, ov);
-                          return (
-                            <TableRow
-                              key={`${key}-${r.id}`}
-                              className={cn(
-                                "border-slate-200",
-                                idx % 2 === 1 ? "bg-slate-50/90" : "bg-white"
-                              )}
-                            >
-                              <TableCell className="align-top px-2 py-3 text-slate-900 md:px-2 lg:px-3 lg:py-4">
-                                <div className="space-y-1">
-                                  <p className="font-medium leading-snug">{r.jmeno || "—"}</p>
-                                  <p className="text-xs text-slate-700">
-                                    <span className="text-slate-500">Přijato:</span>{" "}
-                                    <span className="font-medium tabular-nums text-slate-900">
-                                      {received ? formatReceivedDay(received) : "—"}
-                                    </span>
-                                  </p>
-                                  <p className="break-all text-xs text-slate-600 lg:hidden">
-                                    {r.email || "—"}
-                                  </p>
-                                </div>
-                              </TableCell>
-                              <TableCell className="align-top px-2 py-3 tabular-nums text-slate-800 md:px-2 lg:px-3 lg:py-4">
-                                {r.telefon || "—"}
-                              </TableCell>
-                              <TableCell className="hidden align-top break-all px-2 py-3 text-slate-800 lg:table-cell lg:px-3 lg:py-4">
-                                {r.email || "—"}
-                              </TableCell>
-                              <TableCell className="align-top px-2 py-3 md:px-2 lg:px-3 lg:py-4">
+                <div className="divide-y divide-slate-200">
+                  {sortedFilteredRows.map((r, idx) => {
+                    const key = stableImportLeadDocumentId(r);
+                    const ov = overlayByDocId.get(key);
+                    const currentTag = ov?.tagId ?? "";
+                    const nextMt = nextMeetingByLeadKey.get(key);
+                    const received = leadReceivedDate(r, ov);
+                    const expanded = !!expandedLeadKeys[key];
+                    const dateStr = received ? formatReceivedDay(received) : "—";
+
+                    return (
+                      <div
+                        key={`${key}-${r.id}`}
+                        className={cn(
+                          idx % 2 === 1 ? "bg-slate-50/90" : "bg-white"
+                        )}
+                      >
+                        <div
+                          role="button"
+                          tabIndex={0}
+                          aria-expanded={expanded}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              toggleLeadExpanded(key);
+                            }
+                          }}
+                          onClick={() => toggleLeadExpanded(key)}
+                          className="flex cursor-pointer items-start gap-1.5 px-2 py-2 text-sm transition-colors hover:bg-slate-100/70 sm:gap-2 sm:px-3 sm:py-2 lg:items-center"
+                        >
+                          <ChevronDown
+                            className={cn(
+                              "mt-0.5 h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 lg:mt-0",
+                              expanded && "rotate-180"
+                            )}
+                            aria-hidden
+                          />
+                          <div className="min-w-0 flex-1 space-y-1.5 lg:space-y-0">
+                            <div className="flex flex-col gap-1.5 lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1.15fr)_minmax(0,auto)] lg:items-center lg:gap-x-4">
+                              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
+                                <span className="max-w-full truncate font-medium text-slate-900">
+                                  {r.jmeno || "—"}
+                                </span>
+                                <span className="shrink-0 text-xs tabular-nums text-slate-500">
+                                  {dateStr}
+                                </span>
+                              </div>
+                              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-700 sm:text-sm">
+                                <span className="tabular-nums">{r.telefon || "—"}</span>
+                                <span className="min-w-0 break-all text-slate-600 lg:max-w-none lg:truncate">
+                                  {r.email || "—"}
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
                                 {r.typ?.trim() ? (
-                                  <Badge variant="secondary" className="font-normal">
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-[10px] font-normal leading-none sm:text-xs"
+                                  >
                                     {r.typ}
                                   </Badge>
                                 ) : (
-                                  <span className="text-slate-400">—</span>
+                                  <span className="text-[10px] text-slate-400 sm:text-xs">—</span>
                                 )}
-                              </TableCell>
-                              <TableCell className="align-top px-2 py-3 md:px-2 lg:px-3 lg:py-4">
-                                <div className="max-w-[min(100%,14rem)] space-y-1.5">
-                                  {currentTag && tagById.get(currentTag) ? (
-                                    <LeadTagBadge
-                                      label={tagById.get(currentTag)?.name ?? "Štítek"}
-                                      color={tagById.get(currentTag)?.color}
-                                    />
-                                  ) : (
-                                    <span className="text-xs text-slate-400">Bez štítku</span>
-                                  )}
-                                  <Select
-                                    value={currentTag || "__none__"}
-                                    onValueChange={(v) =>
-                                      void handleTagChange(r, v === "__none__" ? null : v)
-                                    }
-                                  >
-                                    <SelectTrigger className="h-8 text-xs text-left">
-                                      <SelectValue placeholder="Změnit štítek" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      <SelectItem value="__none__">Bez štítku</SelectItem>
-                                      {tags.map((t) => (
-                                        <SelectItem key={t.id} value={t.id!}>
-                                          <span className="flex items-center gap-2">
-                                            <span
-                                              className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/10"
-                                              style={{
-                                                backgroundColor: normalizeLeadTagColor(t.color),
-                                              }}
-                                            />
-                                            {t.name}
-                                          </span>
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                  {currentTag && !tags.some((x) => x.id === currentTag) ? (
-                                    <p className="text-[10px] text-amber-700">
-                                      Štítek byl smazán — vyberte nový.
-                                    </p>
-                                  ) : null}
-                                </div>
-                              </TableCell>
-                              <TableCell className="hidden align-top px-2 py-3 text-xs text-slate-600 lg:table-cell lg:px-3 lg:py-4">
+                                {currentTag && tagById.get(currentTag) ? (
+                                  <LeadTagBadge
+                                    label={tagById.get(currentTag)?.name ?? "Štítek"}
+                                    color={tagById.get(currentTag)?.color}
+                                    className="max-w-[10rem] sm:max-w-[14rem]"
+                                  />
+                                ) : (
+                                  <span className="text-[10px] text-slate-400 sm:text-xs">Bez štítku</span>
+                                )}
                                 {nextMt ? (
-                                  <span className="font-medium text-emerald-800">
+                                  <span
+                                    className="inline-flex items-center gap-0.5 text-[10px] font-medium text-emerald-800 sm:text-xs"
+                                    title="Nejbližší naplánovaná schůzka"
+                                  >
+                                    <Calendar className="h-3 w-3 shrink-0" />
                                     {format(nextMt, "d. M. HH:mm", { locale: cs })}
                                   </span>
-                                ) : (
-                                  <span className="text-slate-400">—</span>
-                                )}
-                              </TableCell>
-                              <TableCell className="hidden align-top whitespace-pre-wrap px-2 py-3 text-slate-700 xl:table-cell xl:max-w-[12rem] xl:px-3 xl:py-4">
-                                {r.adresa || "—"}
-                              </TableCell>
-                              <TableCell className="hidden align-top whitespace-pre-wrap px-2 py-3 text-slate-600 xl:table-cell xl:max-w-[14rem] xl:px-3 xl:py-4">
-                                {r.zprava || "—"}
-                              </TableCell>
-                              <TableCell className="align-top px-2 py-3 md:min-w-[10rem] md:px-2 lg:px-3 lg:py-4">
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+                          <div
+                            className="flex shrink-0 flex-col gap-1 sm:flex-row sm:items-center"
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => e.stopPropagation()}
+                          >
+                            {canMeasure ? (
+                              <Button
+                                asChild
+                                size="sm"
+                                className="h-8 border-0 bg-orange-500 px-2 text-xs text-white hover:bg-orange-600 sm:h-9 sm:px-3"
+                              >
+                                <Link href={buildMeasurementPrefillHref(r)}>
+                                  <Ruler className="mr-1 inline h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                  Zaměřit
+                                </Link>
+                              </Button>
+                            ) : null}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 border-emerald-600/40 px-2 text-xs text-emerald-900 hover:bg-emerald-50 sm:h-9 sm:px-3"
+                              onClick={() => openMeetingDialog(r)}
+                            >
+                              <Calendar className="mr-1 inline h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                              <span className="hidden sm:inline">Naplánovat schůzku</span>
+                              <span className="sm:hidden">Schůzka</span>
+                            </Button>
+                          </div>
+                        </div>
+
+                        {expanded ? (
+                          <div
+                            className="border-b border-slate-200 bg-slate-100/60 px-3 py-3 sm:px-4 sm:py-4"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="mx-auto max-w-4xl space-y-4">
+                              {r.adresa?.trim() ? (
+                                <div className="space-y-1">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                    Adresa
+                                  </p>
+                                  <p className="whitespace-pre-wrap text-sm text-slate-800">{r.adresa}</p>
+                                </div>
+                              ) : null}
+                              {r.zprava?.trim() ? (
+                                <div className="space-y-1">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                    Text poptávky
+                                  </p>
+                                  <p className="whitespace-pre-wrap text-sm text-slate-700">{r.zprava}</p>
+                                </div>
+                              ) : null}
+                              {r.orientacniCenaKc != null && Number.isFinite(r.orientacniCenaKc) ? (
+                                <div className="space-y-1">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                    Orientační cena
+                                  </p>
+                                  <p className="text-sm text-slate-800">
+                                    {new Intl.NumberFormat("cs-CZ").format(r.orientacniCenaKc)} Kč
+                                  </p>
+                                </div>
+                              ) : null}
+                              {nextMt ? (
+                                <div className="flex flex-wrap items-center gap-2 rounded-md border border-emerald-200/80 bg-emerald-50/90 px-3 py-2 text-sm text-emerald-900">
+                                  <Calendar className="h-4 w-4 shrink-0" />
+                                  <span>
+                                    Nejbližší schůzka:{" "}
+                                    <strong className="tabular-nums">
+                                      {format(nextMt, "d. M. yyyy HH:mm", { locale: cs })}
+                                    </strong>
+                                  </span>
+                                </div>
+                              ) : null}
+                              <div className="space-y-2 border-t border-slate-200/80 pt-3">
+                                <Label className="text-xs text-slate-600">Štítek</Label>
+                                <Select
+                                  value={currentTag || "__none__"}
+                                  onValueChange={(v) =>
+                                    void handleTagChange(r, v === "__none__" ? null : v)
+                                  }
+                                >
+                                  <SelectTrigger className="h-9 w-full max-w-md text-left text-sm">
+                                    <SelectValue placeholder="Vyberte štítek" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">Bez štítku</SelectItem>
+                                    {tags.map((t) => (
+                                      <SelectItem key={t.id} value={t.id!}>
+                                        <span className="flex items-center gap-2">
+                                          <span
+                                            className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/10"
+                                            style={{
+                                              backgroundColor: normalizeLeadTagColor(t.color),
+                                            }}
+                                          />
+                                          {t.name}
+                                        </span>
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                                {currentTag && !tags.some((x) => x.id === currentTag) ? (
+                                  <p className="text-xs text-amber-800">
+                                    Štítek byl smazán — vyberte nový.
+                                  </p>
+                                ) : null}
+                              </div>
+                              <div className="space-y-2 border-t border-slate-200/80 pt-3">
+                                <Label className="text-xs text-slate-600">Interní poznámka</Label>
                                 <Textarea
                                   rows={2}
-                                  className="min-h-[52px] resize-y text-xs"
+                                  className="min-h-[4rem] resize-y text-sm"
                                   value={getNoteValue(key, ov)}
                                   onChange={(e) =>
                                     setNoteDraft((d) => ({ ...d, [key]: e.target.value }))
                                   }
-                                  placeholder="Interní poznámka…"
+                                  placeholder="Poznámka jen pro váš tým…"
                                 />
                                 <Button
                                   type="button"
                                   variant="secondary"
                                   size="sm"
-                                  className="mt-1 h-7 text-xs"
+                                  className="h-12 min-h-[44px] sm:h-9 sm:min-h-0"
                                   onClick={() => void saveInternalNote(r)}
                                   disabled={savingNoteKey === key}
                                 >
                                   {savingNoteKey === key ? (
-                                    <Loader2 className="h-3 w-3 animate-spin" />
+                                    <Loader2 className="h-4 w-4 animate-spin" />
                                   ) : (
-                                    "Uložit pozn."
+                                    "Uložit poznámku"
                                   )}
                                 </Button>
-                              </TableCell>
-                              <TableCell className="align-top px-2 py-3 text-right md:px-2 lg:px-3 lg:py-4">
-                                <div className="flex flex-col items-end gap-2">
-                                  {canMeasure ? (
-                                    <Button
-                                      asChild
-                                      size="sm"
-                                      className="min-h-10 w-full min-w-[7.5rem] max-w-[11rem] border-0 bg-orange-500 text-white hover:bg-orange-600"
-                                    >
-                                      <Link href={buildMeasurementPrefillHref(r)}>
-                                        <Ruler className="mr-1 inline h-4 w-4" />
-                                        Zaměřit
-                                      </Link>
-                                    </Button>
-                                  ) : null}
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    className="min-h-10 w-full min-w-[7.5rem] max-w-[11rem] border-emerald-600/40 text-emerald-800 hover:bg-emerald-50"
-                                    onClick={() => openMeetingDialog(r)}
-                                  >
-                                    <Calendar className="mr-1 inline h-4 w-4" />
-                                    Naplánovat schůzku
-                                  </Button>
-                                </div>
-                              </TableCell>
-                            </TableRow>
-                          );
-                        })}
-                      </TableBody>
-                    </Table>
-                  </div>
-
-                  <div className="flex flex-col gap-4 p-3 sm:p-4 md:hidden">
-                    {sortedFilteredRows.map((r, idx) => {
-                      const key = stableImportLeadDocumentId(r);
-                      const ov = overlayByDocId.get(key);
-                      const currentTag = ov?.tagId ?? "";
-                      const nextMt = nextMeetingByLeadKey.get(key);
-                      const received = leadReceivedDate(r, ov);
-                      return (
-                        <Card
-                          key={`${key}-${r.id}`}
-                          className={cn(
-                            "overflow-hidden border-slate-200 shadow-sm",
-                            idx % 2 === 1 ? "bg-slate-50/95" : "bg-white"
-                          )}
-                        >
-                          <CardContent className="space-y-4 p-4 text-base sm:p-5">
-                            <div className="space-y-1">
-                              <p className="text-lg font-semibold leading-snug text-slate-900">
-                                {r.jmeno || "—"}
-                              </p>
-                              <p className="text-sm text-slate-600">
-                                Přijato:{" "}
-                                <span className="font-medium tabular-nums text-slate-900">
-                                  {received ? formatReceivedDay(received) : "—"}
-                                </span>
-                              </p>
+                              </div>
                             </div>
-                            <div className="flex flex-wrap gap-2">
-                              {r.typ?.trim() ? (
-                                <Badge variant="secondary" className="text-sm">
-                                  {r.typ}
-                                </Badge>
-                              ) : null}
-                              {currentTag && tagById.get(currentTag) ? (
-                                <LeadTagBadge
-                                  label={tagById.get(currentTag)?.name ?? "Štítek"}
-                                  color={tagById.get(currentTag)?.color}
-                                />
-                              ) : null}
-                              {nextMt ? (
-                                <Badge className="border border-emerald-200 bg-emerald-100 text-sm text-emerald-900">
-                                  Schůzka {format(nextMt, "d. M. HH:mm", { locale: cs })}
-                                </Badge>
-                              ) : null}
-                            </div>
-                            <div className="grid gap-3 text-base text-slate-800 sm:gap-3.5">
-                              <p>
-                                <span className="text-slate-500">Tel. </span>
-                                <span className="tabular-nums">{r.telefon || "—"}</span>
-                              </p>
-                              <p className="break-words">
-                                <span className="text-slate-500">E-mail </span>
-                                {r.email || "—"}
-                              </p>
-                            </div>
-                            {r.adresa ? (
-                              <p className="whitespace-pre-wrap text-base text-slate-700">{r.adresa}</p>
-                            ) : null}
-                            {r.zprava ? (
-                              <p className="whitespace-pre-wrap border-t border-slate-200 pt-3 text-base text-slate-600">
-                                {r.zprava}
-                              </p>
-                            ) : null}
-                            <div className="space-y-2 border-t border-slate-200 pt-3">
-                              <Label className="text-sm text-slate-600">Štítek</Label>
-                              <Select
-                                value={currentTag || "__none__"}
-                                onValueChange={(v) =>
-                                  void handleTagChange(r, v === "__none__" ? null : v)
-                                }
-                              >
-                                <SelectTrigger className="h-12 min-h-[48px] text-left text-base">
-                                  <SelectValue placeholder="Změnit štítek" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="__none__">Bez štítku</SelectItem>
-                                  {tags.map((t) => (
-                                    <SelectItem key={t.id} value={t.id!}>
-                                      <span className="flex items-center gap-2">
-                                        <span
-                                          className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/10"
-                                          style={{
-                                            backgroundColor: normalizeLeadTagColor(t.color),
-                                          }}
-                                        />
-                                        {t.name}
-                                      </span>
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                            <div className="space-y-2 border-t border-slate-200 pt-3">
-                              <Label className="text-sm text-slate-600">Interní poznámka</Label>
-                              <Textarea
-                                rows={3}
-                                className="min-h-[5rem] text-base"
-                                value={getNoteValue(key, ov)}
-                                onChange={(e) =>
-                                  setNoteDraft((d) => ({ ...d, [key]: e.target.value }))
-                                }
-                                placeholder="Poznámka jen pro váš tým…"
-                              />
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                className="h-12 min-h-[48px] w-full text-base"
-                                onClick={() => void saveInternalNote(r)}
-                                disabled={savingNoteKey === key}
-                              >
-                                {savingNoteKey === key ? (
-                                  <Loader2 className="h-5 w-5 animate-spin" />
-                                ) : (
-                                  "Uložit poznámku"
-                                )}
-                              </Button>
-                            </div>
-                            <div className="flex flex-col gap-3 border-t border-slate-200 pt-4">
-                              {canMeasure ? (
-                                <Button
-                                  asChild
-                                  className="h-12 min-h-[48px] w-full text-base bg-orange-500 hover:bg-orange-600"
-                                >
-                                  <Link href={buildMeasurementPrefillHref(r)}>
-                                    <Ruler className="mr-2 h-5 w-5" />
-                                    Zaměřit
-                                  </Link>
-                                </Button>
-                              ) : null}
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="h-12 min-h-[48px] w-full border-2 border-emerald-600/50 text-base text-emerald-900 hover:bg-emerald-50"
-                                onClick={() => openMeetingDialog(r)}
-                              >
-                                <Calendar className="mr-2 h-5 w-5" />
-                                Naplánovat schůzku
-                              </Button>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      );
-                    })}
-                  </div>
-                </>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </>
           )}
