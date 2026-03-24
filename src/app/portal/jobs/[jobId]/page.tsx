@@ -120,32 +120,20 @@ import {
 import { ref, getDownloadURL, deleteObject, getBlob } from "firebase/storage";
 import { FirebaseError } from "firebase/app";
 import Link from "next/link";
-
-type DimensionColor = "red" | "yellow" | "white" | "black" | "blue";
-
-type DimensionAnnotation = {
-  id: string;
-  type: "dimension";
-  startX: number;
-  startY: number;
-  endX: number;
-  endY: number;
-  label: string;
-  color: DimensionColor;
-};
-
-type NoteAnnotation = {
-  id: string;
-  type: "note";
-  targetX: number;
-  targetY: number;
-  boxX: number;
-  boxY: number;
-  text: string;
-  color: DimensionColor;
-};
-
-type Annotation = DimensionAnnotation | NoteAnnotation;
+import {
+  deserializeJobPhotoAnnotations,
+  readAnnotationPayloadFromPhotoDoc,
+  serializeJobPhotoAnnotations,
+  type DimensionColor,
+  type JobPhotoAnnotation as Annotation,
+  type JobPhotoDimensionAnnotation as DimensionAnnotation,
+  type JobPhotoNoteAnnotation as NoteAnnotation,
+} from "@/lib/job-photo-annotations";
+import {
+  computeNoteLayout,
+  drawNoteAnnotationOnCanvas,
+  noteResizeHandleSize,
+} from "@/lib/job-photo-annotation-canvas";
 
 type AnnotationTool = "dimension" | "note" | "select";
 
@@ -156,7 +144,9 @@ type DragMode =
   | "dim-move"
   | "dim-draw"
   | "note-target"
-  | "note-box";
+  | "note-box"
+  | "note-rect-draw"
+  | "note-resize-br";
 
 type WorkContractForm = {
   templateName: string;
@@ -236,6 +226,9 @@ type PhotoDoc = {
   uploadedBy?: string;
   companyId?: string;
   jobId?: string;
+  /** Editovatelné anotace (normalizované souřadnice), viz job-photo-annotations.ts */
+  annotationData?: unknown;
+  annotationsJson?: string;
 };
 
 function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
@@ -244,6 +237,17 @@ function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
     if (v !== undefined) out[k] = v;
   }
   return out as T;
+}
+
+function getScaleAwareSizes(canvas: HTMLCanvasElement) {
+  const longest = Math.max(canvas.width, canvas.height);
+  const scale = Math.max(1, longest / 1200);
+  const fontSize = Math.round(25 * scale);
+  const lineWidth = Math.max(6, Math.round(6 * scale));
+  const endpointRadius = Math.max(8, Math.round(8 * scale));
+  const arrowLen = Math.max(18, Math.round(18 * scale));
+  const hitRadius = Math.max(18, Math.round(18 * scale));
+  return { fontSize, lineWidth, endpointRadius, arrowLen, hitRadius };
 }
 
 function getPhotoPreviewUrl(p: PhotoDoc): string {
@@ -648,6 +652,15 @@ export default function JobDetailPage() {
   const [dragMode, setDragMode] = useState<DragMode>("none");
   const [dragLastPoint, setDragLastPoint] = useState<{ x: number; y: number } | null>(null);
   const [imageObjectUrl, setImageObjectUrl] = useState<string | null>(null);
+  /** Tažení nové poznámky jako obdélník (x0,y0) → (x1,y1) v souřadnicích canvasu. */
+  const [noteRectDraft, setNoteRectDraft] = useState<{
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  } | null>(null);
+  const noteRectDraftRef = useRef(noteRectDraft);
+  noteRectDraftRef.current = noteRectDraft;
 
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
   const [contractDialogMode, setContractDialogMode] = useState<"view" | "edit">(
@@ -722,6 +735,7 @@ export default function JobDetailPage() {
     setDraftAnnotationId(null);
     setDragMode("none");
     setDragLastPoint(null);
+    setNoteRectDraft(null);
     setImageObjectUrl((prev) => {
       if (prev) {
         try {
@@ -842,17 +856,6 @@ export default function JobDetailPage() {
     const cx = x1 + clamped * dx;
     const cy = y1 + clamped * dy;
     return distance(px, py, cx, cy);
-  };
-
-  const getScaleAwareSizes = (canvas: HTMLCanvasElement) => {
-    const longest = Math.max(canvas.width, canvas.height);
-    const scale = Math.max(1, longest / 1200);
-    const fontSize = Math.round(25 * scale);
-    const lineWidth = Math.max(6, Math.round(6 * scale));
-    const endpointRadius = Math.max(8, Math.round(8 * scale));
-    const arrowLen = Math.max(18, Math.round(18 * scale));
-    const hitRadius = Math.max(18, Math.round(18 * scale));
-    return { fontSize, lineWidth, endpointRadius, arrowLen, hitRadius };
   };
 
   const deriveCustomerDisplayName = (c: any): string => {
@@ -2567,9 +2570,10 @@ export default function JobDetailPage() {
         // Prefer Storage SDK blob -> objectUrl to avoid CORS/tainted canvas.
         let resolvedUrl = await resolveAnnotationImageUrl(annotationSource);
         if (photoToEdit) {
+          /** Základní fotka — ne PNG s anotací (anotace jsou v annotationData). */
           const storagePath =
-            photoToEdit.annotatedStoragePath ||
             photoToEdit.storagePath ||
+            photoToEdit.path ||
             getPhotoStorageFullPath(photoToEdit);
           if (storagePath) {
             const blob = await getBlob(ref(getFirebaseStorage(), storagePath));
@@ -2609,6 +2613,16 @@ export default function JobDetailPage() {
         setImageForCanvas(image);
         setBaseImageLoaded(true);
         setImageError(null);
+
+        const raw = photoToEdit
+          ? readAnnotationPayloadFromPhotoDoc(photoToEdit as Record<string, unknown>)
+          : null;
+        const loaded = deserializeJobPhotoAnnotations(
+          raw,
+          canvas.width,
+          canvas.height
+        );
+        setAnnotations(loaded as Annotation[]);
       } catch (error) {
         if (cancelled) return;
 
@@ -2635,8 +2649,9 @@ export default function JobDetailPage() {
     resolveAnnotationImageUrl,
     loadHtmlImage,
     resetAnnotationState,
+    photoToEdit,
     photoToEdit?.storagePath,
-    photoToEdit?.annotatedStoragePath,
+    photoToEdit?.annotationData,
   ]);
 
   const redrawCanvas = useCallback(() => {
@@ -2719,65 +2734,40 @@ export default function JobDetailPage() {
       }
     };
 
-    const drawNote = (a: NoteAnnotation, isSelected: boolean) => {
-      const stroke = colorToHex(a.color);
-      ctx.lineWidth = isSelected ? lineWidth + 2 : lineWidth;
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.strokeStyle = stroke;
-      ctx.fillStyle = stroke;
-
-      // Arrow from box center to target point
-      const text = (a.text || "").trim();
-      ctx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
-      const paddingX = Math.round(fontSize * 0.6);
-      const paddingY = Math.round(fontSize * 0.45);
-      const maxWidth = Math.max(240, Math.round(canvas.width * 0.35));
-      const clipped = text.length > 140 ? `${text.slice(0, 140)}…` : text;
-      const measured = Math.min(ctx.measureText(clipped).width, maxWidth);
-      const boxWidth = measured + paddingX * 2;
-      const boxHeight = fontSize + paddingY * 2;
-      const boxX = a.boxX;
-      const boxY = a.boxY;
-      const cx = boxX + boxWidth / 2;
-      const cy = boxY + boxHeight / 2;
-
-      ctx.beginPath();
-      ctx.moveTo(cx, cy);
-      ctx.lineTo(a.targetX, a.targetY);
-      ctx.stroke();
-
-      const angle = Math.atan2(a.targetY - cy, a.targetX - cx);
-      drawArrowHead(a.targetX, a.targetY, angle);
-
-      ctx.fillStyle = "rgba(0,0,0,0.75)";
-      ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
-      ctx.lineWidth = 2;
-      ctx.strokeStyle = isSelected ? stroke : "rgba(255,255,255,0.35)";
-      ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
-
-      ctx.fillStyle = "#ffffff";
-      ctx.fillText(clipped, boxX + paddingX, boxY + paddingY + fontSize);
-
-      // Target handle
-      ctx.fillStyle = stroke;
-      ctx.beginPath();
-      ctx.arc(a.targetX, a.targetY, endpointRadius, 0, Math.PI * 2);
-      ctx.fill();
-    };
-
     annotations.forEach((a) => {
       const isSelected = a.id === selectedAnnotationId;
       if (a.type === "dimension") drawDimension(a, isSelected);
-      if (a.type === "note") drawNote(a, isSelected);
+      if (a.type === "note") {
+        drawNoteAnnotationOnCanvas(ctx, canvas, a, isSelected, {
+          fontSize,
+          lineWidth,
+          endpointRadius,
+          arrowLen,
+          colorToHex,
+        });
+      }
     });
+
+    if (noteRectDraft) {
+      const bx = Math.min(noteRectDraft.x0, noteRectDraft.x1);
+      const by = Math.min(noteRectDraft.y0, noteRectDraft.y1);
+      const bw = Math.abs(noteRectDraft.x1 - noteRectDraft.x0);
+      const bh = Math.abs(noteRectDraft.y1 - noteRectDraft.y0);
+      ctx.fillStyle = "rgba(250,204,21,0.18)";
+      ctx.strokeStyle = "rgba(250,204,21,0.95)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.setLineDash([]);
+    }
   }, [
     imageForCanvas,
     baseImageLoaded,
     annotations,
     selectedAnnotationId,
+    noteRectDraft,
     colorToHex,
-    getScaleAwareSizes,
   ]);
 
   useEffect(() => {
@@ -2802,7 +2792,9 @@ export default function JobDetailPage() {
     (x: number, y: number) => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
-      const { hitRadius } = getScaleAwareSizes(canvas);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      const { hitRadius, fontSize, endpointRadius } = getScaleAwareSizes(canvas);
 
       // Top-most first (last drawn)
       for (let i = annotations.length - 1; i >= 0; i--) {
@@ -2826,35 +2818,39 @@ export default function JobDetailPage() {
         }
 
         if (a.type === "note") {
-          // Approximate box for hit test: use current font measurement rules.
-          const { fontSize } = getScaleAwareSizes(canvas);
-          const paddingX = Math.round(fontSize * 0.6);
-          const paddingY = Math.round(fontSize * 0.45);
-          const maxWidth = Math.max(240, Math.round(canvas.width * 0.35));
-          const text = (a.text || "").trim();
-          const clipped = text.length > 140 ? `${text.slice(0, 140)}…` : text;
-          const ctx = canvas.getContext("2d");
-          if (ctx) {
-            ctx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
-            const measured = Math.min(ctx.measureText(clipped).width, maxWidth);
-            const boxW = measured + paddingX * 2;
-            const boxH = fontSize + paddingY * 2;
-            const inBox =
-              x >= a.boxX &&
-              x <= a.boxX + boxW &&
-              y >= a.boxY &&
-              y <= a.boxY + boxH;
-            if (inBox) return { id: a.id, part: "note-box" as const };
+          const layout = computeNoteLayout(a, canvas, ctx, fontSize);
+
+          if (
+            selectedAnnotationId === a.id &&
+            layout.explicitBox &&
+            typeof a.boxWidth === "number" &&
+            typeof a.boxHeight === "number"
+          ) {
+            const h = noteResizeHandleSize(endpointRadius);
+            const hx = layout.boxX + layout.boxW - h;
+            const hy = layout.boxY + layout.boxH - h;
+            if (x >= hx && x <= hx + h && y >= hy && y <= hy + h) {
+              return { id: a.id, part: "note-resize-br" as const };
+            }
           }
 
-          const nearTarget = distance(x, y, a.targetX, a.targetY) <= hitRadius;
-          if (nearTarget) return { id: a.id, part: "note-target" as const };
+          const inBox =
+            x >= layout.boxX &&
+            x <= layout.boxX + layout.boxW &&
+            y >= layout.boxY &&
+            y <= layout.boxY + layout.boxH;
+          if (inBox) return { id: a.id, part: "note-box" as const };
+
+          if (a.showArrow !== false) {
+            const nearTarget = distance(x, y, a.targetX, a.targetY) <= hitRadius;
+            if (nearTarget) return { id: a.id, part: "note-target" as const };
+          }
         }
       }
 
       return null;
     },
-    [annotations]
+    [annotations, selectedAnnotationId]
   );
 
   const updateSelectedColor = useCallback(
@@ -2915,12 +2911,21 @@ export default function JobDetailPage() {
   }, []);
 
   const clearAllAnnotations = useCallback(() => {
+    if (!annotations.length) return;
+    if (
+      !window.confirm(
+        "Opravdu chcete smazat všechny anotace na této fotografii?"
+      )
+    ) {
+      return;
+    }
     setAnnotations([]);
     setSelectedAnnotationId(null);
     setDraftAnnotationId(null);
     setDragMode("none");
     setDragLastPoint(null);
-  }, []);
+    setNoteRectDraft(null);
+  }, [annotations.length]);
 
   const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!imageForCanvas || !baseImageLoaded) return;
@@ -2934,7 +2939,7 @@ export default function JobDetailPage() {
       if (hit) {
         setSelectedAnnotationId(hit.id);
         setDraftAnnotationId(hit.id);
-        setDragMode(hit.part);
+        setDragMode(hit.part as DragMode);
         setDragLastPoint(pt);
         return;
       }
@@ -2962,32 +2967,21 @@ export default function JobDetailPage() {
       if (hit) {
         setSelectedAnnotationId(hit.id);
         setDraftAnnotationId(hit.id);
-        setDragMode(hit.part);
+        setDragMode(hit.part as DragMode);
         setDragLastPoint(pt);
         return;
       }
 
-      const text = (window.prompt("Zadejte poznámku:") || "").trim();
-      if (!text) return;
-      const id = createId();
-      const canvas = canvasRef.current;
-      const { fontSize } = getScaleAwareSizes(canvas);
-      const offset = Math.round(fontSize * 2);
-      const note: NoteAnnotation = {
-        id,
-        type: "note",
-        targetX: pt.x,
-        targetY: pt.y,
-        boxX: Math.max(0, pt.x + offset),
-        boxY: Math.max(0, pt.y - offset),
-        text,
-        color: activeColor,
-      };
-      setAnnotations((prev) => [...prev, note]);
-      setSelectedAnnotationId(id);
-      setDraftAnnotationId(id);
-      setDragMode("note-box");
+      setSelectedAnnotationId(null);
+      setDraftAnnotationId(null);
+      setNoteRectDraft({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y });
+      setDragMode("note-rect-draw");
       setDragLastPoint(pt);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
       return;
     }
 
@@ -2995,7 +2989,7 @@ export default function JobDetailPage() {
     if (hit) {
       setSelectedAnnotationId(hit.id);
       setDraftAnnotationId(hit.id);
-      setDragMode(hit.part);
+      setDragMode(hit.part as DragMode);
       setDragLastPoint(pt);
     } else {
       setSelectedAnnotationId(null);
@@ -3007,13 +3001,24 @@ export default function JobDetailPage() {
 
   const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!imageForCanvas || !baseImageLoaded) return;
-    if (!canvasRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
+
+    if (dragMode === "note-rect-draw") {
+      e.preventDefault();
+      setNoteRectDraft((d) =>
+        d ? { ...d, x1: pt.x, y1: pt.y } : null
+      );
+      return;
+    }
+
     if (dragMode === "none") return;
     if (!draftAnnotationId) return;
     if (!dragLastPoint) return;
     e.preventDefault();
 
-    const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
     const dx = pt.x - dragLastPoint.x;
     const dy = pt.y - dragLastPoint.y;
 
@@ -3044,7 +3049,29 @@ export default function JobDetailPage() {
             return { ...a, targetX: pt.x, targetY: pt.y };
           }
           if (dragMode === "note-box") {
-            return { ...a, boxX: a.boxX + dx, boxY: a.boxY + dy };
+            return {
+              ...a,
+              boxX: a.boxX + dx,
+              boxY: a.boxY + dy,
+              targetX: a.targetX + dx,
+              targetY: a.targetY + dy,
+            };
+          }
+          if (dragMode === "note-resize-br") {
+            const maxW = canvas.width - a.boxX;
+            const maxH = canvas.height - a.boxY;
+            const newW = Math.max(40, Math.min(pt.x - a.boxX, maxW));
+            const newH = Math.max(24, Math.min(pt.y - a.boxY, maxH));
+            const next: NoteAnnotation = {
+              ...a,
+              boxWidth: newW,
+              boxHeight: newH,
+            };
+            if (next.showArrow === false) {
+              next.targetX = a.boxX + newW / 2;
+              next.targetY = a.boxY + newH / 2;
+            }
+            return next;
           }
         }
 
@@ -3057,6 +3084,51 @@ export default function JobDetailPage() {
 
   const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!imageForCanvas || !baseImageLoaded) return;
+
+    if (dragMode === "note-rect-draw") {
+      e.preventDefault();
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      const d = noteRectDraftRef.current;
+      setNoteRectDraft(null);
+      setDragMode("none");
+      setDragLastPoint(null);
+      if (!d) return;
+
+      const bx = Math.min(d.x0, d.x1);
+      const by = Math.min(d.y0, d.y1);
+      const bw = Math.abs(d.x1 - d.x0);
+      const bh = Math.abs(d.y1 - d.y0);
+      if (bw < 8 || bh < 8) return;
+
+      const text = (window.prompt("Text poznámky:", "") || "").trim();
+      if (!text) return;
+
+      const id = createId();
+      const cx = bx + bw / 2;
+      const cy = by + bh / 2;
+      const note: NoteAnnotation = {
+        id,
+        type: "note",
+        boxX: bx,
+        boxY: by,
+        boxWidth: bw,
+        boxHeight: bh,
+        targetX: cx,
+        targetY: cy,
+        text,
+        color: activeColor,
+        showArrow: false,
+      };
+      setAnnotations((prev) => [...prev, note]);
+      setSelectedAnnotationId(id);
+      setDraftAnnotationId(null);
+      return;
+    }
+
     if (!draftAnnotationId) {
       setDragMode("none");
       setDragLastPoint(null);
@@ -3311,39 +3383,13 @@ export default function JobDetailPage() {
         }
 
         if (a.type === "note") {
-          const text = (a.text || "").trim();
-          targetCtx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
-          const paddingX = Math.round(fontSize * 0.6);
-          const paddingY = Math.round(fontSize * 0.45);
-          const maxWidth = Math.max(240, Math.round(canvas.width * 0.35));
-          const clipped = text.length > 140 ? `${text.slice(0, 140)}…` : text;
-          const measured = Math.min(targetCtx.measureText(clipped).width, maxWidth);
-          const boxWidth = measured + paddingX * 2;
-          const boxHeight = fontSize + paddingY * 2;
-          const boxX = a.boxX;
-          const boxY = a.boxY;
-          const cx = boxX + boxWidth / 2;
-          const cy = boxY + boxHeight / 2;
-
-          targetCtx.beginPath();
-          targetCtx.moveTo(cx, cy);
-          targetCtx.lineTo(a.targetX, a.targetY);
-          targetCtx.stroke();
-          const angle = Math.atan2(a.targetY - cy, a.targetX - cx);
-          drawArrowHead(a.targetX, a.targetY, angle, stroke);
-
-          targetCtx.fillStyle = "rgba(0,0,0,0.75)";
-          targetCtx.fillRect(boxX, boxY, boxWidth, boxHeight);
-          targetCtx.lineWidth = 2;
-          targetCtx.strokeStyle = stroke;
-          targetCtx.strokeRect(boxX, boxY, boxWidth, boxHeight);
-          targetCtx.fillStyle = "#ffffff";
-          targetCtx.fillText(clipped, boxX + paddingX, boxY + paddingY + fontSize);
-
-          targetCtx.fillStyle = stroke;
-          targetCtx.beginPath();
-          targetCtx.arc(a.targetX, a.targetY, endpointRadius, 0, Math.PI * 2);
-          targetCtx.fill();
+          drawNoteAnnotationOnCanvas(targetCtx, canvas, a, false, {
+            fontSize,
+            lineWidth,
+            endpointRadius,
+            arrowLen,
+            colorToHex,
+          });
         }
       });
     };
@@ -3360,6 +3406,12 @@ export default function JobDetailPage() {
 
     try {
       const blob = await canvasToBlob(exportCanvas);
+
+      const annotationData = serializeJobPhotoAnnotations(
+        annotations,
+        exportCanvas.width,
+        exportCanvas.height
+      );
 
       const { storagePath: annotatedPath, downloadURL: annotatedUrl } =
         await uploadJobPhotoBlobViaFirebaseSdk(
@@ -3383,6 +3435,7 @@ export default function JobDetailPage() {
           originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
           annotatedImageUrl: annotatedUrl,
           annotatedStoragePath: annotatedPath,
+          annotationData,
           updatedAt: serverTimestamp(),
         }
       );
@@ -3460,9 +3513,11 @@ export default function JobDetailPage() {
   };
 
   const canvasCursor = useMemo(() => {
+    if (dragMode === "note-rect-draw") return "crosshair";
+    if (dragMode === "note-resize-br") return "nwse-resize";
     if (dragMode !== "none") return "grabbing";
     if (activeTool === "dimension") return "crosshair";
-    if (activeTool === "note") return "copy";
+    if (activeTool === "note") return "crosshair";
     return "default";
   }, [activeTool, dragMode]);
 
@@ -4965,16 +5020,18 @@ export default function JobDetailPage() {
           }
         }}
       >
-        <DialogContent className="max-w-[90vw] w-[95vw] md:w-[90vw] max-h-[90vh] h-[90vh] flex flex-col">
-          <DialogHeader>
+        <DialogContent className="max-w-[min(98vw,1680px)] w-[min(98vw,1680px)] p-4 sm:p-6 max-h-[min(96vh,100dvh)] h-[min(96vh,100dvh)] flex flex-col gap-0">
+          <DialogHeader className="shrink-0">
             <DialogTitle>Anotace fotografie</DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 flex flex-col space-y-4 overflow-hidden">
-            <div className="flex flex-col gap-2">
+          <div className="flex-1 flex flex-col min-h-0 space-y-3 sm:space-y-4 overflow-hidden">
+            <div className="flex flex-col gap-2 shrink-0">
               <p className="text-sm text-muted-foreground">
-                Režimy: kóty (tažením), poznámka (klepnutím vložíte šipku na bod
-                + text), výběr (úpravy/přesun). Vše funguje i dotykem.
+                Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: táhněte
+                průhledný obdélník a doplňte text (bez šipky). Výběr: klikněte na
+                kótu nebo poznámku — přesun, úprava textu, konce čáry nebo cíle
+                šipky, změna velikosti poznámky tahem za roh. Dotyk i myš.
               </p>
 
               <div className="flex flex-wrap items-center gap-2">
@@ -5061,13 +5118,19 @@ export default function JobDetailPage() {
               </div>
             </div>
 
-            <div className="relative flex-1 overflow-auto border rounded-md bg-black/80 flex items-center justify-center">
+            <div className="relative flex-1 min-h-0 overflow-hidden border rounded-md bg-black/80 flex items-center justify-center p-1 sm:p-2">
               <canvas
                 ref={setCanvasNode}
                 onPointerDown={handleCanvasPointerDown}
                 onPointerMove={handleCanvasPointerMove}
                 onPointerUp={handleCanvasPointerUp}
-                className={`max-w-full max-h-full touch-none ${
+                onPointerCancel={() => {
+                  setDragMode("none");
+                  setDragLastPoint(null);
+                  setNoteRectDraft(null);
+                  setDraftAnnotationId(null);
+                }}
+                className={`max-w-[min(94vw,1560px)] max-h-[min(82svh,920px)] w-auto h-auto object-contain touch-none ${
                   baseImageLoaded ? "opacity-100" : "opacity-0"
                 }`}
                 style={{ cursor: canvasCursor }}
