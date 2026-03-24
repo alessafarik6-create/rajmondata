@@ -336,14 +336,20 @@ service cloud.firestore {
           request.resource.data.name is string &&
           request.resource.data.name.size() > 0 &&
           request.resource.data.name.size() <= 120 &&
-          request.resource.data.sortOrder is number;
+          request.resource.data.sortOrder is number &&
+          (!('color' in request.resource.data) ||
+            (request.resource.data.color is string &&
+              request.resource.data.color.matches('^#[0-9A-Fa-f]{6}$')));
         allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
           resource.data.companyId == companyId &&
           request.resource.data.companyId == companyId &&
           request.resource.data.name is string &&
           request.resource.data.name.size() > 0 &&
           request.resource.data.name.size() <= 120 &&
-          request.resource.data.sortOrder is number;
+          request.resource.data.sortOrder is number &&
+          (!('color' in request.resource.data) ||
+            (request.resource.data.color is string &&
+              request.resource.data.color.matches('^#[0-9A-Fa-f]{6}$')));
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

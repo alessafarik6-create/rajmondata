@@ -74,6 +74,11 @@ import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
 import { cn } from "@/lib/utils";
+import {
+  LEAD_TAG_COLOR_PRESETS,
+  contrastTextForBg,
+  normalizeLeadTagColor,
+} from "@/lib/lead-tag-colors";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -82,7 +87,32 @@ type LeadTagRow = {
   name?: string;
   sortOrder?: number;
   companyId?: string;
+  color?: string;
 };
+
+function LeadTagBadge({
+  label,
+  color,
+  className,
+}: {
+  label: string;
+  color?: string;
+  className?: string;
+}) {
+  const bg = normalizeLeadTagColor(color);
+  const fg = contrastTextForBg(bg);
+  return (
+    <span
+      className={cn(
+        "inline-flex max-w-full truncate rounded-md border border-black/10 px-2 py-0.5 text-xs font-medium",
+        className
+      )}
+      style={{ backgroundColor: bg, color: fg }}
+    >
+      {label}
+    </span>
+  );
+}
 
 type LeadOverlayRow = {
   id?: string;
@@ -160,6 +190,14 @@ export default function PortalLeadsPage() {
       .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0));
   }, [tagsRaw]);
 
+  const tagById = useMemo(() => {
+    const m = new Map<string, LeadTagRow>();
+    for (const t of tags) {
+      if (t.id) m.set(t.id, t);
+    }
+    return m;
+  }, [tags]);
+
   const overlayByDocId = useMemo(() => {
     const m = new Map<string, LeadOverlayRow>();
     const list = Array.isArray(overlaysRaw) ? overlaysRaw : [];
@@ -198,7 +236,12 @@ export default function PortalLeadsPage() {
 
   const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
   const [newTagName, setNewTagName] = useState("");
-  const [editingTag, setEditingTag] = useState<{ id: string; name: string } | null>(null);
+  const [newTagColor, setNewTagColor] = useState("#0ea5e9");
+  const [editingTag, setEditingTag] = useState<{
+    id: string;
+    name: string;
+    color: string;
+  } | null>(null);
   const [savingTag, setSavingTag] = useState(false);
 
   const [meetingLead, setMeetingLead] = useState<LeadImportRow | null>(null);
@@ -368,6 +411,7 @@ export default function PortalLeadsPage() {
     try {
       await updateDoc(doc(firestore, "companies", companyId, "lead_tags", editingTag.id), {
         name,
+        color: normalizeLeadTagColor(editingTag.color),
         updatedAt: serverTimestamp(),
       });
       setEditingTag(null);
@@ -432,6 +476,7 @@ export default function PortalLeadsPage() {
         place: meetingPlace.trim(),
         note: meetingNote.trim(),
         scheduledAt: Timestamp.fromDate(d),
+        calendarEventType: "lead_meeting",
         createdBy: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -621,16 +666,46 @@ export default function PortalLeadsPage() {
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
-            <div className="flex gap-2">
-              <Input
-                placeholder="Název nového štítku"
-                value={newTagName}
-                onChange={(e) => setNewTagName(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && void handleCreateTag()}
-              />
-              <Button type="button" onClick={() => void handleCreateTag()} disabled={savingTag || !newTagName.trim()}>
-                <Plus className="h-4 w-4" />
-              </Button>
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <Input
+                  placeholder="Název nového štítku"
+                  value={newTagName}
+                  onChange={(e) => setNewTagName(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && void handleCreateTag()}
+                />
+                <Button type="button" onClick={() => void handleCreateTag()} disabled={savingTag || !newTagName.trim()}>
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {LEAD_TAG_COLOR_PRESETS.map((p) => (
+                  <button
+                    key={p.hex}
+                    type="button"
+                    title={p.label}
+                    className={cn(
+                      "h-7 w-7 rounded-full border-2 border-white shadow-sm transition ring-offset-2 hover:opacity-80",
+                      normalizeLeadTagColor(newTagColor).toLowerCase() === p.hex.toLowerCase()
+                        ? "ring-2 ring-slate-800 ring-offset-2"
+                        : "ring-0"
+                    )}
+                    style={{ backgroundColor: p.hex }}
+                    onClick={() => setNewTagColor(p.hex)}
+                  />
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Label className="text-xs text-slate-600">Vlastní barva</Label>
+                <input
+                  type="color"
+                  value={newTagColor}
+                  onChange={(e) => setNewTagColor(e.target.value)}
+                  className="h-8 w-12 cursor-pointer rounded border border-slate-300 bg-white p-0"
+                  aria-label="Vlastní barva štítku"
+                />
+                <LeadTagBadge label="Náhled" color={newTagColor} />
+              </div>
             </div>
             {tagsLoading ? (
               <div className="flex justify-center py-6">
@@ -645,14 +720,22 @@ export default function PortalLeadsPage() {
                     key={t.id}
                     className="flex items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-slate-50"
                   >
-                    <span className="font-medium truncate">{t.name || t.id}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <LeadTagBadge label={t.name || t.id || ""} color={t.color} />
+                    </span>
                     <span className="flex shrink-0 gap-1">
                       <Button
                         type="button"
                         size="icon"
                         variant="ghost"
                         className="h-9 w-9"
-                        onClick={() => setEditingTag({ id: t.id!, name: t.name || "" })}
+                        onClick={() =>
+                          setEditingTag({
+                            id: t.id!,
+                            name: t.name || "",
+                            color: normalizeLeadTagColor(t.color),
+                          })
+                        }
                       >
                         <Pencil className="h-4 w-4" />
                       </Button>
@@ -682,12 +765,57 @@ export default function PortalLeadsPage() {
       <Dialog open={!!editingTag} onOpenChange={(o) => !o && setEditingTag(null)}>
         <DialogContent className="sm:max-w-sm bg-white border-slate-200">
           <DialogHeader>
-            <DialogTitle>Přejmenovat štítek</DialogTitle>
+            <DialogTitle>Upravit štítek</DialogTitle>
           </DialogHeader>
-          <Input
-            value={editingTag?.name ?? ""}
-            onChange={(e) => editingTag && setEditingTag({ ...editingTag, name: e.target.value })}
-          />
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="edit-tag-name">Název</Label>
+              <Input
+                id="edit-tag-name"
+                value={editingTag?.name ?? ""}
+                onChange={(e) =>
+                  editingTag && setEditingTag({ ...editingTag, name: e.target.value })
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-xs text-slate-600">Barva</Label>
+              <div className="flex flex-wrap gap-1.5">
+                {LEAD_TAG_COLOR_PRESETS.map((p) => (
+                  <button
+                    key={p.hex}
+                    type="button"
+                    title={p.label}
+                    className={cn(
+                      "h-7 w-7 rounded-full border-2 border-white shadow-sm transition ring-offset-2 hover:opacity-80",
+                      editingTag &&
+                        normalizeLeadTagColor(editingTag.color).toLowerCase() === p.hex.toLowerCase()
+                        ? "ring-2 ring-slate-800 ring-offset-2"
+                        : "ring-0"
+                    )}
+                    style={{ backgroundColor: p.hex }}
+                    onClick={() =>
+                      editingTag && setEditingTag({ ...editingTag, color: p.hex })
+                    }
+                  />
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="color"
+                  value={editingTag?.color ?? "#64748b"}
+                  onChange={(e) =>
+                    editingTag && setEditingTag({ ...editingTag, color: e.target.value })
+                  }
+                  className="h-8 w-12 cursor-pointer rounded border border-slate-300 bg-white p-0"
+                  aria-label="Vlastní barva štítku"
+                />
+                {editingTag ? (
+                  <LeadTagBadge label={editingTag.name.trim() || "Náhled"} color={editingTag.color} />
+                ) : null}
+              </div>
+            </div>
+          </div>
           <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={() => setEditingTag(null)}>
               Zrušit
@@ -883,27 +1011,47 @@ export default function PortalLeadsPage() {
                                 {r.adresa || "—"}
                               </TableCell>
                               <TableCell className="align-top min-w-[150px]">
-                                <Select
-                                  value={currentTag || "__none__"}
-                                  onValueChange={(v) =>
-                                    void handleTagChange(r, v === "__none__" ? null : v)
-                                  }
-                                >
-                                  <SelectTrigger className="h-9 text-left">
-                                    <SelectValue placeholder="Vyberte štítek" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="__none__">Bez štítku</SelectItem>
-                                    {tags.map((t) => (
-                                      <SelectItem key={t.id} value={t.id!}>
-                                        {t.name}
-                                      </SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                {currentTag && !tags.some((x) => x.id === currentTag) ? (
-                                  <p className="text-[10px] text-amber-700 mt-1">Štítek byl smazán — vyberte nový.</p>
-                                ) : null}
+                                <div className="space-y-1.5">
+                                  {currentTag && tagById.get(currentTag) ? (
+                                    <LeadTagBadge
+                                      label={tagById.get(currentTag)?.name ?? "Štítek"}
+                                      color={tagById.get(currentTag)?.color}
+                                    />
+                                  ) : (
+                                    <span className="text-xs text-slate-400">Bez štítku</span>
+                                  )}
+                                  <Select
+                                    value={currentTag || "__none__"}
+                                    onValueChange={(v) =>
+                                      void handleTagChange(r, v === "__none__" ? null : v)
+                                    }
+                                  >
+                                    <SelectTrigger className="h-8 text-xs text-left">
+                                      <SelectValue placeholder="Změnit štítek" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="__none__">Bez štítku</SelectItem>
+                                      {tags.map((t) => (
+                                        <SelectItem key={t.id} value={t.id!}>
+                                          <span className="flex items-center gap-2">
+                                            <span
+                                              className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/10"
+                                              style={{
+                                                backgroundColor: normalizeLeadTagColor(t.color),
+                                              }}
+                                            />
+                                            {t.name}
+                                          </span>
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {currentTag && !tags.some((x) => x.id === currentTag) ? (
+                                    <p className="text-[10px] text-amber-700">
+                                      Štítek byl smazán — vyberte nový.
+                                    </p>
+                                  ) : null}
+                                </div>
                               </TableCell>
                               <TableCell className="align-top text-xs text-slate-600 hidden lg:table-cell max-w-[130px]">
                                 {nextMt ? (
@@ -1027,14 +1175,22 @@ export default function PortalLeadsPage() {
                               value={currentTag || "__none__"}
                               onValueChange={(v) => void handleTagChange(r, v === "__none__" ? null : v)}
                             >
-                              <SelectTrigger>
-                                <SelectValue placeholder="Vyberte štítek" />
+                              <SelectTrigger className="h-9 text-left">
+                                <SelectValue placeholder="Změnit štítek" />
                               </SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="__none__">Bez štítku</SelectItem>
                                 {tags.map((t) => (
                                   <SelectItem key={t.id} value={t.id!}>
-                                    {t.name}
+                                    <span className="flex items-center gap-2">
+                                      <span
+                                        className="h-2.5 w-2.5 shrink-0 rounded-full border border-black/10"
+                                        style={{
+                                          backgroundColor: normalizeLeadTagColor(t.color),
+                                        }}
+                                      />
+                                      {t.name}
+                                    </span>
                                   </SelectItem>
                                 ))}
                               </SelectContent>

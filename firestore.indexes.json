@@ -1,6 +1,16 @@
 {
   "indexes": [
     {
+      "collectionGroup": "lead_meetings",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "scheduledAt", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "measurements",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "scheduledAt", "order": "ASCENDING" }]
+    },
+    {
       "collectionGroup": "attendance",
       "queryScope": "COLLECTION",
       "fields": [
