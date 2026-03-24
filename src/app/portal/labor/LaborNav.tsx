@@ -8,10 +8,16 @@ import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 
 const NAV = [
-  { href: "/portal/labor/dochazka", label: "Docházka", segment: "dochazka" as const },
-  { href: "/portal/labor/vykazy", label: "Výkazy práce", segment: "vykazy" as const },
-  { href: "/portal/labor/vyplaty", label: "Výplaty", segment: "vyplaty" as const },
-  { href: "/portal/labor/tarify", label: "Tarify", segment: "tarify" as const },
+  {
+    href: "/portal/labor/dochazka/prehled",
+    label: "Přehled docházky",
+    segment: "dochazka-prehled" as const,
+    privilegedOnly: true as const,
+  },
+  { href: "/portal/labor/dochazka", label: "Docházka", segment: "dochazka" as const, privilegedOnly: false as const },
+  { href: "/portal/labor/vykazy", label: "Výkazy práce", segment: "vykazy" as const, privilegedOnly: false as const },
+  { href: "/portal/labor/vyplaty", label: "Výplaty", segment: "vyplaty" as const, privilegedOnly: false as const },
+  { href: "/portal/labor/tarify", label: "Tarify", segment: "tarify" as const, privilegedOnly: false as const },
 ];
 
 export function LaborNav() {
@@ -37,7 +43,7 @@ export function LaborNav() {
 
   const items = useMemo(() => {
     if (isLaborPrivileged) return NAV;
-    return NAV.filter((n) => n.segment === "dochazka");
+    return NAV.filter((n) => !n.privilegedOnly);
   }, [isLaborPrivileged]);
 
   return (
@@ -54,7 +60,7 @@ export function LaborNav() {
               : pathname.startsWith(`/portal/labor/${item.segment}`);
         return (
           <Link
-            key={item.segment}
+            key={item.href}
             href={item.href}
             className={cn(
               "rounded-t-md px-3 py-2.5 text-sm font-medium transition-colors min-h-[44px] sm:min-h-0 inline-flex items-center",
