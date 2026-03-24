@@ -10,7 +10,7 @@ import {
   useCollection,
   useCompany,
 } from "@/firebase";
-import { storage } from "@/firebase/storage";
+import { getFirebaseStorage } from "@/firebase/storage";
 import {
   doc,
   collection,
@@ -731,10 +731,10 @@ export default function JobDetailPage() {
 
     if (value.startsWith("gs://")) {
       const withoutBucket = value.replace(/^gs:\/\/[^/]+\//, "");
-      return await getDownloadURL(ref(storage, withoutBucket));
+      return await getDownloadURL(ref(getFirebaseStorage(), withoutBucket));
     }
 
-    return await getDownloadURL(ref(storage, value));
+    return await getDownloadURL(ref(getFirebaseStorage(), value));
   }, []);
 
   const colorToHex = (c: DimensionColor) => {
@@ -2506,7 +2506,7 @@ export default function JobDetailPage() {
             photoToEdit.storagePath ||
             getPhotoStorageFullPath(photoToEdit);
           if (storagePath) {
-            const blob = await getBlob(ref(storage, storagePath));
+            const blob = await getBlob(ref(getFirebaseStorage(), storagePath));
             const objectUrl = URL.createObjectURL(blob);
             setImageObjectUrl(objectUrl);
             resolvedUrl = objectUrl;
@@ -3088,7 +3088,7 @@ export default function JobDetailPage() {
     try {
       let storageRef: ReturnType<typeof ref>;
       try {
-        storageRef = ref(storage, storagePath);
+        storageRef = ref(getFirebaseStorage(), storagePath);
       } catch (refErr) {
         throw new Error(
           `Nelze vytvořit odkaz v úložišti: ${
@@ -3342,7 +3342,7 @@ export default function JobDetailPage() {
         `job-photos/${companyId}/${jobId}/${photoToEdit.id}`
       }-annotated.png`;
 
-      const annotatedRef = ref(storage, annotatedPath);
+      const annotatedRef = ref(getFirebaseStorage(), annotatedPath);
       await uploadBytes(annotatedRef, blob);
       const annotatedUrl = await getDownloadURL(annotatedRef);
 
@@ -3409,13 +3409,13 @@ export default function JobDetailPage() {
           "";
         if (baseStoragePath) {
           try {
-            await deleteObject(ref(storage, baseStoragePath));
+            await deleteObject(ref(getFirebaseStorage(), baseStoragePath));
           } catch {}
         }
 
         if (data.annotatedStoragePath) {
           try {
-            await deleteObject(ref(storage, data.annotatedStoragePath));
+            await deleteObject(ref(getFirebaseStorage(), data.annotatedStoragePath));
           } catch {}
         }
 

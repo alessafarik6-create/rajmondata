@@ -5,24 +5,18 @@ import { initializeFirebase } from "./init";
 
 let cached: FirebaseStorage | null = null;
 
-function getStorageInstance(): FirebaseStorage {
+/**
+ * Vrací skutečnou instanci Firebase Storage (stejná jako `getStorage(app)`).
+ *
+ * Důležité: nepoužívejte Proxy ani „falešný“ objekt — funkce `ref()` z
+ * `firebase/storage` uvnitř SDK očekává pravý `FirebaseStorage`. S Proxy
+ * může SDK narazit na `undefined` a spadnout na `Cannot read properties of
+ * undefined (reading 'path')` při vytváření reference.
+ */
+export function getFirebaseStorage(): FirebaseStorage {
   if (!cached) {
     const { firebaseApp } = initializeFirebase();
     cached = getStorage(firebaseApp);
   }
   return cached;
 }
-
-/**
- * Lazily initialized so importing this module does not run before env is valid
- * (same timing as FirebaseClientProvider).
- */
-export const storage = new Proxy({} as FirebaseStorage, {
-  get(_target, prop, receiver) {
-    const inst = getStorageInstance();
-    const value = Reflect.get(inst as object, prop, receiver);
-    return typeof value === "function"
-      ? (value as (...args: unknown[]) => unknown).bind(inst)
-      : value;
-  },
-});
