@@ -71,6 +71,8 @@ export type EmployeeLite = {
   id: string;
   displayName: string;
   hourlyRate: number;
+  /** Firebase Auth UID — docházka z webu často ukládá `employeeId` = UID místo id dokumentu zaměstnance. */
+  authUserId?: string | null;
 };
 
 function parseHourlyRate(raw: unknown): number {
@@ -90,13 +92,60 @@ export function buildEmployeeMap(
     const fallback = String(row?.name ?? row?.email ?? id).trim();
     const displayName =
       [first, last].filter(Boolean).join(" ").trim() || fallback;
+    const authRaw = row?.authUserId;
+    const authUserId =
+      typeof authRaw === "string" && authRaw.trim() ? authRaw.trim() : null;
     m.set(id, {
       id,
       displayName,
       hourlyRate: parseHourlyRate(row?.hourlyRate),
+      authUserId,
     });
   }
   return m;
+}
+
+/** Porovnání záznamu docházky s id zaměstnance (dokument) nebo s jeho Auth UID. */
+export function attendanceRowMatchesEmployee(
+  r: AttendanceRow,
+  employeeDocId: string,
+  authUserId?: string | null
+): boolean {
+  const rid = String(r.employeeId ?? "");
+  if (rid === employeeDocId) return true;
+  if (authUserId && rid === authUserId) return true;
+  return false;
+}
+
+/** Stejné porovnání pro záznamy s polem `employeeId` (výkazy, work_time_blocks). */
+export function firestoreEmployeeIdMatches(
+  recordEmployeeId: unknown,
+  emp: EmployeeLite
+): boolean {
+  const rid = String(recordEmployeeId ?? "");
+  if (rid === emp.id) return true;
+  if (emp.authUserId && rid === emp.authUserId) return true;
+  return false;
+}
+
+/**
+ * Orientační výdělek: přednostně odpracované hodiny × hodinová sazba.
+ * Pokud nejsou hodiny ani sazba, fallback na součet odhadů z čekajících výkazů / bloků.
+ */
+export function computeOrientacniVydelekKc(params: {
+  odpracovaneHodiny: number;
+  hourlyRate: number;
+  pendingDailyEst: number;
+  pendingBlockEst: number;
+}): number {
+  const rate = Number(params.hourlyRate);
+  const h = Number(params.odpracovaneHodiny);
+  const pending =
+    Math.round((params.pendingDailyEst + params.pendingBlockEst) * 100) / 100;
+  if (Number.isFinite(rate) && rate > 0 && Number.isFinite(h) && h > 0) {
+    return Math.round(h * rate * 100) / 100;
+  }
+  return Math.max(0, pending);
 }
 
 /** Schválené výkazy (denní modul). */
@@ -196,11 +245,12 @@ export type OverviewTableRow = {
 
 function countAttendanceBlocksForDay(
   rows: AttendanceRow[],
-  employeeId: string,
-  dayIso: string
+  employeeDocId: string,
+  dayIso: string,
+  authUserId?: string | null
 ): number {
   return rows.filter((r) => {
-    if (String(r.employeeId ?? "") !== employeeId) return false;
+    if (!attendanceRowMatchesEmployee(r, employeeDocId, authUserId)) return false;
     const ts = r.timestamp;
     let t: Date | null = null;
     if (ts instanceof Date) t = ts;
@@ -249,26 +299,38 @@ export function buildOverviewRows(params: {
     );
   };
 
-  const moneyPending = (eid: string) => {
+  const computeOrientacniForEmployee = (eid: string, odpracovaneHodiny: number) => {
     const em = employees.get(eid);
     const rate = em?.hourlyRate ?? 0;
-    return (
-      sumPendingDailyReportEstimatesInRange(dailyReports, eid, rate, range) +
-      sumPendingBlocksMoneyInRange(workBlocks, eid, rate, range)
+    const pendD = sumPendingDailyReportEstimatesInRange(
+      dailyReports,
+      eid,
+      rate,
+      range
     );
+    const pendB = sumPendingBlocksMoneyInRange(workBlocks, eid, rate, range);
+    return computeOrientacniVydelekKc({
+      odpracovaneHodiny,
+      hourlyRate: rate,
+      pendingDailyEst: pendD,
+      pendingBlockEst: pendB,
+    });
   };
 
   if (mode === "day") {
     const dayIso = format(range.start, "yyyy-MM-dd");
     for (const eid of empIds) {
-      const name = employees.get(eid)?.displayName ?? eid;
-      const dayRows = attendanceRaw.filter(
-        (r) => String(r.employeeId ?? "") === eid
+      const emp = employees.get(eid);
+      const name = emp?.displayName ?? eid;
+      const auth = emp?.authUserId;
+      const dayRows = attendanceRaw.filter((r) =>
+        attendanceRowMatchesEmployee(r, eid, auth)
       );
-      const sums = summarizeAttendanceByDay(dayRows, { employeeId: eid });
+      const sums = summarizeAttendanceByDay(dayRows);
       const one = sums.find((s) => s.date === dayIso);
       const h = one?.hoursWorked ?? null;
-      const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dayIso);
+      const hoursNum = h != null && Number.isFinite(h) ? h : 0;
+      const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dayIso, auth);
       rows.push({
         key: `${eid}-${dayIso}`,
         datumLabel: format(range.start, "EEEE d. M. yyyy", { locale: cs }),
@@ -279,7 +341,7 @@ export function buildOverviewRows(params: {
         odpracovanoH: h,
         bloku: bloku,
         schvalenoKc: moneyApproved(eid),
-        orientacniKc: moneyPending(eid),
+        orientacniKc: computeOrientacniForEmployee(eid, hoursNum),
       });
     }
     return rows;
@@ -287,17 +349,19 @@ export function buildOverviewRows(params: {
 
   /** Souhrn týden / měsíc — jeden řádek na zaměstnance. */
   for (const eid of empIds) {
-    const name = employees.get(eid)?.displayName ?? eid;
-    const dayRows = attendanceRaw.filter(
-      (r) => String(r.employeeId ?? "") === eid
+    const emp = employees.get(eid);
+    const name = emp?.displayName ?? eid;
+    const auth = emp?.authUserId;
+    const dayRows = attendanceRaw.filter((r) =>
+      attendanceRowMatchesEmployee(r, eid, auth)
     );
-    const summaries = summarizeAttendanceByDay(dayRows, { employeeId: eid });
+    const summaries = summarizeAttendanceByDay(dayRows);
     let totalH = 0;
     let totalBlocks = 0;
     for (const s of summaries) {
       if (!dateInRange(s.date, range)) continue;
       totalH += s.hoursWorked ?? 0;
-      totalBlocks += countAttendanceBlocksForDay(attendanceRaw, eid, s.date);
+      totalBlocks += countAttendanceBlocksForDay(attendanceRaw, eid, s.date, auth);
     }
     totalH = Math.round(totalH * 100) / 100;
     const datumLabel =
@@ -315,7 +379,7 @@ export function buildOverviewRows(params: {
       odpracovanoH: totalH > 0 ? totalH : null,
       bloku: totalBlocks,
       schvalenoKc: moneyApproved(eid),
-      orientacniKc: moneyPending(eid),
+      orientacniKc: computeOrientacniForEmployee(eid, totalH),
     });
   }
 

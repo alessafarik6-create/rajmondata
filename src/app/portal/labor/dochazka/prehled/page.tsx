@@ -42,9 +42,11 @@ import { useToast } from "@/hooks/use-toast";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import type { WorkTimeBlockMoney } from "@/lib/employee-money";
 import {
+  attendanceRowMatchesEmployee,
   buildEmployeeMap,
   buildOverviewRows,
   computePeriodRange,
+  firestoreEmployeeIdMatches,
   formatKc,
   totalsFromRows,
   type PeriodMode,
@@ -120,65 +122,39 @@ export default function AttendanceOverviewPage() {
     [employeesRaw]
   );
 
+  /** Vždy jen podle data — filtr zaměstnance je v klientu (employeeId může být UID nebo id dokumentu). */
   const attendanceQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     const base = collection(firestore, "companies", companyId, "attendance");
-    if (employeeFilter !== ALL) {
-      return query(
-        base,
-        where("employeeId", "==", employeeFilter),
-        where("date", ">=", rangeStr.start),
-        where("date", "<=", rangeStr.end),
-        limit(8000)
-      );
-    }
     return query(
       base,
       where("date", ">=", rangeStr.start),
       where("date", "<=", rangeStr.end),
       limit(8000)
     );
-  }, [firestore, companyId, rangeStr.start, rangeStr.end, employeeFilter]);
+  }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
   const dailyReportsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     const base = collection(firestore, "companies", companyId, "daily_work_reports");
-    if (employeeFilter !== ALL) {
-      return query(
-        base,
-        where("employeeId", "==", employeeFilter),
-        where("date", ">=", rangeStr.start),
-        where("date", "<=", rangeStr.end),
-        limit(8000)
-      );
-    }
     return query(
       base,
       where("date", ">=", rangeStr.start),
       where("date", "<=", rangeStr.end),
       limit(8000)
     );
-  }, [firestore, companyId, rangeStr.start, rangeStr.end, employeeFilter]);
+  }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
   const workBlocksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     const base = collection(firestore, "companies", companyId, "work_time_blocks");
-    if (employeeFilter !== ALL) {
-      return query(
-        base,
-        where("employeeId", "==", employeeFilter),
-        where("date", ">=", rangeStr.start),
-        where("date", "<=", rangeStr.end),
-        limit(8000)
-      );
-    }
     return query(
       base,
       where("date", ">=", rangeStr.start),
       where("date", "<=", rangeStr.end),
       limit(8000)
     );
-  }, [firestore, companyId, rangeStr.start, rangeStr.end, employeeFilter]);
+  }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
   const { data: attendanceData = [], isLoading: attLoading } =
     useCollection(attendanceQuery);
@@ -207,25 +183,68 @@ export default function AttendanceOverviewPage() {
     [workBlocksData]
   );
 
+  const filteredAttendance = useMemo(() => {
+    if (employeeFilter === ALL) return attendanceRows;
+    const emp = employees.get(employeeFilter);
+    if (!emp) return [];
+    return attendanceRows.filter((r) =>
+      attendanceRowMatchesEmployee(r, emp.id, emp.authUserId)
+    );
+  }, [attendanceRows, employeeFilter, employees]);
+
+  const filteredDailyReports = useMemo(() => {
+    if (employeeFilter === ALL) return dailyReports;
+    const emp = employees.get(employeeFilter);
+    if (!emp) return [];
+    return dailyReports.filter((r) =>
+      firestoreEmployeeIdMatches(r?.employeeId, emp)
+    );
+  }, [dailyReports, employeeFilter, employees]);
+
+  const filteredWorkBlocks = useMemo(() => {
+    if (employeeFilter === ALL) return workBlocks;
+    const emp = employees.get(employeeFilter);
+    if (!emp) return [];
+    return workBlocks.filter((b) => firestoreEmployeeIdMatches(b.employeeId, emp));
+  }, [workBlocks, employeeFilter, employees]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    const emp = employeeFilter !== ALL ? employees.get(employeeFilter) : null;
+    console.log("[AttendanceOverview] debug", {
+      selectedEmployeeId: employeeFilter,
+      employeeDocId: emp?.id,
+      authUserId: emp?.authUserId ?? null,
+      rawAttendanceCount: attendanceRows.length,
+      filteredAttendanceCount: filteredAttendance.length,
+      sampleEmployeeIds: attendanceRows.slice(0, 12).map((r) => r.employeeId),
+    });
+  }, [
+    employeeFilter,
+    employees,
+    attendanceRows,
+    filteredAttendance,
+  ]);
+
   const tableRows = useMemo(
     () =>
       buildOverviewRows({
         mode: periodMode,
         range,
         employeeFilterId: employeeFilter === ALL ? "__all__" : employeeFilter,
-        attendanceRaw: attendanceRows,
+        attendanceRaw: filteredAttendance,
         employees,
-        dailyReports,
-        workBlocks,
+        dailyReports: filteredDailyReports,
+        workBlocks: filteredWorkBlocks,
       }),
     [
       periodMode,
       range,
       employeeFilter,
-      attendanceRows,
+      filteredAttendance,
       employees,
-      dailyReports,
-      workBlocks,
+      filteredDailyReports,
+      filteredWorkBlocks,
     ]
   );
 
