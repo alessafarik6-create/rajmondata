@@ -5020,21 +5020,23 @@ export default function JobDetailPage() {
           }
         }}
       >
-        <DialogContent className="max-w-[min(98vw,1680px)] w-[min(98vw,1680px)] p-4 sm:p-6 max-h-[min(96vh,100dvh)] h-[min(96vh,100dvh)] flex flex-col gap-0">
-          <DialogHeader className="shrink-0">
-            <DialogTitle>Anotace fotografie</DialogTitle>
+        <DialogContent className="!flex !max-h-[min(92dvh,92vh)] !h-[min(92dvh,92vh)] !w-[min(95vw,1920px)] !max-w-[min(95vw,1920px)] !flex-col !gap-0 !overflow-hidden overscroll-contain p-2 sm:p-3 md:p-4 sm:!max-w-[min(95vw,1920px)] sm:!w-[min(95vw,1920px)] md:!max-w-[min(95vw,1920px)] md:!w-[min(95vw,1920px)]">
+          <DialogHeader className="shrink-0 space-y-1 pb-2 pr-8 text-left">
+            <DialogTitle className="text-base sm:text-lg">
+              Anotace fotografie
+            </DialogTitle>
           </DialogHeader>
 
-          <div className="flex-1 flex flex-col min-h-0 space-y-3 sm:space-y-4 overflow-hidden">
-            <div className="flex flex-col gap-2 shrink-0">
-              <p className="text-sm text-muted-foreground">
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3">
+            <div className="shrink-0 space-y-1.5 sm:space-y-2">
+              <p className="text-xs leading-snug text-muted-foreground sm:text-sm sm:leading-normal">
                 Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: táhněte
                 průhledný obdélník a doplňte text (bez šipky). Výběr: klikněte na
                 kótu nebo poznámku — přesun, úprava textu, konce čáry nebo cíle
                 šipky, změna velikosti poznámky tahem za roh. Dotyk i myš.
               </p>
 
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <Button
                   type="button"
                   variant={activeTool === "dimension" ? "default" : "outline"}
@@ -5063,7 +5065,7 @@ export default function JobDetailPage() {
                   Výběr
                 </Button>
 
-                <Separator orientation="vertical" className="h-6 mx-1" />
+                <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
 
                 {(
                   [
@@ -5093,7 +5095,7 @@ export default function JobDetailPage() {
                   />
                 ))}
 
-                <Separator orientation="vertical" className="h-6 mx-1" />
+                <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
 
                 <Button
                   type="button"
@@ -5118,7 +5120,7 @@ export default function JobDetailPage() {
               </div>
             </div>
 
-            <div className="relative flex-1 min-h-0 overflow-hidden border rounded-md bg-black/80 flex items-center justify-center p-1 sm:p-2">
+            <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden rounded-md border bg-black/80 p-0.5 sm:p-1">
               <canvas
                 ref={setCanvasNode}
                 onPointerDown={handleCanvasPointerDown}
@@ -5130,7 +5132,7 @@ export default function JobDetailPage() {
                   setNoteRectDraft(null);
                   setDraftAnnotationId(null);
                 }}
-                className={`max-w-[min(94vw,1560px)] max-h-[min(82svh,920px)] w-auto h-auto object-contain touch-none ${
+                className={`h-auto w-auto max-h-full max-w-full object-contain touch-none ${
                   baseImageLoaded ? "opacity-100" : "opacity-0"
                 }`}
                 style={{ cursor: canvasCursor }}
@@ -5154,8 +5156,8 @@ export default function JobDetailPage() {
               )}
             </div>
 
-            <div className="flex justify-between items-center gap-2 pt-2 border-t border-border">
-              <div className="flex gap-2 flex-wrap">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5">
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
                 <Button
                   type="button"
                   variant="outline"
