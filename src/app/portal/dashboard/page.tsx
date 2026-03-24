@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Users,
   Briefcase,
@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Banknote,
   PieChart,
+  Inbox,
 } from "lucide-react";
 import {
   Card,
@@ -41,6 +42,8 @@ import {
 } from "@/lib/employee-money";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
+import type { LeadImportRow } from "@/lib/lead-import-parse";
+import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
 
 type ProfileData = {
   displayName?: string;
@@ -269,6 +272,74 @@ export default function CompanyDashboard() {
   const totalLaborCostsCzk = paidToEmployeesCzk;
   const profitCzk = totalIncomeFromJobsCzk - totalLaborCostsCzk;
 
+  const [importLeadsRows, setImportLeadsRows] = useState<LeadImportRow[]>([]);
+  const [importLeadsLoading, setImportLeadsLoading] = useState(false);
+  const [importLeadsError, setImportLeadsError] = useState<string | null>(null);
+
+  const loadImportLeadsForDashboard = useCallback(async () => {
+    if (!companyId || !user) return;
+    setImportLeadsLoading(true);
+    setImportLeadsError(null);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(
+        `/api/import-leads?companyId=${encodeURIComponent(companyId)}`,
+        {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        }
+      );
+      type ImportLeadsApiBody = {
+        ok?: boolean;
+        rows?: LeadImportRow[];
+        error?: string;
+      };
+      let data: ImportLeadsApiBody | null = null;
+      try {
+        data = (await res.json()) as ImportLeadsApiBody;
+      } catch {
+        data = null;
+      }
+      if (!res.ok) {
+        setImportLeadsError(
+          data?.error ?? `Chyba při načtení poptávek (HTTP ${res.status}).`
+        );
+        setImportLeadsRows([]);
+        return;
+      }
+      if (data?.ok === true && Array.isArray(data.rows)) {
+        setImportLeadsRows(data.rows);
+      } else {
+        setImportLeadsRows([]);
+      }
+    } catch {
+      setImportLeadsError("Nelze načíst poptávky.");
+      setImportLeadsRows([]);
+    } finally {
+      setImportLeadsLoading(false);
+    }
+  }, [companyId, user]);
+
+  useEffect(() => {
+    if (!showAdminDashboard || !companyId || !user) return;
+    void loadImportLeadsForDashboard();
+  }, [showAdminDashboard, companyId, user, loadImportLeadsForDashboard]);
+
+  useEffect(() => {
+    if (!showAdminDashboard || !companyId || !user) return;
+    const t = window.setInterval(() => void loadImportLeadsForDashboard(), 5 * 60 * 1000);
+    return () => window.clearInterval(t);
+  }, [showAdminDashboard, companyId, user, loadImportLeadsForDashboard]);
+
+  const leadsValueStats = useMemo(
+    () => sumOrientacniCenyFromLeadRows(importLeadsRows),
+    [importLeadsRows]
+  );
+
   useEffect(() => {
     if (!showAdminDashboard || !companyId) return;
     console.log("Loading dashboard data");
@@ -486,6 +557,50 @@ export default function CompanyDashboard() {
           ) : null}
 
           {companyId ? <CompanyScheduleCalendar companyId={companyId} /> : null}
+
+          {companyId ? (
+            <Link
+              href="/portal/leads"
+              className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black"
+            >
+              <Card className="border-2 border-black bg-white text-black shadow-sm transition-shadow hover:shadow-md">
+                <CardHeader className="space-y-1 pb-2">
+                  <CardTitle className="flex items-center gap-2 text-base font-semibold text-black">
+                    <Inbox className="h-5 w-5 shrink-0" aria-hidden />
+                    Poptávky aktuálně v hodnotě
+                  </CardTitle>
+                  <CardDescription className="text-sm text-black/75">
+                    Součet orientačních cen z importovaných poptávek vaší firmy (řádky s platnou
+                    vyplněnou cenou).
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-0">
+                  {importLeadsLoading ? (
+                    <div className="flex min-h-[4.5rem] items-center">
+                      <span className="inline-block h-9 w-9 animate-spin rounded-full border-2 border-black border-t-transparent" />
+                    </div>
+                  ) : importLeadsError ? (
+                    <p className="text-sm text-destructive">{importLeadsError}</p>
+                  ) : (
+                    <>
+                      <p className="text-3xl font-bold tabular-nums tracking-tight text-black sm:text-4xl">
+                        {formatKc(leadsValueStats.totalKc)}
+                      </p>
+                      <p className="text-sm leading-snug text-black/85">
+                        {leadsValueStats.totalCount === 0
+                          ? "V importu zatím nejsou žádné poptávky."
+                          : `Orientační cenu má vyplněnou ${leadsValueStats.withPriceCount} z ${leadsValueStats.totalCount} poptávek.`}
+                      </p>
+                      <p className="text-xs text-black/70">
+                        Klepnutím otevřete sekci Poptávky — hodnota se přepočítá při každém načtení
+                        importu.
+                      </p>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+            </Link>
+          ) : null}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <Card className="border-border bg-card shadow-sm transition-shadow hover:shadow-md">

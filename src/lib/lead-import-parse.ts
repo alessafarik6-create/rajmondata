@@ -2,6 +2,8 @@
  * Parsování JSON z externího endpointu pro import poptávek (Zakázky → Poptávky).
  */
 
+import { extractEstimatedPriceKcFromImportObject } from "@/lib/lead-estimated-price";
+
 export type LeadImportRow = {
   id: string;
   jmeno: string;
@@ -16,6 +18,8 @@ export type LeadImportRow = {
    * Jinak se doplní při prvním zobrazení do Firestore (`import_lead_overlays.receivedAt`).
    */
   receivedAtIso?: string;
+  /** Orientační cena v Kč z importu (pokud ji parser z pole našel a je platná). */
+  orientacniCenaKc?: number;
 };
 
 function str(v: unknown): string {
@@ -166,6 +170,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
   const zprava = str(o.zprava ?? o.message ?? o.zpráva);
   const typ = typFromRow(o);
   const receivedAtIso = receivedAtIsoFromRow(o);
+  const orientacniCenaKc = extractEstimatedPriceKcFromImportObject(o);
 
   if (!idFromSource) {
     const synth = syntheticIdFromRow(o);
@@ -179,6 +184,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
       zprava,
       typ,
       ...(receivedAtIso ? { receivedAtIso } : {}),
+      ...(orientacniCenaKc != null ? { orientacniCenaKc } : {}),
     };
   }
 
@@ -191,6 +197,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
     zprava,
     typ,
     ...(receivedAtIso ? { receivedAtIso } : {}),
+    ...(orientacniCenaKc != null ? { orientacniCenaKc } : {}),
   };
 }
 

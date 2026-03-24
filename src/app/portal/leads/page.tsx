@@ -170,6 +170,7 @@ function leadSearchBlob(r: LeadImportRow): string {
     r.typ,
     r.id,
     r.receivedAtIso,
+    r.orientacniCenaKc != null ? String(r.orientacniCenaKc) : "",
   ]
     .map((x) => String(x ?? "").toLowerCase())
     .join(" ");
@@ -1086,9 +1087,6 @@ export default function PortalLeadsPage() {
                           <TableHead className="px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
                             Typ
                           </TableHead>
-                          <TableHead className="whitespace-nowrap px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
-                            Přijato
-                          </TableHead>
                           <TableHead className="min-w-0 px-2 py-3 font-semibold text-slate-900 md:px-2 lg:px-3 lg:py-3.5">
                             Štítek
                           </TableHead>
@@ -1125,8 +1123,14 @@ export default function PortalLeadsPage() {
                               )}
                             >
                               <TableCell className="align-top px-2 py-3 text-slate-900 md:px-2 lg:px-3 lg:py-4">
-                                <div className="space-y-0.5">
+                                <div className="space-y-1">
                                   <p className="font-medium leading-snug">{r.jmeno || "—"}</p>
+                                  <p className="text-xs text-slate-700">
+                                    <span className="text-slate-500">Přijato:</span>{" "}
+                                    <span className="font-medium tabular-nums text-slate-900">
+                                      {received ? formatReceivedDay(received) : "—"}
+                                    </span>
+                                  </p>
                                   <p className="break-all text-xs text-slate-600 lg:hidden">
                                     {r.email || "—"}
                                   </p>
@@ -1143,13 +1147,6 @@ export default function PortalLeadsPage() {
                                   <Badge variant="secondary" className="font-normal">
                                     {r.typ}
                                   </Badge>
-                                ) : (
-                                  <span className="text-slate-400">—</span>
-                                )}
-                              </TableCell>
-                              <TableCell className="align-top whitespace-nowrap px-2 py-3 text-slate-800 md:px-2 lg:px-3 lg:py-4">
-                                {received ? (
-                                  <span className="tabular-nums">{formatReceivedDay(received)}</span>
                                 ) : (
                                   <span className="text-slate-400">—</span>
                                 )}
