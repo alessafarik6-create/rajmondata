@@ -30,6 +30,8 @@ import {
   FileText,
   Ruler,
   ListTodo,
+  Search,
+  Tag,
 } from "lucide-react";
 import {
   useFirestore,
@@ -69,6 +71,12 @@ import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-
 import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
+import {
+  JOB_TAG_CUSTOM_VALUE,
+  JOB_TAG_PRESETS,
+  collectJobTagFilterOptions,
+  jobTagLabel,
+} from "@/lib/job-tags";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
 
@@ -123,6 +131,8 @@ type JobRow = {
   startDate?: string;
   endDate?: string;
   assignedEmployeeIds?: string[];
+  /** Typ / štítek zakázky (např. pergola, domy). */
+  jobTag?: string | null;
 };
 
 function jobAssignsToUser(
@@ -223,7 +233,35 @@ function JobsPageContent() {
     quickCustomerPhone: "",
     quickCustomerAddress: "",
     quickCustomerNotes: "",
+    jobTag: "",
+    jobTagCustom: "",
   });
+  const [jobListSearch, setJobListSearch] = useState("");
+  const [jobTagFilter, setJobTagFilter] = useState("");
+
+  const jobTagFilterOptions = useMemo(
+    () => collectJobTagFilterOptions(jobs as { jobTag?: string | null }[]),
+    [jobs]
+  );
+
+  const filteredJobs = useMemo(() => {
+    const q = jobListSearch.trim().toLowerCase();
+    let list = jobs;
+    if (q) {
+      list = list.filter((j) => {
+        const name = String(j?.name ?? "").toLowerCase();
+        const desc = String(j?.description ?? "").toLowerCase();
+        return name.includes(q) || desc.includes(q);
+      });
+    }
+    if (jobTagFilter) {
+      list = list.filter(
+        (j) => String(j?.jobTag ?? "").trim() === jobTagFilter
+      );
+    }
+    return list;
+  }, [jobs, jobListSearch, jobTagFilter]);
+
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [templateValues, setTemplateValues] = useState<JobTemplateValues>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -368,6 +406,13 @@ function JobsPageContent() {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
+      const resolvedJobTag =
+        newJob.jobTag === JOB_TAG_CUSTOM_VALUE
+          ? newJob.jobTagCustom.trim()
+          : newJob.jobTag.trim();
+      if (resolvedJobTag) {
+        payload.jobTag = resolvedJobTag;
+      }
       if (selectedTemplateId) {
         payload.templateId = selectedTemplateId;
         payload.templateValues = templateValues;
@@ -394,6 +439,8 @@ function JobsPageContent() {
         quickCustomerPhone: "",
         quickCustomerAddress: "",
         quickCustomerNotes: "",
+        jobTag: "",
+        jobTagCustom: "",
       });
       setSelectedTemplateId("");
       setTemplateValues({});
@@ -585,6 +632,41 @@ function JobsPageContent() {
                           }
                           placeholder="Stručný popis projektu..."
                         />
+                      </div>
+                      <div className="space-y-2 col-span-2">
+                        <Label htmlFor="new-job-tag">Typ / štítek zakázky</Label>
+                        <select
+                          id="new-job-tag"
+                          className={NATIVE_SELECT_CLASS}
+                          value={newJob.jobTag}
+                          onChange={(e) =>
+                            setNewJob({
+                              ...newJob,
+                              jobTag: e.target.value,
+                            })
+                          }
+                        >
+                          <option value="">Bez štítku</option>
+                          {JOB_TAG_PRESETS.map((p) => (
+                            <option key={p.value} value={p.value}>
+                              {p.label}
+                            </option>
+                          ))}
+                          <option value={JOB_TAG_CUSTOM_VALUE}>Vlastní…</option>
+                        </select>
+                        {newJob.jobTag === JOB_TAG_CUSTOM_VALUE ? (
+                          <Input
+                            className="mt-2"
+                            value={newJob.jobTagCustom}
+                            onChange={(e) =>
+                              setNewJob({
+                                ...newJob,
+                                jobTagCustom: e.target.value,
+                              })
+                            }
+                            placeholder="Zadejte vlastní typ (např. terasy, bazény)"
+                          />
+                        ) : null}
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="new-job-customer">Zákazník</Label>
@@ -823,13 +905,73 @@ function JobsPageContent() {
         </div>
       </div>
 
+      <Card className="border-slate-200 shadow-sm">
+        <CardContent className="p-4 sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            <div className="flex-1 min-w-[200px] space-y-1.5">
+              <Label htmlFor="jobs-search" className="text-xs text-slate-600">
+                Vyhledávání
+              </Label>
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                <Input
+                  id="jobs-search"
+                  className="pl-9"
+                  placeholder="Název nebo popis zakázky…"
+                  value={jobListSearch}
+                  onChange={(e) => setJobListSearch(e.target.value)}
+                />
+              </div>
+            </div>
+            <div className="w-full sm:w-[min(100%,260px)] space-y-1.5">
+              <Label
+                htmlFor="jobs-tag-filter"
+                className="text-xs text-slate-600 inline-flex items-center gap-1.5"
+              >
+                <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                Štítek / typ
+              </Label>
+              <select
+                id="jobs-tag-filter"
+                className={NATIVE_SELECT_CLASS}
+                value={jobTagFilter}
+                onChange={(e) => setJobTagFilter(e.target.value)}
+              >
+                <option value="">Všechny zakázky</option>
+                {jobTagFilterOptions.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card className="overflow-hidden">
         <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
             <div className="flex items-center justify-center p-8 sm:p-12">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
-          ) : jobs.length > 0 ? (
+          ) : jobs.length > 0 && filteredJobs.length === 0 ? (
+            <div className="text-center py-16 px-4 text-slate-600 space-y-3">
+              <p>Žádná zakázka neodpovídá vyhledávání nebo filtru štítku.</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-[40px]"
+                onClick={() => {
+                  setJobListSearch("");
+                  setJobTagFilter("");
+                }}
+              >
+                Zrušit filtry
+              </Button>
+            </div>
+          ) : filteredJobs.length > 0 ? (
             <Table>
               <TableHeader>
                 <TableRow className="border-slate-200 hover:bg-transparent">
@@ -841,14 +983,25 @@ function JobsPageContent() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {jobs.map((job) => (
+                {filteredJobs.map((job) => (
                   <TableRow
                     key={job?.id ?? `job-${job?.name}`}
                     className="border-slate-200 hover:bg-slate-50"
                   >
                     <TableCell className="pl-4 sm:pl-6 font-medium text-slate-900">
-                      <div className="flex flex-col min-w-0">
-                        <span className="truncate">{job?.name ?? "—"}</span>
+                      <div className="flex flex-col min-w-0 gap-1">
+                        <div className="flex flex-wrap items-center gap-2 min-w-0">
+                          <span className="truncate">{job?.name ?? "—"}</span>
+                          {job?.jobTag && String(job.jobTag).trim() ? (
+                            <Badge
+                              variant="secondary"
+                              className="shrink-0 text-xs font-normal max-w-[10rem] truncate"
+                              title={jobTagLabel(job.jobTag)}
+                            >
+                              {jobTagLabel(job.jobTag)}
+                            </Badge>
+                          ) : null}
+                        </div>
                         <span className="text-xs text-slate-600 font-normal truncate max-w-[200px] sm:max-w-xs">
                           {job?.description ?? ""}
                         </span>

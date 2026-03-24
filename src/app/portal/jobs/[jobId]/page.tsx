@@ -23,6 +23,7 @@ import {
   getDocs,
   getDoc,
   setDoc,
+  deleteField,
 } from "firebase/firestore";
 import {
   User,
@@ -56,7 +57,13 @@ import {
   LIGHT_FORM_CONTROL_CLASS,
   LIGHT_SELECT_CONTENT_CLASS,
   LIGHT_SELECT_TRIGGER_CLASS,
+  NATIVE_SELECT_CLASS,
 } from "@/lib/light-form-control-classes";
+import {
+  JOB_TAG_CUSTOM_VALUE,
+  JOB_TAG_PRESETS,
+  jobTagLabel,
+} from "@/lib/job-tags";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -210,6 +217,8 @@ type JobEditForm = {
   measuringDetails: string;
   customerId: string;
   assignedEmployeeIdsText: string;
+  jobTag: string;
+  jobTagCustom: string;
 };
 
 type PhotoDoc = {
@@ -697,6 +706,8 @@ export default function JobDetailPage() {
     measuringDetails: "",
     customerId: "",
     assignedEmployeeIdsText: "",
+    jobTag: "",
+    jobTagCustom: "",
   });
   const [jobEditTemplateValues, setJobEditTemplateValues] =
     useState<JobTemplateValues>({});
@@ -3520,6 +3531,12 @@ export default function JobDetailPage() {
     const resolvedCustomerId =
       j.customerId || j.customer_id || j.customerID || "";
 
+    const rawTag =
+      typeof j.jobTag === "string" ? j.jobTag.trim() : "";
+    const isPreset =
+      rawTag &&
+      JOB_TAG_PRESETS.some((p) => p.value === rawTag);
+
     setJobEditForm({
       name: j.name || "",
       description: j.description || "",
@@ -3533,6 +3550,8 @@ export default function JobDetailPage() {
       assignedEmployeeIdsText: Array.isArray(j.assignedEmployeeIds)
         ? j.assignedEmployeeIds.join(", ")
         : "",
+      jobTag: isPreset ? rawTag : rawTag ? JOB_TAG_CUSTOM_VALUE : "",
+      jobTagCustom: isPreset ? "" : rawTag,
     });
 
     setJobEditTemplateValues((j.templateValues as JobTemplateValues) || {});
@@ -3596,6 +3615,16 @@ export default function JobDetailPage() {
           assignedEmployeeIds: assignedIds,
           updatedAt: serverTimestamp(),
         };
+
+        const resolvedJobTag =
+          jobEditForm.jobTag === JOB_TAG_CUSTOM_VALUE
+            ? jobEditForm.jobTagCustom.trim()
+            : jobEditForm.jobTag.trim();
+        if (resolvedJobTag) {
+          payload.jobTag = resolvedJobTag;
+        } else {
+          payload.jobTag = deleteField();
+        }
 
         if (job?.templateId) {
           payload.templateId = job.templateId;
@@ -3685,8 +3714,13 @@ export default function JobDetailPage() {
         </Button>
 
         <div className="flex-1">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <h1 className="portal-page-title">{job.name}</h1>
+            {(job as { jobTag?: string }).jobTag?.trim() ? (
+              <Badge variant="secondary" className="font-normal max-w-[12rem] truncate">
+                {jobTagLabel((job as { jobTag?: string }).jobTag)}
+              </Badge>
+            ) : null}
             <Badge variant="outline" className="border-primary/30 text-primary">
               ID: {jobId?.toString().substring(0, 8)}
             </Badge>
@@ -4307,6 +4341,45 @@ export default function JobDetailPage() {
                     placeholder="Popis zakázky"
                     className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[120px]")}
                   />
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label htmlFor="edit-job-tag">Typ / štítek zakázky</Label>
+                  <select
+                    id="edit-job-tag"
+                    className={NATIVE_SELECT_CLASS}
+                    value={jobEditForm.jobTag}
+                    onChange={(e) =>
+                      setJobEditForm((prev) => ({
+                        ...prev,
+                        jobTag: e.target.value,
+                      }))
+                    }
+                  >
+                    <option value="">Bez štítku</option>
+                    {JOB_TAG_PRESETS.map((p) => (
+                      <option key={p.value} value={p.value}>
+                        {p.label}
+                      </option>
+                    ))}
+                    <option value={JOB_TAG_CUSTOM_VALUE}>Vlastní…</option>
+                  </select>
+                  {jobEditForm.jobTag === JOB_TAG_CUSTOM_VALUE ? (
+                    <Input
+                      value={jobEditForm.jobTagCustom}
+                      onChange={(e) =>
+                        setJobEditForm((prev) => ({
+                          ...prev,
+                          jobTagCustom: e.target.value,
+                        }))
+                      }
+                      placeholder="Vlastní typ zakázky"
+                      className={cn(
+                        LIGHT_FORM_CONTROL_CLASS,
+                        "mt-2 min-h-[44px] md:min-h-10"
+                      )}
+                    />
+                  ) : null}
                 </div>
 
                 <div className="space-y-2">
