@@ -45,6 +45,7 @@ import {
   Edit2,
   FileText,
   FileStack,
+  MapPin,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -113,6 +114,7 @@ import {
   parseCustomerNameForParty,
   pickEntityDic,
 } from "@/lib/job-customer-client";
+import { buildJobCustomerAddressBlock } from "@/lib/customer-address-display";
 import {
   Dialog,
   DialogContent,
@@ -595,6 +597,11 @@ export default function JobDetailPage() {
           getTime(b.createdAt) - getTime(a.createdAt)
       );
   }, [workContracts]);
+
+  const jobCustomerAddressBlock = useMemo(
+    () => buildJobCustomerAddressBlock(job, customer),
+    [job, customer]
+  );
 
   const formatContractDate = useCallback((t: any): string => {
     try {
@@ -3867,6 +3874,48 @@ export default function JobDetailPage() {
               <p className="text-foreground leading-relaxed">
                 {job.description || "K této zakázce nebyl přidán žádný popis."}
               </p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-surface border-border">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <MapPin className="w-5 h-5 text-primary" /> Zákazník a adresa
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {jobCustomerAddressBlock.displayName ? (
+                <div className="space-y-1">
+                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Zákazník
+                  </span>
+                  <p className="text-base font-semibold text-foreground">
+                    {jobCustomerAddressBlock.displayName}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  U zakázky není uveden název zákazníka.
+                </p>
+              )}
+              <div className="space-y-1">
+                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  Adresa
+                </span>
+                {jobCustomerAddressBlock.hasAddress ? (
+                  <address className="not-italic text-sm leading-relaxed text-foreground">
+                    {jobCustomerAddressBlock.addressLines.map((line, i) => (
+                      <p key={i} className={i > 0 ? "mt-0.5" : undefined}>
+                        {line}
+                      </p>
+                    ))}
+                  </address>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Adresa zákazníka není vyplněna
+                  </p>
+                )}
+              </div>
             </CardContent>
           </Card>
 

@@ -118,6 +118,37 @@ export function summarizeAttendanceByDay(
   return summaries;
 }
 
+/**
+ * Stav docházky za jeden den z nesetříděných řádků (např. všechny záznamy dnes pro jednoho zaměstnance).
+ * „V práci“ = poslední relevantní událost je `check_in` novější než poslední `check_out`.
+ */
+export function inferAttendanceClockStateForDay(
+  rows: AttendanceRow[]
+): { state: "in"; lastCheckIn: Date } | { state: "out" } {
+  const sorted = [...rows].sort((a, b) => {
+    const ta = rowTime(a)?.getTime() ?? 0;
+    const tb = rowTime(b)?.getTime() ?? 0;
+    return ta - tb;
+  });
+  let lastInTime: Date | null = null;
+  let lastOutTime: Date | null = null;
+  for (const r of sorted) {
+    const t = rowTime(r);
+    if (!t) continue;
+    const type = String(r.type || "");
+    if (type !== "check_in" && type !== "check_out") continue;
+    if (type === "check_in") lastInTime = t;
+    if (type === "check_out") lastOutTime = t;
+  }
+  if (
+    lastInTime &&
+    (!lastOutTime || lastInTime.getTime() > lastOutTime.getTime())
+  ) {
+    return { state: "in", lastCheckIn: lastInTime };
+  }
+  return { state: "out" };
+}
+
 export function sumHoursTodayAndWeek(
   summaries: DayAttendanceSummary[],
   now = new Date()

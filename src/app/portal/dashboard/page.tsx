@@ -42,7 +42,10 @@ import {
 } from "@/lib/employee-money";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
+import { DashboardUpcomingJobsWidget } from "@/components/portal/dashboard-upcoming-jobs-widget";
+import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
+import type { AttendanceRow } from "@/lib/employee-attendance";
 import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
 
 type ProfileData = {
@@ -59,6 +62,10 @@ type JobData = {
   budget?: unknown;
   assignedEmployeeIds?: string[];
   customerId?: string;
+  /** YYYY-MM-DD — předpokládané dokončení */
+  endDate?: string;
+  customerName?: string;
+  customerAddress?: string;
 };
 
 export default function CompanyDashboard() {
@@ -89,10 +96,15 @@ export default function CompanyDashboard() {
   const showAdminDashboard =
     (isManagement || isAccountant) && !isCustomer;
 
+  const todayIso = useMemo(
+    () => new Date().toISOString().split("T")[0],
+    []
+  );
+
   const employeesQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !isManagement) return null;
+    if (!firestore || !companyId || !showAdminDashboard) return null;
     return collection(firestore, "companies", companyId, "employees");
-  }, [firestore, companyId, isManagement]);
+  }, [firestore, companyId, showAdminDashboard]);
 
   const jobsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -162,6 +174,15 @@ export default function CompanyDashboard() {
     );
   }, [firestore, companyId, showAdminDashboard]);
 
+  const attendanceTodayForDashboardQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      where("date", "==", todayIso),
+      limit(4000)
+    );
+  }, [firestore, companyId, showAdminDashboard, todayIso]);
+
   const { data: employees } = useCollection(employeesQuery);
   const {
     data: allJobs,
@@ -178,6 +199,8 @@ export default function CompanyDashboard() {
     data: dashboardChatMessages = [],
     isLoading: chatDashboardLoading,
   } = useCollection(chatDashboardQuery);
+  const { data: attendanceTodayRows = [], isLoading: attendanceTodayLoading } =
+    useCollection(attendanceTodayForDashboardQuery);
   const typedJobs: JobData[] = ((allJobs as JobData[] | undefined) ?? []);
 
   const profileOrCompanyLoading =
@@ -199,11 +222,6 @@ export default function CompanyDashboard() {
     }
     return false;
   });
-
-  const todayIso = useMemo(
-    () => new Date().toISOString().split("T")[0],
-    []
-  );
 
   const attendanceTodayCount = useMemo(() => {
     if (!attendanceRows?.length) return 0;
@@ -554,6 +572,17 @@ export default function CompanyDashboard() {
                 </AlertDescription>
               </Alert>
             </Link>
+          ) : null}
+
+          {companyId ? (
+            <div className="mx-auto grid w-full max-w-3xl grid-cols-1 gap-4 md:max-w-4xl md:grid-cols-2">
+              <DashboardUpcomingJobsWidget jobs={typedJobs} />
+              <DashboardTerminalActiveWidget
+                employees={employees as Record<string, unknown>[] | undefined}
+                attendanceTodayRows={attendanceTodayRows as AttendanceRow[]}
+                loading={attendanceTodayLoading}
+              />
+            </div>
           ) : null}
 
           {companyId ? <CompanyScheduleCalendar companyId={companyId} /> : null}
