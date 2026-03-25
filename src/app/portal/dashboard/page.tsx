@@ -568,7 +568,11 @@ export default function CompanyDashboard() {
       {showAdminDashboard ? (
         <div className="space-y-6">
           {companyId ? (
-            <DashboardJobTasksWidget companyId={companyId} todayIso={todayIso} />
+            <DashboardJobTasksWidget
+              companyId={companyId}
+              todayIso={todayIso}
+              jobs={typedJobs}
+            />
           ) : null}
 
           {!chatDashboardLoading && unreadEmployeeChatCount > 0 ? (
