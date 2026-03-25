@@ -31,8 +31,12 @@ import {
   companyDocumentRefForJobExpense,
 } from "@/lib/job-expense-document-sync";
 import { parseAmountKc } from "@/lib/work-contract-deposit";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -52,6 +56,7 @@ import {
 } from "@/lib/light-form-control-classes";
 import {
   Camera,
+  ChevronDown,
   Download,
   ExternalLink,
   FileText,
@@ -134,6 +139,10 @@ export function JobExpensesSection({
   const [deleteTarget, setDeleteTarget] = useState<JobExpenseRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState<string | null>(null);
+  /** Sekce Náklady — výchozí sbalená. */
+  const [expensesSectionOpen, setExpensesSectionOpen] = useState(false);
+  /** Seznam — po 5 položkách „Zobrazit více“. */
+  const [expensesListExpanded, setExpensesListExpanded] = useState(false);
 
   useEffect(() => {
     if (!pendingFile || !isAllowedJobImageFile(pendingFile)) {
@@ -176,6 +185,11 @@ export function JobExpensesSection({
 
   const remainingBudgetKc =
     originalBudgetKc != null ? originalBudgetKc - totalExpensesKc : null;
+
+  const visibleExpenses = useMemo(() => {
+    if (expensesListExpanded) return sortedExpenses;
+    return sortedExpenses.slice(0, 5);
+  }, [sortedExpenses, expensesListExpanded]);
 
   const resetForm = useCallback(() => {
     setEditingId(null);
@@ -546,190 +560,231 @@ export function JobExpensesSection({
   return (
     <>
       <Card className="bg-surface border-border">
-        <CardHeader className="space-y-1">
-          <CardTitle className="flex items-center gap-2 text-lg">
-            <Wallet className="w-5 h-5 text-primary shrink-0" />
-            Náklady
-          </CardTitle>
-          <p className="text-sm text-muted-foreground">
-            Přehled výdajů a příloh dokladů. Částky se odečítají od rozpočtu zakázky.
-          </p>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-lg border border-border/60 bg-background/40 p-3 sm:p-4">
-            <div className="space-y-0.5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Původní rozpočet
-              </p>
-              <p className="text-base font-semibold tabular-nums">
-                {originalBudgetKc != null ? formatKc(originalBudgetKc) : "—"}
-              </p>
-            </div>
-            <div className="space-y-0.5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Celkové náklady
-              </p>
-              <p className="text-base font-semibold tabular-nums text-amber-700 dark:text-amber-400">
-                {formatKc(totalExpensesKc)}
-              </p>
-            </div>
-            <div className="space-y-0.5">
-              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Zbývá
-              </p>
-              <p
+        <Collapsible
+          open={expensesSectionOpen}
+          onOpenChange={(next) => {
+            setExpensesSectionOpen(next);
+            if (!next) setExpensesListExpanded(false);
+          }}
+        >
+          <CardHeader className="space-y-0 p-2 sm:p-3">
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
                 className={cn(
-                  "text-base font-semibold tabular-nums",
-                  remainingBudgetKc != null && remainingBudgetKc < 0
-                    ? "text-destructive"
-                    : "text-emerald-700 dark:text-emerald-400"
+                  "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left outline-none transition-colors",
+                  "hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
                 )}
               >
-                {remainingBudgetKc != null ? formatKc(remainingBudgetKc) : "—"}
-              </p>
-            </div>
-          </div>
-
-          {canEdit ? (
-            <Button
-              type="button"
-              className="w-full sm:w-auto min-h-[44px]"
-              onClick={openCreate}
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Přidat náklad
-            </Button>
-          ) : null}
-
-          {sortedExpenses.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-2">
-              Zatím žádné náklady. {canEdit ? "Přidejte první záznam." : ""}
-            </p>
-          ) : (
-            <ul className="space-y-3">
-              {sortedExpenses.map((row) => {
-                const attachmentKind = inferJobMediaItemType(row);
-                return (
-                <li
-                  key={row.id}
-                  className="rounded-lg border border-border/70 bg-background/50 p-3 sm:p-4 flex flex-col sm:flex-row sm:items-stretch gap-3"
-                >
-                  <div className="flex-1 min-w-0 space-y-2">
-                    <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                      <span className="font-semibold tabular-nums text-base">
-                        {typeof row.amount === "number"
-                          ? formatKc(row.amount)
-                          : "—"}
-                      </span>
-                      <span className="text-sm text-muted-foreground">
-                        {expenseDateLabel(row)}
-                      </span>
+                <Wallet className="h-4 w-4 shrink-0 text-primary sm:h-5 sm:w-5" aria-hidden />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-semibold sm:text-base">Náklady</div>
+                  <div className="mt-1 grid grid-cols-3 gap-x-2 text-[10px] leading-tight text-muted-foreground sm:gap-x-4 sm:text-xs">
+                    <div>
+                      <div className="uppercase tracking-wide">Rozpočet</div>
+                      <div className="font-semibold tabular-nums text-foreground">
+                        {originalBudgetKc != null ? formatKc(originalBudgetKc) : "—"}
+                      </div>
                     </div>
-                    {row.note ? (
-                      <p className="text-sm text-foreground/90 whitespace-pre-wrap break-words">
-                        {row.note}
-                      </p>
-                    ) : (
-                      <p className="text-sm text-muted-foreground italic">Bez poznámky</p>
-                    )}
-                  </div>
-
-                  <div className="flex flex-col gap-3 sm:items-end">
-                    {row.fileUrl ? (
-                      <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:max-w-[min(100%,20rem)] sm:items-end">
-                        <Badge variant="outline" className="w-fit text-xs font-normal">
-                          {attachmentKind === "pdf" ? "PDF" : "Foto"}
-                        </Badge>
-                        {attachmentKind === "pdf" ? (
-                          <div className="flex w-full min-w-0 flex-col gap-2 rounded-md border border-border bg-background/60 p-3">
-                            <div className="flex min-w-0 items-start gap-2">
-                              <FileText className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
-                              <span className="min-w-0 flex-1 break-all text-left text-sm font-medium leading-snug">
-                                {row.fileName || "PDF doklad"}
-                              </span>
-                            </div>
-                            <div className="flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                variant="secondary"
-                                size="sm"
-                                className="min-h-9 shrink-0 gap-1.5"
-                                asChild
-                              >
-                                <a
-                                  href={row.fileUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  <ExternalLink className="h-4 w-4" />
-                                  Otevřít
-                                </a>
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                size="sm"
-                                className="min-h-9 shrink-0 gap-1.5"
-                                asChild
-                              >
-                                <a href={row.fileUrl} download={row.fileName || "doklad.pdf"}>
-                                  <Download className="h-4 w-4" />
-                                  Stáhnout
-                                </a>
-                              </Button>
-                            </div>
-                          </div>
-                        ) : (
-                          <a
-                            href={row.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block w-full max-w-[12rem] shrink-0 overflow-hidden rounded-md border border-border bg-muted aspect-square sm:w-28 sm:max-w-none"
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={row.fileUrl}
-                              alt={row.fileName || "Příloha nákladu"}
-                              className="h-full w-full object-cover"
-                            />
-                          </a>
+                    <div>
+                      <div className="uppercase tracking-wide">Náklady</div>
+                      <div className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                        {formatKc(totalExpensesKc)}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="uppercase tracking-wide">Zbývá</div>
+                      <div
+                        className={cn(
+                          "font-semibold tabular-nums",
+                          remainingBudgetKc != null && remainingBudgetKc < 0
+                            ? "text-destructive"
+                            : "text-emerald-700 dark:text-emerald-400"
                         )}
+                      >
+                        {remainingBudgetKc != null ? formatKc(remainingBudgetKc) : "—"}
                       </div>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">Bez přílohy</span>
-                    )}
-
-                    {canEdit ? (
-                      <div className="flex items-center justify-end gap-1 sm:mt-1">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="min-h-10 min-w-10"
-                          onClick={() => openEdit(row)}
-                          aria-label="Upravit náklad"
-                        >
-                          <Pencil className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="min-h-10 min-w-10 text-destructive hover:text-destructive"
-                          onClick={() => setDeleteTarget(row)}
-                          aria-label="Smazat náklad"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    ) : null}
+                    </div>
                   </div>
-                </li>
-              );
-              })}
-            </ul>
-          )}
-        </CardContent>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                    expensesSectionOpen && "rotate-180"
+                  )}
+                  aria-hidden
+                />
+              </button>
+            </CollapsibleTrigger>
+          </CardHeader>
+
+          <CollapsibleContent>
+            <CardContent className="space-y-2 px-2 pb-3 pt-0 sm:px-3">
+              <p className="text-[11px] text-muted-foreground sm:text-xs">
+                Výdaje a přílohy — odečítají se od rozpočtu zakázky.
+                {sortedExpenses.length > 0 ? (
+                  <span className="text-foreground"> ({sortedExpenses.length})</span>
+                ) : null}
+              </p>
+
+              {canEdit ? (
+                <Button
+                  type="button"
+                  className="h-9 w-full sm:w-auto"
+                  onClick={openCreate}
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Přidat náklad
+                </Button>
+              ) : null}
+
+              {sortedExpenses.length === 0 ? (
+                <p className="py-1 text-xs text-muted-foreground sm:text-sm">
+                  Zatím žádné náklady. {canEdit ? "Přidejte první záznam." : ""}
+                </p>
+              ) : (
+                <>
+                  <div
+                    className={cn(
+                      "overflow-y-auto rounded-md border border-border/60 bg-background/30",
+                      expensesListExpanded
+                        ? "max-h-[min(400px,55vh)]"
+                        : "max-h-[min(320px,45vh)]"
+                    )}
+                  >
+                    <ul className="divide-y divide-border/50">
+                      {visibleExpenses.map((row) => {
+                        const attachmentKind = inferJobMediaItemType(row);
+                        return (
+                          <li key={row.id}>
+                            <div
+                              className={cn(
+                                "grid gap-x-2 gap-y-1 px-2 py-2 text-xs sm:min-h-11 sm:max-h-[60px] sm:grid-cols-[100px_120px_1fr_minmax(0,120px)_80px] sm:items-center sm:py-1.5 sm:text-sm"
+                              )}
+                            >
+                              <div className="order-2 tabular-nums text-muted-foreground sm:order-1">
+                                {expenseDateLabel(row)}
+                              </div>
+                              <div className="order-1 font-semibold tabular-nums sm:order-2">
+                                {typeof row.amount === "number" ? formatKc(row.amount) : "—"}
+                              </div>
+                              <div className="order-3 min-w-0 sm:col-span-1">
+                                <p className="line-clamp-2 break-words text-foreground/90 sm:line-clamp-1">
+                                  {row.note?.trim() || (
+                                    <span className="italic text-muted-foreground">—</span>
+                                  )}
+                                </p>
+                              </div>
+                              <div className="order-4 flex min-w-0 items-center gap-1 sm:justify-start">
+                                {row.fileUrl ? (
+                                  <>
+                                    {attachmentKind === "pdf" ? (
+                                      <FileText
+                                        className="h-3.5 w-3.5 shrink-0 text-primary sm:h-4 sm:w-4"
+                                        aria-hidden
+                                      />
+                                    ) : (
+                                      <a
+                                        href={row.fileUrl}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-border"
+                                        title={row.fileName || "Otevřít"}
+                                      >
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img
+                                          src={row.fileUrl}
+                                          alt=""
+                                          className="h-full w-full object-cover"
+                                        />
+                                      </a>
+                                    )}
+                                    <div className="flex shrink-0 gap-0.5">
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        asChild
+                                      >
+                                        <a
+                                          href={row.fileUrl}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          title="Otevřít"
+                                        >
+                                          <ExternalLink className="h-3.5 w-3.5" />
+                                        </a>
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        asChild
+                                      >
+                                        <a
+                                          href={row.fileUrl}
+                                          download={row.fileName || "doklad"}
+                                          title="Stáhnout"
+                                        >
+                                          <Download className="h-3.5 w-3.5" />
+                                        </a>
+                                      </Button>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
+                              </div>
+                              <div className="order-5 flex justify-end gap-0.5 sm:justify-end">
+                                {canEdit ? (
+                                  <>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={() => openEdit(row)}
+                                      aria-label="Upravit náklad"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8 text-destructive hover:text-destructive"
+                                      onClick={() => setDeleteTarget(row)}
+                                      aria-label="Smazat náklad"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </>
+                                ) : null}
+                              </div>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                  {sortedExpenses.length > 5 ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 px-2 text-xs"
+                      onClick={() => setExpensesListExpanded((v) => !v)}
+                    >
+                      {expensesListExpanded ? "Zobrazit méně" : "Zobrazit více"}
+                    </Button>
+                  ) : null}
+                </>
+              )}
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
       </Card>
 
       <Dialog
