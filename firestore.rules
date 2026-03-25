@@ -668,6 +668,17 @@ service cloud.firestore {
         allow delete: if false;
       }
 
+      /**
+       * Firemní doklady (sekce Doklady): přijaté/vydané + zrcadlení nákladů zakázky (source job-expense).
+       * companies/{companyId}/documents/{docId}
+       */
+      match /documents/{docId} {
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
       // Zaměstnanec se sem nedostane (frontend redirect + tyto pravidla).
       // Výjimka: employees/{id}/private/** je výše explicitně zakázáno; rekurzivní pravidlo by jinak PIN povolilo (OR pravidel).

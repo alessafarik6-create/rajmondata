@@ -844,7 +844,7 @@ function DocumentTableReceived({
                             </Badge>
                             {fromJobExpense ? (
                               <Badge className="text-[10px] font-normal bg-amber-600 hover:bg-amber-600">
-                                Náklad
+                                Náklad zakázky
                               </Badge>
                             ) : null}
                             {fromJobMedia ? (

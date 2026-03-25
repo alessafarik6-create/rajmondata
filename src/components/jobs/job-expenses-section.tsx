@@ -6,6 +6,8 @@ import type { DocumentData } from "firebase/firestore";
 import {
   collection,
   doc,
+  getDoc,
+  runTransaction,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -381,26 +383,53 @@ export function JobExpensesSection({
           ? storagePath ?? null
           : (existing?.storagePath ?? null);
 
-        await setDoc(
-          companyDocumentRefForJobExpense(firestore, companyId, editingId),
-          buildJobExpenseMirrorMergePatch({
-            companyId,
-            jobId,
-            jobDisplayName,
-            expenseId: editingId,
-            amount: amountKc,
-            date: dateInput.trim(),
-            note: noteTrimmed || null,
-            fileUrl: nextFileUrl,
-            fileType: nextFileType,
-            fileName: nextFileName,
-            storagePath: nextStoragePath,
-            ...(pendingFile
-              ? { mimeType: pendingFile.type?.trim() || null }
-              : {}),
-          }),
-          { merge: true }
+        const mirrorRef = companyDocumentRefForJobExpense(
+          firestore,
+          companyId,
+          editingId
         );
+        const mirrorSnap = await getDoc(mirrorRef);
+        if (!mirrorSnap.exists()) {
+          await setDoc(
+            mirrorRef,
+            buildNewJobExpenseMirrorDocument({
+              companyId,
+              jobId,
+              jobDisplayName,
+              expenseId: editingId,
+              userId: String(existing?.createdBy ?? user.uid),
+              amount: amountKc,
+              date: dateInput.trim(),
+              note: noteTrimmed || null,
+              fileUrl: nextFileUrl,
+              fileType: nextFileType,
+              fileName: nextFileName,
+              storagePath: nextStoragePath,
+              mimeType: pendingFile?.type?.trim() || null,
+            })
+          );
+        } else {
+          await setDoc(
+            mirrorRef,
+            buildJobExpenseMirrorMergePatch({
+              companyId,
+              jobId,
+              jobDisplayName,
+              expenseId: editingId,
+              amount: amountKc,
+              date: dateInput.trim(),
+              note: noteTrimmed || null,
+              fileUrl: nextFileUrl,
+              fileType: nextFileType,
+              fileName: nextFileName,
+              storagePath: nextStoragePath,
+              ...(pendingFile
+                ? { mimeType: pendingFile.type?.trim() || null }
+                : {}),
+            }),
+            { merge: true }
+          );
+        }
 
         if (oldPathToRemove) {
           try {
@@ -416,7 +445,6 @@ export function JobExpensesSection({
             "Změny jsou zapsány v zakázce i v dokladech, rozpočet se přepočítá automaticky.",
         });
       } else {
-        const batch = writeBatch(firestore);
         const expenseRef = doc(
           collection(
             firestore,
@@ -427,7 +455,12 @@ export function JobExpensesSection({
             "expenses"
           )
         );
-        batch.set(expenseRef, {
+        const mirrorRef = companyDocumentRefForJobExpense(
+          firestore,
+          companyId,
+          expenseRef.id
+        );
+        const expensePayload = {
           companyId,
           jobId,
           amount: amountKc,
@@ -440,8 +473,7 @@ export function JobExpensesSection({
           createdBy: user.uid,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        });
-
+        };
         const mirrorDoc = buildNewJobExpenseMirrorDocument({
           companyId,
           jobId,
@@ -457,11 +489,11 @@ export function JobExpensesSection({
           storagePath: storagePath ?? null,
           mimeType: pendingFile?.type?.trim() || null,
         });
-        batch.set(
-          companyDocumentRefForJobExpense(firestore, companyId, expenseRef.id),
-          mirrorDoc
-        );
-        await batch.commit();
+
+        await runTransaction(firestore, async (transaction) => {
+          transaction.set(expenseRef, expensePayload);
+          transaction.set(mirrorRef, mirrorDoc);
+        });
 
         toast({
           title: "Náklad přidán",
