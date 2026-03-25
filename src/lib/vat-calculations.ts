@@ -7,6 +7,9 @@ import { parseBudgetKcFromJob } from "@/lib/work-contract-deposit";
 export const VAT_RATE_OPTIONS = [0, 12, 21] as const;
 export type VatRatePercent = (typeof VAT_RATE_OPTIONS)[number];
 
+/** Zda uživatel zadal rozpočet jako částku bez DPH, nebo včetně DPH. */
+export type JobBudgetType = "net" | "gross";
+
 /** Výchozí sazba u starých záznamů bez vatRate. */
 export const DEFAULT_VAT_RATE: VatRatePercent = 21;
 
@@ -14,6 +17,11 @@ export function normalizeVatRate(raw: unknown): VatRatePercent {
   const n = Number(raw);
   if (n === 0 || n === 12 || n === 21) return n as VatRatePercent;
   return DEFAULT_VAT_RATE;
+}
+
+export function normalizeBudgetType(raw: unknown): JobBudgetType {
+  if (raw === "gross") return "gross";
+  return "net";
 }
 
 export type VatComputed = {
@@ -36,8 +44,37 @@ export function calculateVatAmountsFromNet(
   return { vatAmount, amountGross: net + vatAmount };
 }
 
+/**
+ * Z částky zadané uživatelem a typu (bez / s DPH) dopočítá net, DPH a gross.
+ * Při sazbě 0 % u typu „s DPH“: net = gross = vstup, DPH = 0.
+ */
+export function computeJobBudgetFromInput(params: {
+  budgetInput: number;
+  budgetType: JobBudgetType;
+  vatRate: VatRatePercent;
+}): { budgetNet: number; budgetVat: number; budgetGross: number } {
+  const inp = Math.round(Number(params.budgetInput));
+  if (!Number.isFinite(inp) || inp < 0) {
+    return { budgetNet: 0, budgetVat: 0, budgetGross: 0 };
+  }
+  if (params.budgetType === "net") {
+    const { vatAmount, amountGross } = calculateVatAmountsFromNet(inp, params.vatRate);
+    return { budgetNet: inp, budgetVat: vatAmount, budgetGross: amountGross };
+  }
+  const gross = inp;
+  if (params.vatRate === 0) {
+    return { budgetNet: gross, budgetVat: 0, budgetGross: gross };
+  }
+  const net = Math.round(gross / (1 + params.vatRate / 100));
+  const vat = gross - net;
+  return { budgetNet: net, budgetVat: vat, budgetGross: gross };
+}
+
 export type JobBudgetBreakdown = {
   vatRate: VatRatePercent;
+  budgetType: JobBudgetType;
+  /** Částka zadaná uživatelem (interpretace podle budgetType). */
+  budgetInput: number;
   budgetNet: number;
   budgetVat: number;
   budgetGross: number;
@@ -46,15 +83,35 @@ export type JobBudgetBreakdown = {
 /**
  * Rozpočet zakázky z Firestore.
  *
- * Kompatibilita: pokud chybí budgetNet/budgetGross a existuje jen `budget`,
- * považuje se za částku bez DPH a doplní se DPH podle vatRate (výchozí 21 %).
- * Pole `budget` u nových záznamů udržujte jako budgetGross kvůli starším čtenářům.
+ * Pokud je uloženo `budgetInput` + `budgetType`, přepočet z nich.
+ * Jinak kompatibilita: jen `budget` / `budgetNet` se považují za zadání **bez DPH**
+ * (budgetType net, budgetInput = budgetNet).
+ * `budget` u nových záznamů = budgetGross kvůli starším čtenářům.
  */
 export function resolveJobBudgetFromFirestore(
   job: Record<string, unknown> | null | undefined
 ): JobBudgetBreakdown | null {
   if (!job) return null;
   const rate = normalizeVatRate(job.vatRate);
+  const typeFromDoc = normalizeBudgetType(job.budgetType);
+
+  const bi = job.budgetInput;
+  if (typeof bi === "number" && Number.isFinite(bi) && bi > 0) {
+    const inp = Math.round(bi);
+    const { budgetNet, budgetVat, budgetGross } = computeJobBudgetFromInput({
+      budgetInput: inp,
+      budgetType: typeFromDoc,
+      vatRate: rate,
+    });
+    return {
+      vatRate: rate,
+      budgetType: typeFromDoc,
+      budgetInput: inp,
+      budgetNet,
+      budgetVat,
+      budgetGross,
+    };
+  }
 
   let budgetNet: number | null = null;
   const bn = job.budgetNet;
@@ -65,7 +122,7 @@ export function resolveJobBudgetFromFirestore(
     if (legacy != null) budgetNet = legacy;
   }
 
-  if (budgetNet == null || budgetNet < 0) return null;
+  if (budgetNet == null) return null;
 
   const calc = calculateVatAmountsFromNet(budgetNet, rate);
   let budgetGross = calc.amountGross;
@@ -75,6 +132,11 @@ export function resolveJobBudgetFromFirestore(
   if (typeof storedGross === "number" && Number.isFinite(storedGross)) {
     budgetGross = Math.round(storedGross);
     budgetVat = Math.max(0, Math.min(budgetGross, budgetGross - budgetNet));
+    const storedVat = job.budgetVat;
+    if (typeof storedVat === "number" && Number.isFinite(storedVat)) {
+      budgetVat = Math.round(storedVat);
+      budgetGross = budgetNet + budgetVat;
+    }
   } else {
     const storedVat = job.budgetVat;
     if (typeof storedVat === "number" && Number.isFinite(storedVat)) {
@@ -85,6 +147,8 @@ export function resolveJobBudgetFromFirestore(
 
   return {
     vatRate: rate,
+    budgetType: "net",
+    budgetInput: budgetNet,
     budgetNet,
     budgetVat,
     budgetGross,
@@ -123,31 +187,46 @@ export function resolveExpenseAmounts(row: {
   if (typeof ag === "number" && Number.isFinite(ag)) {
     gross = Math.round(ag);
     vat = Math.max(0, gross - net);
-  } else if (typeof row.vatAmount === "number" && Number.isFinite(row.vatAmount)) {
+  } else if (
+    typeof row.vatAmount === "number" &&
+    Number.isFinite(row.vatAmount)
+  ) {
     vat = Math.round(row.vatAmount);
     gross = net + vat;
   }
   return { vatRate: rate, amountNet: net, vatAmount: vat, amountGross: gross };
 }
 
-/** Payload polí rozpočtu zakázky pro zápis do Firestore. */
+/** Payload polí rozpočtu zakázky pro zápis do Firestore (vatRate vždy 0 / 12 / 21). */
 export function buildJobBudgetFirestorePayload(params: {
-  budgetNet: number;
+  budgetInput: number;
+  budgetType: JobBudgetType;
   vatRate: VatRatePercent;
 }): {
+  budgetInput: number;
+  budgetType: JobBudgetType;
   vatRate: VatRatePercent;
   budgetNet: number;
   budgetVat: number;
   budgetGross: number;
   budget: number;
 } {
-  const net = Math.max(0, Math.round(params.budgetNet));
-  const { vatAmount, amountGross } = calculateVatAmountsFromNet(net, params.vatRate);
-  return {
+  const inp = Math.round(Number(params.budgetInput));
+  if (!Number.isFinite(inp) || inp <= 0) {
+    throw new Error("Rozpočet musí být větší než 0.");
+  }
+  const { budgetNet, budgetVat, budgetGross } = computeJobBudgetFromInput({
+    budgetInput: inp,
+    budgetType: params.budgetType,
     vatRate: params.vatRate,
-    budgetNet: net,
-    budgetVat: vatAmount,
-    budgetGross: amountGross,
-    budget: amountGross,
+  });
+  return {
+    budgetInput: inp,
+    budgetType: params.budgetType,
+    vatRate: params.vatRate,
+    budgetNet,
+    budgetVat,
+    budgetGross,
+    budget: budgetGross,
   };
 }

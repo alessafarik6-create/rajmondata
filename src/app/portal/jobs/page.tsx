@@ -80,8 +80,10 @@ import {
 import { logActivitySafe } from "@/lib/activity-log";
 import {
   buildJobBudgetFirestorePayload,
+  normalizeBudgetType,
   normalizeVatRate,
   VAT_RATE_OPTIONS,
+  type JobBudgetType,
 } from "@/lib/vat-calculations";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
@@ -230,6 +232,7 @@ function JobsPageContent() {
     customerId: "",
     status: "nová",
     budget: "",
+    budgetType: "net" as JobBudgetType,
     vatRate: "21",
     startDate: "",
     endDate: "",
@@ -393,21 +396,44 @@ function JobsPageContent() {
             }`.trim()
           : "");
 
-      const budgetNet =
-        newJob.budget === ""
-          ? 0
-          : Math.max(0, Math.round(Number(newJob.budget)));
-      const vatRateNew = normalizeVatRate(Number(newJob.vatRate));
-      const budgetPayload = buildJobBudgetFirestorePayload({
-        budgetNet,
-        vatRate: vatRateNew,
-      });
+      let budgetPayload: ReturnType<typeof buildJobBudgetFirestorePayload> | null =
+        null;
+      const budgetTrim = newJob.budget.trim();
+      if (budgetTrim !== "") {
+        const amount = Math.round(Number(budgetTrim));
+        if (!Number.isFinite(amount) || amount <= 0) {
+          toast({
+            variant: "destructive",
+            title: "Rozpočet",
+            description: "Zadejte částku větší než 0 nebo nevyplňujte rozpočet.",
+          });
+          setIsSubmitting(false);
+          return;
+        }
+        const vatRateNew = normalizeVatRate(Number(newJob.vatRate));
+        const budgetTypeNew = normalizeBudgetType(newJob.budgetType);
+        try {
+          budgetPayload = buildJobBudgetFirestorePayload({
+            budgetInput: amount,
+            budgetType: budgetTypeNew,
+            vatRate: vatRateNew,
+          });
+        } catch (e) {
+          toast({
+            variant: "destructive",
+            title: "Rozpočet",
+            description: e instanceof Error ? e.message : "Neplatná částka.",
+          });
+          setIsSubmitting(false);
+          return;
+        }
+      }
 
       const payload: Record<string, unknown> = {
         name: newJob.name,
         description: newJob.description,
         status: newJob.status,
-        ...budgetPayload,
+        ...(budgetPayload ? budgetPayload : {}),
         startDate: newJob.startDate,
         endDate: newJob.endDate,
         measuring: newJob.measuring,
@@ -442,14 +468,21 @@ function JobsPageContent() {
         entityType: "job",
         entityId: createdJobRef.id,
         entityName: newJob.name,
-        details: `Stav ${newJob.status}, rozpočet ${budgetPayload.budgetNet} Kč bez DPH / ${budgetPayload.budgetGross} Kč s DPH`,
+        details: budgetPayload
+          ? `Stav ${newJob.status}, rozpočet ${budgetPayload.budgetNet} Kč bez DPH / ${budgetPayload.budgetGross} Kč s DPH (${budgetPayload.budgetType})`
+          : `Stav ${newJob.status}, bez rozpočtu`,
         sourceModule: "jobs",
         route: `/portal/jobs/${createdJobRef.id}`,
         metadata: {
           status: newJob.status,
-          budgetNet: budgetPayload.budgetNet,
-          budgetGross: budgetPayload.budgetGross,
-          vatRate: budgetPayload.vatRate,
+          ...(budgetPayload
+            ? {
+                budgetNet: budgetPayload.budgetNet,
+                budgetGross: budgetPayload.budgetGross,
+                budgetType: budgetPayload.budgetType,
+                vatRate: budgetPayload.vatRate,
+              }
+            : {}),
           customerId: payload.customerId,
           customerName: payload.customerName,
         },
@@ -466,6 +499,7 @@ function JobsPageContent() {
         customerId: "",
         status: "nová",
         budget: "",
+        budgetType: "net" as JobBudgetType,
         vatRate: "21",
         startDate: "",
         endDate: "",
@@ -738,20 +772,26 @@ function JobsPageContent() {
                         ) : null}
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="budget">Rozpočet bez DPH (Kč)</Label>
-                        <Input
-                          id="budget"
-                          type="number"
-                          value={newJob.budget}
+                        <Label htmlFor="new-job-price-type">Typ ceny</Label>
+                        <select
+                          id="new-job-price-type"
+                          className={NATIVE_SELECT_CLASS}
+                          value={newJob.budgetType}
                           onChange={(e) =>
-                            setNewJob({ ...newJob, budget: e.target.value })
+                            setNewJob({
+                              ...newJob,
+                              budgetType: normalizeBudgetType(
+                                e.target.value
+                              ),
+                            })
                           }
-                          placeholder="0"
-                          min={0}
-                        />
+                        >
+                          <option value="net">Cena bez DPH</option>
+                          <option value="gross">Cena s DPH</option>
+                        </select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="new-job-vat">DPH</Label>
+                        <Label htmlFor="new-job-vat">Sazba DPH</Label>
                         <select
                           id="new-job-vat"
                           className={NATIVE_SELECT_CLASS}
@@ -762,10 +802,30 @@ function JobsPageContent() {
                         >
                           {VAT_RATE_OPTIONS.map((r) => (
                             <option key={r} value={String(r)}>
-                              {r} % DPH
+                              {r} %
                             </option>
                           ))}
                         </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="budget">Rozpočet (Kč)</Label>
+                        <Input
+                          id="budget"
+                          type="number"
+                          value={newJob.budget}
+                          onChange={(e) =>
+                            setNewJob({ ...newJob, budget: e.target.value })
+                          }
+                          placeholder={
+                            newJob.budgetType === "gross"
+                              ? "Částka s DPH"
+                              : "Částka bez DPH"
+                          }
+                          min={1}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Volitelné. Hodnota odpovídá typu ceny.
+                        </p>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="startDate">Termín zahájení</Label>

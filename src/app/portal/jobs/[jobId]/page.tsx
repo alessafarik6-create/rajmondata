@@ -106,10 +106,12 @@ import {
 } from "@/lib/work-contract-deposit";
 import {
   buildJobBudgetFirestorePayload,
+  normalizeBudgetType,
   normalizeVatRate,
   resolveExpenseAmounts,
   resolveJobBudgetFromFirestore,
   VAT_RATE_OPTIONS,
+  type JobBudgetType,
 } from "@/lib/vat-calculations";
 import { allocateNextSodContractNumber } from "@/lib/work-contract-counter";
 import {
@@ -219,8 +221,9 @@ type JobEditForm = {
   name: string;
   description: string;
   status: string;
-  /** Rozpočet bez DPH (Kč). */
+  /** Částka v Kč — význam podle `budgetType`. */
   budget: string;
+  budgetType: JobBudgetType;
   /** Sazba DPH 0 / 12 / 21 */
   vatRate: string;
   startDate: string;
@@ -758,6 +761,7 @@ export default function JobDetailPage() {
     description: "",
     status: "nová",
     budget: "",
+    budgetType: "net",
     vatRate: "21",
     startDate: "",
     endDate: "",
@@ -3803,10 +3807,11 @@ export default function JobDetailPage() {
       description: j.description || "",
       status: j.status || "nová",
       budget: bdOpen
-        ? String(bdOpen.budgetNet)
+        ? String(bdOpen.budgetInput)
         : j.budget != null && j.budget !== ""
           ? String(j.budget)
           : "",
+      budgetType: bdOpen ? bdOpen.budgetType : "net",
       vatRate: String(normalizeVatRate(j.vatRate)),
       startDate: j.startDate || "",
       endDate: j.endDate || "",
@@ -3839,16 +3844,50 @@ export default function JobDetailPage() {
         return;
       }
 
-      const budgetNet = (() => {
-        if (jobEditForm.budget.trim() === "") return 0;
-        const n = Number(jobEditForm.budget);
-        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
-      })();
-      const vatRateJob = normalizeVatRate(Number(jobEditForm.vatRate));
-      const budgetFields = buildJobBudgetFirestorePayload({
-        budgetNet,
-        vatRate: vatRateJob,
-      });
+      const budgetTrim = jobEditForm.budget.trim();
+      let budgetFields: ReturnType<typeof buildJobBudgetFirestorePayload> | null =
+        null;
+      if (budgetTrim !== "") {
+        const amount = Math.round(Number(budgetTrim));
+        if (!Number.isFinite(amount) || amount <= 0) {
+          toast({
+            variant: "destructive",
+            title: "Rozpočet",
+            description: "Zadejte částku větší než 0, nebo pole rozpočet vyprázdněte.",
+          });
+          return;
+        }
+        const vatRateJob = normalizeVatRate(Number(jobEditForm.vatRate));
+        const budgetTypeJob = normalizeBudgetType(jobEditForm.budgetType);
+        try {
+          budgetFields = buildJobBudgetFirestorePayload({
+            budgetInput: amount,
+            budgetType: budgetTypeJob,
+            vatRate: vatRateJob,
+          });
+        } catch (err) {
+          toast({
+            variant: "destructive",
+            title: "Rozpočet",
+            description:
+              err instanceof Error ? err.message : "Neplatná částka rozpočtu.",
+          });
+          return;
+        }
+      }
+
+      const budgetClears =
+        budgetTrim === ""
+          ? {
+              budget: deleteField(),
+              budgetInput: deleteField(),
+              budgetType: deleteField(),
+              budgetNet: deleteField(),
+              budgetVat: deleteField(),
+              budgetGross: deleteField(),
+              vatRate: deleteField(),
+            }
+          : {};
 
       const assignedIds = jobEditForm.assignedEmployeeIdsText
         .split(",")
@@ -3873,7 +3912,8 @@ export default function JobDetailPage() {
           name: jobEditForm.name,
           description: jobEditForm.description,
           status: jobEditForm.status,
-          ...budgetFields,
+          ...(budgetFields ? budgetFields : {}),
+          ...budgetClears,
           startDate: jobEditForm.startDate,
           endDate: jobEditForm.endDate,
           measuring: jobEditForm.measuring,
@@ -3921,8 +3961,9 @@ export default function JobDetailPage() {
             previousStatus: jPrev?.status,
             newStatus: jobEditForm.status,
             previousBudget: jPrev?.budget,
-            newBudget: budgetFields.budgetGross,
-            newBudgetNet: budgetFields.budgetNet,
+            newBudget: budgetFields?.budgetGross,
+            newBudgetNet: budgetFields?.budgetNet,
+            budgetType: budgetFields?.budgetType,
             customerId: jobEditForm.customerId || null,
           },
         });
@@ -4403,7 +4444,21 @@ export default function JobDetailPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {jobBudgetBreakdown ? (
-                <div className="space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
+                <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="secondary" className="font-normal">
+                      Zadáno
+                    </Badge>
+                    <span className="text-muted-foreground">
+                      {jobBudgetBreakdown.budgetType === "gross"
+                        ? "s DPH"
+                        : "bez DPH"}
+                      :
+                    </span>
+                    <span className="font-semibold tabular-nums">
+                      {jobBudgetBreakdown.budgetInput.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
                   <div className="flex justify-between gap-2">
                     <span className="text-muted-foreground">Rozpočet bez DPH</span>
                     <span className="font-semibold tabular-nums">
@@ -4624,19 +4679,29 @@ export default function JobDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Rozpočet bez DPH (Kč)</Label>
-                  <Input
-                    type="number"
-                    value={jobEditForm.budget}
-                    onChange={(e) =>
+                  <Label>Typ ceny</Label>
+                  <Select
+                    value={jobEditForm.budgetType}
+                    onValueChange={(v) =>
                       setJobEditForm((prev) => ({
                         ...prev,
-                        budget: e.target.value,
+                        budgetType: normalizeBudgetType(v),
                       }))
                     }
-                    placeholder="Např. 150000"
-                    className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px] md:min-h-10")}
-                  />
+                  >
+                    <SelectTrigger
+                      className={cn(
+                        LIGHT_SELECT_TRIGGER_CLASS,
+                        "min-h-[44px] md:min-h-10"
+                      )}
+                    >
+                      <SelectValue placeholder="Bez / s DPH" />
+                    </SelectTrigger>
+                    <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
+                      <SelectItem value="net">Cena bez DPH</SelectItem>
+                      <SelectItem value="gross">Cena s DPH</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="space-y-2">
@@ -4661,11 +4726,35 @@ export default function JobDetailPage() {
                     <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
                       {VAT_RATE_OPTIONS.map((r) => (
                         <SelectItem key={r} value={String(r)}>
-                          {r} % DPH
+                          {r} %
                         </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <Label>Rozpočet (Kč)</Label>
+                  <Input
+                    type="number"
+                    value={jobEditForm.budget}
+                    onChange={(e) =>
+                      setJobEditForm((prev) => ({
+                        ...prev,
+                        budget: e.target.value,
+                      }))
+                    }
+                    placeholder={
+                      jobEditForm.budgetType === "gross"
+                        ? "Částka s DPH"
+                        : "Částka bez DPH"
+                    }
+                    className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px] md:min-h-10")}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Prázdné pole rozpočet v databázi odebere. Částka odpovídá typu
+                    ceny.
+                  </p>
                 </div>
 
                 <div className="space-y-2">
