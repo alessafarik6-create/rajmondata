@@ -402,6 +402,26 @@ export default function PortalLeadsPage() {
     [rows]
   );
 
+  /** Otevření konkrétní poptávky z dashboardu (?openLead=…) */
+  useEffect(() => {
+    if (typeof window === "undefined" || rows.length === 0) return;
+    const params = new URLSearchParams(window.location.search);
+    const open = params.get("openLead");
+    if (!open) return;
+    const exists = rows.some((r) => stableImportLeadDocumentId(r) === open);
+    if (!exists) return;
+    setExpandedLeadKeys((p) => ({ ...p, [open]: true }));
+    const t = window.setTimeout(() => {
+      try {
+        const el = document.querySelector(`[data-open-lead="${CSS.escape(open)}"]`);
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+      } catch {
+        /* starší prohlížeče bez CSS.escape */
+      }
+    }, 200);
+    return () => window.clearTimeout(t);
+  }, [rows, rowsKey]);
+
   /** Doplní `receivedAt` v overlay (importní datum nebo čas prvního načtení). */
   useEffect(() => {
     if (!firestore || !companyId || !user || !rowsKey) return;
@@ -1082,6 +1102,7 @@ export default function PortalLeadsPage() {
                     return (
                       <div
                         key={`${key}-${r.id}`}
+                        data-open-lead={key}
                         className={cn(
                           idx % 2 === 1 ? "bg-slate-50/90" : "bg-white"
                         )}

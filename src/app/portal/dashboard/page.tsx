@@ -47,6 +47,52 @@ import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-ter
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
+import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
+import { cn } from "@/lib/utils";
+
+const DASHBOARD_LEADS_POLL_MS = 60_000;
+
+function receivedAtToMs(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    "toMillis" in raw &&
+    typeof (raw as { toMillis: () => number }).toMillis === "function"
+  ) {
+    return (raw as { toMillis: () => number }).toMillis();
+  }
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    "toDate" in raw &&
+    typeof (raw as { toDate: () => Date }).toDate === "function"
+  ) {
+    return (raw as { toDate: () => Date }).toDate().getTime();
+  }
+  return null;
+}
+
+function leadNewestTimestampMs(
+  lead: LeadImportRow,
+  overlay?: { receivedAt?: unknown }
+): number {
+  if (lead.receivedAtIso) {
+    const t = Date.parse(lead.receivedAtIso);
+    if (!Number.isNaN(t)) return t;
+  }
+  const ms = receivedAtToMs(overlay?.receivedAt);
+  return ms ?? 0;
+}
+
+function formatLeadListDate(ms: number): string {
+  if (ms <= 0) return "—";
+  return new Date(ms).toLocaleDateString("cs-CZ", {
+    day: "numeric",
+    month: "numeric",
+    year: "numeric",
+  });
+}
 
 type ProfileData = {
   displayName?: string;
@@ -183,6 +229,12 @@ export default function CompanyDashboard() {
     );
   }, [firestore, companyId, showAdminDashboard, todayIso]);
 
+  /** Realtime: změny u poptávek (datum přijetí, štítky) — přepočet „nejnovějších“ na dashboardu. */
+  const importLeadOverlaysQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return collection(firestore, "companies", companyId, "import_lead_overlays");
+  }, [firestore, companyId, showAdminDashboard]);
+
   const { data: employeesRaw } = useCollection(employeesQuery);
   /** useCollection vrací `null` při načítání/chybě — default `= []` se na null nevztahuje. */
   const employees = employeesRaw ?? [];
@@ -208,6 +260,7 @@ export default function CompanyDashboard() {
     data: attendanceTodayRaw,
     isLoading: attendanceTodayLoading,
   } = useCollection(attendanceTodayForDashboardQuery);
+  const { data: importLeadOverlaysRaw } = useCollection(importLeadOverlaysQuery);
 
   const financeRows = financeRowsRaw ?? [];
   const attendanceRows = attendanceRowsRaw ?? [];
@@ -370,7 +423,10 @@ export default function CompanyDashboard() {
 
   useEffect(() => {
     if (!showAdminDashboard || !companyId || !user) return;
-    const t = window.setInterval(() => void loadImportLeadsForDashboard(), 5 * 60 * 1000);
+    const t = window.setInterval(
+      () => void loadImportLeadsForDashboard(),
+      DASHBOARD_LEADS_POLL_MS
+    );
     return () => window.clearInterval(t);
   }, [showAdminDashboard, companyId, user, loadImportLeadsForDashboard]);
 
@@ -378,6 +434,29 @@ export default function CompanyDashboard() {
     () => sumOrientacniCenyFromLeadRows(importLeadsRows),
     [importLeadsRows]
   );
+
+  const importLeadOverlayByKey = useMemo(() => {
+    const m = new Map<string, { receivedAt?: unknown }>();
+    const list = Array.isArray(importLeadOverlaysRaw) ? importLeadOverlaysRaw : [];
+    for (const doc of list) {
+      const row = doc as { id?: string; receivedAt?: unknown };
+      if (typeof row.id === "string" && row.id) m.set(row.id, row);
+    }
+    return m;
+  }, [importLeadOverlaysRaw]);
+
+  const latestFiveDashboardLeads = useMemo(() => {
+    if (!importLeadsRows.length) return [];
+    const list = [...importLeadsRows];
+    list.sort((a, b) => {
+      const ka = stableImportLeadDocumentId(a);
+      const kb = stableImportLeadDocumentId(b);
+      const ta = leadNewestTimestampMs(a, importLeadOverlayByKey.get(ka));
+      const tb = leadNewestTimestampMs(b, importLeadOverlayByKey.get(kb));
+      return tb - ta;
+    });
+    return list.slice(0, 5);
+  }, [importLeadsRows, importLeadOverlayByKey]);
 
   useEffect(() => {
     if (!showAdminDashboard || !companyId) return;
@@ -617,47 +696,126 @@ export default function CompanyDashboard() {
           {companyId ? <CompanyScheduleCalendar companyId={companyId} /> : null}
 
           {companyId ? (
-            <Link
-              href="/portal/leads"
-              className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black"
-            >
-              <Card className="border-2 border-black bg-white text-black shadow-sm transition-shadow hover:shadow-md">
-                <CardHeader className="space-y-1 pb-2">
-                  <CardTitle className="flex items-center gap-2 text-base font-semibold text-black">
-                    <Inbox className="h-5 w-5 shrink-0" aria-hidden />
-                    Poptávky aktuálně v hodnotě
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch lg:gap-6">
+              <Link
+                href="/portal/leads"
+                className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-black"
+              >
+                <Card className="h-full border-2 border-black bg-white text-black shadow-sm transition-shadow hover:shadow-md">
+                  <CardHeader className="space-y-1 pb-2">
+                    <CardTitle className="flex items-center gap-2 text-base font-semibold text-black">
+                      <Inbox className="h-5 w-5 shrink-0" aria-hidden />
+                      Poptávky aktuálně v hodnotě
+                    </CardTitle>
+                    <CardDescription className="text-sm text-black/75">
+                      Součet orientačních cen z importovaných poptávek vaší firmy (řádky s platnou
+                      vyplněnou cenou).
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 pt-0">
+                    {importLeadsLoading ? (
+                      <div className="flex min-h-[4.5rem] items-center">
+                        <span className="inline-block h-9 w-9 animate-spin rounded-full border-2 border-black border-t-transparent" />
+                      </div>
+                    ) : importLeadsError ? (
+                      <p className="text-sm text-destructive">{importLeadsError}</p>
+                    ) : (
+                      <>
+                        <p className="text-3xl font-bold tabular-nums tracking-tight text-black sm:text-4xl">
+                          {formatKc(leadsValueStats.totalKc)}
+                        </p>
+                        <p className="text-sm leading-snug text-black/85">
+                          {leadsValueStats.totalCount === 0
+                            ? "V importu zatím nejsou žádné poptávky."
+                            : `Orientační cenu má vyplněnou ${leadsValueStats.withPriceCount} z ${leadsValueStats.totalCount} poptávek.`}
+                        </p>
+                        <p className="text-xs text-black/70">
+                          Klepnutím otevřete sekci Poptávky — hodnota se přepočítá při načtení importu
+                          (cca každou minutu) a při změnách v přehledu poptávek.
+                        </p>
+                      </>
+                    )}
+                  </CardContent>
+                </Card>
+              </Link>
+
+              <Card
+                className={cn(
+                  "flex h-full min-h-0 flex-col border border-emerald-200/70 bg-emerald-50/35 shadow-sm dark:border-emerald-900/45 dark:bg-emerald-950/20"
+                )}
+              >
+                <CardHeader className="space-y-0.5 pb-2 pt-4">
+                  <CardTitle className="flex items-center gap-2 text-base font-semibold text-emerald-950 dark:text-emerald-100">
+                    <Inbox className="h-5 w-5 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden />
+                    Nejnovější poptávky
                   </CardTitle>
-                  <CardDescription className="text-sm text-black/75">
-                    Součet orientačních cen z importovaných poptávek vaší firmy (řádky s platnou
-                    vyplněnou cenou).
+                  <CardDescription className="text-xs text-emerald-900/75 dark:text-emerald-200/80">
+                    Posledních 5 podle data (import nebo přijetí v aplikaci). Aktualizace z API a z
+                    Firestore.
                   </CardDescription>
                 </CardHeader>
-                <CardContent className="space-y-3 pt-0">
-                  {importLeadsLoading ? (
-                    <div className="flex min-h-[4.5rem] items-center">
-                      <span className="inline-block h-9 w-9 animate-spin rounded-full border-2 border-black border-t-transparent" />
+                <CardContent className="flex flex-1 flex-col gap-2 pb-4 pt-0">
+                  {importLeadsLoading && importLeadsRows.length === 0 ? (
+                    <div className="flex min-h-[6rem] items-center justify-center">
+                      <span className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-emerald-600/50 border-t-transparent" />
                     </div>
-                  ) : importLeadsError ? (
+                  ) : importLeadsError && importLeadsRows.length === 0 ? (
                     <p className="text-sm text-destructive">{importLeadsError}</p>
+                  ) : latestFiveDashboardLeads.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">
+                      Zatím žádné poptávky k zobrazení. Zkontrolujte import v nastavení firmy.
+                    </p>
                   ) : (
-                    <>
-                      <p className="text-3xl font-bold tabular-nums tracking-tight text-black sm:text-4xl">
-                        {formatKc(leadsValueStats.totalKc)}
-                      </p>
-                      <p className="text-sm leading-snug text-black/85">
-                        {leadsValueStats.totalCount === 0
-                          ? "V importu zatím nejsou žádné poptávky."
-                          : `Orientační cenu má vyplněnou ${leadsValueStats.withPriceCount} z ${leadsValueStats.totalCount} poptávek.`}
-                      </p>
-                      <p className="text-xs text-black/70">
-                        Klepnutím otevřete sekci Poptávky — hodnota se přepočítá při každém načtení
-                        importu.
-                      </p>
-                    </>
+                    <ul className="flex flex-col gap-1.5">
+                      {latestFiveDashboardLeads.map((r) => {
+                        const key = stableImportLeadDocumentId(r);
+                        const ts = leadNewestTimestampMs(r, importLeadOverlayByKey.get(key));
+                        const contact =
+                          [r.telefon?.trim(), r.email?.trim()].filter(Boolean).join(" · ") || "—";
+                        const msg = String(r.zprava ?? "").trim();
+                        return (
+                          <li key={key}>
+                            <Link
+                              href={`/portal/leads?openLead=${encodeURIComponent(key)}`}
+                              className={cn(
+                                "flex min-h-[48px] gap-2 rounded-md border border-emerald-200/60 bg-white/70 px-2.5 py-2 text-left transition-colors hover:bg-emerald-50/90 dark:border-emerald-800/40 dark:bg-emerald-950/30 dark:hover:bg-emerald-900/35",
+                                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                              )}
+                            >
+                              <div className="min-w-0 flex-1 space-y-0.5">
+                                <div className="flex items-baseline justify-between gap-2">
+                                  <span className="truncate text-sm font-semibold text-foreground">
+                                    {r.jmeno?.trim() || "—"}
+                                  </span>
+                                  <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+                                    {formatLeadListDate(ts)}
+                                  </span>
+                                </div>
+                                <p className="truncate text-xs text-muted-foreground">{contact}</p>
+                                <p className="line-clamp-1 text-xs text-foreground/85" title={msg}>
+                                  {msg || "—"}
+                                </p>
+                              </div>
+                              <ArrowRight
+                                className="h-4 w-4 shrink-0 self-center text-emerald-600 opacity-70 dark:text-emerald-400"
+                                aria-hidden
+                              />
+                            </Link>
+                          </li>
+                        );
+                      })}
+                    </ul>
                   )}
+                  <Link
+                    href="/portal/leads"
+                    className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-400"
+                  >
+                    Všechny poptávky
+                    <ArrowRight className="h-3.5 w-3.5" aria-hidden />
+                  </Link>
                 </CardContent>
               </Card>
-            </Link>
+            </div>
           ) : null}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
