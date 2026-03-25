@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "firebase/auth";
 import type { DocumentData } from "firebase/firestore";
 import {
@@ -17,10 +17,13 @@ import { getFirebaseStorage } from "@/firebase/storage";
 import { uploadJobExpenseFileViaFirebaseSdk } from "@/lib/job-photo-upload";
 import {
   getJobMediaFileTypeFromFile,
+  inferJobMediaItemType,
+  isAllowedJobImageFile,
   isAllowedJobMediaFile,
   JOB_IMAGE_ACCEPT_ATTR,
   JOB_MEDIA_ACCEPT_ATTR,
 } from "@/lib/job-media-types";
+import type { JobExpenseFileType, JobExpenseRow } from "@/lib/job-expense-types";
 import { parseAmountKc } from "@/lib/work-contract-deposit";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +46,8 @@ import {
 } from "@/lib/light-form-control-classes";
 import {
   Camera,
+  Download,
+  ExternalLink,
   FileText,
   ImageIcon,
   Pencil,
@@ -51,23 +56,7 @@ import {
   Wallet,
 } from "lucide-react";
 
-export type JobExpenseFileType = "image" | "pdf";
-
-export type JobExpenseRow = {
-  id: string;
-  companyId?: string;
-  jobId?: string;
-  amount?: number;
-  date?: string;
-  note?: string;
-  fileUrl?: string;
-  fileType?: JobExpenseFileType;
-  fileName?: string;
-  storagePath?: string;
-  createdBy?: string;
-  createdAt?: unknown;
-  updatedAt?: unknown;
-};
+export type { JobExpenseFileType, JobExpenseRow } from "@/lib/job-expense-types";
 
 function formatKc(n: number): string {
   return `${n.toLocaleString("cs-CZ")} Kč`;
@@ -130,17 +119,34 @@ export function JobExpensesSection({
   const [submitting, setSubmitting] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<JobExpenseRow | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!pendingFile || !isAllowedJobImageFile(pendingFile)) {
+      setAttachmentPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(pendingFile);
+    setAttachmentPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [pendingFile]);
 
   const sortedExpenses = useMemo(() => {
     const list = [...(expenses ?? [])];
     list.sort((a, b) => {
-      const ta = a.createdAt && typeof (a.createdAt as { toMillis?: () => number }).toMillis === "function"
-        ? (a.createdAt as { toMillis: () => number }).toMillis()
-        : 0;
-      const tb = b.createdAt && typeof (b.createdAt as { toMillis?: () => number }).toMillis === "function"
-        ? (b.createdAt as { toMillis: () => number }).toMillis()
-        : 0;
-      return tb - ta;
+      const ta =
+        a.createdAt && typeof (a.createdAt as { toMillis?: () => number }).toMillis === "function"
+          ? (a.createdAt as { toMillis: () => number }).toMillis()
+          : 0;
+      const tb =
+        b.createdAt && typeof (b.createdAt as { toMillis?: () => number }).toMillis === "function"
+          ? (b.createdAt as { toMillis: () => number }).toMillis()
+          : 0;
+      if (tb !== ta) return tb - ta;
+      const da = String(a.date ?? "");
+      const db = String(b.date ?? "");
+      if (db !== da) return db.localeCompare(da);
+      return b.id.localeCompare(a.id);
     });
     return list;
   }, [expenses]);
@@ -206,7 +212,14 @@ export function JobExpensesSection({
       });
       return;
     }
-    if (!firestore || !companyId || !jobId) return;
+    if (!firestore || !companyId || !jobId?.trim()) {
+      toast({
+        title: "Chybí kontext zakázky",
+        description: "Obnovte stránku nebo se znovu přihlaste.",
+        variant: "destructive",
+      });
+      return;
+    }
     if (!dateInput.trim()) {
       toast({
         title: "Datum",
@@ -233,16 +246,29 @@ export function JobExpensesSection({
       let storagePath: string | undefined;
 
       if (pendingFile) {
-        const up = await uploadJobExpenseFileViaFirebaseSdk(
-          pendingFile,
-          companyId,
-          jobId
-        );
-        fileUrl = up.downloadURL;
-        storagePath = up.storagePath;
-        fileType = getJobMediaFileTypeFromFile(pendingFile);
-        fileName =
-          pendingFile.name.replace(/^.*[\\/]/, "").trim() || "soubor";
+        try {
+          const up = await uploadJobExpenseFileViaFirebaseSdk(
+            pendingFile,
+            companyId,
+            jobId
+          );
+          fileUrl = up.downloadURL;
+          storagePath = up.storagePath;
+          fileType = getJobMediaFileTypeFromFile(pendingFile);
+          fileName =
+            pendingFile.name.replace(/^.*[\\/]/, "").trim() || "soubor";
+        } catch (uploadErr) {
+          console.error(uploadErr);
+          toast({
+            title: "Nahrání přílohy se nezdařilo",
+            description:
+              uploadErr instanceof Error
+                ? uploadErr.message
+                : "Zkontrolujte síť a pravidla úložiště.",
+            variant: "destructive",
+          });
+          return;
+        }
       }
 
       const noteTrimmed = noteInput.trim();
@@ -319,7 +345,14 @@ export function JobExpensesSection({
   };
 
   const confirmDelete = async () => {
-    if (!deleteTarget || !firestore || !companyId || !jobId) return;
+    if (!deleteTarget || !firestore || !companyId || !jobId?.trim()) {
+      toast({
+        title: "Chybí kontext zakázky",
+        description: "Smazání nelze dokončit.",
+        variant: "destructive",
+      });
+      return;
+    }
     setDeleting(true);
     try {
       const col = collection(
@@ -332,7 +365,9 @@ export function JobExpensesSection({
       );
       await deleteDoc(doc(col, deleteTarget.id));
       try {
-        await deleteExpenseFileFromStorage(deleteTarget.storagePath);
+        await deleteExpenseFileFromStorage(
+          deleteTarget.storagePath ?? undefined
+        );
       } catch {
         /* */
       }
@@ -417,7 +452,9 @@ export function JobExpensesSection({
             </p>
           ) : (
             <ul className="space-y-3">
-              {sortedExpenses.map((row) => (
+              {sortedExpenses.map((row) => {
+                const attachmentKind = inferJobMediaItemType(row);
+                return (
                 <li
                   key={row.id}
                   className="rounded-lg border border-border/70 bg-background/50 p-3 sm:p-4 flex flex-col sm:flex-row sm:items-stretch gap-3"
@@ -442,36 +479,63 @@ export function JobExpensesSection({
                     )}
                   </div>
 
-                  <div className="flex sm:flex-col items-center sm:items-end justify-between gap-3 shrink-0">
+                  <div className="flex flex-col gap-3 sm:items-end">
                     {row.fileUrl ? (
-                      <div className="flex flex-col items-end gap-2">
-                        <Badge variant="outline" className="text-xs font-normal">
-                          {row.fileType === "pdf" ? "PDF" : "Foto"}
+                      <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:max-w-[min(100%,20rem)] sm:items-end">
+                        <Badge variant="outline" className="w-fit text-xs font-normal">
+                          {attachmentKind === "pdf" ? "PDF" : "Foto"}
                         </Badge>
-                        {row.fileType === "pdf" ? (
-                          <a
-                            href={row.fileUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm font-medium text-primary hover:bg-primary/5 min-h-[44px] max-w-[220px]"
-                          >
-                            <FileText className="w-5 h-5 shrink-0" />
-                            <span className="truncate">
-                              {row.fileName || "PDF doklad"}
-                            </span>
-                          </a>
+                        {attachmentKind === "pdf" ? (
+                          <div className="flex w-full min-w-0 flex-col gap-2 rounded-md border border-border bg-background/60 p-3">
+                            <div className="flex min-w-0 items-start gap-2">
+                              <FileText className="mt-0.5 h-5 w-5 shrink-0 text-primary" aria-hidden />
+                              <span className="min-w-0 flex-1 break-all text-left text-sm font-medium leading-snug">
+                                {row.fileName || "PDF doklad"}
+                              </span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                size="sm"
+                                className="min-h-9 shrink-0 gap-1.5"
+                                asChild
+                              >
+                                <a
+                                  href={row.fileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <ExternalLink className="h-4 w-4" />
+                                  Otevřít
+                                </a>
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="min-h-9 shrink-0 gap-1.5"
+                                asChild
+                              >
+                                <a href={row.fileUrl} download={row.fileName || "doklad.pdf"}>
+                                  <Download className="h-4 w-4" />
+                                  Stáhnout
+                                </a>
+                              </Button>
+                            </div>
+                          </div>
                         ) : (
                           <a
                             href={row.fileUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="block rounded-md border border-border overflow-hidden w-24 h-24 sm:w-28 sm:h-28 shrink-0 bg-muted"
+                            className="block w-full max-w-[12rem] shrink-0 overflow-hidden rounded-md border border-border bg-muted aspect-square sm:w-28 sm:max-w-none"
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
                             <img
                               src={row.fileUrl}
                               alt={row.fileName || "Příloha nákladu"}
-                              className="w-full h-full object-cover"
+                              className="h-full w-full object-cover"
                             />
                           </a>
                         )}
@@ -481,7 +545,7 @@ export function JobExpensesSection({
                     )}
 
                     {canEdit ? (
-                      <div className="flex items-center gap-1">
+                      <div className="flex items-center justify-end gap-1 sm:mt-1">
                         <Button
                           type="button"
                           variant="outline"
@@ -506,7 +570,8 @@ export function JobExpensesSection({
                     ) : null}
                   </div>
                 </li>
-              ))}
+              );
+              })}
             </ul>
           )}
         </CardContent>
@@ -614,9 +679,59 @@ export function JobExpensesSection({
                   Nový soubor: <span className="font-medium text-foreground">{pendingFile.name}</span>
                 </p>
               ) : editingId ? (
-                <p className="text-sm text-muted-foreground">
-                  Příloha beze změny (vyberte soubor pro nahrazení).
-                </p>
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">
+                    Příloha beze změny (vyberte soubor pro nahrazení).
+                  </p>
+                  {(() => {
+                    const current = sortedExpenses.find((e) => e.id === editingId);
+                    if (!current?.fileUrl) return null;
+                    const kind = inferJobMediaItemType(current);
+                    if (kind === "pdf") {
+                      return (
+                        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2">
+                          <FileText className="h-6 w-6 shrink-0 text-primary" />
+                          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                            {current.fileName || "PDF"}
+                          </span>
+                          <Button type="button" variant="ghost" size="sm" className="shrink-0" asChild>
+                            <a href={current.fileUrl} target="_blank" rel="noopener noreferrer">
+                              Náhled
+                            </a>
+                          </Button>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div className="overflow-hidden rounded-md border border-border bg-muted max-h-40 w-full max-w-xs mx-auto sm:mx-0">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={current.fileUrl}
+                          alt=""
+                          className="max-h-40 w-full object-contain object-center"
+                        />
+                      </div>
+                    );
+                  })()}
+                </div>
+              ) : null}
+              {pendingFile && isAllowedJobImageFile(pendingFile) && attachmentPreviewUrl ? (
+                <div className="mt-2 max-h-48 overflow-hidden rounded-md border border-border bg-muted">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={attachmentPreviewUrl}
+                    alt="Náhled přílohy"
+                    className="max-h-48 w-full object-contain object-center"
+                  />
+                </div>
+              ) : null}
+              {pendingFile && !isAllowedJobImageFile(pendingFile) && pendingFile.type === "application/pdf" ? (
+                <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2">
+                  <FileText className="h-8 w-8 shrink-0 text-primary" />
+                  <span className="min-w-0 flex-1 break-all text-sm font-medium">
+                    {pendingFile.name}
+                  </span>
+                </div>
               ) : null}
             </div>
           </div>

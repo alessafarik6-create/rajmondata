@@ -130,13 +130,13 @@ export function getJobMediaFileTypeFromFile(file: File): JobMediaFileType {
 
 /** Typ položky v UI / mazání – z DB nebo z názvu souboru. */
 export function inferJobMediaItemType(row: {
-  fileType?: string;
-  fileName?: string;
-  name?: string;
+  fileType?: string | null;
+  fileName?: string | null;
+  name?: string | null;
 }): JobMediaFileType {
   if (row.fileType === "pdf") return "pdf";
   if (row.fileType === "image") return "image";
-  const base = (row.fileName || row.name || "").toLowerCase();
+  const base = String(row.fileName || row.name || "").toLowerCase();
   if (base.endsWith(".pdf")) return "pdf";
   return "image";
 }

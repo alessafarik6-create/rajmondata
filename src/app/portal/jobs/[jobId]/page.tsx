@@ -22,10 +22,8 @@ import {
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
-import {
-  JobExpensesSection,
-  type JobExpenseRow,
-} from "@/components/jobs/job-expenses-section";
+import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
+import type { JobExpenseRow } from "@/lib/job-expense-types";
 import {
   doc,
   collection,
