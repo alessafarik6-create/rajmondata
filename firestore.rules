@@ -621,6 +621,53 @@ service cloud.firestore {
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
+      /**
+       * Audit aktivit — append-only; čtení jen pro vedení nebo super_admin.
+       * companies/{companyId}/activityLogs/{logId}
+       */
+      match /activityLogs/{logId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || isSuperAdminFirebase());
+        allow create: if signedIn() && sameCompany(companyId) &&
+          request.resource.data.organizationId == companyId &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.createdBy == request.auth.uid &&
+          request.resource.data.actionType is string &&
+          request.resource.data.actionType.size() > 0 &&
+          request.resource.data.actionType.size() <= 120 &&
+          request.resource.data.actionLabel is string &&
+          request.resource.data.actionLabel.size() > 0 &&
+          request.resource.data.actionLabel.size() <= 500 &&
+          request.resource.data.entityType is string &&
+          request.resource.data.entityType.size() > 0 &&
+          request.resource.data.entityType.size() <= 80;
+        allow update, delete: if false;
+      }
+
+      /**
+       * Relace přihlášení (web) — uživatel vytváří / aktualizuje jen vlastní záznam.
+       * companies/{companyId}/staffSessions/{sessionId}
+       */
+      match /staffSessions/{sessionId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || isSuperAdminFirebase());
+        allow create: if signedIn() && sameCompany(companyId) &&
+          request.resource.data.userId == request.auth.uid &&
+          request.resource.data.organizationId == companyId &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.sessionId == sessionId &&
+          request.resource.data.isActive == true &&
+          request.resource.data.loginAt is timestamp;
+        allow update: if signedIn() && sameCompany(companyId) &&
+          resource.data.userId == request.auth.uid &&
+          request.resource.data.userId == resource.data.userId &&
+          request.resource.data.organizationId == companyId &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.sessionId == sessionId;
+        allow delete: if false;
+      }
+
       // Vše ostatní pod firmou (zakázky, podkolekce, …) — pouze privilegované role.
       // Zaměstnanec se sem nedostane (frontend redirect + tyto pravidla).
       // Výjimka: employees/{id}/private/** je výše explicitně zakázáno; rekurzivní pravidlo by jinak PIN povolilo (OR pravidel).

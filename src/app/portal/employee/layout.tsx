@@ -8,6 +8,7 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
+import { ActivitySessionBridge } from "@/components/portal/activity-session-bridge";
 
 const DEBUG_EMPLOYEE_LAYOUT = process.env.NODE_ENV === "development";
 const LAYOUT_TIMEOUT_MS = 8000;
@@ -197,5 +198,10 @@ export default function EmployeeSectionLayout({
     );
   }
 
-  return <>{children}</>;
+  return (
+    <>
+      {user && profile?.companyId ? <ActivitySessionBridge /> : null}
+      {children}
+    </>
+  );
 }

@@ -77,6 +77,7 @@ import {
   collectJobTagFilterOptions,
   jobTagLabel,
 } from "@/lib/job-tags";
+import { logActivitySafe } from "@/lib/activity-log";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
 
@@ -417,7 +418,24 @@ function JobsPageContent() {
         payload.templateId = selectedTemplateId;
         payload.templateValues = templateValues;
       }
-      await addDoc(jobsColRef, payload);
+      const createdJobRef = await addDoc(jobsColRef, payload);
+
+      logActivitySafe(firestore, companyId, user, profile, {
+        actionType: "job.create",
+        actionLabel: "Vytvoření zakázky",
+        entityType: "job",
+        entityId: createdJobRef.id,
+        entityName: newJob.name,
+        details: `Stav ${newJob.status}, rozpočet ${payload.budget as number} Kč`,
+        sourceModule: "jobs",
+        route: `/portal/jobs/${createdJobRef.id}`,
+        metadata: {
+          status: newJob.status,
+          budget: payload.budget,
+          customerId: payload.customerId,
+          customerName: payload.customerName,
+        },
+      });
 
       toast({
         title: "Zakázka vytvořena",

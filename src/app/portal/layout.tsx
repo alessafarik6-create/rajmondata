@@ -12,6 +12,7 @@ import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 import { isCompanyLicenseBlocking } from "@/lib/platform-access";
+import { ActivitySessionBridge } from "@/components/portal/activity-session-bridge";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -408,6 +409,7 @@ export default function PortalLayout({
 
   return (
     <div className="flex min-h-screen bg-background text-foreground">
+      {user && companyId ? <ActivitySessionBridge /> : null}
       <aside className="hidden print:hidden lg:block shrink-0">
         <SidebarComponent />
       </aside>

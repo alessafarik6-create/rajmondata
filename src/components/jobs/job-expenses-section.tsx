@@ -12,8 +12,9 @@ import {
   writeBatch,
 } from "firebase/firestore";
 import { deleteObject, ref as storageRef } from "firebase/storage";
-import { useFirestore } from "@/firebase";
+import { useDoc, useFirestore, useMemoFirebase } from "@/firebase";
 import { getFirebaseStorage } from "@/firebase/storage";
+import { logActivitySafe } from "@/lib/activity-log";
 import { uploadJobExpenseFileViaFirebaseSdk } from "@/lib/job-photo-upload";
 import {
   getJobMediaFileTypeFromFile,
@@ -114,6 +115,11 @@ export function JobExpensesSection({
 }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
+  const actorRef = useMemoFirebase(
+    () => (firestore && user ? doc(firestore, "users", user.uid) : null),
+    [firestore, user?.uid]
+  );
+  const { data: actorProfile } = useDoc(actorRef);
 
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
@@ -304,6 +310,50 @@ export function JobExpensesSection({
         }
         await updateDoc(refDoc, patch);
 
+        logActivitySafe(firestore, companyId, user, actorProfile, {
+          actionType: "expense.update",
+          actionLabel: "Úprava nákladu zakázky",
+          entityType: "job_expense",
+          entityId: editingId,
+          entityName: noteTrimmed || `Náklad ${dateInput.trim()}`,
+          details: `${formatKc(amountKc)} · ${dateInput.trim()}${
+            pendingFile ? ` · nový soubor: ${fileName ?? ""}` : ""
+          }`,
+          sourceModule: "jobs",
+          route: `/portal/jobs/${jobId}`,
+          metadata: {
+            jobId,
+            jobDisplayName: jobDisplayName ?? null,
+            expenseId: editingId,
+            previousAmount: existing?.amount ?? null,
+            newAmount: amountKc,
+            previousDate: existing?.date ?? null,
+            newDate: dateInput.trim(),
+            fileName: fileName ?? existing?.fileName ?? null,
+            fileType: fileType ?? existing?.fileType ?? null,
+            attachmentReplaced: Boolean(pendingFile),
+          },
+        });
+        if (pendingFile && fileName) {
+          logActivitySafe(firestore, companyId, user, actorProfile, {
+            actionType: "document.upload",
+            actionLabel: "Nová příloha k nákladu (úprava)",
+            entityType: "job_expense_file",
+            entityId: editingId,
+            entityName: fileName,
+            details: `Náklad ${formatKc(amountKc)}`,
+            sourceModule: "jobs",
+            route: `/portal/jobs/${jobId}`,
+            metadata: {
+              jobId,
+              expenseId: editingId,
+              fileName,
+              fileType: fileType ?? null,
+              mimeType: pendingFile.type ?? null,
+            },
+          });
+        }
+
         const nextFileUrl = pendingFile
           ? fileUrl ?? null
           : (existing?.fileUrl ?? null);
@@ -456,6 +506,26 @@ export function JobExpensesSection({
       } catch {
         /* */
       }
+      logActivitySafe(firestore, companyId, user, actorProfile, {
+        actionType: "expense.delete",
+        actionLabel: "Smazání nákladu zakázky",
+        entityType: "job_expense",
+        entityId: deleteTarget.id,
+        entityName:
+          deleteTarget.note?.trim() ||
+          (typeof deleteTarget.amount === "number"
+            ? `${formatKc(deleteTarget.amount)}`
+            : deleteTarget.id),
+        details: `Částka ${typeof deleteTarget.amount === "number" ? formatKc(deleteTarget.amount) : "—"}`,
+        sourceModule: "jobs",
+        route: `/portal/jobs/${jobId}`,
+        metadata: {
+          jobId,
+          expenseId: deleteTarget.id,
+          fileName: deleteTarget.fileName ?? null,
+          hadAttachment: Boolean(deleteTarget.fileUrl || deleteTarget.storagePath),
+        },
+      });
       toast({
         title: "Náklad smazán",
         description: "Záznam byl odstraněn.",

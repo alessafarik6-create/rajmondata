@@ -18,9 +18,11 @@ import { ref, deleteObject } from "firebase/storage";
 import type { User } from "firebase/auth";
 import {
   useCollection,
+  useDoc,
   useFirestore,
   useMemoFirebase,
 } from "@/firebase";
+import { logActivitySafe } from "@/lib/activity-log";
 import { getFirebaseStorage } from "@/firebase/storage";
 import {
   uploadJobFolderImageFileViaFirebaseSdk,
@@ -278,6 +280,11 @@ function UserFolderBlock({
   }) => void;
 }) {
   const { toast } = useToast();
+  const actorRef = useMemoFirebase(
+    () => (firestore && user ? doc(firestore, "users", user.uid) : null),
+    [firestore, user?.uid]
+  );
+  const { data: actorProfile } = useDoc(actorRef);
   const [busy, setBusy] = useState(false);
   const [imagePreview, setImagePreview] = useState<{
     url: string;
@@ -448,6 +455,24 @@ function UserFolderBlock({
       { merge: true }
     );
 
+    logActivitySafe(firestore, companyId, user, actorProfile, {
+      actionType: "document.upload",
+      actionLabel: "Nahrání souboru do složky zakázky",
+      entityType: "job_folder_image",
+      entityId: refDoc.id,
+      entityName: safeBaseName,
+      details: `Složka: ${folder.name || folder.id}`,
+      sourceModule: "jobs",
+      route: `/portal/jobs/${jobId}`,
+      metadata: {
+        jobId,
+        folderId: folder.id,
+        fileName: safeBaseName,
+        fileType,
+        mimeType: file.type?.trim() || null,
+      },
+    });
+
     toast({ title: "Soubor uložen", description: safeBaseName });
   };
 
@@ -502,6 +527,20 @@ function UserFolderBlock({
         )
       );
       await batch.commit();
+      logActivitySafe(firestore, companyId, user, actorProfile, {
+        actionType: "document.delete",
+        actionLabel: "Smazání souboru ve složce zakázky",
+        entityType: "job_folder_image",
+        entityId: img.id,
+        entityName: img.fileName || img.name || img.id,
+        sourceModule: "jobs",
+        route: `/portal/jobs/${jobId}`,
+        metadata: {
+          jobId,
+          folderId: folder.id,
+          fileName: img.fileName || img.name,
+        },
+      });
       toast({ title: "Soubor smazán" });
     } catch (e) {
       console.error(e);
@@ -526,6 +565,7 @@ function UserFolderBlock({
     setBusy(true);
     try {
       const snap = await getDocs(imagesColRef);
+      const removedFileCount = snap.docs.length;
       for (const d of snap.docs) {
         const data = d.data() as JobFolderImageDoc;
         const sp =
@@ -573,6 +613,17 @@ function UserFolderBlock({
           folder.id
         )
       );
+      logActivitySafe(firestore, companyId, user, actorProfile, {
+        actionType: "job.folder_delete",
+        actionLabel: "Smazání složky médií zakázky",
+        entityType: "job_folder",
+        entityId: folder.id,
+        entityName: folder.name || folder.id,
+        details: `Odstraněno souborů: ${removedFileCount}`,
+        sourceModule: "jobs",
+        route: `/portal/jobs/${jobId}`,
+        metadata: { jobId, folderId: folder.id, removedFileCount },
+      });
       toast({ title: "Složka byla odstraněna" });
     } catch (e) {
       console.error(e);
@@ -953,6 +1004,12 @@ export function JobMediaSection({
 }: JobMediaSectionProps) {
   const firestore = useFirestore();
   const { toast } = useToast();
+  const actorRef = useMemoFirebase(
+    () =>
+      firestore && user?.uid ? doc(firestore, "users", user.uid) : null,
+    [firestore, user?.uid]
+  );
+  const { data: actorProfile } = useDoc(actorRef);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -1103,6 +1160,26 @@ export function JobMediaSection({
       }
 
       toast({ title: text ? "Poznámka uložena" : "Poznámka odstraněna" });
+      if (user && companyId) {
+        logActivitySafe(firestore, companyId, user, actorProfile, {
+          actionType: "job_media.note_update",
+          actionLabel: text ? "Úprava poznámky u média" : "Odstranění poznámky u média",
+          entityType:
+            noteCtx.path.kind === "photos" ? "job_photo" : "job_folder_image",
+          entityId: noteCtx.imageId,
+          entityName: noteCtx.fileNameHint,
+          sourceModule: "jobs",
+          route: `/portal/jobs/${jobId}`,
+          metadata: {
+            jobId,
+            folderId:
+              noteCtx.path.kind === "folderImages"
+                ? noteCtx.path.folderId
+                : null,
+            newNotePreview: text ? text.slice(0, 200) : null,
+          },
+        });
+      }
       setNoteOpen(false);
       setNoteCtx(null);
     } catch (e) {
@@ -1164,6 +1241,18 @@ export function JobMediaSection({
       );
       batch.delete(companyDocumentRefForJobLegacyPhoto(firestore, companyId, p.id));
       await batch.commit();
+      if (user && companyId) {
+        logActivitySafe(firestore, companyId, user, actorProfile, {
+          actionType: "document.delete",
+          actionLabel: "Smazání fotky ze základní fotodokumentace",
+          entityType: "job_photo",
+          entityId: p.id,
+          entityName: p.fileName || p.name || p.id,
+          sourceModule: "jobs",
+          route: `/portal/jobs/${jobId}`,
+          metadata: { jobId, fileName: p.fileName || p.name },
+        });
+      }
       toast({ title: "Soubor smazán" });
     } catch (e) {
       console.error(e);
@@ -1211,6 +1300,16 @@ export function JobMediaSection({
         jobId,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
+      });
+      logActivitySafe(firestore, companyId, user, actorProfile, {
+        actionType: "job.folder_create",
+        actionLabel: "Vytvoření složky médií zakázky",
+        entityType: "job_folder",
+        entityId: refDoc.id,
+        entityName: name,
+        sourceModule: "jobs",
+        route: `/portal/jobs/${jobId}`,
+        metadata: { jobId, folderId: refDoc.id },
       });
       setNewFolderName("");
       setNewFolderOpen(false);

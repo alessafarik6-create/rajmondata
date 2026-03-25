@@ -83,6 +83,7 @@ import {
   jobTagLabel,
 } from "@/lib/job-tags";
 import { cn } from "@/lib/utils";
+import { logActivitySafe } from "@/lib/activity-log";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -3317,6 +3318,22 @@ export default function JobDetailPage() {
         console.error("[JobDetailPage] company document mirror failed", mirrorErr);
       }
 
+      logActivitySafe(firestore, companyId, user, profile, {
+        actionType: "document.upload",
+        actionLabel: "Nahrání souboru do fotodokumentace zakázky",
+        entityType: "job_photo",
+        entityId: photoDocRef.id,
+        entityName: safeBaseName,
+        sourceModule: "jobs",
+        route: `/portal/jobs/${jobId}`,
+        metadata: {
+          jobId: jobId as string,
+          fileName: safeBaseName,
+          fileType,
+          mimeType: file.type?.trim() || null,
+        },
+      });
+
       toast({
         title: "Soubor nahrán",
         description: safeBaseName,
@@ -3698,6 +3715,20 @@ export default function JobDetailPage() {
       }
 
       if (jobRef) {
+        const deletedName =
+          job && typeof (job as { name?: string }).name === "string"
+            ? (job as { name: string }).name
+            : jobId as string;
+        logActivitySafe(firestore, companyId, user, profile, {
+          actionType: "job.delete",
+          actionLabel: "Smazání zakázky",
+          entityType: "job",
+          entityId: jobId as string,
+          entityName: deletedName,
+          sourceModule: "jobs",
+          route: `/portal/jobs/${jobId}`,
+          metadata: { jobId },
+        });
         await deleteDoc(jobRef);
       }
 
@@ -3840,6 +3871,28 @@ export default function JobDetailPage() {
 
         await updateDoc(jobRef, payload);
 
+        const jPrev = job as Record<string, unknown> | null | undefined;
+        logActivitySafe(firestore, companyId, user, profile, {
+          actionType: "job.update",
+          actionLabel: "Úprava zakázky",
+          entityType: "job",
+          entityId: jobId as string,
+          entityName: jobEditForm.name,
+          details: `Stav ${String(jPrev?.status ?? "")} → ${jobEditForm.status}`,
+          sourceModule: "jobs",
+          route: `/portal/jobs/${jobId}`,
+          metadata: {
+            jobId,
+            previousName: jPrev?.name,
+            newName: jobEditForm.name,
+            previousStatus: jPrev?.status,
+            newStatus: jobEditForm.status,
+            previousBudget: jPrev?.budget,
+            newBudget: budgetNumber,
+            customerId: jobEditForm.customerId || null,
+          },
+        });
+
         toast({
           title: "Zakázka aktualizována",
           description: `Uloženo: ${jobEditForm.name || "Bez názvu"}`,
@@ -3865,6 +3918,10 @@ export default function JobDetailPage() {
       isAdmin,
       jobEditForm,
       customers,
+      job,
+      jobId,
+      user,
+      profile,
       job?.templateId,
       jobEditTemplateValues,
       toast,
@@ -3876,9 +3933,28 @@ export default function JobDetailPage() {
     if (!jobRef) return;
 
     try {
+      const previousStatus =
+        job && typeof (job as { status?: string }).status === "string"
+          ? (job as { status: string }).status
+          : "";
       await updateDoc(jobRef, {
         status: newStatus,
         updatedAt: serverTimestamp(),
+      });
+
+      logActivitySafe(firestore, companyId, user, profile, {
+        actionType: "job.status_change",
+        actionLabel: "Změna stavu zakázky",
+        entityType: "job",
+        entityId: jobId as string,
+        entityName:
+          job && typeof (job as { name?: string }).name === "string"
+            ? (job as { name: string }).name
+            : null,
+        details: `${previousStatus || "—"} → ${newStatus}`,
+        sourceModule: "jobs",
+        route: `/portal/jobs/${jobId}`,
+        metadata: { previousStatus, newStatus, jobId },
       });
 
       toast({

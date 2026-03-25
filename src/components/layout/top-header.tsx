@@ -4,6 +4,7 @@
 import React, { useState, useEffect } from 'react';
 import { usePathname } from 'next/navigation';
 import { useAuth, useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from '@/firebase';
+import { closeStaffSessionAndLog, staffSessionStorageKey } from '@/lib/activity-log';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
   DropdownMenu, 
@@ -27,7 +28,7 @@ interface TopHeaderProps {
 }
 
 export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
-  const pathname = usePathname();
+  const pathname = usePathname() || '/';
   const auth = useAuth();
   const { user } = useUser();
   const firestore = useFirestore();
@@ -59,8 +60,25 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
       fetch('/api/superadmin/logout', { method: 'POST' }).then(() => {
         window.location.href = '/admin/login';
       });
+      return;
+    }
+    const cid = profile?.companyId as string | undefined;
+    const sid =
+      typeof window !== 'undefined' && user && cid
+        ? sessionStorage.getItem(staffSessionStorageKey(cid, user.uid))
+        : null;
+    const runSignOut = () => void signOut(auth);
+    if (user && cid && firestore && sid) {
+      void closeStaffSessionAndLog({
+        firestore,
+        companyId: cid,
+        user,
+        profile,
+        sessionId: sid,
+        route: pathname,
+      }).finally(runSignOut);
     } else {
-      signOut(auth);
+      runSignOut();
     }
   };
 

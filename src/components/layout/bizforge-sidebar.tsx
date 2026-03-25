@@ -21,6 +21,7 @@ import {
   CreditCard as PaymentIcon,
   BarChart3,
   Tags,
+  Activity,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -83,6 +84,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     { label: 'Finance', href: '/portal/finance', icon: Wallet, roles: ['owner', 'admin', 'accountant'], module: 'invoicing' },
     { label: 'Faktury', href: '/portal/invoices', icon: ReceiptText, roles: ['owner', 'admin', 'accountant', 'customer'], module: 'invoicing' },
     { label: 'Doklady', href: '/portal/documents', icon: FileText, roles: ['owner', 'admin', 'accountant'], module: 'invoicing' },
+    { label: 'Report', href: '/portal/report', icon: Activity, roles: ['owner', 'admin'], module: null },
     { label: 'Reporty', href: '/portal/reports', icon: BarChart3, roles: ['owner', 'admin', 'manager', 'accountant'], module: 'attendance_payroll' },
     { label: 'Předplatné', href: '/portal/billing', icon: PaymentIcon, roles: ['owner'], module: null },
     { label: 'Zprávy', href: '/portal/chat', icon: MessageSquare, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: null },
@@ -90,6 +92,16 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   ];
 
   const portalLinks = portalLinksRaw.filter((link) => {
+    if (link.href === '/portal/report') {
+      if (!company) return false;
+      if (isCompanyLicenseBlocking(company)) return false;
+      return (
+        role === 'owner' ||
+        role === 'admin' ||
+        (Array.isArray(userProfile?.globalRoles) &&
+          userProfile.globalRoles.includes('super_admin'))
+      );
+    }
     if (!link.roles.includes(role)) return false;
     if (link.module === null) return true;
     if (!company) return false;

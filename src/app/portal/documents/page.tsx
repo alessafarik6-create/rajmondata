@@ -66,6 +66,7 @@ import {
   type JobMediaFileType,
 } from "@/lib/job-media-types";
 import { cn } from "@/lib/utils";
+import { logActivitySafe } from "@/lib/activity-log";
 import {
   Select,
   SelectContent,
@@ -177,7 +178,7 @@ export default function DocumentsPage() {
 
     try {
       const colRef = collection(firestore, "companies", companyId, "documents");
-      await addDoc(colRef, {
+      const newDocRef = await addDoc(colRef, {
         ...formData,
         type: newDocType,
         amount: Number(formData.amount),
@@ -185,6 +186,24 @@ export default function DocumentsPage() {
         organizationId: companyId,
         createdBy: user?.uid,
         createdAt: serverTimestamp(),
+      });
+
+      logActivitySafe(firestore, companyId, user, profile, {
+        actionType: "document.create",
+        actionLabel:
+          newDocType === "received" ? "Nový přijatý doklad" : "Nový vydaný doklad",
+        entityType: "company_document",
+        entityId: newDocRef.id,
+        entityName: formData.number?.trim() || newDocRef.id,
+        details: `${formData.entityName?.trim() || "—"} · ${Number(formData.amount)} Kč`,
+        sourceModule: "documents",
+        route: "/portal/documents",
+        metadata: {
+          docType: newDocType,
+          number: formData.number,
+          amount: Number(formData.amount),
+          date: formData.date,
+        },
       });
 
       const financeRef = collection(firestore, "companies", companyId, "finance");
@@ -305,6 +324,20 @@ export default function DocumentsPage() {
           batch.delete(photoRef);
           batch.delete(doc(firestore, "companies", companyId, "documents", row.id));
           await batch.commit();
+          logActivitySafe(firestore, companyId, user, profile, {
+            actionType: "document.delete",
+            actionLabel: "Smazání fotky zakázky",
+            entityType: "job_photo",
+            entityId: row.sourceId ?? row.id,
+            entityName: row.fileName || row.number || row.id,
+            sourceModule: "documents",
+            route: "/portal/documents",
+            metadata: {
+              jobId: row.jobId,
+              documentsMirrorId: row.id,
+              fileName: row.fileName,
+            },
+          });
         }
         toast({
           title: "Soubor odstraněn",
@@ -354,6 +387,21 @@ export default function DocumentsPage() {
         }
       }
       await deleteDoc(doc(firestore, "companies", companyId, "documents", row.id));
+      logActivitySafe(firestore, companyId, user, profile, {
+        actionType: "document.delete",
+        actionLabel: "Smazání firemního dokladu",
+        entityType: "company_document",
+        entityId: row.id,
+        entityName: row.number || row.entityName || row.id,
+        sourceModule: "documents",
+        route: "/portal/documents",
+        metadata: {
+          docType: row.type,
+          amount: row.amount,
+          fileName: row.fileName,
+          hadFile: Boolean(row.storagePath || row.fileUrl),
+        },
+      });
       toast({ title: "Doklad odstraněn" });
     } catch {
       toast({ variant: "destructive", title: "Chyba při mazání" });

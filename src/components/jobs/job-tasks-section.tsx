@@ -10,7 +10,8 @@ import {
   serverTimestamp,
   updateDoc,
 } from "firebase/firestore";
-import { useFirestore, useCollection, useMemoFirebase } from "@/firebase";
+import { useFirestore, useCollection, useMemoFirebase, useDoc } from "@/firebase";
+import { logActivitySafe } from "@/lib/activity-log";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -91,6 +92,11 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
   const today = todayIso();
+  const actorRef = useMemoFirebase(
+    () => (firestore && user ? doc(firestore, "users", user.uid) : null),
+    [firestore, user?.uid]
+  );
+  const { data: actorProfile } = useDoc(actorRef);
 
   const tasksCol = useMemoFirebase(
     () =>
@@ -238,6 +244,17 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
         ),
         { status: "done" as JobTaskStatus, updatedAt: serverTimestamp() }
       );
+      logActivitySafe(firestore, companyId, user, actorProfile, {
+        actionType: "task.status_change",
+        actionLabel: "Úkol označen jako hotový",
+        entityType: "job_task",
+        entityId: row.id,
+        entityName: row.title ?? row.id,
+        details: "Stav: active → done",
+        sourceModule: "jobs",
+        route: `/portal/jobs/${jobId}`,
+        metadata: { jobId, taskId: row.id, previousStatus: "active", newStatus: "done" },
+      });
       toast({ title: "Úkol hotový" });
     } catch (e) {
       console.error(e);
@@ -264,6 +281,15 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
           deleteId
         )
       );
+      logActivitySafe(firestore, companyId, user, actorProfile, {
+        actionType: "task.delete",
+        actionLabel: "Smazání úkolu zakázky",
+        entityType: "job_task",
+        entityId: deleteId,
+        sourceModule: "jobs",
+        route: `/portal/jobs/${jobId}`,
+        metadata: { jobId, taskId: deleteId },
+      });
       toast({ title: "Úkol smazán" });
       setDeleteId(null);
     } catch (e) {
