@@ -6,18 +6,16 @@ import {
   resolveJobHourlyRate,
   resolveTariffHourlyRate,
 } from "@/lib/work-segment-rates";
+import {
+  buildTerminalActiveSegmentMapFromDocs,
+  pickPreferredOpenWorkSegmentDoc,
+  type TerminalActiveSegment,
+} from "@/lib/terminal-active-segment";
 
 export type WorkSegmentSource = "job" | "tariff";
 
 export function workDayId(employeeId: string, dateIso: string): string {
   return `${employeeId}__${dateIso}`;
-}
-
-function segmentStartMs(d: QueryDocumentSnapshot): number {
-  const data = d.data() as { startAt?: { toMillis?: () => number } };
-  const t = data.startAt;
-  if (t && typeof t.toMillis === "function") return t.toMillis();
-  return 0;
 }
 
 export async function findOpenWorkSegment(
@@ -33,11 +31,26 @@ export async function findOpenWorkSegment(
     .where("employeeId", "==", employeeId)
     .where("date", "==", dateIso)
     .where("closed", "==", false)
-    .limit(5)
+    .limit(10)
     .get();
   if (snap.empty) return null;
-  const docs = [...snap.docs].sort((a, b) => segmentStartMs(a) - segmentStartMs(b));
-  return docs[docs.length - 1] ?? null;
+  return pickPreferredOpenWorkSegmentDoc(snap.docs);
+}
+
+/** Jeden dotaz: všichni zaměstnanci s otevřeným úsekem za den (terminál / API). */
+export async function loadTodayOpenTerminalSegmentsByEmployee(
+  db: Firestore,
+  companyId: string,
+  dateIso: string
+): Promise<Map<string, TerminalActiveSegment>> {
+  const snap = await db
+    .collection("companies")
+    .doc(companyId)
+    .collection("work_segments")
+    .where("date", "==", dateIso)
+    .where("closed", "==", false)
+    .get();
+  return buildTerminalActiveSegmentMapFromDocs(snap.docs);
 }
 
 export async function closeWorkSegment(

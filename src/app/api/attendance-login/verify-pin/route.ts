@@ -5,6 +5,7 @@ import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
 import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
 import { findOpenWorkSegment } from "@/lib/work-segment-server";
+import { workSegmentDataToTerminalActiveSegment } from "@/lib/terminal-active-segment";
 
 type Body = {
   companyId?: string;
@@ -46,33 +47,11 @@ export async function POST(request: NextRequest) {
     const ev = byEmp.get(employeeId) ?? [];
     const inWork = isShiftOpenFromSorted(ev);
 
-    let activeSegment: {
-      sourceType: "job" | "tariff";
-      jobId: string | null;
-      jobName: string;
-      tariffId: string | null;
-      tariffName: string;
-      displayName: string;
-    } | null = null;
+    let activeSegment: ReturnType<typeof workSegmentDataToTerminalActiveSegment> | null = null;
     if (inWork) {
       const open = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
       if (open) {
-        const d = open.data() as {
-          sourceType?: string;
-          jobId?: string | null;
-          jobName?: string;
-          tariffId?: string | null;
-          tariffName?: string;
-          displayName?: string;
-        };
-        activeSegment = {
-          sourceType: d.sourceType === "tariff" ? "tariff" : "job",
-          jobId: typeof d.jobId === "string" ? d.jobId : null,
-          jobName: typeof d.jobName === "string" ? d.jobName : "",
-          tariffId: typeof d.tariffId === "string" ? d.tariffId : null,
-          tariffName: typeof d.tariffName === "string" ? d.tariffName : "",
-          displayName: typeof d.displayName === "string" ? d.displayName : "",
-        };
+        activeSegment = workSegmentDataToTerminalActiveSegment(open.data() as Record<string, unknown>);
       }
     }
 

@@ -2,13 +2,19 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, Loader2, LogOut } from "lucide-react";
+import { ArrowLeft, Banknote, Briefcase, Loader2, LogOut } from "lucide-react";
+import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { useFirebase } from "@/firebase";
+import {
+  buildTerminalActiveSegmentMapFromDocs,
+  type TerminalActiveSegment,
+} from "@/lib/terminal-active-segment";
 
 const RETURN_TO_SELECTION_MS = 1500;
 
@@ -18,6 +24,7 @@ type EmployeeRow = {
   lastName: string;
   photoURL: string | null;
   inWork?: boolean;
+  activeSegment?: TerminalActiveSegment | null;
 };
 
 type JobRow = { id: string; name: string };
@@ -30,16 +37,20 @@ type TariffRow = {
   active: boolean;
 };
 
-type ActiveSegment = {
-  sourceType: "job" | "tariff";
-  jobId: string | null;
-  jobName: string;
-  tariffId: string | null;
-  tariffName: string;
-  displayName: string;
-};
+type ActiveSegment = TerminalActiveSegment;
 
 type Step = "select" | "pin" | "work";
+
+const TERMINAL_STATUS_POLL_MS = 14_000;
+
+function segmentDisplayTitle(seg: TerminalActiveSegment): string {
+  if (seg.sourceType === "job") {
+    const n = seg.jobName?.trim() || seg.displayName?.trim();
+    return n || "Zakázka";
+  }
+  const n = seg.tariffName?.trim() || seg.displayName?.trim();
+  return n || "Tarif";
+}
 
 function initials(first: string, last: string) {
   const a = first.trim().charAt(0);
@@ -56,11 +67,16 @@ function segmentMatchesCard(seg: ActiveSegment | null, kind: "job" | "tariff", i
 function AttendanceLoginContent() {
   const searchParams = useSearchParams();
   const { toast } = useToast();
+  const { firestore, areServicesAvailable } = useFirebase();
   const companyId = searchParams.get("companyId")?.trim() ?? "";
   const returnToSelectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const [step, setStep] = useState<Step>("select");
   const [employees, setEmployees] = useState<EmployeeRow[]>([]);
+  /** Realtime mapa otevřených úseků (Firestore); má prioritu před activeSegment z API. */
+  const [liveOpenSegments, setLiveOpenSegments] = useState<
+    Record<string, TerminalActiveSegment>
+  >({});
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(true);
 
@@ -109,11 +125,6 @@ function AttendanceLoginContent() {
         }
         const list = Array.isArray(data.employees) ? data.employees : [];
         setEmployees(list);
-        for (const e of list) {
-          console.log(
-            `Employee status resolved: ${e.inWork ? "in work" : "out of work"} (${e.id})`
-          );
-        }
       } catch (e: unknown) {
         setLoadError(e instanceof Error ? e.message : "Chyba načtení.");
       } finally {
@@ -135,6 +146,37 @@ function AttendanceLoginContent() {
     }
     void loadEmployees(true);
   }, [companyId, loadEmployees]);
+
+  useEffect(() => {
+    if (!companyId || step !== "select") return;
+    const id = window.setInterval(() => void loadEmployees(false), TERMINAL_STATUS_POLL_MS);
+    return () => window.clearInterval(id);
+  }, [companyId, step, loadEmployees]);
+
+  useEffect(() => {
+    if (!companyId || !areServicesAvailable || !firestore) return;
+    const todayIso = new Date().toISOString().split("T")[0];
+    const q = query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("date", "==", todayIso),
+      where("closed", "==", false)
+    );
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const map = buildTerminalActiveSegmentMapFromDocs(snap.docs);
+        const rec: Record<string, TerminalActiveSegment> = {};
+        map.forEach((v, k) => {
+          rec[k] = v;
+        });
+        setLiveOpenSegments(rec);
+      },
+      (err) => {
+        console.error("[attendance-login] work_segments listener", err);
+      }
+    );
+    return () => unsub();
+  }, [companyId, areServicesAvailable, firestore]);
 
   const resetToSelection = useCallback(
     (opts?: { afterAttendance?: boolean }) => {
@@ -609,14 +651,16 @@ function AttendanceLoginContent() {
             <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               {employees.map((emp) => {
                 const inWork = emp.inWork === true;
+                const seg = liveOpenSegments[emp.id] ?? emp.activeSegment ?? null;
+                const showAssigned = inWork === true && seg != null;
                 return (
                   <li key={emp.id}>
                     <button
                       type="button"
                       onClick={() => selectEmployee(emp)}
                       className={cn(
-                        "group relative flex w-full flex-col items-center gap-3 rounded-2xl border-4 p-6 text-center shadow-lg transition",
-                        "min-h-[160px] active:scale-[0.99]",
+                        "group relative flex w-full flex-col items-center gap-3 rounded-2xl border-4 p-5 text-center shadow-lg transition sm:p-6",
+                        "min-h-[196px] active:scale-[0.99]",
                         inWork
                           ? "border-emerald-400/90 bg-gradient-to-br from-emerald-900/50 via-emerald-950/40 to-slate-950/90 ring-2 ring-emerald-500/40"
                           : "border-rose-500/80 bg-gradient-to-br from-rose-950/50 via-slate-900/60 to-slate-950/90 ring-2 ring-rose-500/35"
@@ -624,7 +668,7 @@ function AttendanceLoginContent() {
                     >
                       <Badge
                         className={cn(
-                          "absolute right-3 top-3 text-xs font-semibold shadow-md",
+                          "absolute right-3 top-3 z-10 max-w-[calc(100%-5rem)] truncate text-xs font-semibold shadow-md",
                           inWork
                             ? "border-emerald-300/50 bg-emerald-500 text-white hover:bg-emerald-500"
                             : "border-rose-300/50 bg-rose-600 text-white hover:bg-rose-600"
@@ -634,7 +678,7 @@ function AttendanceLoginContent() {
                       </Badge>
                       <Avatar
                         className={cn(
-                          "h-20 w-20 border-2 shadow-md",
+                          "h-20 w-20 shrink-0 border-2 shadow-md",
                           inWork ? "border-emerald-300/60" : "border-rose-300/50"
                         )}
                       >
@@ -653,6 +697,34 @@ function AttendanceLoginContent() {
                       <span className="text-lg font-semibold leading-tight text-white">
                         {emp.firstName} {emp.lastName}
                       </span>
+                      <div className="mt-auto w-full min-w-0 px-1">
+                        {showAssigned ? (
+                          <div
+                            className="mx-auto flex w-full max-w-[20rem] min-w-0 items-center gap-2 rounded-xl border-2 border-emerald-400/70 bg-emerald-500/20 px-3 py-2.5 text-left text-sm font-semibold leading-snug text-emerald-50 shadow-md sm:py-2"
+                            title={`${seg.sourceType === "job" ? "Na zakázce" : "Tarif"}: ${segmentDisplayTitle(seg)}`}
+                          >
+                            {seg.sourceType === "job" ? (
+                              <Briefcase
+                                className="h-5 w-5 shrink-0 text-emerald-300"
+                                aria-hidden
+                              />
+                            ) : (
+                              <Banknote
+                                className="h-5 w-5 shrink-0 text-emerald-300"
+                                aria-hidden
+                              />
+                            )}
+                            <span className="min-w-0 flex-1 truncate">
+                              {seg.sourceType === "job" ? "Na zakázce: " : "Tarif: "}
+                              {segmentDisplayTitle(seg)}
+                            </span>
+                          </div>
+                        ) : (
+                          <div className="mx-auto flex w-full max-w-[20rem] min-w-0 items-center justify-center rounded-xl border border-slate-600/80 bg-slate-900/50 px-3 py-2.5 text-xs font-medium text-slate-400 sm:text-sm">
+                            <span className="truncate">Nepřiřazen</span>
+                          </div>
+                        )}
+                      </div>
                     </button>
                   </li>
                 );

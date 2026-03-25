@@ -448,10 +448,16 @@ service cloud.firestore {
         allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
-      /** Úseky práce na zakázkách / tarifech — zápis přes Admin API; čtení vlastní + privilegovaní. */
+      /**
+       * Úseky práce na zakázkách / tarifech — zápis přes Admin API.
+       * Čtení: vlastní + privilegovaní, nebo anonymně jen otevřené úseky (terminál /attendance-login — companyId v cestě).
+       */
       match /work_segments/{segmentId} {
-        allow read: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow read: if (signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId())) ||
+          (request.auth == null &&
+            resource.data.companyId == companyId &&
+            resource.data.closed == false);
         allow write: if false;
       }
 

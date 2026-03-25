@@ -85,6 +85,14 @@
       "collectionGroup": "work_segments",
       "queryScope": "COLLECTION",
       "fields": [
+        { "fieldPath": "date", "order": "ASCENDING" },
+        { "fieldPath": "closed", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "work_segments",
+      "queryScope": "COLLECTION",
+      "fields": [
         { "fieldPath": "employeeId", "order": "ASCENDING" },
         { "fieldPath": "date", "order": "ASCENDING" },
         { "fieldPath": "closed", "order": "ASCENDING" }

@@ -3,6 +3,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
 import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
 import { isVisibleInAttendanceTerminal } from "@/lib/employee-organization";
+import { loadTodayOpenTerminalSegmentsByEmployee } from "@/lib/work-segment-server";
 
 /**
  * Veřejný seznam zaměstnanců pro /attendance-login (bez Auth).
@@ -25,6 +26,7 @@ export async function GET(request: NextRequest) {
   try {
     const empSnap = await db.collection("companies").doc(companyId).collection("employees").get();
     const byEmp = await loadTodayAttendanceEventsByEmployee(db, companyId, todayIso);
+    const openSegByEmp = await loadTodayOpenTerminalSegmentsByEmployee(db, companyId, todayIso);
 
     const employees = empSnap.docs
       .map((d) => {
@@ -41,6 +43,7 @@ export async function GET(request: NextRequest) {
               : null;
         const ev = byEmp.get(d.id) ?? [];
         const inWork = isShiftOpenFromSorted(ev);
+        const activeSegment = inWork ? openSegByEmp.get(d.id) ?? null : null;
         return {
           id: d.id,
           firstName: String(data.firstName ?? ""),
@@ -48,6 +51,7 @@ export async function GET(request: NextRequest) {
           photoURL,
           isActive: data.isActive !== false,
           inWork,
+          activeSegment,
         };
       })
       .filter(Boolean);
