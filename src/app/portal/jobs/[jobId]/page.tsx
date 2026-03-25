@@ -17,7 +17,8 @@ import {
   uploadJobFolderImageBlobViaFirebaseSdk,
 } from "@/lib/job-photo-upload";
 import {
-  isAllowedJobImageFile,
+  isAllowedJobMediaFile,
+  getJobMediaFileTypeFromFile,
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
@@ -3156,11 +3157,11 @@ export default function JobDetailPage() {
       return;
     }
 
-    if (!isAllowedJobImageFile(file)) {
+    if (!isAllowedJobMediaFile(file)) {
       toast({
         variant: "destructive",
         title: "Nepodporovaný soubor",
-        description: "Použijte JPG, PNG nebo WEBP.",
+        description: "Použijte JPG, PNG, WEBP nebo PDF.",
       });
       return;
     }
@@ -3189,6 +3190,7 @@ export default function JobDetailPage() {
 
     const safeBaseName =
       file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
+    const fileType = getJobMediaFileTypeFromFile(file);
 
     try {
       const { resolvedFullPath, downloadURL } = await uploadJobPhotoFileViaFirebaseSdk(
@@ -3205,6 +3207,8 @@ export default function JobDetailPage() {
         imageUrl: downloadURL,
         url: downloadURL,
         originalImageUrl: downloadURL,
+        downloadURL,
+        fileType,
         storagePath: resolvedFullPath,
         path: resolvedFullPath,
         fileName: safeBaseName,
@@ -3227,7 +3231,7 @@ export default function JobDetailPage() {
         console.error("[JobDetailPage] photo metadata save failed", metaErr);
         toast({
           variant: "destructive",
-          title: "Nelze uložit metadata fotky",
+          title: "Nelze uložit metadata souboru",
           description:
             metaErr instanceof FirebaseError
               ? metaErr.message
@@ -3237,7 +3241,7 @@ export default function JobDetailPage() {
       }
 
       toast({
-        title: "Fotografie nahrána",
+        title: "Soubor nahrán",
         description: safeBaseName,
       });
     } catch (err: unknown) {

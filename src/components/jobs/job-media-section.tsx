@@ -26,8 +26,12 @@ import {
 import {
   formatMediaDate,
   getJobMediaPreviewUrl,
+  inferJobMediaItemType,
   isAllowedJobImageFile,
+  isAllowedJobMediaFile,
+  getJobMediaFileTypeFromFile,
   JOB_IMAGE_ACCEPT_ATTR,
+  JOB_MEDIA_ACCEPT_ATTR,
   type JobFolderDoc,
   type JobFolderImageDoc,
   type JobMediaFirestorePath,
@@ -47,11 +51,15 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import {
   Camera,
+  ExternalLink,
+  Eye,
+  FileText,
   FolderPlus,
   ImagePlus,
   Pencil,
   StickyNote,
   Trash2,
+  Upload,
 } from "lucide-react";
 
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -60,6 +68,7 @@ type LegacyPhotoDoc = {
   id: string;
   fileName?: string;
   name?: string;
+  fileType?: "image" | "pdf";
   imageUrl?: string;
   url?: string;
   downloadURL?: string;
@@ -129,6 +138,10 @@ function UserFolderBlock({
 }) {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
+  const [imagePreview, setImagePreview] = useState<{
+    url: string;
+    title: string;
+  } | null>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
@@ -169,11 +182,11 @@ function UserFolderBlock({
   }, [imagesRaw]);
 
   const uploadOne = async (file: File) => {
-    if (!isAllowedJobImageFile(file)) {
+    if (!isAllowedJobMediaFile(file)) {
       toast({
         variant: "destructive",
         title: "Nepodporovaný formát",
-        description: "Pouze JPG, PNG nebo WEBP.",
+        description: "Pouze JPG, PNG, WEBP nebo PDF.",
       });
       return;
     }
@@ -188,6 +201,7 @@ function UserFolderBlock({
 
     const safeBaseName =
       file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
+    const fileType = getJobMediaFileTypeFromFile(file);
 
     const { resolvedFullPath, downloadURL } =
       await uploadJobFolderImageFileViaFirebaseSdk(
@@ -208,6 +222,8 @@ function UserFolderBlock({
         imageUrl: downloadURL,
         url: downloadURL,
         originalImageUrl: downloadURL,
+        downloadURL,
+        fileType,
         storagePath: resolvedFullPath,
         path: resolvedFullPath,
         fileName: safeBaseName,
@@ -217,13 +233,13 @@ function UserFolderBlock({
       }
     );
 
-    toast({ title: "Obrázek uložen", description: safeBaseName });
+    toast({ title: "Soubor uložen", description: safeBaseName });
   };
 
   const deleteImage = async (img: JobFolderImageDoc) => {
     if (
       !window.confirm(
-        `Smazat obrázek „${img.fileName || img.id}“? Tato akce je nevratná.`
+        `Smazat soubor „${img.fileName || img.id}“? Tato akce je nevratná.`
       )
     ) {
       return;
@@ -261,13 +277,13 @@ function UserFolderBlock({
           img.id
         )
       );
-      toast({ title: "Obrázek smazán" });
+      toast({ title: "Soubor smazán" });
     } catch (e) {
       console.error(e);
       toast({
         variant: "destructive",
         title: "Chyba",
-        description: "Obrázek se nepodařilo smazat.",
+        description: "Soubor se nepodařilo smazat.",
       });
     } finally {
       setBusy(false);
@@ -277,7 +293,7 @@ function UserFolderBlock({
   const deleteFolder = async () => {
     if (
       !window.confirm(
-        `Smazat složku „${folder.name || folder.id}“ včetně všech obrázků?`
+        `Smazat složku „${folder.name || folder.id}“ včetně všech souborů?`
       )
     ) {
       return;
@@ -334,6 +350,7 @@ function UserFolderBlock({
   };
 
   return (
+    <>
     <Card className="border-border/60 bg-surface">
       <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
         <CardTitle className="text-base font-semibold">
@@ -360,7 +377,7 @@ function UserFolderBlock({
           <input
             ref={galleryRef}
             type="file"
-            accept={JOB_IMAGE_ACCEPT_ATTR}
+            accept={JOB_MEDIA_ACCEPT_ATTR}
             multiple
             className="hidden"
             onChange={(e) => {
@@ -391,8 +408,8 @@ function UserFolderBlock({
             disabled={busy}
             onClick={() => galleryRef.current?.click()}
           >
-            <ImagePlus className="h-4 w-4" />
-            Nahrát obrázky
+            <Upload className="h-4 w-4" />
+            Nahrát soubor
           </Button>
           <input
             ref={cameraRef}
@@ -427,103 +444,252 @@ function UserFolderBlock({
         </div>
 
         {images.length > 0 ? (
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-            {images.map((img) => (
-              <div
-                key={img.id}
-                className="group relative overflow-hidden rounded-lg border border-border/40 bg-background"
-              >
-                <MediaThumb
-                  row={img}
-                  alt={img.fileName || img.id}
-                />
-                <div className="border-t border-border/50 bg-background/95 p-2 text-xs">
-                  <p className="truncate font-medium" title={img.fileName}>
-                    {img.fileName || img.name || img.id}
-                  </p>
-                  <p className="text-muted-foreground">
-                    {formatMediaDate(img.createdAt)}
-                  </p>
-                  {img.note?.trim() ? (
-                    <p className="mt-1 line-clamp-2 text-[11px] text-foreground/90">
-                      {img.note.trim()}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {images.map((img) => {
+              const kind = inferJobMediaItemType(img);
+              const openUrl = getJobMediaPreviewUrl(img);
+              const title = img.fileName || img.name || img.id;
+
+              if (kind === "pdf") {
+                return (
+                  <div
+                    key={img.id}
+                    className="group relative flex flex-col overflow-hidden rounded-lg border border-dashed border-red-500/35 bg-red-500/[0.06]"
+                  >
+                    <div className="flex items-start gap-3 p-3">
+                      <span className="text-2xl leading-none" aria-hidden>
+                        📄
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-foreground">
+                          <FileText className="h-4 w-4 shrink-0 text-red-700 dark:text-red-400" />
+                          <span className="truncate" title={title}>
+                            {title}
+                          </span>
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          PDF · {formatMediaDate(img.createdAt)}
+                        </p>
+                        {img.note?.trim() ? (
+                          <p className="mt-2 line-clamp-2 text-[11px] text-foreground/90">
+                            {img.note.trim()}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                    {img.note?.trim() ? (
+                      <span
+                        className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
+                        title="Má poznámku"
+                      >
+                        📝
+                      </span>
+                    ) : null}
+                    <div className="flex flex-wrap gap-1 border-t border-border/50 bg-background/80 p-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="min-h-[36px] px-2 text-xs"
+                        disabled={!openUrl}
+                        onClick={() => {
+                          if (openUrl)
+                            window.open(openUrl, "_blank", "noopener,noreferrer");
+                        }}
+                      >
+                        <ExternalLink className="mr-1 h-3 w-3" />
+                        Otevřít
+                      </Button>
+                      {openUrl ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="min-h-[36px] px-2 text-xs"
+                          asChild
+                        >
+                          <a
+                            href={openUrl}
+                            download={title}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            Stáhnout
+                          </a>
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="min-h-[36px] px-2 text-xs"
+                          disabled
+                        >
+                          Stáhnout
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="min-h-[36px] px-2 text-xs"
+                        onClick={() =>
+                          onNoteDialogOpen({
+                            path: {
+                              kind: "folderImages",
+                              folderId: folder.id,
+                            },
+                            imageId: img.id,
+                            currentNote: img.note || "",
+                          })
+                        }
+                      >
+                        <StickyNote className="mr-1 h-3 w-3" />
+                        Poznámka
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="min-h-[36px] px-2 text-xs"
+                        disabled={busy}
+                        onClick={() => void deleteImage(img)}
+                      >
+                        <Trash2 className="mr-1 h-3 w-3" />
+                        Smazat
+                      </Button>
+                    </div>
+                  </div>
+                );
+              }
+
+              return (
+                <div
+                  key={img.id}
+                  className="group relative overflow-hidden rounded-lg border border-border/40 bg-background"
+                >
+                  <MediaThumb row={img} alt={title} />
+                  <div className="border-t border-border/50 bg-background/95 p-2 text-xs">
+                    <p className="truncate font-medium" title={title}>
+                      {title}
                     </p>
+                    <p className="text-muted-foreground">
+                      {formatMediaDate(img.createdAt)}
+                    </p>
+                    {img.note?.trim() ? (
+                      <p className="mt-1 line-clamp-2 text-[11px] text-foreground/90">
+                        {img.note.trim()}
+                      </p>
+                    ) : null}
+                  </div>
+                  {img.note?.trim() ? (
+                    <span
+                      className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
+                      title="Má poznámku"
+                    >
+                      📝
+                    </span>
                   ) : null}
+                  <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-1 bg-black/45 p-1 opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
+                      onClick={() => {
+                        if (openUrl)
+                          setImagePreview({ url: openUrl, title });
+                      }}
+                    >
+                      <Eye className="mr-1 h-3 w-3" />
+                      Náhled
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
+                      onClick={() =>
+                        onAnnotatePhoto({
+                          id: img.id,
+                          imageUrl: img.imageUrl,
+                          url: img.url,
+                          downloadURL: img.downloadURL,
+                          originalImageUrl: img.originalImageUrl,
+                          annotatedImageUrl: img.annotatedImageUrl,
+                          storagePath: img.storagePath,
+                          path: img.path,
+                          annotatedStoragePath: img.annotatedStoragePath,
+                          fileName: img.fileName,
+                          name: img.name,
+                          annotationData: img.annotationData,
+                          annotationTarget: {
+                            kind: "folderImages",
+                            folderId: folder.id,
+                          },
+                        })
+                      }
+                    >
+                      <Pencil className="mr-1 h-3 w-3" />
+                      Anotovat
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
+                      onClick={() =>
+                        onNoteDialogOpen({
+                          path: {
+                            kind: "folderImages",
+                            folderId: folder.id,
+                          },
+                          imageId: img.id,
+                          currentNote: img.note || "",
+                        })
+                      }
+                    >
+                      <StickyNote className="mr-1 h-3 w-3" />
+                      Poznámka
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
+                      disabled={busy}
+                      onClick={() => void deleteImage(img)}
+                    >
+                      <Trash2 className="mr-1 h-3 w-3" />
+                      Smazat
+                    </Button>
+                  </div>
                 </div>
-                {img.note?.trim() ? (
-                  <span
-                    className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
-                    title="Má poznámku"
-                  >
-                    📝
-                  </span>
-                ) : null}
-                <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-1 bg-black/45 p-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="min-h-[36px] px-2 text-xs"
-                    onClick={() =>
-                      onAnnotatePhoto({
-                        id: img.id,
-                        imageUrl: img.imageUrl,
-                        url: img.url,
-                        downloadURL: img.downloadURL,
-                        originalImageUrl: img.originalImageUrl,
-                        annotatedImageUrl: img.annotatedImageUrl,
-                        storagePath: img.storagePath,
-                        path: img.path,
-                        annotatedStoragePath: img.annotatedStoragePath,
-                        fileName: img.fileName,
-                        name: img.name,
-                        annotationData: img.annotationData,
-                        annotationTarget: {
-                          kind: "folderImages",
-                          folderId: folder.id,
-                        },
-                      })
-                    }
-                  >
-                    <Pencil className="mr-1 h-3 w-3" />
-                    Anotovat
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    className="min-h-[36px] px-2 text-xs"
-                    onClick={() =>
-                      onNoteDialogOpen({
-                        path: {
-                          kind: "folderImages",
-                          folderId: folder.id,
-                        },
-                        imageId: img.id,
-                        currentNote: img.note || "",
-                      })
-                    }
-                  >
-                    <StickyNote className="mr-1 h-3 w-3" />
-                    Poznámka
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="destructive"
-                    className="min-h-[36px] px-2 text-xs"
-                    disabled={busy}
-                    onClick={() => void deleteImage(img)}
-                  >
-                    <Trash2 className="mr-1 h-3 w-3" />
-                    Smazat
-                  </Button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : (
           <p className="text-sm text-muted-foreground">V této složce zatím nic není.</p>
         )}
       </CardContent>
     </Card>
+
+    <Dialog
+      open={!!imagePreview}
+      onOpenChange={(o) => {
+        if (!o) setImagePreview(null);
+      }}
+    >
+      <DialogContent className="max-h-[90vh] max-w-4xl overflow-auto">
+        <DialogHeader>
+          <DialogTitle className="truncate pr-8">
+            {imagePreview?.title || "Náhled"}
+          </DialogTitle>
+        </DialogHeader>
+        {imagePreview?.url ? (
+          <img
+            src={imagePreview.url}
+            alt={imagePreview.title}
+            className="mx-auto max-h-[70vh] w-auto max-w-full object-contain"
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
 
@@ -568,6 +734,10 @@ export function JobMediaSection({
 
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
+  const [legacyImagePreview, setLegacyImagePreview] = useState<{
+    url: string;
+    title: string;
+  } | null>(null);
 
   const foldersColRef = useMemoFirebase(
     () =>
@@ -679,7 +849,7 @@ export function JobMediaSection({
     if (!firestore) return;
     if (
       !window.confirm(
-        `Smazat fotografii „${p.fileName || p.id}“? Tato akce je nevratná.`
+        `Smazat soubor „${p.fileName || p.id}“? Tato akce je nevratná.`
       )
     ) {
       return;
@@ -719,13 +889,13 @@ export function JobMediaSection({
           p.id
         )
       );
-      toast({ title: "Fotografie smazána" });
+      toast({ title: "Soubor smazán" });
     } catch (e) {
       console.error(e);
       toast({
         variant: "destructive",
         title: "Chyba",
-        description: "Fotku se nepodařilo smazat.",
+        description: "Soubor se nepodařilo smazat.",
       });
     }
   };
@@ -841,7 +1011,7 @@ export function JobMediaSection({
               <input
                 ref={galleryRef}
                 type="file"
-                accept={JOB_IMAGE_ACCEPT_ATTR}
+                accept={JOB_MEDIA_ACCEPT_ATTR}
                 multiple
                 className="hidden"
                 onChange={(e) => {
@@ -858,11 +1028,11 @@ export function JobMediaSection({
                   }
                   void (async () => {
                     for (const f of files) {
-                      if (!isAllowedJobImageFile(f)) {
+                      if (!isAllowedJobMediaFile(f)) {
                         toast({
                           variant: "destructive",
                           title: "Přeskočeno",
-                          description: `${f.name} — pouze JPG, PNG, WEBP.`,
+                          description: `${f.name} — pouze JPG, PNG, WEBP nebo PDF.`,
                         });
                         continue;
                       }
@@ -883,8 +1053,8 @@ export function JobMediaSection({
                 disabled={legacyUploading}
                 onClick={() => galleryRef.current?.click()}
               >
-                <ImagePlus className="h-4 w-4" />
-                Nahrát obrázky
+                <Upload className="h-4 w-4" />
+                Nahrát soubor
               </Button>
               <input
                 ref={cameraRef}
@@ -928,91 +1098,220 @@ export function JobMediaSection({
             ) : null}
 
             {photosSorted.length > 0 ? (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-                {photosSorted.map((p) => (
-                  <div
-                    key={p.id}
-                    className="group relative overflow-hidden rounded-lg border border-border/40 bg-background"
-                  >
-                    <MediaThumb row={p} />
-                    <div className="border-t border-border/50 bg-background/95 p-2 text-xs">
-                      <p className="truncate font-medium" title={p.fileName}>
-                        {p.fileName || p.name || p.id}
-                      </p>
-                      <p className="text-muted-foreground">
-                        {formatMediaDate(p.createdAt)}
-                      </p>
-                      {p.note?.trim() ? (
-                        <p className="mt-1 line-clamp-2 text-[11px] text-foreground/90">
-                          {p.note.trim()}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+                {photosSorted.map((p) => {
+                  const kind = inferJobMediaItemType(p);
+                  const openUrl = getJobMediaPreviewUrl(p);
+                  const title = p.fileName || p.name || p.id;
+
+                  if (kind === "pdf") {
+                    return (
+                      <div
+                        key={p.id}
+                        className="group relative flex flex-col overflow-hidden rounded-lg border border-dashed border-red-500/35 bg-red-500/[0.06]"
+                      >
+                        <div className="flex items-start gap-3 p-3">
+                          <span className="text-2xl leading-none" aria-hidden>
+                            📄
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-foreground">
+                              <FileText className="h-4 w-4 shrink-0 text-red-700 dark:text-red-400" />
+                              <span className="truncate" title={title}>
+                                {title}
+                              </span>
+                            </p>
+                            <p className="mt-0.5 text-xs text-muted-foreground">
+                              PDF · {formatMediaDate(p.createdAt)}
+                            </p>
+                            {p.note?.trim() ? (
+                              <p className="mt-2 line-clamp-2 text-[11px] text-foreground/90">
+                                {p.note.trim()}
+                              </p>
+                            ) : null}
+                          </div>
+                        </div>
+                        {p.note?.trim() ? (
+                          <span
+                            className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
+                            title="Má poznámku"
+                          >
+                            📝
+                          </span>
+                        ) : null}
+                        <div className="flex flex-wrap gap-1 border-t border-border/50 bg-background/80 p-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="min-h-[36px] px-2 text-xs"
+                            disabled={!openUrl}
+                            onClick={() => {
+                              if (openUrl)
+                                window.open(
+                                  openUrl,
+                                  "_blank",
+                                  "noopener,noreferrer"
+                                );
+                            }}
+                          >
+                            <ExternalLink className="mr-1 h-3 w-3" />
+                            Otevřít
+                          </Button>
+                          {openUrl ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="min-h-[36px] px-2 text-xs"
+                              asChild
+                            >
+                              <a
+                                href={openUrl}
+                                download={title}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                Stáhnout
+                              </a>
+                            </Button>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="min-h-[36px] px-2 text-xs"
+                              disabled
+                            >
+                              Stáhnout
+                            </Button>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="min-h-[36px] px-2 text-xs"
+                            onClick={() =>
+                              openNoteEditor({
+                                path: { kind: "photos" },
+                                imageId: p.id,
+                                currentNote: p.note || "",
+                              })
+                            }
+                          >
+                            <StickyNote className="mr-1 h-3 w-3" />
+                            Poznámka
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="min-h-[36px] px-2 text-xs"
+                            onClick={() => void deleteLegacyPhoto(p)}
+                          >
+                            <Trash2 className="mr-1 h-3 w-3" />
+                            Smazat
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div
+                      key={p.id}
+                      className="group relative overflow-hidden rounded-lg border border-border/40 bg-background"
+                    >
+                      <MediaThumb row={p} />
+                      <div className="border-t border-border/50 bg-background/95 p-2 text-xs">
+                        <p className="truncate font-medium" title={p.fileName}>
+                          {p.fileName || p.name || p.id}
                         </p>
+                        <p className="text-muted-foreground">
+                          {formatMediaDate(p.createdAt)}
+                        </p>
+                        {p.note?.trim() ? (
+                          <p className="mt-1 line-clamp-2 text-[11px] text-foreground/90">
+                            {p.note.trim()}
+                          </p>
+                        ) : null}
+                      </div>
+                      {p.note?.trim() ? (
+                        <span
+                          className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
+                          title="Má poznámku"
+                        >
+                          📝
+                        </span>
                       ) : null}
+                      <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-1 bg-black/45 p-1 opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100">
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
+                          onClick={() => {
+                            if (openUrl)
+                              setLegacyImagePreview({ url: openUrl, title });
+                          }}
+                        >
+                          <Eye className="mr-1 h-3 w-3" />
+                          Náhled
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
+                          onClick={() =>
+                            onAnnotatePhoto({
+                              id: p.id,
+                              imageUrl: p.imageUrl,
+                              url: p.url,
+                              downloadURL: p.downloadURL,
+                              originalImageUrl: p.originalImageUrl,
+                              annotatedImageUrl: p.annotatedImageUrl,
+                              storagePath: p.storagePath,
+                              path: p.path,
+                              fullPath: p.fullPath,
+                              fileName: p.fileName,
+                              name: p.name,
+                              annotationData: p.annotationData,
+                              annotationTarget: { kind: "photos" },
+                            })
+                          }
+                        >
+                          <Pencil className="mr-1 h-3 w-3" />
+                          Anotovat
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
+                          onClick={() =>
+                            openNoteEditor({
+                              path: { kind: "photos" },
+                              imageId: p.id,
+                              currentNote: p.note || "",
+                            })
+                          }
+                        >
+                          <StickyNote className="mr-1 h-3 w-3" />
+                          Poznámka
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
+                          onClick={() => void deleteLegacyPhoto(p)}
+                        >
+                          <Trash2 className="mr-1 h-3 w-3" />
+                          Smazat
+                        </Button>
+                      </div>
                     </div>
-                    {p.note?.trim() ? (
-                      <span
-                        className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
-                        title="Má poznámku"
-                      >
-                        📝
-                      </span>
-                    ) : null}
-                    <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-1 bg-black/45 p-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="min-h-[36px] px-2 text-xs"
-                        onClick={() =>
-                          onAnnotatePhoto({
-                            id: p.id,
-                            imageUrl: p.imageUrl,
-                            url: p.url,
-                            downloadURL: p.downloadURL,
-                            originalImageUrl: p.originalImageUrl,
-                            annotatedImageUrl: p.annotatedImageUrl,
-                            storagePath: p.storagePath,
-                            path: p.path,
-                            fullPath: p.fullPath,
-                            fileName: p.fileName,
-                            name: p.name,
-                            annotationData: p.annotationData,
-                            annotationTarget: { kind: "photos" },
-                          })
-                        }
-                      >
-                        <Pencil className="mr-1 h-3 w-3" />
-                        Anotovat
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="min-h-[36px] px-2 text-xs"
-                        onClick={() =>
-                          openNoteEditor({
-                            path: { kind: "photos" },
-                            imageId: p.id,
-                            currentNote: p.note || "",
-                          })
-                        }
-                      >
-                        <StickyNote className="mr-1 h-3 w-3" />
-                        Poznámka
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        className="min-h-[36px] px-2 text-xs"
-                        onClick={() => void deleteLegacyPhoto(p)}
-                      >
-                        <Trash2 className="mr-1 h-3 w-3" />
-                        Smazat
-                      </Button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Zatím žádné fotografie ve fotodokumentaci.
+                Zatím žádné soubory ve fotodokumentaci.
               </p>
             )}
           </section>
@@ -1076,7 +1375,7 @@ export function JobMediaSection({
       <Dialog open={noteOpen} onOpenChange={setNoteOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Poznámka k fotce</DialogTitle>
+            <DialogTitle>Poznámka k souboru</DialogTitle>
           </DialogHeader>
           <Textarea
             value={noteDraft}
@@ -1102,6 +1401,28 @@ export function JobMediaSection({
               Uložit
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!legacyImagePreview}
+        onOpenChange={(o) => {
+          if (!o) setLegacyImagePreview(null);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] max-w-4xl overflow-auto">
+          <DialogHeader>
+            <DialogTitle className="truncate pr-8">
+              {legacyImagePreview?.title || "Náhled"}
+            </DialogTitle>
+          </DialogHeader>
+          {legacyImagePreview?.url ? (
+            <img
+              src={legacyImagePreview.url}
+              alt={legacyImagePreview.title}
+              className="mx-auto max-h-[70vh] w-auto max-w-full object-contain"
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

@@ -35,6 +35,8 @@ export type JobFolderDoc = {
   createdBy?: string;
 };
 
+export type JobMediaFileType = "image" | "pdf";
+
 export type JobFolderImageDoc = {
   id: string;
   fileName?: string;
@@ -43,6 +45,8 @@ export type JobFolderImageDoc = {
   url?: string;
   downloadURL?: string;
   originalImageUrl?: string;
+  /** explicitně uložený typ; bez něj se odvodí z přípony / legacy záznamy = image */
+  fileType?: JobMediaFileType;
   storagePath?: string;
   path?: string;
   companyId?: string;
@@ -58,6 +62,10 @@ export type JobFolderImageDoc = {
   noteUpdatedBy?: string;
 };
 
+/** Výběr z galerie / souborů: obrázky i PDF. */
+export const JOB_MEDIA_ACCEPT_ATTR = "image/*,application/pdf";
+
+/** Pouze obrázky (fotoaparát / Vyfotit). */
 export const JOB_IMAGE_ACCEPT_ATTR =
   "image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp";
 
@@ -106,4 +114,29 @@ export function isAllowedJobImageFile(file: File): boolean {
     n.endsWith(".png") ||
     n.endsWith(".webp")
   );
+}
+
+export function isAllowedJobMediaFile(file: File): boolean {
+  if (isAllowedJobImageFile(file)) return true;
+  const t = (file.type || "").toLowerCase();
+  if (t === "application/pdf") return true;
+  return file.name.toLowerCase().endsWith(".pdf");
+}
+
+export function getJobMediaFileTypeFromFile(file: File): JobMediaFileType {
+  if (isAllowedJobImageFile(file)) return "image";
+  return "pdf";
+}
+
+/** Typ položky v UI / mazání – z DB nebo z názvu souboru. */
+export function inferJobMediaItemType(row: {
+  fileType?: string;
+  fileName?: string;
+  name?: string;
+}): JobMediaFileType {
+  if (row.fileType === "pdf") return "pdf";
+  if (row.fileType === "image") return "image";
+  const base = (row.fileName || row.name || "").toLowerCase();
+  if (base.endsWith(".pdf")) return "pdf";
+  return "image";
 }
