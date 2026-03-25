@@ -14,7 +14,13 @@ import { getFirebaseStorage } from "@/firebase/storage";
 import {
   uploadJobPhotoFileViaFirebaseSdk,
   uploadJobPhotoBlobViaFirebaseSdk,
+  uploadJobFolderImageBlobViaFirebaseSdk,
 } from "@/lib/job-photo-upload";
+import {
+  isAllowedJobImageFile,
+  type JobPhotoAnnotationTarget,
+} from "@/lib/job-media-types";
+import { JobMediaSection } from "@/components/jobs/job-media-section";
 import {
   doc,
   collection,
@@ -30,9 +36,6 @@ import {
 } from "firebase/firestore";
 import {
   User,
-  ImagePlus,
-  Camera,
-  Pencil,
   Trash2,
   Calendar,
   Users,
@@ -229,6 +232,9 @@ type PhotoDoc = {
   /** Editovatelné anotace (normalizované souřadnice), viz job-photo-annotations.ts */
   annotationData?: unknown;
   annotationsJson?: string;
+  note?: string;
+  noteUpdatedAt?: unknown;
+  noteUpdatedBy?: string;
 };
 
 function omitUndefinedFields<T extends Record<string, unknown>>(obj: T): T {
@@ -248,20 +254,6 @@ function getScaleAwareSizes(canvas: HTMLCanvasElement) {
   const arrowLen = Math.max(18, Math.round(18 * scale));
   const hitRadius = Math.max(18, Math.round(18 * scale));
   return { fontSize, lineWidth, endpointRadius, arrowLen, hitRadius };
-}
-
-function getPhotoPreviewUrl(p: PhotoDoc): string {
-  const raw = p as PhotoDoc & Record<string, unknown>;
-  const candidates = [
-    raw.annotatedImageUrl,
-    raw.imageUrl,
-    raw.url,
-    raw.downloadURL,
-  ];
-  for (const c of candidates) {
-    if (typeof c === "string" && c.trim()) return c.trim();
-  }
-  return "";
 }
 
 function getPhotoStorageFullPath(p: PhotoDoc): string {
@@ -379,28 +371,6 @@ function describeStorageUploadFailure(err: unknown): string {
   return base;
 }
 
-function JobPhotoThumbnail(p: PhotoDoc) {
-  const [broken, setBroken] = useState(false);
-  const src = getPhotoPreviewUrl(p);
-
-  if (!src || broken) {
-    return (
-      <div className="w-full h-32 flex items-center justify-center bg-muted text-xs text-muted-foreground text-center px-2">
-        {!src ? "Chybí odkaz na obrázek" : "Náhled se nepodařilo načíst"}
-      </div>
-    );
-  }
-
-  return (
-    <img
-      src={src}
-      alt={p.fileName || p.id}
-      className="w-full h-32 object-cover"
-      onError={() => setBroken(true)}
-    />
-  );
-}
-
 type CompanyBankAccountDoc = {
   id: string;
   name?: string;
@@ -499,6 +469,13 @@ export default function JobDetailPage() {
   const isAdmin =
     profile?.role === "owner" ||
     profile?.role === "admin" ||
+    profile?.globalRoles?.includes("super_admin");
+
+  const canManageFolders =
+    profile?.role === "owner" ||
+    profile?.role === "admin" ||
+    profile?.role === "manager" ||
+    profile?.role === "accountant" ||
     profile?.globalRoles?.includes("super_admin");
 
   const photosColRef = useMemoFirebase(
@@ -635,11 +612,11 @@ export default function JobDetailPage() {
 
   const [isUploading, setIsUploading] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
-  const [photoToEdit, setPhotoToEdit] = useState<PhotoDoc | null>(null);
+  const [photoToEdit, setPhotoToEdit] = useState<JobPhotoAnnotationTarget | null>(
+    null
+  );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const photoGalleryFileInputRef = useRef<HTMLInputElement>(null);
-  const photoCameraFileInputRef = useRef<HTMLInputElement>(null);
   const [canvasReady, setCanvasReady] = useState(false);
   const [imageForCanvas, setImageForCanvas] = useState<HTMLImageElement | null>(null);
   const [baseImageLoaded, setBaseImageLoaded] = useState(false);
@@ -749,7 +726,7 @@ export default function JobDetailPage() {
   const annotationSource = useMemo(() => {
     if (!photoToEdit) return null;
 
-    const pe = photoToEdit as PhotoDoc;
+    const pe = photoToEdit;
     return (
       pe.originalImageUrl ||
       pe.imageUrl ||
@@ -3179,11 +3156,11 @@ export default function JobDetailPage() {
       return;
     }
 
-    if (!file.type.startsWith("image/")) {
+    if (!isAllowedJobImageFile(file)) {
       toast({
         variant: "destructive",
         title: "Nepodporovaný soubor",
-        description: "Vyberte obrázek (např. JPG nebo PNG).",
+        description: "Použijte JPG, PNG nebo WEBP.",
       });
       return;
     }
@@ -3413,32 +3390,68 @@ export default function JobDetailPage() {
         exportCanvas.height
       );
 
-      const { storagePath: annotatedPath, downloadURL: annotatedUrl } =
-        await uploadJobPhotoBlobViaFirebaseSdk(
+      const target = photoToEdit.annotationTarget;
+      let annotatedPath: string;
+      let annotatedUrl: string;
+
+      if (target.kind === "photos") {
+        const up = await uploadJobPhotoBlobViaFirebaseSdk(
           blob,
           companyId,
           jobId as string,
           `${photoToEdit.id}-annotated.png`
         );
-
-      await updateDoc(
-        doc(
-          firestore,
-          "companies",
+        annotatedPath = up.storagePath;
+        annotatedUrl = up.downloadURL;
+        await updateDoc(
+          doc(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobId as string,
+            "photos",
+            photoToEdit.id
+          ),
+          {
+            originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+            annotatedImageUrl: annotatedUrl,
+            annotatedStoragePath: annotatedPath,
+            annotationData,
+            updatedAt: serverTimestamp(),
+          }
+        );
+      } else {
+        const up = await uploadJobFolderImageBlobViaFirebaseSdk(
+          blob,
           companyId,
-          "jobs",
           jobId as string,
-          "photos",
-          photoToEdit.id
-        ),
-        {
-          originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
-          annotatedImageUrl: annotatedUrl,
-          annotatedStoragePath: annotatedPath,
-          annotationData,
-          updatedAt: serverTimestamp(),
-        }
-      );
+          target.folderId,
+          `${photoToEdit.id}-annotated.png`
+        );
+        annotatedPath = up.storagePath;
+        annotatedUrl = up.downloadURL;
+        await updateDoc(
+          doc(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobId as string,
+            "folders",
+            target.folderId,
+            "images",
+            photoToEdit.id
+          ),
+          {
+            originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+            annotatedImageUrl: annotatedUrl,
+            annotatedStoragePath: annotatedPath,
+            annotationData,
+            updatedAt: serverTimestamp(),
+          }
+        );
+      }
 
       toast({
         title: "Fotografie upravena",
@@ -3494,6 +3507,59 @@ export default function JobDetailPage() {
         }
 
         await deleteDoc(docSnap.ref);
+      }
+
+      const foldersCol = collection(
+        firestore,
+        "companies",
+        companyId,
+        "jobs",
+        jobId as string,
+        "folders"
+      );
+      const foldersSnap = await getDocs(foldersCol);
+      for (const folderDoc of foldersSnap.docs) {
+        const folderId = folderDoc.id;
+        const imagesCol = collection(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          jobId as string,
+          "folders",
+          folderId,
+          "images"
+        );
+        const imagesSnap = await getDocs(imagesCol);
+        for (const imgSnap of imagesSnap.docs) {
+          const data = imgSnap.data() as {
+            storagePath?: string;
+            path?: string;
+            annotatedStoragePath?: string;
+          };
+          const basePath =
+            (typeof data.storagePath === "string" && data.storagePath) ||
+            (typeof data.path === "string" && data.path) ||
+            "";
+          if (basePath) {
+            try {
+              await deleteObject(ref(getFirebaseStorage(), basePath));
+            } catch {
+              /* */
+            }
+          }
+          if (data.annotatedStoragePath) {
+            try {
+              await deleteObject(
+                ref(getFirebaseStorage(), data.annotatedStoragePath)
+              );
+            } catch {
+              /* */
+            }
+          }
+          await deleteDoc(imgSnap.ref);
+        }
+        await deleteDoc(folderDoc.ref);
       }
 
       if (jobRef) {
@@ -4091,130 +4157,21 @@ export default function JobDetailPage() {
             </CardContent>
           </Card>
 
-          <Card className="bg-surface border-border">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <ImagePlus className="w-5 h-5 text-primary" /> Fotodokumentace
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex flex-col sm:flex-row gap-2">
-                <label className="flex-1">
-                  <Input
-                    ref={photoGalleryFileInputRef}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      const files = Array.from(e.target.files || []).filter(
-                        (f) => f && f.size > 0
-                      );
-                      if (files.length === 0) {
-                        toast({
-                          variant: "destructive",
-                          title: "Žádný soubor",
-                          description: "Vyberte alespoň jeden obrázek.",
-                        });
-                        e.target.value = "";
-                        return;
-                      }
-                      if (process.env.NODE_ENV === "development") {
-                        console.log(
-                          "[JobDetailPage] photo upload: selectedFiles",
-                          files.map((f) => ({ name: f.name, size: f.size, type: f.type }))
-                        );
-                      }
-                      setIsUploading(true);
-                      void (async () => {
-                        for (let i = 0; i < files.length; i++) {
-                          try {
-                            await handlePhotoUpload(files[i], { skipUploadingFlag: true });
-                          } catch (batchErr) {
-                            console.error(
-                              "[JobDetailPage] photo upload: batch item failed",
-                              i,
-                              batchErr
-                            );
-                          }
-                        }
-                      })().finally(() => {
-                        setIsUploading(false);
-                        e.target.value = "";
-                      });
-                    }}
-                  />
-                  <Button type="button" className="w-full justify-center gap-2 min-h-[44px]" asChild>
-                    <span>
-                      <ImagePlus className="w-4 h-4" /> Nahrát fotku
-                    </span>
-                  </Button>
-                </label>
-
-                <label className="flex-1 sm:flex-none">
-                  <Input
-                    ref={photoCameraFileInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) {
-                        toast({
-                          variant: "destructive",
-                          title: "Žádný soubor",
-                          description: "Nebyla pořízena žádná fotografie.",
-                        });
-                        e.target.value = "";
-                        return;
-                      }
-                      void handlePhotoUpload(file).finally(() => {
-                        e.target.value = "";
-                      });
-                    }}
-                  />
-                  <Button type="button" className="w-full justify-center gap-2 min-h-[44px]" asChild>
-                    <span>
-                      <Camera className="w-4 h-4" /> Vyfotit
-                    </span>
-                  </Button>
-                </label>
-              </div>
-
-              {isUploading && (
-                <p className="text-sm text-muted-foreground">Nahrávání fotografie...</p>
-              )}
-
-              {photos && photos.length > 0 ? (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                  {photos.filter(isUsablePhotoRow).map((p) => (
-                    <div
-                      key={p.id}
-                      className="relative group rounded-lg overflow-hidden border border-border/40 bg-background"
-                    >
-                      <JobPhotoThumbnail {...p} />
-                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="min-h-[36px]"
-                          onClick={() => {
-                            setPhotoToEdit(p as PhotoDoc);
-                            setEditorOpen(true);
-                          }}
-                        >
-                          <Pencil className="w-4 h-4 mr-1" /> Anotovat
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">Zatím žádné fotografie.</p>
-              )}
-            </CardContent>
-          </Card>
+          {user && companyId && jobId ? (
+            <JobMediaSection
+              companyId={companyId}
+              jobId={jobId as string}
+              user={user}
+              canManageFolders={canManageFolders}
+              photos={photos?.filter(isUsablePhotoRow) as PhotoDoc[] | undefined}
+              uploadLegacyPhoto={handlePhotoUpload}
+              legacyUploading={isUploading}
+              onAnnotatePhoto={(target) => {
+                setPhotoToEdit(target);
+                setEditorOpen(true);
+              }}
+            />
+          ) : null}
         </div>
       </div>
 

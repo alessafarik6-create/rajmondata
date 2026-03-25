@@ -62,6 +62,24 @@ export function buildJobPhotoStorageObjectPath(
   return `companies/${companyId}/jobs/${jobId}/photos/${safe}`;
 }
 
+/**
+ * Složky zakázky: companies/{companyId}/jobs/{jobId}/folders/{folderId}/images/{file}
+ */
+export function buildJobFolderImageStorageObjectPath(
+  companyId: string,
+  jobId: string,
+  folderId: string,
+  fileNamePart: string
+): string {
+  const base =
+    String(fileNamePart)
+      .replace(/^.*[\\/]/, "")
+      .replace(/\s+/g, " ")
+      .trim() || "photo";
+  const safe = base.replace(/[\\/]/g, "_");
+  return `companies/${companyId}/jobs/${jobId}/folders/${folderId}/images/${safe}`;
+}
+
 function logDebug(step: string, data?: Record<string, unknown>) {
   if (!DEBUG_JOB_PHOTO) return;
   console.log(`[JobPhotoUpload] ${step}`, data ?? "");
@@ -148,6 +166,67 @@ export async function uploadJobPhotoFileViaFirebaseSdk(
   };
 }
 
+export async function uploadJobFolderImageFileViaFirebaseSdk(
+  file: File,
+  companyId: string,
+  jobId: string,
+  folderId: string
+): Promise<{
+  storagePath: string;
+  resolvedFullPath: string;
+  downloadURL: string;
+  uploadResult: UploadResult;
+}> {
+  const safeBaseName =
+    file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
+  const storagePath = buildJobFolderImageStorageObjectPath(
+    companyId,
+    jobId,
+    folderId,
+    `${Date.now()}-${safeBaseName}`
+  );
+
+  logDebug("folder image upload", { companyId, jobId, folderId, storagePath });
+
+  const storage = getFirebaseStorage();
+  const storageRef = ref(storage, storagePath);
+
+  const uploadResult = await promiseWithTimeout(
+    uploadBytes(storageRef, file),
+    JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
+    "Nahrávání souboru do Firebase Storage (složka)"
+  );
+
+  if (!uploadResult?.ref) {
+    throw new Error(
+      "Upload skončil bez platné reference do úložiště (složka zakázky)."
+    );
+  }
+
+  const resolvedFullPath =
+    typeof uploadResult.ref.fullPath === "string" &&
+    uploadResult.ref.fullPath.length > 0
+      ? uploadResult.ref.fullPath
+      : storagePath;
+
+  const downloadURL = await promiseWithTimeout(
+    getDownloadURL(uploadResult.ref),
+    JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
+    "Získání download URL (složka zakázky)"
+  );
+
+  if (typeof downloadURL !== "string" || !downloadURL.trim()) {
+    throw new Error("Úložiště nevrátilo platnou adresu ke stažení.");
+  }
+
+  return {
+    storagePath,
+    resolvedFullPath,
+    downloadURL: downloadURL.trim(),
+    uploadResult,
+  };
+}
+
 /**
  * Nahrání blobu (např. export anotované fotky) na stejnou větev paths jako běžné fotky.
  */
@@ -182,6 +261,44 @@ export async function uploadJobPhotoBlobViaFirebaseSdk(
 
   if (typeof downloadURL !== "string" || !downloadURL.trim()) {
     throw new Error("Úložiště nevrátilo platnou URL pro anotovanou fotku.");
+  }
+
+  return { storagePath, downloadURL: downloadURL.trim() };
+}
+
+export async function uploadJobFolderImageBlobViaFirebaseSdk(
+  blob: Blob,
+  companyId: string,
+  jobId: string,
+  folderId: string,
+  objectFileName: string,
+  contentType = "image/png"
+): Promise<{ storagePath: string; downloadURL: string }> {
+  const storagePath = buildJobFolderImageStorageObjectPath(
+    companyId,
+    jobId,
+    folderId,
+    objectFileName
+  );
+  logDebug("folder blob upload", { storagePath, contentType, folderId });
+
+  const storage = getFirebaseStorage();
+  const storageRef = ref(storage, storagePath);
+
+  await promiseWithTimeout(
+    uploadBytes(storageRef, blob, { contentType }),
+    JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
+    "Nahrání anotované fotografie (složka)"
+  );
+
+  const downloadURL = await promiseWithTimeout(
+    getDownloadURL(storageRef),
+    JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
+    "Získání URL anotované fotografie (složka)"
+  );
+
+  if (typeof downloadURL !== "string" || !downloadURL.trim()) {
+    throw new Error("Úložiště nevrátilo platnou URL pro anotovanou fotku (složka).");
   }
 
   return { storagePath, downloadURL: downloadURL.trim() };

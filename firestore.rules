@@ -97,6 +97,16 @@ service cloud.firestore {
         jobId in get(empRef).data.assignedTerminalJobIds;
     }
 
+    /** Čtení detailu zakázky včetně fotek / složek (shodně s dokumentem jobs/{jobId}). */
+    function jobDetailReadAccess(companyId, jobId) {
+      return terminalCompanyMatches(companyId) ||
+        (signedIn() && sameCompany(companyId) &&
+          (isPrivileged() ||
+            (canLogOwnWorkTime() &&
+              (jobAssignedForWorklog(companyId, jobId) ||
+                jobAssignedForTerminal(companyId, jobId)))));
+    }
+
     /** Pokud je u docházky vyplněno jobId, musí být přiřazeno pro terminál danému zaměstnanci. */
     function attendanceJobValid(companyId) {
       return !('jobId' in request.resource.data) ||
@@ -206,10 +216,58 @@ service cloud.firestore {
       }
 
       match /jobs/{jobId} {
-        allow read: if terminalCompanyMatches(companyId) ||
-          (signedIn() && sameCompany(companyId) &&
-            (isPrivileged() || (canLogOwnWorkTime() && (jobAssignedForWorklog(companyId, jobId) || jobAssignedForTerminal(companyId, jobId)))));
-        allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow read: if jobDetailReadAccess(companyId, jobId);
+        allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+
+        match /photos/{photoId} {
+          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow create: if jobDetailReadAccess(companyId, jobId) &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.createdBy == request.auth.uid;
+          allow update: if jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            (isPrivileged() || resource.data.createdBy == request.auth.uid);
+          allow delete: if jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            (isPrivileged() || resource.data.createdBy == request.auth.uid);
+        }
+
+        match /folders/{folderId} {
+          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.name is string &&
+            request.resource.data.name.size() > 0 &&
+            request.resource.data.name.size() <= 120 &&
+            request.resource.data.createdBy == request.auth.uid;
+          allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId;
+
+          match /images/{imageId} {
+            allow read: if jobDetailReadAccess(companyId, jobId);
+            allow create: if jobDetailReadAccess(companyId, jobId) &&
+              request.resource.data.companyId == companyId &&
+              request.resource.data.jobId == jobId &&
+              request.resource.data.folderId == folderId &&
+              request.resource.data.createdBy == request.auth.uid &&
+              request.resource.data.storagePath is string;
+            allow update: if jobDetailReadAccess(companyId, jobId) &&
+              resource.data.companyId == companyId &&
+              resource.data.jobId == jobId &&
+              resource.data.folderId == folderId &&
+              (isPrivileged() || resource.data.createdBy == request.auth.uid);
+            allow delete: if jobDetailReadAccess(companyId, jobId) &&
+              resource.data.companyId == companyId &&
+              resource.data.jobId == jobId &&
+              resource.data.folderId == folderId &&
+              (isPrivileged() || resource.data.createdBy == request.auth.uid);
+          }
+        }
       }
 
       /**
