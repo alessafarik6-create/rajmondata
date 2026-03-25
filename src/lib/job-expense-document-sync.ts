@@ -1,0 +1,140 @@
+/**
+ * Synchronizace nákladů zakázky (jobs/.../expenses) s firemními doklady (companies/.../documents).
+ * Jednoznačný párovací klíč: dokument v `documents` má id `jobExpense_{expenseId}` a pole `sourceId` = expenseId.
+ */
+
+import type { Firestore } from "firebase/firestore";
+import { doc, serverTimestamp } from "firebase/firestore";
+
+export const JOB_EXPENSE_DOCUMENT_SOURCE = "job-expense" as const;
+
+/** ID dokumentu v `companies/{companyId}/documents/{docId}`. */
+export function companyDocumentIdForJobExpense(expenseId: string): string {
+  return `jobExpense_${expenseId}`;
+}
+
+export function companyDocumentRefForJobExpense(
+  firestore: Firestore,
+  companyId: string,
+  expenseId: string
+) {
+  return doc(
+    firestore,
+    "companies",
+    companyId,
+    "documents",
+    companyDocumentIdForJobExpense(expenseId)
+  );
+}
+
+export type JobExpenseMirrorFirestoreFields = {
+  /** Shodně s kartou „Přijaté doklady“ (existující filtr). */
+  type: "received";
+  /** Doplňkový štítek dle zadání (prijate). */
+  documentKind: "prijate";
+  source: typeof JOB_EXPENSE_DOCUMENT_SOURCE;
+  sourceId: string;
+  sourceLabel: string;
+  linkedExpenseId: string;
+  jobId: string;
+  jobName: string | null;
+  amount: number;
+  date: string;
+  note: string | null;
+  description: string;
+  number: string;
+  entityName: string;
+  fileUrl: string | null;
+  fileType: string | null;
+  fileName: string | null;
+  storagePath: string | null;
+  vat: number;
+  organizationId: string;
+  createdBy: string;
+  createdAt: ReturnType<typeof serverTimestamp>;
+  updatedAt: ReturnType<typeof serverTimestamp>;
+};
+
+export function buildNewJobExpenseMirrorDocument(params: {
+  companyId: string;
+  jobId: string;
+  jobDisplayName: string | null;
+  expenseId: string;
+  userId: string;
+  amount: number;
+  date: string;
+  note: string | null;
+  fileUrl: string | null;
+  fileType: string | null;
+  fileName: string | null;
+  storagePath: string | null;
+}): JobExpenseMirrorFirestoreFields {
+  const note = params.note?.trim() ? params.note.trim() : null;
+  const jn = params.jobDisplayName?.trim() ?? "";
+  const ts = serverTimestamp();
+  return {
+    type: "received",
+    documentKind: "prijate",
+    source: JOB_EXPENSE_DOCUMENT_SOURCE,
+    sourceId: params.expenseId,
+    sourceLabel: "Náklad zakázky",
+    linkedExpenseId: params.expenseId,
+    jobId: params.jobId,
+    jobName: jn || null,
+    amount: params.amount,
+    date: params.date,
+    note,
+    description: note ?? "",
+    number: `NK-${params.expenseId.slice(0, 12)}`,
+    entityName: jn || "Zakázka",
+    fileUrl: params.fileUrl,
+    fileType: params.fileType,
+    fileName: params.fileName,
+    storagePath: params.storagePath,
+    vat: 0,
+    organizationId: params.companyId,
+    createdBy: params.userId,
+    createdAt: ts,
+    updatedAt: ts,
+  };
+}
+
+/** Pola pro merge při úpravě nákladu (bez přepisu createdAt / createdBy). */
+export function buildJobExpenseMirrorMergePatch(params: {
+  companyId: string;
+  jobId: string;
+  jobDisplayName: string | null;
+  expenseId: string;
+  amount: number;
+  date: string;
+  note: string | null;
+  fileUrl: string | null;
+  fileType: string | null;
+  fileName: string | null;
+  storagePath: string | null;
+}): Record<string, unknown> {
+  const note = params.note?.trim() ? params.note.trim() : null;
+  const jn = params.jobDisplayName?.trim() ?? "";
+  return {
+    type: "received",
+    documentKind: "prijate",
+    source: JOB_EXPENSE_DOCUMENT_SOURCE,
+    sourceId: params.expenseId,
+    sourceLabel: "Náklad zakázky",
+    linkedExpenseId: params.expenseId,
+    jobId: params.jobId,
+    jobName: jn || null,
+    amount: params.amount,
+    date: params.date,
+    note,
+    description: note ?? "",
+    number: `NK-${params.expenseId.slice(0, 12)}`,
+    entityName: jn || "Zakázka",
+    fileUrl: params.fileUrl,
+    fileType: params.fileType,
+    fileName: params.fileName,
+    storagePath: params.storagePath,
+    organizationId: params.companyId,
+    updatedAt: serverTimestamp(),
+  };
+}

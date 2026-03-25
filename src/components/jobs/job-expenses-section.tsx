@@ -4,12 +4,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { User } from "firebase/auth";
 import type { DocumentData } from "firebase/firestore";
 import {
-  addDoc,
   collection,
-  deleteDoc,
   doc,
   serverTimestamp,
+  setDoc,
   updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import { deleteObject, ref as storageRef } from "firebase/storage";
 import { useFirestore } from "@/firebase";
@@ -24,6 +24,11 @@ import {
   JOB_MEDIA_ACCEPT_ATTR,
 } from "@/lib/job-media-types";
 import type { JobExpenseFileType, JobExpenseRow } from "@/lib/job-expense-types";
+import {
+  buildJobExpenseMirrorMergePatch,
+  buildNewJobExpenseMirrorDocument,
+  companyDocumentRefForJobExpense,
+} from "@/lib/job-expense-document-sync";
 import { parseAmountKc } from "@/lib/work-contract-deposit";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -89,6 +94,8 @@ async function deleteExpenseFileFromStorage(storagePath: string | undefined) {
 type Props = {
   companyId: string;
   jobId: string;
+  /** Název zakázky pro doklad v sekci Doklady (subjekt / vazba). */
+  jobDisplayName?: string | null;
   user: User;
   /** Aktuální řádky (např. z useCollection nad expenses) — pro okamžitý přepočet bez reloadu. */
   expenses: JobExpenseRow[] | null | undefined;
@@ -99,6 +106,7 @@ type Props = {
 export function JobExpensesSection({
   companyId,
   jobId,
+  jobDisplayName = null,
   user,
   expenses,
   canEdit,
@@ -296,6 +304,37 @@ export function JobExpensesSection({
         }
         await updateDoc(refDoc, patch);
 
+        const nextFileUrl = pendingFile
+          ? fileUrl ?? null
+          : (existing?.fileUrl ?? null);
+        const nextFileType = pendingFile
+          ? fileType ?? null
+          : (existing?.fileType ?? null);
+        const nextFileName = pendingFile
+          ? fileName ?? null
+          : (existing?.fileName ?? null);
+        const nextStoragePath = pendingFile
+          ? storagePath ?? null
+          : (existing?.storagePath ?? null);
+
+        await setDoc(
+          companyDocumentRefForJobExpense(firestore, companyId, editingId),
+          buildJobExpenseMirrorMergePatch({
+            companyId,
+            jobId,
+            jobDisplayName,
+            expenseId: editingId,
+            amount: amountKc,
+            date: dateInput.trim(),
+            note: noteTrimmed || null,
+            fileUrl: nextFileUrl,
+            fileType: nextFileType,
+            fileName: nextFileName,
+            storagePath: nextStoragePath,
+          }),
+          { merge: true }
+        );
+
         if (oldPathToRemove) {
           try {
             await deleteExpenseFileFromStorage(oldPathToRemove);
@@ -306,10 +345,22 @@ export function JobExpensesSection({
 
         toast({
           title: "Náklad uložen",
-          description: "Změny jsou zapsány, rozpočet se přepočítá automaticky.",
+          description:
+            "Změny jsou zapsány v zakázce i v dokladech, rozpočet se přepočítá automaticky.",
         });
       } else {
-        await addDoc(col, {
+        const batch = writeBatch(firestore);
+        const expenseRef = doc(
+          collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobId,
+            "expenses"
+          )
+        );
+        batch.set(expenseRef, {
           companyId,
           jobId,
           amount: amountKc,
@@ -324,9 +375,30 @@ export function JobExpensesSection({
           updatedAt: serverTimestamp(),
         });
 
+        const mirrorDoc = buildNewJobExpenseMirrorDocument({
+          companyId,
+          jobId,
+          jobDisplayName,
+          expenseId: expenseRef.id,
+          userId: user.uid,
+          amount: amountKc,
+          date: dateInput.trim(),
+          note: noteTrimmed || null,
+          fileUrl: fileUrl ?? null,
+          fileType: fileType ?? null,
+          fileName: fileName ?? null,
+          storagePath: storagePath ?? null,
+        });
+        batch.set(
+          companyDocumentRefForJobExpense(firestore, companyId, expenseRef.id),
+          mirrorDoc
+        );
+        await batch.commit();
+
         toast({
           title: "Náklad přidán",
-          description: "Záznam je uložen, rozpočet se přepočítá automaticky.",
+          description:
+            "Záznam je v zakázce i mezi přijatými doklady, rozpočet se přepočítá automaticky.",
         });
       }
 
@@ -355,15 +427,24 @@ export function JobExpensesSection({
     }
     setDeleting(true);
     try {
-      const col = collection(
+      const expenseRef = doc(
         firestore,
         "companies",
         companyId,
         "jobs",
         jobId,
-        "expenses"
+        "expenses",
+        deleteTarget.id
       );
-      await deleteDoc(doc(col, deleteTarget.id));
+      const mirrorRef = companyDocumentRefForJobExpense(
+        firestore,
+        companyId,
+        deleteTarget.id
+      );
+      const batch = writeBatch(firestore);
+      batch.delete(expenseRef);
+      batch.delete(mirrorRef);
+      await batch.commit();
       try {
         await deleteExpenseFileFromStorage(
           deleteTarget.storagePath ?? undefined

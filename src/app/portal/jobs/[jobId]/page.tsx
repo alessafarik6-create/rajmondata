@@ -4242,6 +4242,11 @@ export default function JobDetailPage() {
             <JobExpensesSection
               companyId={companyId}
               jobId={jobId as string}
+              jobDisplayName={
+                job?.name != null && String(job.name).trim() !== ""
+                  ? String(job.name).trim()
+                  : null
+              }
               user={user}
               expenses={jobExpenses}
               canEdit={canManageFolders}
