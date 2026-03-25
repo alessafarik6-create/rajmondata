@@ -1,10 +1,11 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { ArrowLeft, Banknote, Briefcase, Loader2, LogOut } from "lucide-react";
+import { ArrowLeft, Banknote, Briefcase, Loader2, LogOut, Search } from "lucide-react";
 import { collection, onSnapshot, query, where } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -58,6 +59,18 @@ function initials(first: string, last: string) {
   return (a + b).toUpperCase() || "?";
 }
 
+function employeeFullName(emp: Pick<EmployeeRow, "firstName" | "lastName">) {
+  return `${emp.firstName} ${emp.lastName}`.trim() || "Zaměstnanec";
+}
+
+function employeeMatchesSearch(emp: EmployeeRow, raw: string) {
+  const q = raw.trim().toLowerCase();
+  if (!q) return true;
+  const forward = employeeFullName(emp).toLowerCase();
+  const reverse = `${emp.lastName} ${emp.firstName}`.trim().toLowerCase();
+  return forward.includes(q) || reverse.includes(q);
+}
+
 function segmentMatchesCard(seg: ActiveSegment | null, kind: "job" | "tariff", id: string): boolean {
   if (!seg) return false;
   if (kind === "job") return seg.sourceType === "job" && seg.jobId === id;
@@ -97,6 +110,8 @@ function AttendanceLoginContent() {
   const [sessionInWork, setSessionInWork] = useState<boolean | null>(null);
   /** Po úspěšné akci čekáme na návrat na výběr zaměstnance — blokace dvojkliku a interakce. */
   const [awaitingReturnToSelect, setAwaitingReturnToSelect] = useState(false);
+  /** Filtr jmen na obrazovce výběru zaměstnance (terminál). */
+  const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
 
   useEffect(() => {
     return () => {
@@ -177,6 +192,18 @@ function AttendanceLoginContent() {
     );
     return () => unsub();
   }, [companyId, areServicesAvailable, firestore]);
+
+  const displayedEmployees = useMemo(() => {
+    const filtered = employees.filter((e) => employeeMatchesSearch(e, employeeSearchQuery));
+    return [...filtered].sort((a, b) => {
+      const aWork = a.inWork === true ? 1 : 0;
+      const bWork = b.inWork === true ? 1 : 0;
+      if (bWork !== aWork) return bWork - aWork;
+      const na = `${a.lastName} ${a.firstName}`.trim().toLowerCase();
+      const nb = `${b.lastName} ${b.firstName}`.trim().toLowerCase();
+      return na.localeCompare(nb, "cs");
+    });
+  }, [employees, employeeSearchQuery]);
 
   const resetToSelection = useCallback(
     (opts?: { afterAttendance?: boolean }) => {
@@ -588,8 +615,20 @@ function AttendanceLoginContent() {
   };
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-2xl flex-col px-4 py-8 pb-12 sm:px-6">
-      <header className="mb-8 flex items-center justify-between gap-3">
+    <div
+      className={cn(
+        "mx-auto flex min-h-dvh flex-col px-3 pb-8 pt-3 sm:px-4 sm:pt-4",
+        step === "select"
+          ? "max-w-[1600px]"
+          : "max-w-2xl px-4 py-8 pb-12 sm:px-6"
+      )}
+    >
+      <header
+        className={cn(
+          "flex shrink-0 items-center justify-between gap-2",
+          step === "select" ? "mb-2 sm:h-9 sm:mb-3" : "mb-8"
+        )}
+      >
         {step !== "select" ? (
           <Button
             type="button"
@@ -603,11 +642,20 @@ function AttendanceLoginContent() {
             Zpět
           </Button>
         ) : (
-          <span className="w-20" />
+          <span className="w-12 shrink-0 sm:w-16" aria-hidden />
         )}
-        <div className="text-center">
-          <p className="text-xs font-medium uppercase tracking-widest text-emerald-400/90">Docházka</p>
-          <h1 className="text-lg font-semibold tracking-tight text-white sm:text-xl">Přihlášení zaměstnance</h1>
+        <div className="min-w-0 flex-1 text-center">
+          <p className="text-[10px] font-medium uppercase tracking-widest text-emerald-400/90 sm:text-xs">
+            Docházka
+          </p>
+          <h1
+            className={cn(
+              "truncate font-semibold tracking-tight text-white",
+              step === "select" ? "text-sm sm:text-base" : "text-lg sm:text-xl"
+            )}
+          >
+            {step === "select" ? "Vyberte profil" : "Přihlášení zaměstnance"}
+          </h1>
         </div>
         {step === "work" ? (
           <Button
@@ -622,7 +670,7 @@ function AttendanceLoginContent() {
             Zrušit
           </Button>
         ) : (
-          <span className="w-20" />
+          <span className="w-12 shrink-0 sm:w-16" aria-hidden />
         )}
       </header>
 
@@ -639,97 +687,131 @@ function AttendanceLoginContent() {
       )}
 
       {companyId && !loadError && step === "select" && (
-        <div className="flex flex-1 flex-col gap-6">
-          <p className="text-center text-base text-slate-400">Vyberte svůj profil</p>
+        <div className="flex min-h-0 flex-1 flex-col gap-2">
           {loadingList ? (
-            <div className="flex flex-1 items-center justify-center py-24">
-              <Loader2 className="h-12 w-12 animate-spin text-emerald-500/60" />
+            <div className="flex flex-1 items-center justify-center py-16">
+              <Loader2 className="h-10 w-10 animate-spin text-emerald-500/60 sm:h-12 sm:w-12" />
             </div>
           ) : employees.length === 0 ? (
             <p className="text-center text-slate-500">Žádní aktivní zaměstnanci.</p>
           ) : (
-            <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {employees.map((emp) => {
-                const inWork = emp.inWork === true;
-                const seg = liveOpenSegments[emp.id] ?? emp.activeSegment ?? null;
-                const showAssigned = inWork === true && seg != null;
-                return (
-                  <li key={emp.id}>
-                    <button
-                      type="button"
-                      onClick={() => selectEmployee(emp)}
-                      className={cn(
-                        "group relative flex w-full flex-col items-center gap-3 rounded-2xl border-4 p-5 text-center shadow-lg transition sm:p-6",
-                        "min-h-[196px] active:scale-[0.99]",
-                        inWork
-                          ? "border-emerald-400/90 bg-gradient-to-br from-emerald-900/50 via-emerald-950/40 to-slate-950/90 ring-2 ring-emerald-500/40"
-                          : "border-rose-500/80 bg-gradient-to-br from-rose-950/50 via-slate-900/60 to-slate-950/90 ring-2 ring-rose-500/35"
-                      )}
-                    >
-                      <Badge
+            <>
+              <div className="sticky top-0 z-20 -mx-3 shrink-0 border-b border-white/10 bg-slate-950/90 px-3 py-2 backdrop-blur-md sm:-mx-4 sm:px-4">
+                <div className="relative">
+                  <Search
+                    className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"
+                    aria-hidden
+                  />
+                  <Input
+                    type="search"
+                    value={employeeSearchQuery}
+                    onChange={(e) => setEmployeeSearchQuery(e.target.value)}
+                    placeholder="Hledat podle jména…"
+                    autoComplete="off"
+                    className="h-10 min-h-[44px] border-white/20 bg-black/35 pl-9 text-sm text-white placeholder:text-slate-500 focus-visible:ring-emerald-500/40"
+                  />
+                </div>
+                <p className="mt-1.5 text-center text-[10px] leading-tight text-slate-500 sm:text-[11px]">
+                  {displayedEmployees.length === employees.length ? (
+                    <>
+                      {employees.length} zaměstnanců · <span className="text-emerald-400/90">v práci nahoře</span>
+                    </>
+                  ) : (
+                    <>
+                      Zobrazeno {displayedEmployees.length} z {employees.length}
+                      {employeeSearchQuery.trim() ? ` · „${employeeSearchQuery.trim()}“` : ""}
+                    </>
+                  )}
+                </p>
+              </div>
+
+              <ul className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-2.5 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
+                {displayedEmployees.map((emp) => {
+                  const inWork = emp.inWork === true;
+                  const seg = liveOpenSegments[emp.id] ?? emp.activeSegment ?? null;
+                  const showAssigned = inWork === true && seg != null;
+                  const nameTitle = employeeFullName(emp);
+                  return (
+                    <li key={emp.id} className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={() => selectEmployee(emp)}
+                        title={nameTitle}
                         className={cn(
-                          "absolute right-3 top-3 z-10 max-w-[calc(100%-5rem)] truncate text-xs font-semibold shadow-md",
+                          "flex w-full min-h-[88px] items-stretch gap-2 rounded-xl border-2 p-2 text-left shadow-md transition sm:min-h-[92px] sm:gap-2.5 sm:p-2.5",
+                          "touch-manipulation active:scale-[0.98]",
                           inWork
-                            ? "border-emerald-300/50 bg-emerald-500 text-white hover:bg-emerald-500"
-                            : "border-rose-300/50 bg-rose-600 text-white hover:bg-rose-600"
+                            ? "border-emerald-400/85 bg-gradient-to-br from-emerald-900/45 via-emerald-950/35 to-slate-950/95 ring-1 ring-emerald-500/35"
+                            : "border-rose-500/70 bg-gradient-to-br from-rose-950/40 via-slate-900/55 to-slate-950/95 ring-1 ring-rose-500/25"
                         )}
                       >
-                        {inWork ? "V práci" : "Mimo práci"}
-                      </Badge>
-                      <Avatar
-                        className={cn(
-                          "h-20 w-20 shrink-0 border-2 shadow-md",
-                          inWork ? "border-emerald-300/60" : "border-rose-300/50"
-                        )}
-                      >
-                        {emp.photoURL ? (
-                          <AvatarImage src={emp.photoURL} alt="" className="object-cover" />
-                        ) : null}
-                        <AvatarFallback
+                        <Avatar
                           className={cn(
-                            "text-2xl font-medium text-white",
-                            inWork ? "bg-emerald-800" : "bg-rose-900"
+                            "h-12 w-12 shrink-0 border-2 shadow sm:h-14 sm:w-14",
+                            inWork ? "border-emerald-300/55" : "border-rose-300/45"
                           )}
                         >
-                          {initials(emp.firstName, emp.lastName)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="text-lg font-semibold leading-tight text-white">
-                        {emp.firstName} {emp.lastName}
-                      </span>
-                      <div className="mt-auto w-full min-w-0 px-1">
-                        {showAssigned ? (
-                          <div
-                            className="mx-auto flex w-full max-w-[20rem] min-w-0 items-center gap-2 rounded-xl border-2 border-emerald-400/70 bg-emerald-500/20 px-3 py-2.5 text-left text-sm font-semibold leading-snug text-emerald-50 shadow-md sm:py-2"
-                            title={`${seg.sourceType === "job" ? "Na zakázce" : "Tarif"}: ${segmentDisplayTitle(seg)}`}
-                          >
-                            {seg.sourceType === "job" ? (
-                              <Briefcase
-                                className="h-5 w-5 shrink-0 text-emerald-300"
-                                aria-hidden
-                              />
-                            ) : (
-                              <Banknote
-                                className="h-5 w-5 shrink-0 text-emerald-300"
-                                aria-hidden
-                              />
+                          {emp.photoURL ? (
+                            <AvatarImage src={emp.photoURL} alt="" className="object-cover" />
+                          ) : null}
+                          <AvatarFallback
+                            className={cn(
+                              "text-sm font-semibold text-white sm:text-base",
+                              inWork ? "bg-emerald-800" : "bg-rose-900"
                             )}
-                            <span className="min-w-0 flex-1 truncate">
-                              {seg.sourceType === "job" ? "Na zakázce: " : "Tarif: "}
-                              {segmentDisplayTitle(seg)}
+                          >
+                            {initials(emp.firstName, emp.lastName)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
+                          <div className="flex items-start justify-between gap-1">
+                            <span className="line-clamp-2 min-h-[2.25rem] text-[13px] font-semibold leading-tight text-white sm:min-h-[2.5rem] sm:text-sm">
+                              {emp.firstName} {emp.lastName}
+                            </span>
+                            <span
+                              className={cn(
+                                "shrink-0 rounded px-1 py-0.5 text-[9px] font-bold uppercase leading-none sm:text-[10px]",
+                                inWork
+                                  ? "bg-emerald-500 text-white"
+                                  : "bg-rose-600 text-white"
+                              )}
+                            >
+                              {inWork ? "Práce" : "Mimo"}
                             </span>
                           </div>
-                        ) : (
-                          <div className="mx-auto flex w-full max-w-[20rem] min-w-0 items-center justify-center rounded-xl border border-slate-600/80 bg-slate-900/50 px-3 py-2.5 text-xs font-medium text-slate-400 sm:text-sm">
-                            <span className="truncate">Nepřiřazen</span>
-                          </div>
-                        )}
-                      </div>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
+                          {showAssigned ? (
+                            <div
+                              className="flex min-w-0 items-center gap-1 text-[10px] font-medium leading-tight text-emerald-100/95 sm:text-[11px]"
+                              title={`${seg.sourceType === "job" ? "Na zakázce" : "Tarif"}: ${segmentDisplayTitle(seg)}`}
+                            >
+                              {seg.sourceType === "job" ? (
+                                <Briefcase className="h-3 w-3 shrink-0 text-emerald-400" aria-hidden />
+                              ) : (
+                                <Banknote className="h-3 w-3 shrink-0 text-emerald-400" aria-hidden />
+                              )}
+                              <span className="truncate">
+                                {seg.sourceType === "job" ? "Zák.: " : "Tarif: "}
+                                {segmentDisplayTitle(seg)}
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="truncate text-[10px] text-slate-500 sm:text-[11px]">
+                              Nepřiřazen
+                            </span>
+                          )}
+                        </div>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              {displayedEmployees.length === 0 ? (
+                <p className="py-6 text-center text-sm text-slate-500">
+                  Žádný zaměstnanec neodpovídá hledání.
+                </p>
+              ) : null}
+            </>
           )}
         </div>
       )}
