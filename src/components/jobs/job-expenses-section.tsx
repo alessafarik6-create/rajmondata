@@ -202,7 +202,7 @@ export function JobExpensesSection({
     if (!isAllowedJobMediaFile(file)) {
       toast({
         title: "Nepodporovaný soubor",
-        description: "Povolené jsou obrázky (JPG, PNG, WebP) nebo PDF.",
+        description: "Povolené jsou obrázky (JPG, PNG, WebP), PDF nebo Office.",
         variant: "destructive",
       });
       return;
@@ -331,6 +331,9 @@ export function JobExpensesSection({
             fileType: nextFileType,
             fileName: nextFileName,
             storagePath: nextStoragePath,
+            ...(pendingFile
+              ? { mimeType: pendingFile.type?.trim() || null }
+              : {}),
           }),
           { merge: true }
         );
@@ -388,6 +391,7 @@ export function JobExpensesSection({
           fileType: fileType ?? null,
           fileName: fileName ?? null,
           storagePath: storagePath ?? null,
+          mimeType: pendingFile?.type?.trim() || null,
         });
         batch.set(
           companyDocumentRefForJobExpense(firestore, companyId, expenseRef.id),

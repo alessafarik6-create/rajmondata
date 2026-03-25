@@ -259,7 +259,7 @@ service cloud.firestore {
                 request.resource.data.fileUrl.size() <= 2048)) &&
             (!('fileType' in request.resource.data) ||
               request.resource.data.fileType == null ||
-              request.resource.data.fileType in ['image', 'pdf']) &&
+              request.resource.data.fileType in ['image', 'pdf', 'office']) &&
             (!('fileName' in request.resource.data) ||
               request.resource.data.fileName == null ||
               (request.resource.data.fileName is string &&
@@ -292,7 +292,7 @@ service cloud.firestore {
                 request.resource.data.fileUrl.size() <= 2048)) &&
             (!('fileType' in request.resource.data) ||
               request.resource.data.fileType == null ||
-              request.resource.data.fileType in ['image', 'pdf']) &&
+              request.resource.data.fileType in ['image', 'pdf', 'office']) &&
             (!('fileName' in request.resource.data) ||
               request.resource.data.fileName == null ||
               (request.resource.data.fileName is string &&

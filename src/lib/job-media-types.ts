@@ -35,7 +35,7 @@ export type JobFolderDoc = {
   createdBy?: string;
 };
 
-export type JobMediaFileType = "image" | "pdf";
+export type JobMediaFileType = "image" | "pdf" | "office";
 
 export type JobFolderImageDoc = {
   id: string;
@@ -116,15 +116,34 @@ export function isAllowedJobImageFile(file: File): boolean {
   );
 }
 
+const OFFICE_MIME_PREFIXES = [
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument",
+  "application/vnd.ms-excel",
+  "application/vnd.ms-powerpoint",
+];
+
+function isOfficeFileName(name: string): boolean {
+  return /\.(doc|docx|xls|xlsx|ppt|pptx)$/i.test(name);
+}
+
+export function isAllowedJobOfficeFile(file: File): boolean {
+  const t = (file.type || "").toLowerCase();
+  if (OFFICE_MIME_PREFIXES.some((p) => t.startsWith(p))) return true;
+  return isOfficeFileName(file.name);
+}
+
 export function isAllowedJobMediaFile(file: File): boolean {
   if (isAllowedJobImageFile(file)) return true;
   const t = (file.type || "").toLowerCase();
   if (t === "application/pdf") return true;
-  return file.name.toLowerCase().endsWith(".pdf");
+  if (file.name.toLowerCase().endsWith(".pdf")) return true;
+  return isAllowedJobOfficeFile(file);
 }
 
 export function getJobMediaFileTypeFromFile(file: File): JobMediaFileType {
   if (isAllowedJobImageFile(file)) return "image";
+  if (isAllowedJobOfficeFile(file)) return "office";
   return "pdf";
 }
 
@@ -136,7 +155,9 @@ export function inferJobMediaItemType(row: {
 }): JobMediaFileType {
   if (row.fileType === "pdf") return "pdf";
   if (row.fileType === "image") return "image";
+  if (row.fileType === "office") return "office";
   const base = String(row.fileName || row.name || "").toLowerCase();
   if (base.endsWith(".pdf")) return "pdf";
+  if (isOfficeFileName(base)) return "office";
   return "image";
 }

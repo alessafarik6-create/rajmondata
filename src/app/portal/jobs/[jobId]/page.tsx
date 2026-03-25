@@ -22,6 +22,12 @@ import {
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
+import {
+  buildJobMediaMirrorAnnotatedUrlPatch,
+  buildNewJobLegacyPhotoMirrorDocument,
+  companyDocumentRefForJobFolderImage,
+  companyDocumentRefForJobLegacyPhoto,
+} from "@/lib/job-linked-document-sync";
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
@@ -3285,6 +3291,32 @@ export default function JobDetailPage() {
         return;
       }
 
+      try {
+        await setDoc(
+          companyDocumentRefForJobLegacyPhoto(
+            firestore,
+            companyId,
+            photoDocRef.id
+          ),
+          buildNewJobLegacyPhotoMirrorDocument({
+            companyId,
+            jobId: jobId as string,
+            jobDisplayName: job?.name?.trim() ?? null,
+            photoId: photoDocRef.id,
+            userId: user.uid,
+            fileName: safeBaseName,
+            fileType,
+            mimeType: file.type?.trim() || null,
+            fileUrl: downloadURL,
+            storagePath: resolvedFullPath,
+            note: null,
+          }),
+          { merge: true }
+        );
+      } catch (mirrorErr) {
+        console.error("[JobDetailPage] company document mirror failed", mirrorErr);
+      }
+
       toast({
         title: "Soubor nahrán",
         description: safeBaseName,
@@ -3502,6 +3534,37 @@ export default function JobDetailPage() {
         );
       }
 
+      try {
+        const mirrorPatch = buildJobMediaMirrorAnnotatedUrlPatch({
+          fileUrl: annotatedUrl,
+          jobDisplayName: job?.name?.trim() ?? null,
+        });
+        if (target.kind === "photos") {
+          await setDoc(
+            companyDocumentRefForJobLegacyPhoto(
+              firestore,
+              companyId,
+              photoToEdit.id
+            ),
+            mirrorPatch,
+            { merge: true }
+          );
+        } else {
+          await setDoc(
+            companyDocumentRefForJobFolderImage(
+              firestore,
+              companyId,
+              target.folderId,
+              photoToEdit.id
+            ),
+            mirrorPatch,
+            { merge: true }
+          );
+        }
+      } catch (mirrorErr) {
+        console.error("[JobDetailPage] dokument mirror po anotaci", mirrorErr);
+      }
+
       toast({
         title: "Fotografie upravena",
         description: "Kóty a poznámky byly uloženy.",
@@ -3555,6 +3618,17 @@ export default function JobDetailPage() {
           } catch {}
         }
 
+        try {
+          await deleteDoc(
+            companyDocumentRefForJobLegacyPhoto(
+              firestore,
+              companyId,
+              docSnap.id
+            )
+          );
+        } catch {
+          /* */
+        }
         await deleteDoc(docSnap.ref);
       }
 
@@ -3605,6 +3679,18 @@ export default function JobDetailPage() {
             } catch {
               /* */
             }
+          }
+          try {
+            await deleteDoc(
+              companyDocumentRefForJobFolderImage(
+                firestore,
+                companyId,
+                folderId,
+                imgSnap.id
+              )
+            );
+          } catch {
+            /* */
           }
           await deleteDoc(imgSnap.ref);
         }
@@ -4301,6 +4387,7 @@ export default function JobDetailPage() {
             <JobMediaSection
               companyId={companyId}
               jobId={jobId as string}
+              jobDisplayName={job?.name ?? null}
               user={user}
               canManageFolders={canManageFolders}
               photos={photos?.filter(isUsablePhotoRow) as PhotoDoc[] | undefined}

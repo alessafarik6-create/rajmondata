@@ -1,16 +1,18 @@
 "use client";
 
-import React, { useCallback, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Firestore } from "firebase/firestore";
 import {
   collection,
   deleteDoc,
   deleteField,
   doc,
+  getDoc,
   getDocs,
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import { ref, deleteObject } from "firebase/storage";
 import type { User } from "firebase/auth";
@@ -37,6 +39,13 @@ import {
   type JobMediaFirestorePath,
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
+import {
+  buildJobMediaMirrorNoteOnlyPatch,
+  buildNewJobFolderImageMirrorDocument,
+  buildNewJobLegacyPhotoMirrorDocument,
+  companyDocumentRefForJobFolderImage,
+  companyDocumentRefForJobLegacyPhoto,
+} from "@/lib/job-linked-document-sync";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -169,6 +178,21 @@ function JobMediaPdfPreview() {
   );
 }
 
+function JobMediaOfficePreview() {
+  return (
+    <div
+      className="flex h-36 w-full flex-col items-center justify-center gap-1.5 bg-blue-500/[0.07] sm:h-40"
+      aria-hidden
+    >
+      <span className="text-2xl leading-none">📎</span>
+      <FileText className="h-9 w-9 text-blue-700 dark:text-blue-400" strokeWidth={1.5} />
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        Office
+      </span>
+    </div>
+  );
+}
+
 function JobMediaFileCard({
   borderClassName,
   preview,
@@ -231,6 +255,7 @@ function UserFolderBlock({
   folder,
   companyId,
   jobId,
+  jobDisplayName,
   firestore,
   user,
   canManageFolders,
@@ -240,6 +265,7 @@ function UserFolderBlock({
   folder: JobFolderDoc;
   companyId: string;
   jobId: string;
+  jobDisplayName: string | null;
   firestore: Firestore;
   user: User;
   canManageFolders: boolean;
@@ -248,6 +274,7 @@ function UserFolderBlock({
     path: JobMediaFirestorePath;
     imageId: string;
     currentNote: string;
+    fileNameHint: string;
   }) => void;
 }) {
   const { toast } = useToast();
@@ -295,12 +322,62 @@ function UserFolderBlock({
       });
   }, [imagesRaw]);
 
+  useEffect(() => {
+    if (!firestore || !companyId || !jobId || !user?.uid) return;
+    let cancelled = false;
+    const jn = jobDisplayName ?? null;
+    void (async () => {
+      for (const img of images) {
+        if (cancelled) return;
+        if (!img?.id) continue;
+        const mirrorRef = companyDocumentRefForJobFolderImage(
+          firestore,
+          companyId,
+          folder.id,
+          img.id
+        );
+        const snap = await getDoc(mirrorRef);
+        if (cancelled) return;
+        if (!snap.exists()) {
+          const preview = getJobMediaPreviewUrl(img);
+          await setDoc(
+            mirrorRef,
+            buildNewJobFolderImageMirrorDocument({
+              companyId,
+              jobId,
+              jobDisplayName: jn,
+              folderId: folder.id,
+              imageId: img.id,
+              userId:
+                typeof img.createdBy === "string" && img.createdBy
+                  ? img.createdBy
+                  : user.uid,
+              fileName: img.fileName || img.name || img.id,
+              fileType: inferJobMediaItemType(img),
+              mimeType: null,
+              fileUrl: preview,
+              storagePath:
+                (typeof img.storagePath === "string" && img.storagePath) ||
+                (typeof img.path === "string" && img.path) ||
+                null,
+              note: typeof img.note === "string" ? img.note : null,
+            }),
+            { merge: true }
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [images, firestore, companyId, jobId, folder.id, user?.uid, jobDisplayName]);
+
   const uploadOne = async (file: File) => {
     if (!isAllowedJobMediaFile(file)) {
       toast({
         variant: "destructive",
         title: "Nepodporovaný formát",
-        description: "Pouze JPG, PNG, WEBP nebo PDF.",
+        description: "Pouze JPG, PNG, WEBP, PDF nebo Office (DOC, XLS, PPT…).",
       });
       return;
     }
@@ -347,6 +424,30 @@ function UserFolderBlock({
       }
     );
 
+    await setDoc(
+      companyDocumentRefForJobFolderImage(
+        firestore,
+        companyId,
+        folder.id,
+        refDoc.id
+      ),
+      buildNewJobFolderImageMirrorDocument({
+        companyId,
+        jobId,
+        jobDisplayName,
+        folderId: folder.id,
+        imageId: refDoc.id,
+        userId: user.uid,
+        fileName: safeBaseName,
+        fileType,
+        mimeType: file.type?.trim() || null,
+        fileUrl: downloadURL,
+        storagePath: resolvedFullPath,
+        note: null,
+      }),
+      { merge: true }
+    );
+
     toast({ title: "Soubor uložen", description: safeBaseName });
   };
 
@@ -378,7 +479,8 @@ function UserFolderBlock({
           /* ignore */
         }
       }
-      await deleteDoc(
+      const batch = writeBatch(firestore);
+      batch.delete(
         doc(
           firestore,
           "companies",
@@ -391,6 +493,15 @@ function UserFolderBlock({
           img.id
         )
       );
+      batch.delete(
+        companyDocumentRefForJobFolderImage(
+          firestore,
+          companyId,
+          folder.id,
+          img.id
+        )
+      );
+      await batch.commit();
       toast({ title: "Soubor smazán" });
     } catch (e) {
       console.error(e);
@@ -436,6 +547,18 @@ function UserFolderBlock({
           } catch {
             /* */
           }
+        }
+        try {
+          await deleteDoc(
+            companyDocumentRefForJobFolderImage(
+              firestore,
+              companyId,
+              folder.id,
+              d.id
+            )
+          );
+        } catch {
+          /* */
         }
         await deleteDoc(d.ref);
       }
@@ -566,15 +689,27 @@ function UserFolderBlock({
               const dateLine =
                 kind === "pdf"
                   ? `PDF · ${formatMediaDate(img.createdAt)}`
-                  : formatMediaDate(img.createdAt);
+                  : kind === "office"
+                    ? `Office · ${formatMediaDate(img.createdAt)}`
+                    : formatMediaDate(img.createdAt);
               const hasNote = !!img.note?.trim();
 
-              if (kind === "pdf") {
+              if (kind === "pdf" || kind === "office") {
                 return (
                   <JobMediaFileCard
                     key={img.id}
-                    borderClassName="border-dashed border-red-500/30"
-                    preview={<JobMediaPdfPreview />}
+                    borderClassName={
+                      kind === "office"
+                        ? "border-dashed border-blue-500/30"
+                        : "border-dashed border-red-500/30"
+                    }
+                    preview={
+                      kind === "office" ? (
+                        <JobMediaOfficePreview />
+                      ) : (
+                        <JobMediaPdfPreview />
+                      )
+                    }
                     title={title}
                     dateLine={dateLine}
                     note={img.note}
@@ -633,6 +768,7 @@ function UserFolderBlock({
                               },
                               imageId: img.id,
                               currentNote: img.note || "",
+                              fileNameHint: title,
                             })
                           }
                         >
@@ -736,6 +872,7 @@ function UserFolderBlock({
                             },
                             imageId: img.id,
                             currentNote: img.note || "",
+                            fileNameHint: title,
                           })
                         }
                       >
@@ -789,6 +926,8 @@ function UserFolderBlock({
 export type JobMediaSectionProps = {
   companyId: string;
   jobId: string;
+  /** Název zakázky pro globální doklady */
+  jobDisplayName?: string | null;
   user: User | null;
   canManageFolders: boolean;
   /** Legacy fotodokumentace (kolekce photos). */
@@ -804,6 +943,7 @@ export type JobMediaSectionProps = {
 export function JobMediaSection({
   companyId,
   jobId,
+  jobDisplayName = null,
   user,
   canManageFolders,
   photos,
@@ -822,6 +962,7 @@ export function JobMediaSection({
   const [noteCtx, setNoteCtx] = useState<{
     path: JobMediaFirestorePath;
     imageId: string;
+    fileNameHint: string;
   } | null>(null);
   const [noteSaving, setNoteSaving] = useState(false);
 
@@ -861,8 +1002,17 @@ export function JobMediaSection({
   }, [foldersRaw]);
 
   const openNoteEditor = useCallback(
-    (ctx: { path: JobMediaFirestorePath; imageId: string; currentNote: string }) => {
-      setNoteCtx({ path: ctx.path, imageId: ctx.imageId });
+    (ctx: {
+      path: JobMediaFirestorePath;
+      imageId: string;
+      currentNote: string;
+      fileNameHint: string;
+    }) => {
+      setNoteCtx({
+        path: ctx.path,
+        imageId: ctx.imageId,
+        fileNameHint: ctx.fileNameHint,
+      });
       setNoteDraft(ctx.currentNote);
       setNoteOpen(true);
     },
@@ -923,6 +1073,35 @@ export function JobMediaSection({
               }
         );
       }
+
+      const mirrorPatch = buildJobMediaMirrorNoteOnlyPatch({
+        note: text || null,
+        fileNameFallback: noteCtx.fileNameHint,
+        jobDisplayName,
+      });
+      if (noteCtx.path.kind === "photos") {
+        await setDoc(
+          companyDocumentRefForJobLegacyPhoto(
+            firestore,
+            companyId,
+            noteCtx.imageId
+          ),
+          mirrorPatch,
+          { merge: true }
+        );
+      } else {
+        await setDoc(
+          companyDocumentRefForJobFolderImage(
+            firestore,
+            companyId,
+            noteCtx.path.folderId,
+            noteCtx.imageId
+          ),
+          mirrorPatch,
+          { merge: true }
+        );
+      }
+
       toast({ title: text ? "Poznámka uložena" : "Poznámka odstraněna" });
       setNoteOpen(false);
       setNoteCtx(null);
@@ -971,7 +1150,8 @@ export function JobMediaSection({
           /* */
         }
       }
-      await deleteDoc(
+      const batch = writeBatch(firestore);
+      batch.delete(
         doc(
           firestore,
           "companies",
@@ -982,6 +1162,8 @@ export function JobMediaSection({
           p.id
         )
       );
+      batch.delete(companyDocumentRefForJobLegacyPhoto(firestore, companyId, p.id));
+      await batch.commit();
       toast({ title: "Soubor smazán" });
     } catch (e) {
       console.error(e);
@@ -1062,6 +1244,54 @@ export function JobMediaSection({
     });
   }, [photos]);
 
+  useEffect(() => {
+    if (!firestore || !companyId || !jobId || !user?.uid) return;
+    let cancelled = false;
+    const jn = jobDisplayName ?? null;
+    void (async () => {
+      for (const p of photosSorted) {
+        if (cancelled) return;
+        if (!p?.id) continue;
+        const mirrorRef = companyDocumentRefForJobLegacyPhoto(
+          firestore,
+          companyId,
+          p.id
+        );
+        const snap = await getDoc(mirrorRef);
+        if (cancelled) return;
+        if (!snap.exists()) {
+          const preview = getJobMediaPreviewUrl(p);
+          await setDoc(
+            mirrorRef,
+            buildNewJobLegacyPhotoMirrorDocument({
+              companyId,
+              jobId,
+              jobDisplayName: jn,
+              photoId: p.id,
+              userId:
+                typeof p.createdBy === "string" && p.createdBy
+                  ? p.createdBy
+                  : user.uid,
+              fileName: p.fileName || p.name || p.id,
+              fileType: inferJobMediaItemType(p),
+              mimeType: null,
+              fileUrl: preview,
+              storagePath:
+                (typeof p.storagePath === "string" && p.storagePath) ||
+                (typeof p.path === "string" && p.path) ||
+                null,
+              note: typeof p.note === "string" ? p.note : null,
+            }),
+            { merge: true }
+          );
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [photosSorted, firestore, companyId, jobId, user?.uid, jobDisplayName]);
+
   if (!firestore || !user) {
     return (
       <Card>
@@ -1126,7 +1356,7 @@ export function JobMediaSection({
                         toast({
                           variant: "destructive",
                           title: "Přeskočeno",
-                          description: `${f.name} — pouze JPG, PNG, WEBP nebo PDF.`,
+                          description: `${f.name} — pouze JPG, PNG, WEBP, PDF nebo Office.`,
                         });
                         continue;
                       }
@@ -1200,15 +1430,27 @@ export function JobMediaSection({
                   const dateLine =
                     kind === "pdf"
                       ? `PDF · ${formatMediaDate(p.createdAt)}`
-                      : formatMediaDate(p.createdAt);
+                      : kind === "office"
+                        ? `Office · ${formatMediaDate(p.createdAt)}`
+                        : formatMediaDate(p.createdAt);
                   const hasNote = !!p.note?.trim();
 
-                  if (kind === "pdf") {
+                  if (kind === "pdf" || kind === "office") {
                     return (
                       <JobMediaFileCard
                         key={p.id}
-                        borderClassName="border-dashed border-red-500/30"
-                        preview={<JobMediaPdfPreview />}
+                        borderClassName={
+                          kind === "office"
+                            ? "border-dashed border-blue-500/30"
+                            : "border-dashed border-red-500/30"
+                        }
+                        preview={
+                          kind === "office" ? (
+                            <JobMediaOfficePreview />
+                          ) : (
+                            <JobMediaPdfPreview />
+                          )
+                        }
                         title={title}
                         dateLine={dateLine}
                         note={p.note}
@@ -1264,6 +1506,7 @@ export function JobMediaSection({
                                   path: { kind: "photos" },
                                   imageId: p.id,
                                   currentNote: p.note || "",
+                                  fileNameHint: title,
                                 })
                               }
                             >
@@ -1360,6 +1603,7 @@ export function JobMediaSection({
                                 path: { kind: "photos" },
                                 imageId: p.id,
                                 currentNote: p.note || "",
+                                fileNameHint: title,
                               })
                             }
                           >
@@ -1397,6 +1641,7 @@ export function JobMediaSection({
                     folder={folder}
                     companyId={companyId}
                     jobId={jobId}
+                    jobDisplayName={jobDisplayName ?? null}
                     firestore={firestore}
                     user={user}
                     canManageFolders={canManageFolders}

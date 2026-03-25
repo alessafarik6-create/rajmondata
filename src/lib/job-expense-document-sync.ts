@@ -33,6 +33,8 @@ export type JobExpenseMirrorFirestoreFields = {
   /** Doplňkový štítek dle zadání (prijate). */
   documentKind: "prijate";
   source: typeof JOB_EXPENSE_DOCUMENT_SOURCE;
+  /** Jednotná klasifikace: náklad zakázky = expense (viz také `source`). */
+  sourceType: "expense";
   sourceId: string;
   sourceLabel: string;
   linkedExpenseId: string;
@@ -46,6 +48,7 @@ export type JobExpenseMirrorFirestoreFields = {
   entityName: string;
   fileUrl: string | null;
   fileType: string | null;
+  mimeType: string | null;
   fileName: string | null;
   storagePath: string | null;
   vat: number;
@@ -68,6 +71,7 @@ export function buildNewJobExpenseMirrorDocument(params: {
   fileType: string | null;
   fileName: string | null;
   storagePath: string | null;
+  mimeType?: string | null;
 }): JobExpenseMirrorFirestoreFields {
   const note = params.note?.trim() ? params.note.trim() : null;
   const jn = params.jobDisplayName?.trim() ?? "";
@@ -76,6 +80,7 @@ export function buildNewJobExpenseMirrorDocument(params: {
     type: "received",
     documentKind: "prijate",
     source: JOB_EXPENSE_DOCUMENT_SOURCE,
+    sourceType: "expense",
     sourceId: params.expenseId,
     sourceLabel: "Náklad zakázky",
     linkedExpenseId: params.expenseId,
@@ -89,6 +94,7 @@ export function buildNewJobExpenseMirrorDocument(params: {
     entityName: jn || "Zakázka",
     fileUrl: params.fileUrl,
     fileType: params.fileType,
+    mimeType: params.mimeType?.trim() ? params.mimeType.trim() : null,
     fileName: params.fileName,
     storagePath: params.storagePath,
     vat: 0,
@@ -112,13 +118,15 @@ export function buildJobExpenseMirrorMergePatch(params: {
   fileType: string | null;
   fileName: string | null;
   storagePath: string | null;
+  mimeType?: string | null;
 }): Record<string, unknown> {
   const note = params.note?.trim() ? params.note.trim() : null;
   const jn = params.jobDisplayName?.trim() ?? "";
-  return {
+  const patch: Record<string, unknown> = {
     type: "received",
     documentKind: "prijate",
     source: JOB_EXPENSE_DOCUMENT_SOURCE,
+    sourceType: "expense",
     sourceId: params.expenseId,
     sourceLabel: "Náklad zakázky",
     linkedExpenseId: params.expenseId,
@@ -137,4 +145,8 @@ export function buildJobExpenseMirrorMergePatch(params: {
     organizationId: params.companyId,
     updatedAt: serverTimestamp(),
   };
+  if (params.mimeType !== undefined) {
+    patch.mimeType = params.mimeType?.trim() ? params.mimeType.trim() : null;
+  }
+  return patch;
 }

@@ -2,7 +2,7 @@
  * Firestore: companies/{companyId}/jobs/{jobId}/expenses/{expenseId}
  */
 
-export type JobExpenseFileType = "image" | "pdf";
+export type JobExpenseFileType = "image" | "pdf" | "office";
 
 /** Pole uložená v dokumentu nákladu (id přidává klient z useCollection). */
 export type JobExpenseFirestoreFields = {
