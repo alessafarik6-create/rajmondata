@@ -1,3 +1,5 @@
+import { FLOATING_SOLID_PANEL_CLASS } from "@/lib/portal-floating-surface";
+
 /**
  * Jednotný světlý styl pro input / textarea / select trigger (i v dark režimu root HTML).
  * Zelený focus ring dle specifikace portálu.
@@ -16,5 +18,4 @@ export const LIGHT_SELECT_TRIGGER_CLASS =
   `${LIGHT_FORM_CONTROL_CLASS} items-center justify-between gap-2 [&>span]:line-clamp-1 [&>span]:!text-black`;
 
 /** Rozbalovací seznam selectu (Radix). */
-export const LIGHT_SELECT_CONTENT_CLASS =
-  "border border-gray-300 !bg-white !text-black shadow-md";
+export const LIGHT_SELECT_CONTENT_CLASS = `${FLOATING_SOLID_PANEL_CLASS} !bg-white !text-black`;
