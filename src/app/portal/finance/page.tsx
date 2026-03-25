@@ -46,6 +46,14 @@ import {
 } from "recharts";
 import { useRouter } from "next/navigation";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import {
+  resolveExpenseAmounts,
+  resolveJobBudgetFromFirestore,
+} from "@/lib/vat-calculations";
+
+function isReceivedFinanceDoc(d: { type?: string; documentKind?: string }) {
+  return d.type === "received" || d.documentKind === "prijate";
+}
 
 const MONTH_NAMES_CS = [
   "Leden",
@@ -117,22 +125,59 @@ export default function FinancePage() {
         : null,
     [firestore, companyId]
   );
+  const documentsQuery = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "documents")
+        : null,
+    [firestore, companyId]
+  );
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
   const { data: financeRecords, isLoading: isFinanceLoading } =
     useCollection(financeQuery);
+  const { data: documents, isLoading: isDocumentsLoading } =
+    useCollection(documentsQuery);
 
   const stats = useMemo(() => {
-    if (!financeRecords)
-      return { revenue: 0, costs: 0, profit: 0, activeJobs: 0 };
-
-    const revenue = financeRecords
+    const fr = financeRecords ?? [];
+    const revenue = fr
       .filter((r: { type?: string }) => r.type === "revenue")
       .reduce((sum, r: { amount?: unknown }) => sum + Number(r.amount), 0);
-    const costs = financeRecords
+    const costs = fr
       .filter((r: { type?: string }) => r.type === "expense")
       .reduce((sum, r: { amount?: unknown }) => sum + Number(r.amount), 0);
     const profit = revenue - costs;
+
+    let jobsIncomeNet = 0;
+    let jobsIncomeGross = 0;
+    for (const j of jobs ?? []) {
+      const bd = resolveJobBudgetFromFirestore(
+        j as Record<string, unknown>
+      );
+      if (bd) {
+        jobsIncomeNet += bd.budgetNet;
+        jobsIncomeGross += bd.budgetGross;
+      }
+    }
+
+    let docsCostNet = 0;
+    let docsCostGross = 0;
+    for (const d of documents ?? []) {
+      const row = d as Record<string, unknown>;
+      if (!isReceivedFinanceDoc(row as { type?: string; documentKind?: string }))
+        continue;
+      const a = resolveExpenseAmounts({
+        amount: row.amount,
+        amountNet: row.amountNet,
+        amountGross: row.amountGross,
+        vatAmount: row.vatAmount,
+        vatRate: row.vatRate,
+        vat: row.vat,
+      });
+      docsCostNet += a.amountNet;
+      docsCostGross += a.amountGross;
+    }
 
     return {
       revenue,
@@ -143,8 +188,12 @@ export default function FinancePage() {
           (j: { status?: string }) =>
             j.status !== "dokončená" && j.status !== "fakturována"
         ).length || 0,
+      jobsIncomeNet,
+      jobsIncomeGross,
+      docsCostNet,
+      docsCostGross,
     };
-  }, [financeRecords, jobs]);
+  }, [financeRecords, jobs, documents]);
 
   const chartData = useMemo(() => {
     if (!financeRecords?.length) return [];
@@ -176,24 +225,24 @@ export default function FinancePage() {
   }, [financeRecords]);
 
   const pieData = useMemo(() => {
-    if (stats.revenue <= 0 && stats.costs <= 0) return [];
+    if (stats.jobsIncomeGross <= 0 && stats.docsCostGross <= 0) return [];
     const rows: { name: string; value: number; fill: string }[] = [];
-    if (stats.costs > 0) {
+    if (stats.docsCostGross > 0) {
       rows.push({
-        name: "Výdaje",
-        value: stats.costs,
+        name: "Náklady (s DPH)",
+        value: stats.docsCostGross,
         fill: "hsl(var(--primary))",
       });
     }
-    if (stats.revenue > 0) {
+    if (stats.jobsIncomeGross > 0) {
       rows.push({
-        name: "Příjmy",
-        value: stats.revenue,
+        name: "Příjmy zakázek (s DPH)",
+        value: stats.jobsIncomeGross,
         fill: "hsl(var(--secondary))",
       });
     }
     return rows;
-  }, [stats.revenue, stats.costs]);
+  }, [stats.jobsIncomeGross, stats.docsCostGross]);
 
   if (profile && !canAccess) {
     router.push("/portal/dashboard");
@@ -220,7 +269,7 @@ export default function FinancePage() {
     );
   }
 
-  if (isJobsLoading || isFinanceLoading) {
+  if (isJobsLoading || isFinanceLoading || isDocumentsLoading) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -262,33 +311,49 @@ export default function FinancePage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="portal-section-label text-sm font-medium">
-              Celkové příjmy
+              Příjmy ze zakázek
             </CardTitle>
             <DollarSign className="h-4 w-4 text-primary" />
           </CardHeader>
-          <CardContent>
-            <div className="portal-kpi-value">
-              {stats.revenue.toLocaleString("cs-CZ")} Kč
+          <CardContent className="space-y-1">
+            <div className="flex justify-between gap-2 text-sm tabular-nums">
+              <span className="text-muted-foreground">Bez DPH</span>
+              <span className="font-semibold">
+                {stats.jobsIncomeNet.toLocaleString("cs-CZ")} Kč
+              </span>
             </div>
-            <p className="portal-kpi-label">
-              {stats.revenue === 0
-                ? "Zatím nemáte žádné příjmové záznamy"
-                : "Součet příjmů z modulu financí"}
+            <div className="portal-kpi-value text-xl sm:text-2xl">
+              {stats.jobsIncomeGross.toLocaleString("cs-CZ")} Kč
+            </div>
+            <p className="portal-kpi-label">S DPH (součet rozpočtů všech zakázek)</p>
+            <p className="text-[11px] text-muted-foreground">
+              Modul finance (přímé příjmy):{" "}
+              {stats.revenue.toLocaleString("cs-CZ")} Kč
             </p>
           </CardContent>
         </Card>
         <Card>
           <CardHeader className="flex flex-row items-center justify-between pb-2">
             <CardTitle className="portal-section-label text-sm font-medium">
-              Celkové výdaje
+              Náklady (přijaté doklady)
             </CardTitle>
             <Receipt className="h-4 w-4 text-rose-500" />
           </CardHeader>
-          <CardContent>
-            <div className="portal-kpi-value">
-              {stats.costs.toLocaleString("cs-CZ")} Kč
+          <CardContent className="space-y-1">
+            <div className="flex justify-between gap-2 text-sm tabular-nums">
+              <span className="text-muted-foreground">Bez DPH</span>
+              <span className="font-semibold">
+                {stats.docsCostNet.toLocaleString("cs-CZ")} Kč
+              </span>
             </div>
-            <p className="portal-kpi-label">Z výdajových dokladů</p>
+            <div className="portal-kpi-value text-xl sm:text-2xl">
+              {stats.docsCostGross.toLocaleString("cs-CZ")} Kč
+            </div>
+            <p className="portal-kpi-label">S DPH (sekce Doklady, typ přijaté)</p>
+            <p className="text-[11px] text-muted-foreground">
+              Modul finance (přímé výdaje):{" "}
+              {stats.costs.toLocaleString("cs-CZ")} Kč
+            </p>
           </CardContent>
         </Card>
         <Card>
@@ -300,9 +365,18 @@ export default function FinancePage() {
           </CardHeader>
           <CardContent>
             <div className="portal-kpi-value text-emerald-700">
-              {stats.profit.toLocaleString("cs-CZ")} Kč
+              {(
+                stats.jobsIncomeGross - stats.docsCostGross
+              ).toLocaleString("cs-CZ")}{" "}
+              Kč
             </div>
-            <p className="portal-kpi-label">Příjmy mínus výdaje</p>
+            <p className="portal-kpi-label">
+              Příjmy zakázek s DPH mínus náklady dokladů s DPH
+            </p>
+            <p className="text-[11px] text-muted-foreground">
+              Záznamy v modulu finance:{" "}
+              {stats.profit.toLocaleString("cs-CZ")} Kč (příjmy − výdaje)
+            </p>
           </CardContent>
         </Card>
         <Card>

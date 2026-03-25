@@ -78,6 +78,11 @@ import {
   jobTagLabel,
 } from "@/lib/job-tags";
 import { logActivitySafe } from "@/lib/activity-log";
+import {
+  buildJobBudgetFirestorePayload,
+  normalizeVatRate,
+  VAT_RATE_OPTIONS,
+} from "@/lib/vat-calculations";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
 
@@ -225,6 +230,7 @@ function JobsPageContent() {
     customerId: "",
     status: "nová",
     budget: "",
+    vatRate: "21",
     startDate: "",
     endDate: "",
     measuring: "",
@@ -387,11 +393,21 @@ function JobsPageContent() {
             }`.trim()
           : "");
 
+      const budgetNet =
+        newJob.budget === ""
+          ? 0
+          : Math.max(0, Math.round(Number(newJob.budget)));
+      const vatRateNew = normalizeVatRate(Number(newJob.vatRate));
+      const budgetPayload = buildJobBudgetFirestorePayload({
+        budgetNet,
+        vatRate: vatRateNew,
+      });
+
       const payload: Record<string, unknown> = {
         name: newJob.name,
         description: newJob.description,
         status: newJob.status,
-        budget: newJob.budget === "" ? 0 : Number(newJob.budget),
+        ...budgetPayload,
         startDate: newJob.startDate,
         endDate: newJob.endDate,
         measuring: newJob.measuring,
@@ -426,12 +442,14 @@ function JobsPageContent() {
         entityType: "job",
         entityId: createdJobRef.id,
         entityName: newJob.name,
-        details: `Stav ${newJob.status}, rozpočet ${payload.budget as number} Kč`,
+        details: `Stav ${newJob.status}, rozpočet ${budgetPayload.budgetNet} Kč bez DPH / ${budgetPayload.budgetGross} Kč s DPH`,
         sourceModule: "jobs",
         route: `/portal/jobs/${createdJobRef.id}`,
         metadata: {
           status: newJob.status,
-          budget: payload.budget,
+          budgetNet: budgetPayload.budgetNet,
+          budgetGross: budgetPayload.budgetGross,
+          vatRate: budgetPayload.vatRate,
           customerId: payload.customerId,
           customerName: payload.customerName,
         },
@@ -448,6 +466,7 @@ function JobsPageContent() {
         customerId: "",
         status: "nová",
         budget: "",
+        vatRate: "21",
         startDate: "",
         endDate: "",
         measuring: "",
@@ -719,7 +738,7 @@ function JobsPageContent() {
                         ) : null}
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="budget">Rozpočet (Kč)</Label>
+                        <Label htmlFor="budget">Rozpočet bez DPH (Kč)</Label>
                         <Input
                           id="budget"
                           type="number"
@@ -730,6 +749,23 @@ function JobsPageContent() {
                           placeholder="0"
                           min={0}
                         />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="new-job-vat">DPH</Label>
+                        <select
+                          id="new-job-vat"
+                          className={NATIVE_SELECT_CLASS}
+                          value={newJob.vatRate}
+                          onChange={(e) =>
+                            setNewJob({ ...newJob, vatRate: e.target.value })
+                          }
+                        >
+                          {VAT_RATE_OPTIONS.map((r) => (
+                            <option key={r} value={String(r)}>
+                              {r} % DPH
+                            </option>
+                          ))}
+                        </select>
                       </div>
                       <div className="space-y-2">
                         <Label htmlFor="startDate">Termín zahájení</Label>

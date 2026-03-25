@@ -5,6 +5,7 @@
 
 import type { Firestore } from "firebase/firestore";
 import { doc, serverTimestamp } from "firebase/firestore";
+import type { VatRatePercent } from "@/lib/vat-calculations";
 
 export const JOB_EXPENSE_DOCUMENT_SOURCE = "job-expense" as const;
 
@@ -40,7 +41,12 @@ export type JobExpenseMirrorFirestoreFields = {
   linkedExpenseId: string;
   jobId: string;
   jobName: string | null;
+  /** Částka včetně DPH (hlavní částka v přehledu dokladů). */
   amount: number;
+  amountNet: number;
+  vatRate: VatRatePercent;
+  vatAmount: number;
+  amountGross: number;
   date: string;
   note: string | null;
   description: string;
@@ -51,6 +57,7 @@ export type JobExpenseMirrorFirestoreFields = {
   mimeType: string | null;
   fileName: string | null;
   storagePath: string | null;
+  /** Sazba DPH v % (pole „vat“ v dokladech — kompatibilita s ručním zadáním). */
   vat: number;
   organizationId: string;
   createdBy: string;
@@ -64,7 +71,10 @@ export function buildNewJobExpenseMirrorDocument(params: {
   jobDisplayName: string | null;
   expenseId: string;
   userId: string;
-  amount: number;
+  amountNet: number;
+  vatRate: VatRatePercent;
+  vatAmount: number;
+  amountGross: number;
   date: string;
   note: string | null;
   fileUrl: string | null;
@@ -86,7 +96,11 @@ export function buildNewJobExpenseMirrorDocument(params: {
     linkedExpenseId: params.expenseId,
     jobId: params.jobId,
     jobName: jn || null,
-    amount: params.amount,
+    amount: params.amountGross,
+    amountNet: params.amountNet,
+    vatRate: params.vatRate,
+    vatAmount: params.vatAmount,
+    amountGross: params.amountGross,
     date: params.date,
     note,
     description: note ?? "",
@@ -97,7 +111,7 @@ export function buildNewJobExpenseMirrorDocument(params: {
     mimeType: params.mimeType?.trim() ? params.mimeType.trim() : null,
     fileName: params.fileName,
     storagePath: params.storagePath,
-    vat: 0,
+    vat: params.vatRate,
     organizationId: params.companyId,
     createdBy: params.userId,
     createdAt: ts,
@@ -111,7 +125,10 @@ export function buildJobExpenseMirrorMergePatch(params: {
   jobId: string;
   jobDisplayName: string | null;
   expenseId: string;
-  amount: number;
+  amountNet: number;
+  vatRate: VatRatePercent;
+  vatAmount: number;
+  amountGross: number;
   date: string;
   note: string | null;
   fileUrl: string | null;
@@ -132,7 +149,11 @@ export function buildJobExpenseMirrorMergePatch(params: {
     linkedExpenseId: params.expenseId,
     jobId: params.jobId,
     jobName: jn || null,
-    amount: params.amount,
+    amount: params.amountGross,
+    amountNet: params.amountNet,
+    vatRate: params.vatRate,
+    vatAmount: params.vatAmount,
+    amountGross: params.amountGross,
     date: params.date,
     note,
     description: note ?? "",
@@ -142,6 +163,7 @@ export function buildJobExpenseMirrorMergePatch(params: {
     fileType: params.fileType,
     fileName: params.fileName,
     storagePath: params.storagePath,
+    vat: params.vatRate,
     organizationId: params.companyId,
     updatedAt: serverTimestamp(),
   };

@@ -68,6 +68,12 @@ import {
 import { cn } from "@/lib/utils";
 import { logActivitySafe } from "@/lib/activity-log";
 import {
+  calculateVatAmountsFromNet,
+  normalizeVatRate,
+  resolveExpenseAmounts,
+  VAT_RATE_OPTIONS,
+} from "@/lib/vat-calculations";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -90,6 +96,10 @@ type CompanyDocumentRow = {
   number?: string;
   entityName?: string;
   amount?: number;
+  amountNet?: number;
+  amountGross?: number;
+  vatAmount?: number;
+  vatRate?: number;
   vat?: number;
   date?: string;
   description?: string;
@@ -177,12 +187,26 @@ export default function DocumentsPage() {
     setIsSubmitting(true);
 
     try {
+      const amountNet = Math.max(0, Math.round(Number(formData.amount)));
+      const vatRate = normalizeVatRate(Number(formData.vat));
+      const { vatAmount, amountGross } = calculateVatAmountsFromNet(
+        amountNet,
+        vatRate
+      );
+
       const colRef = collection(firestore, "companies", companyId, "documents");
       const newDocRef = await addDoc(colRef, {
-        ...formData,
+        number: formData.number.trim(),
+        entityName: formData.entityName.trim(),
+        description: formData.description.trim(),
+        date: formData.date,
         type: newDocType,
-        amount: Number(formData.amount),
-        vat: Number(formData.vat),
+        amount: amountNet,
+        amountNet,
+        vatRate,
+        vatAmount,
+        amountGross,
+        vat: vatRate,
         organizationId: companyId,
         createdBy: user?.uid,
         createdAt: serverTimestamp(),
@@ -195,20 +219,25 @@ export default function DocumentsPage() {
         entityType: "company_document",
         entityId: newDocRef.id,
         entityName: formData.number?.trim() || newDocRef.id,
-        details: `${formData.entityName?.trim() || "—"} · ${Number(formData.amount)} Kč`,
+        details: `${formData.entityName?.trim() || "—"} · ${amountNet} Kč bez DPH / ${amountGross} Kč s DPH`,
         sourceModule: "documents",
         route: "/portal/documents",
         metadata: {
           docType: newDocType,
           number: formData.number,
-          amount: Number(formData.amount),
+          amountNet,
+          amountGross,
+          vatRate,
           date: formData.date,
         },
       });
 
       const financeRef = collection(firestore, "companies", companyId, "finance");
       await addDoc(financeRef, {
-        amount: Number(formData.amount),
+        amount: amountGross,
+        amountNet,
+        amountGross,
+        vatRate,
         type: newDocType === "received" ? "expense" : "revenue",
         date: formData.date,
         description: `Doklad ${formData.number}: ${formData.description}`,
@@ -534,7 +563,7 @@ export default function DocumentsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="amount">Částka (včetně DPH)</Label>
+                    <Label htmlFor="amount">Částka bez DPH</Label>
                     <Input
                       id="amount"
                       type="number"
@@ -547,16 +576,24 @@ export default function DocumentsPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="vat">Sazba DPH (%)</Label>
-                    <Input
-                      id="vat"
-                      type="number"
+                    <Label htmlFor="vat">DPH</Label>
+                    <Select
                       value={formData.vat}
-                      onChange={(e) =>
-                        setFormData({ ...formData, vat: e.target.value })
+                      onValueChange={(v) =>
+                        setFormData({ ...formData, vat: v })
                       }
-                      className="bg-background"
-                    />
+                    >
+                      <SelectTrigger id="vat" className="bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {VAT_RATE_OPTIONS.map((r) => (
+                          <SelectItem key={r} value={String(r)}>
+                            {r} % DPH
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div className="space-y-2 col-span-2">
                     <Label htmlFor="description">Popis / Poznámka</Label>
@@ -805,10 +842,8 @@ function DocumentTableReceived({
                   const RowIcon =
                     fk === "image" ? ImageIcon : FileText;
 
-                  const showAmount =
-                    !fromJobMedia &&
-                    row.amount != null &&
-                    Number.isFinite(row.amount);
+                  const amts = resolveExpenseAmounts(row);
+                  const showAmount = !fromJobMedia && amts.amountNet > 0;
 
                   return (
                     <TableRow
@@ -882,11 +917,16 @@ function DocumentTableReceived({
                       <TableCell className="align-top text-sm whitespace-nowrap">
                         {row.date ?? "—"}
                       </TableCell>
-                      <TableCell className="align-top text-right tabular-nums">
+                      <TableCell className="align-top text-right tabular-nums text-xs sm:text-sm">
                         {showAmount ? (
-                          <span className="font-bold text-rose-600 dark:text-rose-400">
-                            {row.amount!.toLocaleString("cs-CZ")} Kč
-                          </span>
+                          <div className="space-y-0.5">
+                            <div className="text-muted-foreground">
+                              Bez DPH {amts.amountNet.toLocaleString("cs-CZ")} Kč
+                            </div>
+                            <div className="font-bold text-rose-600 dark:text-rose-400">
+                              S DPH {amts.amountGross.toLocaleString("cs-CZ")} Kč
+                            </div>
+                          </div>
                         ) : (
                           <span className="text-muted-foreground text-sm">—</span>
                         )}
@@ -1011,32 +1051,45 @@ function DocumentTableIssued({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {data.map((docRow) => (
-                  <TableRow key={docRow.id} className="border-border hover:bg-muted/30 group">
-                    <TableCell className="pl-6 font-medium">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <FileDown className="w-4 h-4 text-muted-foreground opacity-50 shrink-0" />
-                        <span className="truncate">{docRow.number}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>{docRow.entityName}</TableCell>
-                    <TableCell>{docRow.date}</TableCell>
-                    <TableCell className="text-right font-bold tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {(docRow.amount ?? 0).toLocaleString("cs-CZ")} Kč
-                    </TableCell>
-                    <TableCell className="pr-6 text-right">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => onDelete(docRow)}
-                        className="text-muted-foreground hover:text-destructive"
-                        aria-label="Smazat doklad"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                {data.map((docRow) => {
+                  const issuedAm = resolveExpenseAmounts(docRow);
+                  return (
+                    <TableRow
+                      key={docRow.id}
+                      className="border-border hover:bg-muted/30 group"
+                    >
+                      <TableCell className="pl-6 font-medium">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileDown className="w-4 h-4 text-muted-foreground opacity-50 shrink-0" />
+                          <span className="truncate">{docRow.number}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell>{docRow.entityName}</TableCell>
+                      <TableCell>{docRow.date}</TableCell>
+                      <TableCell className="text-right text-xs tabular-nums text-emerald-600 dark:text-emerald-400">
+                        <div className="space-y-0.5">
+                          <div className="text-muted-foreground">
+                            Bez DPH {issuedAm.amountNet.toLocaleString("cs-CZ")} Kč
+                          </div>
+                          <div className="font-bold">
+                            S DPH {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
+                          </div>
+                        </div>
+                      </TableCell>
+                      <TableCell className="pr-6 text-right">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => onDelete(docRow)}
+                          className="text-muted-foreground hover:text-destructive"
+                          aria-label="Smazat doklad"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
               </TableBody>
             </Table>
           </div>

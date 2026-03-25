@@ -8,7 +8,14 @@ export type JobExpenseFileType = "image" | "pdf" | "office";
 export type JobExpenseFirestoreFields = {
   companyId: string;
   jobId: string;
+  /** Částka bez DPH; pro kompatibilitu synchronizovaná s `amount`. */
+  amountNet?: number;
+  /** @deprecated Používejte amountNet — zachováno pro starší klienty. */
   amount: number;
+  /** Sazba DPH v procentech: 0, 12, 21 */
+  vatRate?: number;
+  vatAmount?: number;
+  amountGross?: number;
   date: string;
   /** Volitelná poznámka — v dokumentu může být null. */
   note?: string | null;

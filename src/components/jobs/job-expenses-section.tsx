@@ -32,6 +32,13 @@ import {
   buildNewJobExpenseMirrorDocument,
   companyDocumentRefForJobExpense,
 } from "@/lib/job-expense-document-sync";
+import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
+import {
+  calculateVatAmountsFromNet,
+  normalizeVatRate,
+  VAT_RATE_OPTIONS,
+  resolveExpenseAmounts,
+} from "@/lib/vat-calculations";
 import { parseAmountKc } from "@/lib/work-contract-deposit";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
@@ -51,6 +58,13 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -108,7 +122,8 @@ type Props = {
   /** Aktuální řádky (např. z useCollection nad expenses) — pro okamžitý přepočet bez reloadu. */
   expenses: JobExpenseRow[] | null | undefined;
   canEdit: boolean;
-  originalBudgetKc: number | null;
+  /** Rozpočet zakázky (bez / DPH / s DPH) z Firestore. */
+  jobBudget: JobBudgetBreakdown | null;
 };
 
 export function JobExpensesSection({
@@ -118,7 +133,7 @@ export function JobExpensesSection({
   user,
   expenses,
   canEdit,
-  originalBudgetKc,
+  jobBudget,
 }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -134,6 +149,7 @@ export function JobExpensesSection({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [amountInput, setAmountInput] = useState("");
+  const [vatRateInput, setVatRateInput] = useState<string>("21");
   const [dateInput, setDateInput] = useState(todayIsoDate());
   const [noteInput, setNoteInput] = useState("");
   const [pendingFile, setPendingFile] = useState<File | null>(null);
@@ -176,17 +192,21 @@ export function JobExpensesSection({
     return list;
   }, [expenses]);
 
-  const totalExpensesKc = useMemo(
-    () =>
-      sortedExpenses.reduce((s, e) => {
-        const a = typeof e.amount === "number" && Number.isFinite(e.amount) ? e.amount : 0;
-        return s + a;
-      }, 0),
-    [sortedExpenses]
-  );
+  const expenseTotals = useMemo(() => {
+    let net = 0;
+    let gross = 0;
+    for (const e of sortedExpenses) {
+      const r = resolveExpenseAmounts(e);
+      net += r.amountNet;
+      gross += r.amountGross;
+    }
+    return { net, gross };
+  }, [sortedExpenses]);
 
-  const remainingBudgetKc =
-    originalBudgetKc != null ? originalBudgetKc - totalExpensesKc : null;
+  const remainingNetKc =
+    jobBudget != null ? jobBudget.budgetNet - expenseTotals.net : null;
+  const remainingGrossKc =
+    jobBudget != null ? jobBudget.budgetGross - expenseTotals.gross : null;
 
   const visibleExpenses = useMemo(() => {
     if (expensesListExpanded) return sortedExpenses;
@@ -196,6 +216,7 @@ export function JobExpensesSection({
   const resetForm = useCallback(() => {
     setEditingId(null);
     setAmountInput("");
+    setVatRateInput("21");
     setDateInput(todayIsoDate());
     setNoteInput("");
     setPendingFile(null);
@@ -210,7 +231,9 @@ export function JobExpensesSection({
 
   const openEdit = (row: JobExpenseRow) => {
     setEditingId(row.id);
-    setAmountInput(row.amount != null ? String(row.amount) : "");
+    const r = resolveExpenseAmounts(row);
+    setAmountInput(r.amountNet ? String(r.amountNet) : "");
+    setVatRateInput(String(r.vatRate));
     setDateInput(row.date && row.date.length >= 8 ? row.date : todayIsoDate());
     setNoteInput(row.note ?? "");
     setPendingFile(null);
@@ -302,9 +325,16 @@ export function JobExpensesSection({
       }
 
       const noteTrimmed = noteInput.trim();
+      const vatRate = normalizeVatRate(Number(vatRateInput));
+      const amountNet = Math.round(amountKc);
+      const { vatAmount, amountGross } = calculateVatAmountsFromNet(
+        amountNet,
+        vatRate
+      );
 
       if (editingId) {
         const existing = sortedExpenses.find((e) => e.id === editingId);
+        const prevAmts = existing ? resolveExpenseAmounts(existing) : null;
         let oldPathToRemove: string | undefined;
 
         if (pendingFile && existing?.storagePath) {
@@ -313,7 +343,11 @@ export function JobExpensesSection({
 
         const refDoc = doc(col, editingId);
         const patch: DocumentData = {
-          amount: amountKc,
+          amount: amountNet,
+          amountNet,
+          vatRate,
+          vatAmount,
+          amountGross,
           date: dateInput.trim(),
           note: noteTrimmed || null,
           updatedAt: serverTimestamp(),
@@ -332,7 +366,7 @@ export function JobExpensesSection({
           entityType: "job_expense",
           entityId: editingId,
           entityName: noteTrimmed || `Náklad ${dateInput.trim()}`,
-          details: `${formatKc(amountKc)} · ${dateInput.trim()}${
+          details: `${formatKc(amountNet)} bez DPH / ${formatKc(amountGross)} s DPH · ${dateInput.trim()}${
             pendingFile ? ` · nový soubor: ${fileName ?? ""}` : ""
           }`,
           sourceModule: "jobs",
@@ -341,8 +375,8 @@ export function JobExpensesSection({
             jobId,
             jobDisplayName: jobDisplayName ?? null,
             expenseId: editingId,
-            previousAmount: existing?.amount ?? null,
-            newAmount: amountKc,
+            previousAmount: prevAmts?.amountNet ?? existing?.amount ?? null,
+            newAmount: amountNet,
             previousDate: existing?.date ?? null,
             newDate: dateInput.trim(),
             fileName: fileName ?? existing?.fileName ?? null,
@@ -357,7 +391,7 @@ export function JobExpensesSection({
             entityType: "job_expense_file",
             entityId: editingId,
             entityName: fileName,
-            details: `Náklad ${formatKc(amountKc)}`,
+            details: `Náklad ${formatKc(amountNet)} bez DPH`,
             sourceModule: "jobs",
             route: `/portal/jobs/${jobId}`,
             metadata: {
@@ -398,7 +432,10 @@ export function JobExpensesSection({
               jobDisplayName,
               expenseId: editingId,
               userId: String(existing?.createdBy ?? user.uid),
-              amount: amountKc,
+              amountNet,
+              vatRate,
+              vatAmount,
+              amountGross,
               date: dateInput.trim(),
               note: noteTrimmed || null,
               fileUrl: nextFileUrl,
@@ -416,7 +453,10 @@ export function JobExpensesSection({
               jobId,
               jobDisplayName,
               expenseId: editingId,
-              amount: amountKc,
+              amountNet,
+              vatRate,
+              vatAmount,
+              amountGross,
               date: dateInput.trim(),
               note: noteTrimmed || null,
               fileUrl: nextFileUrl,
@@ -463,7 +503,11 @@ export function JobExpensesSection({
         const expensePayload = {
           companyId,
           jobId,
-          amount: amountKc,
+          amount: amountNet,
+          amountNet,
+          vatRate,
+          vatAmount,
+          amountGross,
           date: dateInput.trim(),
           note: noteTrimmed || null,
           fileUrl: fileUrl ?? null,
@@ -480,7 +524,10 @@ export function JobExpensesSection({
           jobDisplayName,
           expenseId: expenseRef.id,
           userId: user.uid,
-          amount: amountKc,
+          amountNet,
+          vatRate,
+          vatAmount,
+          amountGross,
           date: dateInput.trim(),
           note: noteTrimmed || null,
           fileUrl: fileUrl ?? null,
@@ -552,6 +599,7 @@ export function JobExpensesSection({
       } catch {
         /* */
       }
+      const delAmts = resolveExpenseAmounts(deleteTarget);
       logActivitySafe(firestore, companyId, user, actorProfile, {
         actionType: "expense.delete",
         actionLabel: "Smazání nákladu zakázky",
@@ -559,10 +607,10 @@ export function JobExpensesSection({
         entityId: deleteTarget.id,
         entityName:
           deleteTarget.note?.trim() ||
-          (typeof deleteTarget.amount === "number"
-            ? `${formatKc(deleteTarget.amount)}`
+          (delAmts.amountNet > 0
+            ? `${formatKc(delAmts.amountNet)}`
             : deleteTarget.id),
-        details: `Částka ${typeof deleteTarget.amount === "number" ? formatKc(deleteTarget.amount) : "—"}`,
+        details: `Bez DPH ${formatKc(delAmts.amountNet)}, s DPH ${formatKc(delAmts.amountGross)}`,
         sourceModule: "jobs",
         route: `/portal/jobs/${jobId}`,
         metadata: {
@@ -611,30 +659,64 @@ export function JobExpensesSection({
                 <Wallet className="h-4 w-4 shrink-0 text-primary sm:h-5 sm:w-5" aria-hidden />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-semibold sm:text-base">Náklady</div>
-                  <div className="mt-1 grid grid-cols-3 gap-x-2 text-[10px] leading-tight text-muted-foreground sm:gap-x-4 sm:text-xs">
-                    <div>
-                      <div className="uppercase tracking-wide">Rozpočet</div>
-                      <div className="font-semibold tabular-nums text-foreground">
-                        {originalBudgetKc != null ? formatKc(originalBudgetKc) : "—"}
+                  <div className="mt-1 space-y-1.5 text-[10px] leading-tight text-muted-foreground sm:text-xs">
+                    <div className="grid grid-cols-3 gap-x-2 text-center font-medium uppercase tracking-wide">
+                      <span>Rozpočet</span>
+                      <span>Náklady</span>
+                      <span>Zbývá</span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-x-2 tabular-nums">
+                      <div>
+                        <div className="text-muted-foreground">Bez DPH</div>
+                        <div className="font-semibold text-foreground">
+                          {jobBudget != null ? formatKc(jobBudget.budgetNet) : "—"}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Bez DPH</div>
+                        <div className="font-semibold text-amber-700 dark:text-amber-400">
+                          {formatKc(expenseTotals.net)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">Bez DPH</div>
+                        <div
+                          className={cn(
+                            "font-semibold",
+                            remainingNetKc != null && remainingNetKc < 0
+                              ? "text-destructive"
+                              : "text-emerald-700 dark:text-emerald-400"
+                          )}
+                        >
+                          {remainingNetKc != null ? formatKc(remainingNetKc) : "—"}
+                        </div>
                       </div>
                     </div>
-                    <div>
-                      <div className="uppercase tracking-wide">Náklady</div>
-                      <div className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
-                        {formatKc(totalExpensesKc)}
+                    <div className="grid grid-cols-3 gap-x-2 tabular-nums">
+                      <div>
+                        <div className="text-muted-foreground">S DPH</div>
+                        <div className="font-semibold text-foreground">
+                          {jobBudget != null ? formatKc(jobBudget.budgetGross) : "—"}
+                        </div>
                       </div>
-                    </div>
-                    <div>
-                      <div className="uppercase tracking-wide">Zbývá</div>
-                      <div
-                        className={cn(
-                          "font-semibold tabular-nums",
-                          remainingBudgetKc != null && remainingBudgetKc < 0
-                            ? "text-destructive"
-                            : "text-emerald-700 dark:text-emerald-400"
-                        )}
-                      >
-                        {remainingBudgetKc != null ? formatKc(remainingBudgetKc) : "—"}
+                      <div>
+                        <div className="text-muted-foreground">S DPH</div>
+                        <div className="font-semibold text-amber-700 dark:text-amber-400">
+                          {formatKc(expenseTotals.gross)}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-muted-foreground">S DPH</div>
+                        <div
+                          className={cn(
+                            "font-semibold",
+                            remainingGrossKc != null && remainingGrossKc < 0
+                              ? "text-destructive"
+                              : "text-emerald-700 dark:text-emerald-400"
+                          )}
+                        >
+                          {remainingGrossKc != null ? formatKc(remainingGrossKc) : "—"}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -653,7 +735,7 @@ export function JobExpensesSection({
           <CollapsibleContent>
             <CardContent className="space-y-2 px-2 pb-3 pt-0 sm:px-3">
               <p className="text-[11px] text-muted-foreground sm:text-xs">
-                Výdaje a přílohy — odečítají se od rozpočtu zakázky.
+                Výdaje a přílohy — částka bez DPH, DPH a s DPH se odečítá od rozpočtu stejně (bez / s DPH).
                 {sortedExpenses.length > 0 ? (
                   <span className="text-foreground"> ({sortedExpenses.length})</span>
                 ) : null}
@@ -697,8 +779,20 @@ export function JobExpensesSection({
                               <div className="order-2 tabular-nums text-muted-foreground sm:order-1">
                                 {expenseDateLabel(row)}
                               </div>
-                              <div className="order-1 font-semibold tabular-nums sm:order-2">
-                                {typeof row.amount === "number" ? formatKc(row.amount) : "—"}
+                              <div className="order-1 space-y-0.5 font-semibold tabular-nums sm:order-2">
+                                {(() => {
+                                  const r = resolveExpenseAmounts(row);
+                                  return (
+                                    <>
+                                      <div className="text-[10px] font-normal text-muted-foreground sm:text-xs">
+                                        Bez DPH {formatKc(r.amountNet)}
+                                      </div>
+                                      <div className="text-amber-700 dark:text-amber-400">
+                                        S DPH {formatKc(r.amountGross)}
+                                      </div>
+                                    </>
+                                  );
+                                })()}
                               </div>
                               <div className="order-3 min-w-0 sm:col-span-1">
                                 <p className="line-clamp-2 break-words text-foreground/90 sm:line-clamp-1">
@@ -832,13 +926,13 @@ export function JobExpensesSection({
               {editingId ? "Upravit náklad" : "Nový náklad"}
             </DialogTitle>
             <DialogDescription>
-              Částku vyplňte ručně (i u fotky dokladu). Volitelně připojte přílohu.
+              Částku bez DPH vyplňte ručně (i u fotky dokladu). Zvolte sazbu DPH. Volitelně připojte přílohu.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label htmlFor="expense-amount">Částka (Kč) *</Label>
+              <Label htmlFor="expense-amount">Částka bez DPH (Kč) *</Label>
               <Input
                 id="expense-amount"
                 inputMode="decimal"
@@ -847,6 +941,38 @@ export function JobExpensesSection({
                 onChange={(e) => setAmountInput(e.target.value)}
                 className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px]")}
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="expense-vat">DPH</Label>
+              <Select value={vatRateInput} onValueChange={setVatRateInput}>
+                <SelectTrigger
+                  id="expense-vat"
+                  className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px]")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {VAT_RATE_OPTIONS.map((r) => (
+                    <SelectItem key={r} value={String(r)}>
+                      {r} % DPH
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {(() => {
+                const n = parseAmountKc(amountInput.replace(/\s/g, " ").trim());
+                if (n == null || n <= 0) return null;
+                const rate = normalizeVatRate(Number(vatRateInput));
+                const { vatAmount, amountGross } = calculateVatAmountsFromNet(
+                  Math.round(n),
+                  rate
+                );
+                return (
+                  <p className="text-xs text-muted-foreground">
+                    DPH {formatKc(vatAmount)} · celkem s DPH {formatKc(amountGross)}
+                  </p>
+                );
+              })()}
             </div>
             <div className="space-y-2">
               <Label htmlFor="expense-date">Datum *</Label>

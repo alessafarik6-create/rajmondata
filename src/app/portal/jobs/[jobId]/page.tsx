@@ -103,8 +103,14 @@ import {
   parsePercentValue,
   parseAmountKc,
   formatPercentForTemplate,
-  parseBudgetKcFromJob,
 } from "@/lib/work-contract-deposit";
+import {
+  buildJobBudgetFirestorePayload,
+  normalizeVatRate,
+  resolveExpenseAmounts,
+  resolveJobBudgetFromFirestore,
+  VAT_RATE_OPTIONS,
+} from "@/lib/vat-calculations";
 import { allocateNextSodContractNumber } from "@/lib/work-contract-counter";
 import {
   buildWorkContractPrintHtml,
@@ -213,7 +219,10 @@ type JobEditForm = {
   name: string;
   description: string;
   status: string;
+  /** Rozpočet bez DPH (Kč). */
   budget: string;
+  /** Sazba DPH 0 / 12 / 21 */
+  vatRate: string;
   startDate: string;
   endDate: string;
   measuring: string;
@@ -466,10 +475,14 @@ export default function JobDetailPage() {
   );
   const { data: job, isLoading } = useDoc(jobRef);
 
-  const jobBudgetKc = useMemo(
-    () => parseBudgetKcFromJob(job?.budget),
-    [job?.budget]
+  const jobBudgetBreakdown = useMemo(
+    () =>
+      resolveJobBudgetFromFirestore(
+        job as Record<string, unknown> | null | undefined
+      ),
+    [job]
   );
+  const jobBudgetKc = jobBudgetBreakdown?.budgetGross ?? null;
 
   const templateRef = useMemoFirebase(
     () =>
@@ -527,20 +540,26 @@ export default function JobDetailPage() {
   );
   const { data: jobExpenses } = useCollection<JobExpenseRow>(expensesQueryRef);
 
-  const totalJobExpensesKc = useMemo(() => {
-    return (jobExpenses ?? []).reduce((sum, row) => {
-      const a =
-        typeof row.amount === "number" && Number.isFinite(row.amount)
-          ? row.amount
-          : 0;
-      return sum + a;
-    }, 0);
+  const jobExpenseTotals = useMemo(() => {
+    let net = 0;
+    let gross = 0;
+    for (const row of jobExpenses ?? []) {
+      const r = resolveExpenseAmounts(row);
+      net += r.amountNet;
+      gross += r.amountGross;
+    }
+    return { net, gross };
   }, [jobExpenses]);
 
-  const remainingBudgetAfterExpensesKc = useMemo(() => {
-    if (jobBudgetKc == null) return null;
-    return jobBudgetKc - totalJobExpensesKc;
-  }, [jobBudgetKc, totalJobExpensesKc]);
+  const remainingBudgetAfterExpensesNetKc = useMemo(() => {
+    if (jobBudgetBreakdown == null) return null;
+    return jobBudgetBreakdown.budgetNet - jobExpenseTotals.net;
+  }, [jobBudgetBreakdown, jobExpenseTotals.net]);
+
+  const remainingBudgetAfterExpensesGrossKc = useMemo(() => {
+    if (jobBudgetBreakdown == null) return null;
+    return jobBudgetBreakdown.budgetGross - jobExpenseTotals.gross;
+  }, [jobBudgetBreakdown, jobExpenseTotals.gross]);
 
   const customerId =
     (job as any)?.customerId ||
@@ -739,6 +758,7 @@ export default function JobDetailPage() {
     description: "",
     status: "nová",
     budget: "",
+    vatRate: "21",
     startDate: "",
     endDate: "",
     measuring: "",
@@ -3775,11 +3795,19 @@ export default function JobDetailPage() {
       rawTag &&
       JOB_TAG_PRESETS.some((p) => p.value === rawTag);
 
+    const bdOpen = resolveJobBudgetFromFirestore(
+      j as Record<string, unknown>
+    );
     setJobEditForm({
       name: j.name || "",
       description: j.description || "",
       status: j.status || "nová",
-      budget: j.budget != null && j.budget !== "" ? String(j.budget) : "",
+      budget: bdOpen
+        ? String(bdOpen.budgetNet)
+        : j.budget != null && j.budget !== ""
+          ? String(j.budget)
+          : "",
+      vatRate: String(normalizeVatRate(j.vatRate)),
       startDate: j.startDate || "",
       endDate: j.endDate || "",
       measuring: j.measuring || "",
@@ -3811,11 +3839,16 @@ export default function JobDetailPage() {
         return;
       }
 
-      const budgetNumber = (() => {
+      const budgetNet = (() => {
         if (jobEditForm.budget.trim() === "") return 0;
         const n = Number(jobEditForm.budget);
-        return Number.isFinite(n) ? n : 0;
+        return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
       })();
+      const vatRateJob = normalizeVatRate(Number(jobEditForm.vatRate));
+      const budgetFields = buildJobBudgetFirestorePayload({
+        budgetNet,
+        vatRate: vatRateJob,
+      });
 
       const assignedIds = jobEditForm.assignedEmployeeIdsText
         .split(",")
@@ -3840,7 +3873,7 @@ export default function JobDetailPage() {
           name: jobEditForm.name,
           description: jobEditForm.description,
           status: jobEditForm.status,
-          budget: budgetNumber,
+          ...budgetFields,
           startDate: jobEditForm.startDate,
           endDate: jobEditForm.endDate,
           measuring: jobEditForm.measuring,
@@ -3888,7 +3921,8 @@ export default function JobDetailPage() {
             previousStatus: jPrev?.status,
             newStatus: jobEditForm.status,
             previousBudget: jPrev?.budget,
-            newBudget: budgetNumber,
+            newBudget: budgetFields.budgetGross,
+            newBudgetNet: budgetFields.budgetNet,
             customerId: jobEditForm.customerId || null,
           },
         });
@@ -4368,42 +4402,89 @@ export default function JobDetailPage() {
               <CardTitle>Finanční údaje</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex justify-between items-center gap-3 flex-wrap">
-                <span className="text-muted-foreground">Původní rozpočet:</span>
-                <span className="text-xl font-bold tabular-nums">
-                  {job.budget != null && job.budget !== ""
-                    ? `${Number(job.budget).toLocaleString("cs-CZ")} Kč`
-                    : "-"}
-                </span>
+              {jobBudgetBreakdown ? (
+                <div className="space-y-1 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">Rozpočet bez DPH</span>
+                    <span className="font-semibold tabular-nums">
+                      {jobBudgetBreakdown.budgetNet.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted-foreground">
+                      DPH ({jobBudgetBreakdown.vatRate} %)
+                    </span>
+                    <span className="font-semibold tabular-nums">
+                      {jobBudgetBreakdown.budgetVat.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 text-base font-bold">
+                    <span>Rozpočet s DPH</span>
+                    <span className="tabular-nums">
+                      {jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-muted-foreground">Rozpočet</span>
+                  <span className="text-xl font-bold tabular-nums">—</span>
+                </div>
+              )}
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-muted-foreground">Náklady bez DPH</span>
+                  <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                    {jobExpenseTotals.net.toLocaleString("cs-CZ")} Kč
+                  </span>
+                </div>
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-muted-foreground">Náklady s DPH</span>
+                  <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                    {jobExpenseTotals.gross.toLocaleString("cs-CZ")} Kč
+                  </span>
+                </div>
               </div>
-              <div className="flex justify-between items-center text-sm gap-3 flex-wrap">
-                <span className="text-muted-foreground">Celkové náklady:</span>
-                <span className="font-semibold text-amber-700 dark:text-amber-400 tabular-nums">
-                  {`${totalJobExpensesKc.toLocaleString("cs-CZ")} Kč`}
-                </span>
-              </div>
-              <div className="flex justify-between items-center text-sm gap-3 flex-wrap">
-                <span className="text-muted-foreground">Zbývající rozpočet:</span>
-                <span
-                  className={cn(
-                    "font-semibold tabular-nums",
-                    remainingBudgetAfterExpensesKc != null &&
-                      remainingBudgetAfterExpensesKc < 0
-                      ? "text-destructive"
-                      : "text-emerald-700 dark:text-emerald-400"
-                  )}
-                >
-                  {remainingBudgetAfterExpensesKc != null
-                    ? `${remainingBudgetAfterExpensesKc.toLocaleString("cs-CZ")} Kč`
-                    : "-"}
-                </span>
+              <div className="space-y-1 text-sm">
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-muted-foreground">Zbývá bez DPH</span>
+                  <span
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      remainingBudgetAfterExpensesNetKc != null &&
+                        remainingBudgetAfterExpensesNetKc < 0
+                        ? "text-destructive"
+                        : "text-emerald-700 dark:text-emerald-400"
+                    )}
+                  >
+                    {remainingBudgetAfterExpensesNetKc != null
+                      ? `${remainingBudgetAfterExpensesNetKc.toLocaleString("cs-CZ")} Kč`
+                      : "-"}
+                  </span>
+                </div>
+                <div className="flex justify-between items-center gap-3 flex-wrap">
+                  <span className="text-muted-foreground">Zbývá s DPH</span>
+                  <span
+                    className={cn(
+                      "font-semibold tabular-nums",
+                      remainingBudgetAfterExpensesGrossKc != null &&
+                        remainingBudgetAfterExpensesGrossKc < 0
+                        ? "text-destructive"
+                        : "text-emerald-700 dark:text-emerald-400"
+                    )}
+                  >
+                    {remainingBudgetAfterExpensesGrossKc != null
+                      ? `${remainingBudgetAfterExpensesGrossKc.toLocaleString("cs-CZ")} Kč`
+                      : "-"}
+                  </span>
+                </div>
               </div>
               <Separator />
               <div className="flex justify-between items-center text-sm">
-                <span className="text-muted-foreground">Vyfakturováno:</span>
+                <span className="text-muted-foreground">Vyfakturováno (s DPH)</span>
                 <span className="font-semibold text-emerald-500">
-                  {job.status === "fakturována"
-                    ? `${job.budget?.toLocaleString()} Kč`
+                  {job.status === "fakturována" && jobBudgetBreakdown
+                    ? `${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
                     : "0 Kč"}
                 </span>
               </div>
@@ -4422,7 +4503,7 @@ export default function JobDetailPage() {
               user={user}
               expenses={jobExpenses}
               canEdit={canManageFolders}
-              originalBudgetKc={jobBudgetKc}
+              jobBudget={jobBudgetBreakdown}
             />
           ) : null}
 
@@ -4543,7 +4624,7 @@ export default function JobDetailPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>Rozpočet (Kč)</Label>
+                  <Label>Rozpočet bez DPH (Kč)</Label>
                   <Input
                     type="number"
                     value={jobEditForm.budget}
@@ -4556,6 +4637,35 @@ export default function JobDetailPage() {
                     placeholder="Např. 150000"
                     className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px] md:min-h-10")}
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Sazba DPH</Label>
+                  <Select
+                    value={jobEditForm.vatRate}
+                    onValueChange={(v) =>
+                      setJobEditForm((prev) => ({
+                        ...prev,
+                        vatRate: v,
+                      }))
+                    }
+                  >
+                    <SelectTrigger
+                      className={cn(
+                        LIGHT_SELECT_TRIGGER_CLASS,
+                        "min-h-[44px] md:min-h-10"
+                      )}
+                    >
+                      <SelectValue placeholder="Vyberte sazbu" />
+                    </SelectTrigger>
+                    <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
+                      {VAT_RATE_OPTIONS.map((r) => (
+                        <SelectItem key={r} value={String(r)}>
+                          {r} % DPH
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div className="space-y-2">

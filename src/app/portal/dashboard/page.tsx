@@ -34,7 +34,7 @@ import { collection, query, orderBy, limit, where } from "firebase/firestore";
 import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 import { useRouter } from "next/navigation";
-import { parseBudgetKcFromJob } from "@/lib/work-contract-deposit";
+import { resolveJobBudgetFromFirestore } from "@/lib/vat-calculations";
 import {
   formatKc,
   sumMoneyForApprovedDailyReports,
@@ -275,13 +275,17 @@ export default function CompanyDashboard() {
 
   const jobsAggregate = useMemo(() => {
     let count = 0;
-    let totalBudgetKc = 0;
+    let totalBudgetNetKc = 0;
+    let totalBudgetGrossKc = 0;
     for (const j of typedJobs) {
       count += 1;
-      const b = parseBudgetKcFromJob(j.budget);
-      if (b != null) totalBudgetKc += b;
+      const bd = resolveJobBudgetFromFirestore(j as Record<string, unknown>);
+      if (bd) {
+        totalBudgetNetKc += bd.budgetNet;
+        totalBudgetGrossKc += bd.budgetGross;
+      }
     }
-    return { count, totalBudgetKc };
+    return { count, totalBudgetNetKc, totalBudgetGrossKc };
   }, [typedJobs]);
 
   const paidToEmployeesCzk = useMemo(() => {
@@ -301,10 +305,11 @@ export default function CompanyDashboard() {
     ).length;
   }, [dashboardChatMessages]);
 
-  /** Příjmy = součet rozpočtů zakázek; náklady = schválené výplaty z výkazů; zisk = rozdíl (zjednodušený model). */
-  const totalIncomeFromJobsCzk = jobsAggregate.totalBudgetKc;
+  /** Příjmy = součet rozpočtů zakázek (bez / s DPH); náklady = schválené výplaty; zisk = hrubé příjmy minus mzdy (zjednodušený model). */
+  const totalIncomeFromJobsNetCzk = jobsAggregate.totalBudgetNetKc;
+  const totalIncomeFromJobsGrossCzk = jobsAggregate.totalBudgetGrossKc;
   const totalLaborCostsCzk = paidToEmployeesCzk;
-  const profitCzk = totalIncomeFromJobsCzk - totalLaborCostsCzk;
+  const profitCzk = totalIncomeFromJobsGrossCzk - totalLaborCostsCzk;
 
   const [importLeadsRows, setImportLeadsRows] = useState<LeadImportRow[]>([]);
   const [importLeadsLoading, setImportLeadsLoading] = useState(false);
@@ -392,7 +397,7 @@ export default function CompanyDashboard() {
     dailyReportsLoading,
     isJobsLoading,
     paidToEmployeesCzk,
-    jobsAggregate.totalBudgetKc,
+    jobsAggregate.totalBudgetGrossKc,
   ]);
 
   useEffect(() => {
@@ -674,14 +679,21 @@ export default function CompanyDashboard() {
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground">Počet zakázek ve firmě</p>
-                    <p className="pt-2 text-lg font-semibold tabular-nums text-foreground">
-                      {isJobsLoading ? (
-                        <span className="text-muted-foreground">…</span>
-                      ) : (
-                        formatKc(jobsAggregate.totalBudgetKc)
-                      )}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Součet rozpočtů (Kč)</p>
+                    <div className="pt-2 space-y-0.5 text-sm">
+                      <div className="flex justify-between gap-2 tabular-nums">
+                        <span className="text-muted-foreground">Bez DPH</span>
+                        <span className="font-semibold text-foreground">
+                          {isJobsLoading ? "…" : formatKc(jobsAggregate.totalBudgetNetKc)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-2 tabular-nums text-base font-bold text-foreground">
+                        <span className="font-normal text-muted-foreground text-sm">S DPH</span>
+                        <span>
+                          {isJobsLoading ? "…" : formatKc(jobsAggregate.totalBudgetGrossKc)}
+                        </span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Součet rozpočtů zakázek</p>
                   </>
                 )}
               </CardContent>
@@ -715,9 +727,15 @@ export default function CompanyDashboard() {
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
                 <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Příjmy (rozpočty)</span>
+                  <span className="text-muted-foreground">Příjmy bez DPH</span>
                   <span className="font-semibold tabular-nums">
-                    {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsCzk)}
+                    {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsNetCzk)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Příjmy s DPH</span>
+                  <span className="font-semibold tabular-nums">
+                    {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsGrossCzk)}
                   </span>
                 </div>
                 <div className="flex justify-between gap-2">
@@ -739,7 +757,7 @@ export default function CompanyDashboard() {
                   </span>
                 </div>
                 <p className="text-[11px] leading-snug text-muted-foreground">
-                  Zisk = součet rozpočtů zakázek minus schválené částky z výkazů. Nezahrnuje ostatní náklady.
+                  Zisk = součet rozpočtů zakázek s DPH minus schválené částky z výkazů. Nezahrnuje ostatní náklady.
                 </p>
               </CardContent>
             </Card>
