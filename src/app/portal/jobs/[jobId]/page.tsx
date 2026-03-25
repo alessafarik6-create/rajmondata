@@ -23,6 +23,7 @@ import {
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
+import { JobTasksSection } from "@/components/jobs/job-tasks-section";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
 import {
   doc,
@@ -3898,6 +3899,15 @@ export default function JobDetailPage() {
           )}
         </div>
       </div>
+
+      {user && companyId && jobId ? (
+        <JobTasksSection
+          companyId={companyId}
+          jobId={jobId as string}
+          user={user}
+          canEdit={canManageFolders}
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">

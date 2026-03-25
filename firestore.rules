@@ -307,6 +307,58 @@ service cloud.firestore {
             resource.data.jobId == jobId;
         }
 
+        /**
+         * Úkoly zakázky: companies/{companyId}/jobs/{jobId}/tasks/{taskId}
+         * taskScope == 'job' odliší záznam od companies/{companyId}/tasks (task manager).
+         */
+        match /tasks/{taskId} {
+          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.taskScope == 'job' &&
+            request.resource.data.createdBy == request.auth.uid &&
+            request.resource.data.title is string &&
+            request.resource.data.title.size() > 0 &&
+            request.resource.data.title.size() <= 500 &&
+            request.resource.data.status == 'active' &&
+            request.resource.data.priority in ['low', 'medium', 'high'] &&
+            request.resource.data.dueDate is string &&
+            request.resource.data.dueDate.size() > 0 &&
+            request.resource.data.dueDate.size() <= 32 &&
+            (!('note' in request.resource.data) ||
+              request.resource.data.note == null ||
+              (request.resource.data.note is string &&
+                request.resource.data.note.size() <= 8000));
+          allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            resource.data.taskScope == 'job' &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.taskScope == 'job' &&
+            resource.data.createdBy == request.resource.data.createdBy &&
+            request.resource.data.title is string &&
+            request.resource.data.title.size() > 0 &&
+            request.resource.data.title.size() <= 500 &&
+            request.resource.data.status in ['active', 'done'] &&
+            request.resource.data.priority in ['low', 'medium', 'high'] &&
+            request.resource.data.dueDate is string &&
+            request.resource.data.dueDate.size() > 0 &&
+            request.resource.data.dueDate.size() <= 32 &&
+            (!('note' in request.resource.data) ||
+              request.resource.data.note == null ||
+              (request.resource.data.note is string &&
+                request.resource.data.note.size() <= 8000));
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            resource.data.taskScope == 'job';
+        }
+
         match /folders/{folderId} {
           allow read: if jobDetailReadAccess(companyId, jobId);
           allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&

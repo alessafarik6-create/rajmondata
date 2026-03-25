@@ -43,6 +43,7 @@ import {
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
 import { DashboardUpcomingJobsWidget } from "@/components/portal/dashboard-upcoming-jobs-widget";
+import { DashboardJobTasksWidget } from "@/components/jobs/dashboard-job-tasks-widget";
 import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { AttendanceRow } from "@/lib/employee-attendance";
@@ -567,6 +568,14 @@ export default function CompanyDashboard() {
 
       {showAdminDashboard ? (
         <div className="space-y-6">
+          {companyId ? (
+            <DashboardJobTasksWidget
+              companyId={companyId}
+              jobs={typedJobs}
+              todayIso={todayIso}
+            />
+          ) : null}
+
           {!chatDashboardLoading && unreadEmployeeChatCount > 0 ? (
             <Link
               href="/portal/chat"
