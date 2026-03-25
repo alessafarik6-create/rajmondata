@@ -49,8 +49,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   Camera,
+  Download,
   ExternalLink,
   Eye,
   FileText,
@@ -63,6 +71,39 @@ import {
 } from "lucide-react";
 
 const MAX_BYTES = 20 * 1024 * 1024;
+
+/** Mřížka karet: mobil 2 sloupce, desktop více sloupců */
+const JOB_MEDIA_CARD_GRID_CLASS =
+  "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5";
+
+const jobMediaIconBtnClassName =
+  "h-10 w-10 min-h-10 min-w-10 shrink-0 gap-0 rounded-md border-border/70 bg-background/95 p-0 shadow-sm hover:bg-accent md:h-9 md:w-9 md:min-h-9 md:min-w-9 [&_svg]:!size-[18px]";
+
+function JobMediaIconButton({
+  label,
+  className,
+  children,
+  ...props
+}: React.ComponentProps<typeof Button> & { label: string; children: React.ReactNode }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className={cn(jobMediaIconBtnClassName, className)}
+          {...props}
+        >
+          {children}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-[220px] text-xs">
+        {label}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
 
 type LegacyPhotoDoc = {
   id: string;
@@ -97,7 +138,7 @@ function MediaThumb({
 
   if (!src || broken) {
     return (
-      <div className="flex h-32 w-full items-center justify-center bg-muted px-2 text-center text-xs text-muted-foreground">
+      <div className="flex h-36 w-full items-center justify-center bg-muted px-2 text-center text-xs text-muted-foreground sm:h-40">
         {!src ? "Chybí náhled" : "Nelze načíst obrázek"}
       </div>
     );
@@ -107,9 +148,82 @@ function MediaThumb({
     <img
       src={src}
       alt={alt || row.fileName || row.id}
-      className="h-32 w-full object-cover"
+      className="h-36 w-full object-cover sm:h-40"
       onError={() => setBroken(true)}
     />
+  );
+}
+
+function JobMediaPdfPreview() {
+  return (
+    <div
+      className="flex h-36 w-full flex-col items-center justify-center gap-1.5 bg-red-500/[0.07] sm:h-40"
+      aria-hidden
+    >
+      <span className="text-2xl leading-none">📄</span>
+      <FileText className="h-9 w-9 text-red-600 dark:text-red-400" strokeWidth={1.5} />
+      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        PDF
+      </span>
+    </div>
+  );
+}
+
+function JobMediaFileCard({
+  borderClassName,
+  preview,
+  title,
+  dateLine,
+  note,
+  hasNote,
+  actions,
+}: {
+  borderClassName?: string;
+  preview: React.ReactNode;
+  title: string;
+  dateLine: string;
+  note?: string;
+  hasNote: boolean;
+  actions: React.ReactNode;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex h-full flex-col overflow-hidden rounded-xl border bg-card text-card-foreground shadow-sm",
+        "transition-[box-shadow,border-color,transform] duration-200",
+        "hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md",
+        borderClassName
+      )}
+    >
+      <div className="relative w-full shrink-0 overflow-hidden bg-muted">
+        {preview}
+        {hasNote ? (
+          <span
+            className="absolute right-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] leading-none text-white"
+            title="Má poznámku"
+          >
+            📝
+          </span>
+        ) : null}
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-1 p-2.5 pt-2">
+        <p
+          className="truncate text-sm font-medium leading-tight text-foreground"
+          title={title}
+        >
+          {title}
+        </p>
+        <p className="text-xs text-muted-foreground">{dateLine}</p>
+        {note?.trim() ? (
+          <p className="line-clamp-2 text-[11px] leading-snug text-foreground/88">
+            {note.trim()}
+          </p>
+        ) : null}
+        <div className="mt-auto flex flex-nowrap items-center justify-center gap-1 overflow-x-auto border-t border-border/45 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {actions}
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -444,94 +558,176 @@ function UserFolderBlock({
         </div>
 
         {images.length > 0 ? (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+          <div className={JOB_MEDIA_CARD_GRID_CLASS}>
             {images.map((img) => {
               const kind = inferJobMediaItemType(img);
               const openUrl = getJobMediaPreviewUrl(img);
               const title = img.fileName || img.name || img.id;
+              const dateLine =
+                kind === "pdf"
+                  ? `PDF · ${formatMediaDate(img.createdAt)}`
+                  : formatMediaDate(img.createdAt);
+              const hasNote = !!img.note?.trim();
 
               if (kind === "pdf") {
                 return (
-                  <div
+                  <JobMediaFileCard
                     key={img.id}
-                    className="group relative flex flex-col overflow-hidden rounded-lg border border-dashed border-red-500/35 bg-red-500/[0.06]"
-                  >
-                    <div className="flex items-start gap-3 p-3">
-                      <span className="text-2xl leading-none" aria-hidden>
-                        📄
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-foreground">
-                          <FileText className="h-4 w-4 shrink-0 text-red-700 dark:text-red-400" />
-                          <span className="truncate" title={title}>
-                            {title}
-                          </span>
-                        </p>
-                        <p className="mt-0.5 text-xs text-muted-foreground">
-                          PDF · {formatMediaDate(img.createdAt)}
-                        </p>
-                        {img.note?.trim() ? (
-                          <p className="mt-2 line-clamp-2 text-[11px] text-foreground/90">
-                            {img.note.trim()}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                    {img.note?.trim() ? (
-                      <span
-                        className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
-                        title="Má poznámku"
-                      >
-                        📝
-                      </span>
-                    ) : null}
-                    <div className="flex flex-wrap gap-1 border-t border-border/50 bg-background/80 p-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="secondary"
-                        className="min-h-[36px] px-2 text-xs"
+                    borderClassName="border-dashed border-red-500/30"
+                    preview={<JobMediaPdfPreview />}
+                    title={title}
+                    dateLine={dateLine}
+                    note={img.note}
+                    hasNote={hasNote}
+                    actions={
+                      <>
+                        <JobMediaIconButton
+                          label="Otevřít v novém okně"
+                          disabled={!openUrl}
+                          onClick={() => {
+                            if (openUrl)
+                              window.open(
+                                openUrl,
+                                "_blank",
+                                "noopener,noreferrer"
+                              );
+                          }}
+                        >
+                          <ExternalLink className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
+                        {openUrl ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className={jobMediaIconBtnClassName}
+                                asChild
+                              >
+                                <a
+                                  href={openUrl}
+                                  download={title}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <Download className="size-[18px]" aria-hidden />
+                                </a>
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="text-xs">
+                              Stáhnout
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          <JobMediaIconButton label="Stáhnout" disabled>
+                            <Download className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                        )}
+                        <JobMediaIconButton
+                          label="Poznámka"
+                          onClick={() =>
+                            onNoteDialogOpen({
+                              path: {
+                                kind: "folderImages",
+                                folderId: folder.id,
+                              },
+                              imageId: img.id,
+                              currentNote: img.note || "",
+                            })
+                          }
+                        >
+                          <StickyNote className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
+                        <JobMediaIconButton
+                          label="Smazat soubor"
+                          disabled={busy}
+                          className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => void deleteImage(img)}
+                        >
+                          <Trash2 className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
+                      </>
+                    }
+                  />
+                );
+              }
+
+              return (
+                <JobMediaFileCard
+                  key={img.id}
+                  borderClassName="border-border/55"
+                  preview={<MediaThumb row={img} alt={title} />}
+                  title={title}
+                  dateLine={dateLine}
+                  note={img.note}
+                  hasNote={hasNote}
+                  actions={
+                    <>
+                      <JobMediaIconButton
+                        label="Náhled"
                         disabled={!openUrl}
                         onClick={() => {
                           if (openUrl)
-                            window.open(openUrl, "_blank", "noopener,noreferrer");
+                            setImagePreview({ url: openUrl, title });
                         }}
                       >
-                        <ExternalLink className="mr-1 h-3 w-3" />
-                        Otevřít
-                      </Button>
+                        <Eye className="size-[18px]" aria-hidden />
+                      </JobMediaIconButton>
+                      <JobMediaIconButton
+                        label="Anotovat"
+                        onClick={() =>
+                          onAnnotatePhoto({
+                            id: img.id,
+                            imageUrl: img.imageUrl,
+                            url: img.url,
+                            downloadURL: img.downloadURL,
+                            originalImageUrl: img.originalImageUrl,
+                            annotatedImageUrl: img.annotatedImageUrl,
+                            storagePath: img.storagePath,
+                            path: img.path,
+                            annotatedStoragePath: img.annotatedStoragePath,
+                            fileName: img.fileName,
+                            name: img.name,
+                            annotationData: img.annotationData,
+                            annotationTarget: {
+                              kind: "folderImages",
+                              folderId: folder.id,
+                            },
+                          })
+                        }
+                      >
+                        <Pencil className="size-[18px]" aria-hidden />
+                      </JobMediaIconButton>
                       {openUrl ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          className="min-h-[36px] px-2 text-xs"
-                          asChild
-                        >
-                          <a
-                            href={openUrl}
-                            download={title}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                          >
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="icon"
+                              className={jobMediaIconBtnClassName}
+                              asChild
+                            >
+                              <a
+                                href={openUrl}
+                                download={title}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                              >
+                                <Download className="size-[18px]" aria-hidden />
+                              </a>
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="bottom" className="text-xs">
                             Stáhnout
-                          </a>
-                        </Button>
+                          </TooltipContent>
+                        </Tooltip>
                       ) : (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          className="min-h-[36px] px-2 text-xs"
-                          disabled
-                        >
-                          Stáhnout
-                        </Button>
+                        <JobMediaIconButton label="Stáhnout" disabled>
+                          <Download className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
                       )}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="min-h-[36px] px-2 text-xs"
+                      <JobMediaIconButton
+                        label="Poznámka"
                         onClick={() =>
                           onNoteDialogOpen({
                             path: {
@@ -543,122 +739,19 @@ function UserFolderBlock({
                           })
                         }
                       >
-                        <StickyNote className="mr-1 h-3 w-3" />
-                        Poznámka
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        className="min-h-[36px] px-2 text-xs"
+                        <StickyNote className="size-[18px]" aria-hidden />
+                      </JobMediaIconButton>
+                      <JobMediaIconButton
+                        label="Smazat soubor"
                         disabled={busy}
+                        className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => void deleteImage(img)}
                       >
-                        <Trash2 className="mr-1 h-3 w-3" />
-                        Smazat
-                      </Button>
-                    </div>
-                  </div>
-                );
-              }
-
-              return (
-                <div
-                  key={img.id}
-                  className="group relative overflow-hidden rounded-lg border border-border/40 bg-background"
-                >
-                  <MediaThumb row={img} alt={title} />
-                  <div className="border-t border-border/50 bg-background/95 p-2 text-xs">
-                    <p className="truncate font-medium" title={title}>
-                      {title}
-                    </p>
-                    <p className="text-muted-foreground">
-                      {formatMediaDate(img.createdAt)}
-                    </p>
-                    {img.note?.trim() ? (
-                      <p className="mt-1 line-clamp-2 text-[11px] text-foreground/90">
-                        {img.note.trim()}
-                      </p>
-                    ) : null}
-                  </div>
-                  {img.note?.trim() ? (
-                    <span
-                      className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
-                      title="Má poznámku"
-                    >
-                      📝
-                    </span>
-                  ) : null}
-                  <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-1 bg-black/45 p-1 opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
-                      onClick={() => {
-                        if (openUrl)
-                          setImagePreview({ url: openUrl, title });
-                      }}
-                    >
-                      <Eye className="mr-1 h-3 w-3" />
-                      Náhled
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
-                      onClick={() =>
-                        onAnnotatePhoto({
-                          id: img.id,
-                          imageUrl: img.imageUrl,
-                          url: img.url,
-                          downloadURL: img.downloadURL,
-                          originalImageUrl: img.originalImageUrl,
-                          annotatedImageUrl: img.annotatedImageUrl,
-                          storagePath: img.storagePath,
-                          path: img.path,
-                          annotatedStoragePath: img.annotatedStoragePath,
-                          fileName: img.fileName,
-                          name: img.name,
-                          annotationData: img.annotationData,
-                          annotationTarget: {
-                            kind: "folderImages",
-                            folderId: folder.id,
-                          },
-                        })
-                      }
-                    >
-                      <Pencil className="mr-1 h-3 w-3" />
-                      Anotovat
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
-                      onClick={() =>
-                        onNoteDialogOpen({
-                          path: {
-                            kind: "folderImages",
-                            folderId: folder.id,
-                          },
-                          imageId: img.id,
-                          currentNote: img.note || "",
-                        })
-                      }
-                    >
-                      <StickyNote className="mr-1 h-3 w-3" />
-                      Poznámka
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
-                      disabled={busy}
-                      onClick={() => void deleteImage(img)}
-                    >
-                      <Trash2 className="mr-1 h-3 w-3" />
-                      Smazat
-                    </Button>
-                  </div>
-                </div>
+                        <Trash2 className="size-[18px]" aria-hidden />
+                      </JobMediaIconButton>
+                    </>
+                  }
+                />
               );
             })}
           </div>
@@ -980,7 +1073,8 @@ export function JobMediaSection({
   }
 
   return (
-    <>
+    <TooltipProvider delayDuration={250}>
+      <>
       <Card className="bg-surface border-border">
         <CardHeader>
           <CardTitle className="flex flex-wrap items-center gap-2 text-base sm:text-lg">
@@ -1098,98 +1192,169 @@ export function JobMediaSection({
             ) : null}
 
             {photosSorted.length > 0 ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+              <div className={JOB_MEDIA_CARD_GRID_CLASS}>
                 {photosSorted.map((p) => {
                   const kind = inferJobMediaItemType(p);
                   const openUrl = getJobMediaPreviewUrl(p);
                   const title = p.fileName || p.name || p.id;
+                  const dateLine =
+                    kind === "pdf"
+                      ? `PDF · ${formatMediaDate(p.createdAt)}`
+                      : formatMediaDate(p.createdAt);
+                  const hasNote = !!p.note?.trim();
 
                   if (kind === "pdf") {
                     return (
-                      <div
+                      <JobMediaFileCard
                         key={p.id}
-                        className="group relative flex flex-col overflow-hidden rounded-lg border border-dashed border-red-500/35 bg-red-500/[0.06]"
-                      >
-                        <div className="flex items-start gap-3 p-3">
-                          <span className="text-2xl leading-none" aria-hidden>
-                            📄
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="flex items-center gap-1.5 truncate text-sm font-semibold text-foreground">
-                              <FileText className="h-4 w-4 shrink-0 text-red-700 dark:text-red-400" />
-                              <span className="truncate" title={title}>
-                                {title}
-                              </span>
-                            </p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              PDF · {formatMediaDate(p.createdAt)}
-                            </p>
-                            {p.note?.trim() ? (
-                              <p className="mt-2 line-clamp-2 text-[11px] text-foreground/90">
-                                {p.note.trim()}
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                        {p.note?.trim() ? (
-                          <span
-                            className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
-                            title="Má poznámku"
-                          >
-                            📝
-                          </span>
-                        ) : null}
-                        <div className="flex flex-wrap gap-1 border-t border-border/50 bg-background/80 p-2">
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="secondary"
-                            className="min-h-[36px] px-2 text-xs"
+                        borderClassName="border-dashed border-red-500/30"
+                        preview={<JobMediaPdfPreview />}
+                        title={title}
+                        dateLine={dateLine}
+                        note={p.note}
+                        hasNote={hasNote}
+                        actions={
+                          <>
+                            <JobMediaIconButton
+                              label="Otevřít v novém okně"
+                              disabled={!openUrl}
+                              onClick={() => {
+                                if (openUrl)
+                                  window.open(
+                                    openUrl,
+                                    "_blank",
+                                    "noopener,noreferrer"
+                                  );
+                              }}
+                            >
+                              <ExternalLink className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                            {openUrl ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    className={jobMediaIconBtnClassName}
+                                    asChild
+                                  >
+                                    <a
+                                      href={openUrl}
+                                      download={title}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                    >
+                                      <Download className="size-[18px]" aria-hidden />
+                                    </a>
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent side="bottom" className="text-xs">
+                                  Stáhnout
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <JobMediaIconButton label="Stáhnout" disabled>
+                                <Download className="size-[18px]" aria-hidden />
+                              </JobMediaIconButton>
+                            )}
+                            <JobMediaIconButton
+                              label="Poznámka"
+                              onClick={() =>
+                                openNoteEditor({
+                                  path: { kind: "photos" },
+                                  imageId: p.id,
+                                  currentNote: p.note || "",
+                                })
+                              }
+                            >
+                              <StickyNote className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                            <JobMediaIconButton
+                              label="Smazat soubor"
+                              className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => void deleteLegacyPhoto(p)}
+                            >
+                              <Trash2 className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                          </>
+                        }
+                      />
+                    );
+                  }
+
+                  return (
+                    <JobMediaFileCard
+                      key={p.id}
+                      borderClassName="border-border/55"
+                      preview={<MediaThumb row={p} alt={title} />}
+                      title={title}
+                      dateLine={dateLine}
+                      note={p.note}
+                      hasNote={hasNote}
+                      actions={
+                        <>
+                          <JobMediaIconButton
+                            label="Náhled"
                             disabled={!openUrl}
                             onClick={() => {
                               if (openUrl)
-                                window.open(
-                                  openUrl,
-                                  "_blank",
-                                  "noopener,noreferrer"
-                                );
+                                setLegacyImagePreview({ url: openUrl, title });
                             }}
                           >
-                            <ExternalLink className="mr-1 h-3 w-3" />
-                            Otevřít
-                          </Button>
+                            <Eye className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                          <JobMediaIconButton
+                            label="Anotovat"
+                            onClick={() =>
+                              onAnnotatePhoto({
+                                id: p.id,
+                                imageUrl: p.imageUrl,
+                                url: p.url,
+                                downloadURL: p.downloadURL,
+                                originalImageUrl: p.originalImageUrl,
+                                annotatedImageUrl: p.annotatedImageUrl,
+                                storagePath: p.storagePath,
+                                path: p.path,
+                                fullPath: p.fullPath,
+                                fileName: p.fileName,
+                                name: p.name,
+                                annotationData: p.annotationData,
+                                annotationTarget: { kind: "photos" },
+                              })
+                            }
+                          >
+                            <Pencil className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
                           {openUrl ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              className="min-h-[36px] px-2 text-xs"
-                              asChild
-                            >
-                              <a
-                                href={openUrl}
-                                download={title}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className={jobMediaIconBtnClassName}
+                                  asChild
+                                >
+                                  <a
+                                    href={openUrl}
+                                    download={title}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    <Download className="size-[18px]" aria-hidden />
+                                  </a>
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="text-xs">
                                 Stáhnout
-                              </a>
-                            </Button>
+                              </TooltipContent>
+                            </Tooltip>
                           ) : (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              className="min-h-[36px] px-2 text-xs"
-                              disabled
-                            >
-                              Stáhnout
-                            </Button>
+                            <JobMediaIconButton label="Stáhnout" disabled>
+                              <Download className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
                           )}
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="min-h-[36px] px-2 text-xs"
+                          <JobMediaIconButton
+                            label="Poznámka"
                             onClick={() =>
                               openNoteEditor({
                                 path: { kind: "photos" },
@@ -1198,114 +1363,18 @@ export function JobMediaSection({
                               })
                             }
                           >
-                            <StickyNote className="mr-1 h-3 w-3" />
-                            Poznámka
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="destructive"
-                            className="min-h-[36px] px-2 text-xs"
+                            <StickyNote className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                          <JobMediaIconButton
+                            label="Smazat soubor"
+                            className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
                             onClick={() => void deleteLegacyPhoto(p)}
                           >
-                            <Trash2 className="mr-1 h-3 w-3" />
-                            Smazat
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  }
-
-                  return (
-                    <div
-                      key={p.id}
-                      className="group relative overflow-hidden rounded-lg border border-border/40 bg-background"
-                    >
-                      <MediaThumb row={p} />
-                      <div className="border-t border-border/50 bg-background/95 p-2 text-xs">
-                        <p className="truncate font-medium" title={p.fileName}>
-                          {p.fileName || p.name || p.id}
-                        </p>
-                        <p className="text-muted-foreground">
-                          {formatMediaDate(p.createdAt)}
-                        </p>
-                        {p.note?.trim() ? (
-                          <p className="mt-1 line-clamp-2 text-[11px] text-foreground/90">
-                            {p.note.trim()}
-                          </p>
-                        ) : null}
-                      </div>
-                      {p.note?.trim() ? (
-                        <span
-                          className="absolute right-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-sm"
-                          title="Má poznámku"
-                        >
-                          📝
-                        </span>
-                      ) : null}
-                      <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-1 bg-black/45 p-1 opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100">
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
-                          onClick={() => {
-                            if (openUrl)
-                              setLegacyImagePreview({ url: openUrl, title });
-                          }}
-                        >
-                          <Eye className="mr-1 h-3 w-3" />
-                          Náhled
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
-                          onClick={() =>
-                            onAnnotatePhoto({
-                              id: p.id,
-                              imageUrl: p.imageUrl,
-                              url: p.url,
-                              downloadURL: p.downloadURL,
-                              originalImageUrl: p.originalImageUrl,
-                              annotatedImageUrl: p.annotatedImageUrl,
-                              storagePath: p.storagePath,
-                              path: p.path,
-                              fullPath: p.fullPath,
-                              fileName: p.fileName,
-                              name: p.name,
-                              annotationData: p.annotationData,
-                              annotationTarget: { kind: "photos" },
-                            })
-                          }
-                        >
-                          <Pencil className="mr-1 h-3 w-3" />
-                          Anotovat
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
-                          onClick={() =>
-                            openNoteEditor({
-                              path: { kind: "photos" },
-                              imageId: p.id,
-                              currentNote: p.note || "",
-                            })
-                          }
-                        >
-                          <StickyNote className="mr-1 h-3 w-3" />
-                          Poznámka
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="min-h-[36px] px-2 text-xs sm:pointer-events-auto"
-                          onClick={() => void deleteLegacyPhoto(p)}
-                        >
-                          <Trash2 className="mr-1 h-3 w-3" />
-                          Smazat
-                        </Button>
-                      </div>
-                    </div>
+                            <Trash2 className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                        </>
+                      }
+                    />
                   );
                 })}
               </div>
@@ -1425,6 +1494,7 @@ export function JobMediaSection({
           ) : null}
         </DialogContent>
       </Dialog>
-    </>
+      </>
+    </TooltipProvider>
   );
 }
