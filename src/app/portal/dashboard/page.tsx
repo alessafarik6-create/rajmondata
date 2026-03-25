@@ -42,7 +42,6 @@ import {
 } from "@/lib/employee-money";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
-import { DashboardUpcomingJobsWidget } from "@/components/portal/dashboard-upcoming-jobs-widget";
 import { DashboardJobTasksWidget } from "@/components/jobs/dashboard-job-tasks-widget";
 import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
@@ -558,7 +557,7 @@ export default function CompanyDashboard() {
         </div>
       </div>
 
-      {!isCustomer && companyId ? (
+      {!isCustomer && companyId && !showAdminDashboard ? (
         <DashboardOpenTasks
           companyId={companyId}
           employeeId={typedProfile?.employeeId}
@@ -569,11 +568,7 @@ export default function CompanyDashboard() {
       {showAdminDashboard ? (
         <div className="space-y-6">
           {companyId ? (
-            <DashboardJobTasksWidget
-              companyId={companyId}
-              jobs={typedJobs}
-              todayIso={todayIso}
-            />
+            <DashboardJobTasksWidget companyId={companyId} todayIso={todayIso} />
           ) : null}
 
           {!chatDashboardLoading && unreadEmployeeChatCount > 0 ? (
@@ -600,8 +595,7 @@ export default function CompanyDashboard() {
           ) : null}
 
           {companyId ? (
-            <div className="mx-auto grid w-full max-w-3xl grid-cols-1 gap-4 md:max-w-4xl md:grid-cols-2">
-              <DashboardUpcomingJobsWidget jobs={typedJobs} />
+            <div className="mx-auto w-full max-w-xl">
               <DashboardTerminalActiveWidget
                 employees={employees as Record<string, unknown>[] | undefined}
                 attendanceTodayRows={attendanceTodayRows as AttendanceRow[]}
@@ -934,70 +928,83 @@ export default function CompanyDashboard() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3 lg:gap-8">
-        <div className="min-w-0 space-y-6 lg:col-span-2 lg:space-y-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>
-                {isCustomer ? "Stav mých projektů" : "Sledované projekty"}
-              </CardTitle>
-              <CardDescription>
-                Aktuální stav rozpracování zakázek
-              </CardDescription>
-            </CardHeader>
+      <div
+        className={`grid grid-cols-1 gap-6 lg:gap-8 ${
+          showAdminDashboard ? "" : "lg:grid-cols-3"
+        }`}
+      >
+        {!showAdminDashboard ? (
+          <div className="min-w-0 space-y-6 lg:col-span-2 lg:space-y-8">
+            <Card>
+              <CardHeader>
+                <CardTitle>
+                  {isCustomer ? "Stav mých projektů" : "Sledované projekty"}
+                </CardTitle>
+                <CardDescription>
+                  Aktuální stav rozpracování zakázek
+                </CardDescription>
+              </CardHeader>
 
-            <CardContent className="space-y-6">
-              {jobsError && (
-                <Alert variant="destructive" className="mb-4">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>
-                    Zakázky se nepodařilo načíst: {jobsError.message}
-                  </AlertDescription>
-                </Alert>
-              )}
+              <CardContent className="space-y-6">
+                {jobsError && (
+                  <Alert variant="destructive" className="mb-4">
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      Zakázky se nepodařilo načíst: {jobsError.message}
+                    </AlertDescription>
+                  </Alert>
+                )}
 
-              {isJobsLoading && jobsQuery ? (
-                <div className="flex justify-center p-8">
-                  <div
-                    className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent"
-                    aria-hidden
-                  />
-                </div>
-              ) : jobs.length > 0 ? (
-                jobs.slice(0, 5).map((job) => (
-                  <div key={job.id} className="space-y-2 border-b border-slate-100 pb-4 last:border-0 last:pb-0">
-                    <div className="flex items-center justify-between">
-                      <div className="flex flex-col">
-                        <span className="font-semibold text-slate-900">
-                          {job.name || "Bez názvu"}
-                        </span>
-                        <span className="text-[10px] font-medium uppercase text-slate-600">
-                          {job.status || "neuvedeno"}
-                        </span>
-                      </div>
-
-                      <Link href={`/portal/jobs/${job.id}`}>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 gap-1 text-xs text-slate-700"
-                        >
-                          Detail <ArrowRight className="h-3 w-3" />
-                        </Button>
-                      </Link>
-                    </div>
+                {isJobsLoading && jobsQuery ? (
+                  <div className="flex justify-center p-8">
+                    <div
+                      className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent"
+                      aria-hidden
+                    />
                   </div>
-                ))
-              ) : (
-                <div className="py-12 text-center text-slate-600">
-                  Zatím nemáte žádné zakázky.
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+                ) : jobs.length > 0 ? (
+                  jobs.slice(0, 5).map((job) => (
+                    <div
+                      key={job.id}
+                      className="space-y-2 border-b border-slate-100 pb-4 last:border-0 last:pb-0"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex flex-col">
+                          <span className="font-semibold text-slate-900">
+                            {job.name || "Bez názvu"}
+                          </span>
+                          <span className="text-[10px] font-medium uppercase text-slate-600">
+                            {job.status || "neuvedeno"}
+                          </span>
+                        </div>
 
-        <div className="min-w-0 space-y-6 lg:space-y-8">
+                        <Link href={`/portal/jobs/${job.id}`}>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 gap-1 text-xs text-slate-700"
+                          >
+                            Detail <ArrowRight className="h-3 w-3" />
+                          </Button>
+                        </Link>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="py-12 text-center text-slate-600">
+                    Zatím nemáte žádné zakázky.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        ) : null}
+
+        <div
+          className={`min-w-0 space-y-6 lg:space-y-8 ${
+            showAdminDashboard ? "max-w-md lg:max-w-none" : ""
+          }`}
+        >
           {!isCustomer && (
             <Card>
               <CardHeader>
