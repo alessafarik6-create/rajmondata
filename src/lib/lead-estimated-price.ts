@@ -52,19 +52,22 @@ export function extractEstimatedPriceKcFromImportObject(
   return null;
 }
 
-export function sumOrientacniCenyFromLeadRows(rows: { orientacniCenaKc?: number }[]): {
+export function sumOrientacniCenyFromLeadRows(
+  rows: { orientacniCenaKc?: number }[] | null | undefined
+): {
   totalKc: number;
   withPriceCount: number;
   totalCount: number;
 } {
+  const list = Array.isArray(rows) ? rows : [];
   let totalKc = 0;
   let withPriceCount = 0;
-  for (const r of rows) {
+  for (const r of list) {
     const n = r.orientacniCenaKc;
     if (n != null && Number.isFinite(n) && n > 0) {
       totalKc += n;
       withPriceCount++;
     }
   }
-  return { totalKc, withPriceCount, totalCount: rows.length };
+  return { totalKc, withPriceCount, totalCount: list.length };
 }

@@ -26,16 +26,17 @@ export function DashboardTerminalActiveWidget({
   loading,
 }: {
   employees: EmployeeDoc[] | undefined;
-  attendanceTodayRows: AttendanceRow[];
+  attendanceTodayRows: AttendanceRow[] | null | undefined;
   loading?: boolean;
 }) {
   const active = useMemo(() => {
     const raw = Array.isArray(employees) ? employees : [];
+    const todayRows = Array.isArray(attendanceTodayRows) ? attendanceTodayRows : [];
     const empMap = buildEmployeeMap(raw as Record<string, unknown>[]);
     const rows: { name: string; checkInLabel: string }[] = [];
 
     for (const emp of empMap.values()) {
-      const dayRows = attendanceTodayRows.filter((r) =>
+      const dayRows = todayRows.filter((r) =>
         attendanceRowMatchesEmployee(r, emp.id, emp.authUserId)
       );
       if (dayRows.length === 0) continue;

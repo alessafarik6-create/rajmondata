@@ -183,25 +183,41 @@ export default function CompanyDashboard() {
     );
   }, [firestore, companyId, showAdminDashboard, todayIso]);
 
-  const { data: employees } = useCollection(employeesQuery);
+  const { data: employeesRaw } = useCollection(employeesQuery);
+  /** useCollection vrací `null` při načítání/chybě — default `= []` se na null nevztahuje. */
+  const employees = employeesRaw ?? [];
+
   const {
-    data: allJobs,
+    data: allJobsRaw,
     isLoading: isJobsLoading,
     error: jobsError,
   } = useCollection(jobsQuery);
-  const { data: financeRows = [] } = useCollection(financeQuery);
-  const { data: attendanceRows = [] } = useCollection(attendanceQuery);
   const {
-    data: dashboardDailyReports = [],
+    data: financeRowsRaw,
+  } = useCollection(financeQuery);
+  const { data: attendanceRowsRaw } = useCollection(attendanceQuery);
+  const {
+    data: dashboardDailyReportsRaw,
     isLoading: dailyReportsLoading,
   } = useCollection(dailyWorkReportsQuery);
   const {
-    data: dashboardChatMessages = [],
+    data: dashboardChatMessagesRaw,
     isLoading: chatDashboardLoading,
   } = useCollection(chatDashboardQuery);
-  const { data: attendanceTodayRows = [], isLoading: attendanceTodayLoading } =
-    useCollection(attendanceTodayForDashboardQuery);
-  const typedJobs: JobData[] = ((allJobs as JobData[] | undefined) ?? []);
+  const {
+    data: attendanceTodayRaw,
+    isLoading: attendanceTodayLoading,
+  } = useCollection(attendanceTodayForDashboardQuery);
+
+  const financeRows = financeRowsRaw ?? [];
+  const attendanceRows = attendanceRowsRaw ?? [];
+  const dashboardDailyReports = dashboardDailyReportsRaw ?? [];
+  const dashboardChatMessages = dashboardChatMessagesRaw ?? [];
+  const attendanceTodayRows = attendanceTodayRaw ?? [];
+
+  const typedJobs: JobData[] = Array.isArray(allJobsRaw)
+    ? (allJobsRaw as JobData[])
+    : [];
 
   const profileOrCompanyLoading =
     isProfileLoading || (Boolean(companyId) && companyContextLoading);
@@ -775,7 +791,7 @@ export default function CompanyDashboard() {
                   <Users className="h-4 w-4 text-primary" />
                 </CardHeader>
                 <CardContent>
-                  <div className="portal-kpi-value">{employees?.length || 0}</div>
+                  <div className="portal-kpi-value">{employees.length || 0}</div>
                   <p className="portal-kpi-label">Celkový počet pracovníků</p>
                 </CardContent>
               </Card>
@@ -844,7 +860,7 @@ export default function CompanyDashboard() {
                 <Users className="h-4 w-4 text-primary" />
               </CardHeader>
               <CardContent>
-                <div className="portal-kpi-value">{employees?.length || 0}</div>
+                <div className="portal-kpi-value">{employees.length || 0}</div>
                 <p className="portal-kpi-label">Celkový počet pracovníků</p>
               </CardContent>
             </Card>

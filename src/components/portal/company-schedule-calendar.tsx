@@ -40,6 +40,13 @@ type CalendarEvent = {
   detail?: string;
 };
 
+function isValidCalendarEvent(e: unknown): e is CalendarEvent {
+  if (e == null || typeof e !== "object") return false;
+  const o = e as Partial<CalendarEvent>;
+  if (typeof o.id !== "string" || !o.id) return false;
+  return o.at instanceof Date && !Number.isNaN(o.at.getTime());
+}
+
 function isMeasurementDeleted(m: { deletedAt?: unknown }): boolean {
   return m.deletedAt != null;
 }
@@ -126,13 +133,15 @@ export function CompanyScheduleCalendar({
       });
     }
 
-    out.sort((a, b) => a.at.getTime() - b.at.getTime());
-    return out;
+    const valid = out.filter(isValidCalendarEvent);
+    valid.sort((a, b) => a.at.getTime() - b.at.getTime());
+    return valid;
   }, [meetingsRaw, measurementsRaw]);
 
   const eventsByDayKey = useMemo(() => {
     const m = new Map<string, CalendarEvent[]>();
     for (const ev of events) {
+      if (!isValidCalendarEvent(ev)) continue;
       const key = format(ev.at, "yyyy-MM-dd");
       const arr = m.get(key) ?? [];
       arr.push(ev);
@@ -239,7 +248,9 @@ export function CompanyScheduleCalendar({
               ))}
               {days.map((day) => {
                 const key = format(day, "yyyy-MM-dd");
-                const dayEvents = eventsByDayKey.get(key) ?? [];
+                const dayEvents = (eventsByDayKey.get(key) ?? []).filter(
+                  isValidCalendarEvent
+                );
                 const outside = !isSameMonth(day, visibleMonth);
                 const today = isToday(day);
                 return (

@@ -77,19 +77,20 @@ export type JobWithDeadlineMeta<T> = T & {
 };
 
 export function selectUpcomingDeadlineJobs<T extends { endDate?: string; status?: string }>(
-  jobs: T[],
+  jobs: T[] | null | undefined,
   opts?: {
     now?: Date;
     withinDays?: number;
     maxItems?: number;
   }
 ): JobWithDeadlineMeta<T>[] {
+  const list = Array.isArray(jobs) ? jobs : [];
   const now = opts?.now ?? new Date();
   const within = opts?.withinDays ?? UPCOMING_JOB_DEADLINE_WITHIN_DAYS;
   const maxItems = opts?.maxItems ?? 12;
 
   const out: JobWithDeadlineMeta<T>[] = [];
-  for (const job of jobs) {
+  for (const job of list) {
     if (!isJobOpenForDeadlineWidget(job)) continue;
     const end = String(job.endDate ?? "").trim();
     if (!end) continue;

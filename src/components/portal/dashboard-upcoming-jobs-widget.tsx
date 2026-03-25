@@ -58,10 +58,10 @@ function urgencyBadgeClass(u: DeadlineUrgency): string {
   }
 }
 
-export function DashboardUpcomingJobsWidget({ jobs }: { jobs: JobRow[] }) {
+export function DashboardUpcomingJobsWidget({ jobs }: { jobs: JobRow[] | null | undefined }) {
   const list = useMemo(
     () =>
-      selectUpcomingDeadlineJobs(jobs, {
+      selectUpcomingDeadlineJobs(Array.isArray(jobs) ? jobs : [], {
         maxItems: 10,
       }),
     [jobs]
