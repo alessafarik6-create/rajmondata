@@ -23,6 +23,12 @@ service firebase.storage {
       allow write: if request.auth != null;
     }
 
+    /** Přílohy nákladů zakázky (foto / PDF). */
+    match /companies/{companyId}/jobs/{jobId}/expenses/{allPaths=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+
     /**
      * Starší cesta (zpětná kompatibilita pro již nahrané soubory).
      */

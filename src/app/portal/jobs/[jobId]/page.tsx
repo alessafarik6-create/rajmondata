@@ -23,10 +23,15 @@ import {
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
 import {
+  JobExpensesSection,
+  type JobExpenseRow,
+} from "@/components/jobs/job-expenses-section";
+import {
   doc,
   collection,
   query,
   where,
+  orderBy,
   updateDoc,
   serverTimestamp,
   deleteDoc,
@@ -496,6 +501,40 @@ export default function JobDetailPage() {
     [firestore, companyId, jobId]
   );
   const { data: photos } = useCollection(photosColRef);
+
+  const expensesQueryRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? query(
+            collection(
+              firestore,
+              "companies",
+              companyId,
+              "jobs",
+              jobId as string,
+              "expenses"
+            ),
+            orderBy("createdAt", "desc")
+          )
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: jobExpenses } = useCollection<JobExpenseRow>(expensesQueryRef);
+
+  const totalJobExpensesKc = useMemo(() => {
+    return (jobExpenses ?? []).reduce((sum, row) => {
+      const a =
+        typeof row.amount === "number" && Number.isFinite(row.amount)
+          ? row.amount
+          : 0;
+      return sum + a;
+    }, 0);
+  }, [jobExpenses]);
+
+  const remainingBudgetAfterExpensesKc = useMemo(() => {
+    if (jobBudgetKc == null) return null;
+    return jobBudgetKc - totalJobExpensesKc;
+  }, [jobBudgetKc, totalJobExpensesKc]);
 
   const customerId =
     (job as any)?.customerId ||
@@ -4159,10 +4198,34 @@ export default function JobDetailPage() {
               <CardTitle>Finanční údaje</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex justify-between items-center">
-                <span className="text-muted-foreground">Celkový rozpočet:</span>
-                <span className="text-xl font-bold">
-                  {job.budget ? `${job.budget.toLocaleString()} Kč` : "-"}
+              <div className="flex justify-between items-center gap-3 flex-wrap">
+                <span className="text-muted-foreground">Původní rozpočet:</span>
+                <span className="text-xl font-bold tabular-nums">
+                  {job.budget != null && job.budget !== ""
+                    ? `${Number(job.budget).toLocaleString("cs-CZ")} Kč`
+                    : "-"}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm gap-3 flex-wrap">
+                <span className="text-muted-foreground">Celkové náklady:</span>
+                <span className="font-semibold text-amber-700 dark:text-amber-400 tabular-nums">
+                  {`${totalJobExpensesKc.toLocaleString("cs-CZ")} Kč`}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-sm gap-3 flex-wrap">
+                <span className="text-muted-foreground">Zbývající rozpočet:</span>
+                <span
+                  className={cn(
+                    "font-semibold tabular-nums",
+                    remainingBudgetAfterExpensesKc != null &&
+                      remainingBudgetAfterExpensesKc < 0
+                      ? "text-destructive"
+                      : "text-emerald-700 dark:text-emerald-400"
+                  )}
+                >
+                  {remainingBudgetAfterExpensesKc != null
+                    ? `${remainingBudgetAfterExpensesKc.toLocaleString("cs-CZ")} Kč`
+                    : "-"}
                 </span>
               </div>
               <Separator />
@@ -4176,6 +4239,17 @@ export default function JobDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {user && companyId && jobId ? (
+            <JobExpensesSection
+              companyId={companyId}
+              jobId={jobId as string}
+              user={user}
+              expenses={jobExpenses}
+              canEdit={canManageFolders}
+              originalBudgetKc={jobBudgetKc}
+            />
+          ) : null}
 
           <Card className="bg-surface border-border">
             <CardHeader>

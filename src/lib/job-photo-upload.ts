@@ -65,6 +65,23 @@ export function buildJobPhotoStorageObjectPath(
 /**
  * Složky zakázky: companies/{companyId}/jobs/{jobId}/folders/{folderId}/images/{file}
  */
+/**
+ * Přílohy nákladů: companies/{companyId}/jobs/{jobId}/expenses/{file}
+ */
+export function buildJobExpenseStorageObjectPath(
+  companyId: string,
+  jobId: string,
+  fileNamePart: string
+): string {
+  const base =
+    String(fileNamePart)
+      .replace(/^.*[\\/]/, "")
+      .replace(/\s+/g, " ")
+      .trim() || "attachment";
+  const safe = base.replace(/[\\/]/g, "_");
+  return `companies/${companyId}/jobs/${jobId}/expenses/${safe}`;
+}
+
 export function buildJobFolderImageStorageObjectPath(
   companyId: string,
   jobId: string,
@@ -157,6 +174,66 @@ export async function uploadJobPhotoFileViaFirebaseSdk(
   }
 
   logDebug("downloadURL", { downloadURL: downloadURL.trim() });
+
+  return {
+    storagePath,
+    resolvedFullPath,
+    downloadURL: downloadURL.trim(),
+    uploadResult,
+  };
+}
+
+/** Nahrání přílohy nákladu (foto / PDF). */
+export async function uploadJobExpenseFileViaFirebaseSdk(
+  file: File,
+  companyId: string,
+  jobId: string
+): Promise<{
+  storagePath: string;
+  resolvedFullPath: string;
+  downloadURL: string;
+  uploadResult: UploadResult;
+}> {
+  const safeBaseName =
+    file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "attachment";
+  const storagePath = buildJobExpenseStorageObjectPath(
+    companyId,
+    jobId,
+    `${Date.now()}-${safeBaseName}`
+  );
+
+  logDebug("expense attachment upload", { companyId, jobId, storagePath });
+
+  const storage = getFirebaseStorage();
+  const storageRef = ref(storage, storagePath);
+
+  const uploadResult = await promiseWithTimeout(
+    uploadBytes(storageRef, file),
+    JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
+    "Nahrávání přílohy nákladu do Firebase Storage"
+  );
+
+  if (!uploadResult?.ref) {
+    throw new Error(
+      "Upload přílohy skončil bez platné reference do úložiště."
+    );
+  }
+
+  const resolvedFullPath =
+    typeof uploadResult.ref.fullPath === "string" &&
+    uploadResult.ref.fullPath.length > 0
+      ? uploadResult.ref.fullPath
+      : storagePath;
+
+  const downloadURL = await promiseWithTimeout(
+    getDownloadURL(uploadResult.ref),
+    JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
+    "Získání download URL (náklad)"
+  );
+
+  if (typeof downloadURL !== "string" || !downloadURL.trim()) {
+    throw new Error("Úložiště nevrátilo platnou adresu ke stažení.");
+  }
 
   return {
     storagePath,

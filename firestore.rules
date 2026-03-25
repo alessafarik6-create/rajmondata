@@ -235,6 +235,78 @@ service cloud.firestore {
             (isPrivileged() || resource.data.createdBy == request.auth.uid);
         }
 
+        /** Náklady zakázky (částka, datum, poznámka, příloha). Zapisují vedení / účetnictví. */
+        match /expenses/{expenseId} {
+          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.createdBy == request.auth.uid &&
+            request.resource.data.amount is number &&
+            request.resource.data.amount > 0 &&
+            request.resource.data.date is string &&
+            request.resource.data.date.size() > 0 &&
+            request.resource.data.date.size() <= 32 &&
+            (!('note' in request.resource.data) ||
+              request.resource.data.note == null ||
+              (request.resource.data.note is string &&
+                request.resource.data.note.size() <= 4000)) &&
+            (!('fileUrl' in request.resource.data) ||
+              request.resource.data.fileUrl == null ||
+              (request.resource.data.fileUrl is string &&
+                request.resource.data.fileUrl.size() > 0 &&
+                request.resource.data.fileUrl.size() <= 2048)) &&
+            (!('fileType' in request.resource.data) ||
+              request.resource.data.fileType == null ||
+              request.resource.data.fileType in ['image', 'pdf']) &&
+            (!('fileName' in request.resource.data) ||
+              request.resource.data.fileName == null ||
+              (request.resource.data.fileName is string &&
+                request.resource.data.fileName.size() <= 500)) &&
+            (!('storagePath' in request.resource.data) ||
+              request.resource.data.storagePath == null ||
+              (request.resource.data.storagePath is string &&
+                request.resource.data.storagePath.size() <= 1024));
+          allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            resource.data.createdBy == request.resource.data.createdBy &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.createdBy == resource.data.createdBy &&
+            request.resource.data.amount is number &&
+            request.resource.data.amount > 0 &&
+            request.resource.data.date is string &&
+            request.resource.data.date.size() > 0 &&
+            request.resource.data.date.size() <= 32 &&
+            (!('note' in request.resource.data) ||
+              request.resource.data.note == null ||
+              (request.resource.data.note is string &&
+                request.resource.data.note.size() <= 4000)) &&
+            (!('fileUrl' in request.resource.data) ||
+              request.resource.data.fileUrl == null ||
+              (request.resource.data.fileUrl is string &&
+                request.resource.data.fileUrl.size() > 0 &&
+                request.resource.data.fileUrl.size() <= 2048)) &&
+            (!('fileType' in request.resource.data) ||
+              request.resource.data.fileType == null ||
+              request.resource.data.fileType in ['image', 'pdf']) &&
+            (!('fileName' in request.resource.data) ||
+              request.resource.data.fileName == null ||
+              (request.resource.data.fileName is string &&
+                request.resource.data.fileName.size() <= 500)) &&
+            (!('storagePath' in request.resource.data) ||
+              request.resource.data.storagePath == null ||
+              (request.resource.data.storagePath is string &&
+                request.resource.data.storagePath.size() <= 1024));
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId;
+        }
+
         match /folders/{folderId} {
           allow read: if jobDetailReadAccess(companyId, jobId);
           allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
