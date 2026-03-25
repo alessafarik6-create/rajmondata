@@ -2,16 +2,7 @@
 
 import React, { useMemo, useState, useCallback } from "react";
 import Link from "next/link";
-import {
-  collection,
-  collectionGroup,
-  query,
-  where,
-  limit,
-  doc,
-  updateDoc,
-  serverTimestamp,
-} from "firebase/firestore";
+import { collection, query, limit, doc, updateDoc, serverTimestamp } from "firebase/firestore";
 import { useFirestore, useCollection, useMemoFirebase } from "@/firebase";
 import { Loader2, ListTodo, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -38,7 +29,6 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
 import {
-  JOB_TASK_SCOPE,
   type JobTaskRow,
   type JobTaskPriority,
   type JobTaskStatus,
@@ -55,6 +45,7 @@ import {
   LIGHT_SELECT_TRIGGER_CLASS,
 } from "@/lib/light-form-control-classes";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
+import { useActiveJobTasksFromJobList } from "@/components/jobs/use-active-job-tasks-from-jobs";
 
 type JobRef = { id: string; name?: string };
 
@@ -197,13 +188,17 @@ export function DashboardJobTasksWidget({
   companyId,
   todayIso,
   jobs,
+  jobsLoading,
 }: {
   companyId: string;
   todayIso: string;
   jobs: JobRef[];
+  /** Dokud Firebase načítá kolekci jobs — čekej, než spustíme listenery tasks pod zakázkami. */
+  jobsLoading: boolean;
 }) {
   const firestore = useFirestore();
   const { toast } = useToast();
+  const cid = String(companyId ?? "").trim();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogItem, setDialogItem] = useState<DashboardTaskItem | null>(null);
@@ -227,9 +222,9 @@ export function DashboardJobTasksWidget({
   }, [jobs]);
 
   const employeesQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    return collection(firestore, "companies", companyId, "employees");
-  }, [firestore, companyId]);
+    if (!firestore || !cid) return null;
+    return collection(firestore, "companies", cid, "employees");
+  }, [firestore, cid]);
 
   const { data: employeesRaw } = useCollection(employeesQuery);
   const employeeNameById = useMemo(() => {
@@ -247,33 +242,33 @@ export function DashboardJobTasksWidget({
     return m;
   }, [employeesRaw]);
 
-  const jobTasksQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    return query(
-      collectionGroup(firestore, "tasks"),
-      where("companyId", "==", companyId),
-      where("taskScope", "==", JOB_TASK_SCOPE),
-      where("status", "==", "active"),
-      limit(250)
+  const jobIds = useMemo(
+    () =>
+      jobs
+        .map((j) => String(j?.id ?? "").trim())
+        .filter(Boolean),
+    [jobs]
+  );
+
+  const { data: jobTasksRows, isLoading: jobTasksLoading } =
+    useActiveJobTasksFromJobList(
+      firestore,
+      cid || undefined,
+      jobIds,
+      jobsLoading
     );
-  }, [firestore, companyId]);
 
   const orgTasksQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    return query(
-      collection(firestore, "companies", companyId, "tasks"),
-      limit(300)
-    );
-  }, [firestore, companyId]);
+    if (!firestore || !cid) return null;
+    return query(collection(firestore, "companies", cid, "tasks"), limit(300));
+  }, [firestore, cid]);
 
-  const { data: jobRaw, isLoading: jobLoading } =
-    useCollection<JobTaskRow>(jobTasksQuery);
   const { data: orgRaw, isLoading: orgLoading } = useCollection(orgTasksQuery);
 
   const items = useMemo(() => {
     const out: DashboardTaskItem[] = [];
 
-    const jlist = Array.isArray(jobRaw) ? jobRaw : [];
+    const jlist = Array.isArray(jobTasksRows) ? jobTasksRows : [];
     for (const row of jlist) {
       if (row.status === "done") continue;
       const jid = row.jobId?.trim() ?? "";
@@ -323,9 +318,9 @@ export function DashboardJobTasksWidget({
     }
 
     return sortDashboardTasks(out, todayIso);
-  }, [jobRaw, orgRaw, jobNameById, todayIso]);
+  }, [jobTasksRows, orgRaw, jobNameById, todayIso]);
 
-  const isLoading = jobLoading || orgLoading;
+  const isLoading = orgLoading || jobsLoading || jobTasksLoading;
 
   const openTaskDialog = useCallback((item: DashboardTaskItem) => {
     setDialogItem(item);
@@ -353,7 +348,7 @@ export function DashboardJobTasksWidget({
   }, []);
 
   const saveDialog = async () => {
-    if (!firestore || !companyId || !dialogItem) return;
+    if (!firestore || !cid || !dialogItem) return;
     const title = dlgTitle.trim();
     if (!title) {
       toast({
@@ -403,7 +398,7 @@ export function DashboardJobTasksWidget({
           doc(
             firestore,
             "companies",
-            companyId,
+            cid,
             "jobs",
             jid,
             "tasks",
@@ -426,7 +421,7 @@ export function DashboardJobTasksWidget({
             ? dlgDue.trim()
             : null;
         await updateDoc(
-          doc(firestore, "companies", companyId, "tasks", dialogItem.taskId),
+          doc(firestore, "companies", cid, "tasks", dialogItem.taskId),
           {
             title,
             description: dlgNote.trim() || null,
@@ -461,7 +456,7 @@ export function DashboardJobTasksWidget({
   ) => {
     e.preventDefault();
     e.stopPropagation();
-    if (!firestore || !companyId) return;
+    if (!firestore || !cid) return;
     try {
       if (item.source === "job") {
         const jid = item.jobId?.trim();
@@ -470,7 +465,7 @@ export function DashboardJobTasksWidget({
           doc(
             firestore,
             "companies",
-            companyId,
+            cid,
             "jobs",
             jid,
             "tasks",
@@ -483,7 +478,7 @@ export function DashboardJobTasksWidget({
         );
       } else {
         await updateDoc(
-          doc(firestore, "companies", companyId, "tasks", item.taskId),
+          doc(firestore, "companies", cid, "tasks", item.taskId),
           {
             status: "done" as OrganizationTaskStatus,
             completedAt: serverTimestamp(),

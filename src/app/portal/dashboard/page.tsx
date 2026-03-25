@@ -572,6 +572,7 @@ export default function CompanyDashboard() {
               companyId={companyId}
               todayIso={todayIso}
               jobs={typedJobs}
+              jobsLoading={isJobsLoading}
             />
           ) : null}
 

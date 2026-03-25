@@ -238,6 +238,11 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
         "tasks"
       );
       const noteTrim = noteInput.trim();
+      const assignedMode = assignModeInput;
+      const assignedTo =
+        assignedMode === "all"
+          ? null
+          : String(assignEmployeeId || "").trim() || null;
 
       if (editingId) {
         await updateDoc(doc(col, editingId), {
@@ -246,6 +251,8 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
           dueDate: dueInput.trim(),
           priority: priorityInput,
           status: statusInput,
+          assignedMode,
+          assignedTo,
           updatedAt: serverTimestamp(),
         });
         toast({ title: "Úkol uložen" });
@@ -259,6 +266,8 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
           dueDate: dueInput.trim(),
           priority: priorityInput,
           status: "active" as JobTaskStatus,
+          assignedMode,
+          assignedTo,
           createdBy: user.uid,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
