@@ -14,7 +14,10 @@ import { Button } from "@/components/ui/button";
 import { Loader2, ListTodo } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { OrganizationTask } from "@/lib/organization-task";
-import { isTaskOpen } from "@/lib/organization-task";
+import {
+  isTaskOpen,
+  organizationTaskIsForAll,
+} from "@/lib/organization-task";
 
 type Props = {
   companyId: string;
@@ -74,14 +77,19 @@ export function DashboardOpenTasks({
     const eid = String(employeeId || "").trim();
     if (!eid) return [];
     return tasks.filter(
-      (t) => t.assignedTo == null || String(t.assignedTo) === eid
+      (t) =>
+        organizationTaskIsForAll(t) || String(t.assignedTo) === eid
     );
   }, [tasks, isPrivileged, employeeId]);
 
   const toggle = async (t: OrganizationTask) => {
     if (!user || !companyId) return;
     const eid = String(employeeId || "").trim();
-    if (!isPrivileged && String(t.assignedTo) !== eid) {
+    if (
+      !isPrivileged &&
+      !organizationTaskIsForAll(t) &&
+      String(t.assignedTo) !== eid
+    ) {
       toast({
         variant: "destructive",
         title: "Nelze změnit",
@@ -139,11 +147,12 @@ export function DashboardOpenTasks({
                   <p className="whitespace-pre-wrap">{t.description}</p>
                 ) : null}
                 <p className="text-xs font-normal opacity-90">
-                  {t.assignedTo
-                    ? `Přiřazeno: ${
-                        employeeNameById.get(String(t.assignedTo)) ?? t.assignedTo
-                      }`
-                    : "Bez přiřazení (společný úkol)"}
+                  {organizationTaskIsForAll(t)
+                    ? "Přiřazeno: Všem"
+                    : `Přiřazeno: ${
+                        employeeNameById.get(String(t.assignedTo)) ??
+                        t.assignedTo
+                      }`}
                 </p>
                 <div className="flex flex-wrap items-center gap-3 pt-1">
                   <Button

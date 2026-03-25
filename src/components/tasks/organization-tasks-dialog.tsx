@@ -29,11 +29,17 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Loader2, Pencil, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import type { OrganizationTask } from "@/lib/organization-task";
-import { isTaskOpen } from "@/lib/organization-task";
+import {
+  isTaskOpen,
+  organizationTaskIsForAll,
+} from "@/lib/organization-task";
+import type { JobTaskPriority, TaskAssignedMode } from "@/lib/job-task-types";
+import { jobTaskPriorityLabel } from "@/lib/job-task-types";
 
 type Props = {
   open: boolean;
@@ -55,6 +61,20 @@ function formatTaskDate(v: unknown): string {
     });
   }
   return "—";
+}
+
+function formatDueCs(iso: string | undefined): string {
+  if (!iso?.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "—";
+  const [y, m, d] = iso.split("-").map(Number);
+  try {
+    return new Intl.DateTimeFormat("cs-CZ", {
+      day: "numeric",
+      month: "numeric",
+      year: "numeric",
+    }).format(new Date(y, m - 1, d));
+  } catch {
+    return iso;
+  }
 }
 
 export function OrganizationTasksDialog({
@@ -124,7 +144,7 @@ export function OrganizationTasksDialog({
     if (!eid) return [];
     return tasks.filter(
       (t) =>
-        t.assignedTo == null || String(t.assignedTo) === eid
+        organizationTaskIsForAll(t) || String(t.assignedTo) === eid
     );
   }, [tasks, canManage, employeeId]);
 
@@ -132,7 +152,10 @@ export function OrganizationTasksDialog({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [assignedTo, setAssignedTo] = useState<string>("");
+  const [dueDate, setDueDate] = useState("");
+  const [priority, setPriority] = useState<JobTaskPriority>("medium");
+  const [assignMode, setAssignMode] = useState<TaskAssignedMode>("all");
+  const [assignEmployeeId, setAssignEmployeeId] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -146,7 +169,10 @@ export function OrganizationTasksDialog({
     setEditingId(null);
     setTitle("");
     setDescription("");
-    setAssignedTo("");
+    setDueDate("");
+    setPriority("medium");
+    setAssignMode("all");
+    setAssignEmployeeId("");
     setIsEditing(true);
   };
 
@@ -154,7 +180,20 @@ export function OrganizationTasksDialog({
     setEditingId(t.id);
     setTitle(t.title ?? "");
     setDescription(t.description ?? "");
-    setAssignedTo(t.assignedTo ? String(t.assignedTo) : "");
+    setDueDate(
+      typeof t.dueDate === "string" && t.dueDate.length >= 8 ? t.dueDate : ""
+    );
+    const pr = t.priority;
+    setPriority(
+      pr === "high" || pr === "medium" || pr === "low" ? pr : "medium"
+    );
+    if (organizationTaskIsForAll(t)) {
+      setAssignMode("all");
+      setAssignEmployeeId("");
+    } else {
+      setAssignMode("single");
+      setAssignEmployeeId(t.assignedTo ? String(t.assignedTo) : "");
+    }
     setIsEditing(true);
   };
 
@@ -163,7 +202,10 @@ export function OrganizationTasksDialog({
     setEditingId(null);
     setTitle("");
     setDescription("");
-    setAssignedTo("");
+    setDueDate("");
+    setPriority("medium");
+    setAssignMode("all");
+    setAssignEmployeeId("");
   };
 
   const saveTask = async () => {
@@ -176,15 +218,36 @@ export function OrganizationTasksDialog({
       return;
     }
     if (!canManage) return;
+    if (
+      assignMode === "single" &&
+      !String(assignEmployeeId || "").trim()
+    ) {
+      toast({
+        variant: "destructive",
+        title: "Přiřazení",
+        description: "U režimu „konkrétní zaměstnanec“ vyberte osobu.",
+      });
+      return;
+    }
     setSaving(true);
     try {
+      const assignedTo =
+        assignMode === "all" ? null : String(assignEmployeeId).trim();
+      const duePayload =
+        dueDate.trim() && /^\d{4}-\d{2}-\d{2}$/.test(dueDate.trim())
+          ? dueDate.trim()
+          : null;
+
       if (editingId) {
         await updateDoc(
           doc(firestore, "companies", companyId, "tasks", editingId),
           {
             title: title.trim(),
             description: description.trim() || null,
-            assignedTo: assignedTo.trim() ? assignedTo.trim() : null,
+            dueDate: duePayload,
+            priority,
+            assignedMode: assignMode,
+            assignedTo,
             updatedAt: serverTimestamp(),
           }
         );
@@ -193,9 +256,12 @@ export function OrganizationTasksDialog({
         await addDoc(collection(firestore, "companies", companyId, "tasks"), {
           title: title.trim(),
           description: description.trim() || null,
+          dueDate: duePayload,
+          priority,
           organizationId: companyId,
           status: "open" as const,
-          assignedTo: assignedTo.trim() ? assignedTo.trim() : null,
+          assignedMode: assignMode,
+          assignedTo,
           createdBy: user.uid,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -219,8 +285,11 @@ export function OrganizationTasksDialog({
   const toggleDone = async (t: OrganizationTask) => {
     if (!companyId) return;
     const next = isTaskOpen(t) ? "done" : "open";
-    if (!canManage && String(t.assignedTo) !== String(employeeId || "")) {
-      return;
+    if (!canManage) {
+      const mine =
+        organizationTaskIsForAll(t) ||
+        String(t.assignedTo) === String(employeeId || "");
+      if (!mine) return;
     }
     try {
       await updateDoc(doc(firestore, "companies", companyId, "tasks", t.id), {
@@ -264,8 +333,8 @@ export function OrganizationTasksDialog({
           <DialogTitle>Úkoly organizace</DialogTitle>
           <DialogDescription>
             {canManage
-              ? "Vytvářejte úkoly a přiřazujte je zaměstnancům. Nevyřízené úkoly se zobrazují na přehledu portálu."
-              : "Úkoly přiřazené vám nebo bez přiřazení (společné). Stav můžete měnit u svých úkolů."}
+              ? "Vytvářejte úkoly a přiřazujte je všem nebo konkrétnímu zaměstnanci. Nevyřízené úkoly se zobrazují na přehledu portálu."
+              : "Úkoly pro všechny nebo přiřazené vám. Stav můžete měnit u příslušných úkolů."}
           </DialogDescription>
         </DialogHeader>
 
@@ -296,7 +365,7 @@ export function OrganizationTasksDialog({
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="task-desc">Popis</Label>
+              <Label htmlFor="task-desc">Poznámka / popis</Label>
               <Textarea
                 id="task-desc"
                 value={description}
@@ -306,22 +375,77 @@ export function OrganizationTasksDialog({
               />
             </div>
             <div className="space-y-1">
-              <Label htmlFor="task-assign">Přiřadit zaměstnanci</Label>
+              <Label htmlFor="task-due">Termín</Label>
+              <Input
+                id="task-due"
+                type="date"
+                value={dueDate}
+                onChange={(e) => setDueDate(e.target.value)}
+                className="[color-scheme:light]"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="task-priority">Priorita</Label>
               <select
-                id="task-assign"
+                id="task-priority"
                 className={NATIVE_SELECT_CLASS}
-                value={assignedTo}
-                onChange={(e) => setAssignedTo(e.target.value)}
+                value={priority}
+                onChange={(e) =>
+                  setPriority(e.target.value as JobTaskPriority)
+                }
               >
-                <option value="">— bez přiřazení —</option>
-                {(employeesList as { id?: string; firstName?: string; lastName?: string }[])
-                  .filter((e) => e?.id)
-                  .map((e) => (
-                    <option key={String(e.id)} value={String(e.id)}>
-                      {`${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() || e.id}
-                    </option>
-                  ))}
+                <option value="low">Nízká</option>
+                <option value="medium">Střední</option>
+                <option value="high">Vysoká</option>
               </select>
+            </div>
+            <div className="space-y-2">
+              <Label>Přiřazení</Label>
+              <RadioGroup
+                value={assignMode}
+                onValueChange={(v) =>
+                  setAssignMode(v as TaskAssignedMode)
+                }
+                className="space-y-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="all" id="ot-am-all" />
+                  <Label htmlFor="ot-am-all" className="font-normal cursor-pointer">
+                    Všem zaměstnancům
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="single" id="ot-am-single" />
+                  <Label
+                    htmlFor="ot-am-single"
+                    className="font-normal cursor-pointer"
+                  >
+                    Konkrétnímu zaměstnanci
+                  </Label>
+                </div>
+              </RadioGroup>
+              {assignMode === "single" ? (
+                <select
+                  className={NATIVE_SELECT_CLASS}
+                  value={assignEmployeeId}
+                  onChange={(e) => setAssignEmployeeId(e.target.value)}
+                  aria-label="Zaměstnanec"
+                >
+                  <option value="">— vyberte —</option>
+                  {(employeesList as {
+                    id?: string;
+                    firstName?: string;
+                    lastName?: string;
+                  }[])
+                    .filter((e) => e?.id)
+                    .map((e) => (
+                      <option key={String(e.id)} value={String(e.id)}>
+                        {`${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() ||
+                          e.id}
+                      </option>
+                    ))}
+                </select>
+              ) : null}
             </div>
             <div className="flex gap-2 justify-end">
               <Button type="button" variant="outline" size="sm" onClick={cancelEdit}>
@@ -370,11 +494,21 @@ export function OrganizationTasksDialog({
                                 {t.description}
                               </p>
                             ) : null}
+                            <p className="text-xs text-slate-500 mt-1 space-x-2">
+                              <span>Termín: {formatDueCs(t.dueDate)}</span>
+                              <span>·</span>
+                              <span>
+                                Priorita:{" "}
+                                {jobTaskPriorityLabel(
+                                  (t.priority as JobTaskPriority) ?? "low"
+                                )}
+                              </span>
+                            </p>
                             <p className="text-xs text-slate-500 mt-1">
                               Vytvořeno: {formatTaskDate(t.createdAt)} ·{" "}
-                              {t.assignedTo
-                                ? `Přiřazeno: ${employeeNameById.get(String(t.assignedTo)) ?? t.assignedTo}`
-                                : "Bez přiřazení"}
+                              {organizationTaskIsForAll(t)
+                                ? "Přiřazeno: Všem"
+                                : `Přiřazeno: ${employeeNameById.get(String(t.assignedTo)) ?? t.assignedTo}`}
                             </p>
                           </div>
                           {canManage ? (

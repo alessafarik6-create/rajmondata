@@ -55,6 +55,10 @@ import {
   Plus,
   Trash2,
 } from "lucide-react";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
+import type { TaskAssignedMode } from "@/lib/job-task-types";
+import { jobTaskIsForAll } from "@/lib/job-task-types";
 
 function todayIso(): string {
   const t = new Date();
@@ -98,6 +102,29 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
   );
   const { data: actorProfile } = useDoc(actorRef);
 
+  const employeesCol = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "employees")
+        : null,
+    [firestore, companyId]
+  );
+  const { data: employeesRaw } = useCollection(employeesCol);
+  const employeeNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    const list = Array.isArray(employeesRaw) ? employeesRaw : [];
+    for (const e of list as {
+      id?: string;
+      firstName?: string;
+      lastName?: string;
+    }[]) {
+      const id = String(e?.id ?? "");
+      if (!id) continue;
+      m.set(id, `${e.firstName ?? ""} ${e.lastName ?? ""}`.trim() || id);
+    }
+    return m;
+  }, [employeesRaw]);
+
   const tasksCol = useMemoFirebase(
     () =>
       firestore && companyId && jobId
@@ -127,6 +154,9 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
   const [dueInput, setDueInput] = useState(todayIso());
   const [priorityInput, setPriorityInput] = useState<JobTaskPriority>("medium");
   const [statusInput, setStatusInput] = useState<JobTaskStatus>("active");
+  const [assignModeInput, setAssignModeInput] =
+    useState<TaskAssignedMode>("all");
+  const [assignEmployeeId, setAssignEmployeeId] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -138,6 +168,8 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
     setDueInput(todayIso());
     setPriorityInput("medium");
     setStatusInput("active");
+    setAssignModeInput("all");
+    setAssignEmployeeId("");
   };
 
   const openCreate = () => {
@@ -154,6 +186,13 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
     );
     setPriorityInput((row.priority as JobTaskPriority) || "medium");
     setStatusInput((row.status as JobTaskStatus) || "active");
+    if (jobTaskIsForAll(row)) {
+      setAssignModeInput("all");
+      setAssignEmployeeId("");
+    } else {
+      setAssignModeInput("single");
+      setAssignEmployeeId(row.assignedTo ? String(row.assignedTo) : "");
+    }
     setDialogOpen(true);
   };
 
@@ -172,6 +211,17 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
       toast({
         title: "Termín",
         description: "Vyberte termín.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (
+      assignModeInput === "single" &&
+      !String(assignEmployeeId || "").trim()
+    ) {
+      toast({
+        title: "Přiřazení",
+        description: "Vyberte zaměstnance nebo zvolte „Všem“.",
         variant: "destructive",
       });
       return;
@@ -341,6 +391,11 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
           >
             {jobTaskStatusLabel(row.status)}
           </Badge>
+          <Badge variant="outline" className="text-[10px] font-normal h-5 px-1.5">
+            {jobTaskIsForAll(row)
+              ? "Všem"
+              : `Přiřazeno: ${employeeNameById.get(String(row.assignedTo)) ?? row.assignedTo ?? "—"}`}
+          </Badge>
         </div>
       </div>
       {canEdit ? (
@@ -506,6 +561,57 @@ export function JobTasksSection({ companyId, jobId, user, canEdit }: Props) {
                   <SelectItem value="high">Vysoká</SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Přiřazení</Label>
+              <RadioGroup
+                value={assignModeInput}
+                onValueChange={(v) =>
+                  setAssignModeInput(v as TaskAssignedMode)
+                }
+                className="space-y-2"
+              >
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="all" id="jt-am-all" />
+                  <Label htmlFor="jt-am-all" className="font-normal cursor-pointer">
+                    Všem zaměstnancům
+                  </Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="single" id="jt-am-single" />
+                  <Label
+                    htmlFor="jt-am-single"
+                    className="font-normal cursor-pointer"
+                  >
+                    Konkrétnímu zaměstnanci
+                  </Label>
+                </div>
+              </RadioGroup>
+              {assignModeInput === "single" ? (
+                <select
+                  className={NATIVE_SELECT_CLASS}
+                  value={assignEmployeeId}
+                  onChange={(e) => setAssignEmployeeId(e.target.value)}
+                  aria-label="Zaměstnanec"
+                >
+                  <option value="">— vyberte —</option>
+                  {(Array.isArray(employeesRaw) ? employeesRaw : [])
+                    .filter((e) => Boolean((e as { id?: string }).id))
+                    .map((e) => {
+                      const r = e as {
+                        id?: string;
+                        firstName?: string;
+                        lastName?: string;
+                      };
+                      return (
+                        <option key={r.id} value={String(r.id)}>
+                          {`${r.firstName ?? ""} ${r.lastName ?? ""}`.trim() ||
+                            r.id}
+                        </option>
+                      );
+                    })}
+                </select>
+              ) : null}
             </div>
             {editingId ? (
               <div className="space-y-2">

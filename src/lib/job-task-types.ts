@@ -9,6 +9,9 @@ export type JobTaskPriority = "low" | "medium" | "high";
 
 export type JobTaskStatus = "active" | "done";
 
+/** Přiřazení: všem zaměstnancům firmy nebo jednomu (employee dokument id). */
+export type TaskAssignedMode = "single" | "all";
+
 export type JobTaskRow = {
   id: string;
   companyId?: string;
@@ -19,10 +22,18 @@ export type JobTaskRow = {
   dueDate?: string;
   priority?: JobTaskPriority;
   status?: JobTaskStatus;
+  assignedTo?: string | null;
+  assignedMode?: TaskAssignedMode;
   createdBy?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
 };
+
+export function jobTaskIsForAll(row: JobTaskRow): boolean {
+  if (row.assignedMode === "all") return true;
+  if (row.assignedMode === "single") return false;
+  return row.assignedTo == null || String(row.assignedTo).trim() === "";
+}
 
 const PRIORITY_RANK: Record<JobTaskPriority, number> = {
   high: 0,
