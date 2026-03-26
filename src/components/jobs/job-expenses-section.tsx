@@ -72,7 +72,26 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
   LIGHT_FORM_CONTROL_CLASS,
+  LIGHT_SELECT_CONTENT_CLASS,
+  LIGHT_SELECT_TRIGGER_CLASS,
 } from "@/lib/light-form-control-classes";
+
+/** Čitelné texty v sekci nákladů (světlé pozadí) — hlavní / sekundární / částky */
+const EXP = {
+  h1: "text-gray-900 font-bold tracking-tight dark:text-gray-100",
+  h2: "font-semibold text-gray-900 dark:text-gray-100",
+  lead: "text-base text-gray-800 dark:text-gray-200",
+  label: "text-sm font-semibold uppercase tracking-wide text-gray-800 dark:text-gray-200",
+  labelSm: "text-xs font-semibold uppercase text-gray-800 dark:text-gray-200",
+  body: "text-base text-gray-900 dark:text-gray-100",
+  bodySm: "text-sm text-gray-800 dark:text-gray-200",
+  meta: "text-xs text-gray-800 dark:text-gray-200 sm:text-sm",
+  amount: "font-bold tabular-nums text-gray-900 dark:text-gray-50",
+  amountLg: "text-lg font-bold tabular-nums text-gray-900 dark:text-gray-50 sm:text-xl",
+  gridHdr: "text-xs font-medium uppercase tracking-wide text-gray-800 dark:text-gray-200",
+  note: "text-gray-900 dark:text-gray-100",
+  chevron: "shrink-0 text-gray-700 transition-transform duration-200 dark:text-gray-400",
+} as const;
 import {
   Camera,
   ChevronDown,
@@ -689,38 +708,41 @@ export function JobExpensesSection({
           }}
         >
           {isJobDetailWide ? (
-            <div className="border-b border-border/70 bg-muted/30 px-4 py-5 sm:px-6 sm:py-6">
+            <div className="border-b border-gray-200 bg-white px-4 py-5 sm:px-6 sm:py-6 dark:border-gray-700 dark:bg-gray-950/40">
               <h2
                 id="job-expenses-heading"
-                className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl"
+                className={cn(
+                  EXP.h1,
+                  "sm:text-2xl"
+                )}
               >
                 Náklady zakázky
               </h2>
-              <p className="mt-1 text-base text-slate-700 dark:text-slate-300">
+              <p className={cn("mt-1", EXP.lead)}>
                 Součty všech záznamů nákladů (přehled rozpočtu níže v záhlaví sekce).
               </p>
               <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
-                <div className="rounded-lg border border-emerald-200/80 bg-white/90 px-4 py-3 dark:border-emerald-900/50 dark:bg-slate-950/40">
-                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-950/50">
+                  <p className={EXP.label}>
                     Celkem bez DPH
                   </p>
-                  <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-3xl">
+                  <p className={cn("mt-1 text-2xl sm:text-3xl", EXP.amount)}>
                     {formatKc(expenseTotals.net)}
                   </p>
                 </div>
-                <div className="rounded-lg border border-emerald-200/80 bg-white/90 px-4 py-3 dark:border-emerald-900/50 dark:bg-slate-950/40">
-                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-950/50">
+                  <p className={EXP.label}>
                     DPH celkem
                   </p>
-                  <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-3xl">
+                  <p className={cn("mt-1 text-2xl sm:text-3xl", EXP.amount)}>
                     {formatKc(expenseTotals.vat)}
                   </p>
                 </div>
-                <div className="rounded-lg border border-emerald-200/80 bg-white/90 px-4 py-3 dark:border-emerald-900/50 dark:bg-slate-950/40">
-                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-950/50">
+                  <p className={EXP.label}>
                     Celkem s DPH
                   </p>
-                  <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-3xl">
+                  <p className={cn("mt-1 text-2xl sm:text-3xl", EXP.amount)}>
                     {formatKc(expenseTotals.gross)}
                   </p>
                 </div>
@@ -739,13 +761,13 @@ export function JobExpensesSection({
                 className={cn(
                   "flex w-full items-center gap-3 rounded-md text-left outline-none transition-colors",
                   isJobDetailWide
-                    ? "px-2 py-2 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring sm:px-3"
-                    : "rounded-md px-1.5 py-1.5 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+                    ? "px-2 py-2 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-gray-800/50 sm:px-3"
+                    : "rounded-md px-1.5 py-1.5 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-gray-800/50"
                 )}
               >
                 <Wallet
                   className={cn(
-                    "shrink-0 text-primary",
+                    "shrink-0 text-gray-800 dark:text-gray-200",
                     isJobDetailWide ? "h-6 w-6 sm:h-7 sm:w-7" : "h-4 w-4 sm:h-5 sm:w-5"
                   )}
                   aria-hidden
@@ -753,7 +775,7 @@ export function JobExpensesSection({
                 <div className="min-w-0 flex-1">
                   <div
                     className={cn(
-                      "font-semibold text-slate-900 dark:text-slate-100",
+                      EXP.h2,
                       isJobDetailWide ? "text-lg sm:text-xl" : "text-sm sm:text-base"
                     )}
                   >
@@ -765,68 +787,51 @@ export function JobExpensesSection({
                     className={cn(
                       "mt-1 space-y-1.5 leading-tight",
                       isJobDetailWide
-                        ? "text-sm text-slate-700 dark:text-slate-300 sm:text-base"
-                        : "text-[10px] text-muted-foreground sm:text-xs"
+                        ? "text-sm text-gray-800 dark:text-gray-200 sm:text-base"
+                        : "text-xs text-gray-800 dark:text-gray-200 sm:text-sm"
                     )}
                   >
-                    <div className="grid grid-cols-3 gap-x-2 text-center font-medium uppercase tracking-wide">
+                    <div className={cn("grid grid-cols-3 gap-x-2 text-center font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100", !isJobDetailWide && "text-[11px] sm:text-xs")}>
                       <span>Rozpočet</span>
                       <span>Náklady</span>
                       <span>Zbývá</span>
                     </div>
                     <div className="grid grid-cols-3 gap-x-2 tabular-nums">
                       <div>
-                        <div
-                          className={cn(
-                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
-                          )}
-                        >
+                        <div className="text-gray-800 dark:text-gray-200">
                           Bez DPH
                         </div>
                         <div
                           className={cn(
-                            "font-semibold text-foreground",
-                            isJobDetailWide && "text-lg text-slate-900"
+                            "font-semibold text-gray-900 dark:text-gray-50",
+                            isJobDetailWide && "text-lg"
                           )}
                         >
                           {jobBudget != null ? formatKc(jobBudget.budgetNet) : "—"}
                         </div>
                       </div>
                       <div>
-                        <div
-                          className={cn(
-                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
-                          )}
-                        >
+                        <div className="text-gray-800 dark:text-gray-200">
                           Bez DPH
                         </div>
                         <div
                           className={cn(
-                            "font-semibold",
-                            isJobDetailWide
-                              ? "text-lg text-slate-900"
-                              : "text-slate-900 dark:text-slate-100"
+                            "font-semibold text-gray-900 dark:text-gray-50",
+                            isJobDetailWide && "text-lg"
                           )}
                         >
                           {formatKc(expenseTotals.net)}
                         </div>
                       </div>
                       <div>
-                        <div
-                          className={cn(
-                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
-                          )}
-                        >
+                        <div className="text-gray-800 dark:text-gray-200">
                           Bez DPH
                         </div>
                         <div
                           className={cn(
-                            "font-semibold",
-                            remainingNetKc != null && remainingNetKc < 0
-                              ? "text-destructive"
-                              : isJobDetailWide
-                                ? "text-lg text-emerald-800 dark:text-emerald-300"
-                                : "text-emerald-700 dark:text-emerald-400"
+                            "font-semibold text-gray-900 dark:text-gray-50",
+                            remainingNetKc != null && remainingNetKc < 0 && "text-destructive",
+                            isJobDetailWide && "text-lg"
                           )}
                         >
                           {remainingNetKc != null ? formatKc(remainingNetKc) : "—"}
@@ -835,57 +840,40 @@ export function JobExpensesSection({
                     </div>
                     <div className="grid grid-cols-3 gap-x-2 tabular-nums">
                       <div>
-                        <div
-                          className={cn(
-                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
-                          )}
-                        >
+                        <div className="text-gray-800 dark:text-gray-200">
                           S DPH
                         </div>
                         <div
                           className={cn(
-                            "font-semibold text-foreground",
-                            isJobDetailWide && "text-lg text-slate-900"
+                            "font-semibold text-gray-900 dark:text-gray-50",
+                            isJobDetailWide && "text-lg"
                           )}
                         >
                           {jobBudget != null ? formatKc(jobBudget.budgetGross) : "—"}
                         </div>
                       </div>
                       <div>
-                        <div
-                          className={cn(
-                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
-                          )}
-                        >
+                        <div className="text-gray-800 dark:text-gray-200">
                           S DPH
                         </div>
                         <div
                           className={cn(
-                            "font-semibold",
-                            isJobDetailWide
-                              ? "text-lg text-slate-900"
-                              : "text-slate-900 dark:text-slate-100"
+                            "font-semibold text-gray-900 dark:text-gray-50",
+                            isJobDetailWide && "text-lg"
                           )}
                         >
                           {formatKc(expenseTotals.gross)}
                         </div>
                       </div>
                       <div>
-                        <div
-                          className={cn(
-                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
-                          )}
-                        >
+                        <div className="text-gray-800 dark:text-gray-200">
                           S DPH
                         </div>
                         <div
                           className={cn(
-                            "font-semibold",
-                            remainingGrossKc != null && remainingGrossKc < 0
-                              ? "text-destructive"
-                              : isJobDetailWide
-                                ? "text-lg text-emerald-800 dark:text-emerald-300"
-                                : "text-emerald-700 dark:text-emerald-400"
+                            "font-semibold text-gray-900 dark:text-gray-50",
+                            remainingGrossKc != null && remainingGrossKc < 0 && "text-destructive",
+                            isJobDetailWide && "text-lg"
                           )}
                         >
                           {remainingGrossKc != null ? formatKc(remainingGrossKc) : "—"}
@@ -896,7 +884,7 @@ export function JobExpensesSection({
                 </div>
                 <ChevronDown
                   className={cn(
-                    "shrink-0 text-muted-foreground transition-transform duration-200",
+                    EXP.chevron,
                     isJobDetailWide ? "h-5 w-5" : "h-4 w-4",
                     expensesSectionOpen && "rotate-180"
                   )}
@@ -916,14 +904,14 @@ export function JobExpensesSection({
               <p
                 className={cn(
                   isJobDetailWide
-                    ? "text-base text-slate-800 dark:text-slate-200"
-                    : "text-[11px] text-muted-foreground sm:text-xs"
+                    ? "text-base text-gray-800 dark:text-gray-200"
+                    : "text-xs text-gray-800 dark:text-gray-200 sm:text-sm"
                 )}
               >
                 Výdaje a přílohy — částku lze zadat bez DPH nebo s DPH; součty se
                 odečítají od rozpočtu (bez DPH / s DPH).
                 {sortedExpenses.length > 0 ? (
-                  <span className="font-medium text-foreground">
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">
                     {" "}
                     ({sortedExpenses.length})
                   </span>
@@ -934,7 +922,7 @@ export function JobExpensesSection({
                 <Button
                   type="button"
                   className={cn(
-                    "w-full sm:w-auto",
+                    "w-full text-gray-900 sm:w-auto dark:text-gray-100",
                     isJobDetailWide ? "h-11 min-h-[44px] px-6 text-base" : "h-9"
                   )}
                   onClick={openCreate}
@@ -949,10 +937,10 @@ export function JobExpensesSection({
               {sortedExpenses.length === 0 ? (
                 <p
                   className={cn(
-                    "py-2",
+                    "py-2 text-gray-800 dark:text-gray-200",
                     isJobDetailWide
-                      ? "text-base text-slate-800 dark:text-slate-200"
-                      : "py-1 text-xs text-muted-foreground sm:text-sm"
+                      ? "text-base"
+                      : "py-1 text-sm"
                   )}
                 >
                   Zatím žádné náklady. {canEdit ? "Přidejte první záznam." : ""}
@@ -961,7 +949,7 @@ export function JobExpensesSection({
                 <>
                   <div
                     className={cn(
-                      "overflow-y-auto rounded-lg border border-border/60 bg-background/40",
+                      "overflow-y-auto rounded-lg border border-gray-200 bg-white dark:border-gray-700 dark:bg-gray-950/40",
                       isJobDetailWide
                         ? expensesListExpanded
                           ? "max-h-[min(75vh,880px)]"
@@ -989,7 +977,7 @@ export function JobExpensesSection({
                               {attachmentKind === "pdf" ? (
                                 <FileText
                                   className={cn(
-                                    "shrink-0 text-primary",
+                                    "shrink-0 text-gray-800 dark:text-gray-200",
                                     isJobDetailWide ? "h-6 w-6" : "h-3.5 w-3.5 sm:h-4 sm:w-4"
                                   )}
                                   aria-hidden
@@ -1018,7 +1006,10 @@ export function JobExpensesSection({
                                   type="button"
                                   variant="ghost"
                                   size="icon"
-                                  className={isJobDetailWide ? "h-10 w-10" : "h-8 w-8"}
+                                  className={cn(
+                                    isJobDetailWide ? "h-10 w-10" : "h-8 w-8",
+                                    "text-gray-800 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-200 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                                  )}
                                   asChild
                                 >
                                   <a
@@ -1036,7 +1027,10 @@ export function JobExpensesSection({
                                   type="button"
                                   variant="ghost"
                                   size="icon"
-                                  className={isJobDetailWide ? "h-10 w-10" : "h-8 w-8"}
+                                  className={cn(
+                                    isJobDetailWide ? "h-10 w-10" : "h-8 w-8",
+                                    "text-gray-800 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-200 dark:hover:bg-gray-800 dark:hover:text-gray-100"
+                                  )}
                                   asChild
                                 >
                                   <a
@@ -1052,7 +1046,7 @@ export function JobExpensesSection({
                               </div>
                             </>
                           ) : (
-                            <span className="text-slate-800 dark:text-slate-300">—</span>
+                            <span className="text-gray-800 dark:text-gray-200">—</span>
                           );
 
                         if (isJobDetailWide) {
@@ -1062,44 +1056,46 @@ export function JobExpensesSection({
                                 className="grid grid-cols-1 gap-3 px-3 py-4 text-base sm:grid-cols-[minmax(0,7.5rem)_minmax(0,9rem)_minmax(0,8rem)_minmax(0,9rem)_minmax(0,1fr)_minmax(0,10rem)_auto] sm:items-center sm:gap-4 sm:px-5 sm:py-4 lg:gap-5"
                               >
                                 <div className="space-y-1.5">
-                                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                                  <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">
                                     {expenseDateLabel(row)}
                                   </span>
                                   <Badge
                                     variant="secondary"
-                                    className="text-xs font-normal"
+                                    className="border border-gray-300 bg-gray-100 text-xs font-medium text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                                   >
                                     {tag} · {r.vatRate} %
                                   </Badge>
                                 </div>
                                 <div className="tabular-nums">
-                                  <p className="text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
+                                  <p className={EXP.labelSm}>
                                     Bez DPH
                                   </p>
-                                  <p className="text-lg font-bold text-slate-900 dark:text-slate-50 sm:text-xl">
+                                  <p className={EXP.amountLg}>
                                     {formatKc(r.amountNet)}
                                   </p>
                                 </div>
                                 <div className="tabular-nums">
-                                  <p className="text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
+                                  <p className={EXP.labelSm}>
                                     DPH
                                   </p>
-                                  <p className="text-lg font-bold text-slate-900 dark:text-slate-50 sm:text-xl">
+                                  <p className={EXP.amountLg}>
                                     {formatKc(r.vatAmount)}
                                   </p>
                                 </div>
                                 <div className="tabular-nums">
-                                  <p className="text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
+                                  <p className={EXP.labelSm}>
                                     S DPH
                                   </p>
-                                  <p className="text-lg font-bold text-slate-900 dark:text-slate-50 sm:text-xl">
+                                  <p className={EXP.amountLg}>
                                     {formatKc(r.amountGross)}
                                   </p>
                                 </div>
                                 <div className="min-w-0">
-                                  <p className="line-clamp-3 break-words text-base leading-snug text-slate-900 dark:text-slate-100">
+                                  <p className="line-clamp-3 break-words text-base leading-snug text-gray-900 dark:text-gray-100">
                                     {row.note?.trim() || (
-                                      <span className="italic text-slate-800">—</span>
+                                      <span className="italic text-gray-700">
+                                        —
+                                      </span>
                                     )}
                                   </p>
                                 </div>
@@ -1113,7 +1109,7 @@ export function JobExpensesSection({
                                         type="button"
                                         variant="ghost"
                                         size="icon"
-                                        className="h-10 w-10"
+                                        className="h-10 w-10 text-gray-800 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-200 dark:hover:bg-gray-800"
                                         onClick={() => openEdit(row)}
                                         aria-label="Upravit náklad"
                                       >
@@ -1141,36 +1137,38 @@ export function JobExpensesSection({
                           <li key={row.id}>
                             <div
                               className={cn(
-                                "grid gap-x-2 gap-y-1 px-2 py-2 text-xs sm:min-h-11 sm:max-h-[60px] sm:grid-cols-[100px_120px_1fr_minmax(0,120px)_80px] sm:items-center sm:py-1.5 sm:text-sm"
+                                "grid gap-x-2 gap-y-1 px-2 py-2 text-xs text-gray-900 sm:min-h-11 sm:max-h-[60px] sm:grid-cols-[100px_120px_1fr_minmax(0,120px)_80px] sm:items-center sm:py-1.5 sm:text-sm dark:text-gray-100"
                               )}
                             >
-                              <div className="order-2 tabular-nums text-muted-foreground sm:order-1">
+                              <div className="order-2 tabular-nums text-gray-800 sm:order-1 dark:text-gray-200">
                                 {expenseDateLabel(row)}
                               </div>
                               <div className="order-1 space-y-0.5 font-semibold tabular-nums sm:order-2">
                                 <div className="flex flex-wrap items-center gap-1">
                                   <Badge
                                     variant="secondary"
-                                    className="h-5 px-1.5 text-[9px] font-normal"
+                                    className="h-5 border border-gray-300 bg-gray-100 px-1.5 text-[10px] font-medium text-gray-900 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
                                   >
                                     {tag}
                                   </Badge>
-                                  <span className="text-[10px] font-normal text-muted-foreground sm:text-xs">
+                                  <span className="text-[10px] font-medium text-gray-800 sm:text-xs dark:text-gray-200">
                                     DPH {r.vatRate} %
                                   </span>
                                 </div>
-                                <div className="text-[10px] font-normal text-muted-foreground sm:text-xs">
+                                <div className="text-[10px] font-normal text-gray-800 sm:text-xs dark:text-gray-200">
                                   Bez DPH {formatKc(r.amountNet)} · DPH{" "}
                                   {formatKc(r.vatAmount)}
                                 </div>
-                                <div className="text-slate-900 dark:text-slate-100">
+                                <div className="font-bold text-gray-900 dark:text-gray-50">
                                   S DPH {formatKc(r.amountGross)}
                                 </div>
                               </div>
                               <div className="order-3 min-w-0 sm:col-span-1">
-                                <p className="line-clamp-2 break-words text-foreground/90 sm:line-clamp-1">
+                                <p className="line-clamp-2 break-words text-gray-900 sm:line-clamp-1 dark:text-gray-100">
                                   {row.note?.trim() || (
-                                    <span className="italic text-muted-foreground">—</span>
+                                    <span className="italic text-gray-700">
+                                      —
+                                    </span>
                                   )}
                                 </p>
                               </div>
@@ -1179,7 +1177,7 @@ export function JobExpensesSection({
                                   <>
                                     {attachmentKind === "pdf" ? (
                                       <FileText
-                                        className="h-3.5 w-3.5 shrink-0 text-primary sm:h-4 sm:w-4"
+                                        className="h-3.5 w-3.5 shrink-0 text-gray-800 dark:text-gray-200 sm:h-4 sm:w-4"
                                         aria-hidden
                                       />
                                     ) : (
@@ -1187,7 +1185,7 @@ export function JobExpensesSection({
                                         href={row.fileUrl}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-border"
+                                        className="relative h-8 w-8 shrink-0 overflow-hidden rounded border border-gray-200 dark:border-gray-700"
                                         title={row.fileName || "Otevřít"}
                                       >
                                         {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1203,7 +1201,7 @@ export function JobExpensesSection({
                                         type="button"
                                         variant="ghost"
                                         size="icon"
-                                        className="h-8 w-8"
+                                        className="h-8 w-8 text-gray-800 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-200 dark:hover:bg-gray-800 dark:hover:text-gray-100"
                                         asChild
                                       >
                                         <a
@@ -1219,7 +1217,7 @@ export function JobExpensesSection({
                                         type="button"
                                         variant="ghost"
                                         size="icon"
-                                        className="h-8 w-8"
+                                        className="h-8 w-8 text-gray-800 hover:bg-gray-100 hover:text-gray-900 dark:text-gray-200 dark:hover:bg-gray-800 dark:hover:text-gray-100"
                                         asChild
                                       >
                                         <a
@@ -1233,7 +1231,7 @@ export function JobExpensesSection({
                                     </div>
                                   </>
                                 ) : (
-                                  <span className="text-muted-foreground">—</span>
+                                  <span className="text-gray-700 dark:text-gray-400">—</span>
                                 )}
                               </div>
                               <div className="order-5 flex justify-end gap-0.5 sm:justify-end">
@@ -1274,7 +1272,8 @@ export function JobExpensesSection({
                       variant="ghost"
                       size="sm"
                       className={cn(
-                        isJobDetailWide ? "h-11 px-4 text-base" : "h-8 px-2 text-xs"
+                        "font-medium text-gray-900 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-gray-800",
+                        isJobDetailWide ? "h-11 px-4 text-base" : "h-8 px-2 text-sm"
                       )}
                       onClick={() => setExpensesListExpanded((v) => !v)}
                     >
@@ -1297,15 +1296,20 @@ export function JobExpensesSection({
       >
         <DialogContent
           className={cn(
-            "bg-white border-slate-200 text-slate-900 w-[95vw] max-h-[90vh] overflow-y-auto flex flex-col gap-0",
+            "border-gray-200 bg-white text-gray-900 w-[95vw] max-h-[90vh] overflow-y-auto flex flex-col gap-0",
             isJobDetailWide ? "max-w-2xl" : "max-w-lg"
           )}
         >
           <DialogHeader>
-            <DialogTitle className={cn(isJobDetailWide && "text-xl sm:text-2xl")}>
+            <DialogTitle
+              className={cn(
+                "font-bold text-gray-900 dark:text-gray-100",
+                isJobDetailWide && "text-xl sm:text-2xl"
+              )}
+            >
               {editingId ? "Upravit náklad" : "Nový náklad"}
             </DialogTitle>
-            <DialogDescription>
+            <DialogDescription className="text-base text-gray-800 dark:text-gray-200">
               Zvolte, zda zadáváte částku bez DPH nebo s DPH, sazbu DPH a částku. Volitelně připojte přílohu dokladu.
             </DialogDescription>
           </DialogHeader>
@@ -1319,7 +1323,10 @@ export function JobExpensesSection({
             <div className="space-y-2">
               <Label
                 htmlFor="expense-amount-type"
-                className={cn(isJobDetailWide && "text-base")}
+                className={cn(
+                  "font-medium text-gray-900 dark:text-gray-100",
+                  isJobDetailWide && "text-base"
+                )}
               >
                 Zadaná částka
               </Label>
@@ -1332,13 +1339,13 @@ export function JobExpensesSection({
                 <SelectTrigger
                   id="expense-amount-type"
                   className={cn(
-                    LIGHT_FORM_CONTROL_CLASS,
+                    LIGHT_SELECT_TRIGGER_CLASS,
                     isJobDetailWide ? "min-h-12 h-12 text-base" : "min-h-[44px]"
                   )}
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className={LIGHT_SELECT_CONTENT_CLASS}>
                   <SelectItem value="net">Bez DPH</SelectItem>
                   <SelectItem value="gross">S DPH</SelectItem>
                 </SelectContent>
@@ -1347,7 +1354,10 @@ export function JobExpensesSection({
             <div className="space-y-2">
               <Label
                 htmlFor="expense-vat"
-                className={cn(isJobDetailWide && "text-base")}
+                className={cn(
+                  "font-medium text-gray-900 dark:text-gray-100",
+                  isJobDetailWide && "text-base"
+                )}
               >
                 Sazba DPH
               </Label>
@@ -1355,13 +1365,13 @@ export function JobExpensesSection({
                 <SelectTrigger
                   id="expense-vat"
                   className={cn(
-                    LIGHT_FORM_CONTROL_CLASS,
+                    LIGHT_SELECT_TRIGGER_CLASS,
                     isJobDetailWide ? "min-h-12 h-12 text-base" : "min-h-[44px]"
                   )}
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className={LIGHT_SELECT_CONTENT_CLASS}>
                   {VAT_RATE_OPTIONS.map((r) => (
                     <SelectItem key={r} value={String(r)}>
                       {r} % DPH
@@ -1371,7 +1381,10 @@ export function JobExpensesSection({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="expense-amount">
+              <Label
+                htmlFor="expense-amount"
+                className="font-medium text-gray-900 dark:text-gray-100"
+              >
                 Částka (Kč) * — {amountTypeInput === "gross" ? "s DPH" : "bez DPH"}
               </Label>
               <Input
@@ -1396,12 +1409,14 @@ export function JobExpensesSection({
                 return (
                   <div
                     className={cn(
-                      "rounded-md border border-emerald-200/80 bg-emerald-50/60 px-2.5 py-2 text-emerald-950 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-100",
-                      isJobDetailWide ? "text-base" : "text-xs"
+                      "rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100",
+                      isJobDetailWide ? "text-base" : "text-sm"
                     )}
                   >
-                    <div className="font-medium text-foreground/90">Přepočet</div>
-                    <div className="mt-1 space-y-0.5 tabular-nums">
+                    <div className="font-semibold text-gray-900 dark:text-gray-100">
+                      Přepočet
+                    </div>
+                    <div className="mt-1 space-y-0.5 tabular-nums text-gray-900 dark:text-gray-100">
                       <div>Bez DPH: {formatKc(amountNet)}</div>
                       <div>
                         DPH ({rate} %): {formatKc(vatAmount)}
@@ -1415,7 +1430,10 @@ export function JobExpensesSection({
             <div className="space-y-2">
               <Label
                 htmlFor="expense-date"
-                className={cn(isJobDetailWide && "text-base")}
+                className={cn(
+                  "font-medium text-gray-900 dark:text-gray-100",
+                  isJobDetailWide && "text-base"
+                )}
               >
                 Datum *
               </Label>
@@ -1452,24 +1470,26 @@ export function JobExpensesSection({
             </div>
 
             <div className="space-y-2">
-              <Label>Příloha (volitelné)</Label>
-              <div className="flex flex-col sm:flex-row gap-2">
+              <Label className="font-medium text-gray-900 dark:text-gray-100">
+                Příloha (volitelné)
+              </Label>
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
                   type="button"
                   variant="outline"
-                  className="flex-1 min-h-[44px] justify-start gap-2"
+                  className="flex-1 min-h-[44px] justify-start gap-2 border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-900"
                   onClick={() => galleryInputRef.current?.click()}
                 >
-                  <ImageIcon className="w-4 h-4 shrink-0" />
+                  <ImageIcon className="h-4 w-4 shrink-0" />
                   Fotografie nebo PDF
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
-                  className="flex-1 min-h-[44px] justify-start gap-2"
+                  className="flex-1 min-h-[44px] justify-start gap-2 border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-900"
                   onClick={() => cameraInputRef.current?.click()}
                 >
-                  <Camera className="w-4 h-4 shrink-0" />
+                  <Camera className="h-4 w-4 shrink-0" />
                   Vyfotit doklad
                 </Button>
               </div>
@@ -1495,12 +1515,13 @@ export function JobExpensesSection({
                 }}
               />
               {pendingFile ? (
-                <p className="text-sm text-muted-foreground break-all">
-                  Nový soubor: <span className="font-medium text-foreground">{pendingFile.name}</span>
+                <p className={cn("break-all", EXP.bodySm)}>
+                  Nový soubor:{" "}
+                  <span className="font-semibold text-gray-900 dark:text-gray-100">{pendingFile.name}</span>
                 </p>
               ) : editingId ? (
                 <div className="space-y-2">
-                  <p className="text-sm text-muted-foreground">
+                  <p className={EXP.bodySm}>
                     Příloha beze změny (vyberte soubor pro nahrazení).
                   </p>
                   {(() => {
@@ -1509,12 +1530,18 @@ export function JobExpensesSection({
                     const kind = inferJobMediaItemType(current);
                     if (kind === "pdf") {
                       return (
-                        <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2">
-                          <FileText className="h-6 w-6 shrink-0 text-primary" />
-                          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                        <div className="flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/50">
+                          <FileText className="h-6 w-6 shrink-0 text-gray-800 dark:text-gray-200" />
+                          <span className="min-w-0 flex-1 truncate text-xs font-semibold text-gray-900 dark:text-gray-100">
                             {current.fileName || "PDF"}
                           </span>
-                          <Button type="button" variant="ghost" size="sm" className="shrink-0" asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 text-gray-900 hover:bg-gray-100 dark:text-gray-100 dark:hover:bg-gray-800"
+                            asChild
+                          >
                             <a href={current.fileUrl} target="_blank" rel="noopener noreferrer">
                               Náhled
                             </a>
@@ -1523,7 +1550,7 @@ export function JobExpensesSection({
                       );
                     }
                     return (
-                      <div className="overflow-hidden rounded-md border border-border bg-muted max-h-40 w-full max-w-xs mx-auto sm:mx-0">
+                      <div className="mx-auto max-h-40 w-full max-w-xs overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/50 sm:mx-0">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
                         <img
                           src={current.fileUrl}
@@ -1536,7 +1563,7 @@ export function JobExpensesSection({
                 </div>
               ) : null}
               {pendingFile && isAllowedJobImageFile(pendingFile) && attachmentPreviewUrl ? (
-                <div className="mt-2 max-h-48 overflow-hidden rounded-md border border-border bg-muted">
+                <div className="mt-2 max-h-48 overflow-hidden rounded-md border border-gray-200 bg-gray-50 dark:border-gray-700 dark:bg-gray-900/50">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={attachmentPreviewUrl}
@@ -1546,9 +1573,9 @@ export function JobExpensesSection({
                 </div>
               ) : null}
               {pendingFile && !isAllowedJobImageFile(pendingFile) && pendingFile.type === "application/pdf" ? (
-                <div className="mt-2 flex items-center gap-2 rounded-md border border-border bg-muted/50 px-3 py-2">
-                  <FileText className="h-8 w-8 shrink-0 text-primary" />
-                  <span className="min-w-0 flex-1 break-all text-sm font-medium">
+                <div className="mt-2 flex items-center gap-2 rounded-md border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-900/50">
+                  <FileText className="h-8 w-8 shrink-0 text-gray-800 dark:text-gray-200" />
+                  <span className="min-w-0 flex-1 break-all text-sm font-semibold text-gray-900 dark:text-gray-100">
                     {pendingFile.name}
                   </span>
                 </div>
@@ -1556,11 +1583,11 @@ export function JobExpensesSection({
             </div>
           </div>
 
-          <DialogFooter className="gap-2 sm:gap-0 flex-col sm:flex-row">
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:gap-0">
             <Button
               type="button"
               variant="outline"
-              className="min-h-[44px] w-full sm:w-auto"
+              className="min-h-[44px] w-full border-gray-300 bg-white text-gray-900 hover:bg-gray-50 sm:w-auto dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-900"
               disabled={submitting}
               onClick={() => {
                 setDialogOpen(false);
@@ -1571,7 +1598,7 @@ export function JobExpensesSection({
             </Button>
             <Button
               type="button"
-              className="min-h-[44px] w-full sm:w-auto"
+              className="min-h-[44px] w-full text-white sm:w-auto"
               disabled={submitting}
               onClick={() => void persistExpense()}
             >
@@ -1587,18 +1614,20 @@ export function JobExpensesSection({
           if (!open) setDeleteTarget(null);
         }}
       >
-        <DialogContent className="bg-white border-slate-200 text-slate-900 w-[95vw] max-w-md">
+        <DialogContent className="w-[95vw] max-w-md border-gray-200 bg-white text-gray-900">
           <DialogHeader>
-            <DialogTitle>Smazat náklad?</DialogTitle>
-            <DialogDescription>
+            <DialogTitle className="font-bold text-gray-900 dark:text-gray-100">
+              Smazat náklad?
+            </DialogTitle>
+            <DialogDescription className="text-base text-gray-800 dark:text-gray-200">
               Tato akce je nevratná. Soubor přílohy bude také odstraněn z úložiště.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 flex-col sm:flex-row">
+          <DialogFooter className="flex-col gap-2 sm:flex-row">
             <Button
               type="button"
               variant="outline"
-              className="min-h-[44px]"
+              className="min-h-[44px] border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100"
               disabled={deleting}
               onClick={() => setDeleteTarget(null)}
             >
