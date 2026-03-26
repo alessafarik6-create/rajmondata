@@ -72,6 +72,13 @@ import {
 
 const ALL = "__all__";
 
+/**
+ * Firestore: limit musí být celé číslo 1–1000; větší / NaN / null způsobí invalid-argument.
+ */
+function firestoreSafeLimit(limitValue: unknown): number {
+  return Math.min(Math.max(Number(limitValue) || 50, 1), 1000);
+}
+
 function formatHours(h: number | null): string {
   if (h == null || !Number.isFinite(h)) return "—";
   return `${h} h`;
@@ -178,7 +185,7 @@ export default function AttendanceOverviewPage() {
       base,
       where("date", ">=", rangeStr.start),
       where("date", "<=", rangeStr.end),
-      limit(8000)
+      limit(firestoreSafeLimit(1000))
     );
   }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
@@ -189,7 +196,7 @@ export default function AttendanceOverviewPage() {
       base,
       where("date", ">=", rangeStr.start),
       where("date", "<=", rangeStr.end),
-      limit(8000)
+      limit(firestoreSafeLimit(1000))
     );
   }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
@@ -200,7 +207,7 @@ export default function AttendanceOverviewPage() {
       base,
       where("date", ">=", rangeStr.start),
       where("date", "<=", rangeStr.end),
-      limit(8000)
+      limit(firestoreSafeLimit(1000))
     );
   }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
@@ -211,7 +218,7 @@ export default function AttendanceOverviewPage() {
       base,
       where("date", ">=", rangeStr.start),
       where("date", "<=", rangeStr.end),
-      limit(12000)
+      limit(firestoreSafeLimit(1000))
     );
   }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
