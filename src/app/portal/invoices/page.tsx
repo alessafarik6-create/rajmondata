@@ -197,7 +197,7 @@ export default function InvoicesPage() {
                           <DropdownMenuLabel>Možnosti</DropdownMenuLabel>
                           <DropdownMenuItem asChild>
                             <Link href={`/portal/invoices/${inv.id}`}>
-                              <ExternalLink className="w-4 h-4 mr-2" /> Otevřít doklad
+                              <ExternalLink className="w-4 h-4 mr-2" /> Otevřít / náhled
                             </Link>
                           </DropdownMenuItem>
                           {jobId ? (

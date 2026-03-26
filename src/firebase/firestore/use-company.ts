@@ -59,6 +59,9 @@ export type CompanyProfile = {
    */
   registeredOfficeAddress?: string;
   address?: string;
+
+  /** Logo firmy pro doklady (URL z Firebase Storage). */
+  organizationLogoUrl?: string | null;
 };
 
 /** Jednotný výstup: companyId pouze z `users/{uid}.companyId` (žádné URL). */

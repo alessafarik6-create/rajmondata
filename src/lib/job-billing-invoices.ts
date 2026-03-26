@@ -6,12 +6,14 @@ import type { Firestore } from "firebase/firestore";
 import {
   collection,
   doc,
+  getDoc,
   getDocs,
   increment,
   limit,
   query,
   runTransaction,
   serverTimestamp,
+  updateDoc,
   where,
 } from "firebase/firestore";
 import {
@@ -23,6 +25,12 @@ import {
 } from "@/lib/vat-calculations";
 import { computeDepositAmountKc } from "@/lib/work-contract-deposit";
 import type { JobBudgetType } from "@/lib/vat-calculations";
+import {
+  buildAdvanceInvoiceHtml,
+  buildTaxReceiptHtml,
+  singleLineFromGross,
+  type InvoiceLineRow,
+} from "@/lib/invoice-a4-html";
 
 export const JOB_INVOICE_TYPES = {
   ADVANCE: "advance_invoice",
@@ -85,110 +93,107 @@ function nextInvoiceNo(prefix: string): string {
   return `${prefix}-${y}-${r}`;
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+export function variableSymbolFromInvoiceNumber(invoiceNumber: string): string {
+  const d = invoiceNumber.replace(/\D/g, "");
+  if (d.length >= 4) return d.slice(0, 10);
+  return invoiceNumber.replace(/\s/g, "").slice(0, 20) || invoiceNumber;
 }
 
-export function buildAdvanceInvoiceHtml(params: {
-  title: string;
-  supplierName: string;
-  supplierLines: string;
-  customerName: string;
-  customerLines: string;
-  invoiceNumber: string;
-  issueDate: string;
-  dueDate: string;
-  jobName: string;
-  contractNumber?: string | null;
+export type ManualAdvanceLineInput = {
+  description: string;
+  quantity: number;
+  unit: string;
+  unitPriceNet: number;
+  vatRate: VatRatePercent;
+};
+
+export function computeManualAdvanceTotals(lines: ManualAdvanceLineInput[]): {
+  rows: InvoiceLineRow[];
   amountNet: number;
-  vatRate: number;
   vatAmount: number;
   amountGross: number;
-  note?: string;
-}): string {
-  const fmt = (n: number) =>
-    `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><title>${escapeHtml(
-    params.title
-  )}</title>
-<style>
-body{font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#000;max-width:720px;margin:24px auto;padding:16px;line-height:1.45}
-h1{font-size:1.25rem;margin:0 0 8px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
-.box{border:1px solid #ccc;padding:12px;border-radius:8px}
-table{width:100%;border-collapse:collapse;margin:16px 0}
-td{padding:6px 8px;border-bottom:1px solid #eee}
-td:first-child{color:#333;width:55%}
-.amount{font-size:1.15rem;font-weight:700}
-.note{font-size:0.9rem;color:#333;margin-top:12px}
-</style></head><body>
-<h1>${escapeHtml(params.title)}</h1>
-<p><strong>Číslo:</strong> ${escapeHtml(params.invoiceNumber)}</p>
-<p><strong>Datum vystavení:</strong> ${escapeHtml(params.issueDate)} &nbsp;·&nbsp; <strong>Splatnost:</strong> ${escapeHtml(params.dueDate)}</p>
-<p><strong>Zakázka:</strong> ${escapeHtml(params.jobName)}</p>
-${params.contractNumber ? `<p><strong>Smlouva č.:</strong> ${escapeHtml(params.contractNumber)}</p>` : ""}
-<div class="grid">
-<div class="box"><strong>Dodavatel</strong><div style="white-space:pre-wrap;margin-top:6px">${params.supplierLines}</div></div>
-<div class="box"><strong>Odběratel</strong><div style="white-space:pre-wrap;margin-top:6px">${params.customerLines}</div></div>
-</div>
-<table>
-<tr><td>Základ daně</td><td class="amount" style="text-align:right">${fmt(params.amountNet)}</td></tr>
-<tr><td>DPH (${params.vatRate} %)</td><td style="text-align:right">${fmt(params.vatAmount)}</td></tr>
-<tr><td><strong>Celkem k úhradě</strong></td><td class="amount" style="text-align:right">${fmt(params.amountGross)}</td></tr>
-</table>
-<p class="note">${escapeHtml(params.note ?? "Doklad slouží jako zálohová faktura dle smlouvy o dílo.")}</p>
-</body></html>`;
+} {
+  const rows: InvoiceLineRow[] = [];
+  let amountNet = 0;
+  let vatAmount = 0;
+  let amountGross = 0;
+  for (const L of lines) {
+    const q = Math.max(0, roundMoney2(L.quantity));
+    const lineNet = roundMoney2(q * roundMoney2(L.unitPriceNet));
+    const vat = roundMoney2((lineNet * L.vatRate) / 100);
+    const gross = roundMoney2(lineNet + vat);
+    rows.push({
+      description: L.description.trim() || "Položka",
+      quantity: q,
+      unit: (L.unit || "ks").trim() || "ks",
+      unitPriceNet: roundMoney2(L.unitPriceNet),
+      vatRate: L.vatRate,
+      lineNet,
+      lineVat: vat,
+      lineGross: gross,
+    });
+    amountNet += lineNet;
+    vatAmount += vat;
+    amountGross += gross;
+  }
+  return {
+    rows,
+    amountNet: roundMoney2(amountNet),
+    vatAmount: roundMoney2(vatAmount),
+    amountGross: roundMoney2(amountGross),
+  };
 }
 
-export function buildTaxReceiptHtml(params: {
-  supplierName: string;
-  supplierLines: string;
-  customerName: string;
-  customerLines: string;
-  documentNumber: string;
-  paymentDate: string;
-  relatedInvoiceNumber: string;
-  jobName: string;
-  amountNet: number;
-  vatRate: number;
-  vatAmount: number;
-  amountGross: number;
-  variableSymbol?: string;
-  note?: string;
-}): string {
-  const fmt = (n: number) =>
-    `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
-  return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><title>Daňový doklad k přijaté platbě</title>
-<style>
-body{font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#000;max-width:720px;margin:24px auto;padding:16px;line-height:1.45}
-h1{font-size:1.2rem;margin:0 0 8px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
-.box{border:1px solid #ccc;padding:12px;border-radius:8px}
-table{width:100%;border-collapse:collapse;margin:16px 0}
-td{padding:6px 8px;border-bottom:1px solid #eee}
-.amount{font-size:1.1rem;font-weight:700}
-</style></head><body>
-<h1>Daňový doklad k přijaté platbě</h1>
-<p><strong>Číslo dokladu:</strong> ${escapeHtml(params.documentNumber)}</p>
-<p><strong>Datum přijetí platby:</strong> ${escapeHtml(params.paymentDate)}</p>
-<p><strong>Vazba na zálohovou fakturu:</strong> ${escapeHtml(params.relatedInvoiceNumber)}</p>
-<p><strong>Zakázka:</strong> ${escapeHtml(params.jobName)}</p>
-${params.variableSymbol ? `<p><strong>Variabilní symbol:</strong> ${escapeHtml(params.variableSymbol)}</p>` : ""}
-<div class="grid">
-<div class="box"><strong>Dodavatel</strong><div style="white-space:pre-wrap;margin-top:6px">${params.supplierLines}</div></div>
-<div class="box"><strong>Odběratel</strong><div style="white-space:pre-wrap;margin-top:6px">${params.customerLines}</div></div>
-</div>
-<table>
-<tr><td>Základ daně</td><td class="amount" style="text-align:right">${fmt(params.amountNet)}</td></tr>
-<tr><td>DPH (${params.vatRate} %)</td><td style="text-align:right">${fmt(params.vatAmount)}</td></tr>
-<tr><td><strong>Uhrazeno celkem</strong></td><td class="amount" style="text-align:right">${fmt(params.amountGross)}</td></tr>
-</table>
-<p style="font-size:0.9rem;color:#333">${escapeHtml(params.note ?? "Doklad potvrzuje přijetí platby na účet a plní účetní funkci daňového dokladu k přijaté platbě.")}</p>
-</body></html>`;
+/** Položky z uloženého dokladu → vstup pro úpravu (kompatibilní se starým `unitPrice`). */
+export function invoiceItemsToManualLines(inv: Record<string, unknown>): ManualAdvanceLineInput[] {
+  const items = inv.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    return [
+      {
+        description: "",
+        quantity: 1,
+        unit: "ks",
+        unitPriceNet: 0,
+        vatRate: 21,
+      },
+    ];
+  }
+  return items.map((raw) => {
+    const it = raw as Record<string, unknown>;
+    const up =
+      typeof it.unitPriceNet === "number"
+        ? it.unitPriceNet
+        : typeof it.unitPrice === "number"
+          ? it.unitPrice
+          : Number(it.unitPriceNet ?? it.unitPrice) || 0;
+    return {
+      description: String(it.description ?? "").trim() || "Položka",
+      quantity: Math.max(0, Number(it.quantity) || 0),
+      unit: String(it.unit ?? "ks").trim() || "ks",
+      unitPriceNet: roundMoney2(up),
+      vatRate: normalizeVatRate(Number(it.vatRate) || 21),
+    };
+  });
+}
+
+function itemsRowsForFirestore(rows: InvoiceLineRow[]) {
+  return rows.map((r) => ({
+    description: r.description,
+    quantity: r.quantity,
+    unit: r.unit,
+    unitPriceNet: r.unitPriceNet,
+    vatRate: r.vatRate,
+    lineNet: r.lineNet,
+    lineVat: r.lineVat,
+    lineGross: r.lineGross,
+  }));
+}
+
+function representativeVatRate(rows: InvoiceLineRow[]): VatRatePercent {
+  if (rows.length === 0) return 21;
+  const first = rows[0].vatRate;
+  const allSame = rows.every((r) => r.vatRate === first);
+  return allSame ? normalizeVatRate(first) : 21;
 }
 
 export async function findExistingAdvanceForContract(
@@ -251,6 +256,7 @@ export async function createAdvanceInvoiceFromContract(params: {
   contract: WorkContractLike;
   budget: JobBudgetBreakdown;
   userId: string;
+  logoUrl?: string | null;
 }): Promise<{ invoiceId: string; invoiceNumber: string; pdfHtml: string }> {
   const gross = depositGrossKcFromContract(
     params.contract,
@@ -278,28 +284,33 @@ export async function createAdvanceInvoiceFromContract(params: {
   due.setDate(due.getDate() + 14);
   const dueDate = due.toISOString().slice(0, 10);
   const invoiceNumber = nextInvoiceNo("ZF");
-
-  const brJoin = (text: string) =>
-    text
-      .split("\n")
-      .map((l) => escapeHtml(l))
-      .join("<br/>");
+  const vs = variableSymbolFromInvoiceNumber(invoiceNumber);
+  const lineRow = singleLineFromGross({
+    description: `Záloha dle smlouvy o dílo — zakázka ${params.jobName}`,
+    amountNet,
+    vatRate,
+    vatAmount,
+    amountGross,
+  });
 
   const html = buildAdvanceInvoiceHtml({
+    logoUrl: params.logoUrl ?? null,
     title: "Zálohová faktura",
     supplierName: params.supplierName,
-    supplierLines: brJoin(params.supplierAddressLines),
+    supplierAddressText: params.supplierAddressLines || params.supplierName,
     customerName: params.customerName,
-    customerLines: brJoin(params.customerAddressLines),
+    customerAddressText: params.customerAddressLines || params.customerName,
     invoiceNumber,
     issueDate,
     dueDate,
     jobName: params.jobName,
     contractNumber: params.contract.contractNumber != null ? String(params.contract.contractNumber) : null,
+    variableSymbol: vs,
+    items: [lineRow],
     amountNet,
-    vatRate,
     vatAmount,
     amountGross,
+    primaryVatRateLabel: `${vatRate}`,
   });
 
   const invRef = doc(collection(params.firestore, "companies", params.companyId, "invoices"));
@@ -331,19 +342,18 @@ export async function createAdvanceInvoiceFromContract(params: {
       dueDate,
       source: "contract",
       sourceContractId: params.contract.id,
+      contractNumber:
+        params.contract.contractNumber != null
+          ? String(params.contract.contractNumber)
+          : null,
+      variableSymbol: vs,
       /** Stav úhrady zálohové faktury */
       status: "unpaid",
       /** Dokument je vystavený (ne koncept) */
       issueStatus: "issued",
       paidGrossReceived: 0,
       pdfHtml: html,
-      items: [
-        {
-          description: `Záloha dle smlouvy o dílo — zakázka ${params.jobName}`,
-          quantity: 1,
-          unitPrice: amountNet,
-        },
-      ],
+      items: itemsRowsForFirestore([lineRow]),
       totalAmount: amountGross,
       notes: "",
       createdAt: serverTimestamp(),
@@ -362,6 +372,201 @@ export async function createAdvanceInvoiceFromContract(params: {
   });
 
   return { invoiceId: invRef.id, invoiceNumber, pdfHtml: html };
+}
+
+export async function createManualAdvanceInvoice(params: {
+  firestore: Firestore;
+  companyId: string;
+  jobId: string;
+  jobName: string;
+  customerId: string;
+  customerName: string;
+  customerAddressLines: string;
+  supplierName: string;
+  supplierAddressLines: string;
+  userId: string;
+  logoUrl?: string | null;
+  lines: ManualAdvanceLineInput[];
+}): Promise<{ invoiceId: string; invoiceNumber: string; pdfHtml: string }> {
+  const { rows, amountNet, vatAmount, amountGross } = computeManualAdvanceTotals(
+    params.lines
+  );
+  if (rows.length === 0 || amountGross <= 0) {
+    throw new Error("Přidejte alespoň jednu položku s kladnou částkou s DPH.");
+  }
+  const vatRateDoc = representativeVatRate(rows);
+
+  const issueDate = new Date().toISOString().slice(0, 10);
+  const due = new Date();
+  due.setDate(due.getDate() + 14);
+  const dueDate = due.toISOString().slice(0, 10);
+  const invoiceNumber = nextInvoiceNo("ZF");
+  const vs = variableSymbolFromInvoiceNumber(invoiceNumber);
+  const allSameVat = rows.every((r) => r.vatRate === rows[0].vatRate);
+
+  const html = buildAdvanceInvoiceHtml({
+    logoUrl: params.logoUrl ?? null,
+    title: "Zálohová faktura",
+    supplierName: params.supplierName,
+    supplierAddressText: params.supplierAddressLines || params.supplierName,
+    customerName: params.customerName,
+    customerAddressText: params.customerAddressLines || params.customerName,
+    invoiceNumber,
+    issueDate,
+    dueDate,
+    jobName: params.jobName,
+    contractNumber: null,
+    variableSymbol: vs,
+    items: rows,
+    amountNet,
+    vatAmount,
+    amountGross,
+    primaryVatRateLabel: allSameVat ? `${rows[0].vatRate}` : "smíšené",
+    note: "Vlastní zálohová faktura.",
+  });
+
+  const invRef = doc(collection(params.firestore, "companies", params.companyId, "invoices"));
+  const billingMirrorRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "jobs",
+    params.jobId,
+    "billingDocuments",
+    invRef.id
+  );
+
+  await runTransaction(params.firestore, async (tx) => {
+    tx.set(invRef, {
+      type: JOB_INVOICE_TYPES.ADVANCE,
+      organizationId: params.companyId,
+      companyId: params.companyId,
+      jobId: params.jobId,
+      customerId: params.customerId,
+      customerName: params.customerName,
+      amountNet,
+      vatAmount,
+      amountGross,
+      vatRate: vatRateDoc,
+      amountType: "gross" as JobBudgetType,
+      invoiceNumber,
+      issueDate,
+      dueDate,
+      source: "manual",
+      variableSymbol: vs,
+      status: "unpaid",
+      issueStatus: "issued",
+      paidGrossReceived: 0,
+      pdfHtml: html,
+      items: itemsRowsForFirestore(rows),
+      totalAmount: amountGross,
+      notes: "",
+      createdAt: serverTimestamp(),
+      createdBy: params.userId,
+    });
+
+    tx.set(billingMirrorRef, {
+      companyId: params.companyId,
+      jobId: params.jobId,
+      invoiceId: invRef.id,
+      kind: JOB_INVOICE_TYPES.ADVANCE,
+      invoiceNumber,
+      createdAt: serverTimestamp(),
+      createdBy: params.userId,
+    });
+  });
+
+  return { invoiceId: invRef.id, invoiceNumber, pdfHtml: html };
+}
+
+export async function updateAdvanceInvoiceItems(params: {
+  firestore: Firestore;
+  companyId: string;
+  invoiceId: string;
+  jobName: string;
+  customerName: string;
+  customerAddressLines: string;
+  supplierName: string;
+  supplierAddressLines: string;
+  userId: string;
+  logoUrl?: string | null;
+  lines: ManualAdvanceLineInput[];
+}): Promise<{ pdfHtml: string }> {
+  const { rows, amountNet, vatAmount, amountGross } = computeManualAdvanceTotals(
+    params.lines
+  );
+  if (rows.length === 0 || amountGross <= 0) {
+    throw new Error("Přidejte alespoň jednu položku s kladnou částkou s DPH.");
+  }
+  const vatRateDoc = representativeVatRate(rows);
+  const invRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "invoices",
+    params.invoiceId
+  );
+  const snap = await getDoc(invRef);
+  if (!snap.exists()) throw new Error("Doklad neexistuje.");
+  const inv = snap.data() as {
+    type?: string;
+    invoiceNumber?: string;
+    issueDate?: string;
+    dueDate?: string;
+    variableSymbol?: string;
+    sourceContractId?: string;
+    contractNumber?: string | null;
+  };
+  if (inv.type !== JOB_INVOICE_TYPES.ADVANCE) {
+    throw new Error("Upravit lze jen zálohovou fakturu.");
+  }
+  const invoiceNumber = String(inv.invoiceNumber ?? "");
+  const issueDate = String(inv.issueDate ?? new Date().toISOString().slice(0, 10));
+  const dueDate = String(inv.dueDate ?? issueDate);
+  const vs =
+    inv.variableSymbol && String(inv.variableSymbol).trim()
+      ? String(inv.variableSymbol).trim()
+      : variableSymbolFromInvoiceNumber(invoiceNumber);
+  const allSameVat = rows.every((r) => r.vatRate === rows[0].vatRate);
+
+  const html = buildAdvanceInvoiceHtml({
+    logoUrl: params.logoUrl ?? null,
+    title: "Zálohová faktura",
+    supplierName: params.supplierName,
+    supplierAddressText: params.supplierAddressLines || params.supplierName,
+    customerName: params.customerName,
+    customerAddressText: params.customerAddressLines || params.customerName,
+    invoiceNumber,
+    issueDate,
+    dueDate,
+    jobName: params.jobName,
+    contractNumber:
+      inv.contractNumber != null && String(inv.contractNumber).trim()
+        ? String(inv.contractNumber).trim()
+        : null,
+    variableSymbol: vs,
+    items: rows,
+    amountNet,
+    vatAmount,
+    amountGross,
+    primaryVatRateLabel: allSameVat ? `${rows[0].vatRate}` : "smíšené",
+    note: "Doklad slouží jako zálohová faktura dle smlouvy o dílo.",
+  });
+
+  await updateDoc(invRef, {
+    amountNet,
+    vatAmount,
+    amountGross,
+    vatRate: vatRateDoc,
+    totalAmount: amountGross,
+    pdfHtml: html,
+    items: itemsRowsForFirestore(rows),
+    variableSymbol: vs,
+    updatedAt: serverTimestamp(),
+    updatedBy: params.userId,
+  });
+
+  return { pdfHtml: html };
 }
 
 export async function createTaxReceiptForAdvancePayment(params: {
@@ -385,6 +590,7 @@ export async function createTaxReceiptForAdvancePayment(params: {
   note?: string;
   vatRate: VatRatePercent;
   userId: string;
+  logoUrl?: string | null;
 }): Promise<{ receiptId: string; documentNumber: string; pdfHtml: string }> {
   const paidGross = roundMoney2(params.paidGrossInput);
   if (paidGross <= 0) throw new Error("Zadejte kladnou uhrazenou částku.");
@@ -407,17 +613,13 @@ export async function createTaxReceiptForAdvancePayment(params: {
   );
 
   const documentNumber = nextInvoiceNo("DD");
-  const brJoin = (text: string) =>
-    text
-      .split("\n")
-      .map((l) => escapeHtml(l))
-      .join("<br/>");
 
   const html = buildTaxReceiptHtml({
+    logoUrl: params.logoUrl ?? null,
     supplierName: params.supplierName,
-    supplierLines: brJoin(params.supplierAddressLines),
+    supplierAddressText: params.supplierAddressLines || params.supplierName,
     customerName: params.customerName,
-    customerLines: brJoin(params.customerAddressLines),
+    customerAddressText: params.customerAddressLines || params.customerName,
     documentNumber,
     paymentDate: params.paymentDate,
     relatedInvoiceNumber: params.advanceInvoiceNumber,

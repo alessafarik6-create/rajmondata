@@ -20,9 +20,11 @@ import {
   collection,
 } from 'firebase/firestore';
 import Link from 'next/link';
-import { Users, ShieldCheck, Bell, Building2, Clock } from 'lucide-react';
+import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
+import { getFirebaseStorage } from '@/firebase/storage';
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 
 type CompanyBankAccountDoc = {
   id: string;
@@ -59,6 +61,8 @@ export default function SettingsPage() {
   const [poptavkyImportUrlInput, setPoptavkyImportUrlInput] = useState('');
   const [isSavingPoptavkyUrl, setIsSavingPoptavkyUrl] = useState(false);
   const [isSavingCompany, setIsSavingCompany] = useState(false);
+  const [organizationLogoUrl, setOrganizationLogoUrl] = useState('');
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
 
   const [addrStreetAndNumber, setAddrStreetAndNumber] = useState('');
   const [addrCity, setAddrCity] = useState('');
@@ -112,6 +116,9 @@ export default function SettingsPage() {
       setPoptavkyImportUrlInput(
         String((company as { poptavkyImportUrl?: string | null }).poptavkyImportUrl ?? '').trim()
       );
+      setOrganizationLogoUrl(
+        String((company as { organizationLogoUrl?: string | null }).organizationLogoUrl ?? '').trim()
+      );
 
       // Prefer structured address; fallback to legacy registeredOfficeAddress.
       const street = (company as any).companyAddressStreetAndNumber;
@@ -160,6 +167,7 @@ export default function SettingsPage() {
       setPublicProfile(false);
       setEnableDailyReport24hLock(false);
       setPoptavkyImportUrlInput('');
+      setOrganizationLogoUrl('');
       setAddrStreetAndNumber('');
       setAddrCity('');
       setAddrPostalCode('');
@@ -305,6 +313,75 @@ export default function SettingsPage() {
       });
     } finally {
       setIsSavingCompany(false);
+    }
+  };
+
+  const handleOrganizationLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !companyId || !firestore) return;
+    if (!file.type.startsWith('image/')) {
+      toast({
+        variant: 'destructive',
+        title: 'Neplatný soubor',
+        description: 'Nahrajte obrázek (PNG, JPG, …).',
+      });
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      toast({
+        variant: 'destructive',
+        title: 'Soubor je příliš velký',
+        description: 'Maximálně 2 MB.',
+      });
+      return;
+    }
+    try {
+      setIsUploadingLogo(true);
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+      const path = `companies/${companyId}/branding/logo/${Date.now()}-${safeName}`;
+      const storage = getFirebaseStorage();
+      const sref = ref(storage, path);
+      await uploadBytes(sref, file, { contentType: file.type });
+      const url = await getDownloadURL(sref);
+      const payload = { organizationLogoUrl: url, updatedAt: serverTimestamp() };
+      await Promise.all([
+        setDoc(doc(firestore, COMPANIES_COLLECTION, companyId), payload, { merge: true }),
+        setDoc(doc(firestore, ORGANIZATIONS_COLLECTION, companyId), payload, { merge: true }),
+      ]);
+      setOrganizationLogoUrl(url);
+      toast({ title: 'Logo uloženo', description: 'Zobrazí se na fakturách a dokladech.' });
+    } catch (error: unknown) {
+      console.error('Logo upload failed', error);
+      toast({
+        variant: 'destructive',
+        title: 'Nahrání se nezdařilo',
+        description: error instanceof Error ? error.message : 'Zkuste to znovu.',
+      });
+    } finally {
+      setIsUploadingLogo(false);
+    }
+  };
+
+  const handleRemoveOrganizationLogo = async () => {
+    if (!companyId || !firestore) return;
+    try {
+      setIsUploadingLogo(true);
+      const payload = { organizationLogoUrl: null, updatedAt: serverTimestamp() };
+      await Promise.all([
+        setDoc(doc(firestore, COMPANIES_COLLECTION, companyId), payload, { merge: true }),
+        setDoc(doc(firestore, ORGANIZATIONS_COLLECTION, companyId), payload, { merge: true }),
+      ]);
+      setOrganizationLogoUrl('');
+      toast({ title: 'Logo odstraněno' });
+    } catch (error: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Chyba',
+        description: error instanceof Error ? error.message : 'Nepodařilo se odstranit logo.',
+      });
+    } finally {
+      setIsUploadingLogo(false);
     }
   };
 
@@ -474,6 +551,60 @@ export default function SettingsPage() {
                       placeholder="www.firma.cz"
                       className="bg-background"
                     />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label className="flex items-center gap-2">
+                      <ImageIcon className="h-4 w-4" aria-hidden />
+                      Logo na dokladech (faktury, zálohy)
+                    </Label>
+                    <p className="text-xs text-muted-foreground">
+                      PNG nebo JPG, max. 2 MB. Zobrazí se v hlavičce tisku A4.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-3">
+                      {organizationLogoUrl ? (
+                        <img
+                          src={organizationLogoUrl}
+                          alt="Logo firmy"
+                          className="h-14 max-w-[220px] rounded border border-border object-contain bg-white p-1"
+                        />
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Logo není nastaveno.</span>
+                      )}
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={isUploadingLogo || !companyId}
+                          className="relative"
+                          asChild
+                        >
+                          <label className="cursor-pointer">
+                            {isUploadingLogo ? 'Nahrávám…' : 'Nahrát logo'}
+                            <input
+                              type="file"
+                              accept="image/*"
+                              className="absolute inset-0 cursor-pointer opacity-0"
+                              onChange={(e) => void handleOrganizationLogoUpload(e)}
+                            />
+                          </label>
+                        </Button>
+                        {organizationLogoUrl ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1 text-destructive"
+                            disabled={isUploadingLogo}
+                            onClick={() => void handleRemoveOrganizationLogo()}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                            Odstranit
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
                   </div>
                 </div>
 

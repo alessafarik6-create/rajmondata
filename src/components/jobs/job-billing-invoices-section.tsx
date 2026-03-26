@@ -27,20 +27,31 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, FileText, Printer, PlusCircle } from "lucide-react";
+import { Loader2, FileText, Printer, PlusCircle, Plus, Trash2, Pencil } from "lucide-react";
 import { buildCustomerAddressMultiline } from "@/lib/customer-address-display";
 import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
 import { normalizeVatRate, resolveJobPaidFromFirestore } from "@/lib/vat-calculations";
 import {
   createAdvanceInvoiceFromContract,
+  createManualAdvanceInvoice,
   createTaxReceiptForAdvancePayment,
   depositGrossKcFromContract,
   hasAdvanceTerms,
   JOB_INVOICE_TYPES,
+  type ManualAdvanceLineInput,
   type WorkContractLike,
 } from "@/lib/job-billing-invoices";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import type { User } from "firebase/auth";
 import { cn } from "@/lib/utils";
+
+const VAT_OPTIONS = [0, 12, 21] as const;
 
 function openPrintableHtml(title: string, html: string) {
   const w = window.open("", "_blank", "noopener,noreferrer");
@@ -99,6 +110,17 @@ export function JobBillingInvoicesSection({
   const [taxVs, setTaxVs] = useState("");
   const [taxNote, setTaxNote] = useState("");
   const [savingTax, setSavingTax] = useState(false);
+
+  const [manualOpen, setManualOpen] = useState(false);
+  const [manualLines, setManualLines] = useState<ManualAdvanceLineInput[]>([
+    { description: "", quantity: 1, unit: "ks", unitPriceNet: 0, vatRate: 21 },
+  ]);
+  const [creatingManual, setCreatingManual] = useState(false);
+
+  const organizationLogoUrl = useMemo(() => {
+    const u = (companyDoc as { organizationLogoUrl?: string | null })?.organizationLogoUrl;
+    return u && String(u).trim() ? String(u).trim() : null;
+  }, [companyDoc]);
 
   const supplierName =
     String(
@@ -168,6 +190,11 @@ export function JobBillingInvoicesSection({
     primaryContract != null &&
     jobBudgetBreakdown != null;
 
+  const canCreateManualAdvance =
+    canManage &&
+    Boolean(customerId && String(customerId).trim()) &&
+    jobBudgetBreakdown != null;
+
   const handleCreateAdvance = async () => {
     if (!user || !primaryContract || !jobBudgetBreakdown || !customerId) return;
     setCreatingAdvance(true);
@@ -201,6 +228,63 @@ export function JobBillingInvoicesSection({
       });
     } finally {
       setCreatingAdvance(false);
+    }
+  };
+
+  const addManualLine = () => {
+    setManualLines((prev) => [
+      ...prev,
+      { description: "", quantity: 1, unit: "ks", unitPriceNet: 0, vatRate: 21 },
+    ]);
+  };
+
+  const removeManualLine = (idx: number) => {
+    setManualLines((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  const updateManualLine = (idx: number, patch: Partial<ManualAdvanceLineInput>) => {
+    setManualLines((prev) =>
+      prev.map((row, i) => (i === idx ? { ...row, ...patch } : row))
+    );
+  };
+
+  const openManualDialog = () => {
+    setManualLines([{ description: "", quantity: 1, unit: "ks", unitPriceNet: 0, vatRate: 21 }]);
+    setManualOpen(true);
+  };
+
+  const handleCreateManualAdvance = async () => {
+    if (!user || !jobBudgetBreakdown || !customerId) return;
+    setCreatingManual(true);
+    try {
+      const { pdfHtml } = await createManualAdvanceInvoice({
+        firestore,
+        companyId,
+        jobId,
+        jobName,
+        customerId: String(customerId),
+        customerName,
+        customerAddressLines: customerAddressLines || customerName,
+        supplierName,
+        supplierAddressLines: supplierAddressLines || supplierName,
+        userId: user.uid,
+        logoUrl: organizationLogoUrl,
+        lines: manualLines,
+      });
+      toast({
+        title: "Vlastní zálohová faktura vytvořena",
+        description: "Dokument je v seznamu a v sekci Faktury.",
+      });
+      setManualOpen(false);
+      if (pdfHtml) openPrintableHtml("Zálohová faktura", pdfHtml);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Nelze vytvořit",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setCreatingManual(false);
     }
   };
 
@@ -257,6 +341,7 @@ export function JobBillingInvoicesSection({
         note: taxNote.trim() || undefined,
         vatRate: normalizeVatRate(jobBudgetBreakdown.vatRate),
         userId: user.uid,
+        logoUrl: organizationLogoUrl,
       });
       toast({
         title: "Daňový doklad vytvořen",
@@ -312,29 +397,55 @@ export function JobBillingInvoicesSection({
           </p>
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
-          {canCreateAdvance ? (
-            <div className="flex flex-wrap items-center gap-2">
-              <Button
-                type="button"
-                className="gap-2"
-                disabled={creatingAdvance}
-                onClick={() => void handleCreateAdvance()}
-              >
-                {creatingAdvance ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <PlusCircle className="h-4 w-4" />
-                )}
-                Vytvořit zálohovou fakturu
-              </Button>
-              {primaryContract && budgetGross != null ? (
-                <span className="text-neutral-700">
-                  Záloha dle smlouvy:{" "}
-                  <strong>
-                    {depositGrossKcFromContract(primaryContract, budgetGross).toLocaleString("cs-CZ")}{" "}
-                    Kč s DPH
-                  </strong>
-                </span>
+          {canCreateAdvance || canCreateManualAdvance ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                {canCreateAdvance ? (
+                  <Button
+                    type="button"
+                    className="gap-2"
+                    disabled={creatingAdvance}
+                    onClick={() => void handleCreateAdvance()}
+                  >
+                    {creatingAdvance ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <PlusCircle className="h-4 w-4" />
+                    )}
+                    Vytvořit zálohovou fakturu
+                  </Button>
+                ) : null}
+                {canCreateManualAdvance ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="gap-2 border-neutral-950"
+                    disabled={creatingManual}
+                    onClick={() => openManualDialog()}
+                  >
+                    {creatingManual ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Plus className="h-4 w-4" />
+                    )}
+                    Vlastní zálohová faktura
+                  </Button>
+                ) : null}
+                {primaryContract && budgetGross != null && canCreateAdvance ? (
+                  <span className="text-neutral-700">
+                    Záloha dle smlouvy:{" "}
+                    <strong>
+                      {depositGrossKcFromContract(primaryContract, budgetGross).toLocaleString("cs-CZ")}{" "}
+                      Kč s DPH
+                    </strong>
+                  </span>
+                ) : null}
+              </div>
+              {canCreateManualAdvance && !canCreateAdvance ? (
+                <p className="text-xs text-neutral-700">
+                  Záloha dle smlouvy není k dispozici — použijte vlastní zálohovou fakturu s vlastními
+                  položkami a sazbami DPH.
+                </p>
               ) : null}
             </div>
           ) : (
@@ -343,8 +454,8 @@ export function JobBillingInvoicesSection({
                 ? "Nemáte oprávnění vystavit fakturu."
                 : !customerId
                   ? "Doplňte zákazníka u zakázky."
-                  : !primaryContract
-                    ? "Chybí smlouva o dílo se zálohou (částka nebo procento) a platný rozpočet."
+                  : !jobBudgetBreakdown
+                    ? "Chybí platný rozpočet zakázky."
                     : "Nelze vystavit zálohovou fakturu."}
             </p>
           )}
@@ -403,6 +514,14 @@ export function JobBillingInvoicesSection({
                           <Printer className="h-3.5 w-3.5" />
                           Tisk / PDF
                         </Button>
+                        {t === JOB_INVOICE_TYPES.ADVANCE && canManage ? (
+                          <Button type="button" variant="outline" size="sm" className="gap-1" asChild>
+                            <Link href={`/portal/invoices/${row.id}/edit`}>
+                              <Pencil className="h-3.5 w-3.5" />
+                              Upravit
+                            </Link>
+                          </Button>
+                        ) : null}
                         {t === JOB_INVOICE_TYPES.ADVANCE &&
                         st !== "paid" &&
                         canManage ? (
@@ -491,6 +610,128 @@ export function JobBillingInvoicesSection({
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 "Vytvořit doklad"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={manualOpen} onOpenChange={setManualOpen}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-neutral-200 bg-white text-neutral-950">
+          <DialogHeader>
+            <DialogTitle>Vlastní zálohová faktura</DialogTitle>
+            <DialogDescription className="text-neutral-800">
+              Odběratel odpovídá zákazníkovi u zakázky. Upravte položky, množství, ceny bez DPH a sazbu DPH
+              (0 / 12 / 21 %).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addManualLine}>
+                <Plus className="h-4 w-4" />
+                Přidat položku
+              </Button>
+            </div>
+            {manualLines.map((line, idx) => (
+              <div
+                key={idx}
+                className="grid gap-2 rounded-md border border-neutral-100 p-3 sm:grid-cols-2 lg:grid-cols-12"
+              >
+                <div className="sm:col-span-2 lg:col-span-5">
+                  <Label>Popis</Label>
+                  <Input
+                    value={line.description}
+                    onChange={(e) => updateManualLine(idx, { description: e.target.value })}
+                    className="border-neutral-950"
+                  />
+                </div>
+                <div className="lg:col-span-2">
+                  <Label>Množství</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={line.quantity}
+                    onChange={(e) =>
+                      updateManualLine(idx, {
+                        quantity: Number(e.target.value.replace(",", ".")) || 0,
+                      })
+                    }
+                    className="border-neutral-950"
+                  />
+                </div>
+                <div className="lg:col-span-1">
+                  <Label>j.</Label>
+                  <Input
+                    value={line.unit}
+                    onChange={(e) => updateManualLine(idx, { unit: e.target.value })}
+                    className="border-neutral-950"
+                  />
+                </div>
+                <div className="lg:col-span-2">
+                  <Label>Cena bez DPH (jednotková)</Label>
+                  <Input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={line.unitPriceNet}
+                    onChange={(e) =>
+                      updateManualLine(idx, {
+                        unitPriceNet: Number(e.target.value.replace(",", ".")) || 0,
+                      })
+                    }
+                    className="border-neutral-950"
+                  />
+                </div>
+                <div className="lg:col-span-2">
+                  <Label>DPH</Label>
+                  <Select
+                    value={String(line.vatRate)}
+                    onValueChange={(v) =>
+                      updateManualLine(idx, { vatRate: normalizeVatRate(Number(v)) })
+                    }
+                  >
+                    <SelectTrigger className="border-neutral-950">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {VAT_OPTIONS.map((r) => (
+                        <SelectItem key={r} value={String(r)}>
+                          {r} %
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-end justify-end lg:col-span-12">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="text-destructive"
+                    aria-label="Smazat položku"
+                    onClick={() => removeManualLine(idx)}
+                    disabled={manualLines.length <= 1}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" className="border-neutral-950" onClick={() => setManualOpen(false)}>
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              disabled={creatingManual}
+              onClick={() => void handleCreateManualAdvance()}
+            >
+              {creatingManual ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Vytvořit fakturu"
               )}
             </Button>
           </DialogFooter>
