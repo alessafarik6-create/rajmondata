@@ -64,9 +64,10 @@ function buildAttendanceTerminalPath(companyId: string): string {
   return `/attendance-login?companyId=${encodeURIComponent(companyId)}`;
 }
 
+/** Jen malý QR vedle hodin; žádné velké QR uprostřed stránky. */
 function AttendanceTerminalQrSection({
   terminalPath,
-  qrSize = 200,
+  qrSize = 80,
   className,
 }: {
   terminalPath: string;
@@ -104,43 +105,36 @@ function AttendanceTerminalQrSection({
     );
   };
 
+  const shellClass =
+    className ??
+    "flex flex-col items-center gap-2 rounded-lg border border-slate-200 bg-white p-2 shadow-sm";
+
   return (
-    <div
-      className={
-        className ??
-        "flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
-      }
-    >
-      <p className="text-sm text-muted-foreground leading-snug max-w-[min(100%,320px)]">
-        Naskenujte pro otevření terminálu v telefonu nebo tabletu
-      </p>
+    <div className={shellClass}>
       {fullUrl ? (
         <>
-          <div className="inline-flex rounded-lg border border-slate-100 bg-white p-3 shadow-inner">
+          <div className="inline-flex rounded-md border border-slate-100 bg-white p-1 shadow-inner">
             <QRCodeSVG
               value={fullUrl}
               size={qrSize}
               level="M"
               includeMargin
-              className="h-auto w-full max-h-[min(70vw,320px)] max-w-[min(100%,320px)]"
+              className="h-auto w-full max-h-[88px] max-w-[88px]"
             />
           </div>
           <Button
             type="button"
             variant="outline"
-            size="sm"
-            className="w-fit min-h-[44px] gap-2"
+            size="icon"
+            className="h-9 w-9 shrink-0"
             onClick={copyUrl}
+            title="Kopírovat odkaz na terminál"
           >
             <Copy className="h-4 w-4 shrink-0" />
-            Kopírovat odkaz
           </Button>
         </>
       ) : (
-        <div
-          className="flex aspect-square max-h-[min(70vw,320px)] max-w-[min(100%,320px)] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50"
-          style={{ minHeight: Math.min(qrSize, 280) }}
-        >
+        <div className="flex h-[88px] w-[88px] items-center justify-center rounded-md border border-dashed border-slate-200 bg-slate-50">
           <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
         </div>
       )}
@@ -408,7 +402,7 @@ export function AttendancePortalPage() {
 
   return (
     <div className="space-y-6 sm:space-y-8">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <h1 className="portal-page-title text-2xl sm:text-3xl">Docházka</h1>
           <div className="portal-page-description">
@@ -417,38 +411,44 @@ export function AttendancePortalPage() {
           </div>
         </div>
 
-        <div className="flex w-full flex-wrap items-start gap-4 sm:gap-6 lg:flex-1 lg:justify-end">
+        <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-end sm:gap-4 lg:flex-1">
           {terminalPath ? (
-            <div className="flex w-full min-w-0 flex-col gap-4 sm:max-w-md lg:flex-row lg:items-start lg:gap-6">
-              <div className="min-w-0 shrink-0">
-                <Link
-                  href={terminalPath}
-                  className="inline-flex min-w-0"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
-                    <Smartphone className="h-4 w-4 shrink-0" />
-                    Přihlášení zaměstnance
-                  </Button>
-                </Link>
-              </div>
-              <AttendanceTerminalQrSection terminalPath={terminalPath} qrSize={192} />
-            </div>
+            <Link
+              href={terminalPath}
+              className="inline-flex min-w-0 shrink-0"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
+                <Smartphone className="h-4 w-4 shrink-0" />
+                Přihlášení zaměstnance
+              </Button>
+            </Link>
           ) : null}
 
-          <div className="hidden min-w-[180px] rounded-xl border border-slate-200 bg-white p-4 text-right shadow-sm sm:ml-auto sm:block lg:ml-0">
-            <p className="font-mono text-4xl font-bold text-primary">
-              {currentTime || "--:--:--"}
-            </p>
-            <p className="text-sm font-medium text-muted-foreground">
-              {new Date().toLocaleDateString("cs-CZ", {
-                weekday: "long",
-                day: "numeric",
-                month: "long",
-                year: "numeric",
-              })}
-            </p>
+          <div className="flex min-w-0 w-full justify-end sm:ml-auto sm:max-w-full">
+            <div className="flex max-w-full flex-wrap items-start justify-end gap-3 rounded-xl border border-slate-200 bg-white p-3 text-right shadow-sm sm:gap-4 sm:p-4">
+              <div className="min-w-[160px] shrink text-right">
+                <p className="font-mono text-3xl font-bold text-primary sm:text-4xl">
+                  {currentTime || "--:--:--"}
+                </p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  {new Date().toLocaleDateString("cs-CZ", {
+                    weekday: "long",
+                    day: "numeric",
+                    month: "long",
+                    year: "numeric",
+                  })}
+                </p>
+              </div>
+              {terminalPath ? (
+                <AttendanceTerminalQrSection
+                  terminalPath={terminalPath}
+                  qrSize={80}
+                  className="flex shrink-0 flex-col items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/80 p-2"
+                />
+              ) : null}
+            </div>
           </div>
         </div>
       </div>
@@ -507,24 +507,17 @@ export function AttendancePortalPage() {
                     Odkaz otevřete na tabletu nebo sdíleném PC. Zaměstnanci se hlásí výběrem profilu a PINem.
                   </p>
                   {terminalPath ? (
-                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:gap-6">
-                      <div className="min-w-0 shrink-0">
-                        <Link
-                          href={terminalPath}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
-                            <Smartphone className="h-4 w-4" />
-                            Otevřít /attendance-login
-                          </Button>
-                        </Link>
-                      </div>
-                      <AttendanceTerminalQrSection
-                        terminalPath={terminalPath}
-                        qrSize={220}
-                        className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50/80 p-4"
-                      />
+                    <div className="min-w-0 shrink-0">
+                      <Link
+                        href={terminalPath}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
+                          <Smartphone className="h-4 w-4" />
+                          Otevřít /attendance-login
+                        </Button>
+                      </Link>
                     </div>
                   ) : null}
                 </CardContent>
