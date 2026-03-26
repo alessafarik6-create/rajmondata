@@ -127,6 +127,8 @@ type Props = {
   canEdit: boolean;
   /** Rozpočet zakázky (bez / DPH / s DPH) z Firestore. */
   jobBudget: JobBudgetBreakdown | null;
+  /** Širší rozvržení pro detail zakázky (celá šířka stránky). */
+  layout?: "default" | "jobDetailWide";
 };
 
 export function JobExpensesSection({
@@ -137,7 +139,9 @@ export function JobExpensesSection({
   expenses,
   canEdit,
   jobBudget,
+  layout = "default",
 }: Props) {
+  const isJobDetailWide = layout === "jobDetailWide";
   const firestore = useFirestore();
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -162,8 +166,10 @@ export function JobExpensesSection({
   const [deleteTarget, setDeleteTarget] = useState<JobExpenseRow | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [attachmentPreviewUrl, setAttachmentPreviewUrl] = useState<string | null>(null);
-  /** Sekce Náklady — výchozí sbalená. */
-  const [expensesSectionOpen, setExpensesSectionOpen] = useState(false);
+  /** Sekce Náklady — na detailu zakázky výchozí rozbalená. */
+  const [expensesSectionOpen, setExpensesSectionOpen] = useState(
+    () => layout === "jobDetailWide"
+  );
   /** Seznam — po 5 položkách „Zobrazit více“. */
   const [expensesListExpanded, setExpensesListExpanded] = useState(false);
 
@@ -200,12 +206,18 @@ export function JobExpensesSection({
   const expenseTotals = useMemo(() => {
     let net = 0;
     let gross = 0;
+    let vat = 0;
     for (const e of sortedExpenses) {
       const r = resolveExpenseAmounts(e);
       net += r.amountNet;
       gross += r.amountGross;
+      vat += r.vatAmount;
     }
-    return { net, gross };
+    return {
+      net: roundMoney2(net),
+      gross: roundMoney2(gross),
+      vat: roundMoney2(vat),
+    };
   }, [sortedExpenses]);
 
   const remainingNetKc =
@@ -663,7 +675,12 @@ export function JobExpensesSection({
 
   return (
     <>
-      <Card className="bg-surface border-border">
+      <Card
+        className={cn(
+          "bg-surface border-border",
+          isJobDetailWide && "w-full min-w-0 border-2 shadow-sm"
+        )}
+      >
         <Collapsible
           open={expensesSectionOpen}
           onOpenChange={(next) => {
@@ -671,19 +688,87 @@ export function JobExpensesSection({
             if (!next) setExpensesListExpanded(false);
           }}
         >
-          <CardHeader className="space-y-0 p-2 sm:p-3">
+          {isJobDetailWide ? (
+            <div className="border-b border-border/70 bg-muted/30 px-4 py-5 sm:px-6 sm:py-6">
+              <h2
+                id="job-expenses-heading"
+                className="text-xl font-bold tracking-tight text-slate-900 dark:text-slate-100 sm:text-2xl"
+              >
+                Náklady zakázky
+              </h2>
+              <p className="mt-1 text-base text-slate-700 dark:text-slate-300">
+                Součty všech záznamů nákladů (přehled rozpočtu níže v záhlaví sekce).
+              </p>
+              <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
+                <div className="rounded-lg border border-emerald-200/80 bg-white/90 px-4 py-3 dark:border-emerald-900/50 dark:bg-slate-950/40">
+                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                    Celkem bez DPH
+                  </p>
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-3xl">
+                    {formatKc(expenseTotals.net)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-emerald-200/80 bg-white/90 px-4 py-3 dark:border-emerald-900/50 dark:bg-slate-950/40">
+                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                    DPH celkem
+                  </p>
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-3xl">
+                    {formatKc(expenseTotals.vat)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-emerald-200/80 bg-white/90 px-4 py-3 dark:border-emerald-900/50 dark:bg-slate-950/40">
+                  <p className="text-sm font-semibold uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                    Celkem s DPH
+                  </p>
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-amber-800 dark:text-amber-200 sm:text-3xl">
+                    {formatKc(expenseTotals.gross)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <CardHeader
+            className={cn(
+              "space-y-0",
+              isJobDetailWide ? "p-4 sm:p-5" : "p-2 sm:p-3"
+            )}
+          >
             <CollapsibleTrigger asChild>
               <button
                 type="button"
                 className={cn(
-                  "flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left outline-none transition-colors",
-                  "hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
+                  "flex w-full items-center gap-3 rounded-md text-left outline-none transition-colors",
+                  isJobDetailWide
+                    ? "px-2 py-2 hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring sm:px-3"
+                    : "rounded-md px-1.5 py-1.5 hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring"
                 )}
               >
-                <Wallet className="h-4 w-4 shrink-0 text-primary sm:h-5 sm:w-5" aria-hidden />
+                <Wallet
+                  className={cn(
+                    "shrink-0 text-primary",
+                    isJobDetailWide ? "h-6 w-6 sm:h-7 sm:w-7" : "h-4 w-4 sm:h-5 sm:w-5"
+                  )}
+                  aria-hidden
+                />
                 <div className="min-w-0 flex-1">
-                  <div className="text-sm font-semibold sm:text-base">Náklady</div>
-                  <div className="mt-1 space-y-1.5 text-[10px] leading-tight text-muted-foreground sm:text-xs">
+                  <div
+                    className={cn(
+                      "font-semibold text-slate-900 dark:text-slate-100",
+                      isJobDetailWide ? "text-lg sm:text-xl" : "text-sm sm:text-base"
+                    )}
+                  >
+                    {isJobDetailWide
+                      ? "Rozpočet, náklady a zbývá"
+                      : "Náklady"}
+                  </div>
+                  <div
+                    className={cn(
+                      "mt-1 space-y-1.5 leading-tight",
+                      isJobDetailWide
+                        ? "text-sm text-slate-700 dark:text-slate-300 sm:text-base"
+                        : "text-[10px] text-muted-foreground sm:text-xs"
+                    )}
+                  >
                     <div className="grid grid-cols-3 gap-x-2 text-center font-medium uppercase tracking-wide">
                       <span>Rozpočet</span>
                       <span>Náklady</span>
@@ -747,7 +832,8 @@ export function JobExpensesSection({
                 </div>
                 <ChevronDown
                   className={cn(
-                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200",
+                    "shrink-0 text-muted-foreground transition-transform duration-200",
+                    isJobDetailWide ? "h-5 w-5" : "h-4 w-4",
                     expensesSectionOpen && "rotate-180"
                   )}
                   aria-hidden
@@ -757,42 +843,236 @@ export function JobExpensesSection({
           </CardHeader>
 
           <CollapsibleContent>
-            <CardContent className="space-y-2 px-2 pb-3 pt-0 sm:px-3">
-              <p className="text-[11px] text-muted-foreground sm:text-xs">
-                Výdaje a přílohy — částku lze zadat bez DPH nebo s DPH; součty se odečítají od rozpočtu (bez DPH / s DPH).
+            <CardContent
+              className={cn(
+                "space-y-4 pb-4 pt-0",
+                isJobDetailWide ? "px-4 sm:px-6" : "space-y-2 px-2 pb-3 sm:px-3"
+              )}
+            >
+              <p
+                className={cn(
+                  isJobDetailWide
+                    ? "text-base text-slate-800 dark:text-slate-200"
+                    : "text-[11px] text-muted-foreground sm:text-xs"
+                )}
+              >
+                Výdaje a přílohy — částku lze zadat bez DPH nebo s DPH; součty se
+                odečítají od rozpočtu (bez DPH / s DPH).
                 {sortedExpenses.length > 0 ? (
-                  <span className="text-foreground"> ({sortedExpenses.length})</span>
+                  <span className="font-medium text-foreground">
+                    {" "}
+                    ({sortedExpenses.length})
+                  </span>
                 ) : null}
               </p>
 
               {canEdit ? (
                 <Button
                   type="button"
-                  className="h-9 w-full sm:w-auto"
+                  className={cn(
+                    "w-full sm:w-auto",
+                    isJobDetailWide ? "h-11 min-h-[44px] px-6 text-base" : "h-9"
+                  )}
                   onClick={openCreate}
                 >
-                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  <Plus
+                    className={cn("mr-1.5", isJobDetailWide ? "h-5 w-5" : "h-3.5 w-3.5")}
+                  />
                   Přidat náklad
                 </Button>
               ) : null}
 
               {sortedExpenses.length === 0 ? (
-                <p className="py-1 text-xs text-muted-foreground sm:text-sm">
+                <p
+                  className={cn(
+                    "py-2",
+                    isJobDetailWide
+                      ? "text-base text-slate-800 dark:text-slate-200"
+                      : "py-1 text-xs text-muted-foreground sm:text-sm"
+                  )}
+                >
                   Zatím žádné náklady. {canEdit ? "Přidejte první záznam." : ""}
                 </p>
               ) : (
                 <>
                   <div
                     className={cn(
-                      "overflow-y-auto rounded-md border border-border/60 bg-background/30",
-                      expensesListExpanded
-                        ? "max-h-[min(400px,55vh)]"
-                        : "max-h-[min(320px,45vh)]"
+                      "overflow-y-auto rounded-lg border border-border/60 bg-background/40",
+                      isJobDetailWide
+                        ? expensesListExpanded
+                          ? "max-h-[min(75vh,880px)]"
+                          : "max-h-[min(65vh,720px)]"
+                        : expensesListExpanded
+                          ? "max-h-[min(400px,55vh)]"
+                          : "max-h-[min(320px,45vh)]"
                     )}
                   >
-                    <ul className="divide-y divide-border/50">
+                    <ul
+                      className={cn(
+                        isJobDetailWide ? "divide-y divide-border/70" : "divide-y divide-border/50"
+                      )}
+                    >
                       {visibleExpenses.map((row) => {
                         const attachmentKind = inferJobMediaItemType(row);
+                        const r = resolveExpenseAmounts(row);
+                        const tag =
+                          normalizeBudgetType(row.amountType) === "gross"
+                            ? "s DPH"
+                            : "bez DPH";
+                        const attachmentBlock =
+                          row.fileUrl ? (
+                            <>
+                              {attachmentKind === "pdf" ? (
+                                <FileText
+                                  className={cn(
+                                    "shrink-0 text-primary",
+                                    isJobDetailWide ? "h-6 w-6" : "h-3.5 w-3.5 sm:h-4 sm:w-4"
+                                  )}
+                                  aria-hidden
+                                />
+                              ) : (
+                                <a
+                                  href={row.fileUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className={cn(
+                                    "relative shrink-0 overflow-hidden rounded border border-border",
+                                    isJobDetailWide ? "h-11 w-11" : "h-8 w-8"
+                                  )}
+                                  title={row.fileName || "Otevřít"}
+                                >
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img
+                                    src={row.fileUrl}
+                                    alt=""
+                                    className="h-full w-full object-cover"
+                                  />
+                                </a>
+                              )}
+                              <div className="flex shrink-0 gap-1">
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className={isJobDetailWide ? "h-10 w-10" : "h-8 w-8"}
+                                  asChild
+                                >
+                                  <a
+                                    href={row.fileUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    title="Otevřít"
+                                  >
+                                    <ExternalLink
+                                      className={isJobDetailWide ? "h-5 w-5" : "h-3.5 w-3.5"}
+                                    />
+                                  </a>
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className={isJobDetailWide ? "h-10 w-10" : "h-8 w-8"}
+                                  asChild
+                                >
+                                  <a
+                                    href={row.fileUrl}
+                                    download={row.fileName || "doklad"}
+                                    title="Stáhnout"
+                                  >
+                                    <Download
+                                      className={isJobDetailWide ? "h-5 w-5" : "h-3.5 w-3.5"}
+                                    />
+                                  </a>
+                                </Button>
+                              </div>
+                            </>
+                          ) : (
+                            <span className="text-slate-600 dark:text-slate-400">—</span>
+                          );
+
+                        if (isJobDetailWide) {
+                          return (
+                            <li key={row.id}>
+                              <div
+                                className="grid grid-cols-1 gap-3 px-3 py-4 text-base sm:grid-cols-[minmax(0,7.5rem)_minmax(0,9rem)_minmax(0,8rem)_minmax(0,9rem)_minmax(0,1fr)_minmax(0,10rem)_auto] sm:items-center sm:gap-4 sm:px-5 sm:py-4 lg:gap-5"
+                              >
+                                <div className="space-y-1.5">
+                                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                                    {expenseDateLabel(row)}
+                                  </span>
+                                  <Badge
+                                    variant="secondary"
+                                    className="text-xs font-normal"
+                                  >
+                                    {tag} · {r.vatRate} %
+                                  </Badge>
+                                </div>
+                                <div className="tabular-nums">
+                                  <p className="text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
+                                    Bez DPH
+                                  </p>
+                                  <p className="text-lg font-bold text-slate-900 dark:text-slate-50 sm:text-xl">
+                                    {formatKc(r.amountNet)}
+                                  </p>
+                                </div>
+                                <div className="tabular-nums">
+                                  <p className="text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
+                                    DPH
+                                  </p>
+                                  <p className="text-lg font-bold text-slate-900 dark:text-slate-50 sm:text-xl">
+                                    {formatKc(r.vatAmount)}
+                                  </p>
+                                </div>
+                                <div className="tabular-nums">
+                                  <p className="text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
+                                    S DPH
+                                  </p>
+                                  <p className="text-lg font-bold text-amber-800 dark:text-amber-200 sm:text-xl">
+                                    {formatKc(r.amountGross)}
+                                  </p>
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="line-clamp-3 break-words text-base leading-snug text-slate-900 dark:text-slate-100">
+                                    {row.note?.trim() || (
+                                      <span className="italic text-slate-500">—</span>
+                                    )}
+                                  </p>
+                                </div>
+                                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                                  {attachmentBlock}
+                                </div>
+                                <div className="flex justify-end gap-1 sm:justify-end">
+                                  {canEdit ? (
+                                    <>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-10 w-10"
+                                        onClick={() => openEdit(row)}
+                                        aria-label="Upravit náklad"
+                                      >
+                                        <Pencil className="h-5 w-5" />
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-10 w-10 text-destructive hover:text-destructive"
+                                        onClick={() => setDeleteTarget(row)}
+                                        aria-label="Smazat náklad"
+                                      >
+                                        <Trash2 className="h-5 w-5" />
+                                      </Button>
+                                    </>
+                                  ) : null}
+                                </div>
+                              </div>
+                            </li>
+                          );
+                        }
+
                         return (
                           <li key={row.id}>
                             <div
@@ -804,35 +1084,24 @@ export function JobExpensesSection({
                                 {expenseDateLabel(row)}
                               </div>
                               <div className="order-1 space-y-0.5 font-semibold tabular-nums sm:order-2">
-                                {(() => {
-                                  const r = resolveExpenseAmounts(row);
-                                  const tag =
-                                    normalizeBudgetType(row.amountType) === "gross"
-                                      ? "s DPH"
-                                      : "bez DPH";
-                                  return (
-                                    <>
-                                      <div className="flex flex-wrap items-center gap-1">
-                                        <Badge
-                                          variant="secondary"
-                                          className="h-5 px-1.5 text-[9px] font-normal"
-                                        >
-                                          {tag}
-                                        </Badge>
-                                        <span className="text-[10px] font-normal text-muted-foreground sm:text-xs">
-                                          DPH {r.vatRate} %
-                                        </span>
-                                      </div>
-                                      <div className="text-[10px] font-normal text-muted-foreground sm:text-xs">
-                                        Bez DPH {formatKc(r.amountNet)} · DPH{" "}
-                                        {formatKc(r.vatAmount)}
-                                      </div>
-                                      <div className="text-amber-700 dark:text-amber-400">
-                                        S DPH {formatKc(r.amountGross)}
-                                      </div>
-                                    </>
-                                  );
-                                })()}
+                                <div className="flex flex-wrap items-center gap-1">
+                                  <Badge
+                                    variant="secondary"
+                                    className="h-5 px-1.5 text-[9px] font-normal"
+                                  >
+                                    {tag}
+                                  </Badge>
+                                  <span className="text-[10px] font-normal text-muted-foreground sm:text-xs">
+                                    DPH {r.vatRate} %
+                                  </span>
+                                </div>
+                                <div className="text-[10px] font-normal text-muted-foreground sm:text-xs">
+                                  Bez DPH {formatKc(r.amountNet)} · DPH{" "}
+                                  {formatKc(r.vatAmount)}
+                                </div>
+                                <div className="text-amber-700 dark:text-amber-400">
+                                  S DPH {formatKc(r.amountGross)}
+                                </div>
                               </div>
                               <div className="order-3 min-w-0 sm:col-span-1">
                                 <p className="line-clamp-2 break-words text-foreground/90 sm:line-clamp-1">
@@ -940,7 +1209,9 @@ export function JobExpensesSection({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      className="h-8 px-2 text-xs"
+                      className={cn(
+                        isJobDetailWide ? "h-11 px-4 text-base" : "h-8 px-2 text-xs"
+                      )}
                       onClick={() => setExpensesListExpanded((v) => !v)}
                     >
                       {expensesListExpanded ? "Zobrazit méně" : "Zobrazit více"}
@@ -960,9 +1231,14 @@ export function JobExpensesSection({
           if (!open) resetForm();
         }}
       >
-        <DialogContent className="bg-white border-slate-200 text-slate-900 w-[95vw] max-w-lg max-h-[90vh] overflow-y-auto flex flex-col gap-0">
+        <DialogContent
+          className={cn(
+            "bg-white border-slate-200 text-slate-900 w-[95vw] max-h-[90vh] overflow-y-auto flex flex-col gap-0",
+            isJobDetailWide ? "max-w-2xl" : "max-w-lg"
+          )}
+        >
           <DialogHeader>
-            <DialogTitle>
+            <DialogTitle className={cn(isJobDetailWide && "text-xl sm:text-2xl")}>
               {editingId ? "Upravit náklad" : "Nový náklad"}
             </DialogTitle>
             <DialogDescription>
@@ -970,9 +1246,19 @@ export function JobExpensesSection({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4 py-2">
+          <div
+            className={cn(
+              "py-2",
+              isJobDetailWide ? "space-y-6" : "space-y-4"
+            )}
+          >
             <div className="space-y-2">
-              <Label htmlFor="expense-amount-type">Zadaná částka</Label>
+              <Label
+                htmlFor="expense-amount-type"
+                className={cn(isJobDetailWide && "text-base")}
+              >
+                Zadaná částka
+              </Label>
               <Select
                 value={amountTypeInput}
                 onValueChange={(v) =>
@@ -981,7 +1267,10 @@ export function JobExpensesSection({
               >
                 <SelectTrigger
                   id="expense-amount-type"
-                  className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px]")}
+                  className={cn(
+                    LIGHT_FORM_CONTROL_CLASS,
+                    isJobDetailWide ? "min-h-12 h-12 text-base" : "min-h-[44px]"
+                  )}
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -992,11 +1281,19 @@ export function JobExpensesSection({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="expense-vat">Sazba DPH</Label>
+              <Label
+                htmlFor="expense-vat"
+                className={cn(isJobDetailWide && "text-base")}
+              >
+                Sazba DPH
+              </Label>
               <Select value={vatRateInput} onValueChange={setVatRateInput}>
                 <SelectTrigger
                   id="expense-vat"
-                  className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px]")}
+                  className={cn(
+                    LIGHT_FORM_CONTROL_CLASS,
+                    isJobDetailWide ? "min-h-12 h-12 text-base" : "min-h-[44px]"
+                  )}
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -1033,7 +1330,12 @@ export function JobExpensesSection({
                     vatRate: rate,
                   });
                 return (
-                  <div className="rounded-md border border-emerald-200/80 bg-emerald-50/60 px-2.5 py-2 text-xs text-emerald-950 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+                  <div
+                    className={cn(
+                      "rounded-md border border-emerald-200/80 bg-emerald-50/60 px-2.5 py-2 text-emerald-950 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-100",
+                      isJobDetailWide ? "text-base" : "text-xs"
+                    )}
+                  >
                     <div className="font-medium text-foreground/90">Přepočet</div>
                     <div className="mt-1 space-y-0.5 tabular-nums">
                       <div>Bez DPH: {formatKc(amountNet)}</div>
@@ -1047,7 +1349,12 @@ export function JobExpensesSection({
               })()}
             </div>
             <div className="space-y-2">
-              <Label htmlFor="expense-date">Datum *</Label>
+              <Label
+                htmlFor="expense-date"
+                className={cn(isJobDetailWide && "text-base")}
+              >
+                Datum *
+              </Label>
               <Input
                 id="expense-date"
                 type="date"
@@ -1055,19 +1362,28 @@ export function JobExpensesSection({
                 onChange={(e) => setDateInput(e.target.value)}
                 className={cn(
                   LIGHT_FORM_CONTROL_CLASS,
-                  "[color-scheme:light] min-h-[44px]"
+                  "[color-scheme:light]",
+                  isJobDetailWide ? "min-h-12 h-12 text-base" : "min-h-[44px]"
                 )}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="expense-note">Poznámka / popis</Label>
+              <Label
+                htmlFor="expense-note"
+                className={cn(isJobDetailWide && "text-base")}
+              >
+                Poznámka / popis
+              </Label>
               <Textarea
                 id="expense-note"
-                rows={3}
+                rows={isJobDetailWide ? 4 : 3}
                 placeholder="Volitelný popis…"
                 value={noteInput}
                 onChange={(e) => setNoteInput(e.target.value)}
-                className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[96px]")}
+                className={cn(
+                  LIGHT_FORM_CONTROL_CLASS,
+                  isJobDetailWide ? "min-h-[120px] text-base" : "min-h-[96px]"
+                )}
               />
             </div>
 

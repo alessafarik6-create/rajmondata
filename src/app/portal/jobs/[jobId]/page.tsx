@@ -4066,7 +4066,8 @@ export default function JobDetailPage() {
   }
 
   return (
-    <div className="space-y-8 max-w-5xl mx-auto">
+    <div className="w-full min-w-0 space-y-8">
+      <div className="mx-auto max-w-5xl px-4 sm:px-6">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon" onClick={() => router.push("/portal/jobs")}>
           <ChevronLeft className="w-6 h-6" />
@@ -4547,22 +4548,6 @@ export default function JobDetailPage() {
             </CardContent>
           </Card>
 
-          {user && companyId && jobId ? (
-            <JobExpensesSection
-              companyId={companyId}
-              jobId={jobId as string}
-              jobDisplayName={
-                job?.name != null && String(job.name).trim() !== ""
-                  ? String(job.name).trim()
-                  : null
-              }
-              user={user}
-              expenses={jobExpenses}
-              canEdit={canManageFolders}
-              jobBudget={jobBudgetBreakdown}
-            />
-          ) : null}
-
           <Card className="bg-surface border-border">
             <CardHeader>
               <CardTitle>Poznámky a historie</CardTitle>
@@ -4614,6 +4599,31 @@ export default function JobDetailPage() {
           ) : null}
         </div>
       </div>
+      </div>
+
+      {user && companyId && jobId ? (
+        <section
+          className="w-full min-w-0 border-t border-border/60 bg-muted/15 py-8 sm:py-10"
+          aria-labelledby="job-expenses-heading"
+        >
+          <div className="mx-auto w-full max-w-[min(100%,1600px)] px-4 sm:px-6 lg:px-8">
+            <JobExpensesSection
+              companyId={companyId}
+              jobId={jobId as string}
+              jobDisplayName={
+                job?.name != null && String(job.name).trim() !== ""
+                  ? String(job.name).trim()
+                  : null
+              }
+              user={user}
+              expenses={jobExpenses}
+              canEdit={canManageFolders}
+              jobBudget={jobBudgetBreakdown}
+              layout="jobDetailWide"
+            />
+          </div>
+        </section>
+      ) : null}
 
       <Dialog
         open={editJobDialogOpen}
