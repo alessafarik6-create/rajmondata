@@ -36,7 +36,6 @@ import {
   orderBy,
   limit,
   Timestamp,
-  getDoc,
 } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -116,6 +115,18 @@ type LeadOverlayRow = {
   internalNote?: string;
   /** Datum přijetí (import nebo první zobrazení v aplikaci). */
   receivedAt?: unknown;
+  lastSyncedAt?: unknown;
+  jmeno?: string;
+  telefon?: string;
+  email?: string;
+  adresa?: string;
+  zprava?: string;
+  typ?: string;
+  typ_poptavky?: string;
+  stav?: string;
+  externalId?: string;
+  sourceId?: string;
+  importSourceUrl?: string;
 };
 
 function overlayReceivedDate(ov: LeadOverlayRow | undefined): Date | null {
@@ -151,6 +162,12 @@ type ApiImportBody = {
   error?: string;
   code?: string;
   importUrlDebug?: string;
+  sync?: {
+    created: number;
+    updated: number;
+    skipped: number;
+    total: number;
+  };
 };
 
 function leadSearchBlob(r: LeadImportRow): string {
@@ -161,6 +178,7 @@ function leadSearchBlob(r: LeadImportRow): string {
     r.adresa,
     r.zprava,
     r.typ,
+    r.stav,
     r.id,
     r.receivedAtIso,
     r.orientacniCenaKc != null ? String(r.orientacniCenaKc) : "",
@@ -286,64 +304,75 @@ export default function PortalLeadsPage() {
     setExpandedLeadKeys((prev) => ({ ...prev, [key]: !prev[key] }));
   }, []);
 
-  const loadLeads = useCallback(async () => {
-    const cid = (companyId ?? "").trim();
-    if (!cid || !user) return;
-    setLoading(true);
-    setError(null);
-    setErrorDebugUrl(null);
-    setWarning(null);
-    try {
-      const token = await user.getIdToken();
-      const res = await fetch(`/api/import-leads?companyId=${encodeURIComponent(cid)}`, {
-        method: "GET",
-        cache: "no-store",
-        headers: {
-          Accept: "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      let data: ApiImportBody | null = null;
+  const loadLeads = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = opts?.silent ?? true;
+      const cid = (companyId ?? "").trim();
+      if (!cid || !user) return;
+      setLoading(true);
+      setError(null);
+      setErrorDebugUrl(null);
+      setWarning(null);
       try {
-        data = (await res.json()) as ApiImportBody;
-      } catch {
-        data = null;
-      }
-      if (!res.ok) {
-        const dbg =
-          typeof data?.importUrlDebug === "string" && data.importUrlDebug.trim()
-            ? data.importUrlDebug.trim()
-            : null;
-        setErrorDebugUrl(dbg);
-        setError(data?.error || `Import selhal (HTTP ${res.status}).`);
+        const token = await user.getIdToken();
+        const res = await fetch(`/api/import-leads?companyId=${encodeURIComponent(cid)}`, {
+          method: "GET",
+          cache: "no-store",
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        let data: ApiImportBody | null = null;
+        try {
+          data = (await res.json()) as ApiImportBody;
+        } catch {
+          data = null;
+        }
+        if (!res.ok) {
+          const dbg =
+            typeof data?.importUrlDebug === "string" && data.importUrlDebug.trim()
+              ? data.importUrlDebug.trim()
+              : null;
+          setErrorDebugUrl(dbg);
+          setError(data?.error || `Import selhal (HTTP ${res.status}).`);
+          setRows([]);
+          return;
+        }
+        if (data?.ok === true && Array.isArray(data.rows)) {
+          setRows(data.rows);
+          setWarning(
+            typeof data.warning === "string" && data.warning.trim() ? data.warning.trim() : null
+          );
+          if (!silent && data.sync) {
+            const s = data.sync;
+            toast({
+              title: "Synchronizace poptávek",
+              description: `${s.created} nových, ${s.updated} aktualizováno, ${s.skipped} duplicit přeskočeno při slučování, celkem ${s.total} záznamů.`,
+            });
+          }
+          return;
+        }
+        setError("Neplatná odpověď serveru.");
         setRows([]);
-        return;
+      } catch {
+        setError("Nelze načíst poptávky.");
+        setRows([]);
+      } finally {
+        setLoading(false);
       }
-      if (data?.ok === true && Array.isArray(data.rows)) {
-        setRows(data.rows);
-        setWarning(
-          typeof data.warning === "string" && data.warning.trim() ? data.warning.trim() : null
-        );
-        return;
-      }
-      setError("Neplatná odpověď serveru.");
-      setRows([]);
-    } catch {
-      setError("Nelze načíst poptávky.");
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [companyId, user]);
+    },
+    [companyId, user, toast]
+  );
 
   useEffect(() => {
     if (!companyId || isUserLoading || !user) return;
-    void loadLeads();
+    void loadLeads({ silent: true });
   }, [companyId, isUserLoading, user, loadLeads]);
 
   useEffect(() => {
     if (!companyId || !user) return;
-    const t = window.setInterval(() => void loadLeads(), POLL_MS);
+    const t = window.setInterval(() => void loadLeads({ silent: true }), POLL_MS);
     return () => window.clearInterval(t);
   }, [companyId, user, loadLeads]);
 
@@ -421,48 +450,6 @@ export default function PortalLeadsPage() {
     }, 200);
     return () => window.clearTimeout(t);
   }, [rows, rowsKey]);
-
-  /** Doplní `receivedAt` v overlay (importní datum nebo čas prvního načtení). */
-  useEffect(() => {
-    if (!firestore || !companyId || !user || !rowsKey) return;
-    let cancelled = false;
-    const run = async () => {
-      const chunkSize = 15;
-      for (let i = 0; i < rows.length; i += chunkSize) {
-        if (cancelled) return;
-        const chunk = rows.slice(i, i + chunkSize);
-        await Promise.all(
-          chunk.map(async (lead) => {
-            if (cancelled) return;
-            const key = stableImportLeadDocumentId(lead);
-            const ref = doc(firestore, "companies", companyId, "import_lead_overlays", key);
-            const snap = await getDoc(ref);
-            if (cancelled) return;
-            if (snap.exists() && snap.data()?.receivedAt != null) return;
-            const payload: Record<string, unknown> = {
-              companyId,
-              importLeadId: lead.id,
-              updatedAt: serverTimestamp(),
-              updatedByUid: user.uid,
-            };
-            if (lead.receivedAtIso) {
-              const d = new Date(lead.receivedAtIso);
-              payload.receivedAt = Timestamp.fromDate(
-                Number.isNaN(d.getTime()) ? new Date() : d
-              );
-            } else {
-              payload.receivedAt = serverTimestamp();
-            }
-            await setDoc(ref, payload, { merge: true });
-          })
-        );
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [rowsKey, rows, firestore, companyId, user]);
 
   const canMeasure = userCanManageMeasurements(profile);
   const canManageTags =
@@ -753,7 +740,7 @@ export default function PortalLeadsPage() {
                 type="button"
                 variant="outline"
                 className="gap-2 min-h-[44px]"
-                onClick={() => void loadLeads()}
+                onClick={() => void loadLeads({ silent: false })}
                 disabled={loading}
               >
                 {loading ? (

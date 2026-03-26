@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-collections";
 import { parseLeadImportPayload, type LeadImportRow } from "@/lib/lead-import-parse";
+import { syncImportLeadsToFirestoreAdmin } from "@/lib/import-lead-sync-firestore";
 
 export const dynamic = "force-dynamic";
 
@@ -236,9 +237,33 @@ export async function GET(request: NextRequest) {
 
     const rows = parseLeadImportPayload(json);
 
+    let sync:
+      | {
+          created: number;
+          updated: number;
+          skipped: number;
+          total: number;
+        }
+      | undefined;
+    let syncWarning: string | undefined;
+    try {
+      sync = await syncImportLeadsToFirestoreAdmin(
+        db,
+        companyId,
+        rows,
+        importUrl
+      );
+    } catch (e) {
+      console.error("[import-leads] Firestore sync failed", e);
+      syncWarning =
+        "Nepodařilo se uložit synchronizaci do databáze (poptávky se zobrazí z JSON, ale stav v systému může být zastaralý).";
+    }
+
     return NextResponse.json({
       ok: true,
       rows,
+      ...(sync ? { sync } : {}),
+      ...(syncWarning ? { warning: syncWarning } : {}),
       meta: {
         rawCount: Array.isArray(json)
           ? json.length

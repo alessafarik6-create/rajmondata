@@ -430,11 +430,6 @@ export default function CompanyDashboard() {
     return () => window.clearInterval(t);
   }, [showAdminDashboard, companyId, user, loadImportLeadsForDashboard]);
 
-  const leadsValueStats = useMemo(
-    () => sumOrientacniCenyFromLeadRows(importLeadsRows),
-    [importLeadsRows]
-  );
-
   const importLeadOverlayByKey = useMemo(() => {
     const m = new Map<string, { receivedAt?: unknown }>();
     const list = Array.isArray(importLeadOverlaysRaw) ? importLeadOverlaysRaw : [];
@@ -444,6 +439,11 @@ export default function CompanyDashboard() {
     }
     return m;
   }, [importLeadOverlaysRaw]);
+
+  const leadsValueStats = useMemo(
+    () => sumOrientacniCenyFromLeadRows(importLeadsRows),
+    [importLeadsRows]
+  );
 
   const latestFiveDashboardLeads = useMemo(() => {
     if (!importLeadsRows.length) return [];

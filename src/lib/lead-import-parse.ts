@@ -13,6 +13,8 @@ export type LeadImportRow = {
   zprava: string;
   /** Typ / kategorie poptávky z importu (volitelné — záleží na zdroji JSON). */
   typ: string;
+  /** Stav / fáze ze zdroje (volitelné). */
+  stav?: string;
   /**
    * Datum přijetí / vytvoření ze zdrojového JSON (ISO), pokud ho parser našel.
    * Jinak se doplní při prvním zobrazení do Firestore (`import_lead_overlays.receivedAt`).
@@ -29,11 +31,24 @@ function str(v: unknown): string {
   return "";
 }
 
-/** Stabilní syntetické id, pokud zdroj neposílá `id` — stejné údaje ⇒ stejné id. */
+/**
+ * Bez id ze zdroje: stabilní id z kontaktu (email|telefon), aby se při změně zprávy
+ * nebo jména nevytvářel duplicitní záznam při každém importu.
+ */
 function syntheticIdFromRow(o: Record<string, unknown>): string {
+  const email = str(o.email ?? o.mail).trim().toLowerCase();
+  const telefon = str(o.telefon ?? o.phone ?? o.tel).trim();
+  if (email || telefon) {
+    const stable = `${email}|${telefon}`;
+    let h = 2166136261;
+    for (let i = 0; i < stable.length; i++) {
+      h ^= stable.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return `synth_${(h >>> 0).toString(36)}`;
+  }
+
   const parts = [
-    str(o.email ?? o.mail),
-    str(o.telefon ?? o.phone ?? o.tel),
     str(o.jmeno ?? o.name),
     str(o.adresa ?? o.address),
     str(o.zprava ?? o.message ?? o.zpráva),
@@ -155,11 +170,29 @@ function typFromRow(o: Record<string, unknown>): string {
   );
 }
 
+function stavFromRow(o: Record<string, unknown>): string {
+  return str(
+    o.stav ??
+      o.state ??
+      o.status ??
+      o.faze ??
+      o.phase ??
+      o.Stav ??
+      ""
+  );
+}
+
 /** Bez id použijeme syntetické id z údajů řádku (stabilní při opakovaném importu). */
 export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
   if (!raw || typeof raw !== "object") return null;
   const o = raw as Record<string, unknown>;
-  const idRaw = o.id ?? (o as { Id?: unknown }).Id;
+  const idRaw =
+    o.id ??
+    o.externalId ??
+    o.external_id ??
+    o.sourceId ??
+    o.source_id ??
+    (o as { Id?: unknown }).Id;
   const idFromSource =
     idRaw != null && String(idRaw).trim() !== "" ? String(idRaw).trim() : "";
 
@@ -169,6 +202,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
   const adresa = str(o.adresa ?? o.address);
   const zprava = str(o.zprava ?? o.message ?? o.zpráva);
   const typ = typFromRow(o);
+  const stav = stavFromRow(o);
   const receivedAtIso = receivedAtIsoFromRow(o);
   const orientacniCenaKc = extractEstimatedPriceKcFromImportObject(o);
 
@@ -183,6 +217,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
       adresa,
       zprava,
       typ,
+      ...(stav ? { stav } : {}),
       ...(receivedAtIso ? { receivedAtIso } : {}),
       ...(orientacniCenaKc != null ? { orientacniCenaKc } : {}),
     };
@@ -196,6 +231,7 @@ export function normalizeLeadRow(raw: unknown): LeadImportRow | null {
     adresa,
     zprava,
     typ,
+    ...(stav ? { stav } : {}),
     ...(receivedAtIso ? { receivedAtIso } : {}),
     ...(orientacniCenaKc != null ? { orientacniCenaKc } : {}),
   };
