@@ -20,6 +20,8 @@ export type WorkSegmentClient = {
   jobName?: string;
   displayName?: string;
   tariffName?: string;
+  /** Hodinová sazba pro tarif (nebo pro zakázku při sourceType job — z uložené sazby zakázky/tarifu). */
+  hourlyRateCzk?: number | null;
   durationHours?: number | null;
   totalAmountCzk?: number | null;
   startAt?: { toDate?: () => Date } | null;
@@ -58,8 +60,66 @@ export function effectiveSegmentDurationHours(seg: WorkSegmentClient): number {
   return 0;
 }
 
+/**
+ * Hodinová sazba uložená na segmentu (tarif nebo zakázka dle serveru).
+ */
+export function parseSegmentHourlyRateCzk(seg: WorkSegmentClient): number | null {
+  const n = Number(seg.hourlyRateCzk);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * Délka úseku pro přehled: uzavřený = jako výkaz; otevřený = od začátku do min(teď, konec dne)
+ * u dnešního dne, u minulých dnů do konce kalendářního dne.
+ */
+export function segmentDurationForOverview(
+  seg: WorkSegmentClient,
+  dayIso: string,
+  now: Date = new Date()
+): number {
+  const start = tsToDate(seg.startAt);
+  if (!start) return 0;
+  if (seg.closed === true) {
+    return effectiveSegmentDurationHours(seg);
+  }
+  const endFromDb = tsToDate(seg.endAt);
+  if (endFromDb && endFromDb > start) {
+    return effectiveSegmentDurationHours(seg);
+  }
+  const [y, m, d] = dayIso.split("-").map(Number);
+  if (!y || !m || !d) return 0;
+  const dayEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
+  const todayIso = format(now, "yyyy-MM-dd");
+  const capEnd = todayIso === dayIso ? (now < dayEnd ? now : dayEnd) : dayEnd;
+  if (capEnd <= start) return 0;
+  return Math.round(((capEnd.getTime() - start.getTime()) / 36e5) * 100) / 100;
+}
+
 export function formatTimeHm(d: Date): string {
   return d.toLocaleTimeString("cs-CZ", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Začátek / konec pro přehled — otevřený úsek bez konec → „probíhá“. */
+export function segmentStartEndDisplay(seg: WorkSegmentClient): {
+  startHm: string;
+  endHm: string | null;
+  endLabel: string;
+} {
+  const start = tsToDate(seg.startAt);
+  const end = tsToDate(seg.endAt);
+  const startHm = start ? formatTimeHm(start) : "—";
+  if (seg.closed !== true) {
+    if (end && start && end > start) {
+      const eh = formatTimeHm(end);
+      return { startHm, endHm: eh, endLabel: eh };
+    }
+    return { startHm, endHm: null, endLabel: "probíhá" };
+  }
+  if (end && start && end > start) {
+    const eh = formatTimeHm(end);
+    return { startHm, endHm: eh, endLabel: eh };
+  }
+  return { startHm, endHm: null, endLabel: "—" };
 }
 
 /**

@@ -14,10 +14,14 @@ import {
 import { cs } from "date-fns/locale";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
+import { computeSegmentAmount } from "@/lib/work-segment-rates";
 import type { WorkSegmentClient } from "@/lib/work-segment-client";
 import {
-  effectiveSegmentDurationHours,
+  parseSegmentHourlyRateCzk,
   segmentDateIsoKey,
+  segmentDurationForOverview,
+  segmentStartEndDisplay,
+  sortSegmentsByStart,
 } from "@/lib/work-segment-client";
 import {
   formatKc,
@@ -354,40 +358,59 @@ function dailyReportStatusForDay(
   return null;
 }
 
-function aggregateTariffLinesForDay(
-  segments: WorkSegmentClient[],
-  emp: EmployeeLite,
-  dayIso: string
-): { label: string; hours: number }[] {
-  const map = new Map<string, number>();
-  for (const seg of segments) {
-    if (!firestoreEmployeeIdMatches(seg.employeeId, emp)) continue;
-    if (segmentDateIsoKey(seg) !== dayIso) continue;
-    if (seg.closed !== true) continue;
-    const h = effectiveSegmentDurationHours(seg);
-    if (h <= 0) continue;
-    const st = String(seg.sourceType || "");
-    let label: string;
-    if (st === "tariff") {
-      const n = String(seg.tariffName || seg.displayName || "").trim();
-      label = n ? `Tarif ${n}` : "Tarif";
-    } else if (st === "job") {
-      const n = String(seg.jobName || seg.displayName || "").trim();
-      label = n ? `Zakázka: ${n}` : "Zakázka";
-    } else {
-      label = String(seg.displayName || "Úsek").trim() || "Úsek";
-    }
-    map.set(label, (map.get(label) ?? 0) + h);
-  }
-  return [...map.entries()]
-    .map(([label, hours]) => ({
-      label,
-      hours: Math.round(hours * 100) / 100,
-    }))
-    .sort((a, b) => a.label.localeCompare(b.label, "cs"));
-}
+/** Jedna položka tarifního úseku (sazba z tarifu, ne zaměstnanec). */
+export type TariffSegmentDetailRow = {
+  id: string;
+  label: string;
+  startHm: string;
+  endHm: string | null;
+  endLabel: string;
+  durationH: number;
+  rateKcPerH: number | null;
+  earningsKc: number;
+};
 
-export type TariffLineRow = { label: string; hours: number };
+/** Zakázka — sazba z uložené sazby zakázky na segmentu, logika tarifu se neaplikuje. */
+export type JobSegmentDetailRow = {
+  id: string;
+  label: string;
+  startHm: string;
+  endHm: string | null;
+  endLabel: string;
+  durationH: number;
+  rateKcPerH: number | null;
+  earningsKc: number;
+};
+
+function segmentEarningsForOverview(
+  seg: WorkSegmentClient,
+  dayIso: string,
+  now: Date
+): { durationH: number; earningsKc: number; rate: number | null } {
+  const durationH = segmentDurationForOverview(seg, dayIso, now);
+  const rate = parseSegmentHourlyRateCzk(seg);
+  if (rate != null && durationH > 0) {
+    return {
+      durationH,
+      earningsKc: computeSegmentAmount(durationH, rate),
+      rate,
+    };
+  }
+  const tc = seg.totalAmountCzk;
+  if (
+    seg.closed === true &&
+    typeof tc === "number" &&
+    Number.isFinite(tc) &&
+    tc > 0
+  ) {
+    return {
+      durationH,
+      earningsKc: Math.round(tc * 100) / 100,
+      rate: null,
+    };
+  }
+  return { durationH, earningsKc: 0, rate: null };
+}
 
 export type EmployeeDailyDetailRow = {
   key: string;
@@ -396,7 +419,13 @@ export type EmployeeDailyDetailRow = {
   prichod: string;
   odchod: string;
   odpracovanoH: number | null;
-  tariffLines: TariffLineRow[];
+  tariffSegments: TariffSegmentDetailRow[];
+  jobSegments: JobSegmentDetailRow[];
+  /** Hodiny od docházky mínus čas na tarifech a zakázkách (běžná sazba zaměstnance). */
+  hoursOutsideTariffAndJob: number;
+  orientacniKcTariff: number;
+  orientacniKcJob: number;
+  orientacniKcStandard: number;
   bloku: number;
   schvalenoKc: number;
   orientacniKc: number;
@@ -414,9 +443,12 @@ export function buildEmployeeDailyDetailRows(params: {
   dailyReports: Record<string, unknown>[];
   workBlocks: WorkTimeBlockMoney[];
   segments: WorkSegmentClient[];
+  /** Pro otevřené úseky (testy / deterministický výstup). */
+  now?: Date;
 }): EmployeeDailyDetailRow[] {
   const { range, employee, attendanceRaw, dailyReports, workBlocks, segments } =
     params;
+  const now = params.now ?? new Date();
   const eid = employee.id;
   const auth = employee.authUserId;
   const dayRows = attendanceRaw.filter((r) =>
@@ -436,7 +468,78 @@ export function buildEmployeeDailyDetailRows(params: {
     const h = one?.hoursWorked ?? null;
     const hoursNum = h != null && Number.isFinite(h) ? h : 0;
     const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dateIso, auth);
-    const tariffLines = aggregateTariffLinesForDay(segments, employee, dateIso);
+
+    const daySegs = sortSegmentsByStart(
+      segments.filter(
+        (s) =>
+          firestoreEmployeeIdMatches(s.employeeId, employee) &&
+          segmentDateIsoKey(s) === dateIso &&
+          (String(s.sourceType ?? "") === "tariff" || String(s.sourceType ?? "") === "job")
+      )
+    );
+
+    const tariffSegments: TariffSegmentDetailRow[] = [];
+    const jobSegments: JobSegmentDetailRow[] = [];
+    let sumTariffH = 0;
+    let sumJobH = 0;
+    let orientacniKcTariff = 0;
+    let orientacniKcJob = 0;
+
+    for (const seg of daySegs) {
+      const st = String(seg.sourceType ?? "");
+      const disp = segmentStartEndDisplay(seg);
+      const { durationH, earningsKc, rate: r } = segmentEarningsForOverview(
+        seg,
+        dateIso,
+        now
+      );
+      const rateKc = r != null ? r : parseSegmentHourlyRateCzk(seg);
+
+      if (st === "tariff") {
+        const label = String(seg.tariffName || seg.displayName || "").trim();
+        tariffSegments.push({
+          id: seg.id,
+          label: label ? `Tarif ${label}` : "Tarif",
+          startHm: disp.startHm,
+          endHm: disp.endHm,
+          endLabel: disp.endLabel,
+          durationH: Math.round(durationH * 100) / 100,
+          rateKcPerH: rateKc,
+          earningsKc,
+        });
+        sumTariffH += durationH;
+        orientacniKcTariff += earningsKc;
+      } else if (st === "job") {
+        const jn = String(seg.jobName || seg.displayName || "").trim();
+        jobSegments.push({
+          id: seg.id,
+          label: jn ? `Zakázka: ${jn}` : "Zakázka",
+          startHm: disp.startHm,
+          endHm: disp.endHm,
+          endLabel: disp.endLabel,
+          durationH: Math.round(durationH * 100) / 100,
+          rateKcPerH: rateKc,
+          earningsKc,
+        });
+        sumJobH += durationH;
+        orientacniKcJob += earningsKc;
+      }
+    }
+
+    sumTariffH = Math.round(sumTariffH * 100) / 100;
+    sumJobH = Math.round(sumJobH * 100) / 100;
+    const hoursOutsideTariffAndJob = Math.max(
+      0,
+      Math.round((hoursNum - sumTariffH - sumJobH) * 100) / 100
+    );
+    const orientacniKcStandard =
+      rate > 0 && hoursOutsideTariffAndJob > 0
+        ? Math.round(hoursOutsideTariffAndJob * rate * 100) / 100
+        : 0;
+
+    orientacniKcTariff = Math.round(orientacniKcTariff * 100) / 100;
+    orientacniKcJob = Math.round(orientacniKcJob * 100) / 100;
+
     const approvedDr = approvedMoneyDailyReportForDay(dailyReports, employee, dateIso);
     const approvedBl = (() => {
       let s = 0;
@@ -450,12 +553,25 @@ export function buildEmployeeDailyDetailRows(params: {
     const schvalenoKc = Math.round((approvedDr + approvedBl) * 100) / 100;
     const pendD = sumPendingDailyReportEstimateForDay(dailyReports, employee, dateIso);
     const pendB = sumPendingBlocksMoneyForDay(workBlocks, employee, dateIso);
-    const orientacniKc = computeOrientacniVydelekKc({
-      odpracovaneHodiny: hoursNum,
-      hourlyRate: rate,
-      pendingDailyEst: pendD,
-      pendingBlockEst: pendB,
-    });
+
+    const splitOrientacni =
+      orientacniKcTariff + orientacniKcJob + orientacniKcStandard;
+    const hasSplit =
+      hoursNum > 0 ||
+      sumTariffH > 0 ||
+      sumJobH > 0 ||
+      tariffSegments.length > 0 ||
+      jobSegments.length > 0;
+
+    const orientacniKc = hasSplit
+      ? Math.round(splitOrientacni * 100) / 100
+      : computeOrientacniVydelekKc({
+          odpracovaneHodiny: hoursNum,
+          hourlyRate: rate,
+          pendingDailyEst: pendD,
+          pendingBlockEst: pendB,
+        });
+
     const repSt = dailyReportStatusForDay(dailyReports, employee, dateIso);
     let schvalenoStatus: "approved" | "pending" | "none" = "none";
     if (repSt === "approved" || schvalenoKc > 0) schvalenoStatus = "approved";
@@ -478,7 +594,12 @@ export function buildEmployeeDailyDetailRows(params: {
       prichod: one?.checkIn ?? "—",
       odchod: one?.checkOut ?? "—",
       odpracovanoH: h,
-      tariffLines,
+      tariffSegments,
+      jobSegments,
+      hoursOutsideTariffAndJob,
+      orientacniKcTariff,
+      orientacniKcJob,
+      orientacniKcStandard,
       bloku,
       schvalenoKc,
       orientacniKc,
@@ -493,26 +614,55 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   hours: number;
   approvedKc: number;
   orientacniKc: number;
+  totalTariffHours: number;
+  totalTariffKc: number;
+  totalJobHours: number;
+  totalJobKc: number;
+  totalStandardKc: number;
+  totalHoursOutsideTariffJob: number;
 } {
   let daysWorked = 0;
   let hours = 0;
   let approvedKc = 0;
   let orientacniKc = 0;
+  let totalTariffHours = 0;
+  let totalTariffKc = 0;
+  let totalJobHours = 0;
+  let totalJobKc = 0;
+  let totalStandardKc = 0;
+  let totalHoursOutsideTariffJob = 0;
   for (const r of rows) {
     const hasWork =
       (r.odpracovanoH != null && r.odpracovanoH > 0) ||
-      r.tariffLines.length > 0 ||
+      r.tariffSegments.length > 0 ||
+      r.jobSegments.length > 0 ||
       r.bloku > 0;
     if (hasWork) daysWorked += 1;
     hours += r.odpracovanoH ?? 0;
     approvedKc += r.schvalenoKc;
     orientacniKc += r.orientacniKc;
+    for (const t of r.tariffSegments) {
+      totalTariffHours += t.durationH;
+      totalTariffKc += t.earningsKc;
+    }
+    for (const j of r.jobSegments) {
+      totalJobHours += j.durationH;
+      totalJobKc += j.earningsKc;
+    }
+    totalStandardKc += r.orientacniKcStandard;
+    totalHoursOutsideTariffJob += r.hoursOutsideTariffAndJob;
   }
   return {
     daysWorked,
     hours: Math.round(hours * 100) / 100,
     approvedKc: Math.round(approvedKc * 100) / 100,
     orientacniKc: Math.round(orientacniKc * 100) / 100,
+    totalTariffHours: Math.round(totalTariffHours * 100) / 100,
+    totalTariffKc: Math.round(totalTariffKc * 100) / 100,
+    totalJobHours: Math.round(totalJobHours * 100) / 100,
+    totalJobKc: Math.round(totalJobKc * 100) / 100,
+    totalStandardKc: Math.round(totalStandardKc * 100) / 100,
+    totalHoursOutsideTariffJob: Math.round(totalHoursOutsideTariffJob * 100) / 100,
   };
 }
 

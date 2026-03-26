@@ -77,6 +77,17 @@ function formatHours(h: number | null): string {
   return `${h} h`;
 }
 
+function formatRateKcPerH(kc: number | null): string {
+  if (kc == null || !Number.isFinite(kc)) return "—";
+  return `${Math.round(kc)} Kč/h`;
+}
+
+/** Součty hodin v období — 0 zobrazíme jako „0 h“, ne jako pomlčku. */
+function formatHoursPeriodTotal(h: number): string {
+  if (!Number.isFinite(h) || h <= 0) return "0 h";
+  return formatHoursMinutes(h);
+}
+
 export default function AttendanceOverviewPage() {
   const router = useRouter();
   const { user } = useUser();
@@ -394,7 +405,13 @@ export default function AttendanceOverviewPage() {
     if (showEmployeeDetail && dailyDetailRows && detailTotals) {
       doc.setFont("helvetica", "bold");
       doc.text(
-        `Dny s prací: ${detailTotals.daysWorked} | Hodiny: ${formatHours(detailTotals.hours)} | Schváleno: ${formatKc(detailTotals.approvedKc)} | Orientačně: ${formatKc(detailTotals.orientacniKc)}`,
+        `Dny s prací: ${detailTotals.daysWorked} | Hodiny docházky: ${formatHours(detailTotals.hours)} | Schváleno: ${formatKc(detailTotals.approvedKc)} | Orientačně: ${formatKc(detailTotals.orientacniKc)}`,
+        margin,
+        y
+      );
+      y += 5;
+      doc.text(
+        `Tarif: ${formatHoursPeriodTotal(detailTotals.totalTariffHours)} / ${formatKc(detailTotals.totalTariffKc)} | Zakázky: ${formatHoursPeriodTotal(detailTotals.totalJobHours)} / ${formatKc(detailTotals.totalJobKc)} | Mimo tarif/zakázku: ${formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffJob)} / ${formatKc(detailTotals.totalStandardKc)}`,
         margin,
         y
       );
@@ -416,16 +433,36 @@ export default function AttendanceOverviewPage() {
           y
         );
         y += 4;
-        if (day.tariffLines.length > 0) {
-          for (const t of day.tariffLines) {
-            doc.text(`  - ${t.label}: ${formatHoursMinutes(t.hours)}`, margin, y);
-            y += 4;
-            if (y > 275) {
-              doc.addPage();
-              y = 18;
-            }
+        for (const t of day.tariffSegments) {
+          doc.text(
+            `  ${t.label}: ${t.startHm}-${t.endLabel} ${formatHoursMinutes(t.durationH)} ${formatRateKcPerH(t.rateKcPerH)} ${formatKc(t.earningsKc)}`,
+            margin,
+            y
+          );
+          y += 4;
+          if (y > 275) {
+            doc.addPage();
+            y = 18;
           }
         }
+        for (const j of day.jobSegments) {
+          doc.text(
+            `  ${j.label}: ${j.startHm}-${j.endLabel} ${formatHoursMinutes(j.durationH)} ${formatRateKcPerH(j.rateKcPerH)} ${formatKc(j.earningsKc)}`,
+            margin,
+            y
+          );
+          y += 4;
+          if (y > 275) {
+            doc.addPage();
+            y = 18;
+          }
+        }
+        doc.text(
+          `  Mimo tarif/zakázku: ${formatHours(day.hoursOutsideTariffAndJob)} ${formatKc(day.orientacniKcStandard)} | Tarify celkem: ${formatKc(day.orientacniKcTariff)} | Zakázky celkem: ${formatKc(day.orientacniKcJob)}`,
+          margin,
+          y
+        );
+        y += 4;
         const schLabel =
           day.schvalenoStatus === "pending"
             ? " (ceká na schválení)"
@@ -788,6 +825,47 @@ export default function AttendanceOverviewPage() {
         )}
       </div>
 
+      {showEmployeeDetail && detailTotals && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 print:grid-cols-5 print:gap-2">
+          <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+              Čas na tarifech
+            </p>
+            <p className="mt-1 text-lg font-bold tabular-nums">
+              {formatHoursMinutes(detailTotals.totalTariffHours)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+              Výdělek z tarifů
+            </p>
+            <p className="mt-1 text-lg font-bold tabular-nums">{formatKc(detailTotals.totalTariffKc)}</p>
+          </div>
+          <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+              Čas na zakázkách
+            </p>
+            <p className="mt-1 text-lg font-bold tabular-nums">
+              {formatHoursMinutes(detailTotals.totalJobHours)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+              Výdělek zakázky
+            </p>
+            <p className="mt-1 text-lg font-bold tabular-nums">{formatKc(detailTotals.totalJobKc)}</p>
+          </div>
+          <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+              Mimo tarif / zakázku
+            </p>
+            <p className="mt-1 text-sm font-bold tabular-nums leading-tight">
+              {formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffJob)} · {formatKc(detailTotals.totalStandardKc)}
+            </p>
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <div className="flex min-h-[30vh] items-center justify-center gap-2 text-black print:hidden">
           <Loader2 className="h-8 w-8 animate-spin" />
@@ -810,7 +888,7 @@ export default function AttendanceOverviewPage() {
                     Záznamů docházky: {day.bloku}
                   </span>
                 </div>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="mt-3 grid gap-3 sm:grid-cols-3">
                   <div>
                     <p className="text-xs font-medium text-neutral-600">Příchod</p>
                     <p className="text-lg font-semibold tabular-nums">{day.prichod}</p>
@@ -820,34 +898,90 @@ export default function AttendanceOverviewPage() {
                     <p className="text-lg font-semibold tabular-nums">{day.odchod}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-neutral-600">Odpracováno</p>
+                    <p className="text-xs font-medium text-neutral-600">Odpracováno (docházka)</p>
                     <p className="text-lg font-semibold tabular-nums">
                       {formatHours(day.odpracovanoH)}
                     </p>
                   </div>
-                  <div>
-                    <p className="text-xs font-medium text-neutral-600">Tarify / činnosti</p>
-                    {day.tariffLines.length === 0 ? (
-                      <p className="text-sm text-neutral-600">—</p>
-                    ) : (
-                      <ul className="mt-1 space-y-1 text-sm">
-                        {day.tariffLines.map((t) => (
-                          <li key={t.label} className="flex justify-between gap-4">
-                            <span className="text-black">{t.label}</span>
-                            <span className="shrink-0 tabular-nums font-medium">
-                              {formatHoursMinutes(t.hours)}
-                            </span>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
                 </div>
-                <div className="mt-4 flex flex-wrap gap-6 border-t border-black/10 pt-3 text-sm sm:text-base">
-                  <div>
-                    <span className="text-neutral-600">Orientační výdělek: </span>
-                    <span className="font-bold tabular-nums">{formatKc(day.orientacniKc)}</span>
+
+                {day.tariffSegments.length > 0 && (
+                  <div className="mt-4 border-t border-black/10 pt-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-800">
+                      Tarifní úseky
+                    </p>
+                    <ul className="mt-2 space-y-2 text-sm">
+                      {day.tariffSegments.map((t) => (
+                        <li
+                          key={t.id}
+                          className="flex flex-col gap-0.5 rounded-md border border-black/10 bg-neutral-50/80 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-2"
+                        >
+                          <span className="font-medium text-black">{t.label}</span>
+                          <span className="tabular-nums text-neutral-800">
+                            {t.startHm}–{t.endLabel}
+                            {", "}
+                            {formatHoursMinutes(t.durationH)}
+                            {", "}
+                            {formatRateKcPerH(t.rateKcPerH)}
+                            {", "}
+                            <span className="font-semibold">{formatKc(t.earningsKc)}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
                   </div>
+                )}
+
+                {day.jobSegments.length > 0 && (
+                  <div className="mt-4 border-t border-black/10 pt-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-800">
+                      Zakázky (sazba zakázky, ne tarif)
+                    </p>
+                    <ul className="mt-2 space-y-2 text-sm">
+                      {day.jobSegments.map((j) => (
+                        <li
+                          key={j.id}
+                          className="flex flex-col gap-0.5 rounded-md border border-black/10 bg-white px-3 py-2 sm:flex-row sm:flex-wrap sm:items-baseline sm:justify-between sm:gap-2"
+                        >
+                          <span className="font-medium text-black">{j.label}</span>
+                          <span className="tabular-nums text-neutral-800">
+                            {j.startHm}–{j.endLabel}
+                            {", "}
+                            {formatHoursMinutes(j.durationH)}
+                            {", "}
+                            {formatRateKcPerH(j.rateKcPerH)}
+                            {", "}
+                            <span className="font-semibold">{formatKc(j.earningsKc)}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="mt-4 border-t border-black/10 pt-3 text-sm">
+                  <p className="text-xs font-semibold text-neutral-800">Orientační výdělek (rozpad)</p>
+                  <ul className="mt-1 space-y-1 text-neutral-900">
+                    <li className="flex justify-between gap-4">
+                      <span>Mimo tarif a zakázku ({formatHours(day.hoursOutsideTariffAndJob)})</span>
+                      <span className="font-semibold tabular-nums">{formatKc(day.orientacniKcStandard)}</span>
+                    </li>
+                    <li className="flex justify-between gap-4">
+                      <span>Z tarifů</span>
+                      <span className="font-semibold tabular-nums">{formatKc(day.orientacniKcTariff)}</span>
+                    </li>
+                    <li className="flex justify-between gap-4">
+                      <span>Ze zakázek</span>
+                      <span className="font-semibold tabular-nums">{formatKc(day.orientacniKcJob)}</span>
+                    </li>
+                    <li className="flex justify-between gap-4 border-t border-black/10 pt-1 font-bold">
+                      <span>Celkem orientačně</span>
+                      <span className="tabular-nums">{formatKc(day.orientacniKc)}</span>
+                    </li>
+                  </ul>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-6 text-sm sm:text-base">
                   <div>
                     <span className="text-neutral-600">Schválený výdělek: </span>
                     <span className="font-bold tabular-nums">
@@ -891,17 +1025,37 @@ export default function AttendanceOverviewPage() {
                       <p className="font-medium">{day.bloku}</p>
                     </div>
                   </div>
-                  {day.tariffLines.length > 0 && (
-                    <ul className="mt-3 space-y-1 border-t border-black/10 pt-2 text-sm">
-                      {day.tariffLines.map((t) => (
-                        <li key={t.label} className="flex justify-between gap-2">
-                          <span>{t.label}</span>
-                          <span className="tabular-nums">{formatHoursMinutes(t.hours)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                  <div className="mt-3 flex flex-col gap-1 border-t border-black/10 pt-2">
+                  {day.tariffSegments.map((t) => (
+                    <div key={t.id} className="mt-2 rounded border border-black/10 bg-neutral-50/80 px-2 py-1.5 text-xs">
+                      <span className="font-medium">{t.label}</span>
+                      <div className="tabular-nums text-neutral-800">
+                        {t.startHm}–{t.endLabel} · {formatHoursMinutes(t.durationH)} ·{" "}
+                        {formatRateKcPerH(t.rateKcPerH)} · {formatKc(t.earningsKc)}
+                      </div>
+                    </div>
+                  ))}
+                  {day.jobSegments.map((j) => (
+                    <div key={j.id} className="mt-2 rounded border border-black/10 px-2 py-1.5 text-xs">
+                      <span className="font-medium">{j.label}</span>
+                      <div className="tabular-nums text-neutral-800">
+                        {j.startHm}–{j.endLabel} · {formatHoursMinutes(j.durationH)} ·{" "}
+                        {formatRateKcPerH(j.rateKcPerH)} · {formatKc(j.earningsKc)}
+                      </div>
+                    </div>
+                  ))}
+                  <div className="mt-3 flex flex-col gap-1 border-t border-black/10 pt-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-neutral-600">Mimo tarif/zak.</span>
+                      <span>{formatKc(day.orientacniKcStandard)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-600">Tarify</span>
+                      <span>{formatKc(day.orientacniKcTariff)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-neutral-600">Zakázky</span>
+                      <span>{formatKc(day.orientacniKcJob)}</span>
+                    </div>
                     <div className="flex justify-between font-bold">
                       <span className="text-neutral-600">Orientačně</span>
                       <span>{formatKc(day.orientacniKc)}</span>
