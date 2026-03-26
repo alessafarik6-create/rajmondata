@@ -988,7 +988,7 @@ export function JobExpensesSection({
                               </div>
                             </>
                           ) : (
-                            <span className="text-slate-600 dark:text-slate-400">—</span>
+                            <span className="text-slate-600 dark:text-slate-300">—</span>
                           );
 
                         if (isJobDetailWide) {
@@ -1035,7 +1035,7 @@ export function JobExpensesSection({
                                 <div className="min-w-0">
                                   <p className="line-clamp-3 break-words text-base leading-snug text-slate-900 dark:text-slate-100">
                                     {row.note?.trim() || (
-                                      <span className="italic text-slate-500">—</span>
+                                      <span className="italic text-slate-600">—</span>
                                     )}
                                   </p>
                                 </div>

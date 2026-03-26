@@ -521,7 +521,7 @@ export default function EmployeeProfilePage() {
                 </Button>
               ) : null}
             </div>
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-slate-600">
               JPG, PNG… max 5 MB. Fotka se zobrazí na hlavní stránce portálu.
             </p>
           </div>
@@ -535,24 +535,24 @@ export default function EmployeeProfilePage() {
         <CardContent className="space-y-2 text-sm text-slate-800">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <span className="text-slate-500">Jméno</span>
+              <span className="text-slate-600">Jméno</span>
               <p className="font-medium">{profile?.firstName || "—"}</p>
             </div>
             <div>
-              <span className="text-slate-500">Příjmení</span>
+              <span className="text-slate-600">Příjmení</span>
               <p className="font-medium">{profile?.lastName || "—"}</p>
             </div>
           </div>
           <div>
-            <span className="text-slate-500">Email</span>
+            <span className="text-slate-600">Email</span>
             <p className="font-medium">{profile?.email || user?.email || "—"}</p>
           </div>
           <div>
-            <span className="text-slate-500">Pracovní pozice</span>
+            <span className="text-slate-600">Pracovní pozice</span>
             <p className="font-medium">{profile?.jobTitle || "—"}</p>
           </div>
           <div>
-            <span className="text-slate-500">Hodinová sazba</span>
+            <span className="text-slate-600">Hodinová sazba</span>
             <p className="font-medium">
               {profile?.hourlyRate != null && profile?.hourlyRate !== ""
                 ? `${profile.hourlyRate} Kč/h`
@@ -560,14 +560,14 @@ export default function EmployeeProfilePage() {
             </p>
           </div>
           <div>
-            <span className="text-slate-500">Organizace</span>
+            <span className="text-slate-600">Organizace</span>
             <p className="font-medium">
               {companyName && companyName !== "Organization"
                 ? companyName
                 : companyId || "—"}
             </p>
           </div>
-          <p className="text-xs text-slate-500 pt-2">
+          <p className="text-xs text-slate-600 pt-2">
             Změnu jména, pozice a sazby řeší administrátor firmy.
           </p>
         </CardContent>
@@ -642,7 +642,7 @@ export default function EmployeeProfilePage() {
               {label}
             </Button>
           ))}
-          <p className="w-full text-xs text-slate-500 pt-1">
+          <p className="w-full text-xs text-slate-600 pt-1">
             Ovlivňuje rozhraní zaměstnaneckého portálu a jazyk popisu ve výkazu
             práce.
           </p>

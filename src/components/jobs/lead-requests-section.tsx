@@ -196,7 +196,7 @@ export function LeadRequestsSection({
         <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <CardTitle className="flex items-center gap-2 text-lg text-slate-900">
-              <Inbox className="h-5 w-5 text-orange-500" />
+              <Inbox className="h-5 w-5 text-orange-700" />
               Poptávky
             </CardTitle>
             <CardDescription className="text-slate-600">
@@ -280,7 +280,7 @@ export function LeadRequestsSection({
                                 </Link>
                               </Button>
                             ) : (
-                              <span className="text-xs text-slate-500">—</span>
+                              <span className="text-xs text-slate-600">—</span>
                             )}
                           </TableCell>
                         </TableRow>
@@ -298,16 +298,16 @@ export function LeadRequestsSection({
                       <div className="space-y-1">
                         <p className="font-semibold text-slate-900">{r.jmeno || "—"}</p>
                         <p className="text-sm text-slate-700">
-                          <span className="text-slate-500">Tel.: </span>
+                          <span className="text-slate-600">Tel.: </span>
                           {r.telefon || "—"}
                         </p>
                         <p className="text-sm text-slate-700 break-all">
-                          <span className="text-slate-500">E-mail: </span>
+                          <span className="text-slate-600">E-mail: </span>
                           {r.email || "—"}
                         </p>
                         {r.adresa ? (
                           <p className="text-sm text-slate-700 whitespace-pre-wrap">
-                            <span className="text-slate-500">Adresa: </span>
+                            <span className="text-slate-600">Adresa: </span>
                             {r.adresa}
                           </p>
                         ) : null}

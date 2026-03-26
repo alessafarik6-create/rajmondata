@@ -48,8 +48,8 @@ function Calendar({
           "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground focus:bg-primary focus:text-primary-foreground",
         day_today: "bg-slate-200 font-semibold text-slate-900",
         day_outside:
-          "day-outside text-slate-500 opacity-80 aria-selected:bg-slate-100 aria-selected:text-slate-600 aria-selected:opacity-100",
-        day_disabled: "text-slate-400 opacity-60",
+          "day-outside text-slate-600 opacity-80 aria-selected:bg-slate-100 aria-selected:text-slate-600 aria-selected:opacity-100",
+        day_disabled: "text-slate-600 opacity-60",
         day_range_middle:
           "aria-selected:bg-slate-100 aria-selected:text-slate-900",
         day_hidden: "invisible",

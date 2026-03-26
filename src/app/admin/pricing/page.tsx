@@ -82,7 +82,7 @@ export default function AdminPricingPage() {
                   value={defaultEmployeePriceCzk}
                   onChange={(e) => setDefaultEmployeePriceCzk(Number(e.target.value) || 0)}
                 />
-                <p className="text-xs text-slate-500">
+                <p className="text-xs text-slate-600">
                   Použije se u modulu Docházka — celková cena = počet aktivních zaměstnanců × tato částka.
                 </p>
               </div>

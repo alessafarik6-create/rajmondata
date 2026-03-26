@@ -136,7 +136,7 @@ export default function AdminLoginPage() {
                   placeholder="superadmin"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="h-11 border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
+                  className="h-11 border-slate-200 bg-white text-slate-900 placeholder:text-slate-600"
                   disabled={loading}
                   required
                 />
@@ -153,7 +153,7 @@ export default function AdminLoginPage() {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="h-11 border-slate-200 bg-white text-slate-900 placeholder:text-slate-400"
+                  className="h-11 border-slate-200 bg-white text-slate-900 placeholder:text-slate-600"
                   disabled={loading}
                   required
                 />

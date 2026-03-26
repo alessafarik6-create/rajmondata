@@ -612,7 +612,7 @@ export default function CompanyDashboard() {
               ? "Vítejte ve svém klientském portálu."
               : `Zde je přehled vaší práce v ${companyName || companyId || "vaší organizaci"}.`}
           </p>
-          <p className="mt-2 text-xs text-slate-500">
+          <p className="mt-2 text-xs text-slate-600">
             Platforma {PLATFORM_NAME}
           </p>
         </div>

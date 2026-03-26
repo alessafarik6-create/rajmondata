@@ -89,7 +89,7 @@ export function PublicLanding() {
         <p className="text-sm font-medium uppercase tracking-widest text-primary/90">{PLATFORM_NAME}</p>
         <h1 className="mt-4 max-w-3xl text-4xl font-bold tracking-tight sm:text-5xl">{headline}</h1>
         <p className="mt-6 max-w-2xl text-lg text-slate-300">{subline}</p>
-        <p className="mt-4 max-w-2xl text-slate-400">{lead}</p>
+        <p className="mt-4 max-w-2xl text-slate-300">{lead}</p>
         <div className="mt-10 flex flex-wrap gap-3">
           <Button size="lg" asChild>
             <Link href="/register">Vytvořit účet firmy</Link>
@@ -103,7 +103,7 @@ export function PublicLanding() {
       <section className="border-t border-white/10 bg-black/20 py-16 sm:py-20">
         <div className="mx-auto max-w-6xl px-4">
           <h2 className="text-2xl font-bold sm:text-3xl">Tarify a moduly</h2>
-          <p className="mt-2 max-w-2xl text-slate-400">{promo}</p>
+          <p className="mt-2 max-w-2xl text-slate-300">{promo}</p>
           {err ? <p className="mt-4 text-sm text-amber-800">{err}</p> : null}
 
           {!data && !err ? (
@@ -115,7 +115,7 @@ export function PublicLanding() {
               <Card className="border-primary/30 bg-slate-900/80">
                 <CardHeader>
                   <CardTitle className="text-lg">Docházka, práce a mzdy</CardTitle>
-                  <CardDescription className="text-slate-400">
+                  <CardDescription className="text-slate-300">
                     Od {priceEmployee} Kč / zaměstnanec / měsíc
                   </CardDescription>
                 </CardHeader>
@@ -130,7 +130,7 @@ export function PublicLanding() {
                   <Card key={m.code} className="border-white/10 bg-slate-900/60">
                     <CardHeader>
                       <CardTitle className="text-lg">{m.name ?? m.code}</CardTitle>
-                      <CardDescription className="text-slate-400">
+                      <CardDescription className="text-slate-300">
                         {m.billingType === "per_company"
                           ? `${m.basePriceCzk ?? "—"} Kč / měsíc`
                           : "Dle domluvy"}
@@ -152,7 +152,7 @@ export function PublicLanding() {
         </div>
       </section>
 
-      <footer className="border-t border-white/10 py-10 text-center text-sm text-slate-500">
+      <footer className="border-t border-white/10 py-10 text-center text-sm text-slate-400">
         © {new Date().getFullYear()} {PLATFORM_NAME}
       </footer>
     </div>

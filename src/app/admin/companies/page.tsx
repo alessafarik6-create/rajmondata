@@ -200,7 +200,7 @@ export default function AdminCompaniesPage() {
       <Card className="border-slate-200 overflow-hidden">
         <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row gap-4 justify-between">
           <div className="relative w-full sm:max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
             <Input
               placeholder="Hledat firmu, IČO, email..."
               value={searchTerm}
@@ -240,11 +240,11 @@ export default function AdminCompaniesPage() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-slate-900">{company.name}</span>
                         {company.email && (
-                          <span className="text-xs text-slate-500 truncate">{company.email}</span>
+                          <span className="text-xs text-slate-600 truncate">{company.email}</span>
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-slate-500 hidden lg:table-cell max-w-[120px] truncate" title={company.id}>
+                    <TableCell className="font-mono text-xs text-slate-600 hidden lg:table-cell max-w-[120px] truncate" title={company.id}>
                       {company.id}
                     </TableCell>
                     <TableCell className="font-mono text-xs text-slate-600 hidden md:table-cell">

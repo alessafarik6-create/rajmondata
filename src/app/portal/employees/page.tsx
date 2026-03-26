@@ -54,7 +54,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 /** Světlý styl polí v modálu „Pozvat člena týmu“ (neovlivní zbytek portálu). */
 const INVITE_INPUT_CLASS =
-  "flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-base text-black ring-offset-0 placeholder:text-gray-400 focus-visible:border-orange-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:ring-offset-0 md:text-sm disabled:opacity-70";
+  "flex h-10 w-full rounded-md border border-gray-200 bg-white px-3 py-2 text-base text-black ring-offset-0 placeholder:text-gray-600 focus-visible:border-orange-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-orange-500 focus-visible:ring-offset-0 md:text-sm disabled:opacity-70";
 
 const INVITE_SELECT_TRIGGER_CLASS =
   "flex h-10 w-full items-center justify-between rounded-md border border-gray-200 bg-white px-3 py-2 text-sm text-black ring-offset-0 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 focus:ring-offset-0 disabled:opacity-70 [&>span]:line-clamp-1 [&>span]:text-black";
@@ -883,7 +883,7 @@ export default function EmployeesPage() {
                       <option value="employee">Běžný zaměstnanec</option>
                       <option value="orgAdmin">Administrátor organizace</option>
                     </select>
-                    <p className="text-[10px] text-gray-500">
+                    <p className="text-[10px] text-gray-600">
                       Administrátor organizace spravuje tuto firmu v portálu (zaměstnanci, zakázky, docházka…), bez
                       přístupu ke globální správě platformy.
                     </p>
@@ -893,7 +893,7 @@ export default function EmployeesPage() {
                       <Label htmlFor="invite-terminal-visible" className={INVITE_LABEL_CLASS}>
                         Zobrazit v terminálu docházky
                       </Label>
-                      <p className="text-[10px] text-gray-500">
+                      <p className="text-[10px] text-gray-600">
                         Vypnutí skryje zaměstnance na veřejné docházce — nelze ho vybrat ani přihlásit PINem.
                       </p>
                     </div>
@@ -943,7 +943,7 @@ export default function EmployeesPage() {
                       Hodinová sazba (Kč/h)
                     </Label>
                     <div className="relative">
-                      <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <DollarSign className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-600" />
                       <Input
                         id="hourlyRate"
                         type="number"
@@ -955,7 +955,7 @@ export default function EmployeesPage() {
                         className={cn(INVITE_INPUT_CLASS, "pl-10")}
                       />
                     </div>
-                    <p className="text-[10px] text-gray-500">
+                    <p className="text-[10px] text-gray-600">
                       Tato sazba se používá pro výpočet finančních nákladů firmy.
                     </p>
                   </div>
@@ -1022,7 +1022,7 @@ export default function EmployeesPage() {
                 <Label htmlFor="org-settings-terminal" className={INVITE_LABEL_CLASS}>
                   Zobrazit v terminálu docházky
                 </Label>
-                <p className="text-[10px] text-gray-500">
+                <p className="text-[10px] text-gray-600">
                   Vypnuto = zaměstnanec se nezobrazí v seznamu a nelze se přihlásit PINem.
                 </p>
               </div>
@@ -1557,7 +1557,7 @@ export default function EmployeesPage() {
           </DialogHeader>
           {terminalPinGeneratedDisplay ? (
             <div className="py-4 space-y-4">
-              <p className="text-center text-xs font-medium text-gray-500 uppercase tracking-wide">
+              <p className="text-center text-xs font-medium text-gray-600 uppercase tracking-wide">
                 Nový PIN (číslice)
               </p>
               <p className="text-center text-4xl font-mono font-bold tracking-[0.2em] text-black select-all break-all">

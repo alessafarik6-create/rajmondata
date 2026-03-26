@@ -4268,7 +4268,7 @@ export default function JobDetailPage() {
               >
                 Přehled zaměření
               </Link>
-              <span className="text-slate-500"> · zakázka vznikla ze zaměření</span>
+              <span className="text-slate-600"> · zakázka vznikla ze zaměření</span>
             </p>
           ) : null}
         </div>

@@ -41,7 +41,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
 
   if (!template || typeof template !== "object") {
     return (
-      <p className="text-sm text-slate-500">
+      <p className="text-sm text-slate-600">
         Neplatná šablona — nelze zobrazit pole.
       </p>
     );
@@ -49,7 +49,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
 
   if (sections.length === 0) {
     return (
-      <p className="text-sm text-slate-500">
+      <p className="text-sm text-slate-600">
         Šablona zatím nemá definovaná pole (chybí sekce v datech).
       </p>
     );

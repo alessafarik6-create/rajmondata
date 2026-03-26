@@ -118,7 +118,7 @@ export default function InvoicesPage() {
       <Card className="overflow-hidden">
         <div className="p-4 border-b border-slate-200 bg-slate-50/50 flex flex-col sm:flex-row gap-4 justify-between">
           <div className="relative w-full sm:max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
             <Input placeholder="Hledat číslo faktury nebo firmu..." className="pl-10 bg-white border-slate-200 min-h-[44px]" />
           </div>
           <div className="flex flex-wrap gap-2">

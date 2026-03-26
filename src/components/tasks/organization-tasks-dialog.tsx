@@ -494,7 +494,7 @@ export function OrganizationTasksDialog({
                                 {t.description}
                               </p>
                             ) : null}
-                            <p className="text-xs text-slate-500 mt-1 space-x-2">
+                            <p className="text-xs text-slate-600 mt-1 space-x-2">
                               <span>Termín: {formatDueCs(t.dueDate)}</span>
                               <span>·</span>
                               <span>
@@ -504,7 +504,7 @@ export function OrganizationTasksDialog({
                                 )}
                               </span>
                             </p>
-                            <p className="text-xs text-slate-500 mt-1">
+                            <p className="text-xs text-slate-600 mt-1">
                               Vytvořeno: {formatTaskDate(t.createdAt)} ·{" "}
                               {organizationTaskIsForAll(t)
                                 ? "Přiřazeno: Všem"
@@ -563,7 +563,7 @@ export function OrganizationTasksDialog({
                             <p className="font-medium line-through text-slate-600">
                               {t.title}
                             </p>
-                            <p className="text-xs text-slate-500 mt-1">
+                            <p className="text-xs text-slate-600 mt-1">
                               {formatTaskDate(t.completedAt)}
                             </p>
                           </div>

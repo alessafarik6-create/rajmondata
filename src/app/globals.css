@@ -61,7 +61,7 @@
   --popover: 0 0% 100%;
   --popover-foreground: 222 47% 11%;
   --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
+  --muted-foreground: 215 25% 35%;
   --accent: 24 94% 53%;
   --accent-foreground: 0 0% 100%;
   --border: 214 32% 91%;
@@ -77,8 +77,9 @@
   --portal-card: 0 0% 100%;
   --portal-card-border: 226 232 240;
   --portal-text: 15 23 42;
-  --portal-text-muted: 71 85 105;
-  --portal-text-subtle: 100 116 139;
+  /* slate-700 / slate-600 — dostatečný kontrast na bílém */
+  --portal-text-muted: 51 65 85;
+  --portal-text-subtle: 71 85 105;
 }
 
 [data-portal-content] [data-slot="card"],
@@ -217,7 +218,7 @@
   --popover: 0 0% 100%;
   --popover-foreground: 222 47% 11%;
   --muted: 210 40% 96%;
-  --muted-foreground: 215 16% 47%;
+  --muted-foreground: 215 25% 35%;
   --accent: 24 94% 53%;
   --accent-foreground: 0 0% 100%;
   --border: 214 32% 91%;

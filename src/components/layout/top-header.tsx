@@ -129,7 +129,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
           </div>
         )}
         <div className="relative hidden min-w-0 w-full max-w-md sm:block">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-600 pointer-events-none" />
           <Input placeholder="Hledat..." className="pl-10" />
         </div>
       </div>
@@ -160,7 +160,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
                 <p className="text-sm font-medium leading-none text-slate-900">
                   {superadminUsername || profile?.displayName || user?.email || 'Účet'}
                 </p>
-                <p className="text-xs text-slate-500 mt-1 capitalize">
+                <p className="text-xs text-slate-600 mt-1 capitalize">
                   {superadminUsername
                     ? 'Super administrátor'
                     : getRoleLabel(

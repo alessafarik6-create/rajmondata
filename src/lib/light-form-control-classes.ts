@@ -6,7 +6,7 @@ import { FLOATING_SOLID_PANEL_CLASS } from "@/lib/portal-floating-surface";
  */
 export const LIGHT_FORM_CONTROL_CLASS =
   "flex w-full min-h-[44px] rounded-md border border-gray-300 !bg-white !text-black px-3 py-2 text-base shadow-sm " +
-  "placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-0 " +
+  "placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-0 " +
   "disabled:cursor-not-allowed disabled:opacity-60 md:min-h-10 md:text-sm " +
   "file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-black";
 

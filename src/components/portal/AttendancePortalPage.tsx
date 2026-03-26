@@ -568,7 +568,7 @@ export function AttendancePortalPage() {
                     size="lg"
                     variant="outline"
                     disabled={lastAction !== "check_in" && lastAction !== "break_end"}
-                    className="h-24 gap-3 border-amber-500 text-xl font-bold text-amber-500 hover:bg-amber-500/10"
+                    className="h-24 gap-3 border-amber-600 text-xl font-bold text-amber-900 hover:bg-amber-500/15"
                     onClick={() => handleAttendanceAction("break_start")}
                   >
                     <Coffee className="h-6 w-6" />
@@ -579,7 +579,7 @@ export function AttendancePortalPage() {
                     size="lg"
                     variant="outline"
                     disabled={lastAction !== "break_start"}
-                    className="h-24 gap-3 border-blue-500 text-xl font-bold text-blue-500 hover:bg-blue-500/10"
+                    className="h-24 gap-3 border-blue-600 text-xl font-bold text-blue-900 hover:bg-blue-500/15"
                     onClick={() => handleAttendanceAction("break_end")}
                   >
                     <Clock className="h-6 w-6" />

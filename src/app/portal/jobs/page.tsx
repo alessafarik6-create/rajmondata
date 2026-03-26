@@ -1113,7 +1113,7 @@ function JobsPageContent() {
                 Vyhledávání
               </Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 pointer-events-none" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 pointer-events-none" />
                 <Input
                   id="jobs-search"
                   className="pl-9"
@@ -1209,7 +1209,7 @@ function JobsPageContent() {
                     </TableCell>
                     <TableCell className="text-slate-700 hidden md:table-cell">
                       <div className="flex items-center gap-2 text-sm min-w-0">
-                        <Building2 className="w-3 h-3 text-slate-500 shrink-0" />
+                        <Building2 className="w-3 h-3 text-slate-600 shrink-0" />
                         <span className="truncate">
                           {getCustomerName(job?.customerId)}
                         </span>

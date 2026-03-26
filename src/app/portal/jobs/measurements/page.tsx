@@ -740,7 +740,7 @@ function JobMeasurementsPageContent() {
       <Card>
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100">
           <CardTitle className="text-lg flex items-center gap-2">
-            <RefreshCw className="h-5 w-5 text-slate-500" />
+            <RefreshCw className="h-5 w-5 text-slate-600" />
             Přehled zaměření
           </CardTitle>
           <div className="flex flex-wrap items-center gap-2">

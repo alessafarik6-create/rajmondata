@@ -662,7 +662,7 @@ export default function PortalLeadsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="portal-page-title text-2xl sm:text-3xl flex items-center gap-2">
-          <Inbox className="h-7 w-7 text-orange-500 shrink-0" />
+          <Inbox className="h-7 w-7 text-orange-700 shrink-0" />
           Poptávky
         </h1>
         <p className="portal-page-description mt-1">
@@ -683,7 +683,7 @@ export default function PortalLeadsPage() {
                 Vyhledávání
               </Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600" />
                 <Input
                   id="lead-search"
                   className="pl-9"
@@ -763,7 +763,7 @@ export default function PortalLeadsPage() {
               ) : null}
             </div>
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-slate-600">
             Automatické obnovení každých 5 minut. Pole „typ“ se bere z importního JSON (např. typ, type,
             kategorie, productType) — záleží na vašem zdroji.
           </p>
@@ -1109,7 +1109,7 @@ export default function PortalLeadsPage() {
                         >
                           <ChevronDown
                             className={cn(
-                              "mt-0.5 h-4 w-4 shrink-0 text-slate-500 transition-transform duration-200 lg:mt-0",
+                              "mt-0.5 h-4 w-4 shrink-0 text-slate-600 transition-transform duration-200 lg:mt-0",
                               expanded && "rotate-180"
                             )}
                             aria-hidden
@@ -1120,7 +1120,7 @@ export default function PortalLeadsPage() {
                                 <span className="max-w-full truncate font-medium text-slate-900">
                                   {r.jmeno || "—"}
                                 </span>
-                                <span className="shrink-0 text-xs tabular-nums text-slate-500">
+                                <span className="shrink-0 text-xs tabular-nums text-slate-600">
                                   {dateStr}
                                 </span>
                               </div>
@@ -1139,7 +1139,7 @@ export default function PortalLeadsPage() {
                                     {r.typ}
                                   </Badge>
                                 ) : (
-                                  <span className="text-[10px] text-slate-400 sm:text-xs">—</span>
+                                  <span className="text-[10px] text-slate-600 sm:text-xs">—</span>
                                 )}
                                 {currentTag && tagById.get(currentTag) ? (
                                   <LeadTagBadge
@@ -1148,7 +1148,7 @@ export default function PortalLeadsPage() {
                                     className="max-w-[10rem] sm:max-w-[14rem]"
                                   />
                                 ) : (
-                                  <span className="text-[10px] text-slate-400 sm:text-xs">Bez štítku</span>
+                                  <span className="text-[10px] text-slate-600 sm:text-xs">Bez štítku</span>
                                 )}
                                 {nextMt ? (
                                   <span
@@ -1201,7 +1201,7 @@ export default function PortalLeadsPage() {
                             <div className="mx-auto max-w-4xl space-y-4">
                               {r.adresa?.trim() ? (
                                 <div className="space-y-1">
-                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
                                     Adresa
                                   </p>
                                   <p className="whitespace-pre-wrap text-sm text-slate-800">{r.adresa}</p>
@@ -1209,7 +1209,7 @@ export default function PortalLeadsPage() {
                               ) : null}
                               {r.zprava?.trim() ? (
                                 <div className="space-y-1">
-                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
                                     Text poptávky
                                   </p>
                                   <p className="whitespace-pre-wrap text-sm text-slate-700">{r.zprava}</p>
@@ -1217,7 +1217,7 @@ export default function PortalLeadsPage() {
                               ) : null}
                               {r.orientacniCenaKc != null && Number.isFinite(r.orientacniCenaKc) ? (
                                 <div className="space-y-1">
-                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
                                     Orientační cena
                                   </p>
                                   <p className="text-sm text-slate-800">

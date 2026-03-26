@@ -23,7 +23,7 @@ export function JobTemplateFieldEditor({ field, onChange, onRemove }: Props) {
 
   return (
     <div className="flex gap-2 items-start p-3 rounded-lg border border-slate-200 bg-slate-50/50">
-      <div className="pt-2 text-slate-400 cursor-grab">
+      <div className="pt-2 text-slate-600 cursor-grab">
         <GripVertical className="w-4 h-4" />
       </div>
       <div className="flex-1 grid gap-2 sm:grid-cols-2">
@@ -95,7 +95,7 @@ export function JobTemplateFieldEditor({ field, onChange, onRemove }: Props) {
           </div>
         )}
       </div>
-      <Button type="button" variant="ghost" size="icon" onClick={onRemove} className="text-slate-500 hover:text-destructive shrink-0">
+      <Button type="button" variant="ghost" size="icon" onClick={onRemove} className="text-slate-600 hover:text-destructive shrink-0">
         <Trash2 className="w-4 h-4" />
       </Button>
     </div>
