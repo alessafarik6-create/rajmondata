@@ -17,9 +17,16 @@ import {
   where,
   limit,
 } from "firebase/firestore";
-import { format } from "date-fns";
+import { format, subDays } from "date-fns";
 import { jsPDF } from "jspdf";
-import { Loader2, FileDown, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Loader2,
+  FileDown,
+  ChevronLeft,
+  ChevronRight,
+  Printer,
+  ChevronDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -41,13 +48,22 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import type { WorkTimeBlockMoney } from "@/lib/employee-money";
+import type { WorkSegmentClient } from "@/lib/work-segment-client";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   attendanceRowMatchesEmployee,
+  buildEmployeeDailyDetailRows,
   buildEmployeeMap,
   buildOverviewRows,
   computePeriodRange,
   firestoreEmployeeIdMatches,
+  formatHoursMinutes,
   formatKc,
+  totalsFromDailyDetailRows,
   totalsFromRows,
   type PeriodMode,
 } from "@/lib/attendance-overview-compute";
@@ -88,6 +104,10 @@ export default function AttendanceOverviewPage() {
 
   const [periodMode, setPeriodMode] = useState<PeriodMode>("week");
   const [anchorDate, setAnchorDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
+  const [customFrom, setCustomFrom] = useState(() =>
+    format(subDays(new Date(), 30), "yyyy-MM-dd")
+  );
+  const [customTo, setCustomTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [employeeFilter, setEmployeeFilter] = useState<string>(ALL);
 
   const anchor = useMemo(() => {
@@ -96,10 +116,16 @@ export default function AttendanceOverviewPage() {
     return new Date(y, m - 1, d);
   }, [anchorDate]);
 
-  const range = useMemo(
-    () => computePeriodRange(periodMode, anchor),
-    [periodMode, anchor]
-  );
+  const range = useMemo(() => {
+    if (periodMode === "custom") {
+      const [fy, fm, fd] = customFrom.split("-").map(Number);
+      const [ty, tm, td] = customTo.split("-").map(Number);
+      const from = new Date(fy, fm - 1, fd);
+      const to = new Date(ty, tm - 1, td);
+      return computePeriodRange("custom", anchor, { from, to });
+    }
+    return computePeriodRange(periodMode, anchor);
+  }, [periodMode, anchor, customFrom, customTo]);
 
   const rangeStr = useMemo(
     () => ({
@@ -156,12 +182,25 @@ export default function AttendanceOverviewPage() {
     );
   }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
+  const workSegmentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    const base = collection(firestore, "companies", companyId, "work_segments");
+    return query(
+      base,
+      where("date", ">=", rangeStr.start),
+      where("date", "<=", rangeStr.end),
+      limit(12000)
+    );
+  }, [firestore, companyId, rangeStr.start, rangeStr.end]);
+
   const { data: attendanceData = [], isLoading: attLoading } =
     useCollection(attendanceQuery);
   const { data: dailyReportsData = [], isLoading: drLoading } =
     useCollection(dailyReportsQuery);
   const { data: workBlocksData = [], isLoading: wbLoading } =
     useCollection(workBlocksQuery);
+  const { data: workSegmentsData = [], isLoading: segLoading } =
+    useCollection(workSegmentsQuery);
 
   const attendanceRows = useMemo(
     () => (Array.isArray(attendanceData) ? attendanceData : []) as AttendanceRow[],
@@ -181,6 +220,11 @@ export default function AttendanceOverviewPage() {
     () =>
       (Array.isArray(workBlocksData) ? workBlocksData : []) as WorkTimeBlockMoney[],
     [workBlocksData]
+  );
+
+  const workSegments = useMemo(
+    () => (Array.isArray(workSegmentsData) ? workSegmentsData : []) as WorkSegmentClient[],
+    [workSegmentsData]
   );
 
   const filteredAttendance = useMemo(() => {
@@ -248,7 +292,35 @@ export default function AttendanceOverviewPage() {
     ]
   );
 
-  const totals = useMemo(() => totalsFromRows(tableRows), [tableRows]);
+  const selectedEmployee =
+    employeeFilter !== ALL ? employees.get(employeeFilter) : null;
+
+  const dailyDetailRows = useMemo(() => {
+    if (!selectedEmployee) return null;
+    return buildEmployeeDailyDetailRows({
+      range,
+      employee: selectedEmployee,
+      attendanceRaw: filteredAttendance,
+      dailyReports: filteredDailyReports,
+      workBlocks: filteredWorkBlocks,
+      segments: workSegments,
+    });
+  }, [
+    selectedEmployee,
+    range,
+    filteredAttendance,
+    filteredDailyReports,
+    filteredWorkBlocks,
+    workSegments,
+  ]);
+
+  const aggregateTotals = useMemo(() => totalsFromRows(tableRows), [tableRows]);
+  const detailTotals = useMemo(
+    () => (dailyDetailRows ? totalsFromDailyDetailRows(dailyDetailRows) : null),
+    [dailyDetailRows]
+  );
+
+  const showEmployeeDetail = Boolean(selectedEmployee && dailyDetailRows);
 
   const loading =
     profileLoading ||
@@ -256,7 +328,8 @@ export default function AttendanceOverviewPage() {
     employeesLoading ||
     attLoading ||
     drLoading ||
-    wbLoading;
+    wbLoading ||
+    segLoading;
 
   const employeeLabel =
     employeeFilter === ALL
@@ -268,7 +341,13 @@ export default function AttendanceOverviewPage() {
       ? "Denní přehled"
       : periodMode === "week"
         ? "Týdenní přehled"
-        : "Měsíční přehled";
+        : periodMode === "month"
+          ? "Měsíční přehled"
+          : "Vlastní období";
+
+  const handlePrint = useCallback(() => {
+    window.print();
+  }, []);
 
   const handlePdf = useCallback(() => {
     const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -288,69 +367,132 @@ export default function AttendanceOverviewPage() {
     y += 5;
     doc.text(`Zaměstnanec: ${employeeLabel}`, margin, y);
     y += 8;
-    doc.setFont("helvetica", "bold");
-    doc.text(
-      `Celkem odpracováno: ${formatHours(totals.hours)} | Schválený výdělek: ${formatKc(totals.approvedKc)} | Orientační: ${formatKc(totals.pendingKc)}`,
-      margin,
-      y
-    );
-    y += 10;
 
-    doc.setFontSize(9);
-    const col = [margin, margin + 42, margin + 78, margin + 98, margin + 118, margin + 138, margin + 162, margin + 186];
-    doc.setFont("helvetica", "bold");
-    doc.text("Datum / období", col[0], y);
-    doc.text("Jméno", col[1], y);
-    doc.text("Příchod", col[2], y);
-    doc.text("Odchod", col[3], y);
-    doc.text("Hodiny", col[4], y);
-    doc.text("Záznamů", col[5], y);
-    doc.text("Schváleno", col[6], y);
-    doc.text("Orientačně", col[7], y);
-    y += 5;
-    doc.setFont("helvetica", "normal");
-
-    for (const row of tableRows) {
-      if (y > 275) {
-        doc.addPage();
-        y = 18;
+    if (showEmployeeDetail && dailyDetailRows && detailTotals) {
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        `Dny s prací: ${detailTotals.daysWorked} | Hodiny: ${formatHours(detailTotals.hours)} | Schváleno: ${formatKc(detailTotals.approvedKc)} | Orientačně: ${formatKc(detailTotals.orientacniKc)}`,
+        margin,
+        y
+      );
+      y += 10;
+      doc.setFontSize(9);
+      doc.setFont("helvetica", "normal");
+      for (const day of dailyDetailRows) {
+        if (y > 250) {
+          doc.addPage();
+          y = 18;
+        }
+        doc.setFont("helvetica", "bold");
+        doc.text(day.dayTitle, margin, y);
+        y += 4;
+        doc.setFont("helvetica", "normal");
+        doc.text(
+          `Prichod: ${day.prichod}   Odchod: ${day.odchod}   Odpracováno: ${formatHours(day.odpracovanoH)}   Záznamů: ${day.bloku}`,
+          margin,
+          y
+        );
+        y += 4;
+        if (day.tariffLines.length > 0) {
+          for (const t of day.tariffLines) {
+            doc.text(`  - ${t.label}: ${formatHoursMinutes(t.hours)}`, margin, y);
+            y += 4;
+            if (y > 275) {
+              doc.addPage();
+              y = 18;
+            }
+          }
+        }
+        const schLabel =
+          day.schvalenoStatus === "pending"
+            ? " (ceká na schválení)"
+            : day.schvalenoStatus === "none" && (day.odpracovanoH ?? 0) > 0
+              ? " (neodsouhlaseno)"
+              : "";
+        doc.text(
+          `Orientacní výdělek: ${formatKc(day.orientacniKc)}   Schválený výdělek: ${formatKc(day.schvalenoKc)}${schLabel}`,
+          margin,
+          y
+        );
+        y += 8;
       }
-      const line = [
-        row.datumLabel.slice(0, 28),
-        row.employeeName.slice(0, 22),
-        row.prichod,
-        row.odchod,
-        formatHours(row.odpracovanoH),
-        String(row.bloku),
-        formatKc(row.schvalenoKc),
-        formatKc(row.orientacniKc),
+    } else {
+      doc.setFont("helvetica", "bold");
+      doc.text(
+        `Celkem odpracováno: ${formatHours(aggregateTotals.hours)} | Schválený výdělek: ${formatKc(aggregateTotals.approvedKc)} | Orientační: ${formatKc(aggregateTotals.pendingKc)}`,
+        margin,
+        y
+      );
+      y += 10;
+
+      doc.setFontSize(9);
+      const col = [
+        margin,
+        margin + 42,
+        margin + 78,
+        margin + 98,
+        margin + 118,
+        margin + 138,
+        margin + 162,
+        margin + 186,
       ];
-      doc.text(line[0], col[0], y);
-      doc.text(line[1], col[1], y);
-      doc.text(line[2], col[2], y);
-      doc.text(line[3], col[3], y);
-      doc.text(line[4], col[4], y);
-      doc.text(line[5], col[5], y);
-      doc.text(line[6], col[6], y);
-      doc.text(line[7], col[7], y);
+      doc.setFont("helvetica", "bold");
+      doc.text("Datum / období", col[0], y);
+      doc.text("Jméno", col[1], y);
+      doc.text("Příchod", col[2], y);
+      doc.text("Odchod", col[3], y);
+      doc.text("Hodiny", col[4], y);
+      doc.text("Záznamů", col[5], y);
+      doc.text("Schváleno", col[6], y);
+      doc.text("Orientačně", col[7], y);
       y += 5;
+      doc.setFont("helvetica", "normal");
+
+      for (const row of tableRows) {
+        if (y > 275) {
+          doc.addPage();
+          y = 18;
+        }
+        const line = [
+          row.datumLabel.slice(0, 28),
+          row.employeeName.slice(0, 22),
+          row.prichod,
+          row.odchod,
+          formatHours(row.odpracovanoH),
+          String(row.bloku),
+          formatKc(row.schvalenoKc),
+          formatKc(row.orientacniKc),
+        ];
+        doc.text(line[0], col[0], y);
+        doc.text(line[1], col[1], y);
+        doc.text(line[2], col[2], y);
+        doc.text(line[3], col[3], y);
+        doc.text(line[4], col[4], y);
+        doc.text(line[5], col[5], y);
+        doc.text(line[6], col[6], y);
+        doc.text(line[7], col[7], y);
+        y += 5;
+      }
     }
 
     doc.save(`dochazka-prehled-${rangeStr.start}-${rangeStr.end}.pdf`);
     toast({ title: "PDF vygenerováno", description: "Soubor byl stažen." });
   }, [
+    aggregateTotals.approvedKc,
+    aggregateTotals.hours,
+    aggregateTotals.pendingKc,
     companyId,
     companyName,
+    dailyDetailRows,
+    detailTotals,
     employeeLabel,
     periodTitle,
     range.label,
     rangeStr.end,
     rangeStr.start,
+    showEmployeeDetail,
     tableRows,
     toast,
-    totals.approvedKc,
-    totals.hours,
-    totals.pendingKc,
   ]);
 
   const shiftAnchor = (deltaDays: number) => {
@@ -372,9 +514,15 @@ export default function AttendanceOverviewPage() {
     return null;
   }
 
+  const pdfDisabled =
+    loading ||
+    (showEmployeeDetail
+      ? !dailyDetailRows || dailyDetailRows.length === 0
+      : tableRows.length === 0);
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-10 text-black">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+    <div className="mx-auto max-w-6xl space-y-6 pb-10 text-black print:max-w-none">
+      <div className="flex flex-col gap-4 print:hidden sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
             Přehled docházky a výdělků
@@ -384,23 +532,35 @@ export default function AttendanceOverviewPage() {
             {range.label ? ` · ${range.label}` : ""}
           </p>
         </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="min-h-[44px] border-black bg-white text-black hover:bg-neutral-100"
-          onClick={handlePdf}
-          disabled={loading || tableRows.length === 0}
-        >
-          <FileDown className="mr-2 h-4 w-4" />
-          Generovat PDF
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-[44px] border-black bg-white text-black hover:bg-neutral-100"
+            onClick={handlePrint}
+            disabled={loading}
+          >
+            <Printer className="mr-2 h-4 w-4" />
+            Tisk
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-[44px] border-black bg-white text-black hover:bg-neutral-100"
+            onClick={handlePdf}
+            disabled={pdfDisabled}
+          >
+            <FileDown className="mr-2 h-4 w-4" />
+            Export do PDF
+          </Button>
+        </div>
       </div>
 
-      <div className="grid gap-4 rounded-lg border border-black bg-white p-4 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 rounded-lg border border-black bg-white p-4 shadow-sm print:hidden sm:grid-cols-2 lg:grid-cols-4">
         <div>
           <Label className="text-xs font-medium text-neutral-600">Období</Label>
           <div className="mt-2 flex flex-wrap gap-2">
-            {(["day", "week", "month"] as const).map((m) => (
+            {(["day", "week", "month", "custom"] as const).map((m) => (
               <Button
                 key={m}
                 type="button"
@@ -413,45 +573,74 @@ export default function AttendanceOverviewPage() {
                 }
                 onClick={() => setPeriodMode(m)}
               >
-                {m === "day" ? "Den" : m === "week" ? "Týden" : "Měsíc"}
+                {m === "day"
+                  ? "Den"
+                  : m === "week"
+                    ? "Týden"
+                    : m === "month"
+                      ? "Měsíc"
+                      : "Vlastní"}
               </Button>
             ))}
           </div>
         </div>
-        <div className="sm:col-span-2 lg:col-span-2">
-          <Label htmlFor="anchor-date" className="text-xs font-medium text-neutral-600">
-            Datum / návěstí období
-          </Label>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              className="h-10 w-10 shrink-0 border-black"
-              onClick={() => shiftAnchor(-1)}
-              aria-label="Předchozí"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Input
-              id="anchor-date"
-              type="date"
-              value={anchorDate}
-              onChange={(e) => setAnchorDate(e.target.value)}
-              className="max-w-[200px] border-black bg-white text-black"
-            />
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              className="h-10 w-10 shrink-0 border-black"
-              onClick={() => shiftAnchor(1)}
-              aria-label="Další"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+        {periodMode === "custom" ? (
+          <div className="sm:col-span-2 lg:col-span-2">
+            <Label className="text-xs font-medium text-neutral-600">Datum od – do</Label>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                className="max-w-[160px] border-black bg-white text-black"
+                aria-label="Datum od"
+              />
+              <span className="text-neutral-500">–</span>
+              <Input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                className="max-w-[160px] border-black bg-white text-black"
+                aria-label="Datum do"
+              />
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="sm:col-span-2 lg:col-span-2">
+            <Label htmlFor="anchor-date" className="text-xs font-medium text-neutral-600">
+              Datum / návěstí období
+            </Label>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="h-10 w-10 shrink-0 border-black"
+                onClick={() => shiftAnchor(-1)}
+                aria-label="Předchozí"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Input
+                id="anchor-date"
+                type="date"
+                value={anchorDate}
+                onChange={(e) => setAnchorDate(e.target.value)}
+                className="max-w-[200px] border-black bg-white text-black"
+              />
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                className="h-10 w-10 shrink-0 border-black"
+                onClick={() => shiftAnchor(1)}
+                aria-label="Další"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
         <div>
           <Label className="text-xs font-medium text-neutral-600">Zaměstnanec</Label>
           <Select
@@ -474,39 +663,211 @@ export default function AttendanceOverviewPage() {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
-            Celkem odpracováno
-          </p>
-          <p className="mt-2 text-2xl font-bold tabular-nums">{formatHours(totals.hours)}</p>
-        </div>
-        <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
-            Schválený výdělek
-          </p>
-          <p className="mt-2 text-3xl font-bold tabular-nums text-black">
-            {formatKc(totals.approvedKc)}
-          </p>
-        </div>
-        <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
-          <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
-            Orientační výdělek
-          </p>
-          <p className="mt-2 text-3xl font-bold tabular-nums text-black">
-            {formatKc(totals.pendingKc)}
-          </p>
-        </div>
+      <div
+        className={`sticky top-0 z-10 grid gap-3 border-b border-neutral-200 bg-white pb-3 sm:grid-cols-2 ${showEmployeeDetail && detailTotals ? "lg:grid-cols-4" : "lg:grid-cols-3"} print:static print:border-0 print:pb-0`}
+      >
+        {showEmployeeDetail && detailTotals ? (
+          <>
+            <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+                Počet dnů s prací
+              </p>
+              <p className="mt-2 text-2xl font-bold tabular-nums">{detailTotals.daysWorked}</p>
+            </div>
+            <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+                Celkem odpracováno
+              </p>
+              <p className="mt-2 text-2xl font-bold tabular-nums">
+                {formatHours(detailTotals.hours)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+                Schválený výdělek
+              </p>
+              <p className="mt-2 text-3xl font-bold tabular-nums text-black">
+                {formatKc(detailTotals.approvedKc)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+                Orientační výdělek
+              </p>
+              <p className="mt-2 text-3xl font-bold tabular-nums text-black">
+                {formatKc(detailTotals.orientacniKc)}
+              </p>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+                Celkem odpracováno
+              </p>
+              <p className="mt-2 text-2xl font-bold tabular-nums">
+                {formatHours(aggregateTotals.hours)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+                Schválený výdělek
+              </p>
+              <p className="mt-2 text-3xl font-bold tabular-nums text-black">
+                {formatKc(aggregateTotals.approvedKc)}
+              </p>
+            </div>
+            <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+                Orientační výdělek
+              </p>
+              <p className="mt-2 text-3xl font-bold tabular-nums text-black">
+                {formatKc(aggregateTotals.pendingKc)}
+              </p>
+            </div>
+          </>
+        )}
       </div>
 
       {loading ? (
-        <div className="flex min-h-[30vh] items-center justify-center gap-2 text-black">
+        <div className="flex min-h-[30vh] items-center justify-center gap-2 text-black print:hidden">
           <Loader2 className="h-8 w-8 animate-spin" />
           <span>Načítání dat…</span>
         </div>
+      ) : showEmployeeDetail && dailyDetailRows ? (
+        <>
+          <div className="mb-2 hidden text-sm font-semibold text-black print:block">
+            {employeeLabel} · {range.label}
+          </div>
+          <div className="hidden space-y-4 md:block print:block">
+            {dailyDetailRows.map((day) => (
+              <div
+                key={day.key}
+                className="break-inside-avoid rounded-lg border border-black bg-white p-4 shadow-sm print:shadow-none print:break-inside-avoid"
+              >
+                <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-black/15 pb-2">
+                  <h3 className="text-base font-semibold capitalize text-black">{day.dayTitle}</h3>
+                  <span className="text-sm text-neutral-600">
+                    Záznamů docházky: {day.bloku}
+                  </span>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div>
+                    <p className="text-xs font-medium text-neutral-600">Příchod</p>
+                    <p className="text-lg font-semibold tabular-nums">{day.prichod}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-neutral-600">Odchod</p>
+                    <p className="text-lg font-semibold tabular-nums">{day.odchod}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-neutral-600">Odpracováno</p>
+                    <p className="text-lg font-semibold tabular-nums">
+                      {formatHours(day.odpracovanoH)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-neutral-600">Tarify / činnosti</p>
+                    {day.tariffLines.length === 0 ? (
+                      <p className="text-sm text-neutral-600">—</p>
+                    ) : (
+                      <ul className="mt-1 space-y-1 text-sm">
+                        {day.tariffLines.map((t) => (
+                          <li key={t.label} className="flex justify-between gap-4">
+                            <span className="text-black">{t.label}</span>
+                            <span className="shrink-0 tabular-nums font-medium">
+                              {formatHoursMinutes(t.hours)}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+                <div className="mt-4 flex flex-wrap gap-6 border-t border-black/10 pt-3 text-sm sm:text-base">
+                  <div>
+                    <span className="text-neutral-600">Orientační výdělek: </span>
+                    <span className="font-bold tabular-nums">{formatKc(day.orientacniKc)}</span>
+                  </div>
+                  <div>
+                    <span className="text-neutral-600">Schválený výdělek: </span>
+                    <span className="font-bold tabular-nums">
+                      {day.schvalenoKc > 0
+                        ? formatKc(day.schvalenoKc)
+                        : day.schvalenoStatus === "pending"
+                          ? "čeká na schválení"
+                          : (day.odpracovanoH ?? 0) > 0
+                            ? "neodsouhlaseno"
+                            : "—"}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="space-y-2 md:hidden print:hidden">
+            {dailyDetailRows.map((day) => (
+              <Collapsible key={day.key} defaultOpen={false} className="group rounded-lg border border-black bg-white">
+                <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left font-semibold">
+                  <span className="capitalize">{day.dayTitle}</span>
+                  <ChevronDown className="h-4 w-4 shrink-0 transition-transform group-data-[state=open]:rotate-180" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="border-t border-black/15 px-4 pb-4">
+                  <div className="grid grid-cols-2 gap-2 pt-3 text-sm">
+                    <div>
+                      <span className="text-neutral-600">Příchod</span>
+                      <p className="font-medium">{day.prichod}</p>
+                    </div>
+                    <div>
+                      <span className="text-neutral-600">Odchod</span>
+                      <p className="font-medium">{day.odchod}</p>
+                    </div>
+                    <div>
+                      <span className="text-neutral-600">Odpracováno</span>
+                      <p className="font-medium">{formatHours(day.odpracovanoH)}</p>
+                    </div>
+                    <div>
+                      <span className="text-neutral-600">Záznamů</span>
+                      <p className="font-medium">{day.bloku}</p>
+                    </div>
+                  </div>
+                  {day.tariffLines.length > 0 && (
+                    <ul className="mt-3 space-y-1 border-t border-black/10 pt-2 text-sm">
+                      {day.tariffLines.map((t) => (
+                        <li key={t.label} className="flex justify-between gap-2">
+                          <span>{t.label}</span>
+                          <span className="tabular-nums">{formatHoursMinutes(t.hours)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="mt-3 flex flex-col gap-1 border-t border-black/10 pt-2">
+                    <div className="flex justify-between font-bold">
+                      <span className="text-neutral-600">Orientačně</span>
+                      <span>{formatKc(day.orientacniKc)}</span>
+                    </div>
+                    <div className="flex justify-between font-bold">
+                      <span className="text-neutral-600">Schváleno</span>
+                      <span>
+                        {day.schvalenoKc > 0
+                          ? formatKc(day.schvalenoKc)
+                          : day.schvalenoStatus === "pending"
+                            ? "čeká"
+                            : (day.odpracovanoH ?? 0) > 0
+                              ? "neodsouhl."
+                              : "—"}
+                      </span>
+                    </div>
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
+            ))}
+          </div>
+        </>
       ) : (
         <>
-          <div className="hidden overflow-x-auto rounded-lg border border-black bg-white md:block">
+          <div className="hidden overflow-x-auto rounded-lg border border-black bg-white md:block print:block">
             <Table>
               <TableHeader>
                 <TableRow className="border-black hover:bg-transparent">
@@ -549,7 +910,7 @@ export default function AttendanceOverviewPage() {
             </Table>
           </div>
 
-          <div className="space-y-3 md:hidden">
+          <div className="space-y-3 md:hidden print:hidden">
             {tableRows.length === 0 ? (
               <p className="rounded-lg border border-black bg-white p-4 text-center text-sm text-neutral-600">
                 Žádná data pro zvolené filtry.

@@ -3,6 +3,7 @@
  */
 
 import {
+  eachDayOfInterval,
   endOfMonth,
   endOfWeek,
   format,
@@ -13,6 +14,11 @@ import {
 import { cs } from "date-fns/locale";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
+import type { WorkSegmentClient } from "@/lib/work-segment-client";
+import {
+  effectiveSegmentDurationHours,
+  segmentDateIsoKey,
+} from "@/lib/work-segment-client";
 import {
   formatKc,
   getLoggedHours,
@@ -22,14 +28,38 @@ import {
   type WorkTimeBlockMoney,
 } from "@/lib/employee-money";
 
-export type PeriodMode = "day" | "week" | "month";
+export type PeriodMode = "day" | "week" | "month" | "custom";
 
 export type PeriodRange = { start: Date; end: Date; label: string };
 
 export function computePeriodRange(
   mode: PeriodMode,
-  anchor: Date
+  anchor: Date,
+  customFromTo?: { from: Date; to: Date } | null
 ): PeriodRange {
+  if (mode === "custom" && customFromTo) {
+    let a = new Date(
+      customFromTo.from.getFullYear(),
+      customFromTo.from.getMonth(),
+      customFromTo.from.getDate()
+    );
+    let b = new Date(
+      customFromTo.to.getFullYear(),
+      customFromTo.to.getMonth(),
+      customFromTo.to.getDate()
+    );
+    if (a > b) {
+      const t = a;
+      a = b;
+      b = t;
+    }
+    const end = new Date(b.getFullYear(), b.getMonth(), b.getDate(), 23, 59, 59, 999);
+    return {
+      start: a,
+      end,
+      label: `${format(a, "d. M. yyyy", { locale: cs })} – ${format(b, "d. M. yyyy", { locale: cs })}`,
+    };
+  }
   if (mode === "day") {
     const d = new Date(
       anchor.getFullYear(),
@@ -230,6 +260,262 @@ export function sumPendingBlocksMoneyInRange(
   return Math.round(s * 100) / 100;
 }
 
+/** Desetinné hodiny → „3 h 15 min“ (pro tarify a přehled). */
+export function formatHoursMinutes(decimalHours: number | null): string {
+  if (decimalHours == null || !Number.isFinite(decimalHours) || decimalHours <= 0) {
+    return "—";
+  }
+  const totalMin = Math.round(decimalHours * 60);
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+}
+
+export function enumerateIsoDaysInRange(range: PeriodRange): string[] {
+  const start = new Date(
+    range.start.getFullYear(),
+    range.start.getMonth(),
+    range.start.getDate()
+  );
+  const end = new Date(
+    range.end.getFullYear(),
+    range.end.getMonth(),
+    range.end.getDate()
+  );
+  return eachDayOfInterval({ start, end }).map((d) => format(d, "yyyy-MM-dd"));
+}
+
+function sumPendingDailyReportEstimateForDay(
+  reports: Record<string, unknown>[],
+  emp: EmployeeLite,
+  dayIso: string
+): number {
+  let s = 0;
+  const rate = Number(emp.hourlyRate);
+  if (!Number.isFinite(rate) || rate <= 0) return 0;
+  for (const r of reports) {
+    if (!firestoreEmployeeIdMatches(r?.employeeId, emp)) continue;
+    const st = String(r?.status ?? "");
+    if (st === "approved" || st === "rejected") continue;
+    const dk = String(r?.date ?? "").trim();
+    if (dk !== dayIso) continue;
+    const hRaw = r?.hoursConfirmed ?? r?.hoursFromAttendance ?? r?.hoursSum ?? 0;
+    const h = Number(hRaw);
+    if (!Number.isFinite(h) || h <= 0) continue;
+    s += Math.round(h * rate * 100) / 100;
+  }
+  return Math.round(s * 100) / 100;
+}
+
+function sumPendingBlocksMoneyForDay(
+  blocks: WorkTimeBlockMoney[],
+  emp: EmployeeLite,
+  dayIso: string
+): number {
+  const rate = Number(emp.hourlyRate);
+  if (!Number.isFinite(rate) || rate <= 0) return 0;
+  let s = 0;
+  for (const b of blocks) {
+    if (!firestoreEmployeeIdMatches(b.employeeId, emp)) continue;
+    if (b.reviewStatus !== "pending") continue;
+    const dk = String(b.date ?? "").trim();
+    if (dk !== dayIso) continue;
+    s += getLoggedHours(b) * rate;
+  }
+  return Math.round(s * 100) / 100;
+}
+
+function approvedMoneyDailyReportForDay(
+  reports: Record<string, unknown>[],
+  emp: EmployeeLite,
+  dayIso: string
+): number {
+  for (const r of reports) {
+    if (!firestoreEmployeeIdMatches(r?.employeeId, emp)) continue;
+    if (String(r?.date ?? "").trim() !== dayIso) continue;
+    if (String(r?.status ?? "") !== "approved") continue;
+    const n = Number(r?.payableAmountCzk);
+    if (Number.isFinite(n) && n >= 0) return Math.round(n * 100) / 100;
+  }
+  return 0;
+}
+
+function dailyReportStatusForDay(
+  reports: Record<string, unknown>[],
+  emp: EmployeeLite,
+  dayIso: string
+): string | null {
+  for (const r of reports) {
+    if (!firestoreEmployeeIdMatches(r?.employeeId, emp)) continue;
+    if (String(r?.date ?? "").trim() !== dayIso) continue;
+    return String(r?.status ?? "");
+  }
+  return null;
+}
+
+function aggregateTariffLinesForDay(
+  segments: WorkSegmentClient[],
+  emp: EmployeeLite,
+  dayIso: string
+): { label: string; hours: number }[] {
+  const map = new Map<string, number>();
+  for (const seg of segments) {
+    if (!firestoreEmployeeIdMatches(seg.employeeId, emp)) continue;
+    if (segmentDateIsoKey(seg) !== dayIso) continue;
+    if (seg.closed !== true) continue;
+    const h = effectiveSegmentDurationHours(seg);
+    if (h <= 0) continue;
+    const st = String(seg.sourceType || "");
+    let label: string;
+    if (st === "tariff") {
+      const n = String(seg.tariffName || seg.displayName || "").trim();
+      label = n ? `Tarif ${n}` : "Tarif";
+    } else if (st === "job") {
+      const n = String(seg.jobName || seg.displayName || "").trim();
+      label = n ? `Zakázka: ${n}` : "Zakázka";
+    } else {
+      label = String(seg.displayName || "Úsek").trim() || "Úsek";
+    }
+    map.set(label, (map.get(label) ?? 0) + h);
+  }
+  return [...map.entries()]
+    .map(([label, hours]) => ({
+      label,
+      hours: Math.round(hours * 100) / 100,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label, "cs"));
+}
+
+export type TariffLineRow = { label: string; hours: number };
+
+export type EmployeeDailyDetailRow = {
+  key: string;
+  dateIso: string;
+  dayTitle: string;
+  prichod: string;
+  odchod: string;
+  odpracovanoH: number | null;
+  tariffLines: TariffLineRow[];
+  bloku: number;
+  schvalenoKc: number;
+  orientacniKc: number;
+  schvalenoStatus: "approved" | "pending" | "none";
+};
+
+/**
+ * Denní rozpis pro jednoho zaměstnance: docházka, uzavřené segmenty (tarify/zakázky),
+ * orientační a schválený výdělek podle stejné logiky jako souhrnné funkce, ale po dnech.
+ */
+export function buildEmployeeDailyDetailRows(params: {
+  range: PeriodRange;
+  employee: EmployeeLite;
+  attendanceRaw: AttendanceRow[];
+  dailyReports: Record<string, unknown>[];
+  workBlocks: WorkTimeBlockMoney[];
+  segments: WorkSegmentClient[];
+}): EmployeeDailyDetailRow[] {
+  const { range, employee, attendanceRaw, dailyReports, workBlocks, segments } =
+    params;
+  const eid = employee.id;
+  const auth = employee.authUserId;
+  const dayRows = attendanceRaw.filter((r) =>
+    attendanceRowMatchesEmployee(r, eid, auth)
+  );
+  const summaries = summarizeAttendanceByDay(dayRows, {
+    employeeId: eid,
+    authUid: auth ?? undefined,
+  });
+  const byDay = new Map(summaries.map((s) => [s.date, s]));
+  const rate = Number(employee.hourlyRate) || 0;
+  const days = enumerateIsoDaysInRange(range);
+  const out: EmployeeDailyDetailRow[] = [];
+
+  for (const dateIso of days) {
+    const one = byDay.get(dateIso);
+    const h = one?.hoursWorked ?? null;
+    const hoursNum = h != null && Number.isFinite(h) ? h : 0;
+    const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dateIso, auth);
+    const tariffLines = aggregateTariffLinesForDay(segments, employee, dateIso);
+    const approvedDr = approvedMoneyDailyReportForDay(dailyReports, employee, dateIso);
+    const approvedBl = (() => {
+      let s = 0;
+      for (const b of workBlocks) {
+        if (!firestoreEmployeeIdMatches(b.employeeId, employee)) continue;
+        if (String(b.date ?? "").trim() !== dateIso) continue;
+        s += moneyForBlock(b, rate);
+      }
+      return Math.round(s * 100) / 100;
+    })();
+    const schvalenoKc = Math.round((approvedDr + approvedBl) * 100) / 100;
+    const pendD = sumPendingDailyReportEstimateForDay(dailyReports, employee, dateIso);
+    const pendB = sumPendingBlocksMoneyForDay(workBlocks, employee, dateIso);
+    const orientacniKc = computeOrientacniVydelekKc({
+      odpracovaneHodiny: hoursNum,
+      hourlyRate: rate,
+      pendingDailyEst: pendD,
+      pendingBlockEst: pendB,
+    });
+    const repSt = dailyReportStatusForDay(dailyReports, employee, dateIso);
+    let schvalenoStatus: "approved" | "pending" | "none" = "none";
+    if (repSt === "approved" || schvalenoKc > 0) schvalenoStatus = "approved";
+    else if (repSt && repSt !== "rejected" && repSt !== "approved") {
+      schvalenoStatus = "pending";
+    }
+    const dayTitle = format(
+      new Date(
+        Number(dateIso.slice(0, 4)),
+        Number(dateIso.slice(5, 7)) - 1,
+        Number(dateIso.slice(8, 10))
+      ),
+      "EEEE d. M. yyyy",
+      { locale: cs }
+    );
+    out.push({
+      key: `${eid}-${dateIso}`,
+      dateIso,
+      dayTitle,
+      prichod: one?.checkIn ?? "—",
+      odchod: one?.checkOut ?? "—",
+      odpracovanoH: h,
+      tariffLines,
+      bloku,
+      schvalenoKc,
+      orientacniKc,
+      schvalenoStatus,
+    });
+  }
+  return out;
+}
+
+export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
+  daysWorked: number;
+  hours: number;
+  approvedKc: number;
+  orientacniKc: number;
+} {
+  let daysWorked = 0;
+  let hours = 0;
+  let approvedKc = 0;
+  let orientacniKc = 0;
+  for (const r of rows) {
+    const hasWork =
+      (r.odpracovanoH != null && r.odpracovanoH > 0) ||
+      r.tariffLines.length > 0 ||
+      r.bloku > 0;
+    if (hasWork) daysWorked += 1;
+    hours += r.odpracovanoH ?? 0;
+    approvedKc += r.schvalenoKc;
+    orientacniKc += r.orientacniKc;
+  }
+  return {
+    daysWorked,
+    hours: Math.round(hours * 100) / 100,
+    approvedKc: Math.round(approvedKc * 100) / 100,
+    orientacniKc: Math.round(orientacniKc * 100) / 100,
+  };
+}
+
 export type OverviewTableRow = {
   key: string;
   datumLabel: string;
@@ -367,7 +653,9 @@ export function buildOverviewRows(params: {
     const datumLabel =
       mode === "week"
         ? `Souhrn týdne (${format(range.start, "d.M.", { locale: cs })} – ${format(range.end, "d.M.yyyy", { locale: cs })})`
-        : `Souhrn měsíce ${format(range.start, "LLLL yyyy", { locale: cs })}`;
+        : mode === "month"
+          ? `Souhrn měsíce ${format(range.start, "LLLL yyyy", { locale: cs })}`
+          : `Souhrn období (${format(range.start, "d.M.yyyy", { locale: cs })} – ${format(range.end, "d.M.yyyy", { locale: cs })})`;
 
     rows.push({
       key: `${eid}-${mode}-${format(range.start, "yyyy-MM-dd")}`,
