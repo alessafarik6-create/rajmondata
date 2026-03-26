@@ -26,6 +26,11 @@ export type WorkSegmentClient = {
   totalAmountCzk?: number | null;
   startAt?: { toDate?: () => Date } | null;
   endAt?: { toDate?: () => Date } | null;
+  /** Automatické schválení výdělku z terminálu (job-terminal-auto). */
+  approvedAutomatically?: boolean;
+  approvalSource?: string;
+  approvedAt?: unknown;
+  approvedBySystem?: boolean;
 };
 
 function tsToDate(v: unknown): Date | null {

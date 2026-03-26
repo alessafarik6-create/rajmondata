@@ -28,6 +28,7 @@ import {
   ChevronDown,
   AlertCircle,
 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -978,7 +979,14 @@ export default function AttendanceOverviewPage() {
                   ))}
                   {day.jobSegments.map((j) => (
                     <div key={j.id} className="mt-2 rounded border border-black/10 px-2 py-1.5 text-xs">
-                      <span className="font-medium">{j.label}</span>
+                      <span className="font-medium">
+                        {j.label}
+                        {j.autoApproved ? (
+                          <Badge variant="secondary" className="ml-1 align-middle font-normal">
+                            Auto
+                          </Badge>
+                        ) : null}
+                      </span>
                       <div className="tabular-nums text-neutral-800">
                         {j.startHm}–{j.endLabel} · {formatHoursMinutes(j.durationH)} ·{" "}
                         {formatRateKcPerH(j.rateKcPerH)} · {formatKc(j.earningsKc)}

@@ -93,6 +93,7 @@ import {
   chunkArray,
   isJobIdAssigned,
 } from "@/lib/assigned-jobs";
+import { JOB_TERMINAL_AUTO_APPROVAL_SOURCE } from "@/lib/job-terminal-auto-shared";
 import { normalizeEmployeeUiLang } from "@/lib/i18n/employee-ui";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { isDailyWorkLogEnabled, isWorkLogEnabled } from "@/lib/employee-report-flags";
@@ -142,12 +143,22 @@ type WorkBlock = {
   jobName?: string;
   /** Uzavřený úsek z docházkového terminálu — čas bloku nelze měnit ručně. */
   attendanceSegmentId?: string;
+  approvedAutomatically?: boolean;
+  approvalSource?: string;
   description_original?: string;
   description_translated?: string;
   language?: string;
 };
 
+function isAutoTerminalApprovedBlock(b: WorkBlock): boolean {
+  return (
+    b.approvedAutomatically === true &&
+    String(b.approvalSource ?? "") === JOB_TERMINAL_AUTO_APPROVAL_SOURCE
+  );
+}
+
 function canEmployeeDeleteBlock(b: WorkBlock): boolean {
+  if (isAutoTerminalApprovedBlock(b)) return false;
   const st = b.reviewStatus;
   if (st === "approved" || st === "adjusted") return false;
   return true;
@@ -1280,7 +1291,14 @@ export default function EmployeeWorklogsPage() {
                           </TableCell>
                           <TableCell className="text-black">{b.hours ?? "—"}</TableCell>
                           <TableCell className="text-black">
-                            {getReviewLabel(b.reviewStatus)}
+                            <span className="inline-flex flex-col gap-1">
+                              <span>{getReviewLabel(b.reviewStatus)}</span>
+                              {isAutoTerminalApprovedBlock(b) ? (
+                                <Badge variant="outline" className="w-fit text-xs font-normal">
+                                  Automaticky schváleno
+                                </Badge>
+                              ) : null}
+                            </span>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1388,6 +1406,11 @@ export default function EmployeeWorklogsPage() {
                                 >
                                   {getReviewLabel(b.reviewStatus)}
                                 </Badge>
+                                {isAutoTerminalApprovedBlock(b) ? (
+                                  <Badge variant="outline" className="text-xs font-normal">
+                                    Automaticky schváleno
+                                  </Badge>
+                                ) : null}
                               </div>
                               <div className="flex shrink-0 items-center gap-1">
                                 <Button
@@ -1539,12 +1562,19 @@ export default function EmployeeWorklogsPage() {
                                     : (b.approvedHours ?? b.hours ?? "—")}
                                 </TableCell>
                                 <TableCell>
-                                  <Badge
-                                    variant={reviewBadgeVariant(b.reviewStatus)}
-                                    className="whitespace-nowrap text-xs font-semibold"
-                                  >
-                                    {getReviewLabel(b.reviewStatus)}
-                                  </Badge>
+                                  <div className="flex flex-col gap-1">
+                                    <Badge
+                                      variant={reviewBadgeVariant(b.reviewStatus)}
+                                      className="whitespace-nowrap text-xs font-semibold"
+                                    >
+                                      {getReviewLabel(b.reviewStatus)}
+                                    </Badge>
+                                    {isAutoTerminalApprovedBlock(b) ? (
+                                      <Badge variant="outline" className="text-xs font-normal">
+                                        Automaticky schváleno
+                                      </Badge>
+                                    ) : null}
+                                  </div>
                                 </TableCell>
                                 <TableCell className="max-w-[140px] truncate text-sm text-black">
                                   {b.jobName?.trim() || b.jobId || "—"}

@@ -11,6 +11,7 @@ import {
   pickPreferredOpenWorkSegmentDoc,
   type TerminalActiveSegment,
 } from "@/lib/terminal-active-segment";
+import { isJobTerminalAutoApprovedSegmentData } from "@/lib/job-terminal-auto-shared";
 
 export type WorkSegmentSource = "job" | "tariff";
 
@@ -326,7 +327,9 @@ export async function applyApprovedJobLaborFromSegments(
   let totalPay = 0;
   const closed = snap.docs.filter((d) => (d.data() as { closed?: boolean }).closed === true);
   for (const d of closed) {
-    const x = d.data() as { totalAmountCzk?: number };
+    const raw = d.data() as Record<string, unknown>;
+    if (isJobTerminalAutoApprovedSegmentData(raw)) continue;
+    const x = raw as { totalAmountCzk?: number };
     if (typeof x.totalAmountCzk === "number") totalPay += x.totalAmountCzk;
   }
   totalPay = Math.round(totalPay * 100) / 100;

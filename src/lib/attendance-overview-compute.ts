@@ -2,6 +2,7 @@
  * Agregace dat pro přehled docházky (admin): období, řádky tabulky, výdělky.
  */
 
+import { isJobTerminalAutoApprovedSegmentData } from "@/lib/job-terminal-auto-shared";
 import {
   eachDayOfInterval,
   endOfMonth,
@@ -381,6 +382,8 @@ export type JobSegmentDetailRow = {
   durationH: number;
   rateKcPerH: number | null;
   earningsKc: number;
+  /** Automaticky schválený výdělek z terminálu — orientační částka se nekopíruje (je ve schváleném bloku). */
+  autoApproved?: boolean;
 };
 
 function segmentEarningsForOverview(
@@ -520,6 +523,9 @@ export function buildEmployeeDailyDetailRows(params: {
         orientacniKcTariff += earningsKc;
       } else if (st === "job") {
         const jn = String(seg.jobName || seg.displayName || "").trim();
+        const autoAp = isJobTerminalAutoApprovedSegmentData(
+          seg as unknown as Record<string, unknown>
+        );
         jobSegments.push({
           id: seg.id,
           label: jn ? `Zakázka: ${jn}` : "Zakázka",
@@ -529,9 +535,10 @@ export function buildEmployeeDailyDetailRows(params: {
           durationH: Math.round(durationH * 100) / 100,
           rateKcPerH: rateKc,
           earningsKc,
+          autoApproved: autoAp,
         });
         sumJobH += durationH;
-        orientacniKcJob += earningsKc;
+        if (!autoAp) orientacniKcJob += earningsKc;
       }
     }
 

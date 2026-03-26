@@ -24,6 +24,8 @@ export type WorkTimeBlockMoney = {
   hours?: number;
   originalHours?: number;
   approvedHours?: number;
+  /** Pevná částka (např. zakázka podle sazby na segmentu) — má přednost před hodinami × sazba zaměstnance. */
+  payableAmountCzk?: number;
   reviewStatus?: WorkTimeReviewStatus | string;
   adminNote?: string;
   adjustmentReason?: string;
@@ -36,6 +38,10 @@ export type WorkTimeBlockMoney = {
   employeeName?: string;
   jobId?: string;
   jobName?: string;
+  approvedAutomatically?: boolean;
+  approvalSource?: string;
+  approvedAt?: unknown;
+  approvedBySystem?: boolean;
 };
 
 export type AdvanceStatus = "paid" | "unpaid";
@@ -152,10 +158,16 @@ export function sumMoneyForBlocks(
   hourlyRate: number,
   range?: { start: Date; end: Date }
 ): number {
-  const h = sumPayableHoursForBlocks(blocks, range);
-  const r = Number(hourlyRate);
-  if (!Number.isFinite(r) || r <= 0) return 0;
-  return Math.round(h * r * 100) / 100;
+  let s = 0;
+  for (const b of blocks) {
+    if (range) {
+      const d = parseBlockDay(b.date);
+      if (!d || !isWithinInterval(d, { start: range.start, end: range.end }))
+        continue;
+    }
+    s += moneyForBlock(b, hourlyRate);
+  }
+  return Math.round(s * 100) / 100;
 }
 
 /** Schválené denní výkazy — částka uložená při schválení (ne z attendance). */
@@ -179,6 +191,17 @@ export function moneyForBlock(
   block: WorkTimeBlockMoney,
   hourlyRate: number
 ): number {
+  const st = block.reviewStatus;
+  if (st === "pending" || st === "rejected") return 0;
+  if (
+    block.payableAmountCzk != null &&
+    typeof block.payableAmountCzk === "number" &&
+    Number.isFinite(block.payableAmountCzk) &&
+    block.payableAmountCzk >= 0 &&
+    (st === "approved" || st === "adjusted" || st == null || st === "")
+  ) {
+    return Math.round(block.payableAmountCzk * 100) / 100;
+  }
   const h = getPayableHours(block);
   const r = Number(hourlyRate);
   if (!Number.isFinite(r) || r <= 0 || h <= 0) return 0;

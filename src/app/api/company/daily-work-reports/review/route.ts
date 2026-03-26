@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { parseHourlyRate } from "@/lib/attendance-shift-state";
+import { sumAutoJobTerminalBlockPayableCzkForDay } from "@/lib/job-terminal-auto-approve";
 import { applyApprovedJobLaborFromSegments } from "@/lib/work-segment-server";
 
 type Body = {
@@ -130,8 +131,18 @@ export async function POST(request: NextRequest) {
         date,
         rid
       );
+      const autoTerminalPayCzk = await sumAutoJobTerminalBlockPayableCzkForDay(
+        db,
+        companyId,
+        employeeId,
+        date
+      );
       const payableAmountCzk =
-        totalClosedSegmentPayCzk > 0 ? totalClosedSegmentPayCzk : fallbackPay;
+        totalClosedSegmentPayCzk > 0
+          ? totalClosedSegmentPayCzk
+          : autoTerminalPayCzk > 0
+            ? 0
+            : fallbackPay;
 
       await ref.update({
         status: "approved",

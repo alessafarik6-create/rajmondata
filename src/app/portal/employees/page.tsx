@@ -228,6 +228,9 @@ export default function EmployeesPage() {
   );
   const [savingAssignedTerminalJobs, setSavingAssignedTerminalJobs] =
     useState(false);
+  /** Dialog „Zakázky pro terminál“ — automatické schválení výdělku na zakázce. */
+  const [autoApproveJobEarningsTerminal, setAutoApproveJobEarningsTerminal] =
+    useState(false);
 
   /** Pouze id — celé objekty zaměstnance v deps useMemoFirebase rozbíjely stabilitu dotazu. */
   const assignJobsTargetId =
@@ -307,6 +310,18 @@ export default function EmployeesPage() {
     setAssignTerminalJobIds((prev) => (jobIdSetsEqual(prev, next) ? prev : next));
   }, [terminalEmployeeId, employees]);
 
+  useEffect(() => {
+    if (!terminalEmployeeId) {
+      setAutoApproveJobEarningsTerminal(false);
+      return;
+    }
+    const fresh = employees?.find((e) => e.id === terminalEmployeeId) as
+      | { autoApproveJobEarnings?: boolean }
+      | undefined;
+    if (!fresh) return;
+    setAutoApproveJobEarningsTerminal(fresh.autoApproveJobEarnings === true);
+  }, [terminalEmployeeId, employees]);
+
   const toggleAssignWorklogJob = (jobId: string) => {
     setAssignWorklogJobIds((prev) => {
       const next = new Set(prev);
@@ -371,6 +386,7 @@ export default function EmployeesPage() {
         ),
         {
           assignedTerminalJobIds: Array.from(assignTerminalJobIds),
+          autoApproveJobEarnings: Boolean(autoApproveJobEarningsTerminal),
           updatedAt: serverTimestamp(),
         }
       );
@@ -1766,6 +1782,23 @@ export default function EmployeesPage() {
               uvidí při příchodu na veřejné docházce jen tyto zakázky (odděleně od výkazu práce).
             </DialogDescription>
           </DialogHeader>
+          <label className="flex cursor-pointer items-start gap-3 rounded-md border border-gray-200 p-3 text-sm hover:bg-gray-50">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4 shrink-0"
+              checked={autoApproveJobEarningsTerminal}
+              onChange={(e) => setAutoApproveJobEarningsTerminal(e.target.checked)}
+            />
+            <span>
+              <span className="font-medium text-black">
+                Automatické schvalování výdělku při práci na zakázce
+              </span>
+              <span className="mt-1 block text-xs text-gray-600">
+                Po uzavření úseku na zakázce z tohoto terminálu se výdělek schválí bez ručního výkazu a bez
+                schválení vedením. Platí jen pro zakázku zvolenou na terminálu, ne pro tarify.
+              </span>
+            </span>
+          </label>
           <div className="max-h-[50vh] space-y-2 overflow-y-auto py-2">
             {companyJobsLoading ? (
               <div className="flex justify-center py-8">

@@ -47,6 +47,7 @@ import {
   segmentDurationHours,
   sumClosedSegmentHours,
 } from "@/lib/daily-work-report-day-form";
+import { isJobTerminalAutoApprovedSegmentData } from "@/lib/job-terminal-auto-shared";
 import { isDailyReportLockedBy24hRule } from "@/lib/daily-report-24h-lock";
 import { buildDayCalendarMarkerMap } from "@/lib/daily-report-calendar-state";
 
@@ -96,6 +97,28 @@ function buildDescriptionFromDayRows(
     }
   }
   return lines.join("\n\n").trim();
+}
+
+function buildDescriptionForDailyReportSubmit(
+  rows: DayFormRow[],
+  assignedJobs: AssignedJobOption[],
+  jobTerminalLineNotes: Record<string, string>,
+  closedSegments: WorkSegmentClient[]
+): string {
+  let d = buildDescriptionFromDayRows(rows, assignedJobs);
+  if (d.trim()) return d;
+  const notes = Object.values(jobTerminalLineNotes)
+    .map((x) => String(x ?? "").trim())
+    .filter(Boolean);
+  if (notes.length) return notes.join("\n\n");
+  if (
+    closedSegments.some((s) =>
+      isJobTerminalAutoApprovedSegmentData(s as unknown as Record<string, unknown>)
+    )
+  ) {
+    return "Práce na zakázce (terminál, automaticky schválený výdělek).";
+  }
+  return "";
 }
 
 function sumDayFormHours(rows: DayFormRow[]): number {
@@ -710,7 +733,12 @@ export default function EmployeeDailyReportsPage() {
       });
       return;
     }
-    const descriptionPayload = buildDescriptionFromDayRows(dayFormRows, assignedJobs);
+    const descriptionPayload = buildDescriptionForDailyReportSubmit(
+      dayFormRows,
+      assignedJobs,
+      jobTerminalLineNotes,
+      closedSegments
+    );
     if (mode === "submit" && !descriptionPayload.trim()) {
       toast({
         variant: "destructive",
@@ -1325,10 +1353,20 @@ export default function EmployeeDailyReportsPage() {
                           const dur = segmentDurationHours(seg);
                           const jn =
                             String(seg.jobName || seg.displayName || "").trim() || "Zakázka z terminálu";
+                          const autoAp = isJobTerminalAutoApprovedSegmentData(
+                            seg as unknown as Record<string, unknown>
+                          );
                           return (
                             <div key={seg.id} className="space-y-1.5">
-                              <Label className="text-xs text-neutral-900">
-                                {jn} · {segmentTimeRangeLabel(seg)} · {dur > 0 ? `${dur} h` : "—"}
+                              <Label className="flex flex-wrap items-center gap-2 text-xs text-neutral-900">
+                                <span>
+                                  {jn} · {segmentTimeRangeLabel(seg)} · {dur > 0 ? `${dur} h` : "—"}
+                                </span>
+                                {autoAp ? (
+                                  <Badge variant="secondary" className="font-normal">
+                                    Automaticky schváleno
+                                  </Badge>
+                                ) : null}
                               </Label>
                               <Textarea
                                 rows={3}

@@ -23,6 +23,7 @@ import {
   serverTimestamp,
   type Firestore,
 } from "firebase/firestore";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -62,6 +63,7 @@ import {
   buildWorklogPdfFileName,
   downloadWorklogPdfFromElement,
 } from "@/lib/worklog-report-pdf";
+import { JOB_TERMINAL_AUTO_APPROVAL_SOURCE } from "@/lib/job-terminal-auto-shared";
 import {
   Loader2,
   AlertCircle,
@@ -1074,7 +1076,15 @@ function PayrollAdminPageInner() {
                                     : (b.approvedHours ?? b.hours ?? "—")}
                                 </TableCell>
                                 <TableCell className="text-black">
-                                  {getReviewLabel(b.reviewStatus)}
+                                  <span className="inline-flex flex-col gap-1">
+                                    <span>{getReviewLabel(b.reviewStatus)}</span>
+                                    {b.approvedAutomatically === true &&
+                                    String(b.approvalSource ?? "") === JOB_TERMINAL_AUTO_APPROVAL_SOURCE ? (
+                                      <Badge variant="outline" className="w-fit text-xs font-normal">
+                                        Automaticky schváleno
+                                      </Badge>
+                                    ) : null}
+                                  </span>
                                 </TableCell>
                                 <TableCell className="print:hidden">
                                   <div className="flex flex-wrap gap-2">

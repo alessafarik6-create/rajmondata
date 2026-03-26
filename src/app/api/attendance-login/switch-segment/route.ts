@@ -4,6 +4,7 @@ import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
 import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
+import { maybeAutoApproveJobSegmentAfterTerminalClose } from "@/lib/job-terminal-auto-approve";
 import {
   closeWorkSegment,
   createWorkSegment,
@@ -108,6 +109,7 @@ export async function POST(request: NextRequest) {
           ? (open.data() as { hourlyRateCzk: number }).hourlyRateCzk
           : null;
       await closeWorkSegment(open.ref, nowMs, rate);
+      await maybeAutoApproveJobSegmentAfterTerminalClose(db, companyId, open.ref, employeeId);
     }
 
     const jobId = sourceType === "job" ? String(body.jobId || "").trim() : null;

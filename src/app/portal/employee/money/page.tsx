@@ -38,6 +38,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { JOB_TERMINAL_AUTO_APPROVAL_SOURCE } from "@/lib/job-terminal-auto-shared";
 
 export default function EmployeeMoneyPage() {
   const { user, isUserLoading } = useUser();
@@ -521,7 +522,15 @@ export default function EmployeeMoneyPage() {
                             : (b.approvedHours ?? b.hours ?? "—")}
                         </TableCell>
                         <TableCell className="text-black">
-                          {getReviewLabel(b.reviewStatus)}
+                          <span className="inline-flex flex-col gap-1">
+                            <span>{getReviewLabel(b.reviewStatus)}</span>
+                            {b.approvedAutomatically === true &&
+                            String(b.approvalSource ?? "") === JOB_TERMINAL_AUTO_APPROVAL_SOURCE ? (
+                              <Badge variant="outline" className="w-fit text-xs font-normal">
+                                Automaticky schváleno
+                              </Badge>
+                            ) : null}
+                          </span>
                         </TableCell>
                         <TableCell className="whitespace-nowrap font-medium text-black">
                           {hourlyRate > 0 && getPayableHours(b) > 0
