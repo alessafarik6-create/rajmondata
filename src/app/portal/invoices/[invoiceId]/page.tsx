@@ -91,9 +91,11 @@ export default function InvoiceDocumentPage() {
     return String(inv?.invoiceNumber ?? inv?.documentNumber ?? "Doklad");
   }, [invoice]);
 
-  const isAdvance =
-    invoice &&
-    String((invoice as { type?: string }).type ?? "") === JOB_INVOICE_TYPES.ADVANCE;
+  const invType = invoice
+    ? String((invoice as { type?: string }).type ?? "")
+    : "";
+  const isAdvance = invType === JOB_INVOICE_TYPES.ADVANCE;
+  const isSettlement = invType === JOB_INVOICE_TYPES.FINAL_INVOICE;
 
   const handlePrint = () => {
     if (!html) {
@@ -193,7 +195,7 @@ export default function InvoiceDocumentPage() {
         </Button>
         <h1 className="text-xl font-bold text-neutral-950 sm:text-2xl">{title}</h1>
         <div className="ml-auto flex flex-wrap gap-2">
-          {isAdvance ? (
+          {isAdvance || isSettlement ? (
             <Button type="button" variant="outline" className="gap-2 border-neutral-950" asChild>
               <Link href={`/portal/invoices/${invoiceId}/edit`}>
                 <Pencil className="h-4 w-4" />

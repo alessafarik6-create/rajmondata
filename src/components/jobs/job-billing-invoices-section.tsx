@@ -32,9 +32,12 @@ import { buildCustomerAddressMultiline } from "@/lib/customer-address-display";
 import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
 import { normalizeVatRate, resolveJobPaidFromFirestore } from "@/lib/vat-calculations";
 import {
+  computeSettlementAmounts,
   createAdvanceInvoiceFromContract,
+  createFinalSettlementInvoice,
   createManualAdvanceInvoice,
   createTaxReceiptForAdvancePayment,
+  deleteJobInvoice,
   depositGrossKcFromContract,
   hasAdvanceTerms,
   JOB_INVOICE_TYPES,
@@ -68,6 +71,8 @@ type Props = {
   companyDisplayName: string;
   user: User | null;
   canManage: boolean;
+  /** Stav zakázky (např. dokončená) — pro vyúčtovací fakturu. */
+  jobStatus: string;
 };
 
 export function JobBillingInvoicesSection({
@@ -84,6 +89,7 @@ export function JobBillingInvoicesSection({
   companyDisplayName,
   user,
   canManage,
+  jobStatus,
 }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -123,6 +129,8 @@ export function JobBillingInvoicesSection({
     { description: "", quantity: 1, unit: "ks", unitPriceNet: 0, vatRate: 21 },
   ]);
   const [creatingManual, setCreatingManual] = useState(false);
+  const [creatingSettlement, setCreatingSettlement] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const organizationLogoUrl = useMemo(() => {
     const u = (companyDoc as { organizationLogoUrl?: string | null })?.organizationLogoUrl;
@@ -190,6 +198,49 @@ export function JobBillingInvoicesSection({
       Math.round((jobBudgetBreakdown.budgetGross - jobPaid.paidGross) * 100) / 100
     );
   }, [jobBudgetBreakdown, jobPaid.paidGross]);
+
+  const settlementPreview = useMemo(() => {
+    if (jobBudgetBreakdown == null) return null;
+    const primary =
+      workContractsForJob.find((c) => hasAdvanceTerms(c, budgetGross)) ??
+      workContractsForJob[0] ??
+      null;
+    const rows = jobInvoices.map((inv) => {
+      const r = inv as Record<string, unknown> & { id: string };
+      return {
+        id: r.id,
+        type: r.type as string | undefined,
+        invoiceNumber: r.invoiceNumber as string | undefined,
+        paidGrossReceived: r.paidGrossReceived,
+        amountGross: r.amountGross,
+      };
+    });
+    return computeSettlementAmounts({
+      budgetGross: jobBudgetBreakdown.budgetGross,
+      advanceInvoices: rows,
+      contractFallback: rows.some((x) => x.type === JOB_INVOICE_TYPES.ADVANCE)
+        ? null
+        : primary,
+    });
+  }, [jobBudgetBreakdown, jobInvoices, workContractsForJob, budgetGross]);
+
+  const hasFinalSettlement = useMemo(
+    () =>
+      jobInvoices.some(
+        (inv) =>
+          String((inv as { type?: string }).type ?? "") === JOB_INVOICE_TYPES.FINAL_INVOICE
+      ),
+    [jobInvoices]
+  );
+
+  const canCreateSettlement =
+    canManage &&
+    Boolean(customerId && String(customerId).trim()) &&
+    jobBudgetBreakdown != null &&
+    !hasFinalSettlement &&
+    (jobStatus === "dokončená" ||
+      jobStatus === "čeká" ||
+      jobStatus === "fakturována");
 
   const canCreateAdvance =
     canManage &&
@@ -374,6 +425,79 @@ export function JobBillingInvoicesSection({
     }
   };
 
+  const handleCreateSettlement = async () => {
+    if (!user || !jobBudgetBreakdown || !customerId) return;
+    setCreatingSettlement(true);
+    try {
+      const rows = jobInvoices.map((inv) => {
+        const r = inv as Record<string, unknown> & { id: string };
+        return {
+          id: r.id,
+          type: r.type as string | undefined,
+          invoiceNumber: r.invoiceNumber as string | undefined,
+          paidGrossReceived: r.paidGrossReceived,
+          amountGross: r.amountGross,
+        };
+      });
+      const primary =
+        workContractsForJob.find((c) => hasAdvanceTerms(c, budgetGross)) ??
+        workContractsForJob[0] ??
+        null;
+      const { pdfHtml } = await createFinalSettlementInvoice({
+        firestore,
+        companyId,
+        jobId,
+        jobName,
+        customerId: String(customerId),
+        customerName,
+        customerAddressLines: customerAddressLines || customerName,
+        supplierName,
+        supplierAddressLines: supplierAddressLines || supplierName,
+        userId: user.uid,
+        logoUrl: organizationLogoUrl,
+        budget: jobBudgetBreakdown,
+        advanceInvoices: rows,
+        workContractsForJob,
+        sourceContractId: primary?.id ?? null,
+      });
+      toast({
+        title: "Vyúčtovací faktura vytvořena",
+        description: "Dokument je v seznamu a v sekci Faktury.",
+      });
+      if (pdfHtml) printDocHtml("Vyúčtovací faktura", pdfHtml);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Nelze vytvořit",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setCreatingSettlement(false);
+    }
+  };
+
+  const handleDeleteInvoice = async (invoiceId: string) => {
+    if (!window.confirm("Opravdu smazat tento doklad? Akci nelze vrátit.")) return;
+    setDeletingId(invoiceId);
+    try {
+      await deleteJobInvoice({
+        firestore,
+        companyId,
+        jobId,
+        invoiceId,
+      });
+      toast({ title: "Doklad byl smazán" });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Nelze smazat",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <>
       <Card
@@ -402,8 +526,49 @@ export function JobBillingInvoicesSection({
                 : "—"}
             </strong>
           </p>
+          {settlementPreview && jobBudgetBreakdown ? (
+            <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2 text-xs text-neutral-800">
+              <div className="font-semibold text-neutral-950">Vyúčtování (náhled)</div>
+              <div>
+                Celková cena zakázky (s DPH):{" "}
+                <strong>{settlementPreview.totalContractGross.toLocaleString("cs-CZ")} Kč</strong>
+              </div>
+              <div>
+                Odečtené zálohy ({settlementPreview.advanceSource === "contract" ? "smlouva" : settlementPreview.advanceSource === "invoices" ? "zálohové faktury" : "—"}
+                ):{" "}
+                <strong>{settlementPreview.totalAdvancePaid.toLocaleString("cs-CZ")} Kč</strong>
+              </div>
+              <div>
+                Doplatek:{" "}
+                <strong>{settlementPreview.amountToPay.toLocaleString("cs-CZ")} Kč s DPH</strong>
+              </div>
+            </div>
+          ) : null}
         </CardHeader>
         <CardContent className="space-y-4 text-sm">
+          {canCreateSettlement ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="secondary"
+                className="gap-2 border-neutral-950"
+                disabled={creatingSettlement}
+                onClick={() => void handleCreateSettlement()}
+              >
+                {creatingSettlement ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileText className="h-4 w-4" />
+                )}
+                Vyúčtovat zakázku (finální faktura)
+              </Button>
+              <span className="text-xs text-neutral-700">
+                Stav zakázky: <strong>{jobStatus}</strong> — vytvoří vyúčtovací fakturu s odečtem záloh.
+              </span>
+            </div>
+          ) : hasFinalSettlement ? (
+            <p className="text-xs text-neutral-700">Vyúčtovací faktura k této zakázce již existuje.</p>
+          ) : null}
           {canCreateAdvance || canCreateManualAdvance ? (
             <div className="flex flex-col gap-2">
               <div className="flex flex-wrap items-center gap-2">
@@ -485,9 +650,19 @@ export function JobBillingInvoicesSection({
                       ? "Zálohová faktura"
                       : t === JOB_INVOICE_TYPES.TAX_RECEIPT
                         ? "Daňový doklad k přijaté platbě"
-                        : "Faktura / doklad";
+                        : t === JOB_INVOICE_TYPES.FINAL_INVOICE
+                          ? "Vyúčtovací faktura"
+                          : "Faktura / doklad";
                   const st = String(row.status ?? "");
                   const num = String(row.invoiceNumber ?? row.documentNumber ?? "—");
+                  const displayGross =
+                    t === JOB_INVOICE_TYPES.FINAL_INVOICE
+                      ? Number(
+                          (row as { amountToPay?: unknown }).amountToPay ??
+                            row.amountGross ??
+                            0
+                        )
+                      : Number(row.amountGross ?? row.paidAmount ?? 0);
                   return (
                     <li
                       key={row.id}
@@ -521,12 +696,31 @@ export function JobBillingInvoicesSection({
                           <Printer className="h-3.5 w-3.5" />
                           Tisk / PDF
                         </Button>
-                        {t === JOB_INVOICE_TYPES.ADVANCE && canManage ? (
+                        {(t === JOB_INVOICE_TYPES.ADVANCE || t === JOB_INVOICE_TYPES.FINAL_INVOICE) &&
+                        canManage ? (
                           <Button type="button" variant="outline" size="sm" className="gap-1" asChild>
                             <Link href={`/portal/invoices/${row.id}/edit`}>
                               <Pencil className="h-3.5 w-3.5" />
                               Upravit
                             </Link>
+                          </Button>
+                        ) : null}
+                        {canManage &&
+                        (t === JOB_INVOICE_TYPES.ADVANCE || t === JOB_INVOICE_TYPES.FINAL_INVOICE) ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-1 text-destructive"
+                            disabled={deletingId === row.id}
+                            onClick={() => void handleDeleteInvoice(row.id)}
+                          >
+                            {deletingId === row.id ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Trash2 className="h-3.5 w-3.5" />
+                            )}
+                            Smazat
                           </Button>
                         ) : null}
                         {t === JOB_INVOICE_TYPES.ADVANCE &&

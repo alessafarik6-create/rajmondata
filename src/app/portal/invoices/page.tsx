@@ -16,7 +16,8 @@ import {
   Printer,
   CheckCircle2,
   Clock,
-  ExternalLink
+  ExternalLink,
+  Pencil
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
@@ -103,6 +104,7 @@ export default function InvoicesPage() {
     const t = String(inv.type ?? "");
     if (t === JOB_INVOICE_TYPES.ADVANCE) return "Zálohová faktura";
     if (t === JOB_INVOICE_TYPES.TAX_RECEIPT) return "Daňový doklad (platba)";
+    if (t === JOB_INVOICE_TYPES.FINAL_INVOICE) return "Vyúčtovací faktura";
     return "Faktura";
   };
 
@@ -214,6 +216,14 @@ export default function InvoicesPage() {
                               <ExternalLink className="w-4 h-4 mr-2" /> Otevřít / náhled
                             </Link>
                           </DropdownMenuItem>
+                          {(row.type === JOB_INVOICE_TYPES.ADVANCE ||
+                            row.type === JOB_INVOICE_TYPES.FINAL_INVOICE) && (
+                            <DropdownMenuItem asChild>
+                              <Link href={`/portal/invoices/${inv.id}/edit`}>
+                                <Pencil className="w-4 h-4 mr-2" /> Upravit položky
+                              </Link>
+                            </DropdownMenuItem>
+                          )}
                           {jobId ? (
                             <DropdownMenuItem asChild>
                               <Link href={`/portal/jobs/${jobId}`}>

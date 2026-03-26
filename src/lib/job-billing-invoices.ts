@@ -5,6 +5,7 @@
 import type { Firestore } from "firebase/firestore";
 import {
   collection,
+  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -27,15 +28,20 @@ import { computeDepositAmountKc } from "@/lib/work-contract-deposit";
 import type { JobBudgetType } from "@/lib/vat-calculations";
 import {
   buildAdvanceInvoiceHtml,
+  buildFinalSettlementInvoiceHtml,
   buildTaxReceiptHtml,
   singleLineFromGross,
   type InvoiceLineRow,
+  type SettlementAdvanceRow,
 } from "@/lib/invoice-a4-html";
 
 export const JOB_INVOICE_TYPES = {
   ADVANCE: "advance_invoice",
   TAX_RECEIPT: "tax_receipt_received_payment",
+  FINAL_INVOICE: "final_invoice",
 } as const;
+
+export const INVOICE_SUBTYPE_SETTLEMENT = "settlement_invoice" as const;
 
 export type JobInvoiceType =
   (typeof JOB_INVOICE_TYPES)[keyof typeof JOB_INVOICE_TYPES];
@@ -752,4 +758,436 @@ export async function createTaxReceiptForAdvancePayment(params: {
   });
 
   return { receiptId: receiptRef.id, documentNumber, pdfHtml: html };
+}
+
+export type SettlementAdvanceLine = {
+  invoiceId: string;
+  invoiceNumber: string;
+  paidGross: number;
+};
+
+/**
+ * Vyúčtování: celková cena zakázky mínus zálohy.
+ * Zálohy primárně ze zálohových faktur (uhrazená část). Bez duplicity se smlouvou.
+ */
+export function computeSettlementAmounts(params: {
+  budgetGross: number | null;
+  advanceInvoices: Array<{
+    id: string;
+    type?: string;
+    invoiceNumber?: string;
+    paidGrossReceived?: unknown;
+    amountGross?: unknown;
+  }>;
+  /** Použije se jen pokud u zakázky není žádná zálohová faktura. */
+  contractFallback: WorkContractLike | null;
+}): {
+  totalContractGross: number;
+  totalAdvancePaid: number;
+  advanceSource: "invoices" | "contract" | "none";
+  amountToPay: number;
+  relatedAdvanceInvoiceIds: string[];
+  advanceLines: SettlementAdvanceLine[];
+  advanceRowsForHtml: SettlementAdvanceRow[];
+} {
+  const totalContractGross =
+    params.budgetGross != null && Number.isFinite(params.budgetGross)
+      ? roundMoney2(params.budgetGross)
+      : 0;
+
+  const advances = params.advanceInvoices.filter(
+    (x) => x.type === JOB_INVOICE_TYPES.ADVANCE
+  );
+
+  const advanceLines: SettlementAdvanceLine[] = [];
+  const advanceRowsForHtml: SettlementAdvanceRow[] = [];
+  let totalAdvancePaid = 0;
+  let advanceSource: "invoices" | "contract" | "none" = "none";
+
+  if (advances.length > 0) {
+    advanceSource = "invoices";
+    for (const a of advances) {
+      const cap = roundMoney2(Number(a.amountGross) || 0);
+      const paidRaw = roundMoney2(Number(a.paidGrossReceived) || 0);
+      const paid = cap > 0 ? Math.min(paidRaw, cap) : paidRaw;
+      totalAdvancePaid = roundMoney2(totalAdvancePaid + paid);
+      advanceLines.push({
+        invoiceId: a.id,
+        invoiceNumber: String(a.invoiceNumber ?? ""),
+        paidGross: paid,
+      });
+      if (paid > 0) {
+        advanceRowsForHtml.push({
+          label: `Uhrazená záloha — ${String(a.invoiceNumber ?? a.id)}`,
+          amountGross: paid,
+        });
+      }
+    }
+  } else if (
+    params.contractFallback &&
+    params.budgetGross != null &&
+    params.budgetGross > 0
+  ) {
+    const dep = depositGrossKcFromContract(
+      params.contractFallback,
+      params.budgetGross
+    );
+    if (dep > 0) {
+      advanceSource = "contract";
+      totalAdvancePaid = roundMoney2(dep);
+      advanceRowsForHtml.push({
+        label: "Záloha dle smlouvy o dílo (bez vystavené zálohové faktury)",
+        amountGross: dep,
+      });
+    }
+  }
+
+  const amountToPay = Math.max(
+    0,
+    roundMoney2(totalContractGross - totalAdvancePaid)
+  );
+
+  return {
+    totalContractGross,
+    totalAdvancePaid,
+    advanceSource,
+    amountToPay,
+    relatedAdvanceInvoiceIds: advances.map((a) => a.id),
+    advanceLines,
+    advanceRowsForHtml,
+  };
+}
+
+export async function hasFinalSettlementInvoiceForJob(
+  firestore: Firestore,
+  companyId: string,
+  jobId: string
+): Promise<boolean> {
+  const q = query(
+    collection(firestore, "companies", companyId, "invoices"),
+    where("jobId", "==", jobId),
+    limit(80)
+  );
+  const snap = await getDocs(q);
+  for (const d of snap.docs) {
+    const x = d.data() as { type?: string };
+    if (x.type === JOB_INVOICE_TYPES.FINAL_INVOICE) return true;
+  }
+  return false;
+}
+
+export async function createFinalSettlementInvoice(params: {
+  firestore: Firestore;
+  companyId: string;
+  jobId: string;
+  jobName: string;
+  customerId: string;
+  customerName: string;
+  customerAddressLines: string;
+  supplierName: string;
+  supplierAddressLines: string;
+  logoUrl?: string | null;
+  budget: JobBudgetBreakdown;
+  advanceInvoices: Array<{
+    id: string;
+    type?: string;
+    invoiceNumber?: string;
+    paidGrossReceived?: unknown;
+    amountGross?: unknown;
+  }>;
+  workContractsForJob: WorkContractLike[];
+  userId: string;
+  notes?: string;
+  sourceContractId?: string | null;
+}): Promise<{ invoiceId: string; invoiceNumber: string; pdfHtml: string }> {
+  const dup = await hasFinalSettlementInvoiceForJob(
+    params.firestore,
+    params.companyId,
+    params.jobId
+  );
+  if (dup) {
+    throw new Error("Pro tuto zakázku již existuje vyúčtovací faktura.");
+  }
+
+  const primaryContract =
+    params.workContractsForJob.find((c) =>
+      hasAdvanceTerms(c, params.budget.budgetGross)
+    ) ?? params.workContractsForJob[0] ?? null;
+
+  const settlement = computeSettlementAmounts({
+    budgetGross: params.budget.budgetGross,
+    advanceInvoices: params.advanceInvoices,
+    contractFallback:
+      params.advanceInvoices.some((i) => i.type === JOB_INVOICE_TYPES.ADVANCE)
+        ? null
+        : primaryContract,
+  });
+
+  const vatRate = normalizeVatRate(params.budget.vatRate);
+  const { amountNet, vatAmount, amountGross } = splitGrossToNetVat(
+    settlement.amountToPay,
+    vatRate
+  );
+
+  const lineRow =
+    settlement.amountToPay <= 0
+      ? singleLineFromGross({
+          description: `Vyúčtování zakázky ${params.jobName} — doplatek 0 Kč`,
+          amountNet: 0,
+          vatRate,
+          vatAmount: 0,
+          amountGross: 0,
+        })
+      : singleLineFromGross({
+          description: `Doplatek za zakázku ${params.jobName} (po odečtení záloh)`,
+          amountNet,
+          vatRate,
+          vatAmount,
+          amountGross,
+        });
+
+  const issueDate = new Date().toISOString().slice(0, 10);
+  const due = new Date();
+  due.setDate(due.getDate() + 14);
+  const dueDate = due.toISOString().slice(0, 10);
+  const invoiceNumber = nextInvoiceNo("VF");
+  const vs = variableSymbolFromInvoiceNumber(invoiceNumber);
+
+  const html = buildFinalSettlementInvoiceHtml({
+    logoUrl: params.logoUrl ?? null,
+    supplierName: params.supplierName,
+    supplierAddressText: params.supplierAddressLines || params.supplierName,
+    customerName: params.customerName,
+    customerAddressText: params.customerAddressLines || params.customerName,
+    invoiceNumber,
+    issueDate,
+    dueDate,
+    jobName: params.jobName,
+    variableSymbol: vs,
+    totalContractGross: settlement.totalContractGross,
+    advanceRows:
+      settlement.advanceRowsForHtml.length > 0
+        ? settlement.advanceRowsForHtml
+        : [{ label: "Žádná uhrazená záloha", amountGross: 0 }],
+    totalAdvancePaid: settlement.totalAdvancePaid,
+    items: [lineRow],
+    amountNet,
+    vatAmount,
+    amountGross,
+    primaryVatRateLabel: `${vatRate}`,
+    note: params.notes?.trim() || undefined,
+  });
+
+  const invRef = doc(collection(params.firestore, "companies", params.companyId, "invoices"));
+  const billingMirrorRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "jobs",
+    params.jobId,
+    "billingDocuments",
+    invRef.id
+  );
+
+  await runTransaction(params.firestore, async (tx) => {
+    tx.set(invRef, {
+      type: JOB_INVOICE_TYPES.FINAL_INVOICE,
+      invoiceSubtype: INVOICE_SUBTYPE_SETTLEMENT,
+      organizationId: params.companyId,
+      companyId: params.companyId,
+      jobId: params.jobId,
+      customerId: params.customerId,
+      customerName: params.customerName,
+      amountNet,
+      vatAmount,
+      amountGross,
+      vatRate,
+      amountType: "gross" as JobBudgetType,
+      invoiceNumber,
+      issueDate,
+      dueDate,
+      totalContractAmount: settlement.totalContractGross,
+      totalAdvancePaid: settlement.totalAdvancePaid,
+      amountToPay: settlement.amountToPay,
+      advanceSource: settlement.advanceSource,
+      relatedAdvanceInvoiceIds: settlement.relatedAdvanceInvoiceIds,
+      sourceContractId: params.sourceContractId ?? primaryContract?.id ?? null,
+      variableSymbol: vs,
+      status: settlement.amountToPay <= 0 ? "paid" : "unpaid",
+      issueStatus: "issued",
+      pdfHtml: html,
+      items: itemsRowsForFirestore([lineRow]),
+      totalAmount: amountGross,
+      notes: params.notes ?? "",
+      createdAt: serverTimestamp(),
+      createdBy: params.userId,
+    });
+
+    tx.set(billingMirrorRef, {
+      companyId: params.companyId,
+      jobId: params.jobId,
+      invoiceId: invRef.id,
+      kind: JOB_INVOICE_TYPES.FINAL_INVOICE,
+      invoiceNumber,
+      createdAt: serverTimestamp(),
+      createdBy: params.userId,
+    });
+  });
+
+  return { invoiceId: invRef.id, invoiceNumber, pdfHtml: html };
+}
+
+export async function updateFinalSettlementInvoice(params: {
+  firestore: Firestore;
+  companyId: string;
+  invoiceId: string;
+  jobName: string;
+  customerName: string;
+  customerAddressLines: string;
+  supplierName: string;
+  supplierAddressLines: string;
+  userId: string;
+  logoUrl?: string | null;
+  lines: ManualAdvanceLineInput[];
+  totalContractGross: number;
+  totalAdvancePaid: number;
+  notes?: string;
+}): Promise<{ pdfHtml: string }> {
+  const { rows, amountNet, vatAmount, amountGross } = computeManualAdvanceTotals(
+    params.lines
+  );
+  const invRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "invoices",
+    params.invoiceId
+  );
+  const snap = await getDoc(invRef);
+  if (!snap.exists()) throw new Error("Doklad neexistuje.");
+  const inv = snap.data() as {
+    type?: string;
+    invoiceNumber?: string;
+    issueDate?: string;
+    dueDate?: string;
+    variableSymbol?: string;
+    jobId?: string;
+  };
+  if (inv.type !== JOB_INVOICE_TYPES.FINAL_INVOICE) {
+    throw new Error("Upravit lze jen vyúčtovací fakturu.");
+  }
+  const invoiceNumber = String(inv.invoiceNumber ?? "");
+  const issueDate = String(inv.issueDate ?? new Date().toISOString().slice(0, 10));
+  const dueDate = String(inv.dueDate ?? issueDate);
+  const vs =
+    inv.variableSymbol && String(inv.variableSymbol).trim()
+      ? String(inv.variableSymbol).trim()
+      : variableSymbolFromInvoiceNumber(invoiceNumber);
+  const vatRateDoc = representativeVatRate(rows);
+  const allSameVat = rows.every((r) => r.vatRate === rows[0].vatRate);
+
+  const advanceRows: SettlementAdvanceRow[] = [
+    {
+      label: "Souhrn záloh (účetní) — upraveno v dokladu",
+      amountGross: roundMoney2(params.totalAdvancePaid),
+    },
+  ];
+
+  const html = buildFinalSettlementInvoiceHtml({
+    logoUrl: params.logoUrl ?? null,
+    supplierName: params.supplierName,
+    supplierAddressText: params.supplierAddressLines || params.supplierName,
+    customerName: params.customerName,
+    customerAddressText: params.customerAddressLines || params.customerName,
+    invoiceNumber,
+    issueDate,
+    dueDate,
+    jobName: params.jobName,
+    variableSymbol: vs,
+    totalContractGross: roundMoney2(params.totalContractGross),
+    advanceRows,
+    totalAdvancePaid: roundMoney2(params.totalAdvancePaid),
+    items: rows,
+    amountNet,
+    vatAmount,
+    amountGross,
+    primaryVatRateLabel: allSameVat ? `${rows[0].vatRate}` : "smíšené",
+    note: params.notes?.trim() || "Vyúčtovací faktura — dokončení zakázky.",
+  });
+
+  /** Doplatek = součet položek (shodné s PDF „Celkem k úhradě“). */
+  const amountToPay = roundMoney2(amountGross);
+
+  await updateDoc(invRef, {
+    amountNet,
+    vatAmount,
+    amountGross,
+    vatRate: vatRateDoc,
+    totalAmount: amountGross,
+    totalContractAmount: roundMoney2(params.totalContractGross),
+    totalAdvancePaid: roundMoney2(params.totalAdvancePaid),
+    amountToPay,
+    pdfHtml: html,
+    items: itemsRowsForFirestore(rows),
+    notes: params.notes ?? "",
+    variableSymbol: vs,
+    updatedAt: serverTimestamp(),
+    updatedBy: params.userId,
+  });
+
+  return { pdfHtml: html };
+}
+
+export async function deleteJobInvoice(params: {
+  firestore: Firestore;
+  companyId: string;
+  jobId: string;
+  invoiceId: string;
+}): Promise<void> {
+  const invRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "invoices",
+    params.invoiceId
+  );
+  const mirrorRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "jobs",
+    params.jobId,
+    "billingDocuments",
+    params.invoiceId
+  );
+  const snap = await getDoc(invRef);
+  if (!snap.exists()) throw new Error("Doklad neexistuje.");
+  const data = snap.data() as {
+    type?: string;
+    paidGrossReceived?: number;
+    jobId?: string;
+  };
+  if (data.jobId !== params.jobId) {
+    throw new Error("Doklad nepatří k této zakázce.");
+  }
+  if (data.type === JOB_INVOICE_TYPES.TAX_RECEIPT) {
+    throw new Error(
+      "Smazání daňového dokladu zatím není podporováno (vazby na platby a finance)."
+    );
+  }
+  if (data.type === JOB_INVOICE_TYPES.ADVANCE) {
+    const paid = Number(data.paidGrossReceived) || 0;
+    if (paid > 0.01) {
+      throw new Error(
+        "Zálohovou fakturu s připsanými platbami nelze smazat. Nejdřív odeberte související úhrady."
+      );
+    }
+  }
+
+  await deleteDoc(invRef);
+  try {
+    await deleteDoc(mirrorRef);
+  } catch {
+    /* mirror může chybět u starých záznamů */
+  }
 }

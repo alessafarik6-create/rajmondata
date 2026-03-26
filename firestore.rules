@@ -375,7 +375,7 @@ service cloud.firestore {
             request.resource.data.companyId == companyId &&
             request.resource.data.jobId == jobId &&
             request.resource.data.invoiceId is string &&
-            request.resource.data.kind in ['advance_invoice', 'tax_receipt_received_payment'];
+            request.resource.data.kind in ['advance_invoice', 'tax_receipt_received_payment', 'final_invoice'];
           allow update, delete: if false;
         }
 

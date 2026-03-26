@@ -4895,6 +4895,11 @@ export default function JobDetailPage() {
               }
               user={user}
               canManage={canManageFolders}
+              jobStatus={
+                job && typeof (job as { status?: string }).status === "string"
+                  ? String((job as { status: string }).status)
+                  : ""
+              }
             />
           ) : null}
 

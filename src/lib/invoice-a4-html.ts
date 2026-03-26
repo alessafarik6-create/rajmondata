@@ -245,6 +245,132 @@ export function buildTaxReceiptHtml(params: {
 </html>`;
 }
 
+export type SettlementAdvanceRow = {
+  label: string;
+  amountGross: number;
+};
+
+/**
+ * Vyúčtovací / konečná faktura po dokončení zakázky — A4, souhrn záloh + doplatek.
+ */
+export function buildFinalSettlementInvoiceHtml(params: {
+  logoUrl?: string | null;
+  supplierName: string;
+  supplierAddressText: string;
+  customerName: string;
+  customerAddressText: string;
+  invoiceNumber: string;
+  issueDate: string;
+  dueDate: string;
+  jobName: string;
+  variableSymbol?: string | null;
+  totalContractGross: number;
+  advanceRows: SettlementAdvanceRow[];
+  totalAdvancePaid: number;
+  items: InvoiceLineRow[];
+  amountNet: number;
+  vatAmount: number;
+  amountGross: number;
+  primaryVatRateLabel?: string;
+  note?: string;
+}): string {
+  const supplierLines = brJoinEscaped(params.supplierAddressText || params.supplierName);
+  const customerLines = brJoinEscaped(params.customerAddressText || params.customerName);
+  const logoBlock =
+    params.logoUrl && String(params.logoUrl).trim()
+      ? `<div class="doc-logo"><img src="${escapeHtml(String(params.logoUrl).trim())}" alt="Logo"/></div>`
+      : "";
+  const vs = params.variableSymbol ? String(params.variableSymbol).trim() : "";
+
+  const advanceTable =
+    params.advanceRows.length > 0
+      ? `<table class="items">
+  <thead><tr><th>Popis (záloha / odečet)</th><th class="num">Částka s DPH</th></tr></thead>
+  <tbody>${params.advanceRows
+    .map(
+      (r) =>
+        `<tr><td>${escapeHtml(r.label)}</td><td class="num">${fmtKc(r.amountGross)}</td></tr>`
+    )
+    .join("")}
+  <tr><td><strong>Odečteno celkem</strong></td><td class="num"><strong>${fmtKc(params.totalAdvancePaid)}</strong></td></tr>
+  </tbody></table>`
+      : `<p class="note">Žádné evidované zálohy ze zálohových faktur — použit odhad dle smlouvy nebo 0 Kč.</p>`;
+
+  const rowsHtml = params.items
+    .map(
+      (r) => `<tr>
+<td>${escapeHtml(r.description)}</td>
+<td class="num">${escapeHtml(String(r.quantity).replace(".", ","))}</td>
+<td>${escapeHtml(r.unit || "ks")}</td>
+<td class="num">${fmtKc(r.unitPriceNet)}</td>
+<td class="num">${escapeHtml(String(r.vatRate))} %</td>
+<td class="num">${fmtKc(r.lineNet)}</td>
+<td class="num">${fmtKc(r.lineVat)}</td>
+<td class="num">${fmtKc(r.lineGross)}</td>
+</tr>`
+    )
+    .join("");
+
+  return `<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8"/>
+<style>${INVOICE_A4_SCREEN_AND_PRINT_CSS}</style>
+<title>Vyúčtovací faktura</title>
+</head>
+<body>
+<div class="a4-wrap">
+  <div class="a4-sheet">
+    <div class="doc-header">
+      <div>
+        ${logoBlock}
+        <div class="doc-title">Vyúčtovací faktura (konečné vyúčtování)</div>
+        <div class="doc-meta">
+          <p><strong>Číslo:</strong> ${escapeHtml(params.invoiceNumber)}</p>
+          <p><strong>Datum vystavení:</strong> ${escapeHtml(params.issueDate)} &nbsp;·&nbsp; <strong>Splatnost:</strong> ${escapeHtml(params.dueDate)}</p>
+          <p><strong>Zakázka:</strong> ${escapeHtml(params.jobName)}</p>
+          ${vs ? `<p><strong>Variabilní symbol:</strong> ${escapeHtml(vs)}</p>` : ""}
+        </div>
+      </div>
+      <div class="doc-meta" style="text-align:right"><strong>${escapeHtml(params.supplierName)}</strong></div>
+    </div>
+    <div class="grid2">
+      <div class="box"><h3>Dodavatel</h3><div>${supplierLines}</div></div>
+      <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
+    </div>
+    <table class="totals">
+      <tr><td>Celková cena zakázky (s DPH)</td><td>${fmtKc(params.totalContractGross)}</td></tr>
+    </table>
+    <h3 style="font-size:10pt;margin:12px 0 6px">Odečtené zálohy</h3>
+    ${advanceTable}
+    <h3 style="font-size:10pt;margin:12px 0 6px">Položky — doplatek</h3>
+    <table class="items">
+      <thead>
+        <tr>
+          <th>Položka</th>
+          <th class="num">Množství</th>
+          <th>j.</th>
+          <th class="num">Cena bez DPH</th>
+          <th class="num">DPH %</th>
+          <th class="num">Základ</th>
+          <th class="num">DPH</th>
+          <th class="num">Celkem s DPH</th>
+        </tr>
+      </thead>
+      <tbody>${rowsHtml}</tbody>
+    </table>
+    <table class="totals">
+      <tr><td>Základ daně celkem</td><td>${fmtKc(params.amountNet)}</td></tr>
+      <tr><td>DPH${params.primaryVatRateLabel ? ` (${escapeHtml(params.primaryVatRateLabel)})` : ""}</td><td>${fmtKc(params.vatAmount)}</td></tr>
+      <tr class="grand"><td><strong>Celkem k úhradě (doplatek)</strong></td><td>${fmtKc(params.amountGross)}</td></tr>
+    </table>
+    <p class="note">${escapeHtml(params.note ?? "Doklad dokončuje vyúčtování zakázky po odečtení uhrazených záloh.")}</p>
+  </div>
+</div>
+</body>
+</html>`;
+}
+
 /** Jednořádková záloha ze smlouvy — jedna položka. */
 export function singleLineFromGross(params: {
   description: string;

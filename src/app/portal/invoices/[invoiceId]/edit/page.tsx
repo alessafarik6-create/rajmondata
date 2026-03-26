@@ -16,6 +16,7 @@ import { Loader2, ChevronLeft, Plus, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -28,6 +29,7 @@ import {
   invoiceItemsToManualLines,
   JOB_INVOICE_TYPES,
   updateAdvanceInvoiceItems,
+  updateFinalSettlementInvoice,
   type ManualAdvanceLineInput,
 } from "@/lib/job-billing-invoices";
 import { normalizeVatRate } from "@/lib/vat-calculations";
@@ -89,6 +91,9 @@ export default function EditAdvanceInvoicePage() {
   const [lines, setLines] = useState<ManualAdvanceLineInput[]>([]);
   const [saving, setSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
+  const [totalContractGross, setTotalContractGross] = useState(0);
+  const [totalAdvancePaid, setTotalAdvancePaid] = useState(0);
+  const [notes, setNotes] = useState("");
 
   const jobName = useMemo(() => {
     const j = jobDoc as Record<string, unknown> | null | undefined;
@@ -126,9 +131,19 @@ export default function EditAdvanceInvoicePage() {
   useEffect(() => {
     if (!invoice || initialized) return;
     const inv = invoice as Record<string, unknown>;
-    if (String(inv.type ?? "") !== JOB_INVOICE_TYPES.ADVANCE) return;
-    setLines(invoiceItemsToManualLines(inv));
-    setInitialized(true);
+    const t = String(inv.type ?? "");
+    if (t === JOB_INVOICE_TYPES.ADVANCE) {
+      setLines(invoiceItemsToManualLines(inv));
+      setInitialized(true);
+      return;
+    }
+    if (t === JOB_INVOICE_TYPES.FINAL_INVOICE) {
+      setLines(invoiceItemsToManualLines(inv));
+      setTotalContractGross(Number(inv.totalContractAmount) || 0);
+      setTotalAdvancePaid(Number(inv.totalAdvancePaid) || 0);
+      setNotes(String(inv.notes ?? ""));
+      setInitialized(true);
+    }
   }, [invoice, initialized]);
 
   const addLine = () => {
@@ -149,22 +164,44 @@ export default function EditAdvanceInvoicePage() {
   };
 
   const handleSave = async () => {
+    const invType = invoice
+      ? String((invoice as { type?: string }).type ?? "")
+      : "";
     if (!user || !companyId || !invoiceId) return;
     setSaving(true);
     try {
-      await updateAdvanceInvoiceItems({
-        firestore,
-        companyId,
-        invoiceId,
-        jobName,
-        customerName,
-        customerAddressLines: customerAddressLines || customerName,
-        supplierName,
-        supplierAddressLines: supplierAddressLines || supplierName,
-        userId: user.uid,
-        logoUrl,
-        lines,
-      });
+      if (invType === JOB_INVOICE_TYPES.FINAL_INVOICE) {
+        await updateFinalSettlementInvoice({
+          firestore,
+          companyId,
+          invoiceId,
+          jobName,
+          customerName,
+          customerAddressLines: customerAddressLines || customerName,
+          supplierName,
+          supplierAddressLines: supplierAddressLines || supplierName,
+          userId: user.uid,
+          logoUrl,
+          lines,
+          totalContractGross,
+          totalAdvancePaid,
+          notes: notes.trim() || undefined,
+        });
+      } else {
+        await updateAdvanceInvoiceItems({
+          firestore,
+          companyId,
+          invoiceId,
+          jobName,
+          customerName,
+          customerAddressLines: customerAddressLines || customerName,
+          supplierName,
+          supplierAddressLines: supplierAddressLines || supplierName,
+          userId: user.uid,
+          logoUrl,
+          lines,
+        });
+      }
       toast({ title: "Uloženo", description: "Položky a náhled dokladu byly aktualizovány." });
       router.push(`/portal/invoices/${invoiceId}`);
     } catch (e) {
@@ -208,12 +245,14 @@ export default function EditAdvanceInvoicePage() {
     );
   }
 
-  if (String((invoice as { type?: string }).type ?? "") !== JOB_INVOICE_TYPES.ADVANCE) {
+  const invType = String((invoice as { type?: string }).type ?? "");
+  const isFinal = invType === JOB_INVOICE_TYPES.FINAL_INVOICE;
+  if (invType !== JOB_INVOICE_TYPES.ADVANCE && invType !== JOB_INVOICE_TYPES.FINAL_INVOICE) {
     return (
       <Alert className="max-w-xl">
         <AlertTitle>Úprava není k dispozici</AlertTitle>
         <AlertDescription>
-          Položky lze měnit jen u zálohové faktury.{" "}
+          Položky lze měnit u zálohové nebo vyúčtovací faktury.{" "}
           <Link href={`/portal/invoices/${invoiceId}`} className="underline">
             Zpět na doklad
           </Link>
@@ -230,7 +269,9 @@ export default function EditAdvanceInvoicePage() {
             <ChevronLeft className="h-6 w-6" />
           </Link>
         </Button>
-        <h1 className="text-xl font-bold text-neutral-950 sm:text-2xl">Upravit zálohovou fakturu</h1>
+        <h1 className="text-xl font-bold text-neutral-950 sm:text-2xl">
+          {isFinal ? "Upravit vyúčtovací fakturu" : "Upravit zálohovou fakturu"}
+        </h1>
       </div>
 
       <p className="text-sm text-neutral-700">
@@ -238,6 +279,41 @@ export default function EditAdvanceInvoicePage() {
       </p>
 
       <div className="space-y-4 rounded-lg border border-neutral-200 bg-white p-4">
+        {isFinal ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <Label>Celková cena zakázky (s DPH)</Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={totalContractGross}
+                onChange={(e) => setTotalContractGross(Number(e.target.value.replace(",", ".")) || 0)}
+                className="border-neutral-950"
+              />
+            </div>
+            <div>
+              <Label>Odečtené zálohy celkem (s DPH)</Label>
+              <Input
+                type="number"
+                min={0}
+                step="0.01"
+                value={totalAdvancePaid}
+                onChange={(e) => setTotalAdvancePaid(Number(e.target.value.replace(",", ".")) || 0)}
+                className="border-neutral-950"
+              />
+            </div>
+            <div className="sm:col-span-2">
+              <Label>Poznámka</Label>
+              <Textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                className="border-neutral-950"
+              />
+            </div>
+          </div>
+        ) : null}
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold">Položky</h2>
           <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addLine}>
