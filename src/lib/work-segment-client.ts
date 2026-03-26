@@ -39,23 +39,34 @@ function tsToDate(v: unknown): Date | null {
 
 const DUR_EPS = 0.001;
 
+/** Začátek úseku (Firestore Timestamp / Date). */
+export function segmentStartTimestamp(seg: WorkSegmentClient): Date | null {
+  return tsToDate(seg.startAt);
+}
+
+/** Konec úseku (Firestore Timestamp / Date). */
+export function segmentEndTimestamp(seg: WorkSegmentClient): Date | null {
+  return tsToDate(seg.endAt);
+}
+
 /**
- * Délka úseku v hodinách: nejdřív `durationHours`, jinak rozdíl začátek/konec.
- * Bez toho často zmizí „odemčené“ úseky z výkazu (duration 0 → prázdný formulář).
+ * Délka úseku v hodinách.
+ * Pokud existují `startAt` i `endAt`, použije se výhradně rozdíl v ms (přesná délka).
+ * Jinak fallback na `durationHours` (legacy / výkaz).
  */
 export function effectiveSegmentDurationHours(seg: WorkSegmentClient): number {
+  const a = tsToDate(seg.startAt);
+  const b = tsToDate(seg.endAt);
+  if (a && b && b > a) {
+    const h = (b.getTime() - a.getTime()) / 36e5;
+    return Math.round(h * 100) / 100;
+  }
   const d =
     typeof seg.durationHours === "number" && Number.isFinite(seg.durationHours)
       ? seg.durationHours
       : 0;
   if (d > DUR_EPS) {
     return Math.round(d * 100) / 100;
-  }
-  const a = tsToDate(seg.startAt);
-  const b = tsToDate(seg.endAt);
-  if (a && b && b > a) {
-    const h = (b.getTime() - a.getTime()) / 36e5;
-    return Math.round(h * 100) / 100;
   }
   return 0;
 }

@@ -411,7 +411,7 @@ export default function AttendanceOverviewPage() {
       );
       y += 5;
       doc.text(
-        `Tarif: ${formatHoursPeriodTotal(detailTotals.totalTariffHours)} / ${formatKc(detailTotals.totalTariffKc)} | Zakázky: ${formatHoursPeriodTotal(detailTotals.totalJobHours)} / ${formatKc(detailTotals.totalJobKc)} | Mimo tarif/zakázku: ${formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffJob)} / ${formatKc(detailTotals.totalStandardKc)}`,
+        `Tarif: ${formatHoursPeriodTotal(detailTotals.totalTariffHours)} / ${formatKc(detailTotals.totalTariffKc)} | Mimo tarif (docházka − tarify): ${formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffOnly)} | Zakázky: ${formatHoursPeriodTotal(detailTotals.totalJobHours)} / ${formatKc(detailTotals.totalJobKc)} | Mimo tarif i zakázku: ${formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffJob)} / ${formatKc(detailTotals.totalStandardKc)}`,
         margin,
         y
       );
@@ -429,6 +429,12 @@ export default function AttendanceOverviewPage() {
         doc.setFont("helvetica", "normal");
         doc.text(
           `Prichod: ${day.prichod}   Odchod: ${day.odchod}   Odpracováno: ${formatHours(day.odpracovanoH)}   Záznamů: ${day.bloku}`,
+          margin,
+          y
+        );
+        y += 4;
+        doc.text(
+          `Tarify (součet hodin): ${formatHoursMinutes(day.tariffHoursTotal)}   Mimo tarif (docházka − tarify): ${formatHoursMinutes(day.hoursOutsideTariffOnly)}`,
           margin,
           y
         );
@@ -826,7 +832,7 @@ export default function AttendanceOverviewPage() {
       </div>
 
       {showEmployeeDetail && detailTotals && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5 print:grid-cols-5 print:gap-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 print:grid-cols-3 print:gap-2">
           <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
             <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
               Čas na tarifech
@@ -840,6 +846,14 @@ export default function AttendanceOverviewPage() {
               Výdělek z tarifů
             </p>
             <p className="mt-1 text-lg font-bold tabular-nums">{formatKc(detailTotals.totalTariffKc)}</p>
+          </div>
+          <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+              Čas mimo tarif (docházka − tarify)
+            </p>
+            <p className="mt-1 text-lg font-bold tabular-nums">
+              {formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffOnly)}
+            </p>
           </div>
           <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
             <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
@@ -857,7 +871,7 @@ export default function AttendanceOverviewPage() {
           </div>
           <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
             <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
-              Mimo tarif / zakázku
+              Mimo tarif i zakázku (standard)
             </p>
             <p className="mt-1 text-sm font-bold tabular-nums leading-tight">
               {formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffJob)} · {formatKc(detailTotals.totalStandardKc)}
@@ -901,6 +915,22 @@ export default function AttendanceOverviewPage() {
                     <p className="text-xs font-medium text-neutral-600">Odpracováno (docházka)</p>
                     <p className="text-lg font-semibold tabular-nums">
                       {formatHours(day.odpracovanoH)}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-medium text-neutral-600">Čas na tarifech (součet)</p>
+                    <p className="text-lg font-semibold tabular-nums">
+                      {formatHoursMinutes(day.tariffHoursTotal)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-neutral-600">
+                      Čas mimo tarif (docházka − tarify)
+                    </p>
+                    <p className="text-lg font-semibold tabular-nums">
+                      {formatHoursMinutes(day.hoursOutsideTariffOnly)}
                     </p>
                   </div>
                 </div>
@@ -963,7 +993,9 @@ export default function AttendanceOverviewPage() {
                   <p className="text-xs font-semibold text-neutral-800">Orientační výdělek (rozpad)</p>
                   <ul className="mt-1 space-y-1 text-neutral-900">
                     <li className="flex justify-between gap-4">
-                      <span>Mimo tarif a zakázku ({formatHours(day.hoursOutsideTariffAndJob)})</span>
+                      <span>
+                        Mimo tarif i zakázku – standard ({formatHours(day.hoursOutsideTariffAndJob)})
+                      </span>
                       <span className="font-semibold tabular-nums">{formatKc(day.orientacniKcStandard)}</span>
                     </li>
                     <li className="flex justify-between gap-4">
@@ -1024,6 +1056,13 @@ export default function AttendanceOverviewPage() {
                       <span className="text-neutral-600">Záznamů</span>
                       <p className="font-medium">{day.bloku}</p>
                     </div>
+                    <div className="col-span-2">
+                      <span className="text-neutral-600">Tarify / mimo tarif</span>
+                      <p className="font-medium">
+                        {formatHoursMinutes(day.tariffHoursTotal)} /{" "}
+                        {formatHoursMinutes(day.hoursOutsideTariffOnly)}
+                      </p>
+                    </div>
                   </div>
                   {day.tariffSegments.map((t) => (
                     <div key={t.id} className="mt-2 rounded border border-black/10 bg-neutral-50/80 px-2 py-1.5 text-xs">
@@ -1045,7 +1084,7 @@ export default function AttendanceOverviewPage() {
                   ))}
                   <div className="mt-3 flex flex-col gap-1 border-t border-black/10 pt-2 text-xs">
                     <div className="flex justify-between">
-                      <span className="text-neutral-600">Mimo tarif/zak.</span>
+                      <span className="text-neutral-600">Mimo tarif i zak.</span>
                       <span>{formatKc(day.orientacniKcStandard)}</span>
                     </div>
                     <div className="flex justify-between">

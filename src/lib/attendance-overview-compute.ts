@@ -21,6 +21,7 @@ import {
   segmentDateIsoKey,
   segmentDurationForOverview,
   segmentStartEndDisplay,
+  segmentStartTimestamp,
   sortSegmentsByStart,
 } from "@/lib/work-segment-client";
 import {
@@ -421,6 +422,13 @@ export type EmployeeDailyDetailRow = {
   odpracovanoH: number | null;
   tariffSegments: TariffSegmentDetailRow[];
   jobSegments: JobSegmentDetailRow[];
+  /** Součet délky tarifních úseků za den (hodiny). */
+  tariffHoursTotal: number;
+  /**
+   * Odpracované hodiny z docházky mínus čas na tarifech (bez odečtu zakázek).
+   * Tarifní čas se nepočítá zároveň jako „běžná“ docházka.
+   */
+  hoursOutsideTariffOnly: number;
   /** Hodiny od docházky mínus čas na tarifech a zakázkách (běžná sazba zaměstnance). */
   hoursOutsideTariffAndJob: number;
   orientacniKcTariff: number;
@@ -496,6 +504,7 @@ export function buildEmployeeDailyDetailRows(params: {
       const rateKc = r != null ? r : parseSegmentHourlyRateCzk(seg);
 
       if (st === "tariff") {
+        if (!segmentStartTimestamp(seg)) continue;
         const label = String(seg.tariffName || seg.displayName || "").trim();
         tariffSegments.push({
           id: seg.id,
@@ -528,6 +537,10 @@ export function buildEmployeeDailyDetailRows(params: {
 
     sumTariffH = Math.round(sumTariffH * 100) / 100;
     sumJobH = Math.round(sumJobH * 100) / 100;
+    const hoursOutsideTariffOnly = Math.max(
+      0,
+      Math.round((hoursNum - sumTariffH) * 100) / 100
+    );
     const hoursOutsideTariffAndJob = Math.max(
       0,
       Math.round((hoursNum - sumTariffH - sumJobH) * 100) / 100
@@ -596,6 +609,8 @@ export function buildEmployeeDailyDetailRows(params: {
       odpracovanoH: h,
       tariffSegments,
       jobSegments,
+      tariffHoursTotal: sumTariffH,
+      hoursOutsideTariffOnly,
       hoursOutsideTariffAndJob,
       orientacniKcTariff,
       orientacniKcJob,
@@ -620,6 +635,8 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   totalJobKc: number;
   totalStandardKc: number;
   totalHoursOutsideTariffJob: number;
+  /** Součet (den po dni) hodin „mimo tarif“ = odpracováno − tarify. */
+  totalHoursOutsideTariffOnly: number;
 } {
   let daysWorked = 0;
   let hours = 0;
@@ -631,6 +648,7 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   let totalJobKc = 0;
   let totalStandardKc = 0;
   let totalHoursOutsideTariffJob = 0;
+  let totalHoursOutsideTariffOnly = 0;
   for (const r of rows) {
     const hasWork =
       (r.odpracovanoH != null && r.odpracovanoH > 0) ||
@@ -651,6 +669,7 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     }
     totalStandardKc += r.orientacniKcStandard;
     totalHoursOutsideTariffJob += r.hoursOutsideTariffAndJob;
+    totalHoursOutsideTariffOnly += r.hoursOutsideTariffOnly;
   }
   return {
     daysWorked,
@@ -663,6 +682,7 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     totalJobKc: Math.round(totalJobKc * 100) / 100,
     totalStandardKc: Math.round(totalStandardKc * 100) / 100,
     totalHoursOutsideTariffJob: Math.round(totalHoursOutsideTariffJob * 100) / 100,
+    totalHoursOutsideTariffOnly: Math.round(totalHoursOutsideTariffOnly * 100) / 100,
   };
 }
 
