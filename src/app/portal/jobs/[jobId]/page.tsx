@@ -44,6 +44,7 @@ import {
   getDoc,
   setDoc,
   deleteField,
+  addDoc,
 } from "firebase/firestore";
 import {
   User,
@@ -87,6 +88,8 @@ import { logActivitySafe } from "@/lib/activity-log";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { JobTemplateFormFields } from "@/components/jobs/job-template-form-fields";
 import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-contract-templates-manager-dialog";
 import {
@@ -218,6 +221,8 @@ type WorkContractDoc = {
   updatedAt?: any;
 };
 
+type JobCustomerInputMode = "list" | "manual";
+
 type JobEditForm = {
   name: string;
   description: string;
@@ -232,6 +237,13 @@ type JobEditForm = {
   measuring: string;
   measuringDetails: string;
   customerId: string;
+  /** Vybrat ze seznamu vs. nový zákazník (ruční záznam do kolekce customers). */
+  customerInputMode: JobCustomerInputMode;
+  manualCustomerCompanyName: string;
+  manualCustomerAddress: string;
+  manualCustomerEmail: string;
+  manualCustomerPhone: string;
+  manualCustomerNotes: string;
   assignedEmployeeIdsText: string;
   jobTag: string;
   jobTagCustom: string;
@@ -769,12 +781,45 @@ export default function JobDetailPage() {
     measuring: "",
     measuringDetails: "",
     customerId: "",
+    customerInputMode: "list",
+    manualCustomerCompanyName: "",
+    manualCustomerAddress: "",
+    manualCustomerEmail: "",
+    manualCustomerPhone: "",
+    manualCustomerNotes: "",
     assignedEmployeeIdsText: "",
     jobTag: "",
     jobTagCustom: "",
   });
   const [jobEditTemplateValues, setJobEditTemplateValues] =
     useState<JobTemplateValues>({});
+
+  /** Při ručním zadání — název odpovídá existujícímu zákazníkovi v adresáři (nabídka propojení). */
+  const customerEditDuplicateHint = useMemo(() => {
+    if (!editJobDialogOpen || jobEditForm.customerInputMode !== "manual") {
+      return null;
+    }
+    const q = jobEditForm.manualCustomerCompanyName.trim();
+    if (!q || !customers?.length) return null;
+    const normalize = (s: string) =>
+      s.trim().toLowerCase().replace(/\s+/g, " ");
+    const nq = normalize(q);
+    return (
+      customers.find((c: any) => {
+        const label = (
+          c.companyName ||
+          `${c.firstName || ""} ${c.lastName || ""}`.trim() ||
+          ""
+        ).trim();
+        return label && normalize(label) === nq;
+      }) ?? null
+    );
+  }, [
+    editJobDialogOpen,
+    jobEditForm.customerInputMode,
+    jobEditForm.manualCustomerCompanyName,
+    customers,
+  ]);
 
   const setCanvasNode = useCallback((node: HTMLCanvasElement | null) => {
     canvasRef.current = node;
@@ -3793,6 +3838,8 @@ export default function JobDetailPage() {
     const j = job as any;
     const resolvedCustomerId =
       j.customerId || j.customer_id || j.customerID || "";
+    const legacyCustomerName =
+      typeof j.customerName === "string" ? j.customerName.trim() : "";
 
     const rawTag =
       typeof j.jobTag === "string" ? j.jobTag.trim() : "";
@@ -3819,6 +3866,16 @@ export default function JobDetailPage() {
       measuring: j.measuring || "",
       measuringDetails: j.measuringDetails || "",
       customerId: resolvedCustomerId || "",
+      customerInputMode: resolvedCustomerId
+        ? "list"
+        : legacyCustomerName
+          ? "manual"
+          : "list",
+      manualCustomerCompanyName: resolvedCustomerId ? "" : legacyCustomerName,
+      manualCustomerAddress: "",
+      manualCustomerEmail: "",
+      manualCustomerPhone: "",
+      manualCustomerNotes: "",
       assignedEmployeeIdsText: Array.isArray(j.assignedEmployeeIds)
         ? j.assignedEmployeeIds.join(", ")
         : "",
@@ -3895,20 +3952,136 @@ export default function JobDetailPage() {
         .map((s) => s.trim())
         .filter(Boolean);
 
-      const selectedCustomer =
-        jobEditForm.customerId && customers
-          ? (customers.find((c: any) => c.id === jobEditForm.customerId) as any)
-          : null;
+      if (jobEditForm.customerInputMode === "manual") {
+        const qName = jobEditForm.manualCustomerCompanyName.trim();
+        const qAddr = jobEditForm.manualCustomerAddress.trim();
+        if (!qName) {
+          toast({
+            variant: "destructive",
+            title: "Zákazník",
+            description:
+              "Vyplňte název firmy nebo jméno zákazníka, nebo přepněte na výběr ze seznamu.",
+          });
+          return;
+        }
+        if (!qAddr) {
+          toast({
+            variant: "destructive",
+            title: "Adresa",
+            description:
+              "Při zadání nového zákazníka ručně je adresa povinná.",
+          });
+          return;
+        }
+      }
 
-      const customerName = selectedCustomer
-        ? selectedCustomer.companyName ||
-          `${selectedCustomer.firstName || ""} ${selectedCustomer.lastName || ""}`.trim()
-        : "";
-      const customerPhone = selectedCustomer?.phone || "";
-      const customerEmail = selectedCustomer?.email || "";
+      if (!user?.uid) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: "Nejste přihlášeni.",
+        });
+        return;
+      }
+
+      if (!customersColRef) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: "Nelze načíst adresář zákazníků.",
+        });
+        return;
+      }
 
       setIsSavingJobEdit(true);
       try {
+        let resolvedCustomerId: string | null = null;
+        let customerName = "";
+        let customerPhone = "";
+        let customerEmail = "";
+
+        if (jobEditForm.customerInputMode === "list") {
+          resolvedCustomerId = jobEditForm.customerId.trim() || null;
+          const selectedCustomer =
+            resolvedCustomerId && customers
+              ? (customers.find((c: any) => c.id === resolvedCustomerId) as any)
+              : null;
+          customerName = selectedCustomer
+            ? selectedCustomer.companyName ||
+              `${selectedCustomer.firstName || ""} ${selectedCustomer.lastName || ""}`.trim()
+            : "";
+          customerPhone = selectedCustomer?.phone || "";
+          customerEmail = selectedCustomer?.email || "";
+        } else {
+          const qName = jobEditForm.manualCustomerCompanyName.trim();
+          const qAddr = jobEditForm.manualCustomerAddress.trim();
+          const emailTrim = jobEditForm.manualCustomerEmail.trim();
+          const phoneTrim = jobEditForm.manualCustomerPhone.trim();
+
+          const candidates: any[] = [];
+
+          if (emailTrim) {
+            const q = query(customersColRef, where("email", "==", emailTrim));
+            const snap = await getDocs(q);
+            snap.forEach((d) => candidates.push({ id: d.id, ...d.data() }));
+          }
+          if (!candidates.length && phoneTrim) {
+            const q = query(customersColRef, where("phone", "==", phoneTrim));
+            const snap = await getDocs(q);
+            snap.forEach((d) => candidates.push({ id: d.id, ...d.data() }));
+          }
+          if (!candidates.length && qName) {
+            const q = query(
+              customersColRef,
+              where("companyName", "==", qName)
+            );
+            const snap = await getDocs(q);
+            snap.forEach((d) => candidates.push({ id: d.id, ...d.data() }));
+          }
+
+          let customerSnapshot: any;
+
+          if (candidates.length) {
+            customerSnapshot = candidates[0];
+            resolvedCustomerId = customerSnapshot.id;
+            toast({
+              title: "Propojeno s existujícím zákazníkem",
+              description: `Použit záznam z adresáře: „${
+                customerSnapshot.companyName ||
+                `${customerSnapshot.firstName || ""} ${customerSnapshot.lastName || ""}`.trim() ||
+                qName
+              }“.`,
+            });
+          } else {
+            const customerPayload = {
+              companyName: qName,
+              email: emailTrim,
+              phone: phoneTrim,
+              address: qAddr,
+              notes: jobEditForm.manualCustomerNotes.trim(),
+              companyId,
+              organizationId: companyId,
+              createdBy: user.uid,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            };
+            const newRef = await addDoc(customersColRef, customerPayload);
+            resolvedCustomerId = newRef.id;
+            customerSnapshot = { id: resolvedCustomerId, ...customerPayload };
+            toast({
+              title: "Zákazník vytvořen",
+              description: `„${qName}“ je uložen v adresáři zákazníků.`,
+            });
+          }
+
+          customerName =
+            customerSnapshot.companyName ||
+            `${customerSnapshot.firstName || ""} ${customerSnapshot.lastName || ""}`.trim() ||
+            qName;
+          customerPhone = String(customerSnapshot.phone || phoneTrim || "");
+          customerEmail = String(customerSnapshot.email || emailTrim || "");
+        }
+
         const payload: Record<string, any> = {
           name: jobEditForm.name,
           description: jobEditForm.description,
@@ -3920,7 +4093,7 @@ export default function JobDetailPage() {
           measuring: jobEditForm.measuring,
           measuringDetails: jobEditForm.measuringDetails,
 
-          customerId: jobEditForm.customerId || null,
+          customerId: resolvedCustomerId,
           customerName,
           customerPhone,
           customerEmail,
@@ -3965,7 +4138,7 @@ export default function JobDetailPage() {
             newBudget: budgetFields?.budgetGross,
             newBudgetNet: budgetFields?.budgetNet,
             budgetType: budgetFields?.budgetType,
-            customerId: jobEditForm.customerId || null,
+            customerId: resolvedCustomerId,
           },
         });
 
@@ -4002,6 +4175,7 @@ export default function JobDetailPage() {
       jobEditTemplateValues,
       toast,
       router,
+      customersColRef,
     ]
   );
 
@@ -4888,36 +5062,227 @@ export default function JobDetailPage() {
                   />
                 </div>
 
-                <div className="space-y-2 md:col-span-2">
+                <div className="space-y-3 md:col-span-2">
                   <Label>Zákazník</Label>
-                  <Select
-                    value={jobEditForm.customerId || "none"}
+                  <RadioGroup
+                    value={jobEditForm.customerInputMode}
                     onValueChange={(v) =>
                       setJobEditForm((prev) => ({
                         ...prev,
-                        customerId: v === "none" ? "" : v,
+                        customerInputMode: v as JobCustomerInputMode,
+                        ...(v === "list"
+                          ? {
+                              manualCustomerCompanyName: "",
+                              manualCustomerAddress: "",
+                              manualCustomerEmail: "",
+                              manualCustomerPhone: "",
+                              manualCustomerNotes: "",
+                            }
+                          : { customerId: "" }),
                       }))
                     }
+                    className="flex flex-col gap-2 sm:flex-row sm:gap-8"
                   >
-                    <SelectTrigger
-                      className={cn(
-                        LIGHT_SELECT_TRIGGER_CLASS,
-                        "min-h-[44px] md:min-h-10"
-                      )}
+                    <div className="flex items-center gap-2">
+                      <RadioGroupItem value="list" id="job-edit-cust-list" />
+                      <Label
+                        htmlFor="job-edit-cust-list"
+                        className="font-normal cursor-pointer"
+                      >
+                        Vybrat ze seznamu
+                      </Label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <RadioGroupItem value="manual" id="job-edit-cust-manual" />
+                      <Label
+                        htmlFor="job-edit-cust-manual"
+                        className="font-normal cursor-pointer"
+                      >
+                        Nový zákazník (ručně)
+                      </Label>
+                    </div>
+                  </RadioGroup>
+
+                  {jobEditForm.customerInputMode === "list" ? (
+                    <Select
+                      value={jobEditForm.customerId || "none"}
+                      onValueChange={(v) =>
+                        setJobEditForm((prev) => ({
+                          ...prev,
+                          customerId: v === "none" ? "" : v,
+                        }))
+                      }
                     >
-                      <SelectValue placeholder="Vyberte zákazníka" />
-                    </SelectTrigger>
-                    <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
-                      <SelectItem value="none">Bez zákazníka</SelectItem>
-                      {customers?.map((c: any) => (
-                        <SelectItem key={c.id} value={c.id}>
-                          {c.companyName ||
-                            `${c.firstName || ""} ${c.lastName || ""}`.trim() ||
-                            "Neznámý zákazník"}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                      <SelectTrigger
+                        className={cn(
+                          LIGHT_SELECT_TRIGGER_CLASS,
+                          "min-h-[44px] md:min-h-10"
+                        )}
+                      >
+                        <SelectValue placeholder="Vyberte zákazníka" />
+                      </SelectTrigger>
+                      <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
+                        <SelectItem value="none">Bez zákazníka</SelectItem>
+                        {customers?.map((c: any) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.companyName ||
+                              `${c.firstName || ""} ${c.lastName || ""}`.trim() ||
+                              "Neznámý zákazník"}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <div className="space-y-4 rounded-lg border border-border bg-muted/20 p-4">
+                      <p className="text-sm text-foreground">
+                        Po uložení se vytvoří záznam v sekci Zákazníci a zakázka
+                        se s ním propojí. Povinné jsou název / jméno a adresa.
+                      </p>
+                      {customerEditDuplicateHint ? (
+                        <Alert className="border-amber-200 bg-amber-50/90 text-amber-950">
+                          <AlertTitle className="text-sm">
+                            Možná duplicita
+                          </AlertTitle>
+                          <AlertDescription className="text-xs sm:text-sm space-y-2">
+                            <span>
+                              Zákazník s tímto jménem už v adresáři existuje —
+                              můžete ho vybrat ze seznamu místo vytváření nového
+                              záznamu.
+                            </span>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="mt-1"
+                              onClick={() => {
+                                const id = customerEditDuplicateHint.id;
+                                if (!id) return;
+                                setJobEditForm((prev) => ({
+                                  ...prev,
+                                  customerInputMode: "list",
+                                  customerId: id,
+                                  manualCustomerCompanyName: "",
+                                  manualCustomerAddress: "",
+                                  manualCustomerEmail: "",
+                                  manualCustomerPhone: "",
+                                  manualCustomerNotes: "",
+                                }));
+                              }}
+                            >
+                              Použít:{" "}
+                              {customerEditDuplicateHint.companyName ||
+                                `${customerEditDuplicateHint.firstName || ""} ${
+                                  customerEditDuplicateHint.lastName || ""
+                                }`.trim() ||
+                                "existující zákazník"}
+                            </Button>
+                          </AlertDescription>
+                        </Alert>
+                      ) : null}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label htmlFor="job-edit-manual-cust-name">
+                            Název firmy / jméno
+                            <span className="text-destructive"> *</span>
+                          </Label>
+                          <Input
+                            id="job-edit-manual-cust-name"
+                            value={jobEditForm.manualCustomerCompanyName}
+                            onChange={(e) =>
+                              setJobEditForm((prev) => ({
+                                ...prev,
+                                manualCustomerCompanyName: e.target.value,
+                              }))
+                            }
+                            placeholder="Např. Novákovi s.r.o."
+                            className={cn(
+                              LIGHT_FORM_CONTROL_CLASS,
+                              "min-h-[44px] md:min-h-10"
+                            )}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="job-edit-manual-cust-email">
+                            Email
+                          </Label>
+                          <Input
+                            id="job-edit-manual-cust-email"
+                            type="email"
+                            value={jobEditForm.manualCustomerEmail}
+                            onChange={(e) =>
+                              setJobEditForm((prev) => ({
+                                ...prev,
+                                manualCustomerEmail: e.target.value,
+                              }))
+                            }
+                            className={cn(
+                              LIGHT_FORM_CONTROL_CLASS,
+                              "min-h-[44px] md:min-h-10"
+                            )}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="job-edit-manual-cust-phone">
+                            Telefon
+                          </Label>
+                          <Input
+                            id="job-edit-manual-cust-phone"
+                            value={jobEditForm.manualCustomerPhone}
+                            onChange={(e) =>
+                              setJobEditForm((prev) => ({
+                                ...prev,
+                                manualCustomerPhone: e.target.value,
+                              }))
+                            }
+                            className={cn(
+                              LIGHT_FORM_CONTROL_CLASS,
+                              "min-h-[44px] md:min-h-10"
+                            )}
+                          />
+                        </div>
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label htmlFor="job-edit-manual-cust-address">
+                            Adresa
+                            <span className="text-destructive"> *</span>
+                          </Label>
+                          <Input
+                            id="job-edit-manual-cust-address"
+                            value={jobEditForm.manualCustomerAddress}
+                            onChange={(e) =>
+                              setJobEditForm((prev) => ({
+                                ...prev,
+                                manualCustomerAddress: e.target.value,
+                              }))
+                            }
+                            placeholder="Ulice, město, PSČ"
+                            className={cn(
+                              LIGHT_FORM_CONTROL_CLASS,
+                              "min-h-[44px] md:min-h-10"
+                            )}
+                          />
+                        </div>
+                        <div className="space-y-2 sm:col-span-2">
+                          <Label htmlFor="job-edit-manual-cust-notes">
+                            Poznámka
+                          </Label>
+                          <Textarea
+                            id="job-edit-manual-cust-notes"
+                            value={jobEditForm.manualCustomerNotes}
+                            onChange={(e) =>
+                              setJobEditForm((prev) => ({
+                                ...prev,
+                                manualCustomerNotes: e.target.value,
+                              }))
+                            }
+                            className={cn(
+                              LIGHT_FORM_CONTROL_CLASS,
+                              "min-h-[88px]"
+                            )}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="space-y-2 md:col-span-2">
