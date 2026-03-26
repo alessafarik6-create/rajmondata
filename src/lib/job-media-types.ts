@@ -26,9 +26,14 @@ export type JobPhotoAnnotationTarget = {
   annotationTarget: JobMediaFirestorePath;
 };
 
+/** Typ vlastní složky u zakázky (v Firestore pole `type`). */
+export type JobFolderType = "photos" | "documents" | "files";
+
 export type JobFolderDoc = {
   id: string;
   name?: string;
+  /** Fotodokumentace / doklady / obecné soubory */
+  type?: JobFolderType;
   companyId?: string;
   jobId?: string;
   createdAt?: unknown;
@@ -60,6 +65,13 @@ export type JobFolderImageDoc = {
   note?: string;
   noteUpdatedAt?: unknown;
   noteUpdatedBy?: string;
+  /** Účetní vazba u složky „Doklady“ */
+  ledgerKind?: "income" | "expense";
+  ledgerExpenseId?: string;
+  ledgerFinanceId?: string | null;
+  ledgerAmountNet?: number;
+  ledgerAmountGross?: number;
+  ledgerDate?: string;
 };
 
 /** Výběr z galerie / souborů: obrázky i PDF. */

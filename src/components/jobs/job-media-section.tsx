@@ -38,9 +38,35 @@ import {
   JOB_MEDIA_ACCEPT_ATTR,
   type JobFolderDoc,
   type JobFolderImageDoc,
+  type JobFolderType,
   type JobMediaFirestorePath,
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
+import {
+  commitFolderAccountingExpense,
+  commitFolderAccountingIncome,
+  deleteFolderExpenseLinkedToImage,
+  reverseFolderAccountingIncome,
+} from "@/lib/job-folder-ledger";
+import {
+  computeExpenseAmountsFromInput,
+  normalizeBudgetType,
+  normalizeVatRate,
+  roundMoney2,
+  VAT_RATE_OPTIONS,
+  type JobBudgetType,
+  type VatRatePercent,
+} from "@/lib/vat-calculations";
+import type { JobExpenseFileType } from "@/lib/job-expense-types";
+import { parseMoneyAmountInput } from "@/lib/work-contract-deposit";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   buildJobMediaMirrorNoteOnlyPatch,
   buildNewJobFolderImageMirrorDocument,
@@ -55,6 +81,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -99,6 +126,23 @@ const JOB_MEDIA_INITIAL_COUNT = 6;
 /** Max. výška scrollovatelné oblasti se seznamy */
 const JOB_MEDIA_LIST_SCROLL_CLASS =
   "max-h-[min(50vh,480px)] overflow-y-auto overscroll-contain";
+
+function folderTypeLabel(t: JobFolderType | undefined): string {
+  switch (t ?? "files") {
+    case "photos":
+      return "Fotodokumentace";
+    case "documents":
+      return "Doklady / účetní";
+    default:
+      return "Obecné soubory";
+  }
+}
+
+function todayIsoDate(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 const jobMediaIconBtnClassName =
   "h-10 w-10 min-h-10 min-w-10 shrink-0 gap-0 rounded-md border-border/70 bg-background/95 p-0 shadow-sm hover:bg-accent md:h-9 md:w-9 md:min-h-9 md:min-w-9 [&_svg]:!size-[18px]";
@@ -426,6 +470,20 @@ function UserFolderBlock({
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
+  const folderType: JobFolderType = folder.type ?? "files";
+  const isAccountingFolder = folderType === "documents";
+
+  const [accountingOpen, setAccountingOpen] = useState(false);
+  const [accountingQueue, setAccountingQueue] = useState<File[]>([]);
+  const [ledgerKind, setLedgerKind] = useState<"income" | "expense">("income");
+  const [ledgerAmountInput, setLedgerAmountInput] = useState("");
+  const [ledgerAmountType, setLedgerAmountType] = useState<"net" | "gross">(
+    "net"
+  );
+  const [ledgerVatRate, setLedgerVatRate] = useState<string>("21");
+  const [ledgerDate, setLedgerDate] = useState(todayIsoDate());
+  const [ledgerSubmitting, setLedgerSubmitting] = useState(false);
+
   const imagesColRef = useMemoFirebase(
     () =>
       collection(
@@ -529,7 +587,16 @@ function UserFolderBlock({
     };
   }, [images, firestore, companyId, jobId, folder.id, user?.uid, jobDisplayName]);
 
-  const uploadOne = async (file: File) => {
+  const uploadOne = async (
+    file: File,
+    ledger?: {
+      kind: "income" | "expense";
+      amountInput: number;
+      amountType: JobBudgetType;
+      vatRate: VatRatePercent;
+      date: string;
+    }
+  ) => {
     if (!isAllowedJobMediaFile(file)) {
       toast({
         variant: "destructive",
@@ -543,6 +610,14 @@ function UserFolderBlock({
         variant: "destructive",
         title: "Soubor je příliš velký",
         description: "Maximální velikost je 20 MB.",
+      });
+      return;
+    }
+    if (isAccountingFolder && !ledger) {
+      toast({
+        variant: "destructive",
+        title: "Chybí údaje dokladu",
+        description: "Vyplňte typ dokladu a částku.",
       });
       return;
     }
@@ -560,9 +635,98 @@ function UserFolderBlock({
       );
 
     const refDoc = doc(imagesColRef);
-    await setDoc(
-      refDoc,
-      {
+
+    if (isAccountingFolder && ledger) {
+      const vatRate = normalizeVatRate(ledger.vatRate);
+      const amts = computeExpenseAmountsFromInput({
+        amountInput: roundMoney2(ledger.amountInput),
+        amountType: ledger.amountType,
+        vatRate,
+      });
+
+      if (ledger.kind === "income") {
+        const { financeId } = await commitFolderAccountingIncome({
+          firestore,
+          companyId,
+          jobId,
+          jobDisplayName,
+          userId: user.uid,
+          imageId: refDoc.id,
+          fileName: safeBaseName,
+          fileUrl: downloadURL,
+          date: ledger.date,
+          amountInput: ledger.amountInput,
+          amountType: ledger.amountType,
+          vatRate,
+        });
+        await setDoc(refDoc, {
+          id: refDoc.id,
+          companyId,
+          jobId,
+          folderId: folder.id,
+          imageUrl: downloadURL,
+          url: downloadURL,
+          originalImageUrl: downloadURL,
+          downloadURL,
+          fileType,
+          storagePath: resolvedFullPath,
+          path: resolvedFullPath,
+          fileName: safeBaseName,
+          name: safeBaseName,
+          createdAt: serverTimestamp(),
+          createdBy: user.uid,
+          ledgerKind: "income",
+          ledgerDate: ledger.date,
+          ledgerAmountNet: amts.amountNet,
+          ledgerAmountGross: amts.amountGross,
+          ledgerFinanceId: financeId,
+        });
+      } else {
+        const expenseFt: JobExpenseFileType = fileType;
+        const { expenseId, financeId } = await commitFolderAccountingExpense({
+          firestore,
+          companyId,
+          jobId,
+          jobDisplayName,
+          userId: user.uid,
+          imageId: refDoc.id,
+          folderId: folder.id,
+          fileName: safeBaseName,
+          fileUrl: downloadURL,
+          date: ledger.date,
+          amountInput: ledger.amountInput,
+          amountType: ledger.amountType,
+          vatRate,
+          fileType: expenseFt,
+          storagePath: resolvedFullPath,
+          mimeType: file.type?.trim() || null,
+        });
+        await setDoc(refDoc, {
+          id: refDoc.id,
+          companyId,
+          jobId,
+          folderId: folder.id,
+          imageUrl: downloadURL,
+          url: downloadURL,
+          originalImageUrl: downloadURL,
+          downloadURL,
+          fileType,
+          storagePath: resolvedFullPath,
+          path: resolvedFullPath,
+          fileName: safeBaseName,
+          name: safeBaseName,
+          createdAt: serverTimestamp(),
+          createdBy: user.uid,
+          ledgerKind: "expense",
+          ledgerExpenseId: expenseId,
+          ledgerFinanceId: financeId,
+          ledgerDate: ledger.date,
+          ledgerAmountNet: amts.amountNet,
+          ledgerAmountGross: amts.amountGross,
+        });
+      }
+    } else {
+      await setDoc(refDoc, {
         id: refDoc.id,
         companyId,
         jobId,
@@ -578,8 +742,8 @@ function UserFolderBlock({
         name: safeBaseName,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
-      }
-    );
+      });
+    }
 
     await setDoc(
       companyDocumentRefForJobFolderImage(
@@ -607,7 +771,9 @@ function UserFolderBlock({
 
     logActivitySafe(firestore, companyId, user, actorProfile, {
       actionType: "document.upload",
-      actionLabel: "Nahrání souboru do složky zakázky",
+      actionLabel: isAccountingFolder
+        ? "Nahrání dokladu do účetní složky zakázky"
+        : "Nahrání souboru do složky zakázky",
       entityType: "job_folder_image",
       entityId: refDoc.id,
       entityName: safeBaseName,
@@ -620,10 +786,91 @@ function UserFolderBlock({
         fileName: safeBaseName,
         fileType,
         mimeType: file.type?.trim() || null,
+        ledgerKind: ledger?.kind ?? null,
       },
     });
 
     toast({ title: "Soubor uložen", description: safeBaseName });
+  };
+
+  const openAccountingForFiles = (files: File[]) => {
+    if (!files.length) return;
+    if (!canManageFolders) {
+      toast({
+        variant: "destructive",
+        title: "Nemáte oprávnění",
+        description: "Do účetní složky mohou nahrávat jen správci a účetní.",
+      });
+      return;
+    }
+    setLedgerKind("income");
+    setLedgerAmountInput("");
+    setLedgerAmountType("net");
+    setLedgerVatRate("21");
+    setLedgerDate(todayIsoDate());
+    setAccountingQueue(files);
+    setAccountingOpen(true);
+  };
+
+  const submitAccountingDialog = async () => {
+    const file = accountingQueue[0];
+    if (!file) {
+      setAccountingOpen(false);
+      return;
+    }
+    const amountKc = parseMoneyAmountInput(
+      ledgerAmountInput.replace(/\s/g, " ").trim()
+    );
+    if (amountKc == null || amountKc <= 0) {
+      toast({
+        variant: "destructive",
+        title: "Částka",
+        description: "Zadejte platnou částku větší než 0.",
+      });
+      return;
+    }
+    if (!ledgerDate.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Datum",
+        description: "Vyplňte datum dokladu.",
+      });
+      return;
+    }
+    const vatRate = normalizeVatRate(Number(ledgerVatRate));
+    const amountTypeResolved = normalizeBudgetType(ledgerAmountType);
+    setLedgerSubmitting(true);
+    try {
+      await uploadOne(file, {
+        kind: ledgerKind,
+        amountInput: amountKc,
+        amountType: amountTypeResolved,
+        vatRate,
+        date: ledgerDate.trim(),
+      });
+      setAccountingQueue((q) => {
+        const next = q.slice(1);
+        if (next.length === 0) {
+          setAccountingOpen(false);
+        } else {
+          setLedgerAmountInput("");
+          setLedgerAmountType("net");
+          setLedgerVatRate("21");
+          setLedgerDate(todayIsoDate());
+        }
+        return next;
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Účetní zápis se nepodařil",
+        description:
+          err instanceof Error ? err.message : "Zkuste to prosím znovu.",
+      });
+    } finally {
+      setLedgerSubmitting(false);
+    }
   };
 
   const deleteImage = async (img: JobFolderImageDoc) => {
@@ -636,6 +883,29 @@ function UserFolderBlock({
     }
     setBusy(true);
     try {
+      if (img.ledgerKind === "income") {
+        await reverseFolderAccountingIncome({
+          firestore,
+          companyId,
+          jobId,
+          imageId: img.id,
+        });
+      } else if (
+        img.ledgerKind === "expense" &&
+        typeof img.ledgerExpenseId === "string" &&
+        img.ledgerExpenseId
+      ) {
+        await deleteFolderExpenseLinkedToImage({
+          firestore,
+          companyId,
+          jobId,
+          expenseId: img.ledgerExpenseId,
+          financeId:
+            typeof img.ledgerFinanceId === "string" && img.ledgerFinanceId
+              ? img.ledgerFinanceId
+              : null,
+        });
+      }
       const sp =
         (typeof img.storagePath === "string" && img.storagePath) ||
         (typeof img.path === "string" && img.path) ||
@@ -718,6 +988,29 @@ function UserFolderBlock({
       const removedFileCount = snap.docs.length;
       for (const d of snap.docs) {
         const data = d.data() as JobFolderImageDoc;
+        if (data.ledgerKind === "income") {
+          await reverseFolderAccountingIncome({
+            firestore,
+            companyId,
+            jobId,
+            imageId: d.id,
+          });
+        } else if (
+          data.ledgerKind === "expense" &&
+          typeof data.ledgerExpenseId === "string" &&
+          data.ledgerExpenseId
+        ) {
+          await deleteFolderExpenseLinkedToImage({
+            firestore,
+            companyId,
+            jobId,
+            expenseId: data.ledgerExpenseId,
+            financeId:
+              typeof data.ledgerFinanceId === "string" && data.ledgerFinanceId
+                ? data.ledgerFinanceId
+                : null,
+          });
+        }
         const sp =
           (typeof data.storagePath === "string" && data.storagePath) ||
           (typeof data.path === "string" && data.path) ||
@@ -789,6 +1082,123 @@ function UserFolderBlock({
 
   return (
     <>
+      <Dialog
+        open={accountingOpen}
+        onOpenChange={(o) => {
+          setAccountingOpen(o);
+          if (!o) setAccountingQueue([]);
+        }}
+      >
+        <DialogContent className="max-w-md text-gray-900">
+          <DialogHeader>
+            <DialogTitle className="text-gray-900">Účetní doklad</DialogTitle>
+            <DialogDescription className="text-gray-800">
+              {accountingQueue[0]
+                ? `Soubor: ${accountingQueue[0].name}${
+                    accountingQueue.length > 1
+                      ? ` (${accountingQueue.length} celkem ve frontě)`
+                      : ""
+                  }`
+                : "Vyberte soubor a vyplňte částku."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label className="text-gray-900">Typ dokladu</Label>
+              <Select
+                value={ledgerKind}
+                onValueChange={(v) =>
+                  setLedgerKind(v === "expense" ? "expense" : "income")
+                }
+              >
+                <SelectTrigger className="min-h-[44px] bg-background text-gray-900">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="income">Příjem (faktura / záloha)</SelectItem>
+                  <SelectItem value="expense">Náklad</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-900">Částka (Kč)</Label>
+              <Input
+                value={ledgerAmountInput}
+                onChange={(e) => setLedgerAmountInput(e.target.value)}
+                placeholder="např. 12 500"
+                className="min-h-[44px] bg-background text-gray-900"
+                inputMode="decimal"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-2">
+                <Label className="text-gray-900">Bez / s DPH</Label>
+                <Select
+                  value={ledgerAmountType}
+                  onValueChange={(v) =>
+                    setLedgerAmountType(v === "gross" ? "gross" : "net")
+                  }
+                >
+                  <SelectTrigger className="min-h-[44px] bg-background text-gray-900">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="net">Bez DPH</SelectItem>
+                    <SelectItem value="gross">S DPH</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label className="text-gray-900">Sazba DPH</Label>
+                <Select
+                  value={ledgerVatRate}
+                  onValueChange={setLedgerVatRate}
+                >
+                  <SelectTrigger className="min-h-[44px] bg-background text-gray-900">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VAT_RATE_OPTIONS.map((r) => (
+                      <SelectItem key={r} value={String(r)}>
+                        {r} %
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-900">Datum dokladu</Label>
+              <Input
+                type="date"
+                value={ledgerDate}
+                onChange={(e) => setLedgerDate(e.target.value)}
+                className="min-h-[44px] bg-background text-gray-900"
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={ledgerSubmitting}
+              onClick={() => {
+                setAccountingOpen(false);
+                setAccountingQueue([]);
+              }}
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              disabled={ledgerSubmitting || !accountingQueue[0]}
+              onClick={() => void submitAccountingDialog()}
+            >
+              {ledgerSubmitting ? "Ukládám…" : "Nahrát a zaúčtovat"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     <Collapsible open={folderOpen} onOpenChange={setFolderOpen}>
       <Card className="border-border/60 bg-surface">
         <CardHeader className="space-y-3 pb-2">
@@ -805,8 +1215,14 @@ function UserFolderBlock({
                   )}
                   aria-hidden
                 />
-                <span className="truncate text-base font-semibold text-foreground">
+                <span className="truncate text-base font-semibold text-gray-900">
                   {folder.name || "Bez názvu"}
+                </span>
+                <span
+                  className="shrink-0 rounded-full border border-border/80 bg-background px-2 py-0.5 text-xs font-medium text-gray-900"
+                  title="Typ složky"
+                >
+                  {folderTypeLabel(folderType)}
                 </span>
                 <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
                   {images.length}
@@ -840,6 +1256,19 @@ function UserFolderBlock({
               const files = Array.from(e.target.files || []).filter(Boolean);
               e.target.value = "";
               if (!files.length) return;
+              if (isAccountingFolder) {
+                const ok = files.filter((f) => isAllowedJobMediaFile(f));
+                if (!ok.length) {
+                  toast({
+                    variant: "destructive",
+                    title: "Nepodporovaný formát",
+                    description: "Pouze JPG, PNG, WEBP, PDF nebo Office.",
+                  });
+                  return;
+                }
+                openAccountingForFiles(ok);
+                return;
+              }
               setBusy(true);
               void (async () => {
                 for (const f of files) {
@@ -877,6 +1306,17 @@ function UserFolderBlock({
               const file = e.target.files?.[0];
               e.target.value = "";
               if (!file) return;
+              if (isAccountingFolder) {
+                if (!isAllowedJobMediaFile(file)) {
+                  toast({
+                    variant: "destructive",
+                    title: "Nepodporovaný formát",
+                  });
+                  return;
+                }
+                openAccountingForFiles([file]);
+                return;
+              }
               setBusy(true);
               void uploadOne(file).catch((err) => {
                 console.error(err);
@@ -1316,6 +1756,7 @@ export function JobMediaSection({
   const { data: actorProfile } = useDoc(actorRef);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderType, setNewFolderType] = useState<JobFolderType>("files");
   const [creatingFolder, setCreatingFolder] = useState(false);
 
   const [noteOpen, setNoteOpen] = useState(false);
@@ -1604,6 +2045,7 @@ export function JobMediaSection({
       await setDoc(refDoc, {
         id: refDoc.id,
         name,
+        type: newFolderType,
         companyId,
         jobId,
         createdAt: serverTimestamp(),
@@ -1620,6 +2062,7 @@ export function JobMediaSection({
         metadata: { jobId, folderId: refDoc.id },
       });
       setNewFolderName("");
+      setNewFolderType("files");
       setNewFolderOpen(false);
       toast({ title: "Složka vytvořena", description: name });
     } catch (e) {
@@ -2251,17 +2694,38 @@ export function JobMediaSection({
       </Card>
 
       <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md text-gray-900">
           <DialogHeader>
-            <DialogTitle>Nová složka</DialogTitle>
+            <DialogTitle className="text-gray-900">Nová složka</DialogTitle>
           </DialogHeader>
-          <Input
-            value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
-            placeholder="Název složky"
-            className="min-h-[44px]"
-            maxLength={120}
-          />
+          <div className="space-y-3">
+            <div className="space-y-2">
+              <Label className="text-gray-900">Název</Label>
+              <Input
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="Název složky"
+                className="min-h-[44px] bg-background text-gray-900"
+                maxLength={120}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-gray-900">Typ složky</Label>
+              <Select
+                value={newFolderType}
+                onValueChange={(v) => setNewFolderType(v as JobFolderType)}
+              >
+                <SelectTrigger className="min-h-[44px] bg-background text-gray-900">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="photos">Fotodokumentace</SelectItem>
+                  <SelectItem value="documents">Doklady / účetní</SelectItem>
+                  <SelectItem value="files">Obecné soubory</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button
               type="button"

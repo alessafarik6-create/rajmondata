@@ -34,7 +34,11 @@ import { collection, query, orderBy, limit, where } from "firebase/firestore";
 import Link from "next/link";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 import { useRouter } from "next/navigation";
-import { resolveJobBudgetFromFirestore } from "@/lib/vat-calculations";
+import {
+  resolveJobBudgetFromFirestore,
+  resolveJobPaidFromFirestore,
+  roundMoney2,
+} from "@/lib/vat-calculations";
 import {
   formatKc,
   sumMoneyForApprovedDailyReports,
@@ -345,6 +349,8 @@ export default function CompanyDashboard() {
     let count = 0;
     let totalBudgetNetKc = 0;
     let totalBudgetGrossKc = 0;
+    let totalPaidNetKc = 0;
+    let totalPaidGrossKc = 0;
     for (const j of typedJobs) {
       count += 1;
       const bd = resolveJobBudgetFromFirestore(j as Record<string, unknown>);
@@ -352,8 +358,17 @@ export default function CompanyDashboard() {
         totalBudgetNetKc += bd.budgetNet;
         totalBudgetGrossKc += bd.budgetGross;
       }
+      const pd = resolveJobPaidFromFirestore(j as Record<string, unknown>);
+      totalPaidNetKc += pd.paidNet;
+      totalPaidGrossKc += pd.paidGross;
     }
-    return { count, totalBudgetNetKc, totalBudgetGrossKc };
+    return {
+      count,
+      totalBudgetNetKc,
+      totalBudgetGrossKc,
+      totalPaidNetKc: roundMoney2(totalPaidNetKc),
+      totalPaidGrossKc: roundMoney2(totalPaidGrossKc),
+    };
   }, [typedJobs]);
 
   const paidToEmployeesCzk = useMemo(() => {
@@ -373,9 +388,13 @@ export default function CompanyDashboard() {
     ).length;
   }, [dashboardChatMessages]);
 
-  /** Příjmy = součet rozpočtů zakázek (bez / s DPH); náklady = schválené výplaty; zisk = hrubé příjmy minus mzdy (zjednodušený model). */
+  /** Rozpočty zakázek (bez / s DPH); zaplaceno z účetních příjmů; náklady = schválené výplaty; zisk = hrubé rozpočty minus mzdy (zjednodušený model). */
   const totalIncomeFromJobsNetCzk = jobsAggregate.totalBudgetNetKc;
   const totalIncomeFromJobsGrossCzk = jobsAggregate.totalBudgetGrossKc;
+  const totalPaidFromJobsGrossCzk = jobsAggregate.totalPaidGrossKc;
+  const totalRemainingToPayGrossCzk = roundMoney2(
+    totalIncomeFromJobsGrossCzk - totalPaidFromJobsGrossCzk
+  );
   const totalLaborCostsCzk = paidToEmployeesCzk;
   const profitCzk = totalIncomeFromJobsGrossCzk - totalLaborCostsCzk;
 
@@ -901,15 +920,37 @@ export default function CompanyDashboard() {
               </CardHeader>
               <CardContent className="space-y-3 text-sm">
                 <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Příjmy bez DPH</span>
-                  <span className="font-semibold tabular-nums">
-                    {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsNetCzk)}
+                  <span className="text-muted-foreground">
+                    Celkové příjmy (zaplacené, s DPH)
+                  </span>
+                  <span className="font-semibold tabular-nums text-foreground">
+                    {isJobsLoading ? "…" : formatKc(totalPaidFromJobsGrossCzk)}
                   </span>
                 </div>
                 <div className="flex justify-between gap-2">
-                  <span className="text-muted-foreground">Příjmy s DPH</span>
-                  <span className="font-semibold tabular-nums">
+                  <span className="text-muted-foreground">
+                    Hodnota zakázek (rozpočty s DPH)
+                  </span>
+                  <span className="font-semibold tabular-nums text-foreground">
                     {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsGrossCzk)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Zbývá doplatit (s DPH)</span>
+                  <span
+                    className={`font-semibold tabular-nums ${
+                      totalRemainingToPayGrossCzk < 0
+                        ? "text-destructive"
+                        : "text-foreground"
+                    }`}
+                  >
+                    {isJobsLoading ? "…" : formatKc(totalRemainingToPayGrossCzk)}
+                  </span>
+                </div>
+                <div className="flex justify-between gap-2 border-t border-border/60 pt-2">
+                  <span className="text-muted-foreground">Rozpočty bez DPH (součet)</span>
+                  <span className="font-semibold tabular-nums">
+                    {isJobsLoading ? "…" : formatKc(totalIncomeFromJobsNetCzk)}
                   </span>
                 </div>
                 <div className="flex justify-between gap-2">

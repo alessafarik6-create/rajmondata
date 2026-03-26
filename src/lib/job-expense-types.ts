@@ -31,6 +31,10 @@ export type JobExpenseFirestoreFields = {
   createdBy: string;
   createdAt?: unknown;
   updatedAt?: unknown;
+  /** Např. `folder_documents` — náklad z účetní složky. */
+  source?: string;
+  folderId?: string;
+  folderImageId?: string;
 };
 
 export type JobExpenseRow = { id: string } & Partial<JobExpenseFirestoreFields>;

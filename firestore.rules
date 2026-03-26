@@ -235,6 +235,32 @@ service cloud.firestore {
             (isPrivileged() || resource.data.createdBy == request.auth.uid);
         }
 
+        /**
+         * Příjmy (úhrady) zaúčtované ze složky dokladů — id dokumentu = id souboru ve složce.
+         * companies/{companyId}/jobs/{jobId}/incomes/{incomeId}
+         */
+        match /incomes/{incomeId} {
+          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.createdBy == request.auth.uid &&
+            request.resource.data.type == 'income' &&
+            request.resource.data.date is string &&
+            request.resource.data.date.size() > 0 &&
+            request.resource.data.date.size() <= 32 &&
+            request.resource.data.amountNet is number &&
+            request.resource.data.amountGross is number &&
+            request.resource.data.amountNet >= 0 &&
+            request.resource.data.amountGross >= request.resource.data.amountNet;
+          allow update: if false;
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId;
+        }
+
         /** Náklady zakázky (částka, datum, poznámka, příloha). Zapisují vedení / účetnictví. */
         match /expenses/{expenseId} {
           allow read: if jobDetailReadAccess(companyId, jobId);
@@ -389,10 +415,14 @@ service cloud.firestore {
             request.resource.data.name is string &&
             request.resource.data.name.size() > 0 &&
             request.resource.data.name.size() <= 120 &&
-            request.resource.data.createdBy == request.auth.uid;
+            request.resource.data.createdBy == request.auth.uid &&
+            (!('type' in request.resource.data) ||
+              request.resource.data.type in ['photos', 'documents', 'files']);
           allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             resource.data.companyId == companyId &&
-            resource.data.jobId == jobId;
+            resource.data.jobId == jobId &&
+            (!('type' in request.resource.data) ||
+              request.resource.data.type in ['photos', 'documents', 'files']);
 
           match /images/{imageId} {
             allow read: if jobDetailReadAccess(companyId, jobId);

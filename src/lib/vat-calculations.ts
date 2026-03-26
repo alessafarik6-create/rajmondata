@@ -189,6 +189,25 @@ export function resolveJobBudgetFromFirestore(
   };
 }
 
+/**
+ * Zaplacené částky u zakázky (úhrady z účetní složky + případně ruční pole).
+ * Primárně `paidAmountNet` / `paidAmountGross`; legacy `paidAmount` = hrubá částka.
+ */
+export function resolveJobPaidFromFirestore(
+  job: Record<string, unknown> | null | undefined
+): { paidNet: number; paidGross: number } {
+  if (!job) return { paidNet: 0, paidGross: 0 };
+  const pn = Number(job.paidAmountNet);
+  const pg = Number(job.paidAmountGross);
+  const legacy = Number(job.paidAmount);
+  const paidNet = Number.isFinite(pn) ? roundMoney2(pn) : 0;
+  let paidGross = Number.isFinite(pg) ? roundMoney2(pg) : 0;
+  if (paidGross === 0 && Number.isFinite(legacy) && legacy > 0) {
+    paidGross = roundMoney2(legacy);
+  }
+  return { paidNet, paidGross };
+}
+
 /** Částka nákladu / řádku / přijatého dokladu: net, DPH, brutto z uložených polí nebo legacy `amount`. */
 export function resolveExpenseAmounts(row: {
   amount?: unknown;

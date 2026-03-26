@@ -113,6 +113,7 @@ import {
   normalizeVatRate,
   resolveExpenseAmounts,
   resolveJobBudgetFromFirestore,
+  resolveJobPaidFromFirestore,
   roundMoney2,
   VAT_RATE_OPTIONS,
   type JobBudgetType,
@@ -500,6 +501,24 @@ export default function JobDetailPage() {
   );
   const jobBudgetKc = jobBudgetBreakdown?.budgetGross ?? null;
 
+  const jobPaid = useMemo(
+    () =>
+      resolveJobPaidFromFirestore(
+        job as Record<string, unknown> | null | undefined
+      ),
+    [job]
+  );
+
+  const remainingToPayNetKc = useMemo(() => {
+    if (jobBudgetBreakdown == null) return null;
+    return roundMoney2(jobBudgetBreakdown.budgetNet - jobPaid.paidNet);
+  }, [jobBudgetBreakdown, jobPaid.paidNet]);
+
+  const remainingToPayGrossKc = useMemo(() => {
+    if (jobBudgetBreakdown == null) return null;
+    return roundMoney2(jobBudgetBreakdown.budgetGross - jobPaid.paidGross);
+  }, [jobBudgetBreakdown, jobPaid.paidGross]);
+
   const templateRef = useMemoFirebase(
     () =>
       firestore && companyId && job?.templateId
@@ -555,6 +574,48 @@ export default function JobDetailPage() {
     [firestore, companyId, jobId]
   );
   const { data: jobExpenses } = useCollection<JobExpenseRow>(expensesQueryRef);
+
+  const jobIncomesColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobId as string,
+            "incomes"
+          )
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: jobIncomesRaw } = useCollection(jobIncomesColRef);
+
+  const jobIncomesSorted = useMemo(() => {
+    const list = [...(jobIncomesRaw ?? [])] as {
+      id: string;
+      date?: string;
+      amountNet?: number;
+      amountGross?: number;
+      fileName?: string;
+      fileUrl?: string;
+    }[];
+    list.sort((a, b) => {
+      const da = String(a.date ?? "");
+      const db = String(b.date ?? "");
+      if (db !== da) return db.localeCompare(da);
+      return b.id.localeCompare(a.id);
+    });
+    return list;
+  }, [jobIncomesRaw]);
+
+  const folderSourceExpenses = useMemo(
+    () =>
+      (jobExpenses ?? []).filter(
+        (e) => (e as { source?: string }).source === "folder_documents"
+      ),
+    [jobExpenses]
+  );
 
   const jobExpenseTotals = useMemo(() => {
     let net = 0;
@@ -4662,6 +4723,52 @@ export default function JobDetailPage() {
                   <span className="text-xl font-bold tabular-nums">—</span>
                 </div>
               )}
+              {jobBudgetBreakdown ? (
+                <div className="space-y-1 text-sm border-t border-border/50 pt-3">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-800">Zaplaceno bez DPH</span>
+                    <span className="font-semibold tabular-nums text-slate-900">
+                      {jobPaid.paidNet.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-800">Zaplaceno s DPH</span>
+                    <span className="font-semibold tabular-nums text-slate-900">
+                      {jobPaid.paidGross.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span className="text-slate-800">K doplatení (bez DPH)</span>
+                    <span
+                      className={cn(
+                        "font-semibold tabular-nums",
+                        remainingToPayNetKc != null && remainingToPayNetKc < 0
+                          ? "text-destructive"
+                          : "text-slate-900"
+                      )}
+                    >
+                      {remainingToPayNetKc != null
+                        ? `${remainingToPayNetKc.toLocaleString("cs-CZ")} Kč`
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-2 text-base font-semibold">
+                    <span className="text-slate-900">K doplatení (s DPH)</span>
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        remainingToPayGrossKc != null && remainingToPayGrossKc < 0
+                          ? "text-destructive"
+                          : "text-slate-900"
+                      )}
+                    >
+                      {remainingToPayGrossKc != null
+                        ? `${remainingToPayGrossKc.toLocaleString("cs-CZ")} Kč`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between items-center gap-3 flex-wrap">
                   <span className="text-slate-800">Náklady bez DPH</span>
@@ -4710,6 +4817,48 @@ export default function JobDetailPage() {
                   </span>
                 </div>
               </div>
+              {jobIncomesSorted.length > 0 || folderSourceExpenses.length > 0 ? (
+                <div className="space-y-2 border-t border-border/50 pt-3 text-sm">
+                  <p className="font-semibold text-slate-900">
+                    Doklady ze složky dokladů
+                  </p>
+                  <ul className="space-y-2">
+                    {jobIncomesSorted.map((row) => (
+                      <li
+                        key={`inc-${row.id}`}
+                        className="flex flex-wrap justify-between gap-2 rounded-md border border-border/50 px-2 py-1.5"
+                      >
+                        <span className="text-slate-800">
+                          Příjem · {row.fileName || row.id}
+                        </span>
+                        <span className="tabular-nums text-slate-900">
+                          {typeof row.amountGross === "number"
+                            ? row.amountGross.toLocaleString("cs-CZ")
+                            : "—"}{" "}
+                          Kč · {row.date || "—"}
+                        </span>
+                      </li>
+                    ))}
+                    {folderSourceExpenses.map((row) => {
+                      const r = resolveExpenseAmounts(row);
+                      return (
+                        <li
+                          key={`exp-${row.id}`}
+                          className="flex flex-wrap justify-between gap-2 rounded-md border border-border/50 px-2 py-1.5"
+                        >
+                          <span className="text-slate-800">
+                            Náklad · {row.fileName || row.note || row.id}
+                          </span>
+                          <span className="tabular-nums text-slate-900">
+                            {r.amountGross.toLocaleString("cs-CZ")} Kč ·{" "}
+                            {row.date || "—"}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ) : null}
               <Separator />
               <div className="flex justify-between items-center text-sm">
                 <span className="text-muted-foreground">Vyfakturováno (s DPH)</span>
