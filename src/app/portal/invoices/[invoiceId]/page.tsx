@@ -10,12 +10,15 @@ import { Loader2, ChevronLeft, Printer, Download, Pencil } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
 import { sanitizeInvoicePreviewHtml } from "@/lib/invoice-a4-html";
+import { printInvoiceHtmlDocument } from "@/lib/print-html";
+import { useToast } from "@/hooks/use-toast";
 
 export default function InvoiceDocumentPage() {
   const params = useParams();
   const invoiceId = typeof params?.invoiceId === "string" ? params.invoiceId : "";
   const { user } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -46,7 +49,7 @@ export default function InvoiceDocumentPage() {
     return h.trim();
   }, [invoice]);
 
-  /** Sanitizovaný HTML jen pro náhled v iframe (bez JS). Tisk používá původní `html`. */
+  /** Sanitizovaný HTML pro náhled v iframe i pro tisk (bez JS) — viz `printInvoiceHtmlDocument`. */
   const previewHtml = useMemo(() => sanitizeInvoicePreviewHtml(html), [html]);
 
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
@@ -93,17 +96,31 @@ export default function InvoiceDocumentPage() {
     String((invoice as { type?: string }).type ?? "") === JOB_INVOICE_TYPES.ADVANCE;
 
   const handlePrint = () => {
-    if (!html) return;
-    const safe = sanitizeInvoicePreviewHtml(html);
-    if (!safe.trim()) return;
-    const w = window.open("", "_blank", "noopener,noreferrer");
-    if (!w) return;
-    w.document.open();
-    w.document.write(safe);
-    w.document.close();
-    w.document.title = title;
-    w.focus();
-    w.print();
+    if (!html) {
+      toast({
+        variant: "destructive",
+        title: "Nelze tisknout",
+        description: "Chybí uložený obsah dokladu (pdfHtml).",
+      });
+      return;
+    }
+    const result = printInvoiceHtmlDocument(html, title);
+    if (result === "empty") {
+      toast({
+        variant: "destructive",
+        title: "Nelze tisknout",
+        description: "Obsah dokladu je prázdný.",
+      });
+      return;
+    }
+    if (result === "blocked") {
+      toast({
+        variant: "destructive",
+        title: "Tisk byl zablokován",
+        description:
+          "Prohlížeč zablokoval nové okno. Povolte vyskakovací okna pro tento web nebo zkuste znovu.",
+      });
+    }
   };
 
   const handleDownloadPdf = () => {

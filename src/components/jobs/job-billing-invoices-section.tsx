@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   collection,
@@ -50,17 +50,9 @@ import {
 } from "@/components/ui/select";
 import type { User } from "firebase/auth";
 import { cn } from "@/lib/utils";
+import { printInvoiceHtmlDocument } from "@/lib/print-html";
 
 const VAT_OPTIONS = [0, 12, 21] as const;
-
-function openPrintableHtml(title: string, html: string) {
-  const w = window.open("", "_blank", "noopener,noreferrer");
-  if (!w) return;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  w.document.title = title;
-}
 
 type Props = {
   companyId: string;
@@ -95,6 +87,21 @@ export function JobBillingInvoicesSection({
 }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const printDocHtml = useCallback(
+    (docTitle: string, pdfHtml: string) => {
+      const r = printInvoiceHtmlDocument(pdfHtml, docTitle);
+      if (r === "blocked") {
+        toast({
+          variant: "destructive",
+          title: "Tisk byl zablokován",
+          description:
+            "Povolte vyskakovací okna pro tento web nebo zkuste znovu z detailu dokladu.",
+        });
+      }
+    },
+    [toast]
+  );
 
   const [creatingAdvance, setCreatingAdvance] = useState(false);
   const [taxDialogOpen, setTaxDialogOpen] = useState(false);
@@ -219,7 +226,7 @@ export function JobBillingInvoicesSection({
         title: "Zálohová faktura vytvořena",
         description: "Dokument je v seznamu níže a v sekci Faktury.",
       });
-      if (pdfHtml) openPrintableHtml("Zálohová faktura", pdfHtml);
+      if (pdfHtml) printDocHtml("Zálohová faktura", pdfHtml);
     } catch (e) {
       toast({
         variant: "destructive",
@@ -276,7 +283,7 @@ export function JobBillingInvoicesSection({
         description: "Dokument je v seznamu a v sekci Faktury.",
       });
       setManualOpen(false);
-      if (pdfHtml) openPrintableHtml("Zálohová faktura", pdfHtml);
+      if (pdfHtml) printDocHtml("Zálohová faktura", pdfHtml);
     } catch (e) {
       toast({
         variant: "destructive",
@@ -347,7 +354,7 @@ export function JobBillingInvoicesSection({
         title: "Daňový doklad vytvořen",
         description: "Platba je propsána do zakázky a do přehledu financí.",
       });
-      if (receiptHtml) openPrintableHtml("Daňový doklad", receiptHtml);
+      if (receiptHtml) printDocHtml("Daňový doklad", receiptHtml);
       setTaxDialogOpen(false);
       setTaxTarget(null);
     } catch (e) {
@@ -363,7 +370,7 @@ export function JobBillingInvoicesSection({
 
   const printRow = (html: unknown) => {
     if (typeof html === "string" && html.trim()) {
-      openPrintableHtml("Doklad", html);
+      printDocHtml("Doklad", html);
     }
   };
 

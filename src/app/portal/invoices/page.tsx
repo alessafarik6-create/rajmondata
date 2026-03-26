@@ -33,16 +33,30 @@ import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
+import { printInvoiceHtmlDocument } from "@/lib/print-html";
 
-function openInvoicePrint(inv: Record<string, unknown>) {
+function openInvoicePrint(
+  inv: Record<string, unknown>,
+  toast: (o: { variant?: "destructive"; title: string; description: string }) => void
+) {
   const html = inv.pdfHtml;
-  if (typeof html !== "string" || !html.trim()) return;
-  const w = window.open("", "_blank", "noopener,noreferrer");
-  if (!w) return;
-  w.document.open();
-  w.document.write(html);
-  w.document.close();
-  w.document.title = String(inv.invoiceNumber || inv.documentNumber || "Doklad");
+  if (typeof html !== "string" || !html.trim()) {
+    toast({
+      variant: "destructive",
+      title: "Nelze tisknout",
+      description: "U dokladu není uložený náhled (pdfHtml).",
+    });
+    return;
+  }
+  const title = String(inv.invoiceNumber || inv.documentNumber || "Doklad");
+  const r = printInvoiceHtmlDocument(html, title);
+  if (r === "blocked") {
+    toast({
+      variant: "destructive",
+      title: "Tisk byl zablokován",
+      description: "Povolte vyskakovací okna pro tento web.",
+    });
+  }
 }
 
 export default function InvoicesPage() {
@@ -207,7 +221,7 @@ export default function InvoicesPage() {
                               </Link>
                             </DropdownMenuItem>
                           ) : null}
-                          <DropdownMenuItem onClick={() => openInvoicePrint(row)}>
+                          <DropdownMenuItem onClick={() => openInvoicePrint(row, toast)}>
                             <Printer className="w-4 h-4 mr-2" /> Tisk / PDF (nové okno)
                           </DropdownMenuItem>
                           {row.type !== JOB_INVOICE_TYPES.ADVANCE &&
