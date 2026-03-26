@@ -686,6 +686,74 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   };
 }
 
+export type DailyDetailPeriodTotals = ReturnType<typeof totalsFromDailyDetailRows>;
+
+/**
+ * Součty tarifů / zakázek / mimo tarif za celé organizační období — součet přes všechny zaměstnance.
+ * Použití: export PDF/tisk při výběru „všichni zaměstnanci“.
+ */
+export function aggregateDailyDetailTotalsForAllEmployees(params: {
+  range: PeriodRange;
+  employees: Map<string, EmployeeLite>;
+  attendanceRaw: AttendanceRow[];
+  dailyReports: Record<string, unknown>[];
+  workBlocks: WorkTimeBlockMoney[];
+  segments: WorkSegmentClient[];
+  now?: Date;
+}): DailyDetailPeriodTotals | null {
+  const { range, employees, attendanceRaw, dailyReports, workBlocks, segments } =
+    params;
+  const now = params.now ?? new Date();
+  if (employees.size === 0) return null;
+  let daysWorked = 0;
+  let hours = 0;
+  let approvedKc = 0;
+  let orientacniKc = 0;
+  let totalTariffHours = 0;
+  let totalTariffKc = 0;
+  let totalJobHours = 0;
+  let totalJobKc = 0;
+  let totalStandardKc = 0;
+  let totalHoursOutsideTariffJob = 0;
+  let totalHoursOutsideTariffOnly = 0;
+  for (const emp of employees.values()) {
+    const rows = buildEmployeeDailyDetailRows({
+      range,
+      employee: emp,
+      attendanceRaw,
+      dailyReports,
+      workBlocks,
+      segments,
+      now,
+    });
+    const t = totalsFromDailyDetailRows(rows);
+    daysWorked += t.daysWorked;
+    hours += t.hours;
+    approvedKc += t.approvedKc;
+    orientacniKc += t.orientacniKc;
+    totalTariffHours += t.totalTariffHours;
+    totalTariffKc += t.totalTariffKc;
+    totalJobHours += t.totalJobHours;
+    totalJobKc += t.totalJobKc;
+    totalStandardKc += t.totalStandardKc;
+    totalHoursOutsideTariffJob += t.totalHoursOutsideTariffJob;
+    totalHoursOutsideTariffOnly += t.totalHoursOutsideTariffOnly;
+  }
+  return {
+    daysWorked,
+    hours: Math.round(hours * 100) / 100,
+    approvedKc: Math.round(approvedKc * 100) / 100,
+    orientacniKc: Math.round(orientacniKc * 100) / 100,
+    totalTariffHours: Math.round(totalTariffHours * 100) / 100,
+    totalTariffKc: Math.round(totalTariffKc * 100) / 100,
+    totalJobHours: Math.round(totalJobHours * 100) / 100,
+    totalJobKc: Math.round(totalJobKc * 100) / 100,
+    totalStandardKc: Math.round(totalStandardKc * 100) / 100,
+    totalHoursOutsideTariffJob: Math.round(totalHoursOutsideTariffJob * 100) / 100,
+    totalHoursOutsideTariffOnly: Math.round(totalHoursOutsideTariffOnly * 100) / 100,
+  };
+}
+
 export type OverviewTableRow = {
   key: string;
   datumLabel: string;

@@ -18,7 +18,7 @@ import {
   limit,
 } from "firebase/firestore";
 import { format, subDays } from "date-fns";
-import { jsPDF } from "jspdf";
+import { cs } from "date-fns/locale";
 import {
   Loader2,
   FileDown,
@@ -57,6 +57,7 @@ import {
 } from "@/components/ui/collapsible";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
+  aggregateDailyDetailTotalsForAllEmployees,
   attendanceRowMatchesEmployee,
   buildEmployeeDailyDetailRows,
   buildEmployeeMap,
@@ -69,6 +70,8 @@ import {
   totalsFromRows,
   type PeriodMode,
 } from "@/lib/attendance-overview-compute";
+import { downloadAttendanceOverviewPdf } from "@/lib/attendance-overview-pdf";
+import { AttendanceExportDocument } from "./attendance-export-document";
 
 const ALL = "__all__";
 
@@ -363,6 +366,39 @@ export default function AttendanceOverviewPage() {
 
   const showEmployeeDetail = Boolean(selectedEmployee && dailyDetailRows);
 
+  const customRangeLine = useMemo(() => {
+    if (periodMode !== "custom") return null;
+    return `${customFrom} – ${customTo}`;
+  }, [periodMode, customFrom, customTo]);
+
+  const summaryTotalsAll = useMemo(() => {
+    if (employeeFilter !== ALL) return null;
+    return aggregateDailyDetailTotalsForAllEmployees({
+      range,
+      employees,
+      attendanceRaw: attendanceRows,
+      dailyReports,
+      workBlocks,
+      segments: workSegments,
+    });
+  }, [
+    employeeFilter,
+    range,
+    employees,
+    attendanceRows,
+    dailyReports,
+    workBlocks,
+    workSegments,
+  ]);
+
+  const exportVariant: "detail" | "summary" =
+    showEmployeeDetail && dailyDetailRows ? "detail" : "summary";
+
+  const hasEmptyExportData =
+    exportVariant === "detail"
+      ? !dailyDetailRows || dailyDetailRows.length === 0
+      : tableRows.length === 0;
+
   const loading =
     profileLoading ||
     !companyId ||
@@ -391,179 +427,42 @@ export default function AttendanceOverviewPage() {
   }, []);
 
   const handlePdf = useCallback(() => {
-    const doc = new jsPDF({ unit: "mm", format: "a4" });
-    const margin = 14;
-    let y = 18;
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(16);
-    doc.text("Přehled docházky a výdělků", margin, y);
-    y += 8;
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(10);
-    doc.text(`Organizace: ${companyName || companyId || "—"}`, margin, y);
-    y += 5;
-    doc.text(`Období: ${range.label}`, margin, y);
-    y += 5;
-    doc.text(`Režim: ${periodTitle}`, margin, y);
-    y += 5;
-    doc.text(`Zaměstnanec: ${employeeLabel}`, margin, y);
-    y += 8;
-
-    if (showEmployeeDetail && dailyDetailRows && detailTotals) {
-      doc.setFont("helvetica", "bold");
-      doc.text(
-        `Dny s prací: ${detailTotals.daysWorked} | Hodiny docházky: ${formatHours(detailTotals.hours)} | Schváleno: ${formatKc(detailTotals.approvedKc)} | Orientačně: ${formatKc(detailTotals.orientacniKc)}`,
-        margin,
-        y
-      );
-      y += 5;
-      doc.text(
-        `Tarif: ${formatHoursPeriodTotal(detailTotals.totalTariffHours)} / ${formatKc(detailTotals.totalTariffKc)} | Mimo tarif (docházka − tarify): ${formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffOnly)} | Zakázky: ${formatHoursPeriodTotal(detailTotals.totalJobHours)} / ${formatKc(detailTotals.totalJobKc)} | Mimo tarif i zakázku: ${formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffJob)} / ${formatKc(detailTotals.totalStandardKc)}`,
-        margin,
-        y
-      );
-      y += 10;
-      doc.setFontSize(9);
-      doc.setFont("helvetica", "normal");
-      for (const day of dailyDetailRows) {
-        if (y > 250) {
-          doc.addPage();
-          y = 18;
-        }
-        doc.setFont("helvetica", "bold");
-        doc.text(day.dayTitle, margin, y);
-        y += 4;
-        doc.setFont("helvetica", "normal");
-        doc.text(
-          `Prichod: ${day.prichod}   Odchod: ${day.odchod}   Odpracováno: ${formatHours(day.odpracovanoH)}   Záznamů: ${day.bloku}`,
-          margin,
-          y
-        );
-        y += 4;
-        doc.text(
-          `Tarify (součet hodin): ${formatHoursMinutes(day.tariffHoursTotal)}   Mimo tarif (docházka − tarify): ${formatHoursMinutes(day.hoursOutsideTariffOnly)}`,
-          margin,
-          y
-        );
-        y += 4;
-        for (const t of day.tariffSegments) {
-          doc.text(
-            `  ${t.label}: ${t.startHm}-${t.endLabel} ${formatHoursMinutes(t.durationH)} ${formatRateKcPerH(t.rateKcPerH)} ${formatKc(t.earningsKc)}`,
-            margin,
-            y
-          );
-          y += 4;
-          if (y > 275) {
-            doc.addPage();
-            y = 18;
-          }
-        }
-        for (const j of day.jobSegments) {
-          doc.text(
-            `  ${j.label}: ${j.startHm}-${j.endLabel} ${formatHoursMinutes(j.durationH)} ${formatRateKcPerH(j.rateKcPerH)} ${formatKc(j.earningsKc)}`,
-            margin,
-            y
-          );
-          y += 4;
-          if (y > 275) {
-            doc.addPage();
-            y = 18;
-          }
-        }
-        doc.text(
-          `  Mimo tarif/zakázku: ${formatHours(day.hoursOutsideTariffAndJob)} ${formatKc(day.orientacniKcStandard)} | Tarify celkem: ${formatKc(day.orientacniKcTariff)} | Zakázky celkem: ${formatKc(day.orientacniKcJob)}`,
-          margin,
-          y
-        );
-        y += 4;
-        const schLabel =
-          day.schvalenoStatus === "pending"
-            ? " (ceká na schválení)"
-            : day.schvalenoStatus === "none" && (day.odpracovanoH ?? 0) > 0
-              ? " (neodsouhlaseno)"
-              : "";
-        doc.text(
-          `Orientacní výdělek: ${formatKc(day.orientacniKc)}   Schválený výdělek: ${formatKc(day.schvalenoKc)}${schLabel}`,
-          margin,
-          y
-        );
-        y += 8;
-      }
-    } else {
-      doc.setFont("helvetica", "bold");
-      doc.text(
-        `Celkem odpracováno: ${formatHours(aggregateTotals.hours)} | Schválený výdělek: ${formatKc(aggregateTotals.approvedKc)} | Orientační: ${formatKc(aggregateTotals.pendingKc)}`,
-        margin,
-        y
-      );
-      y += 10;
-
-      doc.setFontSize(9);
-      const col = [
-        margin,
-        margin + 42,
-        margin + 78,
-        margin + 98,
-        margin + 118,
-        margin + 138,
-        margin + 162,
-        margin + 186,
-      ];
-      doc.setFont("helvetica", "bold");
-      doc.text("Datum / období", col[0], y);
-      doc.text("Jméno", col[1], y);
-      doc.text("Příchod", col[2], y);
-      doc.text("Odchod", col[3], y);
-      doc.text("Hodiny", col[4], y);
-      doc.text("Záznamů", col[5], y);
-      doc.text("Schváleno", col[6], y);
-      doc.text("Orientačně", col[7], y);
-      y += 5;
-      doc.setFont("helvetica", "normal");
-
-      for (const row of tableRows) {
-        if (y > 275) {
-          doc.addPage();
-          y = 18;
-        }
-        const line = [
-          row.datumLabel.slice(0, 28),
-          row.employeeName.slice(0, 22),
-          row.prichod,
-          row.odchod,
-          formatHours(row.odpracovanoH),
-          String(row.bloku),
-          formatKc(row.schvalenoKc),
-          formatKc(row.orientacniKc),
-        ];
-        doc.text(line[0], col[0], y);
-        doc.text(line[1], col[1], y);
-        doc.text(line[2], col[2], y);
-        doc.text(line[3], col[3], y);
-        doc.text(line[4], col[4], y);
-        doc.text(line[5], col[5], y);
-        doc.text(line[6], col[6], y);
-        doc.text(line[7], col[7], y);
-        y += 5;
-      }
-    }
-
-    doc.save(`dochazka-prehled-${rangeStr.start}-${rangeStr.end}.pdf`);
+    const generatedAtLabel = format(new Date(), "d. M. yyyy HH:mm", { locale: cs });
+    downloadAttendanceOverviewPdf(
+      {
+        companyName: companyName || "",
+        companyId,
+        rangeLabel: range.label,
+        rangeStr,
+        periodTitle,
+        customRangeLine,
+        employeeLabel,
+        generatedAtLabel,
+        variant: exportVariant,
+        dailyDetailRows: exportVariant === "detail" ? dailyDetailRows : null,
+        detailTotals: exportVariant === "detail" ? detailTotals : null,
+        summaryTotalsAll: exportVariant === "summary" ? summaryTotalsAll : null,
+        tableRows,
+        aggregateTotals,
+        hasEmptyData: hasEmptyExportData,
+      },
+      `dochazka-prehled-${rangeStr.start}-${rangeStr.end}`
+    );
     toast({ title: "PDF vygenerováno", description: "Soubor byl stažen." });
   }, [
-    aggregateTotals.approvedKc,
-    aggregateTotals.hours,
-    aggregateTotals.pendingKc,
+    aggregateTotals,
     companyId,
     companyName,
+    customRangeLine,
     dailyDetailRows,
     detailTotals,
     employeeLabel,
+    exportVariant,
+    hasEmptyExportData,
     periodTitle,
     range.label,
-    rangeStr.end,
-    rangeStr.start,
-    showEmployeeDetail,
+    rangeStr,
+    summaryTotalsAll,
     tableRows,
     toast,
   ]);
@@ -574,24 +473,6 @@ export default function AttendanceOverviewPage() {
     dt.setDate(dt.getDate() + deltaDays);
     setAnchorDate(format(dt, "yyyy-MM-dd"));
   };
-
-  if (!user) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center">
-        <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (!profileLoading && !isPrivileged) {
-    return null;
-  }
-
-  const pdfDisabled =
-    loading ||
-    (showEmployeeDetail
-      ? !dailyDetailRows || dailyDetailRows.length === 0
-      : tableRows.length === 0);
 
   const dataLoadIssues = useMemo(() => {
     const list: string[] = [];
@@ -609,8 +490,23 @@ export default function AttendanceOverviewPage() {
     workSegmentsError,
   ]);
 
+  if (!user) {
+    return (
+      <div className="flex min-h-[40vh] items-center justify-center">
+        <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (!profileLoading && !isPrivileged) {
+    return null;
+  }
+
+  const pdfDisabled = loading;
+
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-10 text-black print:max-w-none">
+    <>
+    <div className="mx-auto max-w-6xl space-y-6 pb-10 text-black print:hidden">
       <div className="flex flex-col gap-4 print:hidden sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-xl font-bold tracking-tight sm:text-2xl">
@@ -1221,5 +1117,26 @@ export default function AttendanceOverviewPage() {
         </>
       )}
     </div>
+
+      {!loading && (
+        <AttendanceExportDocument
+          className="hidden print:block"
+          companyName={companyName || ""}
+          companyId={companyId}
+          rangeLabel={range.label}
+          periodTitle={periodTitle}
+          customRangeLine={customRangeLine}
+          employeeLabel={employeeLabel}
+          generatedAtLabel={format(new Date(), "d. M. yyyy HH:mm", { locale: cs })}
+          variant={exportVariant}
+          dailyDetailRows={exportVariant === "detail" ? dailyDetailRows : null}
+          detailTotals={exportVariant === "detail" ? detailTotals : null}
+          summaryTotalsAll={exportVariant === "summary" ? summaryTotalsAll : null}
+          tableRows={tableRows}
+          aggregateTotals={aggregateTotals}
+          hasEmptyData={hasEmptyExportData}
+        />
+      )}
+    </>
   );
 }
