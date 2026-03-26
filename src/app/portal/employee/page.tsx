@@ -21,25 +21,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  summarizeAttendanceByDay,
-  sumHoursTodayAndWeek,
-} from "@/lib/employee-attendance";
 import { formatKc } from "@/lib/employee-money";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
-import {
-  Calendar,
-  Clock,
-  Loader2,
-  AlertCircle,
-  CircleDollarSign,
-  BadgeCheck,
-} from "lucide-react";
+import { Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
+import { EmployeeAttendanceOverview } from "./employee-attendance-overview";
 
 const DEBUG_EMPLOYEE_HOME = process.env.NODE_ENV === "development";
 
@@ -70,23 +59,6 @@ export default function EmployeeHomePage() {
   );
   const { data: employeeDoc } = useDoc<any>(employeeRef);
 
-  const attendanceQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !user) return null;
-    const ids = [...new Set([employeeId, user.uid].filter(Boolean))] as string[];
-    if (ids.length === 0) return null;
-    const base = collection(firestore, "companies", companyId, "attendance");
-    if (ids.length === 1) {
-      return query(base, where("employeeId", "==", ids[0]), limit(400));
-    }
-    return query(base, where("employeeId", "in", ids), limit(400));
-  }, [firestore, companyId, employeeId, user]);
-
-  const {
-    data: rawRows,
-    isLoading: attendanceLoading,
-    error: attendanceError,
-  } = useCollection(attendanceQuery);
-
   const dailyReportsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId) return null;
     return query(
@@ -108,54 +80,6 @@ export default function EmployeeHomePage() {
     );
   }, [dailyReportsRaw]);
 
-  /** Součet částek potvrzených administrátorem (schválené výkazy). */
-  const totalApprovedPayCzk = useMemo(() => {
-    let s = 0;
-    for (const row of dailyReportsSorted as Record<string, unknown>[]) {
-      if (String(row.status) !== "approved") continue;
-      const n = row.payableAmountCzk;
-      if (typeof n === "number" && Number.isFinite(n)) s += n;
-    }
-    return Math.round(s * 100) / 100;
-  }, [dailyReportsSorted]);
-
-  const hasApprovedReport = useMemo(
-    () =>
-      dailyReportsSorted.some(
-        (row: Record<string, unknown>) => String(row.status) === "approved"
-      ),
-    [dailyReportsSorted]
-  );
-
-  const safeRows = Array.isArray(rawRows) ? rawRows : [];
-
-  const summaries = useMemo(() => {
-    try {
-      return summarizeAttendanceByDay(safeRows as any[], {
-        employeeId,
-        authUid: user?.uid,
-      });
-    } catch (e) {
-      console.error("[employee/page] summarizeAttendanceByDay", e);
-      return [];
-    }
-  }, [safeRows, employeeId, user?.uid]);
-
-  const { today, week } = useMemo(
-    () => sumHoursTodayAndWeek(summaries),
-    [summaries]
-  );
-
-  /** Součet odpracovaných hodin z docházky (kompletní dny). */
-  const totalHoursFromAttendance = useMemo(() => {
-    let s = 0;
-    for (const x of summaries) {
-      const h = x.hoursWorked;
-      if (h != null && Number.isFinite(h)) s += h;
-    }
-    return Math.round(s * 100) / 100;
-  }, [summaries]);
-
   const hourlyRateEmployee = useMemo(() => {
     const raw = employeeDoc?.hourlyRate ?? profile?.hourlyRate;
     if (raw == null || raw === "") return 0;
@@ -163,14 +87,6 @@ export default function EmployeeHomePage() {
       typeof raw === "number" ? raw : Number(String(raw).replace(/\s/g, "").replace(",", "."));
     return Number.isFinite(n) && n > 0 ? n : 0;
   }, [employeeDoc?.hourlyRate, profile?.hourlyRate]);
-
-  const orientacniVydelekKc = useMemo(
-    () => Math.round(totalHoursFromAttendance * hourlyRateEmployee * 100) / 100,
-    [totalHoursFromAttendance, hourlyRateEmployee]
-  );
-
-  const todayIso = new Date().toISOString().split("T")[0];
-  const todaySummary = summaries.find((s) => s.date === todayIso);
 
   const displayName =
     profile?.displayName ||
@@ -182,8 +98,6 @@ export default function EmployeeHomePage() {
 
   useEffect(() => {
     if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
-      console.log("[employee/page] attendanceBlocks", safeRows.length);
-      console.log("[employee/page] totalHours", totalHoursFromAttendance);
       console.log("[employee/page] employee.hourlyRate", employeeDoc?.hourlyRate ?? profile?.hourlyRate);
     }
     if (DEBUG_EMPLOYEE_HOME && typeof window !== "undefined") {
@@ -203,9 +117,7 @@ export default function EmployeeHomePage() {
         isUserLoading,
         isProfileLoading,
         companyLoading,
-        attendanceLoading,
         profileError: profileError?.message ?? null,
-        attendanceError: attendanceError?.message ?? null,
       });
     }
   }, [
@@ -217,11 +129,7 @@ export default function EmployeeHomePage() {
     isUserLoading,
     isProfileLoading,
     companyLoading,
-    attendanceLoading,
     profileError,
-    attendanceError,
-    safeRows,
-    totalHoursFromAttendance,
     employeeDoc,
   ]);
 
@@ -321,17 +229,6 @@ export default function EmployeeHomePage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 sm:space-y-8 px-2 sm:px-0">
-      {attendanceError ? (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Docházku nelze načíst</AlertTitle>
-          <AlertDescription>
-            {attendanceError.message ||
-              "Nemáte oprávnění číst kolekci docházky, nebo došlo k chybě sítě."}
-          </AlertDescription>
-        </Alert>
-      ) : null}
-
       <DashboardOpenTasks
         companyId={companyId}
         employeeId={employeeId}
@@ -368,161 +265,32 @@ export default function EmployeeHomePage() {
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card className={cn(panel)}>
-          <CardHeader className="space-y-2 pb-2">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
-              <CircleDollarSign className="h-4 w-4 shrink-0" aria-hidden />
-              Orientační výdělek
-            </CardTitle>
-            <p className="text-xs leading-relaxed text-neutral-900">
-              Odhad jako <strong className="text-neutral-950">odpracované hodiny × vaše hodinová sazba</strong> z
-              profilu — pouze orientace,{" "}
-              <strong className="text-neutral-950">ne závazná výplata</strong>.
-            </p>
-          </CardHeader>
-          <CardContent>
-            {attendanceLoading ? (
-              <p className="flex items-center gap-2 text-sm text-neutral-900">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Načítám docházku…
-              </p>
-            ) : hourlyRateEmployee > 0 ? (
-              <div className="space-y-1">
-                <p className="text-2xl font-bold tabular-nums tracking-tight text-neutral-950 sm:text-3xl">
-                  {formatKc(orientacniVydelekKc)}
-                </p>
-                <p className="text-xs text-neutral-900">
-                  {totalHoursFromAttendance} h × {hourlyRateEmployee} Kč/h
-                </p>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <p className="text-lg font-semibold text-neutral-950">nenastaveno</p>
-                <p className="text-xs text-neutral-900">
-                  V profilu zaměstnance není nastavená hodinová sazba — administrátor může doplnit sazbu v evidenci
-                  lidí.
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className={cn(panel)}>
-          <CardHeader className="space-y-2 pb-2">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
-              <BadgeCheck className="h-4 w-4 shrink-0" aria-hidden />
-              Schválená částka
-            </CardTitle>
-            <p className="text-xs leading-relaxed text-neutral-900">
-              Částka <strong className="text-neutral-950">potvrzená administrátorem</strong> jako podklad
-              k výplatě (součet schválených denních výkazů).
-            </p>
-          </CardHeader>
-          <CardContent>
-            {dailyReportsLoading ? (
-              <p className="flex items-center gap-2 text-sm text-neutral-900">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Načítám výkazy…
-              </p>
-            ) : hasApprovedReport ? (
-              <p className="text-2xl font-bold tabular-nums tracking-tight text-neutral-950 sm:text-3xl">
-                {formatKc(totalApprovedPayCzk)}
-              </p>
-            ) : (
-              <div className="space-y-1">
-                <p className="text-lg font-semibold text-neutral-950">Zatím neschváleno</p>
-                <p className="text-sm text-neutral-900">
-                  Žádný denní výkaz zatím nemá stav Schváleno.
-                </p>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Card className={cn(panel)}>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
-              <Clock className="h-4 w-4" aria-hidden />
-              Hodiny
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3 text-sm text-neutral-900">
-            {attendanceLoading ? (
-              <p className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Načítám docházku…
-              </p>
-            ) : (
-              <>
-                <div className="flex justify-between gap-4">
-                  <span className="font-medium text-neutral-950">{t("today")}</span>
-                  <span className="font-semibold tabular-nums text-neutral-950">
-                    {today > 0 ? `${today} h` : "—"}
-                  </span>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span className="font-medium text-neutral-950">Tento týden (po–dnes)</span>
-                  <span className="font-semibold tabular-nums text-neutral-950">
-                    {week > 0 ? `${week} h` : "—"}
-                  </span>
-                </div>
-              </>
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className={cn(panel)}>
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-base font-semibold text-neutral-950">
-              <Calendar className="h-4 w-4" aria-hidden />
-              {t("dayOverview")} ({todayIso})
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2 text-sm text-neutral-900">
-            {attendanceLoading ? (
-              <p className="flex items-center gap-2">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Načítám…
-              </p>
-            ) : todaySummary ? (
-              <>
-                <p>
-                  <span className="font-medium text-neutral-950">Příchod:</span>{" "}
-                  {todaySummary.checkIn ?? "—"}
-                </p>
-                <p>
-                  <span className="font-medium text-neutral-950">Odchod:</span>{" "}
-                  {todaySummary.checkOut ?? "—"}
-                </p>
-                <p>
-                  <span className="font-medium text-neutral-950">Odpracováno:</span>{" "}
-                  {todaySummary.hoursWorked != null
-                    ? `${todaySummary.hoursWorked} h`
-                    : "—"}
-                </p>
-                <p>
-                  <span className="font-medium text-neutral-950">Stav:</span>{" "}
-                  {todaySummary.statusLabel}
-                </p>
-              </>
-            ) : (
-              <p className="text-neutral-900">{t("noAttendanceToday")}</p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+      {user && (
+        <EmployeeAttendanceOverview
+          companyId={companyId}
+          employeeId={employeeId}
+          authUserId={user.uid}
+          employeeDisplayName={displayName}
+          companyName={companyName}
+          hourlyRate={hourlyRateEmployee}
+        />
+      )}
 
       <Card className={cn(panel)}>
-        <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between">
+        <CardHeader className="pb-2">
           <CardTitle className="text-base font-semibold text-neutral-950">
             Denní výkazy a částky
           </CardTitle>
-          <Button variant="default" size="lg" asChild className="w-full min-h-[48px] sm:w-auto">
-            <Link href="/portal/employee/daily-reports">Upravit výkazy</Link>
-          </Button>
+          <p className="mt-1 text-sm text-neutral-800">
+            Náhled — celková historie výkazů. Úpravy provedete v sekci{" "}
+            <Link
+              href="/portal/employee/daily-reports"
+              className="font-medium text-neutral-950 underline underline-offset-2"
+            >
+              Denní výkazy
+            </Link>
+            .
+          </p>
         </CardHeader>
         <CardContent className="text-sm text-neutral-900">
           {dailyReportsLoading ? (
