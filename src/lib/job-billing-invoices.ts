@@ -116,7 +116,7 @@ export function buildAdvanceInvoiceHtml(params: {
     params.title
   )}</title>
 <style>
-body{font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#111;max-width:720px;margin:24px auto;padding:16px;line-height:1.45}
+body{font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#000;max-width:720px;margin:24px auto;padding:16px;line-height:1.45}
 h1{font-size:1.25rem;margin:0 0 8px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
 .box{border:1px solid #ccc;padding:12px;border-radius:8px}
@@ -164,7 +164,7 @@ export function buildTaxReceiptHtml(params: {
     `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
   return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><title>Daňový doklad k přijaté platbě</title>
 <style>
-body{font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#111;max-width:720px;margin:24px auto;padding:16px;line-height:1.45}
+body{font-family:system-ui,Segoe UI,Roboto,sans-serif;color:#000;max-width:720px;margin:24px auto;padding:16px;line-height:1.45}
 h1{font-size:1.2rem;margin:0 0 8px}
 .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0}
 .box{border:1px solid #ccc;padding:12px;border-radius:8px}
@@ -303,6 +303,15 @@ export async function createAdvanceInvoiceFromContract(params: {
   });
 
   const invRef = doc(collection(params.firestore, "companies", params.companyId, "invoices"));
+  const billingMirrorRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "jobs",
+    params.jobId,
+    "billingDocuments",
+    invRef.id
+  );
 
   await runTransaction(params.firestore, async (tx) => {
     tx.set(invRef, {
@@ -322,7 +331,10 @@ export async function createAdvanceInvoiceFromContract(params: {
       dueDate,
       source: "contract",
       sourceContractId: params.contract.id,
+      /** Stav úhrady zálohové faktury */
       status: "unpaid",
+      /** Dokument je vystavený (ne koncept) */
+      issueStatus: "issued",
       paidGrossReceived: 0,
       pdfHtml: html,
       items: [
@@ -334,6 +346,16 @@ export async function createAdvanceInvoiceFromContract(params: {
       ],
       totalAmount: amountGross,
       notes: "",
+      createdAt: serverTimestamp(),
+      createdBy: params.userId,
+    });
+
+    tx.set(billingMirrorRef, {
+      companyId: params.companyId,
+      jobId: params.jobId,
+      invoiceId: invRef.id,
+      kind: JOB_INVOICE_TYPES.ADVANCE,
+      invoiceNumber,
       createdAt: serverTimestamp(),
       createdBy: params.userId,
     });
@@ -428,6 +450,15 @@ export async function createTaxReceiptForAdvancePayment(params: {
     "invoices",
     params.advanceInvoiceId
   );
+  const billingMirrorRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "jobs",
+    params.jobId,
+    "billingDocuments",
+    receiptRef.id
+  );
 
   await runTransaction(params.firestore, async (tx) => {
     const advSnap = await tx.get(advanceRef);
@@ -502,6 +533,17 @@ export async function createTaxReceiptForAdvancePayment(params: {
       invoiceId: receiptRef.id,
       relatedAdvanceInvoiceId: params.advanceInvoiceId,
       jobName: params.jobDisplayName.trim(),
+      createdAt: serverTimestamp(),
+      createdBy: params.userId,
+    });
+
+    tx.set(billingMirrorRef, {
+      companyId: params.companyId,
+      jobId: params.jobId,
+      invoiceId: receiptRef.id,
+      relatedInvoiceId: params.advanceInvoiceId,
+      kind: JOB_INVOICE_TYPES.TAX_RECEIPT,
+      documentNumber,
       createdAt: serverTimestamp(),
       createdBy: params.userId,
     });

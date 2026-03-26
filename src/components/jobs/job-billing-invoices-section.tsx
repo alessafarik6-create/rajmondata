@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import Link from "next/link";
 import {
   collection,
   query,
@@ -383,6 +384,15 @@ export function JobBillingInvoicesSection({
                         </div>
                       </div>
                       <div className="flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="gap-1 border-neutral-950"
+                          asChild
+                        >
+                          <Link href={`/portal/invoices/${row.id}`}>Otevřít</Link>
+                        </Button>
                         <Button
                           type="button"
                           variant="outline"

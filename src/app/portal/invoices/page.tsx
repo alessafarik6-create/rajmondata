@@ -195,6 +195,11 @@ export default function InvoicesPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuLabel>Možnosti</DropdownMenuLabel>
+                          <DropdownMenuItem asChild>
+                            <Link href={`/portal/invoices/${inv.id}`}>
+                              <ExternalLink className="w-4 h-4 mr-2" /> Otevřít doklad
+                            </Link>
+                          </DropdownMenuItem>
                           {jobId ? (
                             <DropdownMenuItem asChild>
                               <Link href={`/portal/jobs/${jobId}`}>
@@ -203,7 +208,7 @@ export default function InvoicesPage() {
                             </DropdownMenuItem>
                           ) : null}
                           <DropdownMenuItem onClick={() => openInvoicePrint(row)}>
-                            <Printer className="w-4 h-4 mr-2" /> Tisk / PDF
+                            <Printer className="w-4 h-4 mr-2" /> Tisk / PDF (nové okno)
                           </DropdownMenuItem>
                           {row.type !== JOB_INVOICE_TYPES.ADVANCE &&
                             row.type !== JOB_INVOICE_TYPES.TAX_RECEIPT &&

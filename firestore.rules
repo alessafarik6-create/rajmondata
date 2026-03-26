@@ -356,6 +356,30 @@ service cloud.firestore {
         }
 
         /**
+         * Smlouvy o dílo u zakázky — companies/{companyId}/jobs/{jobId}/workContracts/{contractId}
+         */
+        match /workContracts/{contractId} {
+          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId);
+        }
+
+        /**
+         * Zrcadlení fakturačních dokladů (záloha / daňový doklad) — jen odkaz na companies/.../invoices.
+         * companies/{companyId}/jobs/{jobId}/billingDocuments/{docId}
+         */
+        match /billingDocuments/{docId} {
+          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId) &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.invoiceId is string &&
+            request.resource.data.kind in ['advance_invoice', 'tax_receipt_received_payment'];
+          allow update, delete: if false;
+        }
+
+        /**
          * Úkoly zakázky: companies/{companyId}/jobs/{jobId}/tasks/{taskId}
          * taskScope == 'job' odliší záznam od companies/{companyId}/tasks (task manager).
          */
