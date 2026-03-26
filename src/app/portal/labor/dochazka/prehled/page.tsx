@@ -26,6 +26,7 @@ import {
   ChevronRight,
   Printer,
   ChevronDown,
+  AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,6 +55,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   attendanceRowMatchesEmployee,
   buildEmployeeDailyDetailRows,
@@ -110,6 +112,12 @@ export default function AttendanceOverviewPage() {
   const [customTo, setCustomTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [employeeFilter, setEmployeeFilter] = useState<string>(ALL);
 
+  /** Firestore permission denied nesmí emitovat globální chybu — FirebaseErrorListener by shodil celou aplikaci. */
+  const silentListen = useMemo(
+    () => ({ suppressGlobalPermissionError: true as const }),
+    []
+  );
+
   const anchor = useMemo(() => {
     const [y, m, d] = anchorDate.split("-").map(Number);
     if (!y || !m || !d) return new Date();
@@ -140,8 +148,11 @@ export default function AttendanceOverviewPage() {
     return collection(firestore, "companies", companyId, "employees");
   }, [firestore, companyId]);
 
-  const { data: employeesRaw = [], isLoading: employeesLoading } =
-    useCollection(employeesQuery);
+  const {
+    data: employeesRaw = [],
+    isLoading: employeesLoading,
+    error: employeesError,
+  } = useCollection(employeesQuery, silentListen);
 
   const employees = useMemo(
     () => buildEmployeeMap(Array.isArray(employeesRaw) ? employeesRaw : []),
@@ -193,14 +204,26 @@ export default function AttendanceOverviewPage() {
     );
   }, [firestore, companyId, rangeStr.start, rangeStr.end]);
 
-  const { data: attendanceData = [], isLoading: attLoading } =
-    useCollection(attendanceQuery);
-  const { data: dailyReportsData = [], isLoading: drLoading } =
-    useCollection(dailyReportsQuery);
-  const { data: workBlocksData = [], isLoading: wbLoading } =
-    useCollection(workBlocksQuery);
-  const { data: workSegmentsData = [], isLoading: segLoading } =
-    useCollection(workSegmentsQuery);
+  const {
+    data: attendanceData = [],
+    isLoading: attLoading,
+    error: attendanceError,
+  } = useCollection(attendanceQuery, silentListen);
+  const {
+    data: dailyReportsData = [],
+    isLoading: drLoading,
+    error: dailyReportsError,
+  } = useCollection(dailyReportsQuery, silentListen);
+  const {
+    data: workBlocksData = [],
+    isLoading: wbLoading,
+    error: workBlocksError,
+  } = useCollection(workBlocksQuery, silentListen);
+  const {
+    data: workSegmentsData = [],
+    isLoading: segLoading,
+    error: workSegmentsError,
+  } = useCollection(workSegmentsQuery, silentListen);
 
   const attendanceRows = useMemo(
     () => (Array.isArray(attendanceData) ? attendanceData : []) as AttendanceRow[],
@@ -520,6 +543,22 @@ export default function AttendanceOverviewPage() {
       ? !dailyDetailRows || dailyDetailRows.length === 0
       : tableRows.length === 0);
 
+  const dataLoadIssues = useMemo(() => {
+    const list: string[] = [];
+    if (employeesError) list.push("zaměstnanci");
+    if (attendanceError) list.push("docházka");
+    if (dailyReportsError) list.push("denní výkazy");
+    if (workBlocksError) list.push("bloky práce");
+    if (workSegmentsError) list.push("úseky práce / tarify");
+    return list;
+  }, [
+    employeesError,
+    attendanceError,
+    dailyReportsError,
+    workBlocksError,
+    workSegmentsError,
+  ]);
+
   return (
     <div className="mx-auto max-w-6xl space-y-6 pb-10 text-black print:max-w-none">
       <div className="flex flex-col gap-4 print:hidden sm:flex-row sm:items-start sm:justify-between">
@@ -662,6 +701,26 @@ export default function AttendanceOverviewPage() {
           </Select>
         </div>
       </div>
+
+      {dataLoadIssues.length > 0 && (
+        <Alert
+          className="border-amber-300 bg-amber-50 text-amber-950 print:hidden [&>svg]:text-amber-800"
+          variant="default"
+        >
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Část dat se nepodařila načíst</AlertTitle>
+          <AlertDescription className="text-sm">
+            Přehled se zobrazí s dostupnými údaji. Chybí nebo jsou nedostupná:{" "}
+            <span className="font-medium">{dataLoadIssues.join(", ")}</span>.
+            {workSegmentsError && (
+              <span className="mt-1 block">
+                Rozpis tarifů za den vyžaduje oprávnění ke kolekci úseků práce (work_segments); bez
+                ní zůstanou jen docházka a výdělky z výkazů.
+              </span>
+            )}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div
         className={`sticky top-0 z-10 grid gap-3 border-b border-neutral-200 bg-white pb-3 sm:grid-cols-2 ${showEmployeeDetail && detailTotals ? "lg:grid-cols-4" : "lg:grid-cols-3"} print:static print:border-0 print:pb-0`}

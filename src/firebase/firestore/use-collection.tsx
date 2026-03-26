@@ -27,6 +27,15 @@ export interface UseCollectionResult<T> {
   error: FirestoreError | Error | null; // Error object, or null.
 }
 
+/** Volitelné chování u `useCollection` (např. stránky, kde nesmí permission denied shodit celou app přes FirebaseErrorListener). */
+export type UseCollectionOptions = {
+  /**
+   * Když true, při permission denied se neemituje `permission-error` do globálního error emitteru
+   * (FirebaseErrorListener by jinak při přerenderu vyhodil výjimku a spadla celá aplikace).
+   */
+  suppressGlobalPermissionError?: boolean;
+};
+
 /* Internal implementation of Query:
   https://github.com/firebase/firebase-js-sdk/blob/c5f08a9bc5da0d2b0207802c972d53724ccef055/packages/firestore/src/lite-api/reference.ts#L143
 */
@@ -71,6 +80,7 @@ function getFirestoreListenerDebugPath(
  */
 export function useCollection<T = any>(
     memoizedTargetRefOrQuery: ((CollectionReference<DocumentData> | Query<DocumentData>) & {__memo?: boolean})  | null | undefined,
+    options?: UseCollectionOptions,
 ): UseCollectionResult<T> {
   type ResultItemType = WithId<T>;
   type StateDataType = ResultItemType[] | null;
@@ -125,13 +135,14 @@ export function useCollection<T = any>(
         setData(null)
         setIsLoading(false)
 
-        // trigger global error propagation
-        errorEmitter.emit('permission-error', contextualError);
+        if (!options?.suppressGlobalPermissionError) {
+          errorEmitter.emit('permission-error', contextualError);
+        }
       }
     );
 
     return () => unsubscribe();
-  }, [memoizedTargetRefOrQuery]); // Re-run if the target query/reference changes.
+  }, [memoizedTargetRefOrQuery, options?.suppressGlobalPermissionError]);
   if (
     memoizedTargetRefOrQuery &&
     !isMemoFirebaseTarget(memoizedTargetRefOrQuery)
