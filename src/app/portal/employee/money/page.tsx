@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, AlertCircle, Wallet } from "lucide-react";
+import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
 import {
   formatKc,
   getPayableHours,
@@ -79,8 +80,10 @@ export default function EmployeeMoneyPage() {
     );
   }, [firestore, companyId, employeeId]);
 
+  const silentListen = { suppressGlobalPermissionError: true as const };
+
   const { data: blocksRaw, isLoading: blocksLoading, error: blocksError } =
-    useCollection(blocksQuery);
+    useCollection(blocksQuery, silentListen);
 
   const advancesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId) return null;
@@ -92,7 +95,7 @@ export default function EmployeeMoneyPage() {
   }, [firestore, companyId, employeeId]);
 
   const { data: advancesRaw, isLoading: advancesLoading, error: advancesError } =
-    useCollection(advancesQuery);
+    useCollection(advancesQuery, silentListen);
 
   const blocks = useMemo(() => {
     const raw = Array.isArray(blocksRaw) ? blocksRaw : [];
@@ -222,11 +225,16 @@ export default function EmployeeMoneyPage() {
       </div>
 
       {(blocksError || advancesError) && (
-        <Alert variant="destructive">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Data se nepodařilo načíst</AlertTitle>
-          <AlertDescription className="text-black">
-            {blocksError?.message || advancesError?.message || "Zkuste znovu."}
+        <Alert
+          className="border-amber-300 bg-amber-50 text-amber-950"
+          variant="default"
+        >
+          <AlertCircle className="h-4 w-4 text-amber-800" />
+          <AlertTitle>Část dat se nepodařila načíst</AlertTitle>
+          <AlertDescription className="text-amber-950">
+            {isFirestoreIndexError(blocksError) || isFirestoreIndexError(advancesError)
+              ? "Databáze momentálně nemůže vrátit všechna data (index nebo dočasný problém). Součty níže mohou být neúplné — zkuste stránku později."
+              : "Zkuste obnovit stránku. Pokud problém přetrvává, kontaktujte administrátora."}
           </AlertDescription>
         </Alert>
       )}

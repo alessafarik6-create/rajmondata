@@ -241,23 +241,55 @@ export default function EmployeeDailyReportsPage() {
     employeeId
   );
 
-  const attendanceQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !user) return null;
-    const ids = [...new Set([employeeId, user.uid].filter(Boolean))] as string[];
-    if (ids.length === 0) return null;
-    const base = collection(firestore, "companies", companyId, "attendance");
-    if (ids.length === 1) {
-      return query(base, where("employeeId", "==", ids[0]), limit(500));
-    }
-    return query(base, where("employeeId", "in", ids), limit(500));
-  }, [firestore, companyId, employeeId, user]);
+  const authUid = user?.uid;
+  const needAltAttendanceKey =
+    Boolean(authUid && employeeId) && authUid !== employeeId;
 
-  const { data: attendanceRows = [], isLoading: attendanceLoading } = useCollection(attendanceQuery);
-  /** Zaručené pole — useCollection může někdy vrátit nearray, což rozbije agregaci docházky. */
-  const attendanceBlocks = useMemo(
-    () => (Array.isArray(attendanceRows) ? attendanceRows : []) as Record<string, unknown>[],
-    [attendanceRows]
+  const attendanceEmployeeQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      where("employeeId", "==", employeeId),
+      limit(500)
+    );
+  }, [firestore, companyId, employeeId]);
+
+  const attendanceUidQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !needAltAttendanceKey || !authUid) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      where("employeeId", "==", authUid),
+      limit(500)
+    );
+  }, [firestore, companyId, needAltAttendanceKey, authUid]);
+
+  const silentListen = { suppressGlobalPermissionError: true as const };
+
+  const { data: attendanceByEmployee = [], isLoading: attendanceLoadEmp } = useCollection(
+    attendanceEmployeeQuery,
+    silentListen
   );
+  const { data: attendanceByUid = [], isLoading: attendanceLoadUid } = useCollection(
+    attendanceUidQuery,
+    silentListen
+  );
+
+  const attendanceLoading = attendanceLoadEmp || (needAltAttendanceKey ? attendanceLoadUid : false);
+
+  /** Sloučení záznamů pod employeeId a případně pod UID (legacy) — bez dotazu `in`, který vyžaduje index. */
+  const attendanceBlocks = useMemo(() => {
+    const a = (Array.isArray(attendanceByEmployee) ? attendanceByEmployee : []) as Record<
+      string,
+      unknown
+    >[];
+    const b = (Array.isArray(attendanceByUid) ? attendanceByUid : []) as Record<string, unknown>[];
+    const map = new Map<string, Record<string, unknown>>();
+    for (const row of [...a, ...b]) {
+      const id = String((row as { id?: string }).id ?? "");
+      if (id && !map.has(id)) map.set(id, row);
+    }
+    return Array.from(map.values());
+  }, [attendanceByEmployee, attendanceByUid]);
 
   const [selectedDay, setSelectedDay] = useState<Date | undefined>(new Date());
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => new Date());

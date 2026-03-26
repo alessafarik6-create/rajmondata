@@ -30,6 +30,7 @@ import {
   Printer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
 import { formatKc } from "@/lib/employee-money";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import type { WorkTimeBlockMoney } from "@/lib/employee-money";
@@ -44,8 +45,29 @@ import {
 } from "@/lib/attendance-overview-compute";
 import { AttendanceExportDocument } from "../labor/dochazka/prehled/attendance-export-document";
 
-function firestoreSafeLimit(limitValue: unknown): number {
-  return Math.min(Math.max(Number(limitValue) || 50, 1), 1000);
+/** Stačí jedno pole + limit — bez složeného indexu (employeeId + date). Datum filtrujeme v klientovi. */
+const EMPLOYEE_FETCH_LIMIT = 3000;
+
+function mergeDocsById<T extends { id?: string }>(batches: T[][]): T[] {
+  const map = new Map<string, T>();
+  for (const batch of batches) {
+    for (const row of batch) {
+      const id = String(row?.id ?? "");
+      if (!id) continue;
+      if (!map.has(id)) map.set(id, row);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function rowInDateRange(
+  row: { date?: unknown },
+  startIso: string,
+  endIso: string
+): boolean {
+  const d = String(row.date ?? "").trim();
+  if (!d) return false;
+  return d >= startIso && d <= endIso;
 }
 
 const silentListen = { suppressGlobalPermissionError: true as const };
@@ -115,116 +137,127 @@ export function EmployeeAttendanceOverview({
     [employeeId, employeeDisplayName, hourlyRate, authUserId]
   );
 
-  const attendanceQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    const ids = [...new Set([employeeId, authUserId].filter(Boolean))] as string[];
-    if (ids.length === 0) return null;
-    const base = collection(firestore, "companies", companyId, "attendance");
-    const lim = firestoreSafeLimit(1000);
-    if (ids.length === 1) {
-      return query(
-        base,
-        where("employeeId", "==", ids[0]),
-        where("date", ">=", rangeStr.start),
-        where("date", "<=", rangeStr.end),
-        limit(lim)
-      );
-    }
+  const needAltEmployeeKey =
+    Boolean(authUserId) && Boolean(employeeId) && authUserId !== employeeId;
+
+  const attendanceQueryPrimary = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
     return query(
-      base,
-      where("employeeId", "in", ids),
-      where("date", ">=", rangeStr.start),
-      where("date", "<=", rangeStr.end),
-      limit(lim)
+      collection(firestore, "companies", companyId, "attendance"),
+      where("employeeId", "==", employeeId),
+      limit(EMPLOYEE_FETCH_LIMIT)
     );
-  }, [firestore, companyId, employeeId, authUserId, rangeStr.start, rangeStr.end]);
+  }, [firestore, companyId, employeeId]);
+
+  const attendanceQueryAlt = useMemoFirebase(() => {
+    if (!firestore || !companyId || !needAltEmployeeKey) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      where("employeeId", "==", authUserId),
+      limit(EMPLOYEE_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, needAltEmployeeKey, authUserId]);
 
   const dailyReportsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId) return null;
     return query(
       collection(firestore, "companies", companyId, "daily_work_reports"),
       where("employeeId", "==", employeeId),
-      where("date", ">=", rangeStr.start),
-      where("date", "<=", rangeStr.end),
-      limit(firestoreSafeLimit(1000))
+      limit(EMPLOYEE_FETCH_LIMIT)
     );
-  }, [firestore, companyId, employeeId, rangeStr.start, rangeStr.end]);
+  }, [firestore, companyId, employeeId]);
 
-  const workBlocksQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    const ids = [...new Set([employeeId, authUserId].filter(Boolean))] as string[];
-    if (ids.length === 0) return null;
-    const base = collection(firestore, "companies", companyId, "work_time_blocks");
-    const lim = firestoreSafeLimit(1000);
-    if (ids.length === 1) {
-      return query(
-        base,
-        where("employeeId", "==", ids[0]),
-        where("date", ">=", rangeStr.start),
-        where("date", "<=", rangeStr.end),
-        limit(lim)
-      );
-    }
+  const workBlocksQueryPrimary = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
     return query(
-      base,
-      where("employeeId", "in", ids),
-      where("date", ">=", rangeStr.start),
-      where("date", "<=", rangeStr.end),
-      limit(lim)
+      collection(firestore, "companies", companyId, "work_time_blocks"),
+      where("employeeId", "==", employeeId),
+      limit(EMPLOYEE_FETCH_LIMIT)
     );
-  }, [firestore, companyId, employeeId, authUserId, rangeStr.start, rangeStr.end]);
+  }, [firestore, companyId, employeeId]);
 
-  const workSegmentsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    const ids = [...new Set([employeeId, authUserId].filter(Boolean))] as string[];
-    if (ids.length === 0) return null;
-    const base = collection(firestore, "companies", companyId, "work_segments");
-    const lim = firestoreSafeLimit(1000);
-    if (ids.length === 1) {
-      return query(
-        base,
-        where("employeeId", "==", ids[0]),
-        where("date", ">=", rangeStr.start),
-        where("date", "<=", rangeStr.end),
-        limit(lim)
-      );
-    }
+  const workBlocksQueryAlt = useMemoFirebase(() => {
+    if (!firestore || !companyId || !needAltEmployeeKey) return null;
     return query(
-      base,
-      where("employeeId", "in", ids),
-      where("date", ">=", rangeStr.start),
-      where("date", "<=", rangeStr.end),
-      limit(lim)
+      collection(firestore, "companies", companyId, "work_time_blocks"),
+      where("employeeId", "==", authUserId),
+      limit(EMPLOYEE_FETCH_LIMIT)
     );
-  }, [firestore, companyId, employeeId, authUserId, rangeStr.start, rangeStr.end]);
+  }, [firestore, companyId, needAltEmployeeKey, authUserId]);
 
-  const { data: rawAttendance = [], isLoading: attLoading, error: attError } =
-    useCollection(attendanceQuery, silentListen);
+  const workSegmentsQueryPrimary = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", employeeId),
+      limit(EMPLOYEE_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, employeeId]);
+
+  const workSegmentsQueryAlt = useMemoFirebase(() => {
+    if (!firestore || !companyId || !needAltEmployeeKey) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", authUserId),
+      limit(EMPLOYEE_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, needAltEmployeeKey, authUserId]);
+
+  const { data: rawAttendancePrimary = [], isLoading: attLoadP, error: attErrP } =
+    useCollection(attendanceQueryPrimary, silentListen);
+  const { data: rawAttendanceAlt = [], isLoading: attLoadA, error: attErrA } =
+    useCollection(attendanceQueryAlt, silentListen);
   const { data: dailyReportsRaw = [], isLoading: drLoading, error: drError } =
     useCollection(dailyReportsQuery, silentListen);
-  const { data: workBlocksRaw = [], isLoading: wbLoading, error: wbError } =
-    useCollection(workBlocksQuery, silentListen);
-  const { data: segmentsRaw = [], isLoading: segLoading, error: segError } =
-    useCollection(workSegmentsQuery, silentListen);
+  const { data: workBlocksPrimary = [], isLoading: wbLoadP, error: wbErrP } =
+    useCollection(workBlocksQueryPrimary, silentListen);
+  const { data: workBlocksAlt = [], isLoading: wbLoadA, error: wbErrA } =
+    useCollection(workBlocksQueryAlt, silentListen);
+  const { data: segmentsPrimary = [], isLoading: segLoadP, error: segErrP } =
+    useCollection(workSegmentsQueryPrimary, silentListen);
+  const { data: segmentsAlt = [], isLoading: segLoadA, error: segErrA } =
+    useCollection(workSegmentsQueryAlt, silentListen);
 
+  const attLoading = attLoadP || (needAltEmployeeKey ? attLoadA : false);
+  const wbLoading = wbLoadP || (needAltEmployeeKey ? wbLoadA : false);
+  const segLoading = segLoadP || (needAltEmployeeKey ? segLoadA : false);
+
+  const attError = attErrP || attErrA;
+  const wbError = wbErrP || wbErrA;
+  const segError = segErrP || segErrA;
   const dataError = attError || drError || wbError || segError;
 
-  const attendanceRows = useMemo(
-    () => (Array.isArray(rawAttendance) ? rawAttendance : []) as AttendanceRow[],
-    [rawAttendance]
-  );
-  const dailyReports = useMemo(
-    () => (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []) as Record<string, unknown>[],
-    [dailyReportsRaw]
-  );
-  const workBlocks = useMemo(
-    () => (Array.isArray(workBlocksRaw) ? workBlocksRaw : []) as WorkTimeBlockMoney[],
-    [workBlocksRaw]
-  );
-  const workSegments = useMemo(
-    () => (Array.isArray(segmentsRaw) ? segmentsRaw : []) as WorkSegmentClient[],
-    [segmentsRaw]
-  );
+  const attendanceRows = useMemo(() => {
+    const merged = mergeDocsById<AttendanceRow>([
+      (Array.isArray(rawAttendancePrimary) ? rawAttendancePrimary : []) as AttendanceRow[],
+      (Array.isArray(rawAttendanceAlt) ? rawAttendanceAlt : []) as AttendanceRow[],
+    ]);
+    return merged.filter((row) => rowInDateRange(row, rangeStr.start, rangeStr.end));
+  }, [rawAttendancePrimary, rawAttendanceAlt, rangeStr.start, rangeStr.end]);
+
+  const dailyReports = useMemo(() => {
+    const raw = (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []) as Record<
+      string,
+      unknown
+    >[];
+    return raw.filter((row) => rowInDateRange(row, rangeStr.start, rangeStr.end));
+  }, [dailyReportsRaw, rangeStr.start, rangeStr.end]);
+
+  const workBlocks = useMemo(() => {
+    const merged = mergeDocsById<WorkTimeBlockMoney>([
+      (Array.isArray(workBlocksPrimary) ? workBlocksPrimary : []) as WorkTimeBlockMoney[],
+      (Array.isArray(workBlocksAlt) ? workBlocksAlt : []) as WorkTimeBlockMoney[],
+    ]);
+    return merged.filter((row) => rowInDateRange(row, rangeStr.start, rangeStr.end));
+  }, [workBlocksPrimary, workBlocksAlt, rangeStr.start, rangeStr.end]);
+
+  const workSegments = useMemo(() => {
+    const merged = mergeDocsById<WorkSegmentClient>([
+      (Array.isArray(segmentsPrimary) ? segmentsPrimary : []) as WorkSegmentClient[],
+      (Array.isArray(segmentsAlt) ? segmentsAlt : []) as WorkSegmentClient[],
+    ]);
+    return merged.filter((row) => rowInDateRange(row, rangeStr.start, rangeStr.end));
+  }, [segmentsPrimary, segmentsAlt, rangeStr.start, rangeStr.end]);
 
   const dailyDetailRows = useMemo(
     () =>
@@ -286,10 +319,11 @@ export function EmployeeAttendanceOverview({
     <>
       {dataError ? (
         <div className="rounded-lg border-2 border-amber-300 bg-amber-50 p-4 text-sm text-amber-950 print:hidden">
-          <p className="font-semibold">Část dat se nepodařila načíst</p>
+          <p className="font-semibold">Část dat se momentálně nepodařila načíst.</p>
           <p className="mt-1">
-            {dataError.message ||
-              "Zkontrolujte oprávnění nebo zkuste stránku znovu načíst. Přehled se zobrazí z dostupných údajů."}
+            {isFirestoreIndexError(dataError)
+              ? "Databáze ještě připravuje index, nebo část dotazů není k dispozici. Zkuste to později — přehled níže používá jen úspěšně načtená data."
+              : "Zkuste obnovit stránku. Pokud problém přetrvává, kontaktujte administrátora."}
           </p>
         </div>
       ) : null}
@@ -311,6 +345,10 @@ export function EmployeeAttendanceOverview({
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Načítám…
               </p>
+            ) : attError && wbError && segError ? (
+              <p className="text-sm text-neutral-900">
+                Orientační částku nelze spočítat — nepodařilo se načíst docházku ani související údaje.
+              </p>
             ) : hourlyRate > 0 ? (
               <div className="space-y-1">
                 <p className="text-2xl font-bold tabular-nums tracking-tight text-neutral-950 sm:text-3xl">
@@ -318,6 +356,11 @@ export function EmployeeAttendanceOverview({
                 </p>
                 <p className="text-xs text-neutral-900">
                   Dle rozpisu docházky a tarifů v období (viz níže).
+                  {(attError || wbError || segError) && !loading ? (
+                    <span className="mt-1 block font-medium text-amber-900">
+                      Pozn.: část podkladů se nenačetla — částka může být neúplná.
+                    </span>
+                  ) : null}
                 </p>
               </div>
             ) : (
@@ -343,6 +386,10 @@ export function EmployeeAttendanceOverview({
               <p className="flex items-center gap-2 text-sm text-neutral-900">
                 <Loader2 className="h-4 w-4 animate-spin" />
                 Načítám…
+              </p>
+            ) : drError ? (
+              <p className="text-sm text-neutral-900">
+                Schválenou částku nelze zobrazit — nepodařilo se načíst denní výkazy.
               </p>
             ) : hasApprovedReport || detailTotals.approvedKc > 0 ? (
               <p className="text-2xl font-bold tabular-nums tracking-tight text-neutral-950 sm:text-3xl">

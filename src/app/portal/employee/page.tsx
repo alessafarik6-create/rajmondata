@@ -29,8 +29,11 @@ import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { EmployeeAttendanceOverview } from "./employee-attendance-overview";
+import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
 
 const DEBUG_EMPLOYEE_HOME = process.env.NODE_ENV === "development";
+
+const silentFirestoreListen = { suppressGlobalPermissionError: true as const };
 
 export default function EmployeeHomePage() {
   const pathname = usePathname();
@@ -69,9 +72,11 @@ export default function EmployeeHomePage() {
   }, [firestore, companyId, employeeId]);
 
   const {
-    data: dailyReportsRaw = [],
+    data: dailyReportsRaw,
     isLoading: dailyReportsLoading,
-  } = useCollection(dailyReportsQuery);
+    error: dailyReportsError,
+    isIndexPending: dailyReportsIndexPending,
+  } = useCollection(dailyReportsQuery, silentFirestoreListen);
 
   const dailyReportsSorted = useMemo(() => {
     const r = Array.isArray(dailyReportsRaw) ? dailyReportsRaw : [];
@@ -79,6 +84,9 @@ export default function EmployeeHomePage() {
       String(b.date || "").localeCompare(String(a.date || ""))
     );
   }, [dailyReportsRaw]);
+
+  const dailyReportsLoadFailed =
+    !dailyReportsLoading && (dailyReportsError != null || dailyReportsIndexPending);
 
   const hourlyRateEmployee = useMemo(() => {
     const raw = employeeDoc?.hourlyRate ?? profile?.hourlyRate;
@@ -298,6 +306,16 @@ export default function EmployeeHomePage() {
               <Loader2 className="h-4 w-4 animate-spin" />
               Načítám výkazy…
             </p>
+          ) : dailyReportsLoadFailed ? (
+            <Alert className="border-amber-300 bg-amber-50 text-amber-950">
+              <AlertCircle className="h-4 w-4" />
+              <AlertTitle>Výkazy se nepodařilo načíst</AlertTitle>
+              <AlertDescription>
+                {isFirestoreIndexError(dailyReportsError)
+                  ? "Data se z databáze momentálně nepodařilo načíst. Zkuste stránku později nebo kontaktujte administrátora."
+                  : "Zkuste obnovit stránku. Pokud problém přetrvává, kontaktujte administrátora."}
+              </AlertDescription>
+            </Alert>
           ) : dailyReportsSorted.length === 0 ? (
             <p>
               Zatím nemáte žádný denní výkaz. Částka se započte až po schválení administrátorem.

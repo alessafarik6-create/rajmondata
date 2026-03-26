@@ -136,7 +136,8 @@ export function useCollection<T = any>(
         if (isFirestoreIndexError(err)) {
           logFirestoreIndexError("useCollection", path, err);
           setError(err);
-          setData(null);
+          /** Prázdné pole místo null — stránky používají výchozí `= []` jen pro `undefined`; při indexu jinak padají výpočty a „0 Kč“ vypadá jako skutečná nula. */
+          setData([]);
           setIsLoading(false);
           setIsIndexPending(true);
           return;
@@ -149,7 +150,7 @@ export function useCollection<T = any>(
         });
 
         setError(contextualError);
-        setData(null);
+        setData([]);
         setIsLoading(false);
 
         if (!options?.suppressGlobalPermissionError) {
