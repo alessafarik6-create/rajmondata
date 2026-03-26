@@ -34,12 +34,14 @@ import {
 } from "@/lib/job-expense-document-sync";
 import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
 import {
-  calculateVatAmountsFromNet,
+  computeExpenseAmountsFromInput,
+  normalizeBudgetType,
   normalizeVatRate,
+  roundMoney2,
   VAT_RATE_OPTIONS,
   resolveExpenseAmounts,
 } from "@/lib/vat-calculations";
-import { parseAmountKc } from "@/lib/work-contract-deposit";
+import { parseMoneyAmountInput } from "@/lib/work-contract-deposit";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   Collapsible,
@@ -47,6 +49,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -149,6 +152,8 @@ export function JobExpensesSection({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [amountInput, setAmountInput] = useState("");
+  /** Zda je pole částky bez DPH nebo s DPH. */
+  const [amountTypeInput, setAmountTypeInput] = useState<"net" | "gross">("net");
   const [vatRateInput, setVatRateInput] = useState<string>("21");
   const [dateInput, setDateInput] = useState(todayIsoDate());
   const [noteInput, setNoteInput] = useState("");
@@ -216,6 +221,7 @@ export function JobExpensesSection({
   const resetForm = useCallback(() => {
     setEditingId(null);
     setAmountInput("");
+    setAmountTypeInput("net");
     setVatRateInput("21");
     setDateInput(todayIsoDate());
     setNoteInput("");
@@ -232,7 +238,15 @@ export function JobExpensesSection({
   const openEdit = (row: JobExpenseRow) => {
     setEditingId(row.id);
     const r = resolveExpenseAmounts(row);
-    setAmountInput(r.amountNet ? String(r.amountNet) : "");
+    const rawIn = row.amountInput;
+    if (typeof rawIn === "number" && Number.isFinite(rawIn) && rawIn > 0) {
+      const s = String(roundMoney2(rawIn));
+      setAmountInput(s.includes(".") ? s.replace(".", ",") : s);
+      setAmountTypeInput(normalizeBudgetType(row.amountType));
+    } else {
+      setAmountInput(r.amountNet ? String(r.amountNet) : "");
+      setAmountTypeInput("net");
+    }
     setVatRateInput(String(r.vatRate));
     setDateInput(row.date && row.date.length >= 8 ? row.date : todayIsoDate());
     setNoteInput(row.note ?? "");
@@ -256,7 +270,7 @@ export function JobExpensesSection({
   };
 
   const persistExpense = async () => {
-    const amountKc = parseAmountKc(amountInput.replace(/\s/g, " ").trim());
+    const amountKc = parseMoneyAmountInput(amountInput.replace(/\s/g, " ").trim());
     if (amountKc == null || amountKc <= 0) {
       toast({
         title: "Částka je povinná",
@@ -326,11 +340,13 @@ export function JobExpensesSection({
 
       const noteTrimmed = noteInput.trim();
       const vatRate = normalizeVatRate(Number(vatRateInput));
-      const amountNet = Math.round(amountKc);
-      const { vatAmount, amountGross } = calculateVatAmountsFromNet(
-        amountNet,
-        vatRate
-      );
+      const amountTypeResolved = normalizeBudgetType(amountTypeInput);
+      const amountInputStored = roundMoney2(amountKc);
+      const { amountNet, vatAmount, amountGross } = computeExpenseAmountsFromInput({
+        amountInput: amountInputStored,
+        amountType: amountTypeResolved,
+        vatRate,
+      });
 
       if (editingId) {
         const existing = sortedExpenses.find((e) => e.id === editingId);
@@ -344,6 +360,8 @@ export function JobExpensesSection({
         const refDoc = doc(col, editingId);
         const patch: DocumentData = {
           amount: amountNet,
+          amountInput: amountInputStored,
+          amountType: amountTypeResolved,
           amountNet,
           vatRate,
           vatAmount,
@@ -432,6 +450,8 @@ export function JobExpensesSection({
               jobDisplayName,
               expenseId: editingId,
               userId: String(existing?.createdBy ?? user.uid),
+              amountInput: amountInputStored,
+              amountType: amountTypeResolved,
               amountNet,
               vatRate,
               vatAmount,
@@ -453,6 +473,8 @@ export function JobExpensesSection({
               jobId,
               jobDisplayName,
               expenseId: editingId,
+              amountInput: amountInputStored,
+              amountType: amountTypeResolved,
               amountNet,
               vatRate,
               vatAmount,
@@ -524,6 +546,8 @@ export function JobExpensesSection({
           jobDisplayName,
           expenseId: expenseRef.id,
           userId: user.uid,
+          amountInput: amountInputStored,
+          amountType: amountTypeResolved,
           amountNet,
           vatRate,
           vatAmount,
@@ -735,7 +759,7 @@ export function JobExpensesSection({
           <CollapsibleContent>
             <CardContent className="space-y-2 px-2 pb-3 pt-0 sm:px-3">
               <p className="text-[11px] text-muted-foreground sm:text-xs">
-                Výdaje a přílohy — částka bez DPH, DPH a s DPH se odečítá od rozpočtu stejně (bez / s DPH).
+                Výdaje a přílohy — částku lze zadat bez DPH nebo s DPH; součty se odečítají od rozpočtu (bez DPH / s DPH).
                 {sortedExpenses.length > 0 ? (
                   <span className="text-foreground"> ({sortedExpenses.length})</span>
                 ) : null}
@@ -782,10 +806,26 @@ export function JobExpensesSection({
                               <div className="order-1 space-y-0.5 font-semibold tabular-nums sm:order-2">
                                 {(() => {
                                   const r = resolveExpenseAmounts(row);
+                                  const tag =
+                                    normalizeBudgetType(row.amountType) === "gross"
+                                      ? "s DPH"
+                                      : "bez DPH";
                                   return (
                                     <>
+                                      <div className="flex flex-wrap items-center gap-1">
+                                        <Badge
+                                          variant="secondary"
+                                          className="h-5 px-1.5 text-[9px] font-normal"
+                                        >
+                                          {tag}
+                                        </Badge>
+                                        <span className="text-[10px] font-normal text-muted-foreground sm:text-xs">
+                                          DPH {r.vatRate} %
+                                        </span>
+                                      </div>
                                       <div className="text-[10px] font-normal text-muted-foreground sm:text-xs">
-                                        Bez DPH {formatKc(r.amountNet)}
+                                        Bez DPH {formatKc(r.amountNet)} · DPH{" "}
+                                        {formatKc(r.vatAmount)}
                                       </div>
                                       <div className="text-amber-700 dark:text-amber-400">
                                         S DPH {formatKc(r.amountGross)}
@@ -926,24 +966,33 @@ export function JobExpensesSection({
               {editingId ? "Upravit náklad" : "Nový náklad"}
             </DialogTitle>
             <DialogDescription>
-              Částku bez DPH vyplňte ručně (i u fotky dokladu). Zvolte sazbu DPH. Volitelně připojte přílohu.
+              Zvolte, zda zadáváte částku bez DPH nebo s DPH, sazbu DPH a částku. Volitelně připojte přílohu dokladu.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-2">
             <div className="space-y-2">
-              <Label htmlFor="expense-amount">Částka bez DPH (Kč) *</Label>
-              <Input
-                id="expense-amount"
-                inputMode="decimal"
-                placeholder="např. 1 250"
-                value={amountInput}
-                onChange={(e) => setAmountInput(e.target.value)}
-                className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px]")}
-              />
+              <Label htmlFor="expense-amount-type">Zadaná částka</Label>
+              <Select
+                value={amountTypeInput}
+                onValueChange={(v) =>
+                  setAmountTypeInput(normalizeBudgetType(v) as "net" | "gross")
+                }
+              >
+                <SelectTrigger
+                  id="expense-amount-type"
+                  className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px]")}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="net">Bez DPH</SelectItem>
+                  <SelectItem value="gross">S DPH</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="expense-vat">DPH</Label>
+              <Label htmlFor="expense-vat">Sazba DPH</Label>
               <Select value={vatRateInput} onValueChange={setVatRateInput}>
                 <SelectTrigger
                   id="expense-vat"
@@ -959,18 +1008,41 @@ export function JobExpensesSection({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="expense-amount">
+                Částka (Kč) * — {amountTypeInput === "gross" ? "s DPH" : "bez DPH"}
+              </Label>
+              <Input
+                id="expense-amount"
+                inputMode="decimal"
+                placeholder={amountTypeInput === "gross" ? "např. 1 512,50" : "např. 1 250"}
+                value={amountInput}
+                onChange={(e) => setAmountInput(e.target.value)}
+                className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px]")}
+              />
               {(() => {
-                const n = parseAmountKc(amountInput.replace(/\s/g, " ").trim());
+                const n = parseMoneyAmountInput(amountInput.replace(/\s/g, " ").trim());
                 if (n == null || n <= 0) return null;
                 const rate = normalizeVatRate(Number(vatRateInput));
-                const { vatAmount, amountGross } = calculateVatAmountsFromNet(
-                  Math.round(n),
-                  rate
-                );
+                const t = normalizeBudgetType(amountTypeInput);
+                const { amountNet, vatAmount, amountGross } =
+                  computeExpenseAmountsFromInput({
+                    amountInput: roundMoney2(n),
+                    amountType: t,
+                    vatRate: rate,
+                  });
                 return (
-                  <p className="text-xs text-muted-foreground">
-                    DPH {formatKc(vatAmount)} · celkem s DPH {formatKc(amountGross)}
-                  </p>
+                  <div className="rounded-md border border-emerald-200/80 bg-emerald-50/60 px-2.5 py-2 text-xs text-emerald-950 dark:border-emerald-800/60 dark:bg-emerald-950/30 dark:text-emerald-100">
+                    <div className="font-medium text-foreground/90">Přepočet</div>
+                    <div className="mt-1 space-y-0.5 tabular-nums">
+                      <div>Bez DPH: {formatKc(amountNet)}</div>
+                      <div>
+                        DPH ({rate} %): {formatKc(vatAmount)}
+                      </div>
+                      <div>S DPH: {formatKc(amountGross)}</div>
+                    </div>
+                  </div>
                 );
               })()}
             </div>

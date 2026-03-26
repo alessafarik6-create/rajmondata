@@ -56,6 +56,22 @@ export function parseAmountKc(raw: string): number | null {
   return Math.round(n);
 }
 
+/**
+ * Částka v Kč z textu (náklady zakázky) — až 2 desetinná místa.
+ */
+export function parseMoneyAmountInput(raw: string): number | null {
+  if (/%/.test(String(raw))) return null;
+  const cleaned = String(raw ?? "")
+    .replace(/\s+/g, "")
+    .replace(/kč/gi, "")
+    .replace(/czk/gi, "")
+    .replace(",", ".");
+  if (cleaned === "") return null;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n)) return null;
+  return Math.round(n * 100) / 100;
+}
+
 /** Pro šablonu: „30 %“ nebo prázdné. */
 export function formatPercentForTemplate(percentStorage: string): string {
   const n = parsePercentValue(percentStorage);

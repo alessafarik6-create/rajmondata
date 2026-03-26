@@ -5,7 +5,7 @@
 
 import type { Firestore } from "firebase/firestore";
 import { doc, serverTimestamp } from "firebase/firestore";
-import type { VatRatePercent } from "@/lib/vat-calculations";
+import type { JobBudgetType, VatRatePercent } from "@/lib/vat-calculations";
 
 export const JOB_EXPENSE_DOCUMENT_SOURCE = "job-expense" as const;
 
@@ -43,6 +43,9 @@ export type JobExpenseMirrorFirestoreFields = {
   jobName: string | null;
   /** Částka včetně DPH (hlavní částka v přehledu dokladů). */
   amount: number;
+  /** Uživatelský vstup (stejně jako u nákladu v zakázce). */
+  amountInput?: number;
+  amountType?: JobBudgetType;
   amountNet: number;
   vatRate: VatRatePercent;
   vatAmount: number;
@@ -71,6 +74,8 @@ export function buildNewJobExpenseMirrorDocument(params: {
   jobDisplayName: string | null;
   expenseId: string;
   userId: string;
+  amountInput: number;
+  amountType: JobBudgetType;
   amountNet: number;
   vatRate: VatRatePercent;
   vatAmount: number;
@@ -97,6 +102,8 @@ export function buildNewJobExpenseMirrorDocument(params: {
     jobId: params.jobId,
     jobName: jn || null,
     amount: params.amountGross,
+    amountInput: params.amountInput,
+    amountType: params.amountType,
     amountNet: params.amountNet,
     vatRate: params.vatRate,
     vatAmount: params.vatAmount,
@@ -125,6 +132,8 @@ export function buildJobExpenseMirrorMergePatch(params: {
   jobId: string;
   jobDisplayName: string | null;
   expenseId: string;
+  amountInput: number;
+  amountType: JobBudgetType;
   amountNet: number;
   vatRate: VatRatePercent;
   vatAmount: number;
@@ -150,6 +159,8 @@ export function buildJobExpenseMirrorMergePatch(params: {
     jobId: params.jobId,
     jobName: jn || null,
     amount: params.amountGross,
+    amountInput: params.amountInput,
+    amountType: params.amountType,
     amountNet: params.amountNet,
     vatRate: params.vatRate,
     vatAmount: params.vatAmount,

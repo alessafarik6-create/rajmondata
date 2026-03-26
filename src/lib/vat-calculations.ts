@@ -24,6 +24,40 @@ export function normalizeBudgetType(raw: unknown): JobBudgetType {
   return "net";
 }
 
+/** Zaokrouhlení částky v Kč na 2 desetinná místa (náklady / doklady). */
+export function roundMoney2(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.round(n * 100) / 100;
+}
+
+/**
+ * Náklad / řádek dokladu: z uživatelského vstupu a typu (bez DPH / s DPH) dopočítá net, DPH, gross.
+ * Při sazbě 0 % u typu „s DPH“: net = gross = vstup.
+ */
+export function computeExpenseAmountsFromInput(params: {
+  amountInput: number;
+  amountType: JobBudgetType;
+  vatRate: VatRatePercent;
+}): { amountNet: number; vatAmount: number; amountGross: number } {
+  const inp = roundMoney2(params.amountInput);
+  if (!Number.isFinite(inp) || inp <= 0) {
+    return { amountNet: 0, vatAmount: 0, amountGross: 0 };
+  }
+  if (params.amountType === "net") {
+    const amountNet = inp;
+    const vatAmount = roundMoney2((amountNet * params.vatRate) / 100);
+    const amountGross = roundMoney2(amountNet + vatAmount);
+    return { amountNet, vatAmount, amountGross };
+  }
+  const amountGross = inp;
+  if (params.vatRate === 0) {
+    return { amountNet: amountGross, vatAmount: 0, amountGross };
+  }
+  const amountNet = roundMoney2(amountGross / (1 + params.vatRate / 100));
+  const vatAmount = roundMoney2(amountGross - amountNet);
+  return { amountNet, vatAmount, amountGross };
+}
+
 export type VatComputed = {
   vatAmount: number;
   amountGross: number;
@@ -162,6 +196,8 @@ export function resolveExpenseAmounts(row: {
   amountGross?: unknown;
   vatAmount?: unknown;
   vatRate?: unknown;
+  amountInput?: unknown;
+  amountType?: unknown;
   /** Pro starší doklady (`vat` = %). */
   vat?: unknown;
 }): {
@@ -173,26 +209,39 @@ export function resolveExpenseAmounts(row: {
   const rawRate =
     row.vatRate !== undefined && row.vatRate !== null ? row.vatRate : row.vat;
   const rate = normalizeVatRate(rawRate);
+  const typeFromDoc = normalizeBudgetType(row.amountType);
+
+  const ai = row.amountInput;
+  if (typeof ai === "number" && Number.isFinite(ai) && ai > 0) {
+    const inp = roundMoney2(ai);
+    const { amountNet, vatAmount, amountGross } = computeExpenseAmountsFromInput({
+      amountInput: inp,
+      amountType: typeFromDoc,
+      vatRate: rate,
+    });
+    return { vatRate: rate, amountNet, vatAmount, amountGross };
+  }
+
   let net = 0;
   const an = row.amountNet;
   if (typeof an === "number" && Number.isFinite(an)) {
-    net = Math.round(an);
+    net = roundMoney2(an);
   } else if (typeof row.amount === "number" && Number.isFinite(row.amount)) {
-    net = Math.round(row.amount);
+    net = roundMoney2(row.amount);
   }
   const calc = calculateVatAmountsFromNet(net, rate);
-  let gross = calc.amountGross;
-  let vat = calc.vatAmount;
+  let gross = roundMoney2(calc.amountGross);
+  let vat = roundMoney2(calc.vatAmount);
   const ag = row.amountGross;
   if (typeof ag === "number" && Number.isFinite(ag)) {
-    gross = Math.round(ag);
-    vat = Math.max(0, gross - net);
+    gross = roundMoney2(ag);
+    vat = roundMoney2(Math.max(0, gross - net));
   } else if (
     typeof row.vatAmount === "number" &&
     Number.isFinite(row.vatAmount)
   ) {
-    vat = Math.round(row.vatAmount);
-    gross = net + vat;
+    vat = roundMoney2(row.vatAmount);
+    gross = roundMoney2(net + vat);
   }
   return { vatRate: rate, amountNet: net, vatAmount: vat, amountGross: gross };
 }

@@ -8,6 +8,10 @@ export type JobExpenseFileType = "image" | "pdf" | "office";
 export type JobExpenseFirestoreFields = {
   companyId: string;
   jobId: string;
+  /** Hodnota zadaná uživatelem (význam podle `amountType`). */
+  amountInput?: number;
+  /** Zda je `amountInput` bez DPH nebo s DPH. */
+  amountType?: "net" | "gross";
   /** Částka bez DPH; pro kompatibilitu synchronizovaná s `amount`. */
   amountNet?: number;
   /** @deprecated Používejte amountNet — zachováno pro starší klienty. */

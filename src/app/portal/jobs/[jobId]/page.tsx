@@ -110,6 +110,7 @@ import {
   normalizeVatRate,
   resolveExpenseAmounts,
   resolveJobBudgetFromFirestore,
+  roundMoney2,
   VAT_RATE_OPTIONS,
   type JobBudgetType,
 } from "@/lib/vat-calculations";
@@ -551,7 +552,7 @@ export default function JobDetailPage() {
       net += r.amountNet;
       gross += r.amountGross;
     }
-    return { net, gross };
+    return { net: roundMoney2(net), gross: roundMoney2(gross) };
   }, [jobExpenses]);
 
   const remainingBudgetAfterExpensesNetKc = useMemo(() => {
