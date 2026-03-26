@@ -69,6 +69,7 @@ import {
 } from "@/components/ui/tooltip";
 import {
   Camera,
+  ChevronDown,
   Download,
   ExternalLink,
   Eye,
@@ -80,12 +81,26 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
-/** Mřížka karet: mobil 2 sloupce, desktop více sloupců */
+/** Kompaktní mřížka náhledů — stejná výška buněk, bez nekonečného sloupce */
 const JOB_MEDIA_CARD_GRID_CLASS =
-  "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5";
+  "grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5";
+
+const JOB_MEDIA_THUMB_H = "h-28 sm:h-32";
+
+/** Kolik položek zobrazit před „Zobrazit více“ */
+const JOB_MEDIA_INITIAL_COUNT = 6;
+
+/** Max. výška scrollovatelné oblasti se seznamy (jako u Nákladů) */
+const JOB_MEDIA_LIST_SCROLL_CLASS =
+  "max-h-[min(52vh,480px)] overflow-y-auto overscroll-contain";
 
 const jobMediaIconBtnClassName =
   "h-10 w-10 min-h-10 min-w-10 shrink-0 gap-0 rounded-md border-border/70 bg-background/95 p-0 shadow-sm hover:bg-accent md:h-9 md:w-9 md:min-h-9 md:min-w-9 [&_svg]:!size-[18px]";
@@ -149,7 +164,12 @@ function MediaThumb({
 
   if (!src || broken) {
     return (
-      <div className="flex h-36 w-full items-center justify-center bg-muted px-2 text-center text-xs text-muted-foreground sm:h-40">
+      <div
+        className={cn(
+          "flex w-full items-center justify-center bg-muted px-2 text-center text-xs text-muted-foreground",
+          JOB_MEDIA_THUMB_H
+        )}
+      >
         {!src ? "Chybí náhled" : "Nelze načíst obrázek"}
       </div>
     );
@@ -159,7 +179,7 @@ function MediaThumb({
     <img
       src={src}
       alt={alt || row.fileName || row.id}
-      className="h-36 w-full object-cover sm:h-40"
+      className={cn("w-full object-cover", JOB_MEDIA_THUMB_H)}
       onError={() => setBroken(true)}
     />
   );
@@ -168,7 +188,10 @@ function MediaThumb({
 function JobMediaPdfPreview() {
   return (
     <div
-      className="flex h-36 w-full flex-col items-center justify-center gap-1.5 bg-red-500/[0.07] sm:h-40"
+      className={cn(
+        "flex w-full flex-col items-center justify-center gap-1.5 bg-red-500/[0.07]",
+        JOB_MEDIA_THUMB_H
+      )}
       aria-hidden
     >
       <span className="text-2xl leading-none">📄</span>
@@ -183,7 +206,10 @@ function JobMediaPdfPreview() {
 function JobMediaOfficePreview() {
   return (
     <div
-      className="flex h-36 w-full flex-col items-center justify-center gap-1.5 bg-blue-500/[0.07] sm:h-40"
+      className={cn(
+        "flex w-full flex-col items-center justify-center gap-1.5 bg-blue-500/[0.07]",
+        JOB_MEDIA_THUMB_H
+      )}
       aria-hidden
     >
       <span className="text-2xl leading-none">📎</span>
@@ -232,14 +258,14 @@ function JobMediaFileCard({
           </span>
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-1 p-2.5 pt-2">
+      <div className="flex min-h-0 flex-1 flex-col gap-1 p-2 pt-1.5">
         <p
-          className="truncate text-sm font-medium leading-tight text-foreground"
+          className="truncate text-xs font-medium leading-tight text-foreground sm:text-sm"
           title={title}
         >
           {title}
         </p>
-        <p className="text-xs text-muted-foreground">{dateLine}</p>
+        <p className="text-[11px] text-muted-foreground sm:text-xs">{dateLine}</p>
         {note?.trim() ? (
           <p className="line-clamp-2 text-[11px] leading-snug text-foreground/88">
             {note.trim()}
@@ -328,6 +354,13 @@ function UserFolderBlock({
         return tb - ta;
       });
   }, [imagesRaw]);
+
+  const [folderOpen, setFolderOpen] = useState(false);
+  const [showAllInFolder, setShowAllInFolder] = useState(false);
+  const visibleFolderImages = useMemo(() => {
+    if (showAllInFolder || images.length <= JOB_MEDIA_INITIAL_COUNT) return images;
+    return images.slice(0, JOB_MEDIA_INITIAL_COUNT);
+  }, [images, showAllInFolder]);
 
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !user?.uid) return;
@@ -639,29 +672,47 @@ function UserFolderBlock({
 
   return (
     <>
-    <Card className="border-border/60 bg-surface">
-      <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
-        <CardTitle className="text-base font-semibold">
-          {folder.name || "Bez názvu"}
-        </CardTitle>
-        <div className="flex flex-wrap gap-2">
-          {canManageFolders ? (
-            <Button
-              type="button"
-              variant="destructive"
-              size="sm"
-              className="min-h-[40px] min-w-[44px]"
-              disabled={busy}
-              onClick={() => void deleteFolder()}
-            >
-              <Trash2 className="h-4 w-4" />
-              <span className="ml-1 hidden sm:inline">Složku</span>
-            </Button>
-          ) : null}
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row">
+    <Collapsible open={folderOpen} onOpenChange={setFolderOpen}>
+      <Card className="border-border/60 bg-surface">
+        <CardHeader className="space-y-3 pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5 pl-1.5 pr-2 text-left hover:bg-muted/60"
+              >
+                <ChevronDown
+                  className={cn(
+                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                    folderOpen && "rotate-180"
+                  )}
+                  aria-hidden
+                />
+                <span className="truncate text-base font-semibold text-foreground">
+                  {folder.name || "Bez názvu"}
+                </span>
+                <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
+                  {images.length}
+                </span>
+              </button>
+            </CollapsibleTrigger>
+            <div className="flex flex-wrap gap-2">
+              {canManageFolders ? (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="min-h-[40px] min-w-[44px]"
+                  disabled={busy}
+                  onClick={() => void deleteFolder()}
+                >
+                  <Trash2 className="h-4 w-4" />
+                  <span className="ml-1 hidden sm:inline">Složku</span>
+                </Button>
+              ) : null}
+            </div>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
           <input
             ref={galleryRef}
             type="file"
@@ -730,10 +781,19 @@ function UserFolderBlock({
             Vyfotit
           </Button>
         </div>
-
+        </CardHeader>
+        <CollapsibleContent>
+          <CardContent className="space-y-3 pt-0">
         {images.length > 0 ? (
+          <>
+          <div
+            className={cn(
+              JOB_MEDIA_LIST_SCROLL_CLASS,
+              "max-h-[min(38vh,340px)] rounded-md border border-border/40 bg-muted/5 p-2"
+            )}
+          >
           <div className={JOB_MEDIA_CARD_GRID_CLASS}>
-            {images.map((img) => {
+            {visibleFolderImages.map((img) => {
               const kind = inferJobMediaItemType(img);
               const openUrl = getJobMediaPreviewUrl(img);
               const title = img.fileName || img.name || img.id;
@@ -943,11 +1003,28 @@ function UserFolderBlock({
               );
             })}
           </div>
+          </div>
+          {images.length > JOB_MEDIA_INITIAL_COUNT ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full text-muted-foreground"
+              onClick={() => setShowAllInFolder((v) => !v)}
+            >
+              {showAllInFolder
+                ? "Zobrazit méně"
+                : `Zobrazit více (${images.length - JOB_MEDIA_INITIAL_COUNT} dalších)`}
+            </Button>
+          ) : null}
+          </>
         ) : (
           <p className="text-sm text-muted-foreground">V této složce zatím nic není.</p>
         )}
-      </CardContent>
-    </Card>
+          </CardContent>
+        </CollapsibleContent>
+      </Card>
+    </Collapsible>
 
     <Dialog
       open={!!imagePreview}
@@ -1029,6 +1106,9 @@ export function JobMediaSection({
     url: string;
     title: string;
   } | null>(null);
+
+  const [mediaGalleryOpen, setMediaGalleryOpen] = useState(true);
+  const [showAllLegacyPhotos, setShowAllLegacyPhotos] = useState(false);
 
   const foldersColRef = useMemoFirebase(
     () =>
@@ -1343,6 +1423,16 @@ export function JobMediaSection({
     });
   }, [photos]);
 
+  const visibleLegacyPhotos = useMemo(() => {
+    if (
+      showAllLegacyPhotos ||
+      photosSorted.length <= JOB_MEDIA_INITIAL_COUNT
+    ) {
+      return photosSorted;
+    }
+    return photosSorted.slice(0, JOB_MEDIA_INITIAL_COUNT);
+  }, [photosSorted, showAllLegacyPhotos]);
+
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !user?.uid) return;
     let cancelled = false;
@@ -1404,33 +1494,34 @@ export function JobMediaSection({
   return (
     <TooltipProvider delayDuration={250}>
       <>
-      <Card className="bg-surface border-border">
-        <CardHeader>
-          <CardTitle className="flex flex-wrap items-center gap-2 text-base sm:text-lg">
-            <ImagePlus className="h-5 w-5 shrink-0 text-primary" />
-            Fotodokumentace a složky
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-6">
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            {canManageFolders ? (
-              <Button
+      <Card className="bg-surface border-border overflow-hidden">
+        <Collapsible open={mediaGalleryOpen} onOpenChange={setMediaGalleryOpen}>
+          <CardHeader className="space-y-3 pb-2">
+            <CollapsibleTrigger asChild>
+              <button
                 type="button"
-                variant="outline"
-                className="min-h-[44px] gap-2"
-                onClick={() => setNewFolderOpen(true)}
+                className="flex w-full min-w-0 items-center gap-2 rounded-lg py-1.5 text-left hover:bg-muted/50"
               >
-                <FolderPlus className="h-4 w-4" />
-                Nová složka
-              </Button>
-            ) : null}
-          </div>
-
-          <section className="space-y-3">
-            <h3 className="text-sm font-semibold text-foreground">
-              Fotodokumentace
-            </h3>
-            <div className="flex flex-col gap-2 sm:flex-row">
+                <ChevronDown
+                  className={cn(
+                    "h-5 w-5 shrink-0 text-muted-foreground transition-transform",
+                    mediaGalleryOpen && "rotate-180"
+                  )}
+                  aria-hidden
+                />
+                <ImagePlus className="h-5 w-5 shrink-0 text-primary" />
+                <span className="min-w-0 truncate text-base font-semibold sm:text-lg">
+                  Fotodokumentace a složky
+                </span>
+                <span className="ml-auto shrink-0 text-xs text-muted-foreground sm:text-sm">
+                  {photosSorted.length} souborů
+                  {foldersSorted.length > 0
+                    ? ` · ${foldersSorted.length} složek`
+                    : ""}
+                </span>
+              </button>
+            </CollapsibleTrigger>
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <input
                 ref={galleryRef}
                 type="file"
@@ -1472,7 +1563,7 @@ export function JobMediaSection({
               />
               <Button
                 type="button"
-                className="min-h-[44px] flex-1 gap-2"
+                className="min-h-[44px] flex-1 gap-2 sm:min-w-[140px] sm:flex-none"
                 disabled={legacyUploading}
                 onClick={() => galleryRef.current?.click()}
               >
@@ -1508,21 +1599,45 @@ export function JobMediaSection({
               <Button
                 type="button"
                 variant="outline"
-                className="min-h-[44px] flex-1 gap-2"
+                className="min-h-[44px] flex-1 gap-2 sm:min-w-[140px] sm:flex-none"
                 disabled={legacyUploading}
                 onClick={() => cameraRef.current?.click()}
               >
                 <Camera className="h-4 w-4" />
                 Vyfotit
               </Button>
+              {canManageFolders ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-[44px] gap-2 sm:min-w-[140px]"
+                  onClick={() => setNewFolderOpen(true)}
+                >
+                  <FolderPlus className="h-4 w-4" />
+                  Nová složka
+                </Button>
+              ) : null}
             </div>
             {legacyUploading ? (
               <p className="text-sm text-muted-foreground">Nahrávání…</p>
             ) : null}
-
-            {photosSorted.length > 0 ? (
-              <div className={JOB_MEDIA_CARD_GRID_CLASS}>
-                {photosSorted.map((p) => {
+          </CardHeader>
+          <CollapsibleContent>
+            <CardContent className="space-y-0 pt-0">
+              <div
+                className={cn(
+                  JOB_MEDIA_LIST_SCROLL_CLASS,
+                  "max-h-[min(55vh,520px)] space-y-5 rounded-md border border-border/40 bg-muted/5 p-3 sm:p-4"
+                )}
+              >
+                <section className="space-y-3">
+                  <h3 className="text-sm font-semibold text-foreground">
+                    Základní fotodokumentace
+                  </h3>
+                  {photosSorted.length > 0 ? (
+                    <>
+                      <div className={JOB_MEDIA_CARD_GRID_CLASS}>
+                        {visibleLegacyPhotos.map((p) => {
                   const kind = inferJobMediaItemType(p);
                   const openUrl = getJobMediaPreviewUrl(p);
                   const title = p.fileName || p.name || p.id;
@@ -1721,37 +1836,54 @@ export function JobMediaSection({
                   );
                 })}
               </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Zatím žádné soubory ve fotodokumentaci.
-              </p>
-            )}
-          </section>
+                      {photosSorted.length > JOB_MEDIA_INITIAL_COUNT ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="w-full text-muted-foreground"
+                          onClick={() => setShowAllLegacyPhotos((v) => !v)}
+                        >
+                          {showAllLegacyPhotos
+                            ? "Zobrazit méně"
+                            : `Zobrazit více (${photosSorted.length - JOB_MEDIA_INITIAL_COUNT} dalších)`}
+                        </Button>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      Zatím žádné soubory ve fotodokumentaci.
+                    </p>
+                  )}
+                </section>
 
-          {foldersSorted.length > 0 ? (
-            <section className="space-y-3">
-              <h3 className="text-sm font-semibold text-foreground">
-                Vlastní složky
-              </h3>
-              <div className="space-y-4">
-                {foldersSorted.map((folder) => (
-                  <UserFolderBlock
-                    key={folder.id}
-                    folder={folder}
-                    companyId={companyId}
-                    jobId={jobId}
-                    jobDisplayName={jobDisplayName ?? null}
-                    firestore={firestore}
-                    user={user}
-                    canManageFolders={canManageFolders}
-                    onAnnotatePhoto={onAnnotatePhoto}
-                    onNoteDialogOpen={openNoteEditor}
-                  />
-                ))}
+                {foldersSorted.length > 0 ? (
+                  <section className="space-y-3 border-t border-border/50 pt-4">
+                    <h3 className="text-sm font-semibold text-foreground">
+                      Vlastní složky
+                    </h3>
+                    <div className="space-y-3">
+                      {foldersSorted.map((folder) => (
+                        <UserFolderBlock
+                          key={folder.id}
+                          folder={folder}
+                          companyId={companyId}
+                          jobId={jobId}
+                          jobDisplayName={jobDisplayName ?? null}
+                          firestore={firestore}
+                          user={user}
+                          canManageFolders={canManageFolders}
+                          onAnnotatePhoto={onAnnotatePhoto}
+                          onNoteDialogOpen={openNoteEditor}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
               </div>
-            </section>
-          ) : null}
-        </CardContent>
+            </CardContent>
+          </CollapsibleContent>
+        </Collapsible>
       </Card>
 
       <Dialog open={newFolderOpen} onOpenChange={setNewFolderOpen}>
