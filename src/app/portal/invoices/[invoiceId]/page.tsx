@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { doc } from "firebase/firestore";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Loader2, ChevronLeft, Printer, Download, Pencil } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
+import { sanitizeInvoicePreviewHtml } from "@/lib/invoice-a4-html";
 
 export default function InvoiceDocumentPage() {
   const params = useParams();
@@ -45,20 +46,42 @@ export default function InvoiceDocumentPage() {
     return h.trim();
   }, [invoice]);
 
+  /** Sanitizovaný HTML jen pro náhled v iframe (bez JS). Tisk používá původní `html`. */
+  const previewHtml = useMemo(() => sanitizeInvoicePreviewHtml(html), [html]);
+
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const blobUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!html) {
+    setPreviewError(null);
+    if (!previewHtml) {
       setIframeSrc(null);
-      return;
+      return () => {
+        if (blobUrlRef.current) {
+          URL.revokeObjectURL(blobUrlRef.current);
+          blobUrlRef.current = null;
+        }
+      };
     }
-    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    setIframeSrc(url);
+    try {
+      const blob = new Blob([previewHtml], { type: "text/html;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      blobUrlRef.current = url;
+      setIframeSrc(url);
+    } catch (e) {
+      setIframeSrc(null);
+      setPreviewError(
+        e instanceof Error ? e.message : "Náhled se nepodařilo připravit."
+      );
+    }
     return () => {
-      URL.revokeObjectURL(url);
+      if (blobUrlRef.current) {
+        URL.revokeObjectURL(blobUrlRef.current);
+        blobUrlRef.current = null;
+      }
     };
-  }, [html]);
+  }, [previewHtml]);
 
   const title = useMemo(() => {
     const inv = invoice as { invoiceNumber?: string; documentNumber?: string } | null;
@@ -71,10 +94,12 @@ export default function InvoiceDocumentPage() {
 
   const handlePrint = () => {
     if (!html) return;
+    const safe = sanitizeInvoicePreviewHtml(html);
+    if (!safe.trim()) return;
     const w = window.open("", "_blank", "noopener,noreferrer");
     if (!w) return;
     w.document.open();
-    w.document.write(html);
+    w.document.write(safe);
     w.document.close();
     w.document.title = title;
     w.focus();
@@ -178,12 +203,23 @@ export default function InvoiceDocumentPage() {
       <p className="text-sm text-neutral-700">
         V prohlížeči zvolte „Uložit jako PDF“ v dialogu tisku (Ctrl+P). Náhled je ve formátu A4.
       </p>
-      {html && iframeSrc ? (
+      {previewError ? (
+        <Alert variant="destructive">
+          <AlertTitle>Náhled se nepodařilo zobrazit</AlertTitle>
+          <AlertDescription>{previewError}</AlertDescription>
+        </Alert>
+      ) : html && iframeSrc ? (
         <div className="invoice-a4-preview overflow-auto rounded-lg border-2 border-neutral-950 bg-neutral-200 py-6">
+          {/*
+            Náhled: blob: URL + čisté HTML (bez scriptů). Nepoužívat srcDoc + sandbox —
+            Chrome hlásí „Blocked script execution in about:srcdoc“ bez allow-scripts.
+          */}
           <iframe
+            key={iframeSrc}
             title={title}
             className="mx-auto block min-h-[1123px] w-full max-w-[210mm] border-0 bg-white shadow-md"
             src={iframeSrc}
+            referrerPolicy="no-referrer"
           />
         </div>
       ) : html && !iframeSrc ? (

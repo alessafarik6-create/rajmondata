@@ -264,3 +264,23 @@ export function singleLineFromGross(params: {
     lineGross: params.amountGross,
   };
 }
+
+/**
+ * Náhled v iframe musí být čisté HTML/CSS — bez JS.
+ * Odstraní &lt;script&gt;, vnořené rámy a inline handlery, aby v prohlížeči nevznikaly
+ * chyby typu „Blocked script execution in about:srcdoc“ u sandboxovaného iframe.
+ */
+export function sanitizeInvoicePreviewHtml(html: string): string {
+  if (!html) return "";
+  let out = html;
+  out = out.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "");
+  out = out.replace(/<script\b[^>]*\/?>/gi, "");
+  out = out.replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, "");
+  out = out.replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "");
+  out = out.replace(/<iframe\b[^>]*\/?>/gi, "");
+  out = out.replace(/<object\b[^>]*>[\s\S]*?<\/object>/gi, "");
+  out = out.replace(/<embed\b[^>]*\/?>/gi, "");
+  out = out.replace(/\s+on\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "");
+  out = out.replace(/href\s*=\s*["']?\s*javascript:[^"'>\s]*/gi, 'href="#"');
+  return out;
+}
