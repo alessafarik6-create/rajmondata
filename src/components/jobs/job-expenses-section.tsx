@@ -720,7 +720,7 @@ export function JobExpensesSection({
                   <p className="text-sm font-semibold uppercase tracking-wide text-slate-800 dark:text-slate-200">
                     Celkem s DPH
                   </p>
-                  <p className="mt-1 text-2xl font-bold tabular-nums text-amber-800 dark:text-amber-200 sm:text-3xl">
+                  <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900 dark:text-slate-50 sm:text-3xl">
                     {formatKc(expenseTotals.gross)}
                   </p>
                 </div>
@@ -776,25 +776,57 @@ export function JobExpensesSection({
                     </div>
                     <div className="grid grid-cols-3 gap-x-2 tabular-nums">
                       <div>
-                        <div className="text-muted-foreground">Bez DPH</div>
-                        <div className="font-semibold text-foreground">
+                        <div
+                          className={cn(
+                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
+                          )}
+                        >
+                          Bez DPH
+                        </div>
+                        <div
+                          className={cn(
+                            "font-semibold text-foreground",
+                            isJobDetailWide && "text-lg text-slate-900"
+                          )}
+                        >
                           {jobBudget != null ? formatKc(jobBudget.budgetNet) : "—"}
                         </div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">Bez DPH</div>
-                        <div className="font-semibold text-amber-700 dark:text-amber-400">
+                        <div
+                          className={cn(
+                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
+                          )}
+                        >
+                          Bez DPH
+                        </div>
+                        <div
+                          className={cn(
+                            "font-semibold",
+                            isJobDetailWide
+                              ? "text-lg text-slate-900"
+                              : "text-amber-700 dark:text-amber-400"
+                          )}
+                        >
                           {formatKc(expenseTotals.net)}
                         </div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">Bez DPH</div>
+                        <div
+                          className={cn(
+                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
+                          )}
+                        >
+                          Bez DPH
+                        </div>
                         <div
                           className={cn(
                             "font-semibold",
                             remainingNetKc != null && remainingNetKc < 0
                               ? "text-destructive"
-                              : "text-emerald-700 dark:text-emerald-400"
+                              : isJobDetailWide
+                                ? "text-lg text-emerald-800 dark:text-emerald-300"
+                                : "text-emerald-700 dark:text-emerald-400"
                           )}
                         >
                           {remainingNetKc != null ? formatKc(remainingNetKc) : "—"}
@@ -803,25 +835,57 @@ export function JobExpensesSection({
                     </div>
                     <div className="grid grid-cols-3 gap-x-2 tabular-nums">
                       <div>
-                        <div className="text-muted-foreground">S DPH</div>
-                        <div className="font-semibold text-foreground">
+                        <div
+                          className={cn(
+                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
+                          )}
+                        >
+                          S DPH
+                        </div>
+                        <div
+                          className={cn(
+                            "font-semibold text-foreground",
+                            isJobDetailWide && "text-lg text-slate-900"
+                          )}
+                        >
                           {jobBudget != null ? formatKc(jobBudget.budgetGross) : "—"}
                         </div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">S DPH</div>
-                        <div className="font-semibold text-amber-700 dark:text-amber-400">
+                        <div
+                          className={cn(
+                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
+                          )}
+                        >
+                          S DPH
+                        </div>
+                        <div
+                          className={cn(
+                            "font-semibold",
+                            isJobDetailWide
+                              ? "text-lg text-slate-900"
+                              : "text-amber-700 dark:text-amber-400"
+                          )}
+                        >
                           {formatKc(expenseTotals.gross)}
                         </div>
                       </div>
                       <div>
-                        <div className="text-muted-foreground">S DPH</div>
+                        <div
+                          className={cn(
+                            isJobDetailWide ? "text-slate-700" : "text-muted-foreground"
+                          )}
+                        >
+                          S DPH
+                        </div>
                         <div
                           className={cn(
                             "font-semibold",
                             remainingGrossKc != null && remainingGrossKc < 0
                               ? "text-destructive"
-                              : "text-emerald-700 dark:text-emerald-400"
+                              : isJobDetailWide
+                                ? "text-lg text-emerald-800 dark:text-emerald-300"
+                                : "text-emerald-700 dark:text-emerald-400"
                           )}
                         >
                           {remainingGrossKc != null ? formatKc(remainingGrossKc) : "—"}
@@ -1028,7 +1092,7 @@ export function JobExpensesSection({
                                   <p className="text-xs font-semibold uppercase text-slate-700 dark:text-slate-300">
                                     S DPH
                                   </p>
-                                  <p className="text-lg font-bold text-amber-800 dark:text-amber-200 sm:text-xl">
+                                  <p className="text-lg font-bold text-slate-900 dark:text-slate-50 sm:text-xl">
                                     {formatKc(r.amountGross)}
                                   </p>
                                 </div>

@@ -4664,14 +4664,14 @@ export default function JobDetailPage() {
               )}
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between items-center gap-3 flex-wrap">
-                  <span className="text-muted-foreground">Náklady bez DPH</span>
-                  <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                  <span className="text-slate-800">Náklady bez DPH</span>
+                  <span className="text-lg font-semibold tabular-nums text-slate-900">
                     {jobExpenseTotals.net.toLocaleString("cs-CZ")} Kč
                   </span>
                 </div>
                 <div className="flex justify-between items-center gap-3 flex-wrap">
-                  <span className="text-muted-foreground">Náklady s DPH</span>
-                  <span className="font-semibold tabular-nums text-amber-700 dark:text-amber-400">
+                  <span className="text-slate-800">Náklady s DPH</span>
+                  <span className="text-lg font-semibold tabular-nums text-slate-900">
                     {jobExpenseTotals.gross.toLocaleString("cs-CZ")} Kč
                   </span>
                 </div>
@@ -4755,7 +4755,16 @@ export default function JobDetailPage() {
             </CardContent>
           </Card>
 
-          {user && companyId && jobId ? (
+        </div>
+      </div>
+      </div>
+
+      {user && companyId && jobId ? (
+        <section
+          className="w-full min-w-0 border-t border-border/60 bg-muted/15 py-8 sm:py-10"
+          aria-labelledby="job-media-heading"
+        >
+          <div className="mx-auto w-full max-w-[min(100%,1600px)] px-4 sm:px-6 lg:px-8">
             <JobMediaSection
               companyId={companyId}
               jobId={jobId as string}
@@ -4765,15 +4774,15 @@ export default function JobDetailPage() {
               photos={photos?.filter(isUsablePhotoRow) as PhotoDoc[] | undefined}
               uploadLegacyPhoto={handlePhotoUpload}
               legacyUploading={isUploading}
+              layout="jobDetailWide"
               onAnnotatePhoto={(target) => {
                 setPhotoToEdit(target);
                 setEditorOpen(true);
               }}
             />
-          ) : null}
-        </div>
-      </div>
-      </div>
+          </div>
+        </section>
+      ) : null}
 
       {user && companyId && jobId ? (
         <section

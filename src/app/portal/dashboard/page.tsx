@@ -260,6 +260,21 @@ export default function CompanyDashboard() {
     data: attendanceTodayRaw,
     isLoading: attendanceTodayLoading,
   } = useCollection(attendanceTodayForDashboardQuery);
+
+  const openWorkSegmentsTodayQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("date", "==", todayIso),
+      where("closed", "==", false)
+    );
+  }, [firestore, companyId, showAdminDashboard, todayIso]);
+
+  const {
+    data: openWorkSegmentsRaw,
+    isLoading: openWorkSegmentsLoading,
+  } = useCollection(openWorkSegmentsTodayQuery);
+
   const { data: importLeadOverlaysRaw } = useCollection(importLeadOverlaysQuery);
 
   const financeRows = financeRowsRaw ?? [];
@@ -688,7 +703,8 @@ export default function CompanyDashboard() {
               <DashboardTerminalActiveWidget
                 employees={employees as Record<string, unknown>[] | undefined}
                 attendanceTodayRows={attendanceTodayRows as AttendanceRow[]}
-                loading={attendanceTodayLoading}
+                openWorkSegmentRows={openWorkSegmentsRaw ?? []}
+                loading={attendanceTodayLoading || openWorkSegmentsLoading}
               />
             </div>
           ) : null}

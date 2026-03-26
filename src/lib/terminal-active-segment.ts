@@ -54,6 +54,53 @@ export function workSegmentDataToTerminalActiveSegment(
 }
 
 /** Seskupí dokumenty work_segments podle employeeId a vybere zobrazený segment. */
+/**
+ * Stejné jako {@link buildTerminalActiveSegmentMapFromDocs}, vstup z `useCollection`
+ * (`{ id, ...doc.data() }`).
+ */
+export function buildTerminalActiveSegmentMapFromRows(
+  rows: Array<Record<string, unknown> & { id: string }>
+): Map<string, TerminalActiveSegment> {
+  const fakeDocs = rows.map((row) => {
+    const { id, ...rest } = row;
+    return {
+      id,
+      data: () => rest as Record<string, unknown>,
+    };
+  });
+  return buildTerminalActiveSegmentMapFromDocs(fakeDocs);
+}
+
+/**
+ * Řádek pod jméno na dashboardu: při aktivní zakázce zobrazí zakázku, při tarifu tarif (priorita job > tarif v datech segmentu).
+ */
+export function terminalActiveSegmentDashboardLabel(
+  seg: TerminalActiveSegment | undefined
+): string | null {
+  if (!seg) return null;
+  if (seg.sourceType === "tariff") {
+    const n = seg.tariffName?.trim();
+    return n ? `Tarif: ${n}` : "Tarif";
+  }
+  const jn = seg.jobName?.trim();
+  if (jn) return `Zakázka: ${jn}`;
+  const dn = seg.displayName?.trim();
+  if (dn) return dn;
+  return null;
+}
+
+/** Vyhledání otevřeného segmentu — `employeeId` v segmentu může být id dokumentu nebo Auth UID. */
+export function getTerminalActiveSegmentForEmployee(
+  map: Map<string, TerminalActiveSegment>,
+  emp: { id: string; authUserId?: string | null }
+): TerminalActiveSegment | undefined {
+  const byDoc = map.get(emp.id);
+  if (byDoc) return byDoc;
+  const uid = emp.authUserId?.trim();
+  if (uid) return map.get(uid);
+  return undefined;
+}
+
 export function buildTerminalActiveSegmentMapFromDocs<T extends { id: string; data: () => Record<string, unknown> }>(
   docs: T[]
 ): Map<string, TerminalActiveSegment> {

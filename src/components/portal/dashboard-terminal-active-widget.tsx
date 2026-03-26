@@ -17,23 +17,38 @@ import {
   inferAttendanceClockStateForDay,
   type AttendanceRow,
 } from "@/lib/employee-attendance";
+import {
+  buildTerminalActiveSegmentMapFromRows,
+  getTerminalActiveSegmentForEmployee,
+  terminalActiveSegmentDashboardLabel,
+} from "@/lib/terminal-active-segment";
 
 type EmployeeDoc = Record<string, unknown> & { id?: string };
 
 export function DashboardTerminalActiveWidget({
   employees,
   attendanceTodayRows,
+  openWorkSegmentRows,
   loading,
 }: {
   employees: EmployeeDoc[] | undefined;
   attendanceTodayRows: AttendanceRow[] | null | undefined;
+  /** Otevřené úseky z `work_segments` (dnes, `closed === false`) — realtime z Firestore. */
+  openWorkSegmentRows?: Array<Record<string, unknown> & { id: string }> | null;
   loading?: boolean;
 }) {
   const active = useMemo(() => {
     const raw = Array.isArray(employees) ? employees : [];
     const todayRows = Array.isArray(attendanceTodayRows) ? attendanceTodayRows : [];
+    const segmentRows = Array.isArray(openWorkSegmentRows) ? openWorkSegmentRows : [];
+    const segmentMap = buildTerminalActiveSegmentMapFromRows(segmentRows);
     const empMap = buildEmployeeMap(raw as Record<string, unknown>[]);
-    const rows: { name: string; checkInLabel: string }[] = [];
+    const rows: {
+      employeeKey: string;
+      name: string;
+      checkInLabel: string;
+      segmentLine: string | null;
+    }[] = [];
 
     for (const emp of empMap.values()) {
       const dayRows = todayRows.filter((r) =>
@@ -42,18 +57,22 @@ export function DashboardTerminalActiveWidget({
       if (dayRows.length === 0) continue;
       const st = inferAttendanceClockStateForDay(dayRows);
       if (st.state !== "in") continue;
+      const seg = getTerminalActiveSegmentForEmployee(segmentMap, emp);
+      const segmentLine = terminalActiveSegmentDashboardLabel(seg);
       rows.push({
+        employeeKey: emp.id,
         name: emp.displayName,
         checkInLabel: st.lastCheckIn.toLocaleTimeString("cs-CZ", {
           hour: "2-digit",
           minute: "2-digit",
         }),
+        segmentLine,
       });
     }
 
     rows.sort((a, b) => a.name.localeCompare(b.name, "cs"));
     return rows;
-  }, [employees, attendanceTodayRows]);
+  }, [employees, attendanceTodayRows, openWorkSegmentRows]);
 
   return (
     <Card className="border-border bg-card shadow-sm">
@@ -63,7 +82,8 @@ export function DashboardTerminalActiveWidget({
           V práci (terminál)
         </CardTitle>
         <CardDescription className="text-xs leading-snug">
-          Zaměstnanci s posledním příchodem na terminálu bez odhlášení dnes.
+          Zaměstnanci s posledním příchodem na terminálu bez odhlášení dnes. U každého je aktuální
+          tarif nebo zakázka z otevřeného úseku práce.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 pt-0">
@@ -77,23 +97,33 @@ export function DashboardTerminalActiveWidget({
           </p>
         ) : (
           <ul className="max-h-[280px] space-y-2 overflow-y-auto pr-1 [-webkit-overflow-scrolling:touch]">
-            {active.map((item, idx) => (
+            {active.map((item) => (
               <li
-                key={`${item.name}-${item.checkInLabel}-${idx}`}
-                className="flex items-center justify-between gap-2 rounded-lg border border-emerald-500/25 bg-emerald-500/[0.07] px-3 py-2 text-sm"
+                key={item.employeeKey}
+                className="rounded-lg border border-emerald-500/25 bg-emerald-500/[0.07] px-3 py-2 text-sm"
               >
-                <div className="flex min-w-0 items-center gap-2">
-                  <span
-                    className="h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/40"
-                    aria-hidden
-                  />
-                  <span className="min-w-0 truncate font-medium text-foreground">
-                    {item.name}
+                <div className="flex flex-col gap-1 sm:flex-row sm:items-start sm:justify-between sm:gap-3">
+                  <div className="flex min-w-0 items-start gap-2">
+                    <span
+                      className="mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/40 sm:mt-2"
+                      aria-hidden
+                    />
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate font-medium text-foreground">{item.name}</span>
+                      {item.segmentLine ? (
+                        <span
+                          className="mt-0.5 block max-w-full truncate text-[11px] leading-snug text-muted-foreground"
+                          title={item.segmentLine}
+                        >
+                          {item.segmentLine}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  <span className="shrink-0 self-end tabular-nums text-xs text-muted-foreground sm:self-start sm:pt-0.5">
+                    od {item.checkInLabel}
                   </span>
                 </div>
-                <span className="shrink-0 tabular-nums text-xs text-muted-foreground">
-                  od {item.checkInLabel}
-                </span>
               </li>
             ))}
           </ul>

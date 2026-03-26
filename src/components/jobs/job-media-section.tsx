@@ -89,18 +89,16 @@ import {
 
 const MAX_BYTES = 20 * 1024 * 1024;
 
-/** Kompaktní mřížka náhledů — stejná výška buněk, bez nekonečného sloupce */
+/** Mřížka náhledů — plná šířka, žádné úzké sloupce */
 const JOB_MEDIA_CARD_GRID_CLASS =
-  "grid grid-cols-2 gap-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-4 xl:grid-cols-5";
-
-const JOB_MEDIA_THUMB_H = "h-28 sm:h-32";
+  "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5";
 
 /** Kolik položek zobrazit před „Zobrazit více“ */
 const JOB_MEDIA_INITIAL_COUNT = 6;
 
-/** Max. výška scrollovatelné oblasti se seznamy (jako u Nákladů) */
+/** Max. výška scrollovatelné oblasti se seznamy */
 const JOB_MEDIA_LIST_SCROLL_CLASS =
-  "max-h-[min(52vh,480px)] overflow-y-auto overscroll-contain";
+  "max-h-[min(50vh,480px)] overflow-y-auto overscroll-contain";
 
 const jobMediaIconBtnClassName =
   "h-10 w-10 min-h-10 min-w-10 shrink-0 gap-0 rounded-md border-border/70 bg-background/95 p-0 shadow-sm hover:bg-accent md:h-9 md:w-9 md:min-h-9 md:min-w-9 [&_svg]:!size-[18px]";
@@ -164,12 +162,7 @@ function MediaThumb({
 
   if (!src || broken) {
     return (
-      <div
-        className={cn(
-          "flex w-full items-center justify-center bg-muted px-2 text-center text-xs text-muted-foreground",
-          JOB_MEDIA_THUMB_H
-        )}
-      >
+      <div className="flex aspect-square w-full items-center justify-center bg-muted px-2 text-center text-xs text-gray-700">
         {!src ? "Chybí náhled" : "Nelze načíst obrázek"}
       </div>
     );
@@ -179,19 +172,134 @@ function MediaThumb({
     <img
       src={src}
       alt={alt || row.fileName || row.id}
-      className={cn("w-full object-cover", JOB_MEDIA_THUMB_H)}
+      className="h-full w-full object-cover"
       onError={() => setBroken(true)}
     />
+  );
+}
+
+/** Náhled + rychlé akce: desktop přes celý náhled při hoveru, mobil ikony v rohu */
+function ImageThumbWithQuickActions({
+  children,
+  busy,
+  canManage,
+  onPreview,
+  onDelete,
+}: {
+  children: React.ReactNode;
+  busy: boolean;
+  canManage: boolean;
+  onPreview: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="group/thumb relative aspect-square w-full overflow-hidden bg-muted">
+      {children}
+      <div
+        className={cn(
+          "absolute inset-0 z-[1] hidden items-center justify-center gap-2 bg-black/55",
+          "opacity-0 transition-opacity",
+          "sm:flex sm:opacity-0 sm:group-hover/thumb:opacity-100",
+          "max-sm:!hidden"
+        )}
+      >
+        <Button
+          type="button"
+          size="icon"
+          variant="secondary"
+          className="h-10 w-10 shrink-0 shadow-md"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreview();
+          }}
+          aria-label="Zvětšit náhled"
+        >
+          <Eye className="h-4 w-4" aria-hidden />
+        </Button>
+        {canManage ? (
+          <Button
+            type="button"
+            size="icon"
+            variant="destructive"
+            className="h-10 w-10 shrink-0 shadow-md"
+            disabled={busy}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            aria-label="Smazat soubor"
+          >
+            <Trash2 className="h-4 w-4" aria-hidden />
+          </Button>
+        ) : null}
+      </div>
+      <div className="absolute right-1 top-1 z-10 flex gap-1 sm:hidden">
+        <Button
+          type="button"
+          size="icon"
+          variant="secondary"
+          className="h-8 w-8 bg-background/95 shadow-md"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPreview();
+          }}
+          aria-label="Zvětšit"
+        >
+          <Eye className="h-3.5 w-3.5" aria-hidden />
+        </Button>
+        {canManage ? (
+          <Button
+            type="button"
+            size="icon"
+            variant="destructive"
+            className="h-8 w-8 shadow-md"
+            disabled={busy}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            aria-label="Smazat"
+          >
+            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** Kompaktní řádek pro PDF / Office — místo vysoké karty */
+function MediaCompactDocRow({
+  icon,
+  title,
+  dateLine,
+  actions,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  dateLine: string;
+  actions: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border/70 bg-card px-3 py-2.5 shadow-sm sm:gap-4">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
+        {icon}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-gray-900" title={title}>
+          {title}
+        </p>
+        <p className="truncate text-xs text-gray-700">{dateLine}</p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">{actions}</div>
+    </div>
   );
 }
 
 function JobMediaPdfPreview() {
   return (
     <div
-      className={cn(
-        "flex w-full flex-col items-center justify-center gap-1.5 bg-red-500/[0.07]",
-        JOB_MEDIA_THUMB_H
-      )}
+      className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 bg-red-500/[0.07]"
       aria-hidden
     >
       <span className="text-2xl leading-none">📄</span>
@@ -206,10 +314,7 @@ function JobMediaPdfPreview() {
 function JobMediaOfficePreview() {
   return (
     <div
-      className={cn(
-        "flex w-full flex-col items-center justify-center gap-1.5 bg-blue-500/[0.07]",
-        JOB_MEDIA_THUMB_H
-      )}
+      className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 bg-blue-500/[0.07]"
       aria-hidden
     >
       <span className="text-2xl leading-none">📎</span>
@@ -265,7 +370,7 @@ function JobMediaFileCard({
         >
           {title}
         </p>
-        <p className="text-[11px] text-muted-foreground sm:text-xs">{dateLine}</p>
+        <p className="text-[11px] text-gray-700 sm:text-xs">{dateLine}</p>
         {note?.trim() ? (
           <p className="line-clamp-2 text-[11px] leading-snug text-foreground/88">
             {note.trim()}
@@ -289,6 +394,7 @@ function UserFolderBlock({
   canManageFolders,
   onAnnotatePhoto,
   onNoteDialogOpen,
+  layout = "default",
 }: {
   folder: JobFolderDoc;
   companyId: string;
@@ -304,6 +410,7 @@ function UserFolderBlock({
     currentNote: string;
     fileNameHint: string;
   }) => void;
+  layout?: "default" | "jobDetailWide";
 }) {
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -361,6 +468,16 @@ function UserFolderBlock({
     if (showAllInFolder || images.length <= JOB_MEDIA_INITIAL_COUNT) return images;
     return images.slice(0, JOB_MEDIA_INITIAL_COUNT);
   }, [images, showAllInFolder]);
+
+  const isFolderWide = layout === "jobDetailWide";
+  const folderDocImages = useMemo(
+    () =>
+      visibleFolderImages.filter((img) => {
+        const k = inferJobMediaItemType(img);
+        return k === "pdf" || k === "office";
+      }),
+    [visibleFolderImages]
+  );
 
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !user?.uid) return;
@@ -789,7 +906,9 @@ function UserFolderBlock({
           <div
             className={cn(
               JOB_MEDIA_LIST_SCROLL_CLASS,
-              "max-h-[min(38vh,340px)] rounded-md border border-border/40 bg-muted/5 p-2"
+              isFolderWide
+                ? "max-h-[min(50vh,480px)] rounded-md border border-border/40 bg-muted/5 p-2 sm:p-3"
+                : "max-h-[min(38vh,340px)] rounded-md border border-border/40 bg-muted/5 p-2"
             )}
           >
           <div className={JOB_MEDIA_CARD_GRID_CLASS}>
@@ -804,6 +923,10 @@ function UserFolderBlock({
                     ? `Office · ${formatMediaDate(img.createdAt)}`
                     : formatMediaDate(img.createdAt);
               const hasNote = !!img.note?.trim();
+
+              if (isFolderWide && (kind === "pdf" || kind === "office")) {
+                return null;
+              }
 
               if (kind === "pdf" || kind === "office") {
                 return (
@@ -903,7 +1026,22 @@ function UserFolderBlock({
                 <JobMediaFileCard
                   key={img.id}
                   borderClassName="border-border/55"
-                  preview={<MediaThumb row={img} alt={title} />}
+                  preview={
+                    isFolderWide ? (
+                      <ImageThumbWithQuickActions
+                        busy={busy}
+                        canManage={canManageFolders}
+                        onPreview={() => {
+                          if (openUrl) setImagePreview({ url: openUrl, title });
+                        }}
+                        onDelete={() => void deleteImage(img)}
+                      >
+                        <MediaThumb row={img} alt={title} />
+                      </ImageThumbWithQuickActions>
+                    ) : (
+                      <MediaThumb row={img} alt={title} />
+                    )
+                  }
                   title={title}
                   dateLine={dateLine}
                   note={img.note}
@@ -1003,6 +1141,92 @@ function UserFolderBlock({
               );
             })}
           </div>
+          {isFolderWide && folderDocImages.length > 0 ? (
+            <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
+              {folderDocImages.map((img) => {
+                const kind = inferJobMediaItemType(img);
+                const openUrl = getJobMediaPreviewUrl(img);
+                const title = img.fileName || img.name || img.id;
+                const dateLine =
+                  kind === "pdf"
+                    ? `PDF · ${formatMediaDate(img.createdAt)}`
+                    : `Office · ${formatMediaDate(img.createdAt)}`;
+                return (
+                  <MediaCompactDocRow
+                    key={img.id}
+                    icon={
+                      kind === "office" ? (
+                        <FileText className="h-6 w-6 text-blue-700" strokeWidth={1.5} />
+                      ) : (
+                        <FileText className="h-6 w-6 text-red-600" strokeWidth={1.5} />
+                      )
+                    }
+                    title={title}
+                    dateLine={dateLine}
+                    actions={
+                      <>
+                        <JobMediaIconButton
+                          label="Otevřít"
+                          disabled={!openUrl}
+                          onClick={() => {
+                            if (openUrl)
+                              window.open(openUrl, "_blank", "noopener,noreferrer");
+                          }}
+                        >
+                          <ExternalLink className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
+                        {openUrl ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className={jobMediaIconBtnClassName}
+                                asChild
+                              >
+                                <a
+                                  href={openUrl}
+                                  download={title}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <Download className="size-[18px]" aria-hidden />
+                                </a>
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="bottom" className="text-xs">
+                              Stáhnout
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : null}
+                        <JobMediaIconButton
+                          label="Poznámka"
+                          onClick={() =>
+                            onNoteDialogOpen({
+                              path: { kind: "folderImages", folderId: folder.id },
+                              imageId: img.id,
+                              currentNote: img.note || "",
+                              fileNameHint: title,
+                            })
+                          }
+                        >
+                          <StickyNote className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
+                        <JobMediaIconButton
+                          label="Smazat"
+                          disabled={busy}
+                          className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          onClick={() => void deleteImage(img)}
+                        >
+                          <Trash2 className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
+                      </>
+                    }
+                  />
+                );
+              })}
+            </div>
+          ) : null}
           </div>
           {images.length > JOB_MEDIA_INITIAL_COUNT ? (
             <Button
@@ -1066,6 +1290,8 @@ export type JobMediaSectionProps = {
   ) => Promise<void>;
   legacyUploading: boolean;
   onAnnotatePhoto: (target: JobPhotoAnnotationTarget) => void;
+  /** Plná šířka detailu zakázky — kompaktnější dokumenty, výchozí sbalená sekce */
+  layout?: "default" | "jobDetailWide";
 };
 
 export function JobMediaSection({
@@ -1078,6 +1304,7 @@ export function JobMediaSection({
   uploadLegacyPhoto,
   legacyUploading,
   onAnnotatePhoto,
+  layout = "default",
 }: JobMediaSectionProps) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -1107,7 +1334,8 @@ export function JobMediaSection({
     title: string;
   } | null>(null);
 
-  const [mediaGalleryOpen, setMediaGalleryOpen] = useState(true);
+  const isJobDetailWide = layout === "jobDetailWide";
+  const [mediaGalleryOpen, setMediaGalleryOpen] = useState(() => !isJobDetailWide);
   const [showAllLegacyPhotos, setShowAllLegacyPhotos] = useState(false);
 
   const foldersColRef = useMemoFirebase(
@@ -1433,6 +1661,15 @@ export function JobMediaSection({
     return photosSorted.slice(0, JOB_MEDIA_INITIAL_COUNT);
   }, [photosSorted, showAllLegacyPhotos]);
 
+  const legacyDocPhotos = useMemo(
+    () =>
+      visibleLegacyPhotos.filter((p) => {
+        const k = inferJobMediaItemType(p);
+        return k === "pdf" || k === "office";
+      }),
+    [visibleLegacyPhotos]
+  );
+
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !user?.uid) return;
     let cancelled = false;
@@ -1494,33 +1731,52 @@ export function JobMediaSection({
   return (
     <TooltipProvider delayDuration={250}>
       <>
-      <Card className="bg-surface border-border overflow-hidden">
+      <Card
+        className={cn(
+          "bg-surface border-border overflow-hidden",
+          isJobDetailWide && "w-full min-w-0"
+        )}
+      >
         <Collapsible open={mediaGalleryOpen} onOpenChange={setMediaGalleryOpen}>
           <CardHeader className="space-y-3 pb-2">
-            <CollapsibleTrigger asChild>
-              <button
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1.5 text-left hover:bg-muted/50"
+                >
+                  <ChevronDown
+                    className={cn(
+                      "h-5 w-5 shrink-0 text-muted-foreground transition-transform",
+                      mediaGalleryOpen && "rotate-180"
+                    )}
+                    aria-hidden
+                  />
+                  <ImagePlus className="h-5 w-5 shrink-0 text-primary" />
+                  <span
+                    id="job-media-heading"
+                    className="min-w-0 truncate text-base font-semibold text-gray-900 sm:text-lg"
+                  >
+                    Fotodokumentace a složky
+                  </span>
+                  <span className="ml-auto shrink-0 text-xs text-gray-700 sm:text-sm">
+                    {photosSorted.length} souborů
+                    {foldersSorted.length > 0
+                      ? ` · ${foldersSorted.length} složek`
+                      : ""}
+                  </span>
+                </button>
+              </CollapsibleTrigger>
+              <Button
                 type="button"
-                className="flex w-full min-w-0 items-center gap-2 rounded-lg py-1.5 text-left hover:bg-muted/50"
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => setMediaGalleryOpen((o) => !o)}
               >
-                <ChevronDown
-                  className={cn(
-                    "h-5 w-5 shrink-0 text-muted-foreground transition-transform",
-                    mediaGalleryOpen && "rotate-180"
-                  )}
-                  aria-hidden
-                />
-                <ImagePlus className="h-5 w-5 shrink-0 text-primary" />
-                <span className="min-w-0 truncate text-base font-semibold sm:text-lg">
-                  Fotodokumentace a složky
-                </span>
-                <span className="ml-auto shrink-0 text-xs text-muted-foreground sm:text-sm">
-                  {photosSorted.length} souborů
-                  {foldersSorted.length > 0
-                    ? ` · ${foldersSorted.length} složek`
-                    : ""}
-                </span>
-              </button>
-            </CollapsibleTrigger>
+                {mediaGalleryOpen ? "Sbalit" : "Rozbalit"}
+              </Button>
+            </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <input
                 ref={galleryRef}
@@ -1627,11 +1883,14 @@ export function JobMediaSection({
               <div
                 className={cn(
                   JOB_MEDIA_LIST_SCROLL_CLASS,
-                  "max-h-[min(55vh,520px)] space-y-5 rounded-md border border-border/40 bg-muted/5 p-3 sm:p-4"
+                  "space-y-5 rounded-md border border-border/40 bg-muted/5 p-3 sm:p-4",
+                  isJobDetailWide
+                    ? "max-h-[min(50vh,480px)]"
+                    : "max-h-[min(55vh,520px)]"
                 )}
               >
                 <section className="space-y-3">
-                  <h3 className="text-sm font-semibold text-foreground">
+                  <h3 className="text-sm font-semibold text-gray-900">
                     Základní fotodokumentace
                   </h3>
                   {photosSorted.length > 0 ? (
@@ -1648,6 +1907,10 @@ export function JobMediaSection({
                         ? `Office · ${formatMediaDate(p.createdAt)}`
                         : formatMediaDate(p.createdAt);
                   const hasNote = !!p.note?.trim();
+
+                  if (isJobDetailWide && (kind === "pdf" || kind === "office")) {
+                    return null;
+                  }
 
                   if (kind === "pdf" || kind === "office") {
                     return (
@@ -1743,7 +2006,22 @@ export function JobMediaSection({
                     <JobMediaFileCard
                       key={p.id}
                       borderClassName="border-border/55"
-                      preview={<MediaThumb row={p} alt={title} />}
+                      preview={
+                        isJobDetailWide ? (
+                          <ImageThumbWithQuickActions
+                            busy={legacyUploading}
+                            canManage={canManageFolders}
+                            onPreview={() => {
+                              if (openUrl) setLegacyImagePreview({ url: openUrl, title });
+                            }}
+                            onDelete={() => void deleteLegacyPhoto(p)}
+                          >
+                            <MediaThumb row={p} alt={title} />
+                          </ImageThumbWithQuickActions>
+                        ) : (
+                          <MediaThumb row={p} alt={title} />
+                        )
+                      }
                       title={title}
                       dateLine={dateLine}
                       note={p.note}
@@ -1836,6 +2114,91 @@ export function JobMediaSection({
                   );
                 })}
               </div>
+                      {isJobDetailWide && legacyDocPhotos.length > 0 ? (
+                        <div className="space-y-2 border-t border-border/50 pt-3">
+                          {legacyDocPhotos.map((p) => {
+                            const kind = inferJobMediaItemType(p);
+                            const openUrl = getJobMediaPreviewUrl(p);
+                            const title = p.fileName || p.name || p.id;
+                            const dateLine =
+                              kind === "pdf"
+                                ? `PDF · ${formatMediaDate(p.createdAt)}`
+                                : `Office · ${formatMediaDate(p.createdAt)}`;
+                            return (
+                              <MediaCompactDocRow
+                                key={p.id}
+                                icon={
+                                  kind === "office" ? (
+                                    <FileText className="h-6 w-6 text-blue-700" strokeWidth={1.5} />
+                                  ) : (
+                                    <FileText className="h-6 w-6 text-red-600" strokeWidth={1.5} />
+                                  )
+                                }
+                                title={title}
+                                dateLine={dateLine}
+                                actions={
+                                  <>
+                                    <JobMediaIconButton
+                                      label="Otevřít"
+                                      disabled={!openUrl}
+                                      onClick={() => {
+                                        if (openUrl)
+                                          window.open(openUrl, "_blank", "noopener,noreferrer");
+                                      }}
+                                    >
+                                      <ExternalLink className="size-[18px]" aria-hidden />
+                                    </JobMediaIconButton>
+                                    {openUrl ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            variant="outline"
+                                            size="icon"
+                                            className={jobMediaIconBtnClassName}
+                                            asChild
+                                          >
+                                            <a
+                                              href={openUrl}
+                                              download={title}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                            >
+                                              <Download className="size-[18px]" aria-hidden />
+                                            </a>
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="bottom" className="text-xs">
+                                          Stáhnout
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ) : null}
+                                    <JobMediaIconButton
+                                      label="Poznámka"
+                                      onClick={() =>
+                                        openNoteEditor({
+                                          path: { kind: "photos" },
+                                          imageId: p.id,
+                                          currentNote: p.note || "",
+                                          fileNameHint: title,
+                                        })
+                                      }
+                                    >
+                                      <StickyNote className="size-[18px]" aria-hidden />
+                                    </JobMediaIconButton>
+                                    <JobMediaIconButton
+                                      label="Smazat"
+                                      className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                      onClick={() => void deleteLegacyPhoto(p)}
+                                    >
+                                      <Trash2 className="size-[18px]" aria-hidden />
+                                    </JobMediaIconButton>
+                                  </>
+                                }
+                              />
+                            );
+                          })}
+                        </div>
+                      ) : null}
                       {photosSorted.length > JOB_MEDIA_INITIAL_COUNT ? (
                         <Button
                           type="button"
@@ -1859,7 +2222,7 @@ export function JobMediaSection({
 
                 {foldersSorted.length > 0 ? (
                   <section className="space-y-3 border-t border-border/50 pt-4">
-                    <h3 className="text-sm font-semibold text-foreground">
+                    <h3 className="text-sm font-semibold text-gray-900">
                       Vlastní složky
                     </h3>
                     <div className="space-y-3">
@@ -1875,6 +2238,7 @@ export function JobMediaSection({
                           canManageFolders={canManageFolders}
                           onAnnotatePhoto={onAnnotatePhoto}
                           onNoteDialogOpen={openNoteEditor}
+                          layout={layout}
                         />
                       ))}
                     </div>
