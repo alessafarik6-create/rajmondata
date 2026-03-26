@@ -13,6 +13,10 @@ import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { useFirebase } from "@/firebase";
 import {
+  isFirestoreIndexError,
+  logFirestoreIndexError,
+} from "@/firebase/firestore/firestore-query-errors";
+import {
   buildTerminalActiveSegmentMapFromDocs,
   type TerminalActiveSegment,
 } from "@/lib/terminal-active-segment";
@@ -90,6 +94,7 @@ function AttendanceLoginContent() {
   const [liveOpenSegments, setLiveOpenSegments] = useState<
     Record<string, TerminalActiveSegment>
   >({});
+  const [workSegmentsIndexPending, setWorkSegmentsIndexPending] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadingList, setLoadingList] = useState(true);
 
@@ -176,9 +181,11 @@ function AttendanceLoginContent() {
       where("date", "==", todayIso),
       where("closed", "==", false)
     );
+    const path = `companies/${companyId}/work_segments`;
     const unsub = onSnapshot(
       q,
       (snap) => {
+        setWorkSegmentsIndexPending(false);
         const map = buildTerminalActiveSegmentMapFromDocs(snap.docs);
         const rec: Record<string, TerminalActiveSegment> = {};
         map.forEach((v, k) => {
@@ -187,6 +194,11 @@ function AttendanceLoginContent() {
         setLiveOpenSegments(rec);
       },
       (err) => {
+        if (isFirestoreIndexError(err)) {
+          logFirestoreIndexError("attendance-login work_segments", path, err);
+          setWorkSegmentsIndexPending(true);
+          return;
+        }
         console.error("[attendance-login] work_segments listener", err);
       }
     );
@@ -623,6 +635,14 @@ function AttendanceLoginContent() {
           : "max-w-2xl px-4 py-8 pb-12 sm:px-6"
       )}
     >
+      {workSegmentsIndexPending ? (
+        <p
+          role="status"
+          className="mb-2 text-center text-sm text-amber-100/95"
+        >
+          Data se připravují… (Firestore index)
+        </p>
+      ) : null}
       <header
         className={cn(
           "flex shrink-0 items-center justify-between gap-2",

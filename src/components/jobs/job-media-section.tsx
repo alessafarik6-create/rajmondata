@@ -8,7 +8,6 @@ import {
   deleteField,
   doc,
   getDoc,
-  getDocs,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -22,6 +21,7 @@ import {
   useFirestore,
   useMemoFirebase,
 } from "@/firebase";
+import { getDocsSafe } from "@/lib/firestore-safe-query";
 import { logActivitySafe } from "@/lib/activity-log";
 import { getFirebaseStorage } from "@/firebase/storage";
 import {
@@ -984,9 +984,22 @@ function UserFolderBlock({
     }
     setBusy(true);
     try {
-      const snap = await getDocs(imagesColRef);
-      const removedFileCount = snap.docs.length;
-      for (const d of snap.docs) {
+      const { snapshot, isIndexPending } = await getDocsSafe(
+        imagesColRef,
+        "job-media deleteFolder",
+        `companies/${companyId}/jobs/${jobId}/folders/${folder.id}/images`
+      );
+      if (isIndexPending || !snapshot) {
+        toast({
+          variant: "destructive",
+          title: "Data se připravují",
+          description:
+            "Nelze načíst soubory ve složce (index databáze). Zkuste to za chvíli znovu.",
+        });
+        return;
+      }
+      const removedFileCount = snapshot.docs.length;
+      for (const d of snapshot.docs) {
         const data = d.data() as JobFolderImageDoc;
         if (data.ledgerKind === "income") {
           await reverseFolderAccountingIncome({

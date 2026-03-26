@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId } from 'react';
 import {
   Query,
   onSnapshot,
@@ -13,6 +13,11 @@ import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { logFirestoreFailure } from '@/lib/firestore-log';
 import { isMemoFirebaseTarget } from '@/firebase/memo-firebase-registry';
+import {
+  isFirestoreIndexError,
+  logFirestoreIndexError,
+} from '@/firebase/firestore/firestore-query-errors';
+import { useFirestoreIndexPendingRegistry } from '@/firebase/firestore/firestore-index-pending-registry';
 
 /** Utility type to add an 'id' field to a given type T. */
 export type WithId<T> = T & { id: string };
@@ -25,6 +30,8 @@ export interface UseCollectionResult<T> {
   data: WithId<T>[] | null; // Document data with ID, or null.
   isLoading: boolean;       // True if loading.
   error: FirestoreError | Error | null; // Error object, or null.
+  /** Chybí / se vytváří Firestore index — fallback UI „data se připravují“. */
+  isIndexPending: boolean;
 }
 
 /** Volitelné chování u `useCollection` (např. stránky, kde nesmí permission denied shodit celou app přes FirebaseErrorListener). */
@@ -88,17 +95,25 @@ export function useCollection<T = any>(
   const [data, setData] = useState<StateDataType>(null);
   const [isLoading, setIsLoading] = useState<boolean>(() => !!memoizedTargetRefOrQuery);
   const [error, setError] = useState<FirestoreError | Error | null>(null);
+  const [isIndexPending, setIsIndexPending] = useState(false);
+  const instanceId = useId();
+  const indexRegistry = useFirestoreIndexPendingRegistry();
 
   useEffect(() => {
     if (!memoizedTargetRefOrQuery) {
       setData(null);
       setIsLoading(false);
       setError(null);
+      setIsIndexPending(false);
       return;
     }
 
     setIsLoading(true);
     setError(null);
+    setIsIndexPending(false);
+
+    const path = getFirestoreListenerDebugPath(memoizedTargetRefOrQuery);
+    const registryKey = `useCollection:${path}:${instanceId}`;
 
     const unsubscribe = onSnapshot(
       memoizedTargetRefOrQuery,
@@ -109,40 +124,64 @@ export function useCollection<T = any>(
         }
         setData(results);
         setError(null);
+        setIsIndexPending(false);
         setIsLoading(false);
         if (process.env.NODE_ENV === "development" && typeof window !== "undefined") {
-          const path = getFirestoreListenerDebugPath(memoizedTargetRefOrQuery);
           console.log("User updated from snapshot", path, results.length, "docs");
         }
       },
-      (error: FirestoreError) => {
-        const path = getFirestoreListenerDebugPath(memoizedTargetRefOrQuery);
-        logFirestoreFailure(path, 'listen-query', error);
+      (err: FirestoreError) => {
+        logFirestoreFailure(path, "listen-query", err);
 
-        if (error.code === 'failed-precondition') {
-          setError(error);
+        if (isFirestoreIndexError(err)) {
+          logFirestoreIndexError("useCollection", path, err);
+          setError(err);
           setData(null);
           setIsLoading(false);
+          setIsIndexPending(true);
           return;
         }
 
+        setIsIndexPending(false);
         const contextualError = new FirestorePermissionError({
-          operation: 'list',
+          operation: "list",
           path,
-        })
+        });
 
-        setError(contextualError)
-        setData(null)
-        setIsLoading(false)
+        setError(contextualError);
+        setData(null);
+        setIsLoading(false);
 
         if (!options?.suppressGlobalPermissionError) {
-          errorEmitter.emit('permission-error', contextualError);
+          errorEmitter.emit("permission-error", contextualError);
         }
       }
     );
 
-    return () => unsubscribe();
-  }, [memoizedTargetRefOrQuery, options?.suppressGlobalPermissionError]);
+    return () => {
+      indexRegistry?.unregister(registryKey);
+      unsubscribe();
+    };
+  }, [
+    memoizedTargetRefOrQuery,
+    options?.suppressGlobalPermissionError,
+    instanceId,
+    indexRegistry,
+  ]);
+
+  useEffect(() => {
+    if (!memoizedTargetRefOrQuery || !indexRegistry) return;
+    const path = getFirestoreListenerDebugPath(memoizedTargetRefOrQuery);
+    const registryKey = `useCollection:${path}:${instanceId}`;
+    if (isIndexPending) {
+      indexRegistry.register(registryKey);
+    } else {
+      indexRegistry.unregister(registryKey);
+    }
+    return () => {
+      indexRegistry.unregister(registryKey);
+    };
+  }, [memoizedTargetRefOrQuery, instanceId, isIndexPending, indexRegistry]);
   if (
     memoizedTargetRefOrQuery &&
     !isMemoFirebaseTarget(memoizedTargetRefOrQuery)
@@ -151,5 +190,5 @@ export function useCollection<T = any>(
       `${String(memoizedTargetRefOrQuery)} was not properly memoized using useMemoFirebase`,
     );
   }
-  return { data, isLoading, error };
+  return { data, isLoading, error, isIndexPending };
 }

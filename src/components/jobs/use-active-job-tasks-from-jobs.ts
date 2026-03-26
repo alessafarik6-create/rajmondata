@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useId } from "react";
 import {
   collection,
   query,
@@ -10,6 +10,11 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import type { JobTaskRow } from "@/lib/job-task-types";
+import {
+  isFirestoreIndexError,
+  logFirestoreIndexError,
+} from "@/firebase/firestore/firestore-query-errors";
+import { useFirestoreIndexPendingRegistry } from "@/firebase/firestore/firestore-index-pending-registry";
 
 export type JobTaskWithId = JobTaskRow & { id: string };
 
@@ -23,7 +28,12 @@ export function useActiveJobTasksFromJobList(
   jobIds: string[],
   /** Dokud true, listenery nespouštět (čekej na načtení seznamu zakázek). */
   jobsListLoading: boolean
-): { data: JobTaskWithId[] | null; isLoading: boolean; error: Error | null } {
+): {
+  data: JobTaskWithId[] | null;
+  isLoading: boolean;
+  error: Error | null;
+  isIndexPending: boolean;
+} {
   const sortedKey = useMemo(
     () =>
       [...new Set(jobIds.map((id) => String(id || "").trim()).filter(Boolean))].sort().join(","),
@@ -33,9 +43,15 @@ export function useActiveJobTasksFromJobList(
   const [data, setData] = useState<JobTaskWithId[] | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<Error | null>(null);
+  const [isIndexPending, setIsIndexPending] = useState(false);
+  const indexJobsRef = useRef<Set<string>>(new Set());
+  const hookInstanceId = useId();
+  const indexRegistry = useFirestoreIndexPendingRegistry();
 
   useEffect(() => {
     setError(null);
+    setIsIndexPending(false);
+    indexJobsRef.current.clear();
 
     const cid = String(companyId ?? "").trim();
     if (!firestore || !cid || jobsListLoading) {
@@ -88,6 +104,10 @@ export function useActiveJobTasksFromJobList(
           }
 
           setData(Array.from(rowMap.values()));
+          indexJobsRef.current.delete(jobId);
+          if (indexJobsRef.current.size === 0) {
+            setIsIndexPending(false);
+          }
           if (first) {
             first = false;
             awaitingFirst.delete(jobId);
@@ -95,8 +115,21 @@ export function useActiveJobTasksFromJobList(
           }
         },
         (e) => {
-          console.error("useActiveJobTasksFromJobList", jobId, e);
-          setError(e instanceof Error ? e : new Error(String(e)));
+          const path = `companies/${cid}/jobs/${jobId}/tasks`;
+          if (isFirestoreIndexError(e)) {
+            logFirestoreIndexError(
+              "useActiveJobTasksFromJobList",
+              path,
+              e
+            );
+            indexJobsRef.current.add(jobId);
+            setIsIndexPending(true);
+            setError(null);
+            setData(null);
+          } else {
+            console.error("useActiveJobTasksFromJobList", jobId, e);
+            setError(e instanceof Error ? e : new Error(String(e)));
+          }
           awaitingFirst.delete(jobId);
           if (awaitingFirst.size === 0) setIsLoading(false);
         }
@@ -108,5 +141,18 @@ export function useActiveJobTasksFromJobList(
     };
   }, [firestore, companyId, sortedKey, jobsListLoading]);
 
-  return { data, isLoading, error };
+  const registryKey = `useActiveJobTasks:${hookInstanceId}`;
+  useEffect(() => {
+    if (!indexRegistry) return;
+    if (isIndexPending) {
+      indexRegistry.register(registryKey);
+    } else {
+      indexRegistry.unregister(registryKey);
+    }
+    return () => {
+      indexRegistry.unregister(registryKey);
+    };
+  }, [isIndexPending, indexRegistry, registryKey]);
+
+  return { data, isLoading, error, isIndexPending };
 }

@@ -5,7 +5,8 @@ import { registerMemoFirebaseTarget } from '@/firebase/memo-firebase-registry';
 import { FirebaseApp } from 'firebase/app';
 import { Firestore } from 'firebase/firestore';
 import { Auth, User, onAuthStateChanged } from 'firebase/auth';
-import { FirebaseErrorListener } from '@/components/FirebaseErrorListener'
+import { FirebaseErrorListener } from '@/components/FirebaseErrorListener';
+import { FirestoreIndexPendingProvider } from '@/firebase/firestore/firestore-index-pending-registry';
 interface FirebaseProviderProps {
   children: ReactNode;
   firebaseApp: FirebaseApp | null;
@@ -113,8 +114,10 @@ export const FirebaseProvider: React.FC<FirebaseProviderProps> = ({
 
   return (
     <FirebaseContext.Provider value={contextValue}>
-      <FirebaseErrorListener />
-      {children}
+      <FirestoreIndexPendingProvider>
+        <FirebaseErrorListener />
+        {children}
+      </FirestoreIndexPendingProvider>
     </FirebaseContext.Provider>
   );
 };

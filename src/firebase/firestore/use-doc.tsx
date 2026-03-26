@@ -1,6 +1,6 @@
 'use client';
-    
-import { useState, useEffect } from 'react';
+
+import { useState, useEffect, useId } from 'react';
 import {
   DocumentReference,
   onSnapshot,
@@ -11,6 +11,11 @@ import {
 import { errorEmitter } from '@/firebase/error-emitter';
 import { FirestorePermissionError } from '@/firebase/errors';
 import { logFirestoreFailure } from '@/lib/firestore-log';
+import {
+  isFirestoreIndexError,
+  logFirestoreIndexError,
+} from '@/firebase/firestore/firestore-query-errors';
+import { useFirestoreIndexPendingRegistry } from '@/firebase/firestore/firestore-index-pending-registry';
 
 /** Utility type to add an 'id' field to a given type T. */
 type WithId<T> = T & { id: string };
@@ -23,6 +28,7 @@ export interface UseDocResult<T> {
   data: WithId<T> | null; // Document data with ID, or null.
   isLoading: boolean;       // True if loading.
   error: FirestoreError | Error | null; // Error object, or null.
+  isIndexPending: boolean;
 }
 
 /**
@@ -47,18 +53,28 @@ export function useDoc<T = any>(
   const [data, setData] = useState<StateDataType>(null);
   const [isLoading, setIsLoading] = useState<boolean>(() => !!memoizedDocRef);
   const [error, setError] = useState<FirestoreError | Error | null>(null);
+  const [isIndexPending, setIsIndexPending] = useState(false);
+  const instanceId = useId();
+  const indexRegistry = useFirestoreIndexPendingRegistry();
 
   useEffect(() => {
     if (!memoizedDocRef) {
       setData(null);
       setIsLoading(false);
       setError(null);
+      setIsIndexPending(false);
       return;
     }
 
     setIsLoading(true);
     setError(null);
-    // Optional: setData(null); // Clear previous data instantly
+    setIsIndexPending(false);
+
+    const docPath =
+      typeof memoizedDocRef.path === "string" && memoizedDocRef.path.length > 0
+        ? memoizedDocRef.path
+        : "(unknown-doc-path)";
+    const registryKey = `useDoc:${docPath}:${instanceId}`;
 
     const unsubscribe = onSnapshot(
       memoizedDocRef,
@@ -66,40 +82,67 @@ export function useDoc<T = any>(
         if (snapshot.exists()) {
           const docData = { ...(snapshot.data() as T), id: snapshot.id };
           setData(docData);
-          if (typeof window !== 'undefined') {
-            console.debug('[useDoc]', memoizedDocRef.path, docData);
+          if (typeof window !== "undefined") {
+            console.debug("[useDoc]", memoizedDocRef.path, docData);
           }
         } else {
           setData(null);
-          if (typeof window !== 'undefined') {
-            console.debug('[useDoc]', memoizedDocRef.path, 'document does not exist');
+          if (typeof window !== "undefined") {
+            console.debug("[useDoc]", memoizedDocRef.path, "document does not exist");
           }
         }
         setError(null);
+        setIsIndexPending(false);
         setIsLoading(false);
       },
-      (error: FirestoreError) => {
-        const docPath =
-          typeof memoizedDocRef.path === "string" && memoizedDocRef.path.length > 0
-            ? memoizedDocRef.path
-            : "(unknown-doc-path)";
-        logFirestoreFailure(docPath, 'listen-doc', error);
+      (err: FirestoreError) => {
+        logFirestoreFailure(docPath, "listen-doc", err);
+
+        if (isFirestoreIndexError(err)) {
+          logFirestoreIndexError("useDoc", docPath, err);
+          setError(err);
+          setData(null);
+          setIsLoading(false);
+          setIsIndexPending(true);
+          return;
+        }
+
+        setIsIndexPending(false);
         const contextualError = new FirestorePermissionError({
-          operation: 'get',
+          operation: "get",
           path: docPath,
-        })
+        });
 
-        setError(contextualError)
-        setData(null)
-        setIsLoading(false)
+        setError(contextualError);
+        setData(null);
+        setIsLoading(false);
 
-        // trigger global error propagation
-        errorEmitter.emit('permission-error', contextualError);
+        errorEmitter.emit("permission-error", contextualError);
       }
     );
 
-    return () => unsubscribe();
-  }, [memoizedDocRef]); // Re-run if the memoizedDocRef changes.
+    return () => {
+      indexRegistry?.unregister(registryKey);
+      unsubscribe();
+    };
+  }, [memoizedDocRef, instanceId, indexRegistry]);
 
-  return { data, isLoading, error };
+  useEffect(() => {
+    if (!memoizedDocRef || !indexRegistry) return;
+    const docPath =
+      typeof memoizedDocRef.path === "string" && memoizedDocRef.path.length > 0
+        ? memoizedDocRef.path
+        : "(unknown-doc-path)";
+    const registryKey = `useDoc:${docPath}:${instanceId}`;
+    if (isIndexPending) {
+      indexRegistry.register(registryKey);
+    } else {
+      indexRegistry.unregister(registryKey);
+    }
+    return () => {
+      indexRegistry.unregister(registryKey);
+    };
+  }, [memoizedDocRef, instanceId, isIndexPending, indexRegistry]);
+
+  return { data, isLoading, error, isIndexPending };
 }

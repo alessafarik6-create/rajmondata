@@ -9,6 +9,10 @@ import {
   where,
   type Firestore,
 } from "firebase/firestore";
+import {
+  isFirestoreIndexError,
+  logFirestoreIndexError,
+} from "@/firebase/firestore/firestore-query-errors";
 import { chunkArray, parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 
 /**
@@ -111,6 +115,18 @@ export function useAssignedWorklogJobs(
           setJobs(acc);
         }
       } catch (e) {
+        if (isFirestoreIndexError(e)) {
+          logFirestoreIndexError(
+            "useAssignedWorklogJobs",
+            `companies/${companyId}/jobs`,
+            e
+          );
+          if (!cancelled) {
+            setJobs([]);
+            setAllowedJobIds(parseAssignedWorklogJobIds(employeeData).sort());
+          }
+          return;
+        }
         console.error("[useAssignedWorklogJobs]", e);
         if (!cancelled) {
           setJobs([]);
