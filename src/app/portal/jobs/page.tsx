@@ -1109,11 +1109,11 @@ function JobsPageContent() {
         <CardContent className="p-4 sm:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <div className="flex-1 min-w-[200px] space-y-1.5">
-              <Label htmlFor="jobs-search" className="text-xs text-slate-600">
+              <Label htmlFor="jobs-search" className="text-xs text-slate-800">
                 Vyhledávání
               </Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600 pointer-events-none" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-800 pointer-events-none" />
                 <Input
                   id="jobs-search"
                   className="pl-9"
@@ -1126,7 +1126,7 @@ function JobsPageContent() {
             <div className="w-full sm:w-[min(100%,260px)] space-y-1.5">
               <Label
                 htmlFor="jobs-tag-filter"
-                className="text-xs text-slate-600 inline-flex items-center gap-1.5"
+                className="text-xs text-slate-800 inline-flex items-center gap-1.5"
               >
                 <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 Štítek / typ
@@ -1156,7 +1156,7 @@ function JobsPageContent() {
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : jobs.length > 0 && filteredJobs.length === 0 ? (
-            <div className="text-center py-16 px-4 text-slate-600 space-y-3">
+            <div className="text-center py-16 px-4 text-slate-800 space-y-3">
               <p>Žádná zakázka neodpovídá vyhledávání nebo filtru štítku.</p>
               <Button
                 type="button"
@@ -1202,14 +1202,14 @@ function JobsPageContent() {
                             </Badge>
                           ) : null}
                         </div>
-                        <span className="text-xs text-slate-600 font-normal truncate max-w-[200px] sm:max-w-xs">
+                        <span className="text-xs text-slate-800 font-normal truncate max-w-[200px] sm:max-w-xs">
                           {job?.description ?? ""}
                         </span>
                       </div>
                     </TableCell>
                     <TableCell className="text-slate-700 hidden md:table-cell">
                       <div className="flex items-center gap-2 text-sm min-w-0">
-                        <Building2 className="w-3 h-3 text-slate-600 shrink-0" />
+                        <Building2 className="w-3 h-3 text-slate-800 shrink-0" />
                         <span className="truncate">
                           {getCustomerName(job?.customerId)}
                         </span>
@@ -1220,7 +1220,7 @@ function JobsPageContent() {
                     </TableCell>
                     <TableCell className="hidden lg:table-cell">
                       <div className="flex flex-col text-xs text-slate-700">
-                        <span className="flex items-center gap-1 text-slate-600">
+                        <span className="flex items-center gap-1 text-slate-800">
                           <Calendar className="w-3 h-3 shrink-0" /> Od:{" "}
                           {job?.startDate || "-"}
                         </span>
@@ -1249,7 +1249,7 @@ function JobsPageContent() {
               </TableBody>
             </Table>
           ) : (
-            <div className="text-center py-20 text-slate-600">
+            <div className="text-center py-20 text-slate-800">
               <Briefcase className="w-12 h-12 mx-auto mb-4 opacity-20" />
               <p>Zatím nemáte žádné zakázky.</p>
               {isAdmin && (

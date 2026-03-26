@@ -199,7 +199,7 @@ export function LeadRequestsSection({
               <Inbox className="h-5 w-5 text-orange-700" />
               Poptávky
             </CardTitle>
-            <CardDescription className="text-slate-600">
+            <CardDescription className="text-slate-800">
               Import z URL v nastavení organizace (server proxy). Použijte „Zaměřit“ pro naplánování návštěvy.
             </CardDescription>
           </div>
@@ -207,7 +207,7 @@ export function LeadRequestsSection({
       </CardHeader>
       <CardContent className="p-4 sm:p-6">
         {loading ? (
-          <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-600">
+          <div className="flex flex-col items-center justify-center gap-3 py-12 text-slate-800">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="text-sm">Načítám poptávky…</p>
           </div>
@@ -232,7 +232,7 @@ export function LeadRequestsSection({
               </Alert>
             ) : null}
             {rows.length === 0 ? (
-              <p className="py-8 text-center text-sm text-slate-600">
+              <p className="py-8 text-center text-sm text-slate-800">
                 Žádné poptávky nebyly nalezeny.
               </p>
             ) : (
@@ -280,7 +280,7 @@ export function LeadRequestsSection({
                                 </Link>
                               </Button>
                             ) : (
-                              <span className="text-xs text-slate-600">—</span>
+                              <span className="text-xs text-slate-800">—</span>
                             )}
                           </TableCell>
                         </TableRow>
@@ -298,21 +298,21 @@ export function LeadRequestsSection({
                       <div className="space-y-1">
                         <p className="font-semibold text-slate-900">{r.jmeno || "—"}</p>
                         <p className="text-sm text-slate-700">
-                          <span className="text-slate-600">Tel.: </span>
+                          <span className="text-slate-800">Tel.: </span>
                           {r.telefon || "—"}
                         </p>
                         <p className="text-sm text-slate-700 break-all">
-                          <span className="text-slate-600">E-mail: </span>
+                          <span className="text-slate-800">E-mail: </span>
                           {r.email || "—"}
                         </p>
                         {r.adresa ? (
                           <p className="text-sm text-slate-700 whitespace-pre-wrap">
-                            <span className="text-slate-600">Adresa: </span>
+                            <span className="text-slate-800">Adresa: </span>
                             {r.adresa}
                           </p>
                         ) : null}
                         {r.zprava ? (
-                          <p className="text-sm text-slate-600 whitespace-pre-wrap border-t border-slate-100 pt-2">
+                          <p className="text-sm text-slate-800 whitespace-pre-wrap border-t border-slate-100 pt-2">
                             {r.zprava}
                           </p>
                         ) : null}

@@ -140,7 +140,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             asChild
             variant="ghost"
             size="icon"
-            className="relative text-slate-600 hover:bg-slate-200 hover:text-slate-900 h-10 w-10 shrink-0"
+            className="relative text-slate-800 hover:bg-slate-200 hover:text-slate-900 h-10 w-10 shrink-0"
           >
             <Link href="/portal/chat" aria-label="Zprávy od zaměstnanců">
               <MessageSquare className="w-5 h-5" />
@@ -160,7 +160,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
                 <p className="text-sm font-medium leading-none text-slate-900">
                   {superadminUsername || profile?.displayName || user?.email || 'Účet'}
                 </p>
-                <p className="text-xs text-slate-600 mt-1 capitalize">
+                <p className="text-xs text-slate-800 mt-1 capitalize">
                   {superadminUsername
                     ? 'Super administrátor'
                     : getRoleLabel(

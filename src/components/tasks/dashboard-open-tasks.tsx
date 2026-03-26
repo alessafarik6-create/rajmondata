@@ -115,7 +115,7 @@ export function DashboardOpenTasks({
 
   if (isLoading) {
     return (
-      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+      <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-800">
         <Loader2 className="h-4 w-4 animate-spin" /> Načítám úkoly…
       </div>
     );

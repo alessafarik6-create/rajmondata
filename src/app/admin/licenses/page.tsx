@@ -42,7 +42,7 @@ export default function AdminLicensesPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Licence</h1>
-        <p className="text-slate-600 mt-1">
+        <p className="text-slate-800 mt-1">
           Přehled licencí a povolených modulů u organizací. Úpravy proveďte v sekci Organizace.
         </p>
       </div>
@@ -52,7 +52,7 @@ export default function AdminLicensesPage() {
           <CardTitle className="text-slate-900 flex items-center gap-2">
             <ShieldCheck className="w-5 h-5" /> Přehled licencí
           </CardTitle>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-slate-800">
             Kliknutím na organizaci v sekci Organizace můžete měnit typ licence, stav a povolené moduly.
           </p>
         </CardHeader>
@@ -92,7 +92,7 @@ export default function AdminLicensesPage() {
                       </Badge>
                     </TableCell>
                     <TableCell>
-                      <span className="text-slate-600">
+                      <span className="text-slate-800">
                         {c.license?.enabledModules?.length ?? 0} modulů
                       </span>
                     </TableCell>
@@ -106,7 +106,7 @@ export default function AdminLicensesPage() {
               </TableBody>
             </Table>
           ) : (
-            <p className="text-slate-600 text-center py-8">Žádné organizace.</p>
+            <p className="text-slate-800 text-center py-8">Žádné organizace.</p>
           )}
           <div className="mt-4">
             <Link href="/admin/companies">

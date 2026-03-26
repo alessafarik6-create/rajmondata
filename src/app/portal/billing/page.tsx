@@ -312,7 +312,7 @@ export default function BillingPage() {
             onClick={() => isOwner && handleSimulatePayment("stripe")}
           >
             <CardContent className="flex items-center gap-6 p-6">
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-white font-bold text-slate-600 shadow-sm">
+              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-white font-bold text-slate-800 shadow-sm">
                 S
               </div>
               <div className="flex-1">
@@ -332,7 +332,7 @@ export default function BillingPage() {
             onClick={() => isOwner && handleSimulatePayment("gopay")}
           >
             <CardContent className="flex items-center gap-6 p-6">
-              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-white font-bold text-slate-600 shadow-sm">
+              <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-white font-bold text-slate-800 shadow-sm">
                 G
               </div>
               <div className="flex-1">

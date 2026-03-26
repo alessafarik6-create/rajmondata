@@ -397,7 +397,7 @@ export default function EmployeeProfilePage() {
 
   if (isUserLoading || !user) {
     return (
-      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-800">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">Ověřujeme přihlášení…</p>
       </div>
@@ -406,7 +406,7 @@ export default function EmployeeProfilePage() {
 
   if (profileLoading) {
     return (
-      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-800">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">Načítání profilu…</p>
       </div>
@@ -521,7 +521,7 @@ export default function EmployeeProfilePage() {
                 </Button>
               ) : null}
             </div>
-            <p className="text-xs text-slate-600">
+            <p className="text-xs text-slate-800">
               JPG, PNG… max 5 MB. Fotka se zobrazí na hlavní stránce portálu.
             </p>
           </div>
@@ -535,24 +535,24 @@ export default function EmployeeProfilePage() {
         <CardContent className="space-y-2 text-sm text-slate-800">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
-              <span className="text-slate-600">Jméno</span>
+              <span className="text-slate-800">Jméno</span>
               <p className="font-medium">{profile?.firstName || "—"}</p>
             </div>
             <div>
-              <span className="text-slate-600">Příjmení</span>
+              <span className="text-slate-800">Příjmení</span>
               <p className="font-medium">{profile?.lastName || "—"}</p>
             </div>
           </div>
           <div>
-            <span className="text-slate-600">Email</span>
+            <span className="text-slate-800">Email</span>
             <p className="font-medium">{profile?.email || user?.email || "—"}</p>
           </div>
           <div>
-            <span className="text-slate-600">Pracovní pozice</span>
+            <span className="text-slate-800">Pracovní pozice</span>
             <p className="font-medium">{profile?.jobTitle || "—"}</p>
           </div>
           <div>
-            <span className="text-slate-600">Hodinová sazba</span>
+            <span className="text-slate-800">Hodinová sazba</span>
             <p className="font-medium">
               {profile?.hourlyRate != null && profile?.hourlyRate !== ""
                 ? `${profile.hourlyRate} Kč/h`
@@ -560,14 +560,14 @@ export default function EmployeeProfilePage() {
             </p>
           </div>
           <div>
-            <span className="text-slate-600">Organizace</span>
+            <span className="text-slate-800">Organizace</span>
             <p className="font-medium">
               {companyName && companyName !== "Organization"
                 ? companyName
                 : companyId || "—"}
             </p>
           </div>
-          <p className="text-xs text-slate-600 pt-2">
+          <p className="text-xs text-slate-800 pt-2">
             Změnu jména, pozice a sazby řeší administrátor firmy.
           </p>
         </CardContent>
@@ -579,16 +579,16 @@ export default function EmployeeProfilePage() {
             <Briefcase className="h-5 w-5 shrink-0 text-primary" />
             Výkaz práce — přiřazené zakázky
           </CardTitle>
-          <p className="text-sm text-slate-600 font-normal pt-1">
+          <p className="text-sm text-slate-800 font-normal pt-1">
             Zakázky níže máte přiřazené v systému (správa u administrátora). Ve výkazu práce je u každého řádku
             můžete ručně vybrat k popisu práce — nezávisle na tom, co jste případně vybrali na terminálu docházky.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
           {!companyId || !employeeId ? (
-            <p className="text-sm text-slate-600">Pro zobrazení zakázek musíte mít propojený účet zaměstnance.</p>
+            <p className="text-sm text-slate-800">Pro zobrazení zakázek musíte mít propojený účet zaměstnance.</p>
           ) : assignedWorklogJobsLoading ? (
-            <div className="flex items-center gap-2 text-sm text-slate-600">
+            <div className="flex items-center gap-2 text-sm text-slate-800">
               <Loader2 className="h-4 w-4 animate-spin" />
               Načítání přiřazených zakázek…
             </div>
@@ -642,7 +642,7 @@ export default function EmployeeProfilePage() {
               {label}
             </Button>
           ))}
-          <p className="w-full text-xs text-slate-600 pt-1">
+          <p className="w-full text-xs text-slate-800 pt-1">
             Ovlivňuje rozhraní zaměstnaneckého portálu a jazyk popisu ve výkazu
             práce.
           </p>
@@ -662,12 +662,12 @@ export default function EmployeeProfilePage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {employeeRowLoading ? (
-            <div className="flex items-center gap-2 text-sm text-slate-600">
+            <div className="flex items-center gap-2 text-sm text-slate-800">
               <Loader2 className="h-4 w-4 animate-spin" />
               Načítání stavu PINu…
             </div>
           ) : !employeeHasTerminalPinForProfile(employeeRow) ? (
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-800">
               Administrátor zatím nenastavil PIN pro terminál. Po obdržení výchozího PINu od administrátora si
               jej zde můžete změnit na vlastní.
             </p>

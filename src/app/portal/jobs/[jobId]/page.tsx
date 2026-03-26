@@ -4261,14 +4261,14 @@ export default function JobDetailPage() {
           </div>
           <p className="text-muted-foreground">Detailní přehled projektu</p>
           {(job as any)?.sourceMeasurementId ? (
-            <p className="text-sm text-slate-600 mt-1">
+            <p className="text-sm text-slate-800 mt-1">
               <Link
                 href="/portal/jobs/measurements"
                 className="text-primary font-medium hover:underline"
               >
                 Přehled zaměření
               </Link>
-              <span className="text-slate-600"> · zakázka vznikla ze zaměření</span>
+              <span className="text-slate-800"> · zakázka vznikla ze zaměření</span>
             </p>
           ) : null}
         </div>

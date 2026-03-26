@@ -55,7 +55,7 @@ export default function AdminPlatformSettingsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Nastavení platformy</h1>
-        <p className="mt-1 text-slate-600">Texty pro veřejnou úvodní stránku (headline, popis).</p>
+        <p className="mt-1 text-slate-800">Texty pro veřejnou úvodní stránku (headline, popis).</p>
       </div>
 
       <Card>

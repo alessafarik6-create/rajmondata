@@ -117,7 +117,7 @@ const HOUR_OPTS = Array.from({ length: 24 }, (_, i) => i);
 const MINUTE_OPTS = Array.from({ length: 60 }, (_, i) => i);
 
 const inputBaseClass =
-  "h-12 min-h-[48px] rounded-md border border-slate-300 bg-white text-base text-black placeholder:text-slate-600 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40";
+  "h-12 min-h-[48px] rounded-md border border-slate-300 bg-white text-base text-black placeholder:text-gray-600 focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40";
 
 const selectBaseClass =
   "h-12 min-h-[48px] w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-60";
@@ -228,7 +228,7 @@ function DigitalTimePair({
           ))}
         </select>
       </div>
-      <p className="text-xs text-slate-600">
+      <p className="text-xs text-slate-800">
         Formát HH:mm — digitální výběr (bez ručiček).
       </p>
     </div>
@@ -1227,7 +1227,7 @@ export default function EmployeeWorklogsPage() {
             <p className="mt-1 text-sm font-medium text-black">
               {employeeDisplayName || "—"}
             </p>
-            <p className="mt-1 text-xs text-slate-600">{reportPeriodLabel}</p>
+            <p className="mt-1 text-xs text-slate-800">{reportPeriodLabel}</p>
             <p className="mt-3 text-sm text-black">
               Součty: výkaz {totalLoggedHoursSum} h · schválený čas (započitatelné){" "}
               {totalPayableHoursSum} h
@@ -1728,7 +1728,7 @@ export default function EmployeeWorklogsPage() {
                         "min-h-[96px] resize-y py-3"
                       )}
                     />
-                    <p className="text-xs text-slate-600">
+                    <p className="text-xs text-slate-800">
                       Max. {WORKLOG_DESCRIPTION_MAX_LENGTH} znaků (
                       {normalizeWorklogDescription(newDesc).length}/
                       {WORKLOG_DESCRIPTION_MAX_LENGTH}).
@@ -1865,7 +1865,7 @@ export default function EmployeeWorklogsPage() {
                   "min-h-[96px] resize-y py-3"
                 )}
               />
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-slate-800">
                 Max. {WORKLOG_DESCRIPTION_MAX_LENGTH} znaků (
                 {normalizeWorklogDescription(editDesc).length}/
                 {WORKLOG_DESCRIPTION_MAX_LENGTH}).

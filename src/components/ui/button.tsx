@@ -14,17 +14,17 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 hover:text-destructive-foreground active:bg-destructive/95 active:text-destructive-foreground focus-visible:ring-destructive/80 disabled:text-destructive-foreground/90",
         outline:
-          "border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent/90 active:text-accent-foreground focus-visible:ring-ring disabled:text-muted-foreground",
+          "border border-input bg-background text-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent/90 active:text-accent-foreground focus-visible:ring-ring disabled:text-slate-700",
         outlineLight:
-          "border border-slate-200 bg-white text-slate-800 hover:bg-slate-100 hover:text-slate-900 hover:border-slate-300 active:bg-slate-200 active:text-slate-900 focus-visible:ring-slate-400 focus-visible:ring-offset-2 disabled:text-slate-600 disabled:opacity-70",
+          "border border-slate-200 bg-white text-slate-800 hover:bg-slate-100 hover:text-slate-900 hover:border-slate-300 active:bg-slate-200 active:text-slate-900 focus-visible:ring-slate-400 focus-visible:ring-offset-2 disabled:text-slate-800 disabled:opacity-70",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/90 hover:text-secondary-foreground active:bg-secondary/95 active:text-secondary-foreground focus-visible:ring-secondary/80 disabled:text-secondary-foreground/90",
         success:
           "bg-emerald-600 text-white hover:bg-emerald-700 hover:text-white active:bg-emerald-800 active:text-white focus-visible:ring-emerald-500 disabled:text-white/90",
         ghost:
-          "text-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent/90 active:text-accent-foreground focus-visible:ring-ring disabled:text-muted-foreground",
+          "text-foreground hover:bg-accent hover:text-accent-foreground active:bg-accent/90 active:text-accent-foreground focus-visible:ring-ring disabled:text-slate-700",
         link:
-          "text-primary underline-offset-4 hover:underline hover:text-primary/90 focus-visible:ring-primary/50 disabled:text-muted-foreground",
+          "text-primary underline-offset-4 hover:underline hover:text-primary/90 focus-visible:ring-primary/50 disabled:text-slate-700",
       },
       size: {
         default:

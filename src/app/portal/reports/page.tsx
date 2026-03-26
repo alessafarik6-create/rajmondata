@@ -352,25 +352,25 @@ export default function ReportsPage() {
         <TabsList className="mb-6 rounded-lg border border-slate-200 bg-white shadow-sm">
           <TabsTrigger
             value="overview"
-            className="gap-2 text-slate-600 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            className="gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
           >
             <TrendingUp className="h-4 w-4" /> Přehled
           </TabsTrigger>
           <TabsTrigger
             value="employees"
-            className="gap-2 text-slate-600 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            className="gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
           >
             <Users className="h-4 w-4" /> Zaměstnanci
           </TabsTrigger>
           <TabsTrigger
             value="jobs"
-            className="gap-2 text-slate-600 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            className="gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
           >
             <Briefcase className="h-4 w-4" /> Zakázky
           </TabsTrigger>
           <TabsTrigger
             value="financials"
-            className="gap-2 text-slate-600 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            className="gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
           >
             <Wallet className="h-4 w-4" /> Finance
           </TabsTrigger>
@@ -380,7 +380,7 @@ export default function ReportsPage() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 sm:gap-6">
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-600">
+                <CardTitle className="text-sm font-semibold text-slate-900">
                   Příjmy (letos)
                 </CardTitle>
               </CardHeader>
@@ -397,7 +397,7 @@ export default function ReportsPage() {
             </Card>
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-600">
+                <CardTitle className="text-sm font-semibold text-slate-900">
                   Čistý výsledek (letos)
                 </CardTitle>
               </CardHeader>
@@ -412,7 +412,7 @@ export default function ReportsPage() {
             </Card>
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-slate-600">
+                <CardTitle className="text-sm font-semibold text-slate-900">
                   Marže (letos)
                 </CardTitle>
               </CardHeader>
@@ -434,7 +434,7 @@ export default function ReportsPage() {
               <CardTitle className="text-slate-900">
                 Měsíční příjmy a náklady
               </CardTitle>
-              <CardDescription className="text-slate-600">
+              <CardDescription className="text-slate-800">
                 Agregace podle finančních záznamů v aktuálním roce
               </CardDescription>
             </CardHeader>
@@ -499,7 +499,7 @@ export default function ReportsPage() {
                 <CardTitle className="text-slate-900">
                   Odpracované hodiny
                 </CardTitle>
-                <CardDescription className="text-slate-600">
+                <CardDescription className="text-slate-800">
                   Graf vyžaduje propojení s evidencí odpracovaných hodin
                 </CardDescription>
               </CardHeader>
@@ -512,7 +512,7 @@ export default function ReportsPage() {
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardHeader>
                 <CardTitle className="text-slate-900">Složení rolí</CardTitle>
-                <CardDescription className="text-slate-600">
+                <CardDescription className="text-slate-800">
                   Podle záznamů zaměstnanců ve firmě
                 </CardDescription>
               </CardHeader>
@@ -558,7 +558,7 @@ export default function ReportsPage() {
           <Card className="border-slate-200 bg-white shadow-sm">
             <CardHeader>
               <CardTitle className="text-slate-900">Zisk zakázek</CardTitle>
-              <CardDescription className="text-slate-600">
+              <CardDescription className="text-slate-800">
                 Pouze zakázky s vyplněným polem zisku (žádné odhady)
               </CardDescription>
             </CardHeader>
@@ -611,7 +611,7 @@ export default function ReportsPage() {
                 <CardTitle className="text-slate-900">
                   Struktura nákladů
                 </CardTitle>
-                <CardDescription className="text-slate-600">
+                <CardDescription className="text-slate-800">
                   Vyžaduje kategorie nákladů u dokladů
                 </CardDescription>
               </CardHeader>
@@ -624,13 +624,13 @@ export default function ReportsPage() {
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardHeader>
                 <CardTitle className="text-slate-900">Rychlé údaje</CardTitle>
-                <CardDescription className="text-slate-600">
+                <CardDescription className="text-slate-800">
                   Pouze z reálných dat v systému
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <span className="text-sm text-slate-600">
+                  <span className="text-sm text-slate-800">
                     Aktivní zakázky (neukončené)
                   </span>
                   <span className="font-bold tabular-nums text-slate-900">
@@ -638,7 +638,7 @@ export default function ReportsPage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <span className="text-sm text-slate-600">
+                  <span className="text-sm text-slate-800">
                     Průměrný rozpočet zakázky
                   </span>
                   <span className="font-bold tabular-nums text-slate-900">
@@ -648,7 +648,7 @@ export default function ReportsPage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <span className="text-sm text-slate-600">
+                  <span className="text-sm text-slate-800">
                     Zakázky neuvedené jako fakturované
                   </span>
                   <span className="font-bold tabular-nums text-slate-900">
@@ -656,10 +656,10 @@ export default function ReportsPage() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <span className="text-sm text-slate-600">
+                  <span className="text-sm text-slate-800">
                     Očekávané příjmy (příští měsíc)
                   </span>
-                  <span className="font-bold tabular-nums text-slate-600">
+                  <span className="font-bold tabular-nums text-slate-800">
                     —
                   </span>
                 </div>

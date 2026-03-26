@@ -243,7 +243,7 @@ export default function EmployeeMoneyPage() {
               {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "—"}
             </p>
             {hourlyRate <= 0 && (
-              <p className="mt-1 text-xs text-slate-600">
+              <p className="mt-1 text-xs text-slate-800">
                 Sazba není nastavena — domluvte se s administrátorem.
               </p>
             )}
@@ -313,7 +313,7 @@ export default function EmployeeMoneyPage() {
             <p className="mt-1 text-xl font-bold text-black">
               {blocksLoading ? "…" : formatKc(earnedAll)}
             </p>
-            <p className="text-xs text-slate-600">Jen schválené hodiny</p>
+            <p className="text-xs text-slate-800">Jen schválené hodiny</p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm font-semibold text-slate-800">
@@ -322,7 +322,7 @@ export default function EmployeeMoneyPage() {
             <p className="mt-1 text-xl font-bold text-black">
               {advancesLoading ? "…" : formatKc(paidTotal)}
             </p>
-            <p className="text-xs text-slate-600">Součet záloh se stavem zaplaceno</p>
+            <p className="text-xs text-slate-800">Součet záloh se stavem zaplaceno</p>
           </div>
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4">
             <p className="text-sm font-semibold text-emerald-900">

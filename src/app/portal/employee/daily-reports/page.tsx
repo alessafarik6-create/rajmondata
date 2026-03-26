@@ -854,7 +854,7 @@ export default function EmployeeDailyReportsPage() {
 
   if (isUserLoading || !user) {
     return (
-      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-800">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">{t("loadingAuth")}</p>
       </div>
@@ -863,7 +863,7 @@ export default function EmployeeDailyReportsPage() {
 
   if (profileLoading) {
     return (
-      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-800">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">{t("loadingProfile")}</p>
       </div>

@@ -730,7 +730,7 @@ function PayrollAdminPageInner() {
                 <span className="font-semibold">Vyděláno (schv.):</span>{" "}
                 {formatKc(earnedAll)}
               </p>
-              <p className="text-xs text-slate-600">
+              <p className="text-xs text-slate-800">
                 Bloky výkazu: {formatKc(earnedFromBlocks)} · Denní výkazy (schv.):{" "}
                 {formatKc(earnedFromDailyReports)}
               </p>
@@ -817,7 +817,7 @@ function PayrollAdminPageInner() {
                   <p className="mt-1 text-sm text-slate-700">{companyName}</p>
                 ) : null}
                 <p className="mt-1 text-sm font-medium">{reportEmployeeTitle}</p>
-                <p className="mt-1 text-xs text-slate-600">{reportPeriodLabel}</p>
+                <p className="mt-1 text-xs text-slate-800">{reportPeriodLabel}</p>
                 <p className="mt-3 text-sm">
                   Součty: výkaz {totalLoggedHoursSum} h · schválený čas (započitatelné){" "}
                   {totalPayableHoursSum} h
@@ -1002,7 +1002,7 @@ function PayrollAdminPageInner() {
                   <p className="mt-1 text-sm text-slate-700">{companyName}</p>
                 ) : null}
                 <p className="mt-1 text-sm font-medium">{reportEmployeeTitle}</p>
-                <p className="mt-1 text-xs text-slate-600">{reportPeriodLabel}</p>
+                <p className="mt-1 text-xs text-slate-800">{reportPeriodLabel}</p>
                 <p className="mt-3 text-sm">
                   Součty: výkaz {totalLoggedHoursSum} h · schválený čas (započitatelné){" "}
                   {totalPayableHoursSum} h
@@ -1435,7 +1435,7 @@ function PayrollAdminPageInner() {
                 ) : null}
               </p>
               <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
-                <Label className="text-xs font-semibold uppercase text-slate-600">
+                <Label className="text-xs font-semibold uppercase text-slate-800">
                   Popis práce (z výkazu zaměstnance)
                 </Label>
                 <p className="mt-2 max-h-[40vh] overflow-y-auto whitespace-pre-wrap break-words text-sm text-black">

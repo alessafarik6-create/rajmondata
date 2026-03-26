@@ -87,7 +87,7 @@ export function WorkContractTemplateForm({
               <CardTitle className="text-base text-slate-900">
                 {editingId ? "Úprava šablony" : "Nová šablona"}
               </CardTitle>
-              <CardDescription className="text-slate-600">
+              <CardDescription className="text-slate-800">
                 {editingId
                   ? `Upravujete uloženou šablonu${editingId ? ` (ID: ${editingId})` : ""}.`
                   : "Vyplňte název a text smlouvy. Po uložení bude šablona k dispozici u zakázek."}
@@ -166,7 +166,7 @@ export function WorkContractTemplateForm({
             <Card className="border-slate-200 bg-slate-50/80 shadow-sm dark:bg-slate-950/40">
               <CardHeader className="space-y-1 pb-2">
                 <CardTitle className="text-base text-slate-900">Popis proměnných</CardTitle>
-                <CardDescription className="text-slate-600">
+                <CardDescription className="text-slate-800">
                   Přehled významů a formátů pro správné šablony.
                 </CardDescription>
               </CardHeader>

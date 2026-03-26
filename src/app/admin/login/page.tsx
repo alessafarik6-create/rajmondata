@@ -102,7 +102,7 @@ export default function AdminLoginPage() {
               <CardTitle className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
                 Globální administrace · {PLATFORM_NAME}
               </CardTitle>
-              <CardDescription className="text-slate-600">
+              <CardDescription className="text-slate-800">
                 Přihlaste se do systémové administrace pomocí uživatelského jména
                 a hesla.
               </CardDescription>
@@ -136,7 +136,7 @@ export default function AdminLoginPage() {
                   placeholder="superadmin"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="h-11 border-slate-200 bg-white text-slate-900 placeholder:text-slate-600"
+                  className="h-11 border-slate-200 bg-white text-slate-900 placeholder:text-gray-600"
                   disabled={loading}
                   required
                 />
@@ -153,7 +153,7 @@ export default function AdminLoginPage() {
                   placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="h-11 border-slate-200 bg-white text-slate-900 placeholder:text-slate-600"
+                  className="h-11 border-slate-200 bg-white text-slate-900 placeholder:text-gray-600"
                   disabled={loading}
                   required
                 />
@@ -183,7 +183,7 @@ export default function AdminLoginPage() {
         <div className="flex justify-center">
           <a
             href="/login"
-            className="text-sm text-slate-600 underline hover:text-slate-900"
+            className="text-sm text-slate-800 underline hover:text-slate-900"
           >
             ← Zpět na přihlášení do portálu
           </a>

@@ -48,7 +48,7 @@ function wordmarkClass(context: LogoProps["context"], part: "brand" | "suffix") 
     return "text-primary";
   }
   if (c === "sidebar") return "text-sidebar-foreground/80";
-  if (c === "light") return "text-slate-600";
+  if (c === "light") return "text-slate-800";
   return "text-foreground/75";
 }
 

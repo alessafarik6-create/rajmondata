@@ -132,7 +132,7 @@ export default function AdminDashboardPage() {
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">
           Přehled platformy
         </h1>
-        <p className="mt-1 text-slate-600">
+        <p className="mt-1 text-slate-800">
           Vítejte v globální administraci {PLATFORM_NAME}. Zde můžete spravovat
           organizace a licence.
         </p>
@@ -142,7 +142,7 @@ export default function AdminDashboardPage() {
         {stats.map((stat) => (
           <Card key={stat.title} className="border-slate-200 bg-white">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium text-slate-600">
+              <CardTitle className="text-sm font-medium text-slate-800">
                 {stat.title}
               </CardTitle>
               <stat.icon className="h-4 w-4 text-primary" />
@@ -166,7 +166,7 @@ export default function AdminDashboardPage() {
         <Card className="border-slate-200 bg-white lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-slate-900">Organizace</CardTitle>
-            <p className="text-sm text-slate-600">
+            <p className="text-sm text-slate-800">
               Seznam všech organizací na platformě.
             </p>
           </CardHeader>
@@ -234,7 +234,7 @@ export default function AdminDashboardPage() {
                 </TableBody>
               </Table>
             ) : (
-              <p className="py-8 text-center text-slate-600">
+              <p className="py-8 text-center text-slate-800">
                 Žádné organizace.
               </p>
             )}

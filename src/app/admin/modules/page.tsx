@@ -65,7 +65,7 @@ export default function AdminModulesPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Globální moduly</h1>
-        <p className="mt-1 text-slate-600">Základní ceny a dostupnost modulů na celé platformě.</p>
+        <p className="mt-1 text-slate-800">Základní ceny a dostupnost modulů na celé platformě.</p>
       </div>
 
       <Card>
@@ -88,7 +88,7 @@ export default function AdminModulesPage() {
               >
                 <div className="space-y-2">
                   <p className="font-semibold text-slate-900">{m.name ?? m.code}</p>
-                  <p className="text-sm text-slate-600">{String(m.description ?? "")}</p>
+                  <p className="text-sm text-slate-800">{String(m.description ?? "")}</p>
                   <div className="flex items-center gap-2 pt-2">
                     <Switch
                       checked={Boolean(m.activeGlobally)}

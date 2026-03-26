@@ -627,7 +627,7 @@ export default function CompanyDashboard() {
               ? "Vítejte ve svém klientském portálu."
               : `Zde je přehled vaší práce v ${companyName || companyId || "vaší organizaci"}.`}
           </p>
-          <p className="mt-2 text-xs text-slate-600">
+          <p className="mt-2 text-xs text-slate-800">
             Platforma {PLATFORM_NAME}
           </p>
         </div>
@@ -1170,7 +1170,7 @@ export default function CompanyDashboard() {
                           <span className="font-semibold text-slate-900">
                             {job.name || "Bez názvu"}
                           </span>
-                          <span className="text-[10px] font-medium uppercase text-slate-600">
+                          <span className="text-[10px] font-medium uppercase text-slate-800">
                             {job.status || "neuvedeno"}
                           </span>
                         </div>
@@ -1188,7 +1188,7 @@ export default function CompanyDashboard() {
                     </div>
                   ))
                 ) : (
-                  <div className="py-12 text-center text-slate-600">
+                  <div className="py-12 text-center text-slate-800">
                     Zatím nemáte žádné zakázky.
                   </div>
                 )}

@@ -300,7 +300,7 @@ export function WorkContractTemplatesManagerDialog({
       <DialogContent className="fixed left-1/2 top-1/2 z-50 w-full max-w-[calc(100vw-1rem)] sm:max-w-6xl lg:max-w-[88rem] max-h-[92vh] min-h-0 -translate-x-1/2 -translate-y-1/2 flex flex-col gap-0 overflow-y-auto overflow-x-hidden rounded-2xl border border-slate-200 bg-white p-0 text-slate-900 shadow-xl">
         <DialogHeader className="shrink-0 px-6 pt-6 pb-4 border-b border-slate-200">
           <DialogTitle className="text-xl text-black">Šablony SOD</DialogTitle>
-          <DialogDescription className="text-slate-600">
+          <DialogDescription className="text-slate-800">
             Správa šablon smlouvy o dílo. Kolekce{" "}
             <code className="text-xs bg-slate-100 px-1">contractTemplates</code>, filtr{" "}
             <code className="text-xs bg-slate-100 px-1">companyId</code>.

@@ -57,7 +57,7 @@ export default function AdminPricingPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">Ceník</h1>
-        <p className="mt-1 text-slate-600">
+        <p className="mt-1 text-slate-800">
           Výchozí cena za zaměstnance u docházky a texty pro veřejnou nabídku. Konkrétní moduly upravíte v
           sekci Moduly.
         </p>
@@ -82,7 +82,7 @@ export default function AdminPricingPage() {
                   value={defaultEmployeePriceCzk}
                   onChange={(e) => setDefaultEmployeePriceCzk(Number(e.target.value) || 0)}
                 />
-                <p className="text-xs text-slate-600">
+                <p className="text-xs text-slate-800">
                   Použije se u modulu Docházka — celková cena = počet aktivních zaměstnanců × tato částka.
                 </p>
               </div>

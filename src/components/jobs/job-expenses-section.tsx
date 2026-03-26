@@ -805,7 +805,7 @@ export function JobExpensesSection({
                             "font-semibold",
                             isJobDetailWide
                               ? "text-lg text-slate-900"
-                              : "text-amber-700 dark:text-amber-400"
+                              : "text-slate-900 dark:text-slate-100"
                           )}
                         >
                           {formatKc(expenseTotals.net)}
@@ -864,7 +864,7 @@ export function JobExpensesSection({
                             "font-semibold",
                             isJobDetailWide
                               ? "text-lg text-slate-900"
-                              : "text-amber-700 dark:text-amber-400"
+                              : "text-slate-900 dark:text-slate-100"
                           )}
                         >
                           {formatKc(expenseTotals.gross)}
@@ -1052,7 +1052,7 @@ export function JobExpensesSection({
                               </div>
                             </>
                           ) : (
-                            <span className="text-slate-600 dark:text-slate-300">—</span>
+                            <span className="text-slate-800 dark:text-slate-300">—</span>
                           );
 
                         if (isJobDetailWide) {
@@ -1099,7 +1099,7 @@ export function JobExpensesSection({
                                 <div className="min-w-0">
                                   <p className="line-clamp-3 break-words text-base leading-snug text-slate-900 dark:text-slate-100">
                                     {row.note?.trim() || (
-                                      <span className="italic text-slate-600">—</span>
+                                      <span className="italic text-slate-800">—</span>
                                     )}
                                   </p>
                                 </div>
@@ -1163,7 +1163,7 @@ export function JobExpensesSection({
                                   Bez DPH {formatKc(r.amountNet)} · DPH{" "}
                                   {formatKc(r.vatAmount)}
                                 </div>
-                                <div className="text-amber-700 dark:text-amber-400">
+                                <div className="text-slate-900 dark:text-slate-100">
                                   S DPH {formatKc(r.amountGross)}
                                 </div>
                               </div>

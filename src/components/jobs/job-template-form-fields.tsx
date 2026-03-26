@@ -41,7 +41,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
 
   if (!template || typeof template !== "object") {
     return (
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-slate-800">
         Neplatná šablona — nelze zobrazit pole.
       </p>
     );
@@ -49,7 +49,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
 
   if (sections.length === 0) {
     return (
-      <p className="text-sm text-slate-600">
+      <p className="text-sm text-slate-800">
         Šablona zatím nemá definovaná pole (chybí sekce v datech).
       </p>
     );
@@ -125,7 +125,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
                           checked={value === true}
                           onCheckedChange={(c) => setValue(key, !!c)}
                         />
-                        <span className="text-sm text-slate-600">Ano</span>
+                        <span className="text-sm text-slate-800">Ano</span>
                       </div>
                     )}
                     {ftype === "select" && (() => {
@@ -136,7 +136,7 @@ export function JobTemplateFormFields({ template, values, onChange, className }:
                       );
                       if (options.length === 0) {
                         return (
-                          <p className="text-xs text-amber-700">
+                          <p className="text-xs text-destructive">
                             Pole výběru nemá žádné platné možnosti.
                           </p>
                         );

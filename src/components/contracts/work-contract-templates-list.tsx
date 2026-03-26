@@ -48,11 +48,11 @@ export function WorkContractTemplatesList({
     <div className="flex-1 min-h-0 h-[220px] lg:h-auto overflow-y-auto">
       <div className="p-2 space-y-1">
         {loading ? (
-          <div className="flex justify-center py-8 text-slate-600">
+          <div className="flex justify-center py-8 text-slate-800">
             <Loader2 className="h-6 w-6 animate-spin" />
           </div>
         ) : templates.length === 0 ? (
-          <p className="text-sm text-slate-600 px-2 py-4">
+          <p className="text-sm text-slate-800 px-2 py-4">
             Zatím nemáte žádnou šablonu. Klikněte na „Nová šablona“.
           </p>
         ) : (

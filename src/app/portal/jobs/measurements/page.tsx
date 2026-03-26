@@ -577,7 +577,7 @@ function JobMeasurementsPageContent() {
     <div className="space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 space-y-2">
-          <Button variant="ghost" className="gap-2 -ml-2 text-slate-600" asChild>
+          <Button variant="ghost" className="gap-2 -ml-2 text-slate-800" asChild>
             <Link href="/portal/jobs">
               <ArrowLeft className="h-4 w-4" />
               Zpět na zakázky
@@ -740,11 +740,11 @@ function JobMeasurementsPageContent() {
       <Card>
         <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-slate-100">
           <CardTitle className="text-lg flex items-center gap-2">
-            <RefreshCw className="h-5 w-5 text-slate-600" />
+            <RefreshCw className="h-5 w-5 text-slate-800" />
             Přehled zaměření
           </CardTitle>
           <div className="flex flex-wrap items-center gap-2">
-            <Label htmlFor="m-filter" className="text-sm text-slate-600">
+            <Label htmlFor="m-filter" className="text-sm text-slate-800">
               Stav
             </Label>
             <select
@@ -772,7 +772,7 @@ function JobMeasurementsPageContent() {
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : measurements.length === 0 ? (
-            <div className="text-center py-16 text-slate-600">
+            <div className="text-center py-16 text-slate-800">
               <Ruler className="w-12 h-12 mx-auto mb-3 opacity-20" />
               <p>Zatím nemáte žádné záznamy zaměření.</p>
             </div>

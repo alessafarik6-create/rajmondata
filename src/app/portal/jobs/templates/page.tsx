@@ -400,7 +400,7 @@ export default function JobTemplatesPage() {
                 <CardDescription>{t.productType || "—"}</CardDescription>
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-slate-600">
+                <p className="text-sm text-slate-800">
                   {t.sections?.length || 0} sekcí,{" "}
                   {t.sections?.reduce((acc: number, s: JobTemplateSection) => acc + (s.fields?.length || 0), 0) || 0} polí
                 </p>
@@ -536,7 +536,7 @@ export default function JobTemplatesPage() {
         </div>
       ) : (
         <Card className="border-slate-200">
-          <CardContent className="py-12 text-center text-slate-600">
+          <CardContent className="py-12 text-center text-slate-800">
             <FileStack className="w-12 h-12 mx-auto mb-4 opacity-40" />
             <p className="font-medium">Zatím nemáte žádné šablony</p>
             <p className="text-sm mt-1">Vytvořte šablonu a při nové zakázce zvolte její pole.</p>

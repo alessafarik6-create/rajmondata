@@ -505,13 +505,13 @@ export default function FinancePage() {
             <Table>
               <TableHeader>
                 <TableRow className="border-slate-200 hover:bg-transparent">
-                  <TableHead className="font-medium text-slate-600">
+                  <TableHead className="font-medium text-slate-800">
                     Popis
                   </TableHead>
-                  <TableHead className="font-medium text-slate-600">
+                  <TableHead className="font-medium text-slate-800">
                     Datum
                   </TableHead>
-                  <TableHead className="text-right font-medium text-slate-600">
+                  <TableHead className="text-right font-medium text-slate-800">
                     Částka
                   </TableHead>
                 </TableRow>

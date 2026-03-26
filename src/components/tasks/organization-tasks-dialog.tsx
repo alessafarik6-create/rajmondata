@@ -466,7 +466,7 @@ export function OrganizationTasksDialog({
           ) : (
             <>
               <section>
-                <h3 className="text-sm font-semibold text-slate-800 mb-2">
+                <h3 className="text-sm font-semibold text-slate-900 mb-2">
                   Nevyřízené ({openList.filter((t) => visibleTasks.some((v) => v.id === t.id)).length})
                 </h3>
                 <ul className="space-y-2">
@@ -490,11 +490,11 @@ export function OrganizationTasksDialog({
                           <div className="min-w-0 flex-1">
                             <p className="font-medium text-slate-900">{t.title}</p>
                             {t.description ? (
-                              <p className="text-sm text-slate-600 mt-0.5 whitespace-pre-wrap">
+                              <p className="text-sm text-slate-800 mt-0.5 whitespace-pre-wrap">
                                 {t.description}
                               </p>
                             ) : null}
-                            <p className="text-xs text-slate-600 mt-1 space-x-2">
+                            <p className="text-xs text-slate-800 mt-1 space-x-2">
                               <span>Termín: {formatDueCs(t.dueDate)}</span>
                               <span>·</span>
                               <span>
@@ -504,7 +504,7 @@ export function OrganizationTasksDialog({
                                 )}
                               </span>
                             </p>
-                            <p className="text-xs text-slate-600 mt-1">
+                            <p className="text-xs text-slate-800 mt-1">
                               Vytvořeno: {formatTaskDate(t.createdAt)} ·{" "}
                               {organizationTaskIsForAll(t)
                                 ? "Přiřazeno: Všem"
@@ -543,7 +543,7 @@ export function OrganizationTasksDialog({
 
               {doneList.length > 0 && (
                 <section>
-                  <h3 className="text-sm font-semibold text-slate-600 mb-2">
+                  <h3 className="text-sm font-semibold text-slate-900 mb-2">
                     Vyřízené (skryté z přehledu)
                   </h3>
                   <ul className="space-y-2">
@@ -560,10 +560,10 @@ export function OrganizationTasksDialog({
                             aria-label="Označit jako nevyřízené"
                           />
                           <div className="min-w-0 flex-1">
-                            <p className="font-medium line-through text-slate-600">
+                            <p className="font-medium line-through text-slate-800">
                               {t.title}
                             </p>
-                            <p className="text-xs text-slate-600 mt-1">
+                            <p className="text-xs text-slate-800 mt-1">
                               {formatTaskDate(t.completedAt)}
                             </p>
                           </div>

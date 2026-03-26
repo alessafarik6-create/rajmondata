@@ -163,7 +163,7 @@ export function CompanyScheduleCalendar({
           <h2 className="text-lg font-semibold text-slate-900">
             Kalendář schůzek a zaměření
           </h2>
-          <p className="text-sm text-slate-600">
+          <p className="text-sm text-slate-800">
             Schůzky z poptávek a naplánovaná zaměření — měsíční přehled.
           </p>
         </div>
@@ -224,7 +224,7 @@ export function CompanyScheduleCalendar({
                 </span>
               </div>
               {!loading && events.length === 0 ? (
-                <span className="text-slate-600">
+                <span className="text-slate-800">
                   V tomto měsíci nic — naplánujte v{" "}
                   <Link
                     href="/portal/leads"
@@ -290,7 +290,7 @@ export function CompanyScheduleCalendar({
                         </li>
                       ))}
                       {dayEvents.length > 4 ? (
-                        <li className="text-[10px] text-slate-600">
+                        <li className="text-[10px] text-slate-800">
                           +{dayEvents.length - 4} další
                         </li>
                       ) : null}

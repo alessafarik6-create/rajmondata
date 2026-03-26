@@ -194,13 +194,13 @@ export default function AdminCompaniesPage() {
     <div className="space-y-6 sm:space-y-8">
       <div>
         <h1 className="text-2xl sm:text-3xl font-bold text-slate-900">Správa organizací</h1>
-        <p className="text-slate-600 mt-1">Přehled všech organizací a jejich licencí.</p>
+        <p className="text-slate-800 mt-1">Přehled všech organizací a jejich licencí.</p>
       </div>
 
       <Card className="border-slate-200 overflow-hidden">
         <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row gap-4 justify-between">
           <div className="relative w-full sm:max-w-xs">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-600" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-800" />
             <Input
               placeholder="Hledat firmu, IČO, email..."
               value={searchTerm}
@@ -240,17 +240,17 @@ export default function AdminCompaniesPage() {
                       <div className="flex flex-col min-w-0">
                         <span className="text-slate-900">{company.name}</span>
                         {company.email && (
-                          <span className="text-xs text-slate-600 truncate">{company.email}</span>
+                          <span className="text-xs text-slate-800 truncate">{company.email}</span>
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-slate-600 hidden lg:table-cell max-w-[120px] truncate" title={company.id}>
+                    <TableCell className="font-mono text-xs text-slate-800 hidden lg:table-cell max-w-[120px] truncate" title={company.id}>
                       {company.id}
                     </TableCell>
-                    <TableCell className="font-mono text-xs text-slate-600 hidden md:table-cell">
+                    <TableCell className="font-mono text-xs text-slate-800 hidden md:table-cell">
                       {company.ico || "—"}
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-slate-600 text-xs">
+                    <TableCell className="hidden md:table-cell text-slate-800 text-xs">
                       {company.createdAt ? new Date(company.createdAt).toLocaleDateString("cs-CZ") : "—"}
                     </TableCell>
                     <TableCell>
@@ -258,7 +258,7 @@ export default function AdminCompaniesPage() {
                         {company.licenseId || company.license.licenseType}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-xs text-slate-600">
+                    <TableCell className="text-xs text-slate-800">
                       {(company.license.enabledModules?.length ?? 0)} modulů
                     </TableCell>
                     <TableCell>
@@ -299,7 +299,7 @@ export default function AdminCompaniesPage() {
               </TableBody>
             </Table>
           ) : (
-            <div className="text-center py-16 text-slate-600">
+            <div className="text-center py-16 text-slate-800">
               <Building2 className="w-12 h-12 mx-auto mb-4 opacity-40" />
               <p>Žádné organizace nenalezeny.</p>
             </div>

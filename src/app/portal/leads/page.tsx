@@ -679,11 +679,11 @@ export default function PortalLeadsPage() {
         <CardContent className="space-y-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end">
             <div className="flex-1 min-w-[200px] space-y-1.5">
-              <Label htmlFor="lead-search" className="text-xs text-slate-600">
+              <Label htmlFor="lead-search" className="text-xs text-slate-800">
                 Vyhledávání
               </Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-600" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-800" />
                 <Input
                   id="lead-search"
                   className="pl-9"
@@ -694,7 +694,7 @@ export default function PortalLeadsPage() {
               </div>
             </div>
             <div className="w-full sm:w-[200px] space-y-1.5">
-              <Label className="text-xs text-slate-600">Typ poptávky (ze zdroje)</Label>
+              <Label className="text-xs text-slate-800">Typ poptávky (ze zdroje)</Label>
               <select
                 className={NATIVE_SELECT_CLASS}
                 value={filterTyp}
@@ -709,7 +709,7 @@ export default function PortalLeadsPage() {
               </select>
             </div>
             <div className="w-full sm:w-[220px] space-y-1.5">
-              <Label className="text-xs text-slate-600">Štítek</Label>
+              <Label className="text-xs text-slate-800">Štítek</Label>
               <select
                 className={NATIVE_SELECT_CLASS}
                 value={filterTag}
@@ -725,7 +725,7 @@ export default function PortalLeadsPage() {
               </select>
             </div>
             <div className="w-full sm:w-[200px] space-y-1.5">
-              <Label className="text-xs text-slate-600">Řazení podle data přijetí</Label>
+              <Label className="text-xs text-slate-800">Řazení podle data přijetí</Label>
               <select
                 className={NATIVE_SELECT_CLASS}
                 value={sortOrder}
@@ -763,7 +763,7 @@ export default function PortalLeadsPage() {
               ) : null}
             </div>
           </div>
-          <p className="text-xs text-slate-600">
+          <p className="text-xs text-slate-800">
             Automatické obnovení každých 5 minut. Pole „typ“ se bere z importního JSON (např. typ, type,
             kategorie, productType) — záleží na vašem zdroji.
           </p>
@@ -810,7 +810,7 @@ export default function PortalLeadsPage() {
                 ))}
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                <Label className="text-xs text-slate-600">Vlastní barva</Label>
+                <Label className="text-xs text-slate-800">Vlastní barva</Label>
                 <input
                   type="color"
                   value={newTagColor}
@@ -826,7 +826,7 @@ export default function PortalLeadsPage() {
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : tags.length === 0 ? (
-              <p className="text-sm text-slate-600">Zatím nemáte žádné štítky — vytvořte první výše.</p>
+              <p className="text-sm text-slate-800">Zatím nemáte žádné štítky — vytvořte první výše.</p>
             ) : (
               <ul className="divide-y rounded-md border border-slate-200 max-h-[280px] overflow-y-auto">
                 {tags.map((t) => (
@@ -893,7 +893,7 @@ export default function PortalLeadsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label className="text-xs text-slate-600">Barva</Label>
+              <Label className="text-xs text-slate-800">Barva</Label>
               <div className="flex flex-wrap gap-1.5">
                 {LEAD_TAG_COLOR_PRESETS.map((p) => (
                   <button
@@ -1043,7 +1043,7 @@ export default function PortalLeadsPage() {
       <Card className="overflow-hidden border-slate-200 shadow-sm">
         <CardContent className="p-0">
           {loading && rows.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-600">
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-slate-800">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <p className="text-sm">Načítám poptávky…</p>
             </div>
@@ -1068,11 +1068,11 @@ export default function PortalLeadsPage() {
                 </Alert>
               ) : null}
               {rows.length === 0 ? (
-                <p className="py-16 text-center text-sm text-slate-600">
+                <p className="py-16 text-center text-sm text-slate-800">
                   Žádné poptávky nebyly nalezeny.
                 </p>
               ) : filteredRows.length === 0 ? (
-                <p className="py-16 text-center text-sm text-slate-600">
+                <p className="py-16 text-center text-sm text-slate-800">
                   Žádné záznamy neodpovídají filtru.
                 </p>
               ) : (
@@ -1109,7 +1109,7 @@ export default function PortalLeadsPage() {
                         >
                           <ChevronDown
                             className={cn(
-                              "mt-0.5 h-4 w-4 shrink-0 text-slate-600 transition-transform duration-200 lg:mt-0",
+                              "mt-0.5 h-4 w-4 shrink-0 text-slate-800 transition-transform duration-200 lg:mt-0",
                               expanded && "rotate-180"
                             )}
                             aria-hidden
@@ -1120,13 +1120,13 @@ export default function PortalLeadsPage() {
                                 <span className="max-w-full truncate font-medium text-slate-900">
                                   {r.jmeno || "—"}
                                 </span>
-                                <span className="shrink-0 text-xs tabular-nums text-slate-600">
+                                <span className="shrink-0 text-xs tabular-nums text-slate-800">
                                   {dateStr}
                                 </span>
                               </div>
                               <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-700 sm:text-sm">
                                 <span className="tabular-nums">{r.telefon || "—"}</span>
-                                <span className="min-w-0 break-all text-slate-600 lg:max-w-none lg:truncate">
+                                <span className="min-w-0 break-all text-slate-800 lg:max-w-none lg:truncate">
                                   {r.email || "—"}
                                 </span>
                               </div>
@@ -1139,7 +1139,7 @@ export default function PortalLeadsPage() {
                                     {r.typ}
                                   </Badge>
                                 ) : (
-                                  <span className="text-[10px] text-slate-600 sm:text-xs">—</span>
+                                  <span className="text-[10px] text-slate-800 sm:text-xs">—</span>
                                 )}
                                 {currentTag && tagById.get(currentTag) ? (
                                   <LeadTagBadge
@@ -1148,7 +1148,7 @@ export default function PortalLeadsPage() {
                                     className="max-w-[10rem] sm:max-w-[14rem]"
                                   />
                                 ) : (
-                                  <span className="text-[10px] text-slate-600 sm:text-xs">Bez štítku</span>
+                                  <span className="text-[10px] text-slate-800 sm:text-xs">Bez štítku</span>
                                 )}
                                 {nextMt ? (
                                   <span
@@ -1201,7 +1201,7 @@ export default function PortalLeadsPage() {
                             <div className="mx-auto max-w-4xl space-y-4">
                               {r.adresa?.trim() ? (
                                 <div className="space-y-1">
-                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
                                     Adresa
                                   </p>
                                   <p className="whitespace-pre-wrap text-sm text-slate-800">{r.adresa}</p>
@@ -1209,7 +1209,7 @@ export default function PortalLeadsPage() {
                               ) : null}
                               {r.zprava?.trim() ? (
                                 <div className="space-y-1">
-                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
                                     Text poptávky
                                   </p>
                                   <p className="whitespace-pre-wrap text-sm text-slate-700">{r.zprava}</p>
@@ -1217,7 +1217,7 @@ export default function PortalLeadsPage() {
                               ) : null}
                               {r.orientacniCenaKc != null && Number.isFinite(r.orientacniCenaKc) ? (
                                 <div className="space-y-1">
-                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-600">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
                                     Orientační cena
                                   </p>
                                   <p className="text-sm text-slate-800">
@@ -1237,7 +1237,7 @@ export default function PortalLeadsPage() {
                                 </div>
                               ) : null}
                               <div className="space-y-2 border-t border-slate-200/80 pt-3">
-                                <Label className="text-xs text-slate-600">Štítek</Label>
+                                <Label className="text-xs text-slate-800">Štítek</Label>
                                 <Select
                                   value={currentTag || "__none__"}
                                   onValueChange={(v) =>
@@ -1271,7 +1271,7 @@ export default function PortalLeadsPage() {
                                 ) : null}
                               </div>
                               <div className="space-y-2 border-t border-slate-200/80 pt-3">
-                                <Label className="text-xs text-slate-600">Interní poznámka</Label>
+                                <Label className="text-xs text-slate-800">Interní poznámka</Label>
                                 <Textarea
                                   rows={2}
                                   className="min-h-[4rem] resize-y text-sm"

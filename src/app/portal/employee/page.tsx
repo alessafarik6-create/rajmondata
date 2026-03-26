@@ -227,7 +227,7 @@ export default function EmployeeHomePage() {
 
   if (isUserLoading || !user) {
     return (
-      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-800">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">Ověřujeme přihlášení…</p>
       </div>
@@ -236,7 +236,7 @@ export default function EmployeeHomePage() {
 
   if (isProfileLoading) {
     return (
-      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-600">
+      <div className="flex min-h-[30vh] flex-col items-center justify-center gap-3 text-slate-800">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
         <p className="text-sm">Načítání profilu…</p>
       </div>

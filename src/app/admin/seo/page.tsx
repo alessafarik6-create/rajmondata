@@ -71,7 +71,7 @@ export default function AdminSeoPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold text-slate-900 sm:text-3xl">SEO</h1>
-        <p className="mt-1 text-slate-600">Meta tagy a texty pro veřejnou stránku.</p>
+        <p className="mt-1 text-slate-800">Meta tagy a texty pro veřejnou stránku.</p>
       </div>
 
       <Card>
