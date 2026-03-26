@@ -29,6 +29,7 @@ import {
   companyDocumentRefForJobLegacyPhoto,
 } from "@/lib/job-linked-document-sync";
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
+import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoices-section";
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
 import {
@@ -4870,6 +4871,32 @@ export default function JobDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {companyId && jobId ? (
+            <JobBillingInvoicesSection
+              companyId={companyId}
+              jobId={String(jobId)}
+              job={job as Record<string, unknown>}
+              jobName={
+                job?.name != null && String(job.name).trim() !== ""
+                  ? String(job.name).trim()
+                  : "Zakázka"
+              }
+              customerId={job?.customerId as string | undefined}
+              customerName={jobCustomerAddressBlock.displayName}
+              customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
+              jobBudgetBreakdown={jobBudgetBreakdown}
+              workContractsForJob={workContractsForJob}
+              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
+              companyDisplayName={
+                companyNameFromDoc ||
+                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
+                "Organizace"
+              }
+              user={user}
+              canManage={canManageFolders}
+            />
+          ) : null}
 
           <Card className="bg-surface border-border">
             <CardHeader>

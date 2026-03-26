@@ -32,6 +32,18 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
+
+function openInvoicePrint(inv: Record<string, unknown>) {
+  const html = inv.pdfHtml;
+  if (typeof html !== "string" || !html.trim()) return;
+  const w = window.open("", "_blank", "noopener,noreferrer");
+  if (!w) return;
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+  w.document.title = String(inv.invoiceNumber || inv.documentNumber || "Doklad");
+}
 
 export default function InvoicesPage() {
   const { user } = useUser();
@@ -73,12 +85,21 @@ export default function InvoicesPage() {
     }
   };
 
+  const docTypeLabel = (inv: Record<string, unknown>) => {
+    const t = String(inv.type ?? "");
+    if (t === JOB_INVOICE_TYPES.ADVANCE) return "Zálohová faktura";
+    if (t === JOB_INVOICE_TYPES.TAX_RECEIPT) return "Daňový doklad (platba)";
+    return "Faktura";
+  };
+
   const getStatusBadge = (status: string) => {
     switch(status) {
       case 'paid': return <Badge className="bg-emerald-600">Zaplaceno</Badge>;
+      case 'partially_paid': return <Badge variant="secondary">Částečně uhrazeno</Badge>;
+      case 'unpaid': return <Badge variant="outline">Neuhrazeno</Badge>;
       case 'sent': return <Badge variant="secondary" className="bg-blue-600 text-white">Odesláno</Badge>;
       case 'draft': return <Badge variant="outline">Draft</Badge>;
-      default: return <Badge variant="outline">{status}</Badge>;
+      default: return <Badge variant="outline">{status || "—"}</Badge>;
     }
   };
 
@@ -142,20 +163,31 @@ export default function InvoicesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {invoices.map((inv) => (
+                {invoices.map((inv) => {
+                  const row = inv as Record<string, unknown> & { id: string };
+                  const num = String(row.invoiceNumber ?? row.documentNumber ?? "—");
+                  const total =
+                    typeof row.totalAmount === "number"
+                      ? row.totalAmount
+                      : Number(row.amountGross ?? row.paidAmount ?? 0);
+                  const dueOrPay =
+                    String(row.dueDate ?? row.paymentDate ?? "—");
+                  const jobId = row.jobId ? String(row.jobId) : "";
+                  return (
                   <TableRow key={inv.id} className="border-border hover:bg-muted/30">
-                    <TableCell className="pl-6 font-bold">{inv.invoiceNumber}</TableCell>
-                    <TableCell>{getCustomerName(inv.customerId)}</TableCell>
+                    <TableCell className="pl-6 font-bold">{num}</TableCell>
+                    <TableCell className="text-sm">{docTypeLabel(row)}</TableCell>
+                    <TableCell>{getCustomerName(String(inv.customerId ?? ""))}</TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5 text-xs">
                         <Clock className="w-3 h-3 text-muted-foreground" />
-                        {inv.dueDate}
+                        {dueOrPay}
                       </div>
                     </TableCell>
                     <TableCell className="text-right font-bold text-primary">
-                      {inv.totalAmount?.toLocaleString()} Kč
+                      {Number.isFinite(total) ? total.toLocaleString("cs-CZ") : "—"} Kč
                     </TableCell>
-                    <TableCell>{getStatusBadge(inv.status)}</TableCell>
+                    <TableCell>{getStatusBadge(String(inv.status ?? ""))}</TableCell>
                     <TableCell className="pr-6 text-right">
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
@@ -163,15 +195,19 @@ export default function InvoicesPage() {
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuLabel>Možnosti</DropdownMenuLabel>
-                          <DropdownMenuItem asChild>
-                            <Link href={`/portal/invoices/${inv.id}`}>
-                              <ExternalLink className="w-4 h-4 mr-2" /> Zobrazit detail
-                            </Link>
+                          {jobId ? (
+                            <DropdownMenuItem asChild>
+                              <Link href={`/portal/jobs/${jobId}`}>
+                                <ExternalLink className="w-4 h-4 mr-2" /> Otevřít zakázku
+                              </Link>
+                            </DropdownMenuItem>
+                          ) : null}
+                          <DropdownMenuItem onClick={() => openInvoicePrint(row)}>
+                            <Printer className="w-4 h-4 mr-2" /> Tisk / PDF
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => window.print()}>
-                            <Printer className="w-4 h-4 mr-2" /> Tisknout PDF
-                          </DropdownMenuItem>
-                          {inv.status !== 'paid' && (
+                          {row.type !== JOB_INVOICE_TYPES.ADVANCE &&
+                            row.type !== JOB_INVOICE_TYPES.TAX_RECEIPT &&
+                            inv.status !== "paid" && (
                             <>
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => markAsPaid(inv.id)} className="text-emerald-500 font-bold">
@@ -183,7 +219,8 @@ export default function InvoicesPage() {
                       </DropdownMenu>
                     </TableCell>
                   </TableRow>
-                ))}
+                );
+                })}
               </TableBody>
             </Table>
           ) : (
