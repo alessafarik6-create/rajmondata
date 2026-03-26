@@ -48,7 +48,6 @@ import {
   query,
   where,
   getDocs,
-  setDoc,
 } from "firebase/firestore";
 import {
   Dialog,
@@ -319,39 +318,84 @@ function JobsPageContent() {
         "customers"
       );
 
-      let customerId = newJob.customerId || "";
+      let customerId = "";
       let customerSnapshot: any | null = null;
+      const customerFromList = Boolean(newJob.customerId?.trim());
 
-      if (
-        !customerId &&
-        (newJob.quickCustomerEmail ||
-          newJob.quickCustomerPhone ||
-          newJob.quickCustomerName)
-      ) {
+      if (customerFromList) {
+        customerId = newJob.customerId.trim();
+        customerSnapshot =
+          customers.find((c: { id?: string }) => c.id === customerId) ?? null;
+      } else {
+        const qName = newJob.quickCustomerName.trim();
+        const qAddr = newJob.quickCustomerAddress.trim();
+        const budgetEarly = newJob.budget.trim();
+
+        if (!qName) {
+          toast({
+            variant: "destructive",
+            title: "Zákazník",
+            description:
+              "Vyberte zákazníka ze seznamu, nebo vyplňte název firmy / jméno pro nového zákazníka.",
+          });
+          setIsSubmitting(false);
+          return;
+        }
+        if (!qAddr) {
+          toast({
+            variant: "destructive",
+            title: "Adresa",
+            description:
+              "Při zadání nového zákazníka ručně je adresa povinná.",
+          });
+          setIsSubmitting(false);
+          return;
+        }
+        if (!budgetEarly) {
+          toast({
+            variant: "destructive",
+            title: "Rozpočet",
+            description:
+              "Při zadání nového zákazníka ručně je rozpočet zakázky povinný.",
+          });
+          setIsSubmitting(false);
+          return;
+        }
+        const budgetNumEarly = Math.round(Number(budgetEarly));
+        if (!Number.isFinite(budgetNumEarly) || budgetNumEarly <= 0) {
+          toast({
+            variant: "destructive",
+            title: "Rozpočet",
+            description: "Zadejte platnou částku větší než 0.",
+          });
+          setIsSubmitting(false);
+          return;
+        }
+
         const candidates: any[] = [];
 
-        if (newJob.quickCustomerEmail) {
+        if (newJob.quickCustomerEmail?.trim()) {
           const q = query(
             customersColRef,
-            where("email", "==", newJob.quickCustomerEmail)
+            where("email", "==", newJob.quickCustomerEmail.trim())
           );
           const snap = await getDocs(q);
           snap.forEach((d) => candidates.push({ id: d.id, ...d.data() }));
         }
 
-        if (!candidates.length && newJob.quickCustomerPhone) {
+        if (!candidates.length && newJob.quickCustomerPhone?.trim()) {
           const q = query(
             customersColRef,
-            where("phone", "==", newJob.quickCustomerPhone)
+            where("phone", "==", newJob.quickCustomerPhone.trim())
           );
           const snap = await getDocs(q);
           snap.forEach((d) => candidates.push({ id: d.id, ...d.data() }));
         }
 
-        if (!candidates.length && newJob.quickCustomerName) {
+        if (!candidates.length && qName) {
           const q = query(
             customersColRef,
-            where("companyName", "==", newJob.quickCustomerName)
+            where("companyName", "==", qName)
           );
           const snap = await getDocs(q);
           snap.forEach((d) => candidates.push({ id: d.id, ...d.data() }));
@@ -361,35 +405,32 @@ function JobsPageContent() {
           customerSnapshot = candidates[0];
           customerId = customerSnapshot.id;
         } else {
-          const newCustomerRef = doc(customersColRef);
-          customerId = newCustomerRef.id;
           const customerPayload = {
-            companyName: newJob.quickCustomerName || "",
-            email: newJob.quickCustomerEmail || "",
-            phone: newJob.quickCustomerPhone || "",
-            address: newJob.quickCustomerAddress || "",
-            notes: newJob.quickCustomerNotes || "",
+            companyName: qName,
+            email: newJob.quickCustomerEmail.trim() || "",
+            phone: newJob.quickCustomerPhone.trim() || "",
+            address: qAddr,
+            notes: newJob.quickCustomerNotes.trim() || "",
             companyId,
+            organizationId: companyId,
+            createdBy: user.uid,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           };
-          await setDoc(newCustomerRef, customerPayload);
+          const newRef = await addDoc(customersColRef, customerPayload);
+          customerId = newRef.id;
           customerSnapshot = { id: customerId, ...customerPayload };
 
           toast({
             title: "Zákazník vytvořen",
-            description:
-              customerPayload.companyName ||
-              customerPayload.email ||
-              customerPayload.phone ||
-              "Nový zákazník byl přidán.",
+            description: `„${qName}“ je uložen v adresáři zákazníků a propojen s touto zakázkou.`,
           });
         }
       }
 
       const customerName =
         customerSnapshot?.companyName ||
-        newJob.quickCustomerName ||
+        newJob.quickCustomerName.trim() ||
         (customerSnapshot
           ? `${customerSnapshot.firstName || ""} ${
               customerSnapshot.lastName || ""
@@ -443,9 +484,13 @@ function JobsPageContent() {
         customerId: customerId || null,
         customerName,
         customerPhone:
-          customerSnapshot?.phone || newJob.quickCustomerPhone || "",
+          customerSnapshot?.phone ||
+          newJob.quickCustomerPhone?.trim() ||
+          "",
         customerEmail:
-          customerSnapshot?.email || newJob.quickCustomerEmail || "",
+          customerSnapshot?.email ||
+          newJob.quickCustomerEmail?.trim() ||
+          "",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };
@@ -643,13 +688,43 @@ function JobsPageContent() {
                   <DialogHeader className="shrink-0">
                     <DialogTitle>Vytvořit novou zakázku</DialogTitle>
                     <DialogDescription>
-                      Zadejte základní informace o novém projektu.
+                      Zadejte základní informace o novém projektu. Zákazníka
+                      vyberte ze seznamu, nebo vyplňte údaje níže — vznikne nový
+                      záznam v sekci Zákazníci.
                     </DialogDescription>
                   </DialogHeader>
                   <form
                     onSubmit={handleCreateJob}
                     className="space-y-4 py-4 pr-1 sm:pr-0 flex-1 overflow-y-auto"
                   >
+                    {!newJob.customerId &&
+                    newJob.quickCustomerName.trim().length > 0 ? (
+                      <Alert className="border-emerald-200 bg-emerald-50/90 text-emerald-950 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-100">
+                        <AlertTitle className="text-sm">
+                          Nový zákazník
+                        </AlertTitle>
+                        <AlertDescription className="text-xs sm:text-sm">
+                          Po uložení bude zákazník vytvořen v adresáři a propojen
+                          s touto zakázkou. Vyplňte povinně jméno, adresu a
+                          rozpočet.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                    {!newJob.customerId &&
+                    !newJob.quickCustomerName.trim() &&
+                    !newJob.quickCustomerAddress.trim() &&
+                    !newJob.budget.trim() ? (
+                      <Alert>
+                        <AlertTitle className="text-sm">
+                          Bez výběru ze seznamu
+                        </AlertTitle>
+                        <AlertDescription className="text-xs sm:text-sm">
+                          Pokud není vybrán zákazník v poli výše, vyplňte v sekci
+                          „Rychlé údaje o zákazníkovi“ název, adresu a rozpočet —
+                          jinak zakázku nelze uložit.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
                     {templatesList.length > 0 && (
                       <div className="space-y-2">
                         <Label htmlFor="new-job-template">
@@ -808,7 +883,10 @@ function JobsPageContent() {
                         </select>
                       </div>
                       <div className="space-y-2">
-                        <Label htmlFor="budget">Rozpočet (Kč)</Label>
+                        <Label htmlFor="budget">
+                          Rozpočet (Kč)
+                          {newJob.customerId ? "" : " *"}
+                        </Label>
                         <Input
                           id="budget"
                           type="number"
@@ -822,9 +900,12 @@ function JobsPageContent() {
                               : "Částka bez DPH"
                           }
                           min={1}
+                          required={!newJob.customerId}
                         />
                         <p className="text-xs text-muted-foreground">
-                          Volitelné. Hodnota odpovídá typu ceny.
+                          {newJob.customerId
+                            ? "Volitelné. Hodnota odpovídá typu ceny."
+                            : "Povinné při ručním zadání zákazníka. Hodnota odpovídá typu ceny."}
                         </p>
                       </div>
                       <div className="space-y-2">
@@ -898,7 +979,10 @@ function JobsPageContent() {
                             />
                           </div>
                           <div className="space-y-2 col-span-2">
-                            <Label htmlFor="quickCustomerAddress">Adresa</Label>
+                            <Label htmlFor="quickCustomerAddress">
+                              Adresa
+                              {!newJob.customerId ? " *" : ""}
+                            </Label>
                             <Input
                               id="quickCustomerAddress"
                               value={newJob.quickCustomerAddress}
@@ -908,6 +992,8 @@ function JobsPageContent() {
                                   quickCustomerAddress: e.target.value,
                                 })
                               }
+                              placeholder="Ulice, město, PSČ"
+                              required={!newJob.customerId}
                             />
                           </div>
                           <div className="space-y-2 col-span-2">
