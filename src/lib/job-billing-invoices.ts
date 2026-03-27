@@ -37,6 +37,7 @@ import {
 import { allocateNextDocumentNumber } from "@/lib/invoice-number-series";
 import {
   type OrgBankAccountRow,
+  buildInvoicePaymentQr,
   formatBankBlockPlainLines,
   formatCustomerPartyLines,
   formatSupplierPartyLines,
@@ -61,7 +62,9 @@ export type JobInvoiceType =
 export type WorkContractLike = {
   id: string;
   contractNumber?: string | null;
-  /** Odběratel dle smlouvy o dílo */
+  /** Objednatel dle smlouvy o dílo */
+  client?: string | null;
+  /** Dodavatel (firma) dle smlouvy — nepoužívat jako odběratele faktury. */
   contractor?: string | null;
   bankAccountId?: string | null;
   bankAccountNumber?: string | null;
@@ -70,6 +73,13 @@ export type WorkContractLike = {
   zalohovaCastka?: string | number | null;
   zalohovaProcenta?: string | number | null;
 };
+
+function paymentMessageForInvoice(invoiceNumber: string, jobName: string): string {
+  const inv = String(invoiceNumber || "").trim();
+  const job = String(jobName || "").trim();
+  if (inv && job) return `${inv} - ${job}`;
+  return inv || job || "Platba faktury";
+}
 
 function numStr(v: unknown): string {
   if (v == null) return "";
@@ -267,6 +277,8 @@ export async function createAdvanceInvoiceFromContract(params: {
   customerId: string;
   customerName: string;
   customerAddressLines: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
   supplierName: string;
   supplierAddressLines: string;
   contract: WorkContractLike;
@@ -330,15 +342,20 @@ export async function createAdvanceInvoiceFromContract(params: {
   const bankText = formatBankBlockPlainLines(bankSnap);
 
   const recipient = resolveInvoiceRecipient({
-    contractContractor: params.contract.contractor,
+    contractCustomerBlock: params.contract.client,
     fallbackCustomerName: params.customerName,
     customerAddressLines: params.customerAddressLines,
+    customerPhone: params.customerPhone,
+    customerEmail: params.customerEmail,
     customerIco: params.customerIco,
     customerDic: params.customerDic,
+    supplierNameToAvoid: params.supplierName,
   });
   const customerParty = formatCustomerPartyLines(
     recipient.customerName,
     recipient.customerAddressLines,
+    recipient.customerPhone,
+    recipient.customerEmail,
     recipient.customerIco,
     recipient.customerDic
   );
@@ -356,6 +373,14 @@ export async function createAdvanceInvoiceFromContract(params: {
     vatAmount,
     amountGross,
   });
+  const qr = buildInvoicePaymentQr({
+    iban: bankSnap.iban,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    amountGross,
+    variableSymbol: vs,
+    message: paymentMessageForInvoice(invoiceNumber, params.jobName),
+  });
 
   const html = buildAdvanceInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
@@ -372,6 +397,9 @@ export async function createAdvanceInvoiceFromContract(params: {
     contractNumber: params.contract.contractNumber != null ? String(params.contract.contractNumber) : null,
     variableSymbol: vs,
     bankAccountText: bankText,
+    paymentDueDate: dueDate,
+    paymentQrUrl: qr?.warning ? null : qr?.qrUrl ?? null,
+    paymentQrWarning: qr?.warning ?? null,
     items: [lineRow],
     amountNet,
     vatAmount,
@@ -398,6 +426,9 @@ export async function createAdvanceInvoiceFromContract(params: {
       jobId: params.jobId,
       customerId: params.customerId,
       customerName: recipient.customerName,
+      customerAddressLines: recipient.customerAddressLines,
+      customerPhone: recipient.customerPhone,
+      customerEmail: recipient.customerEmail,
       amountNet,
       vatAmount,
       amountGross,
@@ -458,6 +489,8 @@ export async function createManualAdvanceInvoice(params: {
   customerId: string;
   customerName: string;
   customerAddressLines: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
   supplierName: string;
   supplierAddressLines: string;
   userId: string;
@@ -509,15 +542,20 @@ export async function createManualAdvanceInvoice(params: {
   const bankText = formatBankBlockPlainLines(bankSnap);
 
   const recipient = resolveInvoiceRecipient({
-    contractContractor: c?.contractor,
+    contractCustomerBlock: c?.client,
     fallbackCustomerName: params.customerName,
     customerAddressLines: params.customerAddressLines,
+    customerPhone: params.customerPhone,
+    customerEmail: params.customerEmail,
     customerIco: params.customerIco,
     customerDic: params.customerDic,
+    supplierNameToAvoid: params.supplierName,
   });
   const customerParty = formatCustomerPartyLines(
     recipient.customerName,
     recipient.customerAddressLines,
+    recipient.customerPhone,
+    recipient.customerEmail,
     recipient.customerIco,
     recipient.customerDic
   );
@@ -529,6 +567,14 @@ export async function createManualAdvanceInvoice(params: {
   });
 
   const allSameVat = rows.every((r) => r.vatRate === rows[0].vatRate);
+  const qr = buildInvoicePaymentQr({
+    iban: bankSnap.iban,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    amountGross,
+    variableSymbol: vs,
+    message: paymentMessageForInvoice(invoiceNumber, params.jobName),
+  });
 
   const html = buildAdvanceInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
@@ -545,6 +591,9 @@ export async function createManualAdvanceInvoice(params: {
     contractNumber: c?.contractNumber != null ? String(c.contractNumber) : null,
     variableSymbol: vs,
     bankAccountText: bankText,
+    paymentDueDate: dueDate,
+    paymentQrUrl: qr?.warning ? null : qr?.qrUrl ?? null,
+    paymentQrWarning: qr?.warning ?? null,
     items: rows,
     amountNet,
     vatAmount,
@@ -572,6 +621,9 @@ export async function createManualAdvanceInvoice(params: {
       jobId: params.jobId,
       customerId: params.customerId,
       customerName: recipient.customerName,
+      customerAddressLines: recipient.customerAddressLines,
+      customerPhone: recipient.customerPhone,
+      customerEmail: recipient.customerEmail,
       amountNet,
       vatAmount,
       amountGross,
@@ -626,6 +678,8 @@ export async function updateAdvanceInvoiceItems(params: {
   jobName: string;
   customerName: string;
   customerAddressLines: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
   supplierName: string;
   supplierAddressLines: string;
   userId: string;
@@ -715,19 +769,38 @@ export async function updateAdvanceInvoiceItems(params: {
     ico: supIco,
     dic: supDic,
   });
+  const recipient = resolveInvoiceRecipient({
+    fallbackCustomerName: params.customerName,
+    customerAddressLines: params.customerAddressLines,
+    customerPhone: params.customerPhone,
+    customerEmail: params.customerEmail,
+    customerIco: custIco,
+    customerDic: custDic,
+    supplierNameToAvoid: params.supplierName,
+  });
   const customerParty = formatCustomerPartyLines(
-    params.customerName,
-    params.customerAddressLines,
-    custIco,
-    custDic
+    recipient.customerName,
+    recipient.customerAddressLines,
+    recipient.customerPhone,
+    recipient.customerEmail,
+    recipient.customerIco,
+    recipient.customerDic
   );
+  const qr = buildInvoicePaymentQr({
+    iban: bankSnap.iban,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    amountGross,
+    variableSymbol: vs,
+    message: paymentMessageForInvoice(invoiceNumber, params.jobName),
+  });
 
   const html = buildAdvanceInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
     title: "Zálohová faktura",
     supplierName: params.supplierName,
     supplierAddressText: supplierParty,
-    customerName: params.customerName,
+    customerName: recipient.customerName,
     customerAddressText: customerParty,
     invoiceNumber,
     issueDate,
@@ -740,6 +813,9 @@ export async function updateAdvanceInvoiceItems(params: {
         : null,
     variableSymbol: vs,
     bankAccountText: bankText,
+    paymentDueDate: dueDate,
+    paymentQrUrl: qr?.warning ? null : qr?.qrUrl ?? null,
+    paymentQrWarning: qr?.warning ?? null,
     items: rows,
     amountNet,
     vatAmount,
@@ -760,11 +836,14 @@ export async function updateAdvanceInvoiceItems(params: {
     issueDate,
     dueDate,
     taxSupplyDate,
-    customerName: params.customerName,
+    customerName: recipient.customerName,
+    customerAddressLines: recipient.customerAddressLines,
+    customerPhone: recipient.customerPhone,
+    customerEmail: recipient.customerEmail,
     supplierIco: supIco,
     supplierDic: supDic,
-    customerIco: custIco,
-    customerDic: custDic,
+    customerIco: recipient.customerIco,
+    customerDic: recipient.customerDic,
     bankAccountId: bankSnap.bankAccountId,
     bankAccountNumber: bankSnap.bankAccountNumber,
     bankCode: bankSnap.bankCode,
@@ -786,6 +865,8 @@ export async function createTaxReceiptForAdvancePayment(params: {
   customerId: string;
   customerName: string;
   customerAddressLines: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
   supplierName: string;
   supplierAddressLines: string;
   advanceInvoiceId: string;
@@ -874,15 +955,19 @@ export async function createTaxReceiptForAdvancePayment(params: {
   const bankText = formatBankBlockPlainLines(bankSnap);
 
   const recipient = resolveInvoiceRecipient({
-    contractContractor: null,
     fallbackCustomerName: params.customerName,
     customerAddressLines: params.customerAddressLines,
+    customerPhone: params.customerPhone,
+    customerEmail: params.customerEmail,
     customerIco: params.customerIco,
     customerDic: params.customerDic,
+    supplierNameToAvoid: params.supplierName,
   });
   const customerParty = formatCustomerPartyLines(
     recipient.customerName,
     recipient.customerAddressLines,
+    recipient.customerPhone,
+    recipient.customerEmail,
     recipient.customerIco,
     recipient.customerDic
   );
@@ -893,6 +978,14 @@ export async function createTaxReceiptForAdvancePayment(params: {
     dic: params.supplierDic,
   });
 
+  const qr = buildInvoicePaymentQr({
+    iban: bankSnap.iban,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    amountGross,
+    variableSymbol: vs,
+    message: paymentMessageForInvoice(documentNumber, params.jobName),
+  });
   const html = buildTaxReceiptHtml({
     logoUrl: params.logoUrl ?? null,
     supplierName: params.supplierName,
@@ -911,6 +1004,8 @@ export async function createTaxReceiptForAdvancePayment(params: {
     amountGross,
     variableSymbol: vs,
     bankAccountText: bankText,
+    paymentQrUrl: qr?.warning ? null : qr?.qrUrl ?? null,
+    paymentQrWarning: qr?.warning ?? null,
     note: params.note,
   });
 
@@ -973,6 +1068,9 @@ export async function createTaxReceiptForAdvancePayment(params: {
       relatedInvoiceId: params.advanceInvoiceId,
       customerId: params.customerId,
       customerName: recipient.customerName,
+      customerAddressLines: recipient.customerAddressLines,
+      customerPhone: recipient.customerPhone,
+      customerEmail: recipient.customerEmail,
       paidAmount: amountGross,
       issueDate,
       taxSupplyDate,
@@ -1171,6 +1269,8 @@ export async function createFinalSettlementInvoice(params: {
   customerId: string;
   customerName: string;
   customerAddressLines: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
   supplierName: string;
   supplierAddressLines: string;
   logoUrl?: string | null;
@@ -1268,15 +1368,20 @@ export async function createFinalSettlementInvoice(params: {
   const bankText = formatBankBlockPlainLines(bankSnap);
 
   const recipient = resolveInvoiceRecipient({
-    contractContractor: primaryContract?.contractor,
+    contractCustomerBlock: primaryContract?.client,
     fallbackCustomerName: params.customerName,
     customerAddressLines: params.customerAddressLines,
+    customerPhone: params.customerPhone,
+    customerEmail: params.customerEmail,
     customerIco: params.customerIco,
     customerDic: params.customerDic,
+    supplierNameToAvoid: params.supplierName,
   });
   const customerParty = formatCustomerPartyLines(
     recipient.customerName,
     recipient.customerAddressLines,
+    recipient.customerPhone,
+    recipient.customerEmail,
     recipient.customerIco,
     recipient.customerDic
   );
@@ -1287,6 +1392,14 @@ export async function createFinalSettlementInvoice(params: {
     dic: params.supplierDic,
   });
 
+  const qr = buildInvoicePaymentQr({
+    iban: bankSnap.iban,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    amountGross,
+    variableSymbol: vs,
+    message: paymentMessageForInvoice(invoiceNumber, params.jobName),
+  });
   const html = buildFinalSettlementInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
     supplierName: params.supplierName,
@@ -1304,6 +1417,9 @@ export async function createFinalSettlementInvoice(params: {
         : null,
     variableSymbol: vs,
     bankAccountText: bankText,
+    paymentDueDate: dueDate,
+    paymentQrUrl: qr?.warning ? null : qr?.qrUrl ?? null,
+    paymentQrWarning: qr?.warning ?? null,
     totalContractGross: settlement.totalContractGross,
     advanceRows:
       settlement.advanceRowsForHtml.length > 0
@@ -1338,6 +1454,9 @@ export async function createFinalSettlementInvoice(params: {
       jobId: params.jobId,
       customerId: params.customerId,
       customerName: recipient.customerName,
+      customerAddressLines: recipient.customerAddressLines,
+      customerPhone: recipient.customerPhone,
+      customerEmail: recipient.customerEmail,
       amountNet,
       vatAmount,
       amountGross,
@@ -1394,6 +1513,8 @@ export async function updateFinalSettlementInvoice(params: {
   jobName: string;
   customerName: string;
   customerAddressLines: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
   supplierName: string;
   supplierAddressLines: string;
   userId: string;
@@ -1483,11 +1604,22 @@ export async function updateFinalSettlementInvoice(params: {
     ico: supIco,
     dic: supDic,
   });
+  const recipient = resolveInvoiceRecipient({
+    fallbackCustomerName: params.customerName,
+    customerAddressLines: params.customerAddressLines,
+    customerPhone: params.customerPhone,
+    customerEmail: params.customerEmail,
+    customerIco: custIco,
+    customerDic: custDic,
+    supplierNameToAvoid: params.supplierName,
+  });
   const customerParty = formatCustomerPartyLines(
-    params.customerName,
-    params.customerAddressLines,
-    custIco,
-    custDic
+    recipient.customerName,
+    recipient.customerAddressLines,
+    recipient.customerPhone,
+    recipient.customerEmail,
+    recipient.customerIco,
+    recipient.customerDic
   );
 
   const advanceRows: SettlementAdvanceRow[] = [
@@ -1496,12 +1628,20 @@ export async function updateFinalSettlementInvoice(params: {
       amountGross: roundMoney2(params.totalAdvancePaid),
     },
   ];
+  const qr = buildInvoicePaymentQr({
+    iban: bankSnap.iban,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    amountGross,
+    variableSymbol: vs,
+    message: paymentMessageForInvoice(invoiceNumber, params.jobName),
+  });
 
   const html = buildFinalSettlementInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
     supplierName: params.supplierName,
     supplierAddressText: supplierParty,
-    customerName: params.customerName,
+    customerName: recipient.customerName,
     customerAddressText: customerParty,
     invoiceNumber,
     issueDate,
@@ -1514,6 +1654,9 @@ export async function updateFinalSettlementInvoice(params: {
         : null,
     variableSymbol: vs,
     bankAccountText: bankText,
+    paymentDueDate: dueDate,
+    paymentQrUrl: qr?.warning ? null : qr?.qrUrl ?? null,
+    paymentQrWarning: qr?.warning ?? null,
     totalContractGross: roundMoney2(params.totalContractGross),
     advanceRows,
     totalAdvancePaid: roundMoney2(params.totalAdvancePaid),
@@ -1544,11 +1687,14 @@ export async function updateFinalSettlementInvoice(params: {
     issueDate,
     dueDate,
     taxSupplyDate,
-    customerName: params.customerName,
+    customerName: recipient.customerName,
+    customerAddressLines: recipient.customerAddressLines,
+    customerPhone: recipient.customerPhone,
+    customerEmail: recipient.customerEmail,
     supplierIco: supIco,
     supplierDic: supDic,
-    customerIco: custIco,
-    customerDic: custDic,
+    customerIco: recipient.customerIco,
+    customerDic: recipient.customerDic,
     bankAccountId: bankSnap.bankAccountId,
     bankAccountNumber: bankSnap.bankAccountNumber,
     bankCode: bankSnap.bankCode,
@@ -1569,6 +1715,8 @@ export async function updateTaxReceiptDocument(params: {
   jobName: string;
   customerName: string;
   customerAddressLines: string;
+  customerPhone?: string | null;
+  customerEmail?: string | null;
   supplierName: string;
   supplierAddressLines: string;
   userId: string;
@@ -1667,15 +1815,19 @@ export async function updateTaxReceiptDocument(params: {
   const bankText = formatBankBlockPlainLines(bankSnap);
 
   const recipient = resolveInvoiceRecipient({
-    contractContractor: null,
     fallbackCustomerName: params.customerName,
     customerAddressLines: params.customerAddressLines,
+    customerPhone: params.customerPhone,
+    customerEmail: params.customerEmail,
     customerIco: custIco,
     customerDic: custDic,
+    supplierNameToAvoid: params.supplierName,
   });
   const customerParty = formatCustomerPartyLines(
     recipient.customerName,
     recipient.customerAddressLines,
+    recipient.customerPhone,
+    recipient.customerEmail,
     recipient.customerIco,
     recipient.customerDic
   );
@@ -1691,6 +1843,14 @@ export async function updateTaxReceiptDocument(params: {
   const vatAmount = Number(inv.vatAmount) || 0;
   const amountGross = Number(inv.amountGross) || 0;
 
+  const qr = buildInvoicePaymentQr({
+    iban: bankSnap.iban,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    amountGross,
+    variableSymbol: vs,
+    message: paymentMessageForInvoice(documentNumber, params.jobName),
+  });
   const html = buildTaxReceiptHtml({
     logoUrl: params.logoUrl ?? null,
     supplierName: params.supplierName,
@@ -1709,11 +1869,16 @@ export async function updateTaxReceiptDocument(params: {
     amountGross,
     variableSymbol: vs,
     bankAccountText: bankText,
+    paymentQrUrl: qr?.warning ? null : qr?.qrUrl ?? null,
+    paymentQrWarning: qr?.warning ?? null,
     note: params.note ?? inv.note,
   });
 
   await updateDoc(invRef, {
     customerName: recipient.customerName,
+    customerAddressLines: recipient.customerAddressLines,
+    customerPhone: recipient.customerPhone,
+    customerEmail: recipient.customerEmail,
     issueDate,
     taxSupplyDate,
     paymentDate,

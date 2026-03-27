@@ -148,6 +148,16 @@ export function JobBillingInvoicesSection({
     const v = String(c?.dic ?? "").trim();
     return v || null;
   }, [customerDoc]);
+  const customerPhone = useMemo(() => {
+    const c = customerDoc as { phone?: string } | null | undefined;
+    const v = String(c?.phone ?? "").trim();
+    return v || null;
+  }, [customerDoc]);
+  const customerEmail = useMemo(() => {
+    const c = customerDoc as { email?: string } | null | undefined;
+    const v = String(c?.email ?? "").trim();
+    return v || null;
+  }, [customerDoc]);
 
   const printDocHtml = useCallback(
     (docTitle: string, pdfHtml: string) => {
@@ -321,6 +331,8 @@ export function JobBillingInvoicesSection({
         customerName,
         customerAddressLines:
           customerAddressLines || customerName,
+        customerPhone,
+        customerEmail,
         supplierName,
         supplierAddressLines:
           supplierAddressLines || supplierName,
@@ -385,6 +397,8 @@ export function JobBillingInvoicesSection({
         customerId: String(customerId),
         customerName,
         customerAddressLines: customerAddressLines || customerName,
+        customerPhone,
+        customerEmail,
         supplierName,
         supplierAddressLines: supplierAddressLines || supplierName,
         userId: user.uid,
@@ -456,6 +470,8 @@ export function JobBillingInvoicesSection({
         customerName,
         customerAddressLines:
           customerAddressLines || customerName,
+        customerPhone,
+        customerEmail,
         supplierName,
         supplierAddressLines:
           supplierAddressLines || supplierName,
@@ -526,6 +542,8 @@ export function JobBillingInvoicesSection({
         customerId: String(customerId),
         customerName,
         customerAddressLines: customerAddressLines || customerName,
+        customerPhone,
+        customerEmail,
         supplierName,
         supplierAddressLines: supplierAddressLines || supplierName,
         userId: user.uid,

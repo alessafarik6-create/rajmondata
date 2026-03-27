@@ -127,6 +127,16 @@ export default function EditAdvanceInvoicePage() {
   const [customerIco, setCustomerIco] = useState("");
   const [customerDic, setCustomerDic] = useState("");
   const [contractNumber, setContractNumber] = useState("");
+  const customerPhone = useMemo(() => {
+    const c = customerDoc as { phone?: string } | null | undefined;
+    const v = String(c?.phone ?? "").trim();
+    return v || null;
+  }, [customerDoc]);
+  const customerEmail = useMemo(() => {
+    const c = customerDoc as { email?: string } | null | undefined;
+    const v = String(c?.email ?? "").trim();
+    return v || null;
+  }, [customerDoc]);
 
   const jobName = useMemo(() => {
     const j = jobDoc as Record<string, unknown> | null | undefined;
@@ -252,6 +262,8 @@ export default function EditAdvanceInvoicePage() {
           jobName,
           customerName: custName,
           customerAddressLines: custAddr,
+          customerPhone,
+          customerEmail,
           supplierName,
           supplierAddressLines: supplierAddressLines || supplierName,
           userId: user.uid,
@@ -277,6 +289,8 @@ export default function EditAdvanceInvoicePage() {
           jobName,
           customerName: custName,
           customerAddressLines: custAddr,
+          customerPhone,
+          customerEmail,
           supplierName,
           supplierAddressLines: supplierAddressLines || supplierName,
           userId: user.uid,
@@ -306,6 +320,8 @@ export default function EditAdvanceInvoicePage() {
           jobName,
           customerName: custName,
           customerAddressLines: custAddr,
+          customerPhone,
+          customerEmail,
           supplierName,
           supplierAddressLines: supplierAddressLines || supplierName,
           userId: user.uid,

@@ -58,6 +58,9 @@ table.totals td:first-child { width: 55%; color: #333; }
 table.totals td:last-child { text-align: right; font-weight: 600; }
 table.totals tr.grand td { font-size: 12pt; border-top: 2px solid #111; border-bottom: none; padding-top: 10px; }
 .note { font-size: 9pt; color: #333; margin-top: 14px; }
+.payment-qr-grid { display:grid; grid-template-columns: 1fr 120px; gap:10px; align-items:center; margin-top: 8px; }
+.payment-qr-grid img { width:120px; height:120px; border:1px solid #ddd; background:#fff; }
+.payment-warn { margin-top:8px; font-size:9pt; color:#8a3b00; background:#fff3e8; border:1px solid #f2c39b; padding:6px 8px; }
 `;
 
 export type InvoiceLineRow = {
@@ -105,6 +108,9 @@ export function buildAdvanceInvoiceHtml(params: {
   variableSymbol?: string | null;
   /** Formátovaný text účtu / IBAN pro patičku */
   bankAccountText?: string | null;
+  paymentDueDate?: string | null;
+  paymentQrUrl?: string | null;
+  paymentQrWarning?: string | null;
   items: InvoiceLineRow[];
   amountNet: number;
   vatAmount: number;
@@ -140,6 +146,19 @@ export function buildAdvanceInvoiceHtml(params: {
 
   const vs = params.variableSymbol ? String(params.variableSymbol).trim() : "";
   const bankHtml = bankBoxHtml(params.bankAccountText);
+  const paymentMeta = `<div class="doc-meta">
+    ${params.variableSymbol ? `<p><strong>VS:</strong> ${escapeHtml(String(params.variableSymbol))}</p>` : ""}
+    ${params.paymentDueDate ? `<p><strong>Splatnost:</strong> ${escapeHtml(params.paymentDueDate)}</p>` : ""}
+    <p><strong>Částka:</strong> ${fmtKc(params.amountGross)}</p>
+  </div>`;
+  const qrHtml = params.paymentQrUrl
+    ? `<div class="payment-qr-grid"><div>${paymentMeta}</div><img src="${escapeHtml(
+        String(params.paymentQrUrl)
+      )}" alt="QR platba"/></div>`
+    : "";
+  const qrWarn = params.paymentQrWarning
+    ? `<div class="payment-warn">${escapeHtml(params.paymentQrWarning)}</div>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="cs">
 <head>
@@ -173,6 +192,8 @@ export function buildAdvanceInvoiceHtml(params: {
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
     ${bankHtml}
+    ${qrHtml}
+    ${qrWarn}
     <table class="items">
       <thead>
         <tr>
@@ -220,6 +241,8 @@ export function buildTaxReceiptHtml(params: {
   amountGross: number;
   variableSymbol?: string;
   bankAccountText?: string | null;
+  paymentQrUrl?: string | null;
+  paymentQrWarning?: string | null;
   note?: string;
 }): string {
   const supplierLines = brJoinEscaped(params.supplierAddressText || params.supplierName);
@@ -231,6 +254,19 @@ export function buildTaxReceiptHtml(params: {
   const taxSupply =
     (params.taxSupplyDate && String(params.taxSupplyDate).trim()) || params.paymentDate;
   const bankHtml = bankBoxHtml(params.bankAccountText);
+  const paymentMeta = `<div class="doc-meta">
+    ${params.variableSymbol ? `<p><strong>VS:</strong> ${escapeHtml(String(params.variableSymbol))}</p>` : ""}
+    <p><strong>Částka:</strong> ${fmtKc(params.amountGross)}</p>
+    <p><strong>Datum:</strong> ${escapeHtml(params.paymentDate)}</p>
+  </div>`;
+  const qrHtml = params.paymentQrUrl
+    ? `<div class="payment-qr-grid"><div>${paymentMeta}</div><img src="${escapeHtml(
+        String(params.paymentQrUrl)
+      )}" alt="QR platba"/></div>`
+    : "";
+  const qrWarn = params.paymentQrWarning
+    ? `<div class="payment-warn">${escapeHtml(params.paymentQrWarning)}</div>`
+    : "";
 
   return `<!DOCTYPE html>
 <html lang="cs">
@@ -263,6 +299,8 @@ export function buildTaxReceiptHtml(params: {
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
     ${bankHtml}
+    ${qrHtml}
+    ${qrWarn}
     <table class="totals">
       <tr><td>Základ daně</td><td>${fmtKc(params.amountNet)}</td></tr>
       <tr><td>DPH (${params.vatRate} %)</td><td>${fmtKc(params.vatAmount)}</td></tr>
@@ -297,6 +335,9 @@ export function buildFinalSettlementInvoiceHtml(params: {
   contractNumber?: string | null;
   variableSymbol?: string | null;
   bankAccountText?: string | null;
+  paymentDueDate?: string | null;
+  paymentQrUrl?: string | null;
+  paymentQrWarning?: string | null;
   totalContractGross: number;
   advanceRows: SettlementAdvanceRow[];
   totalAdvancePaid: number;
@@ -317,6 +358,19 @@ export function buildFinalSettlementInvoiceHtml(params: {
   const taxSupply =
     (params.taxSupplyDate && String(params.taxSupplyDate).trim()) || params.issueDate;
   const bankHtml = bankBoxHtml(params.bankAccountText);
+  const paymentMeta = `<div class="doc-meta">
+    ${params.variableSymbol ? `<p><strong>VS:</strong> ${escapeHtml(String(params.variableSymbol))}</p>` : ""}
+    ${params.paymentDueDate ? `<p><strong>Splatnost:</strong> ${escapeHtml(params.paymentDueDate)}</p>` : ""}
+    <p><strong>Částka:</strong> ${fmtKc(params.amountGross)}</p>
+  </div>`;
+  const qrHtml = params.paymentQrUrl
+    ? `<div class="payment-qr-grid"><div>${paymentMeta}</div><img src="${escapeHtml(
+        String(params.paymentQrUrl)
+      )}" alt="QR platba"/></div>`
+    : "";
+  const qrWarn = params.paymentQrWarning
+    ? `<div class="payment-warn">${escapeHtml(params.paymentQrWarning)}</div>`
+    : "";
 
   const advanceTable =
     params.advanceRows.length > 0
@@ -378,6 +432,8 @@ export function buildFinalSettlementInvoiceHtml(params: {
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
     ${bankHtml}
+    ${qrHtml}
+    ${qrWarn}
     <table class="totals">
       <tr><td>Celková cena zakázky (s DPH)</td><td>${fmtKc(params.totalContractGross)}</td></tr>
     </table>
