@@ -85,6 +85,7 @@ import {
   jobTagLabel,
 } from "@/lib/job-tags";
 import { cn } from "@/lib/utils";
+import { JD } from "@/lib/job-detail-page-styles";
 import { logActivitySafe } from "@/lib/activity-log";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -4302,16 +4303,17 @@ export default function JobDetailPage() {
   }
 
   return (
-    <div className="w-full min-w-0 space-y-8">
-      <div className="mx-auto max-w-5xl px-4 sm:px-6">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => router.push("/portal/jobs")}>
+    <div className={JD.page}>
+      <div className={JD.contentMax}>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+        <div className="flex items-start gap-3 min-w-0">
+        <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0" onClick={() => router.push("/portal/jobs")}>
           <ChevronLeft className="w-6 h-6" />
         </Button>
 
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="portal-page-title">{job.name}</h1>
+            <h1 className={JD.headerTitle}>{job.name}</h1>
             {(job as { jobTag?: string }).jobTag?.trim() ? (
               <Badge variant="secondary" className="font-normal max-w-[12rem] truncate">
                 {jobTagLabel((job as { jobTag?: string }).jobTag)}
@@ -4321,7 +4323,7 @@ export default function JobDetailPage() {
               ID: {jobId?.toString().substring(0, 8)}
             </Badge>
           </div>
-          <p className="text-muted-foreground">Detailní přehled projektu</p>
+          <p className={JD.headerSubtitle}>Detailní přehled projektu</p>
           {(job as any)?.sourceMeasurementId ? (
             <p className="text-sm text-slate-800 mt-1">
               <Link
@@ -4334,14 +4336,17 @@ export default function JobDetailPage() {
             </p>
           ) : null}
         </div>
+        </div>
 
-        <div className="flex gap-2 flex-wrap">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {isAdmin && (
             <Select value={job.status} onValueChange={handleStatusChange}>
-              <SelectTrigger className="w-[180px] bg-surface">
+              <SelectTrigger
+                className={cn(LIGHT_SELECT_TRIGGER_CLASS, "h-10 w-[min(100%,180px)] min-w-[140px]")}
+              >
                 <SelectValue placeholder="Změnit stav" />
               </SelectTrigger>
-              <SelectContent className="bg-surface border-border">
+              <SelectContent className={LIGHT_SELECT_CONTENT_CLASS}>
                 <SelectItem value="nová">Nová</SelectItem>
                 <SelectItem value="rozpracovaná">Rozpracovaná</SelectItem>
                 <SelectItem value="čeká">Čeká</SelectItem>
@@ -4353,7 +4358,7 @@ export default function JobDetailPage() {
 
           <Button
             variant="outline"
-            className="gap-2"
+            className={JD.actionButton}
             onClick={openEditJobDialog}
           >
             <Edit2 className="w-4 h-4" /> Upravit zakázku
@@ -4361,14 +4366,14 @@ export default function JobDetailPage() {
 
           <Button
             variant="outline"
-            className="gap-2"
+            className={JD.actionButton}
             onClick={openContractDialog}
           >
             <FileText className="w-4 h-4" /> Vytvořit smlouvu o dílo
           </Button>
 
           {isAdmin && (
-            <Button variant="destructive" className="gap-2" onClick={handleDeleteJob}>
+            <Button variant="destructive" className={JD.actionButton} onClick={handleDeleteJob}>
               <Trash2 className="w-4 h-4" /> Smazat
             </Button>
           )}
@@ -4384,31 +4389,31 @@ export default function JobDetailPage() {
         />
       ) : null}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-8">
-          <Card className="bg-surface border-border">
+      <div className={JD.grid}>
+        <div className={JD.mainCol}>
+          <Card className={cn(JD.card)}>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-primary" /> Popis zakázky
+              <CardTitle className={JD.cardTitle}>
+                <FileText aria-hidden /> Popis zakázky
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-foreground leading-relaxed">
+              <p className={JD.body}>
                 {job.description || "K této zakázce nebyl přidán žádný popis."}
               </p>
             </CardContent>
           </Card>
 
-          <Card className="bg-surface border-border">
+          <Card className={cn(JD.card)}>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <MapPin className="w-5 h-5 text-primary" /> Zákazník a adresa
+              <CardTitle className={JD.cardTitle}>
+                <MapPin aria-hidden /> Zákazník a adresa
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {jobCustomerAddressBlock.displayName ? (
                 <div className="space-y-1">
-                  <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                  <span className={JD.label}>
                     Zákazník
                   </span>
                   <p className="text-base font-semibold text-foreground">
@@ -4416,12 +4421,12 @@ export default function JobDetailPage() {
                   </p>
                 </div>
               ) : (
-                <p className="text-sm text-muted-foreground">
+                <p className={JD.bodyMuted}>
                   U zakázky není uveden název zákazníka.
                 </p>
               )}
               <div className="space-y-1">
-                <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                <span className={JD.label}>
                   Adresa
                 </span>
                 {jobCustomerAddressBlock.hasAddress ? (
@@ -4433,7 +4438,7 @@ export default function JobDetailPage() {
                     ))}
                   </address>
                 ) : (
-                  <p className="text-sm text-muted-foreground">
+                  <p className={JD.bodyMuted}>
                     Adresa zákazníka není vyplněna
                   </p>
                 )}
@@ -4441,33 +4446,33 @@ export default function JobDetailPage() {
             </CardContent>
           </Card>
 
-          <Card className="bg-surface border-border">
+          <Card className={cn(JD.card)}>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-primary" /> Měření
+              <CardTitle className={JD.cardTitle}>
+                <FileText aria-hidden /> Měření
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-foreground leading-relaxed">
+              <p className={JD.body}>
                 {job.measuring || "Žádné poznámky k měření."}
               </p>
               {job.measuringDetails && (
-                <p className="mt-2 text-sm text-muted-foreground">{job.measuringDetails}</p>
+                <p className="mt-2 text-sm text-gray-800">{job.measuringDetails}</p>
               )}
             </CardContent>
           </Card>
 
-          <Card className="bg-surface border-border">
+          <Card className={cn(JD.card)}>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <FileText className="w-5 h-5 text-primary" /> Smlouvy o dílo
+              <CardTitle className={JD.cardTitle}>
+                <FileText aria-hidden /> Smlouvy o dílo
               </CardTitle>
             </CardHeader>
             <CardContent>
               {isWorkContractsLoading ? (
-                <p className="text-sm text-muted-foreground">Načítání…</p>
+                <p className={JD.bodyMuted}>Načítání…</p>
               ) : workContractsForJob.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
+                <p className={JD.bodyMuted}>
                   Zatím žádné smlouvy.
                 </p>
               ) : (
@@ -4475,7 +4480,7 @@ export default function JobDetailPage() {
                   {workContractsForJob.map((c) => (
                     <div
                       key={c.id}
-                      className="p-3 rounded-lg bg-background/50 border border-border/50 space-y-3"
+                      className={cn(JD.innerBox, "space-y-3")}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
@@ -4489,7 +4494,7 @@ export default function JobDetailPage() {
                               Číslo: {(c as WorkContractDoc).contractNumber}
                             </p>
                           ) : null}
-                          <p className="text-xs text-muted-foreground">
+                          <p className="text-xs text-gray-800">
                             Uloženo: {formatContractDate(c.updatedAt || c.createdAt)}
                           </p>
                         </div>
@@ -4499,6 +4504,7 @@ export default function JobDetailPage() {
                         <Button
                           size="sm"
                           variant="outline"
+                          className="h-9 text-xs"
                           type="button"
                           onClick={() => openWorkContract(c.id, "view")}
                         >
@@ -4507,6 +4513,7 @@ export default function JobDetailPage() {
                         <Button
                           size="sm"
                           variant="outline"
+                          className="h-9 text-xs"
                           type="button"
                           onClick={() => openWorkContract(c.id, "edit")}
                         >
@@ -4515,6 +4522,7 @@ export default function JobDetailPage() {
                         <Button
                           size="sm"
                           variant="outline"
+                          className="h-9 text-xs"
                           type="button"
                           onClick={() => generatePDFFromContractId(c.id)}
                         >
@@ -4523,6 +4531,7 @@ export default function JobDetailPage() {
                         <Button
                           size="sm"
                           variant="destructive"
+                          className="h-9 text-xs"
                           type="button"
                           onClick={() => deleteWorkContract(c.id)}
                         >
@@ -4540,10 +4549,10 @@ export default function JobDetailPage() {
             template &&
             job.templateValues != null &&
             Object.keys(job.templateValues).length > 0 && (
-              <Card className="bg-surface border-border">
+              <Card className={cn(JD.card)}>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <FileStack className="w-5 h-5 text-primary" /> Data šablony:{" "}
+                  <CardTitle className={JD.cardTitle}>
+                    <FileStack aria-hidden /> Data šablony:{" "}
                     {(template as JobTemplate).name}
                   </CardTitle>
                 </CardHeader>
@@ -4560,7 +4569,7 @@ export default function JobDetailPage() {
 
                       return (
                         <div key={section.id}>
-                          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-2">
+                          <p className={cn(JD.label, "mb-2 normal-case")}>
                             {section.name}
                           </p>
                           <dl className="space-y-1.5">
@@ -4571,7 +4580,7 @@ export default function JobDetailPage() {
                                   key={f.id}
                                   className="flex justify-between gap-4 text-sm"
                                 >
-                                  <dt className="text-muted-foreground">{f.label}</dt>
+                                  <dt className="text-gray-800">{f.label}</dt>
                                   <dd className="font-medium text-right">
                                     {typeof value === "boolean"
                                       ? value
@@ -4591,15 +4600,15 @@ export default function JobDetailPage() {
               </Card>
             )}
 
-          <Card className="bg-surface border-border">
+          <Card className={cn(JD.card)}>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-primary" /> Časová osa a Pokrok
+              <CardTitle className={JD.cardTitle}>
+                <Clock aria-hidden /> Časová osa a pokrok
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="space-y-2">
-                <div className="flex justify-between text-sm mb-2">
+                <div className="mb-2 flex justify-between text-sm text-gray-900">
                   <span>Celkový pokrok</span>
                   <span className="font-bold">
                     {job.status === "dokončená" || job.status === "fakturována"
@@ -4616,23 +4625,23 @@ export default function JobDetailPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-8 pt-4">
+              <div className="grid grid-cols-1 gap-4 border-t border-gray-200 pt-4 sm:grid-cols-2 sm:gap-8">
                 <div className="space-y-1">
-                  <span className="text-xs text-muted-foreground uppercase font-bold tracking-wider">
+                  <span className={JD.label}>
                     Zahájeno
                   </span>
-                  <div className="flex items-center gap-2 font-semibold">
-                    <Calendar className="w-4 h-4 text-primary" />
+                  <div className="flex items-center gap-2 font-semibold text-gray-950">
+                    <Calendar className="h-4 w-4 shrink-0 text-primary" aria-hidden />
                     {job.startDate || "neuvedeno"}
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <span className="text-xs text-muted-foreground uppercase font-bold tracking-wider">
+                  <span className={JD.label}>
                     Předpokládané dokončení
                   </span>
-                  <div className="flex items-center gap-2 font-semibold">
-                    <Calendar className="w-4 h-4 text-primary" />
+                  <div className="flex items-center gap-2 font-semibold text-gray-950">
+                    <Calendar className="h-4 w-4 shrink-0 text-primary" aria-hidden />
                     {job.endDate || "neuvedeno"}
                   </div>
                 </div>
@@ -4640,10 +4649,10 @@ export default function JobDetailPage() {
             </CardContent>
           </Card>
 
-          <Card className="bg-surface border-border">
+          <Card className={cn(JD.card)}>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-primary" /> Přiřazení pracovníci
+              <CardTitle className={JD.cardTitle}>
+                <Users aria-hidden /> Přiřazení pracovníci
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -4651,7 +4660,7 @@ export default function JobDetailPage() {
                 {job.assignedEmployeeIds?.map((empId: string) => (
                   <div
                     key={empId}
-                    className="flex items-center justify-between p-3 rounded-lg bg-background/50 border border-border/50"
+                    className={cn(JD.innerBox, "flex items-center justify-between")}
                   >
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary font-bold">
@@ -4666,7 +4675,7 @@ export default function JobDetailPage() {
                 ))}
 
                 {!job.assignedEmployeeIds?.length && (
-                  <p className="text-muted-foreground text-sm">
+                  <p className={JD.bodyMuted}>
                     Žádní pracovníci nejsou přiřazeni.
                   </p>
                 )}
@@ -4675,15 +4684,15 @@ export default function JobDetailPage() {
           </Card>
         </div>
 
-        <div className="space-y-8">
-          <Card className="bg-surface border-border">
+        <div className={JD.sideCol}>
+          <Card className={cn(JD.card)}>
             <CardHeader>
-              <CardTitle>Finanční údaje</CardTitle>
+              <CardTitle className={JD.cardTitlePlain}>Finanční údaje</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
               {jobBudgetBreakdown ? (
-                <div className="space-y-2 rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                <div className={JD.financeHighlight}>
+                  <p className={cn(JD.label, "normal-case")}>
                     Přehled (s DPH)
                   </p>
                   <div className="flex justify-between gap-4 tabular-nums">
@@ -4717,12 +4726,12 @@ export default function JobDetailPage() {
                 </div>
               ) : null}
               {jobBudgetBreakdown ? (
-                <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
+                <div className={JD.financeBreakdown}>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="secondary" className="font-normal">
+                    <Badge variant="secondary" className="font-normal text-gray-900">
                       Zadáno
                     </Badge>
-                    <span className="text-muted-foreground">
+                    <span className="text-gray-800">
                       {jobBudgetBreakdown.budgetType === "gross"
                         ? "s DPH"
                         : "bez DPH"}
@@ -4733,13 +4742,13 @@ export default function JobDetailPage() {
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">Rozpočet bez DPH</span>
+                    <span className="text-gray-800">Rozpočet bez DPH</span>
                     <span className="font-semibold tabular-nums">
                       {jobBudgetBreakdown.budgetNet.toLocaleString("cs-CZ")} Kč
                     </span>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <span className="text-muted-foreground">
+                    <span className="text-gray-800">
                       DPH ({jobBudgetBreakdown.vatRate} %)
                     </span>
                     <span className="font-semibold tabular-nums">
@@ -4754,13 +4763,13 @@ export default function JobDetailPage() {
                   </div>
                 </div>
               ) : (
-                <div className="flex justify-between items-center gap-3 flex-wrap">
-                  <span className="text-muted-foreground">Rozpočet</span>
-                  <span className="text-xl font-bold tabular-nums">—</span>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span className="text-gray-800">Rozpočet</span>
+                  <span className="text-xl font-bold tabular-nums text-gray-950">—</span>
                 </div>
               )}
               {jobBudgetBreakdown ? (
-                <div className="space-y-1 text-sm border-t border-border/50 pt-3">
+                <div className="space-y-1 border-t border-gray-200 pt-3 text-sm">
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-800">Zaplaceno bez DPH</span>
                     <span className="font-semibold tabular-nums text-slate-900">
@@ -4821,7 +4830,7 @@ export default function JobDetailPage() {
               </div>
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between items-center gap-3 flex-wrap">
-                  <span className="text-muted-foreground">Zbývá bez DPH</span>
+                  <span className="text-gray-800">Zbývá bez DPH</span>
                   <span
                     className={cn(
                       "font-semibold tabular-nums",
@@ -4854,15 +4863,15 @@ export default function JobDetailPage() {
                 </div>
               </div>
               {jobIncomesSorted.length > 0 || folderSourceExpenses.length > 0 ? (
-                <div className="space-y-2 border-t border-border/50 pt-3 text-sm">
-                  <p className="font-semibold text-slate-900">
+                <div className="space-y-2 border-t border-gray-200 pt-3 text-sm">
+                  <p className="font-semibold text-gray-950">
                     Doklady ze složky dokladů
                   </p>
                   <ul className="space-y-2">
                     {jobIncomesSorted.map((row) => (
                       <li
                         key={`inc-${row.id}`}
-                        className="flex flex-wrap justify-between gap-2 rounded-md border border-border/50 px-2 py-1.5"
+                        className="flex flex-wrap justify-between gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5"
                       >
                         <span className="text-slate-800">
                           Příjem · {row.fileName || row.id}
@@ -4880,7 +4889,7 @@ export default function JobDetailPage() {
                       return (
                         <li
                           key={`exp-${row.id}`}
-                          className="flex flex-wrap justify-between gap-2 rounded-md border border-border/50 px-2 py-1.5"
+                          className="flex flex-wrap justify-between gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5"
                         >
                           <span className="text-slate-800">
                             Náklad · {row.fileName || row.note || row.id}
@@ -4896,9 +4905,9 @@ export default function JobDetailPage() {
                 </div>
               ) : null}
               <Separator />
-              <div className="flex justify-between items-center text-sm">
-                <span className="text-muted-foreground">Vyfakturováno (s DPH)</span>
-                <span className="font-semibold text-emerald-500">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-800">Vyfakturováno (s DPH)</span>
+                <span className="font-semibold text-emerald-700">
                   {job.status === "fakturována" && jobBudgetBreakdown
                     ? `${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
                     : "0 Kč"}
@@ -4938,17 +4947,17 @@ export default function JobDetailPage() {
             />
           ) : null}
 
-          <Card className="bg-surface border-border">
+          <Card className={cn(JD.card)}>
             <CardHeader>
-              <CardTitle>Poznámky a historie</CardTitle>
+              <CardTitle className={JD.cardTitlePlain}>Poznámky a historie</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="text-sm space-y-4">
+              <div className="space-y-4 text-sm">
                 <div className="flex gap-3">
-                  <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
+                  <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                   <div>
-                    <p className="font-semibold">Zakázka vytvořena</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="font-semibold text-gray-950">Zakázka vytvořena</p>
+                    <p className="text-xs text-gray-800">
                       {job.createdAt?.toDate
                         ? job.createdAt.toDate().toLocaleString("cs-CZ")
                         : "-"}
@@ -4957,10 +4966,10 @@ export default function JobDetailPage() {
                 </div>
 
                 <div className="flex gap-3">
-                  <div className="w-1.5 h-1.5 rounded-full bg-primary mt-1.5 shrink-0" />
+                  <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
                   <div>
-                    <p className="font-semibold">Stav změněn na "{job.status}"</p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="font-semibold text-gray-950">Stav změněn na &quot;{job.status}&quot;</p>
+                    <p className="text-xs text-gray-800">
                       {job.updatedAt?.toDate
                         ? job.updatedAt.toDate().toLocaleString("cs-CZ")
                         : "-"}
@@ -4977,10 +4986,10 @@ export default function JobDetailPage() {
 
       {user && companyId && jobId ? (
         <section
-          className="w-full min-w-0 border-t border-border/60 bg-muted/15 py-8 sm:py-10"
+          className={JD.sectionBand}
           aria-labelledby="job-media-heading"
         >
-          <div className="mx-auto w-full max-w-[min(100%,1600px)] px-4 sm:px-6 lg:px-8">
+          <div className={JD.sectionBandInner}>
             <JobMediaSection
               companyId={companyId}
               jobId={jobId as string}
@@ -5002,10 +5011,10 @@ export default function JobDetailPage() {
 
       {user && companyId && jobId ? (
         <section
-          className="w-full min-w-0 border-t border-border/60 bg-muted/15 py-8 sm:py-10"
+          className={JD.sectionBand}
           aria-labelledby="job-expenses-heading"
         >
-          <div className="mx-auto w-full max-w-[min(100%,1600px)] px-4 sm:px-6 lg:px-8">
+          <div className={JD.sectionBandInner}>
             <JobExpensesSection
               companyId={companyId}
               jobId={jobId as string}
