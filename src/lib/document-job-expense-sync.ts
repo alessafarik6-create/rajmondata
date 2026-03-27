@@ -201,6 +201,8 @@ export type CompanyDocumentExpenseReconcileBefore = DocAmountInput & {
   fileName?: string | null;
   storagePath?: string | null;
   mimeType?: string | null;
+  requiresPayment?: boolean;
+  paid?: boolean;
 };
 
 /**

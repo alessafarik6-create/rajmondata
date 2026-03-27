@@ -71,6 +71,7 @@ import {
   reconcileCompanyDocumentJobExpense,
   type CompanyDocumentExpenseReconcileBefore,
 } from "@/lib/document-job-expense-sync";
+import { reconcileCompanyDocumentJobIncome } from "@/lib/document-job-income-sync";
 import { JOB_MEDIA_DOCUMENT_SOURCE } from "@/lib/job-linked-document-sync";
 import {
   inferJobMediaItemType,
@@ -189,6 +190,8 @@ type CompanyDocumentRow = {
   assignmentType?: "job_cost" | "overhead" | "pending_assignment";
   /** ID záznamu v jobs/.../expenses pro primární doklad (ne zrcadlo jobExpense_*). */
   linkedExpenseId?: string | null;
+  /** ID záznamu v jobs/.../incomes odpovídá ID dokladu (vydaný příjem k zakázce). */
+  linkedIncomeId?: string | null;
   /** Doklad má být uhrazen (přehled Nutno uhradit). */
   requiresPayment?: boolean;
   /** Splatnost (YYYY-MM-DD). */
@@ -541,17 +544,41 @@ function DocumentsPageContent() {
       paidBy: user.uid,
       updatedAt: serverTimestamp(),
     });
+    try {
+      await reconcileCompanyDocumentJobIncome({
+        firestore,
+        companyId,
+        userId: user.uid,
+        documentId: row.id,
+        before: { ...row, id: row.id },
+        after: { ...row, id: row.id, paid: true },
+      });
+    } catch (e) {
+      console.error("documents: job income reconcile after paid", e);
+    }
     toast({ title: "Označeno jako zaplaceno" });
   };
 
   const markDocumentUnpaid = async (row: CompanyDocumentRow) => {
-    if (!companyId || !firestore) return;
+    if (!companyId || !firestore || !user) return;
     await updateDoc(doc(firestore, "companies", companyId, "documents", row.id), {
       paid: false,
       paidAt: deleteField(),
       paidBy: deleteField(),
       updatedAt: serverTimestamp(),
     });
+    try {
+      await reconcileCompanyDocumentJobIncome({
+        firestore,
+        companyId,
+        userId: user.uid,
+        documentId: row.id,
+        before: { ...row, id: row.id },
+        after: { ...row, id: row.id, paid: false },
+      });
+    } catch (e) {
+      console.error("documents: job income reconcile after unpaid", e);
+    }
     toast({ title: "Platba zrušena" });
   };
 
@@ -856,48 +883,59 @@ function DocumentsPageContent() {
         assignmentType === "job_cost"
           ? selectedJob?.id ?? selectedJobId
           : null;
+      const afterReconcile: CompanyDocumentExpenseReconcileBefore = {
+        assignmentType,
+        jobId: jobIdForCost,
+        zakazkaId: jobIdForCost,
+        number: formData.number.trim(),
+        entityName: formData.entityName.trim(),
+        nazev: formData.entityName.trim(),
+        description: formData.description.trim(),
+        date: formData.date,
+        currency: docCurrency,
+        amountOriginal,
+        amountCZK: czk.castkaCZK,
+        exchangeRate: docCurrency === "EUR" ? rateEurCzk : 1,
+        castka: amountGross,
+        castkaCZK: czk.castkaCZK,
+        amountNetCZK: czk.amountNetCZK,
+        amountGrossCZK: czk.amountGrossCZK,
+        vatAmountCZK: czk.vatAmountCZK,
+        amountNet,
+        amount: amountNet,
+        amountGross,
+        vatAmount,
+        vatRate,
+        dphSazba: vatRate,
+        vat: vatRate,
+        sDPH: true,
+        type: newDocType,
+        documentKind: newDocType === "received" ? "prijate" : "vydane",
+        source: undefined,
+        sourceType: undefined,
+        fileUrl: uploadMeta?.fileUrl ?? null,
+        fileName: uploadMeta?.fileName ?? null,
+        fileType: uploadMeta?.fileType ?? null,
+        mimeType: uploadMeta?.mimeType ?? null,
+        storagePath: uploadMeta?.storagePath ?? null,
+        requiresPayment: formData.requiresPayment,
+        paid: false,
+      };
       await reconcileCompanyDocumentJobExpense({
         firestore,
         companyId,
         userId: user.uid,
         documentId: newDocRef.id,
         before: null,
-        after: {
-          assignmentType,
-          jobId: jobIdForCost,
-          zakazkaId: jobIdForCost,
-          number: formData.number.trim(),
-          entityName: formData.entityName.trim(),
-          nazev: formData.entityName.trim(),
-          description: formData.description.trim(),
-          date: formData.date,
-          currency: docCurrency,
-          amountOriginal,
-          amountCZK: czk.castkaCZK,
-          exchangeRate: docCurrency === "EUR" ? rateEurCzk : 1,
-          castka: amountGross,
-          castkaCZK: czk.castkaCZK,
-          amountNetCZK: czk.amountNetCZK,
-          amountGrossCZK: czk.amountGrossCZK,
-          vatAmountCZK: czk.vatAmountCZK,
-          amountNet,
-          amount: amountNet,
-          amountGross,
-          vatAmount,
-          vatRate,
-          dphSazba: vatRate,
-          vat: vatRate,
-          sDPH: true,
-          type: newDocType,
-          documentKind: newDocType === "received" ? "prijate" : "vydane",
-          source: undefined,
-          sourceType: undefined,
-          fileUrl: uploadMeta?.fileUrl ?? null,
-          fileName: uploadMeta?.fileName ?? null,
-          fileType: uploadMeta?.fileType ?? null,
-          mimeType: uploadMeta?.mimeType ?? null,
-          storagePath: uploadMeta?.storagePath ?? null,
-        },
+        after: afterReconcile,
+      });
+      await reconcileCompanyDocumentJobIncome({
+        firestore,
+        companyId,
+        userId: user.uid,
+        documentId: newDocRef.id,
+        before: null,
+        after: afterReconcile,
       });
 
       const financeRef = collection(firestore, "companies", companyId, "finance");
@@ -1009,6 +1047,14 @@ function DocumentsPageContent() {
         jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
       };
       await reconcileCompanyDocumentJobExpense({
+        firestore,
+        companyId,
+        userId: user.uid,
+        documentId: assigningDocId,
+        before,
+        after,
+      });
+      await reconcileCompanyDocumentJobIncome({
         firestore,
         companyId,
         userId: user.uid,
@@ -1207,6 +1253,14 @@ function DocumentsPageContent() {
         id: editRow.id,
       };
       await reconcileCompanyDocumentJobExpense({
+        firestore,
+        companyId,
+        userId: user.uid,
+        documentId: editRow.id,
+        before: { ...editRow, id: editRow.id },
+        after: afterForExpense,
+      });
+      await reconcileCompanyDocumentJobIncome({
         firestore,
         companyId,
         userId: user.uid,
@@ -1435,6 +1489,27 @@ function DocumentsPageContent() {
           );
         } catch {
           /* */
+        }
+      }
+      if (user?.uid) {
+        try {
+          await reconcileCompanyDocumentJobIncome({
+            firestore,
+            companyId,
+            userId: user.uid,
+            documentId: row.id,
+            before: { ...row, id: row.id },
+            after: {
+              ...row,
+              id: row.id,
+              assignmentType: "pending_assignment",
+              jobId: null,
+              zakazkaId: null,
+              jobName: null,
+            },
+          });
+        } catch (e) {
+          console.error("documents: job income reconcile before delete", e);
         }
       }
       await deleteDoc(doc(firestore, "companies", companyId, "documents", row.id));

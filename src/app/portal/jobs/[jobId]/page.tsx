@@ -601,6 +601,8 @@ export default function JobDetailPage() {
       amountGross?: number;
       fileName?: string;
       fileUrl?: string;
+      source?: string;
+      number?: string;
     }[];
     list.sort((a, b) => {
       const da = String(a.date ?? "");
@@ -4874,7 +4876,9 @@ export default function JobDetailPage() {
                         className="flex flex-wrap justify-between gap-2 rounded-md border border-gray-200 bg-white px-2 py-1.5"
                       >
                         <span className="text-slate-800">
-                          Příjem · {row.fileName || row.id}
+                          {row.source === "company_document"
+                            ? `Vydaný doklad · ${row.fileName || row.number || row.id}`
+                            : `Příjem · ${row.fileName || row.id}`}
                         </span>
                         <span className="tabular-nums text-slate-900">
                           {typeof row.amountGross === "number"
