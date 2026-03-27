@@ -4,14 +4,6 @@ import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -705,18 +697,10 @@ export default function DocumentsPage() {
         },
       });
 
-      const financeRef = collection(firestore, "companies", companyId, "finance");
-      await addDoc(financeRef, {
-        amount: amountGross,
-        amountNet,
-        amountGross,
-        vatRate,
-        type: newDocType === "received" ? "expense" : "revenue",
-        date: formData.date,
-        description: `Doklad ${formData.number}: ${formData.description}`,
-        createdAt: serverTimestamp(),
-      });
-
+      /**
+       * Náklady zakázky musí vzniknout vždy, i když zápis do `finance` selže (jiná pravidla / chybějící kolekce).
+       * Dříve při výjimce z `addDoc(finance)` vůbec neproběhl reconcile → doklad bez nákladu v zakázce.
+       */
       const jobIdForCost =
         assignmentType === "job_cost"
           ? selectedJob?.id ?? selectedJobId
@@ -756,6 +740,22 @@ export default function DocumentsPage() {
           storagePath: uploadMeta?.storagePath ?? null,
         },
       });
+
+      const financeRef = collection(firestore, "companies", companyId, "finance");
+      try {
+        await addDoc(financeRef, {
+          amount: amountGross,
+          amountNet,
+          amountGross,
+          vatRate,
+          type: newDocType === "received" ? "expense" : "revenue",
+          date: formData.date,
+          description: `Doklad ${formData.number}: ${formData.description}`,
+          createdAt: serverTimestamp(),
+        });
+      } catch (financeErr) {
+        console.error("documents: finance ledger write failed", financeErr);
+      }
 
       toast({
         title: "Doklad uložen",
@@ -968,7 +968,8 @@ export default function DocumentsPage() {
         basePayload.zakazkaId = null;
         basePayload.jobId = null;
         basePayload.jobName = null;
-        basePayload.assignmentType = "pending_assignment";
+        basePayload.assignmentType =
+          editForm.noJobMode === "overhead" ? "overhead" : "pending_assignment";
       }
 
       basePayload.requiresPayment = editForm.requiresPayment;
@@ -1281,7 +1282,7 @@ export default function DocumentsPage() {
 
   return (
     <TooltipProvider delayDuration={250}>
-    <div className="mx-auto w-full max-w-[min(100%,1600px)] px-2 sm:px-4 space-y-4 sm:space-y-5">
+    <div className="mx-auto w-full max-w-6xl px-3 sm:px-4 space-y-3 sm:space-y-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-gray-950 sm:text-3xl dark:text-gray-50">
@@ -2065,23 +2066,27 @@ function DocumentTableReceived({
     return "—";
   };
 
+  /** Kompaktní řádek bez min-width → žádný horizontální scroll na běžném desktopu (max-w-6xl). */
+  const receivedRowGrid =
+    "grid w-full grid-cols-[92px_minmax(0,1.35fr)_30px_minmax(0,0.95fr)_62px_minmax(0,1.15fr)_minmax(72px,0.9fr)_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0.5 px-2 py-1.5 text-[11px] leading-snug sm:text-xs [&>*]:min-w-0";
+
   return (
-    <Card className="overflow-hidden min-w-0">
-      <div className="p-4 border-b flex flex-col gap-4">
-        <div className="relative w-full sm:max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+    <Card className="min-w-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
+      <div className="flex flex-col gap-2 border-b border-gray-200 bg-white p-2 sm:p-3">
+        <div className="relative w-full max-w-md">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
           <Input
             placeholder="Hledat (název, zakázka, poznámka…)"
-            className="pl-10 min-h-[44px] w-full"
+            className="h-9 border-gray-300 bg-white pl-8 text-sm text-gray-900"
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="space-y-1.5 min-w-0">
-            <Label className="text-xs text-muted-foreground">Zakázka</Label>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 lg:gap-x-3">
+          <div className="space-y-1 min-w-0">
+            <Label className="text-[11px] font-medium text-gray-800">Zakázka</Label>
             <Select value={jobFilter} onValueChange={setJobFilter}>
-              <SelectTrigger className="min-h-[44px] w-full">
+              <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
                 <SelectValue placeholder="Všechny zakázky" />
               </SelectTrigger>
               <SelectContent>
@@ -2094,10 +2099,10 @@ function DocumentTableReceived({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5 min-w-0">
-            <Label className="text-xs text-muted-foreground">Typ souboru</Label>
+          <div className="space-y-1 min-w-0">
+            <Label className="text-[11px] font-medium text-gray-800">Typ souboru</Label>
             <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="min-h-[44px] w-full">
+              <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
                 <SelectValue placeholder="Všechny typy" />
               </SelectTrigger>
               <SelectContent>
@@ -2109,28 +2114,28 @@ function DocumentTableReceived({
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Od data</Label>
+          <div className="space-y-1">
+            <Label className="text-[11px] font-medium text-gray-800">Od data</Label>
             <Input
               type="date"
-              className="min-h-[44px]"
+              className="h-9 border-gray-300 bg-white text-gray-900"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
             />
           </div>
-          <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Do data</Label>
+          <div className="space-y-1">
+            <Label className="text-[11px] font-medium text-gray-800">Do data</Label>
             <Input
               type="date"
-              className="min-h-[44px]"
+              className="h-9 border-gray-300 bg-white text-gray-900"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
             />
           </div>
-          <div className="space-y-1.5 min-w-0 sm:col-span-2 lg:col-span-4">
-            <Label className="text-xs text-muted-foreground">Platba / splatnost</Label>
+          <div className="space-y-1 min-w-0 sm:col-span-2 lg:col-span-4">
+            <Label className="text-[11px] font-medium text-gray-800">Platba / splatnost</Label>
             <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-              <SelectTrigger className="min-h-[44px] w-full">
+              <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
                 <SelectValue placeholder="Vše" />
               </SelectTrigger>
               <SelectContent>
@@ -2148,346 +2153,308 @@ function DocumentTableReceived({
       </div>
       <CardContent className="p-0">
         {isLoading ? (
-          <div className="flex justify-center p-12">
-            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+          <div className="flex justify-center p-8">
+            <Loader2 className="h-7 w-7 animate-spin text-primary" />
           </div>
         ) : rows.length > 0 ? (
-          <div className="overflow-x-auto -mx-0">
-            <Table className="min-w-[1100px] w-full table-fixed">
-              <TableHeader>
-                <TableRow className="border-border">
-                  <TableHead className="pl-6 w-[18%] min-w-[130px]">
-                    Soubor / doklad
-                  </TableHead>
-                  <TableHead className="w-[8%] min-w-[72px]">Typ</TableHead>
-                  <TableHead className="w-[14%] min-w-[120px]">Zakázka</TableHead>
-                  <TableHead className="w-[8%] min-w-[88px]">Datum</TableHead>
-                  <TableHead className="w-[6%] min-w-[72px]">K úhradě</TableHead>
-                  <TableHead className="w-[8%] min-w-[88px]">Splatnost</TableHead>
-                  <TableHead className="w-[7%] min-w-[72px]">Platba</TableHead>
-                  <TableHead className="w-[9%] min-w-[88px]">Stav</TableHead>
-                  <TableHead className="w-[11%] min-w-[100px] text-right">
-                    Částka
-                  </TableHead>
-                  <TableHead className="w-[12%] min-w-[100px]">Poznámka</TableHead>
-                  <TableHead className="pr-4 text-right min-w-[200px] sticky right-0 z-30 bg-card border-l border-border shadow-[inset_1px_0_0_0_hsl(var(--border))]">
-                    Akce
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((row) => {
-                  const jobLinkId =
-                    (row.jobId ?? row.zakazkaId)?.trim() || "";
-                  const fromJobExpense =
-                    row.source === JOB_EXPENSE_DOCUMENT_SOURCE ||
-                    row.sourceType === "expense";
-                  const fromJobMedia =
-                    row.source === JOB_MEDIA_DOCUMENT_SOURCE ||
-                    row.sourceType === "job";
-                  const fk = inferDocRowFileKind(row);
-                  const RowIcon =
-                    fk === "image" ? ImageIcon : FileText;
+          <div className="w-full overflow-hidden bg-white">
+            <div
+              className={cn(
+                receivedRowGrid,
+                "border-b border-gray-200 bg-gray-100 font-semibold text-gray-900"
+              )}
+            >
+              <span className="text-left">Akce</span>
+              <span>Doklad</span>
+              <span className="text-center">Typ</span>
+              <span>Zakázka</span>
+              <span>Datum</span>
+              <span>Úhrada / splatnost / stav</span>
+              <span className="text-right tabular-nums">Částka</span>
+              <span>Poznámka</span>
+            </div>
+            {rows.map((row) => {
+              const jobLinkId =
+                (row.jobId ?? row.zakazkaId)?.trim() || "";
+              const fromJobExpense =
+                row.source === JOB_EXPENSE_DOCUMENT_SOURCE ||
+                row.sourceType === "expense";
+              const fromJobMedia =
+                row.source === JOB_MEDIA_DOCUMENT_SOURCE ||
+                row.sourceType === "job";
+              const fk = inferDocRowFileKind(row);
+              const RowIcon = fk === "image" ? ImageIcon : FileText;
 
-                  const amts = docDisplayAmounts(row);
-                  const showAmount =
-                    !fromJobMedia &&
-                    (amts.amountGross > 0 || amts.amountNet > 0);
-                  const title = docDisplayTitle(row);
-                  const canEditRow = !fromJobMedia;
-                  const pr = row as CompanyDocumentPaymentRow;
-                  const payU = getDocumentPaymentUrgency(pr, todayIso);
+              const amts = docDisplayAmounts(row);
+              const showAmount =
+                !fromJobMedia &&
+                (amts.amountGross > 0 || amts.amountNet > 0);
+              const title = docDisplayTitle(row);
+              const canEditRow = !fromJobMedia;
+              const pr = row as CompanyDocumentPaymentRow;
+              const payU = getDocumentPaymentUrgency(pr, todayIso);
 
-                  const assignmentBadge =
-                    row.assignmentType === "job_cost"
-                      ? "Zakázka"
-                      : row.assignmentType === "overhead"
-                        ? "Režie"
-                        : "Nezařazeno";
-                  return (
-                    <TableRow
-                      key={row.id}
-                      className={cn(
-                        "border-border hover:bg-muted/30",
-                        fromJobExpense && "bg-amber-50/50 dark:bg-amber-950/15",
-                        fromJobMedia && "bg-sky-50/60 dark:bg-sky-950/20",
-                        row.assignmentType === "pending_assignment" &&
-                          "ring-1 ring-amber-300 bg-amber-50/70 dark:bg-amber-950/20"
-                      )}
+              const assignmentBadge =
+                row.assignmentType === "job_cost"
+                  ? "Zakázka"
+                  : row.assignmentType === "overhead"
+                    ? "Režie"
+                    : "Nezařazeno";
+
+              const iconBtn =
+                "h-7 w-7 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950";
+
+              return (
+                <div
+                  key={row.id}
+                  className={cn(
+                    receivedRowGrid,
+                    "border-b border-gray-200 text-gray-900 hover:bg-gray-50/80",
+                    fromJobExpense && "bg-amber-50/90",
+                    fromJobMedia && "bg-sky-50/90",
+                    row.assignmentType === "pending_assignment" &&
+                      "bg-amber-50/90 ring-1 ring-inset ring-amber-200"
+                  )}
+                >
+                  <div className="flex flex-wrap gap-0.5">
+                    {isDocumentEligibleForPaymentBox(pr) ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-6 px-1 text-[9px] font-medium leading-none"
+                        title="Označit jako zaplaceno"
+                        onClick={() => void onMarkPaid(row)}
+                      >
+                        Zapl.
+                      </Button>
+                    ) : null}
+                    {row.paid === true && row.requiresPayment ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 px-1 text-[9px] leading-none"
+                        title="Označit jako nezaplaceno"
+                        onClick={() => void onMarkUnpaid(row)}
+                      >
+                        Nezap.
+                      </Button>
+                    ) : null}
+                    {row.fileUrl ? (
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className={iconBtn}
+                        asChild
+                        title="Příloha"
+                      >
+                        <a
+                          href={row.fileUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </a>
+                      </Button>
+                    ) : null}
+                    {jobLinkId ? (
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className={iconBtn}
+                        asChild
+                        title="Zakázka"
+                      >
+                        <Link href={`/portal/jobs/${jobLinkId}`}>
+                          <Briefcase className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                    ) : null}
+                    {canEditRow ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={iconBtn}
+                        title="Upravit"
+                        onClick={() => onEdit(row)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={iconBtn}
+                      title="Přiřadit"
+                      onClick={() => onAssign(row)}
                     >
-                      <TableCell className="pl-6 align-top">
-                        <div className="flex flex-col gap-1.5 min-w-0 max-w-[18rem]">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <RowIcon
-                              className={cn(
-                                "h-4 w-4 shrink-0",
-                                fk === "pdf" && "text-red-600",
-                                fk === "office" && "text-blue-700",
-                                fk === "image" && "text-emerald-600",
-                                fk === "none" && "text-muted-foreground opacity-60"
-                              )}
-                            />
-                            <span
-                              className="font-medium truncate text-sm"
-                              title={title}
-                            >
-                              {title}
-                            </span>
-                          </div>
-                          {row.fileName?.trim() &&
-                          row.fileName.trim() !== title.trim() ? (
-                            <span className="text-xs text-muted-foreground truncate pl-6">
-                              {row.fileName}
-                            </span>
-                          ) : null}
-                          <div className="flex flex-wrap gap-1">
-                            <Badge variant="secondary" className="text-[10px] font-normal">
-                              Přijaté
-                            </Badge>
-                            {fromJobExpense ? (
-                              <Badge className="text-[10px] font-normal bg-amber-600 hover:bg-amber-600">
-                                Náklad zakázky
-                              </Badge>
-                            ) : null}
-                            {fromJobMedia ? (
-                              <Badge className="text-[10px] font-normal bg-sky-700 text-white hover:bg-sky-700">
-                                Média zakázky
-                              </Badge>
-                            ) : null}
-                            <Badge
-                              className={cn(
-                                "text-[10px] font-normal",
-                                row.assignmentType === "pending_assignment"
-                                  ? "bg-amber-600 text-white hover:bg-amber-600"
-                                  : "bg-slate-700 text-white hover:bg-slate-700"
-                              )}
-                            >
-                              {assignmentBadge}
-                            </Badge>
-                          </div>
+                      <Link2 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={cn(iconBtn, "hover:text-red-700")}
+                      title="Smazat"
+                      onClick={() => onDelete(row)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+
+                  <div className="min-w-0">
+                    <div className="flex items-start gap-1">
+                      <RowIcon
+                        className={cn(
+                          "mt-0.5 h-3.5 w-3.5 shrink-0",
+                          fk === "pdf" && "text-red-600",
+                          fk === "office" && "text-blue-700",
+                          fk === "image" && "text-emerald-600",
+                          fk === "none" && "text-gray-400"
+                        )}
+                      />
+                      <span
+                        className="font-medium text-gray-950 line-clamp-2"
+                        title={title}
+                      >
+                        {title}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 flex flex-wrap gap-0.5">
+                      <Badge
+                        variant="secondary"
+                        className="h-5 border-gray-300 px-1.5 text-[10px] font-normal text-gray-900"
+                      >
+                        Přijaté
+                      </Badge>
+                      {fromJobExpense ? (
+                        <Badge className="h-5 bg-amber-600 px-1.5 text-[10px] font-normal hover:bg-amber-600">
+                          Náklad Z
+                        </Badge>
+                      ) : null}
+                      {fromJobMedia ? (
+                        <Badge className="h-5 bg-sky-700 px-1.5 text-[10px] text-white hover:bg-sky-700">
+                          Média
+                        </Badge>
+                      ) : null}
+                      <Badge
+                        className={cn(
+                          "h-5 px-1.5 text-[10px] font-normal text-white",
+                          row.assignmentType === "pending_assignment"
+                            ? "bg-amber-600 hover:bg-amber-600"
+                            : "bg-slate-700 hover:bg-slate-700"
+                        )}
+                      >
+                        {assignmentBadge}
+                      </Badge>
+                    </div>
+                  </div>
+
+                  <div className="text-center text-gray-800">
+                    {fileKindLabel(fk)}
+                  </div>
+
+                  <div className="min-w-0">
+                    {jobLinkId ? (
+                      <Link
+                        href={`/portal/jobs/${jobLinkId}`}
+                        className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2"
+                        title={row.jobName ?? row.entityName ?? ""}
+                      >
+                        {row.jobName || row.entityName || "Zakázka"}
+                      </Link>
+                    ) : (
+                      <span className="text-gray-800 line-clamp-2">
+                        {row.assignmentType === "pending_assignment"
+                          ? "Zařadit později"
+                          : row.entityName ?? "—"}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="whitespace-nowrap text-gray-900">
+                    {row.date ?? "—"}
+                  </div>
+
+                  <div className="space-y-0.5 text-gray-900">
+                    <div className="flex flex-wrap gap-x-1 gap-y-0">
+                      <span>{row.requiresPayment ? "K úhr.: ano" : "K úhr.: ne"}</span>
+                      <span className="text-gray-800">·</span>
+                      <span className="tabular-nums">
+                        {row.dueDate?.trim() || "—"}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-0.5">
+                      {row.paid === true ? (
+                        <Badge className="h-5 bg-emerald-700 px-1.5 text-[10px] text-white hover:bg-emerald-700">
+                          Zaplaceno
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-gray-400 px-1.5 text-[10px] text-gray-900"
+                        >
+                          Nezaplaceno
+                        </Badge>
+                      )}
+                      {!row.requiresPayment || row.paid === true ? null : (
+                        <Badge
+                          className={cn(
+                            "h-5 px-1.5 text-[10px]",
+                            payU === "overdue" &&
+                              "border-red-700 bg-red-100 text-red-950",
+                            payU === "due_soon" &&
+                              "border-amber-600 bg-amber-100 text-amber-950",
+                            payU === "incomplete_no_due" &&
+                              "border-amber-700 bg-yellow-50 text-yellow-950",
+                            payU === "ok" &&
+                              "border-gray-400 bg-gray-100 text-gray-900"
+                          )}
+                        >
+                          {urgencyLabel(payU)}
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="text-right tabular-nums text-gray-950">
+                    {showAmount ? (
+                      <div className="space-y-0">
+                        <div className="text-[10px] font-medium uppercase text-gray-700">
+                          {docVatInfoLine(row)}
                         </div>
-                      </TableCell>
-                      <TableCell className="align-top text-xs text-muted-foreground">
-                        <div className="flex flex-col gap-0.5 min-w-0">
-                          <span>{fileKindLabel(fk)}</span>
-                          {row.mimeType?.trim() ? (
-                            <span className="line-clamp-2 break-all" title={row.mimeType}>
-                              {row.mimeType}
-                            </span>
-                          ) : null}
-                        </div>
-                      </TableCell>
-                      <TableCell className="align-top">
-                        {jobLinkId ? (
-                          <div className="flex flex-col gap-1.5 min-w-0">
-                            <Link
-                              href={`/portal/jobs/${jobLinkId}`}
-                              className="text-sm font-semibold text-primary hover:underline truncate"
-                              title={row.jobName ?? row.entityName ?? ""}
-                            >
-                              {row.jobName || row.entityName || "Zakázka"}
-                            </Link>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 w-fit max-w-full text-xs shrink-0"
-                              asChild
-                            >
-                              <Link href={`/portal/jobs/${jobLinkId}`}>
-                                <Briefcase className="h-3.5 w-3.5 mr-1.5 shrink-0" />
-                                Otevřít zakázku
-                              </Link>
-                            </Button>
-                          </div>
-                        ) : (
-                          <span className="text-sm text-muted-foreground">
-                            {row.assignmentType === "pending_assignment"
-                              ? "Zařadit později"
-                              : row.entityName ?? "—"}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="align-top text-sm whitespace-nowrap">
-                        {row.date ?? "—"}
-                      </TableCell>
-                      <TableCell className="align-top text-xs">
-                        {row.requiresPayment ? (
-                          <Badge variant="secondary" className="text-[10px]">
-                            Ano
-                          </Badge>
-                        ) : (
-                          <span className="text-muted-foreground">Ne</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="align-top text-xs whitespace-nowrap">
-                        {row.dueDate?.trim() ? (
-                          <span>{row.dueDate}</span>
-                        ) : (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="align-top text-xs">
-                        {row.paid === true ? (
-                          <Badge className="bg-emerald-700 text-[10px] text-white hover:bg-emerald-700">
-                            Zaplaceno
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="text-[10px]">
-                            Nezaplaceno
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="align-top text-xs">
-                        {!row.requiresPayment ? (
-                          <span className="text-muted-foreground">—</span>
-                        ) : row.paid === true ? (
-                          <span className="text-muted-foreground">—</span>
-                        ) : (
-                          <Badge
-                            className={cn(
-                              "text-[10px]",
-                              payU === "overdue" &&
-                                "border-red-700 bg-red-100 text-red-950 hover:bg-red-100",
-                              payU === "due_soon" &&
-                                "border-amber-600 bg-amber-100 text-amber-950 hover:bg-amber-100",
-                              payU === "incomplete_no_due" &&
-                                "border-amber-700 bg-yellow-50 text-yellow-950 hover:bg-yellow-50",
-                              payU === "ok" &&
-                                "border-gray-400 bg-gray-100 text-gray-900 hover:bg-gray-100"
-                            )}
-                          >
-                            {urgencyLabel(payU)}
-                          </Badge>
-                        )}
-                      </TableCell>
-                      <TableCell className="align-top text-right tabular-nums text-xs sm:text-sm">
-                        {showAmount ? (
-                          <div className="space-y-0.5">
-                            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                              {docVatInfoLine(row)}
+                        {inferSDPH(row) ? (
+                          <>
+                            <div className="text-gray-800">
+                              Základ {amts.amountNet.toLocaleString("cs-CZ")}
                             </div>
-                            <div className="text-muted-foreground">
-                              {inferSDPH(row) ? (
-                                <>
-                                  Základ {amts.amountNet.toLocaleString("cs-CZ")} Kč
-                                </>
-                              ) : (
-                                <>Částka {amts.amountGross.toLocaleString("cs-CZ")} Kč</>
-                              )}
+                            <div className="text-[10px] text-gray-800">
+                              DPH {amts.vatAmount.toLocaleString("cs-CZ")}
                             </div>
-                            {inferSDPH(row) ? (
-                              <>
-                                <div className="text-muted-foreground text-[11px]">
-                                  DPH {amts.vatAmount.toLocaleString("cs-CZ")} Kč
-                                </div>
-                                <div className="font-bold text-rose-600 dark:text-rose-400">
-                                  Celkem {amts.amountGross.toLocaleString("cs-CZ")} Kč
-                                </div>
-                              </>
-                            ) : null}
-                          </div>
+                            <div className="font-semibold text-gray-950">
+                              {amts.amountGross.toLocaleString("cs-CZ")} Kč
+                            </div>
+                          </>
                         ) : (
-                          <span className="text-muted-foreground text-sm">—</span>
+                          <div className="font-semibold text-gray-950">
+                            {amts.amountGross.toLocaleString("cs-CZ")} Kč
+                          </div>
                         )}
-                      </TableCell>
-                      <TableCell className="align-top max-w-[14rem]">
-                        <p className="text-sm text-foreground/90 line-clamp-2 break-words">
-                          {row.note || row.description || "—"}
-                        </p>
-                      </TableCell>
-                      <TableCell className="pr-4 align-top text-right sticky right-0 z-20 bg-card border-l border-border shadow-[inset_1px_0_0_0_hsl(var(--border))]">
-                        <div className="flex flex-wrap items-center justify-end gap-1">
-                          {isDocumentEligibleForPaymentBox(pr) ? (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              className="h-8 px-2 text-[10px] shrink-0"
-                              onClick={() => void onMarkPaid(row)}
-                            >
-                              Zaplaceno
-                            </Button>
-                          ) : null}
-                          {row.paid === true && row.requiresPayment ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 px-2 text-[10px] shrink-0"
-                              onClick={() => void onMarkUnpaid(row)}
-                            >
-                              Nezaplaceno
-                            </Button>
-                          ) : null}
-                          {row.fileUrl ? (
-                            <Button
-                              variant="outline"
-                              size="icon"
-                              className="h-9 w-9 shrink-0"
-                              asChild
-                              title="Otevřít přílohu"
-                            >
-                              <a
-                                href={row.fileUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <ExternalLink className="h-4 w-4" />
-                              </a>
-                            </Button>
-                          ) : null}
-                          {jobLinkId ? (
-                            <Button
-                              variant="secondary"
-                              size="icon"
-                              className="h-9 w-9 shrink-0"
-                              asChild
-                              title="Otevřít zakázku"
-                            >
-                              <Link href={`/portal/jobs/${jobLinkId}`}>
-                                <Briefcase className="h-4 w-4 shrink-0" />
-                              </Link>
-                            </Button>
-                          ) : null}
-                          {canEditRow ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-9 w-9 text-muted-foreground hover:text-foreground"
-                              title="Upravit"
-                              onClick={() => onEdit(row)}
-                            >
-                              <Pencil className="h-4 w-4" />
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-foreground"
-                            title="Přiřadit k zakázce"
-                            onClick={() => onAssign(row)}
-                          >
-                            <Link2 className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                            title="Smazat"
-                            onClick={() => onDelete(row)}
-                          >
-                            <Trash2 className="h-4 w-4 shrink-0" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                      </div>
+                    ) : (
+                      <span className="text-gray-500">—</span>
+                    )}
+                  </div>
+
+                  <p className="line-clamp-2 break-words text-gray-900">
+                    {row.note || row.description || "—"}
+                  </p>
+                </div>
+              );
+            })}
           </div>
         ) : data.length === 0 ? (
           <div className="text-center py-20 text-muted-foreground">
@@ -2527,184 +2494,163 @@ function DocumentTableIssued({
   onMarkPaid?: (row: CompanyDocumentRow) => void | Promise<void>;
   onMarkUnpaid?: (row: CompanyDocumentRow) => void | Promise<void>;
 }) {
+  const issuedRow =
+    "grid w-full grid-cols-[88px_minmax(0,1.2fr)_minmax(0,1fr)_72px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0.5 border-b border-gray-200 px-2 py-1.5 text-[11px] leading-snug sm:text-xs [&>*]:min-w-0";
+
   return (
-    <Card className="overflow-hidden min-w-0">
-      <div className="p-4 border-b flex flex-col sm:flex-row gap-4 justify-between">
-        <div className="relative w-full sm:max-w-xs">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+    <Card className="min-w-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
+      <div className="flex flex-col justify-between gap-2 border-b border-gray-200 p-2 sm:flex-row sm:items-center sm:p-3">
+        <div className="relative w-full max-w-xs">
+          <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
           <Input
             placeholder="Hledat ve vydaných…"
-            className="pl-10 min-h-[44px] w-full"
+            className="h-9 border-gray-300 bg-white pl-8 text-sm text-gray-900"
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outlineLight" size="sm" className="gap-2 min-h-[44px] sm:min-h-0">
-            <Filter className="w-4 h-4 shrink-0" /> Filtr
+        <div className="flex flex-wrap gap-1.5">
+          <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs">
+            <Filter className="h-3.5 w-3.5 shrink-0" /> Filtr
           </Button>
-          <Button variant="outlineLight" size="sm" className="gap-2 min-h-[44px] sm:min-h-0">
-            <Download className="w-4 h-4 shrink-0" /> Export
+          <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs">
+            <Download className="h-3.5 w-3.5 shrink-0" /> Export
           </Button>
         </div>
       </div>
       <CardContent className="p-0">
         {isLoading ? (
-          <div className="flex justify-center p-12">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <div className="flex justify-center p-8">
+            <Loader2 className="h-7 w-7 animate-spin text-primary" />
           </div>
         ) : data.length > 0 ? (
-          <div className="overflow-x-auto">
-            <Table className="min-w-[720px] w-full">
-              <TableHeader>
-                <TableRow className="border-border">
-                  <TableHead className="pl-6 min-w-[140px]">Doklad</TableHead>
-                  <TableHead className="min-w-[120px]">Zakázka</TableHead>
-                  <TableHead className="min-w-[100px]">Datum</TableHead>
-                  <TableHead className="text-right min-w-[140px]">
-                    Částka / DPH
-                  </TableHead>
-                  <TableHead className="pr-4 text-right min-w-[120px] sticky right-0 z-30 bg-card border-l border-border shadow-[inset_1px_0_0_0_hsl(var(--border))]">
-                    Akce
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.map((docRow) => {
-                  const issuedAm = docDisplayAmounts(docRow);
-                  const title = docDisplayTitle(docRow);
-                  const issuedJobId =
-                    (docRow.jobId ?? docRow.zakazkaId)?.trim() || "";
-                  return (
-                    <TableRow
-                      key={docRow.id}
-                      className="border-border hover:bg-muted/30 group"
+          <div className="w-full overflow-hidden bg-white">
+            <div
+              className={cn(
+                issuedRow,
+                "border-b border-gray-200 bg-gray-100 font-semibold text-gray-900"
+              )}
+            >
+              <span>Akce</span>
+              <span>Doklad</span>
+              <span>Zakázka</span>
+              <span>Datum</span>
+              <span className="text-right tabular-nums">Částka</span>
+            </div>
+            {data.map((docRow) => {
+              const issuedAm = docDisplayAmounts(docRow);
+              const title = docDisplayTitle(docRow);
+              const issuedJobId =
+                (docRow.jobId ?? docRow.zakazkaId)?.trim() || "";
+              const ib =
+                "h-7 w-7 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950";
+              return (
+                <div
+                  key={docRow.id}
+                  className={cn(issuedRow, "text-gray-900 hover:bg-gray-50/80")}
+                >
+                  <div className="flex flex-wrap gap-0.5">
+                    {issuedJobId ? (
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        className={ib}
+                        asChild
+                        title="Zakázka"
+                      >
+                        <Link href={`/portal/jobs/${issuedJobId}`}>
+                          <Briefcase className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={ib}
+                      title="Upravit"
+                      onClick={() => onEdit(docRow)}
                     >
-                      <TableCell className="pl-6 font-medium">
-                        <div className="flex flex-col gap-0.5 min-w-0 max-w-[16rem]">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <FileDown className="w-4 h-4 text-muted-foreground opacity-50 shrink-0" />
-                            <span className="truncate text-sm" title={title}>
-                              {title}
-                            </span>
-                          </div>
-                          {docRow.number?.trim() && docRow.number !== title ? (
-                            <span className="text-xs text-muted-foreground pl-6 truncate">
-                              {docRow.number}
-                            </span>
-                          ) : null}
+                      <Pencil className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={ib}
+                      title="Přiřadit k zakázce"
+                      onClick={() => onAssign(docRow)}
+                    >
+                      <Link2 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onDelete(docRow)}
+                      className={cn(ib, "hover:text-red-700")}
+                      aria-label="Smazat doklad"
+                      title="Smazat"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <div className="min-w-0 font-medium">
+                    <div className="flex items-start gap-1">
+                      <FileDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500" />
+                      <span className="line-clamp-2 text-gray-950" title={title}>
+                        {title}
+                      </span>
+                    </div>
+                    {docRow.number?.trim() && docRow.number !== title ? (
+                      <span className="mt-0.5 block pl-4 text-[10px] text-gray-700 line-clamp-1">
+                        {docRow.number}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="min-w-0">
+                    {issuedJobId ? (
+                      <Link
+                        href={`/portal/jobs/${issuedJobId}`}
+                        className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2"
+                        title={docRow.jobName ?? ""}
+                      >
+                        {docRow.jobName ?? "Zakázka"}
+                      </Link>
+                    ) : (
+                      <span className="text-gray-800">
+                        {docRow.assignmentType === "overhead" ? "Režie" : "—"}
+                      </span>
+                    )}
+                  </div>
+                  <div className="whitespace-nowrap text-gray-900">
+                    {docRow.date ?? "—"}
+                  </div>
+                  <div className="text-right tabular-nums text-gray-950">
+                    <div className="text-[10px] font-medium uppercase text-gray-700">
+                      {docVatInfoLine(docRow)}
+                    </div>
+                    {inferSDPH(docRow) ? (
+                      <>
+                        <div className="text-gray-800">
+                          Základ {issuedAm.amountNet.toLocaleString("cs-CZ")}
                         </div>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {issuedJobId ? (
-                          <div className="flex flex-col gap-1 min-w-0 max-w-[14rem]">
-                            <Link
-                              href={`/portal/jobs/${issuedJobId}`}
-                              className="font-medium text-primary hover:underline truncate"
-                              title={docRow.jobName ?? ""}
-                            >
-                              {docRow.jobName ?? "Zakázka"}
-                            </Link>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="h-8 w-fit text-xs"
-                              asChild
-                            >
-                              <Link href={`/portal/jobs/${issuedJobId}`}>
-                                <Briefcase className="h-3.5 w-3.5 mr-1" />
-                                Otevřít zakázku
-                              </Link>
-                            </Button>
-                          </div>
-                        ) : (
-                          <span className="text-muted-foreground">
-                            {docRow.assignmentType === "overhead"
-                              ? "Režie"
-                              : "—"}
-                          </span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-sm whitespace-nowrap">
-                        {docRow.date ?? "—"}
-                      </TableCell>
-                      <TableCell className="text-right text-xs tabular-nums text-emerald-600 dark:text-emerald-400">
-                        <div className="space-y-0.5">
-                          <div className="text-[10px] uppercase text-muted-foreground">
-                            {docVatInfoLine(docRow)}
-                          </div>
-                          {inferSDPH(docRow) ? (
-                            <>
-                              <div className="text-muted-foreground">
-                                Základ {issuedAm.amountNet.toLocaleString("cs-CZ")} Kč
-                              </div>
-                              <div className="text-[11px] text-muted-foreground">
-                                DPH {issuedAm.vatAmount.toLocaleString("cs-CZ")} Kč
-                              </div>
-                              <div className="font-bold">
-                                Celkem {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
-                              </div>
-                            </>
-                          ) : (
-                            <div className="font-bold">
-                              {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
-                            </div>
-                          )}
+                        <div className="text-[10px] text-gray-800">
+                          DPH {issuedAm.vatAmount.toLocaleString("cs-CZ")}
                         </div>
-                      </TableCell>
-                      <TableCell className="pr-4 text-right sticky right-0 z-20 bg-card border-l border-border shadow-[inset_1px_0_0_0_hsl(var(--border))]">
-                        <div className="flex flex-wrap justify-end gap-1">
-                          {issuedJobId ? (
-                            <Button
-                              variant="secondary"
-                              size="icon"
-                              className="h-9 w-9 shrink-0"
-                              asChild
-                              title="Otevřít zakázku"
-                            >
-                              <Link href={`/portal/jobs/${issuedJobId}`}>
-                                <Briefcase className="h-4 w-4" />
-                              </Link>
-                            </Button>
-                          ) : null}
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-foreground"
-                            title="Upravit"
-                            onClick={() => onEdit(docRow)}
-                          >
-                            <Pencil className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-9 w-9 text-muted-foreground hover:text-foreground"
-                            title="Přiřadit k zakázce"
-                            onClick={() => onAssign(docRow)}
-                          >
-                            <Link2 className="w-4 h-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => onDelete(docRow)}
-                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
-                            aria-label="Smazat doklad"
-                            title="Smazat"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                        <div className="font-semibold text-gray-950">
+                          {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
                         </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
+                      </>
+                    ) : (
+                      <div className="font-semibold text-gray-950">
+                        {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         ) : (
           <div className="text-center py-20 text-muted-foreground">
