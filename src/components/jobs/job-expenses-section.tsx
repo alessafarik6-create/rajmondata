@@ -44,7 +44,13 @@ import {
   resolveExpenseAmounts,
 } from "@/lib/vat-calculations";
 import { parseMoneyAmountInput } from "@/lib/work-contract-deposit";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import {
   Collapsible,
   CollapsibleContent,
@@ -756,12 +762,166 @@ export function JobExpensesSection({
 
   return (
     <>
-      <Card
-        className={cn(
-          "bg-surface border-border",
-          isJobDetailWide && "w-full min-w-0 border-2 shadow-sm"
-        )}
-      >
+      <Card className="w-full min-w-0 bg-surface border-border shadow-sm">
+        <CardHeader
+          className={cn("space-y-4 sm:space-y-5", "p-4 sm:p-6")}
+        >
+          <div className="space-y-2">
+            <CardTitle
+              id="job-expenses-heading"
+              className={cn(
+                "flex items-start gap-2.5 font-semibold leading-tight tracking-tight text-gray-900 dark:text-gray-50",
+                isJobDetailWide ? "text-xl sm:text-2xl" : "text-lg sm:text-xl"
+              )}
+            >
+              <Wallet
+                className={cn(
+                  "mt-0.5 shrink-0 text-primary",
+                  isJobDetailWide ? "h-6 w-6 sm:h-7 sm:w-7" : "h-5 w-5 sm:h-6 sm:w-6"
+                )}
+                aria-hidden
+              />
+              <span>{isJobDetailWide ? "Náklady zakázky" : "Náklady"}</span>
+            </CardTitle>
+            <CardDescription
+              className={cn(
+                "text-gray-900 dark:text-gray-100",
+                isJobDetailWide ? "text-base" : "text-sm sm:text-base"
+              )}
+            >
+              {isJobDetailWide
+                ? "Rozpočet, evidované náklady a zbývající prostředky. Hlavní přehled je v částkách s DPH."
+                : "Rozpočet, náklady a zbývá u této zakázky."}
+            </CardDescription>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
+            <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white px-4 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-950">
+              <span
+                className={cn(
+                  "font-medium text-gray-900 dark:text-gray-50",
+                  isJobDetailWide ? "text-sm sm:text-base" : "text-sm"
+                )}
+              >
+                Rozpočet
+              </span>
+              <span
+                className={cn(
+                  "font-bold tabular-nums tracking-tight text-gray-900 dark:text-gray-50",
+                  isJobDetailWide ? "text-xl sm:text-2xl" : "text-lg sm:text-xl"
+                )}
+              >
+                {jobBudget != null ? formatKc(jobBudget.budgetGross) : "—"}
+              </span>
+              <span className="text-xs font-medium text-gray-900 dark:text-gray-200 sm:text-sm">
+                s DPH
+              </span>
+            </div>
+            <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white px-4 py-4 shadow-sm ring-1 ring-gray-900/[0.06] dark:border-gray-700 dark:bg-gray-950 dark:ring-white/10">
+              <span
+                className={cn(
+                  "font-medium text-gray-900 dark:text-gray-50",
+                  isJobDetailWide ? "text-sm sm:text-base" : "text-sm"
+                )}
+              >
+                Náklady
+              </span>
+              <span
+                className={cn(
+                  "font-extrabold tabular-nums tracking-tight text-gray-950 dark:text-gray-50",
+                  isJobDetailWide ? "text-xl sm:text-2xl" : "text-lg sm:text-xl"
+                )}
+              >
+                {formatKc(expenseTotals.gross)}
+              </span>
+              <span className="text-xs font-medium text-gray-900 dark:text-gray-200 sm:text-sm">
+                s DPH (součet)
+              </span>
+            </div>
+            <div className="flex flex-col gap-2 rounded-lg border border-gray-200 bg-white px-4 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-950">
+              <span
+                className={cn(
+                  "font-medium text-gray-900 dark:text-gray-50",
+                  isJobDetailWide ? "text-sm sm:text-base" : "text-sm"
+                )}
+              >
+                Zbývá
+              </span>
+              <span
+                className={cn(
+                  "font-bold tabular-nums tracking-tight",
+                  isJobDetailWide ? "text-xl sm:text-2xl" : "text-lg sm:text-xl",
+                  remainingGrossKc == null && "text-gray-900 dark:text-gray-50",
+                  remainingGrossKc != null &&
+                    remainingGrossKc >= 0 &&
+                    "text-emerald-700 dark:text-emerald-400",
+                  remainingGrossKc != null &&
+                    remainingGrossKc < 0 &&
+                    "text-red-700 dark:text-red-400"
+                )}
+              >
+                {remainingGrossKc != null ? formatKc(remainingGrossKc) : "—"}
+              </span>
+              <span className="text-xs font-medium text-gray-900 dark:text-gray-200 sm:text-sm">
+                s DPH
+              </span>
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              "grid grid-cols-1 gap-3 rounded-lg border border-gray-200 bg-white px-4 py-4 shadow-sm dark:border-gray-700 dark:bg-gray-950 sm:grid-cols-3 sm:gap-4"
+            )}
+          >
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100 sm:text-sm">
+                Rozpočet bez DPH
+              </p>
+              <p
+                className={cn(
+                  "mt-1.5 font-semibold tabular-nums text-gray-900 dark:text-gray-50",
+                  isJobDetailWide ? "text-base sm:text-lg" : "text-sm sm:text-base"
+                )}
+              >
+                {jobBudget != null ? formatKc(jobBudget.budgetNet) : "—"}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100 sm:text-sm">
+                Náklady bez DPH
+              </p>
+              <p
+                className={cn(
+                  "mt-1.5 font-semibold tabular-nums text-gray-900 dark:text-gray-50",
+                  isJobDetailWide ? "text-base sm:text-lg" : "text-sm sm:text-base"
+                )}
+              >
+                {formatKc(expenseTotals.net)}
+              </p>
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100 sm:text-sm">
+                Zbývá bez DPH
+              </p>
+              <p
+                className={cn(
+                  "mt-1.5 font-bold tabular-nums",
+                  isJobDetailWide ? "text-base sm:text-lg" : "text-sm sm:text-base",
+                  remainingNetKc == null && "text-gray-900 dark:text-gray-50",
+                  remainingNetKc != null &&
+                    remainingNetKc >= 0 &&
+                    "text-emerald-700 dark:text-emerald-400",
+                  remainingNetKc != null &&
+                    remainingNetKc < 0 &&
+                    "text-red-700 dark:text-red-400"
+                )}
+              >
+                {remainingNetKc != null ? formatKc(remainingNetKc) : "—"}
+              </p>
+            </div>
+          </div>
+        </CardHeader>
+
         <Collapsible
           open={expensesSectionOpen}
           onOpenChange={(next) => {
@@ -769,211 +929,52 @@ export function JobExpensesSection({
             if (!next) setExpensesListExpanded(false);
           }}
         >
-          {isJobDetailWide ? (
-            <div className="border-b border-gray-200 bg-white px-4 py-5 sm:px-6 sm:py-6 dark:border-gray-700 dark:bg-gray-950/40">
-              <h2
-                id="job-expenses-heading"
-                className={cn(
-                  EXP.h1,
-                  "sm:text-2xl"
-                )}
-              >
-                Náklady zakázky
-              </h2>
-              <p className={cn("mt-1", EXP.lead)}>
-                Součty všech záznamů nákladů (přehled rozpočtu níže v záhlaví sekce).
-              </p>
-              <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-3 sm:gap-6">
-                <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-950/50">
-                  <p className={EXP.label}>
-                    Celkem bez DPH
-                  </p>
-                  <p className={cn("mt-1 text-2xl sm:text-3xl", EXP.amount)}>
-                    {formatKc(expenseTotals.net)}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-950/50">
-                  <p className={EXP.label}>
-                    DPH celkem
-                  </p>
-                  <p className={cn("mt-1 text-2xl sm:text-3xl", EXP.amount)}>
-                    {formatKc(expenseTotals.vat)}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-gray-200 bg-white px-4 py-3 shadow-sm dark:border-gray-700 dark:bg-gray-950/50">
-                  <p className={EXP.label}>
-                    Celkem s DPH
-                  </p>
-                  <p className={cn("mt-1 text-2xl sm:text-3xl", EXP.amount)}>
-                    {formatKc(expenseTotals.gross)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          ) : null}
-          <CardHeader
-            className={cn(
-              "space-y-0",
-              isJobDetailWide ? "p-4 sm:p-5" : "p-2 sm:p-3"
-            )}
-          >
+          <div className="border-t border-gray-200 px-4 dark:border-gray-700 sm:px-6">
             <CollapsibleTrigger asChild>
               <button
                 type="button"
                 className={cn(
-                  "flex w-full items-center gap-3 rounded-md text-left outline-none transition-colors",
-                  isJobDetailWide
-                    ? "px-2 py-2 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-gray-800/50 sm:px-3"
-                    : "rounded-md px-1.5 py-1.5 hover:bg-gray-100 focus-visible:ring-2 focus-visible:ring-ring dark:hover:bg-gray-800/50"
+                  "flex w-full items-center justify-between gap-3 rounded-lg py-3 text-left outline-none transition-colors",
+                  "font-semibold text-gray-900 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-ring dark:text-gray-50 dark:hover:bg-gray-800/70",
+                  isJobDetailWide ? "min-h-[48px] text-base sm:py-4" : "min-h-[44px] text-sm sm:text-base"
                 )}
               >
-                <Wallet
-                  className={cn(
-                    "shrink-0 text-gray-800 dark:text-gray-200",
-                    isJobDetailWide ? "h-6 w-6 sm:h-7 sm:w-7" : "h-4 w-4 sm:h-5 sm:w-5"
-                  )}
-                  aria-hidden
-                />
-                <div className="min-w-0 flex-1">
-                  <div
-                    className={cn(
-                      EXP.h2,
-                      isJobDetailWide ? "text-lg sm:text-xl" : "text-sm sm:text-base"
-                    )}
-                  >
-                    {isJobDetailWide
-                      ? "Rozpočet, náklady a zbývá"
-                      : "Náklady"}
-                  </div>
-                  <div
-                    className={cn(
-                      "mt-1 space-y-1.5 leading-tight",
-                      isJobDetailWide
-                        ? "text-sm text-gray-800 dark:text-gray-200 sm:text-base"
-                        : "text-xs text-gray-800 dark:text-gray-200 sm:text-sm"
-                    )}
-                  >
-                    <div className={cn("grid grid-cols-3 gap-x-2 text-center font-semibold uppercase tracking-wide text-gray-900 dark:text-gray-100", !isJobDetailWide && "text-[11px] sm:text-xs")}>
-                      <span>Rozpočet</span>
-                      <span>Náklady</span>
-                      <span>Zbývá</span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-x-2 tabular-nums">
-                      <div>
-                        <div className="text-gray-800 dark:text-gray-200">
-                          Bez DPH
-                        </div>
-                        <div
-                          className={cn(
-                            "font-semibold text-gray-900 dark:text-gray-50",
-                            isJobDetailWide && "text-lg"
-                          )}
-                        >
-                          {jobBudget != null ? formatKc(jobBudget.budgetNet) : "—"}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-800 dark:text-gray-200">
-                          Bez DPH
-                        </div>
-                        <div
-                          className={cn(
-                            "font-semibold text-gray-900 dark:text-gray-50",
-                            isJobDetailWide && "text-lg"
-                          )}
-                        >
-                          {formatKc(expenseTotals.net)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-800 dark:text-gray-200">
-                          Bez DPH
-                        </div>
-                        <div
-                          className={cn(
-                            "font-semibold text-gray-900 dark:text-gray-50",
-                            remainingNetKc != null && remainingNetKc < 0 && "text-destructive",
-                            isJobDetailWide && "text-lg"
-                          )}
-                        >
-                          {remainingNetKc != null ? formatKc(remainingNetKc) : "—"}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="grid grid-cols-3 gap-x-2 tabular-nums">
-                      <div>
-                        <div className="text-gray-800 dark:text-gray-200">
-                          S DPH
-                        </div>
-                        <div
-                          className={cn(
-                            "font-semibold text-gray-900 dark:text-gray-50",
-                            isJobDetailWide && "text-lg"
-                          )}
-                        >
-                          {jobBudget != null ? formatKc(jobBudget.budgetGross) : "—"}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-800 dark:text-gray-200">
-                          S DPH
-                        </div>
-                        <div
-                          className={cn(
-                            "font-semibold text-gray-900 dark:text-gray-50",
-                            isJobDetailWide && "text-lg"
-                          )}
-                        >
-                          {formatKc(expenseTotals.gross)}
-                        </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-800 dark:text-gray-200">
-                          S DPH
-                        </div>
-                        <div
-                          className={cn(
-                            "font-semibold text-gray-900 dark:text-gray-50",
-                            remainingGrossKc != null && remainingGrossKc < 0 && "text-destructive",
-                            isJobDetailWide && "text-lg"
-                          )}
-                        >
-                          {remainingGrossKc != null ? formatKc(remainingGrossKc) : "—"}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                <span className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                  <span>Seznam nákladů</span>
+                  {sortedExpenses.length > 0 ? (
+                    <span className="tabular-nums text-gray-900 dark:text-gray-100">
+                      ({sortedExpenses.length})
+                    </span>
+                  ) : null}
+                </span>
                 <ChevronDown
                   className={cn(
-                    EXP.chevron,
-                    isJobDetailWide ? "h-5 w-5" : "h-4 w-4",
+                    "h-5 w-5 shrink-0 text-gray-900 transition-transform duration-200 dark:text-gray-200",
                     expensesSectionOpen && "rotate-180"
                   )}
                   aria-hidden
                 />
               </button>
             </CollapsibleTrigger>
-          </CardHeader>
+          </div>
 
           <CollapsibleContent>
             <CardContent
               className={cn(
-                "space-y-4 pb-4 pt-0",
-                isJobDetailWide ? "px-4 sm:px-6" : "space-y-2 px-2 pb-3 sm:px-3"
+                "space-y-4 border-t border-gray-200 pb-4 pt-4 dark:border-gray-700",
+                isJobDetailWide ? "px-4 sm:px-6" : "px-4 sm:px-6"
               )}
             >
               <p
                 className={cn(
-                  isJobDetailWide
-                    ? "text-base text-gray-800 dark:text-gray-200"
-                    : "text-xs text-gray-800 dark:text-gray-200 sm:text-sm"
+                  "text-gray-900 dark:text-gray-100",
+                  isJobDetailWide ? "text-base" : "text-sm sm:text-base"
                 )}
               >
                 Výdaje a přílohy — částku lze zadat bez DPH nebo s DPH; součty se
                 odečítají od rozpočtu (bez DPH / s DPH).
                 {sortedExpenses.length > 0 ? (
-                  <span className="font-semibold text-gray-900 dark:text-gray-100">
+                  <span className="font-semibold text-gray-950 dark:text-gray-50">
                     {" "}
                     ({sortedExpenses.length})
                   </span>
