@@ -44,6 +44,10 @@ import {
   type EmployeeLite,
   type PeriodMode,
 } from "@/lib/attendance-overview-compute";
+import {
+  buildGlobalDayPayoutMap,
+  dayPayoutByDateResolved,
+} from "@/lib/employee-day-payout";
 import { AttendanceExportDocument } from "../labor/dochazka/prehled/attendance-export-document";
 
 /** Stačí jedno pole + limit — bez složeného indexu (employeeId + date). Datum filtrujeme v klientovi. */
@@ -238,6 +242,24 @@ export function EmployeeAttendanceOverview({
     );
   }, [firestore, companyId, needAltEmployeeKey, authUserId]);
 
+  const payoutsQueryPrimary = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_day_payouts"),
+      where("employeeId", "==", employeeId),
+      limit(EMPLOYEE_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, employeeId]);
+
+  const payoutsQueryAlt = useMemoFirebase(() => {
+    if (!firestore || !companyId || !needAltEmployeeKey) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_day_payouts"),
+      where("employeeId", "==", authUserId),
+      limit(EMPLOYEE_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, needAltEmployeeKey, authUserId]);
+
   const { data: rawAttendancePrimary = [], isLoading: attLoadP, error: attErrP } =
     useCollection(attendanceQueryPrimary, silentListen);
   const { data: rawAttendanceAlt = [], isLoading: attLoadA, error: attErrA } =
@@ -252,15 +274,21 @@ export function EmployeeAttendanceOverview({
     useCollection(workSegmentsQueryPrimary, silentListen);
   const { data: segmentsAlt = [], isLoading: segLoadA, error: segErrA } =
     useCollection(workSegmentsQueryAlt, silentListen);
+  const { data: payoutsPrimary = [], isLoading: payLoadP, error: payErrP } =
+    useCollection(payoutsQueryPrimary, silentListen);
+  const { data: payoutsAlt = [], isLoading: payLoadA, error: payErrA } =
+    useCollection(payoutsQueryAlt, silentListen);
 
   const attLoading = attLoadP || (needAltEmployeeKey ? attLoadA : false);
   const wbLoading = wbLoadP || (needAltEmployeeKey ? wbLoadA : false);
   const segLoading = segLoadP || (needAltEmployeeKey ? segLoadA : false);
+  const payLoading = payLoadP || (needAltEmployeeKey ? payLoadA : false);
 
   const attError = attErrP || attErrA;
   const wbError = wbErrP || wbErrA;
   const segError = segErrP || segErrA;
-  const dataError = attError || drError || wbError || segError;
+  const payError = payErrP || payErrA;
+  const dataError = attError || drError || wbError || segError || payError;
 
   const attendanceRows = useMemo(() => {
     const merged = mergeDocsById<AttendanceRow>([
@@ -294,6 +322,28 @@ export function EmployeeAttendanceOverview({
     return merged.filter((row) => rowInDateRange(row, rangeStr.start, rangeStr.end));
   }, [segmentsPrimary, segmentsAlt, rangeStr.start, rangeStr.end]);
 
+  const dayPayoutByDate = useMemo(() => {
+    const raw = [
+      ...(Array.isArray(payoutsPrimary) ? payoutsPrimary : []),
+      ...(Array.isArray(payoutsAlt) ? payoutsAlt : []),
+    ] as Record<string, unknown>[];
+    const byId = new Map<string, Record<string, unknown>>();
+    for (const r of raw) {
+      const id = String((r as { id?: string }).id ?? "");
+      if (id && !byId.has(id)) byId.set(id, r);
+    }
+    const uniq = Array.from(byId.values());
+    const g = buildGlobalDayPayoutMap(uniq, rangeStr.start, rangeStr.end);
+    return dayPayoutByDateResolved(g, employeeId, authUserId);
+  }, [
+    payoutsPrimary,
+    payoutsAlt,
+    rangeStr.start,
+    rangeStr.end,
+    employeeId,
+    authUserId,
+  ]);
+
   const dailyDetailRows = useMemo(
     () =>
       buildEmployeeDailyDetailRows({
@@ -303,8 +353,17 @@ export function EmployeeAttendanceOverview({
         dailyReports,
         workBlocks,
         segments: workSegments,
+        dayPayoutByDate,
       }),
-    [range, employeeLite, attendanceRows, dailyReports, workBlocks, workSegments]
+    [
+      range,
+      employeeLite,
+      attendanceRows,
+      dailyReports,
+      workBlocks,
+      workSegments,
+      dayPayoutByDate,
+    ]
   );
 
   const detailTotals = useMemo(
@@ -312,7 +371,7 @@ export function EmployeeAttendanceOverview({
     [dailyDetailRows]
   );
 
-  const loading = attLoading || drLoading || wbLoading || segLoading;
+  const loading = attLoading || drLoading || wbLoading || segLoading || payLoading;
 
   const periodTitle =
     periodMode === "day"
@@ -580,9 +639,11 @@ export function EmployeeAttendanceOverview({
                   </p>
                 </div>
                 <div className="rounded-lg border border-neutral-950 bg-white p-3">
-                  <p className="text-xs font-medium text-neutral-800">Z toho hodinová práce</p>
+                  <p className="text-xs font-medium text-neutral-800">
+                    Běžná sazba (mimo tarif i zakázku)
+                  </p>
                   <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950">
-                    {formatHoursMinutes(detailTotals.totalHoursOutsideTariffOnly)}
+                    {formatHoursMinutes(detailTotals.totalHoursOutsideTariffJob)}
                   </p>
                 </div>
               </div>
@@ -701,7 +762,7 @@ export function EmployeeAttendanceOverview({
                           Neúplná docházka (chybí příchod nebo odchod) — den není započten do výpočtu.
                         </p>
                       ) : null}
-                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                         <div>
                           <p className="text-xs font-medium text-neutral-800">Čas na tarifech</p>
                           <p className="font-semibold tabular-nums text-neutral-950">
@@ -712,6 +773,14 @@ export function EmployeeAttendanceOverview({
                           <p className="text-xs font-medium text-neutral-800">Čas mimo tarif</p>
                           <p className="font-semibold tabular-nums text-neutral-950">
                             {formatHoursMinutes(day.hoursOutsideTariffOnly)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-neutral-800">
+                            Hodinová práce (mimo tarif i zakázku)
+                          </p>
+                          <p className="font-semibold tabular-nums text-neutral-950">
+                            {formatHoursMinutes(day.hoursOutsideTariffAndJob)}
                           </p>
                         </div>
                       </div>
@@ -770,6 +839,11 @@ export function EmployeeAttendanceOverview({
                           )}
                         </span>
                       </div>
+                      {day.paidNote ? (
+                        <p className="mt-2 text-xs text-neutral-800">
+                          Poznámka: „{day.paidNote}“
+                        </p>
+                      ) : null}
                     </div>
                   ))
                 )}
@@ -813,11 +887,29 @@ export function EmployeeAttendanceOverview({
                             </p>
                           </div>
                           <div>
-                            <span className="text-neutral-700">Tarify / mimo</span>
+                            <span className="text-neutral-700">Tarify / mimo tarif</span>
                             <p className="font-medium">
                               {formatHoursMinutes(day.tariffHoursTotal)} /{" "}
                               {formatHoursMinutes(day.hoursOutsideTariffOnly)}
                             </p>
+                          </div>
+                          <div className="col-span-2">
+                            <span className="text-neutral-700">Mimo tarif i zakázku</span>
+                            <p className="font-medium">
+                              {formatHoursMinutes(day.hoursOutsideTariffAndJob)}
+                            </p>
+                          </div>
+                          <div className="col-span-2 flex flex-wrap items-center gap-2">
+                            {day.paidStatus === "paid" ? (
+                              <Badge className="bg-emerald-600 text-white">Zaplaceno</Badge>
+                            ) : day.paidStatus === "unpaid" ? (
+                              <Badge variant="destructive">Nezaplaceno</Badge>
+                            ) : (
+                              <Badge variant="secondary">Bez platby</Badge>
+                            )}
+                            {day.paidNote ? (
+                              <span className="text-xs text-neutral-800">„{day.paidNote}“</span>
+                            ) : null}
                           </div>
                         </div>
                         {day.tariffSegments.map((t) => (

@@ -183,6 +183,14 @@ export function buildAttendanceOverviewPdf(params: AttendanceOverviewPdfParams):
         y,
         CONTENT_W
       );
+      const paidLine =
+        day.paidStatus === "paid"
+          ? "Zaplaceno"
+          : day.paidStatus === "unpaid"
+            ? "Nezaplaceno"
+            : "—";
+      const noteLine = day.paidNote ? ` | Poznámka: ${day.paidNote}` : "";
+      y = addLines(doc, `Platba: ${paidLine}${noteLine}`, MARGIN_MM, y, CONTENT_W);
       y += 4;
     }
 

@@ -229,6 +229,27 @@ service cloud.firestore {
         allow write: if false;
       }
 
+      /**
+       * Označení denní výplaty (zaplaceno / poznámka) — admin zapisuje, zaměstnanec čte vlastní.
+       * companies/{companyId}/employee_day_payouts/{docId}
+       */
+      match /employee_day_payouts/{payoutId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow create, update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.employeeId is string &&
+          request.resource.data.employeeId.size() > 0 &&
+          request.resource.data.date is string &&
+          request.resource.data.date.size() == 10 &&
+          request.resource.data.paid is bool &&
+          (!('paidNote' in request.resource.data) ||
+            request.resource.data.paidNote == null ||
+            (request.resource.data.paidNote is string &&
+              request.resource.data.paidNote.size() <= 400));
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       match /jobs/{jobId} {
         allow read: if jobDetailReadAccess(companyId, jobId);
         allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();

@@ -12,9 +12,12 @@ import {
 } from "@/firebase";
 import {
   collection,
+  deleteDoc,
   doc,
   query,
   limit,
+  setDoc,
+  serverTimestamp,
 } from "firebase/firestore";
 import { format, subDays } from "date-fns";
 import { cs } from "date-fns/locale";
@@ -38,6 +41,15 @@ import {
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -71,6 +83,12 @@ import {
   type PeriodMode,
 } from "@/lib/attendance-overview-compute";
 import { downloadAttendanceOverviewPdf } from "@/lib/attendance-overview-pdf";
+import {
+  buildGlobalDayPayoutMap,
+  dayPayoutMapForEmployee,
+  employeeDayPayoutDocId,
+  MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN,
+} from "@/lib/employee-day-payout";
 import { AttendanceExportDocument } from "./attendance-export-document";
 
 const ALL = "__all__";
@@ -174,6 +192,10 @@ export default function AttendanceOverviewPage() {
   );
   const [customTo, setCustomTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [employeeFilter, setEmployeeFilter] = useState<string>(ALL);
+  const [payoutDialogDate, setPayoutDialogDate] = useState<string | null>(null);
+  const [payoutFormPaid, setPayoutFormPaid] = useState(true);
+  const [payoutFormNote, setPayoutFormNote] = useState("");
+  const [payoutSaving, setPayoutSaving] = useState(false);
 
   /** Firestore permission denied nesmí emitovat globální chybu — FirebaseErrorListener by shodil celou aplikaci. */
   const silentListen = useMemo(
@@ -287,6 +309,33 @@ export default function AttendanceOverviewPage() {
     error: workSegmentsError,
   } = useCollection(workSegmentsQuery, silentListen);
 
+  const payoutsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_day_payouts"),
+      limit(firestoreSafeLimit(1000))
+    );
+  }, [firestore, companyId]);
+
+  const {
+    data: payoutsRaw = [],
+    isLoading: payoutsLoading,
+    error: payoutsError,
+  } = useCollection(payoutsQuery, silentListen);
+
+  const dayPayoutGlobalMap = useMemo(
+    () =>
+      buildGlobalDayPayoutMap(
+        (Array.isArray(payoutsRaw) ? payoutsRaw : []) as Record<
+          string,
+          unknown
+        >[],
+        rangeStr.start,
+        rangeStr.end
+      ),
+    [payoutsRaw, rangeStr.start, rangeStr.end]
+  );
+
   const attendanceRows = useMemo(
     () =>
       ((Array.isArray(attendanceData) ? attendanceData : []) as AttendanceRow[]).filter(
@@ -389,6 +438,8 @@ export default function AttendanceOverviewPage() {
         employees,
         dailyReports: filteredDailyReports,
         workBlocks: filteredWorkBlocks,
+        segments: workSegments,
+        dayPayoutGlobalMap,
       }),
     [
       periodMode,
@@ -398,6 +449,8 @@ export default function AttendanceOverviewPage() {
       employees,
       filteredDailyReports,
       filteredWorkBlocks,
+      workSegments,
+      dayPayoutGlobalMap,
     ]
   );
 
@@ -413,6 +466,10 @@ export default function AttendanceOverviewPage() {
       dailyReports: filteredDailyReports,
       workBlocks: filteredWorkBlocks,
       segments: workSegments,
+      dayPayoutByDate: dayPayoutMapForEmployee(
+        dayPayoutGlobalMap,
+        selectedEmployee.id
+      ),
     });
   }, [
     selectedEmployee,
@@ -421,6 +478,7 @@ export default function AttendanceOverviewPage() {
     filteredDailyReports,
     filteredWorkBlocks,
     workSegments,
+    dayPayoutGlobalMap,
   ]);
 
   const aggregateTotals = useMemo(() => totalsFromRows(tableRows), [tableRows]);
@@ -471,7 +529,8 @@ export default function AttendanceOverviewPage() {
     attLoading ||
     drLoading ||
     wbLoading ||
-    segLoading;
+    segLoading ||
+    payoutsLoading;
 
   const employeeLabel =
     employeeFilter === ALL
@@ -546,6 +605,7 @@ export default function AttendanceOverviewPage() {
     if (dailyReportsError) list.push("denní výkazy");
     if (workBlocksError) list.push("bloky práce");
     if (workSegmentsError) list.push("úseky práce / tarify");
+    if (payoutsError) list.push("denní výplaty");
     return list;
   }, [
     employeesError,
@@ -553,7 +613,93 @@ export default function AttendanceOverviewPage() {
     dailyReportsError,
     workBlocksError,
     workSegmentsError,
+    payoutsError,
   ]);
+
+  const openPayoutDialog = useCallback(
+    (dateIso: string) => {
+      if (!selectedEmployee) return;
+      const m = dayPayoutMapForEmployee(dayPayoutGlobalMap, selectedEmployee.id);
+      const st = m?.get(dateIso);
+      setPayoutFormPaid(st ? st.paid : false);
+      setPayoutFormNote(st?.paidNote ?? "");
+      setPayoutDialogDate(dateIso);
+    },
+    [dayPayoutGlobalMap, selectedEmployee]
+  );
+
+  const savePayoutDay = useCallback(async () => {
+    if (
+      !firestore ||
+      !companyId ||
+      !user?.uid ||
+      !selectedEmployee ||
+      !payoutDialogDate
+    )
+      return;
+    setPayoutSaving(true);
+    try {
+      const id = employeeDayPayoutDocId(selectedEmployee.id, payoutDialogDate);
+      await setDoc(
+        doc(firestore, "companies", companyId, "employee_day_payouts", id),
+        {
+          companyId,
+          employeeId: selectedEmployee.id,
+          date: payoutDialogDate,
+          paid: payoutFormPaid,
+          paidNote:
+            payoutFormNote.trim().slice(0, MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN) ||
+            null,
+          paidAt: serverTimestamp(),
+          paidBy: user.uid,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      toast({ title: "Výplata dne uložena" });
+      setPayoutDialogDate(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Uložení se nezdařilo",
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setPayoutSaving(false);
+    }
+  }, [
+    firestore,
+    companyId,
+    user?.uid,
+    selectedEmployee,
+    payoutDialogDate,
+    payoutFormPaid,
+    payoutFormNote,
+    toast,
+  ]);
+
+  const deletePayoutDay = useCallback(async () => {
+    if (!firestore || !companyId || !selectedEmployee || !payoutDialogDate)
+      return;
+    setPayoutSaving(true);
+    try {
+      const id = employeeDayPayoutDocId(selectedEmployee.id, payoutDialogDate);
+      await deleteDoc(
+        doc(firestore, "companies", companyId, "employee_day_payouts", id)
+      );
+      toast({ title: "Záznam výplaty odstraněn", description: "Platí výchozí pravidla (bloky)." });
+      setPayoutDialogDate(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Odstranění se nezdařilo",
+      });
+    } finally {
+      setPayoutSaving(false);
+    }
+  }, [firestore, companyId, selectedEmployee, payoutDialogDate, toast]);
 
   if (!user) {
     return (
@@ -1036,6 +1182,34 @@ export default function AttendanceOverviewPage() {
                     </span>
                   </div>
                 </div>
+
+                <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-black/10 pt-3 print:hidden">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                    {day.paidStatus === "paid" ? (
+                      <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                        Zaplaceno
+                      </Badge>
+                    ) : day.paidStatus === "unpaid" ? (
+                      <Badge variant="destructive">Nezaplaceno</Badge>
+                    ) : (
+                      <Badge variant="secondary">Bez platby</Badge>
+                    )}
+                    {day.paidNote ? (
+                      <span className="text-xs text-neutral-700">
+                        Poznámka: „{day.paidNote}“
+                      </span>
+                    ) : null}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="shrink-0 border-black bg-white text-black"
+                    onClick={() => openPayoutDialog(day.dateIso)}
+                  >
+                    Výplata dne
+                  </Button>
+                </div>
               </div>
             ))}
           </div>
@@ -1135,6 +1309,31 @@ export default function AttendanceOverviewPage() {
                               : "—"}
                       </span>
                     </div>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2 border-t border-black/10 pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {day.paidStatus === "paid" ? (
+                        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                          Zaplaceno
+                        </Badge>
+                      ) : day.paidStatus === "unpaid" ? (
+                        <Badge variant="destructive">Nezaplaceno</Badge>
+                      ) : (
+                        <Badge variant="secondary">Bez platby</Badge>
+                      )}
+                    </div>
+                    {day.paidNote ? (
+                      <p className="text-xs text-neutral-700">Poznámka: „{day.paidNote}“</p>
+                    ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full border-black"
+                      onClick={() => openPayoutDialog(day.dateIso)}
+                    >
+                      Výplata dne
+                    </Button>
                   </div>
                   {day.hasIncompleteAttendance ? (
                     <p className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900">
@@ -1243,6 +1442,74 @@ export default function AttendanceOverviewPage() {
         </>
       )}
     </div>
+
+      <Dialog
+        open={payoutDialogDate != null}
+        onOpenChange={(open) => {
+          if (!open) setPayoutDialogDate(null);
+        }}
+      >
+        <DialogContent className="border-black bg-white text-black sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Výplata za den</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            {payoutDialogDate ? (
+              <p className="text-sm font-medium text-neutral-800">{payoutDialogDate}</p>
+            ) : null}
+            <div className="flex items-center justify-between gap-3">
+              <Label htmlFor="payout-paid-switch">Zaplaceno</Label>
+              <Switch
+                id="payout-paid-switch"
+                checked={payoutFormPaid}
+                onCheckedChange={setPayoutFormPaid}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="payout-note-field">Poznámka k platbě</Label>
+              <Textarea
+                id="payout-note-field"
+                value={payoutFormNote}
+                onChange={(e) => setPayoutFormNote(e.target.value)}
+                maxLength={MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN}
+                rows={3}
+                className="border-black"
+                placeholder="např. hotově, převod, záloha…"
+              />
+            </div>
+          </div>
+          <DialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-black"
+              onClick={() => setPayoutDialogDate(null)}
+              disabled={payoutSaving}
+            >
+              Zrušit
+            </Button>
+            <div className="flex flex-wrap gap-2 sm:justify-end">
+              <Button
+                type="button"
+                variant="outline"
+                className="border-rose-300 text-rose-800"
+                onClick={() => void deletePayoutDay()}
+                disabled={payoutSaving}
+              >
+                Smazat záznam
+              </Button>
+              <Button
+                type="button"
+                className="bg-black text-white hover:bg-neutral-900"
+                onClick={() => void savePayoutDay()}
+                disabled={payoutSaving}
+              >
+                {payoutSaving ? "Ukládám…" : "Uložit"}
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {!loading && (
         <AttendanceExportDocument

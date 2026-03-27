@@ -259,6 +259,15 @@ export function AttendanceExportDocument({
                 <div className="mt-2 text-[10pt] font-bold text-black">
                   Schválený výdělek: {schvalenoDayLine(day)}
                 </div>
+                <div className="mt-1 text-[10pt] text-black">
+                  Platba:{" "}
+                  {day.paidStatus === "paid"
+                    ? "Zaplaceno"
+                    : day.paidStatus === "unpaid"
+                      ? "Nezaplaceno"
+                      : "—"}
+                  {day.paidNote ? ` · Poznámka: ${day.paidNote}` : ""}
+                </div>
               </article>
             ))}
           </section>

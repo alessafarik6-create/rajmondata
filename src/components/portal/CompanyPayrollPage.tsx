@@ -60,7 +60,7 @@ import {
   formatKc,
   getLoggedHours,
   getReviewLabel,
-  sumMoneyForBlocks,
+  moneyForBlock,
   sumMoneyForApprovedDailyReports,
   sumPaidAdvances,
   sumPayableHoursForBlocks,
@@ -69,6 +69,16 @@ import {
   type DailyWorkReportMoney,
   type WorkTimeBlockMoney,
 } from "@/lib/employee-money";
+import { format } from "date-fns";
+import type { AttendanceRow } from "@/lib/employee-attendance";
+import type { WorkSegmentClient } from "@/lib/work-segment-client";
+import { segmentDateIsoKey } from "@/lib/work-segment-client";
+import {
+  buildEmployeeDailyDetailRows,
+  computePeriodRange,
+  totalsFromDailyDetailRows,
+  type EmployeeLite,
+} from "@/lib/attendance-overview-compute";
 import {
   buildWorklogPdfFileName,
   downloadWorklogPdfFromElement,
@@ -102,6 +112,26 @@ import {
 } from "@/lib/employee-debt-recalc";
 
 const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
+
+function attendanceRowDateIso(r: AttendanceRow): string {
+  const raw = r.date;
+  if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim().slice(0, 10))) {
+    return raw.trim().slice(0, 10);
+  }
+  const ts = r.timestamp;
+  if (ts instanceof Date && !Number.isNaN(ts.getTime())) {
+    return format(ts, "yyyy-MM-dd");
+  }
+  if (ts && typeof (ts as { toDate?: () => Date }).toDate === "function") {
+    try {
+      const d = (ts as { toDate: () => Date }).toDate();
+      if (d instanceof Date && !Number.isNaN(d.getTime())) return format(d, "yyyy-MM-dd");
+    } catch {
+      /* ignore */
+    }
+  }
+  return "";
+}
 
 type EmployeeDebtReason = "tool_damage" | "loan" | "deduction" | "other";
 
@@ -321,6 +351,41 @@ function PayrollAdminPageInner() {
 
   const { data: dailyReportsRaw = [] } = useCollection(dailyReportsQuery);
 
+  const attendancePayrollQuery = useMemoFirebase(() => {
+    if (
+      !firestore ||
+      !companyId ||
+      !selectedEmployeeId ||
+      selectedEmployeeId === "all"
+    )
+      return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      where("employeeId", "==", selectedEmployeeId),
+      limit(1000)
+    );
+  }, [firestore, companyId, selectedEmployeeId]);
+
+  const workSegmentsPayrollQuery = useMemoFirebase(() => {
+    if (
+      !firestore ||
+      !companyId ||
+      !selectedEmployeeId ||
+      selectedEmployeeId === "all"
+    )
+      return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", selectedEmployeeId),
+      limit(1000)
+    );
+  }, [firestore, companyId, selectedEmployeeId]);
+
+  const { data: attendancePayrollRaw = [] } =
+    useCollection(attendancePayrollQuery);
+  const { data: workSegmentsPayrollRaw = [] } =
+    useCollection(workSegmentsPayrollQuery);
+
   const blocks = useMemo(() => {
     const raw = Array.isArray(blocksRaw) ? blocksRaw : [];
     return raw.map((b: any) => ({ ...b, id: String(b?.id ?? "") }));
@@ -346,19 +411,105 @@ function PayrollAdminPageInner() {
 
   const selectedEmp = employees.find((e) => e.id === selectedEmployeeId);
   const hourlyRate = Number(selectedEmp?.hourlyRate) || 0;
-  const earnedFromBlocks = useMemo(
-    () => sumMoneyForBlocks(blocksMoney, hourlyRate),
-    [blocksMoney, hourlyRate]
-  );
   const earnedFromDailyReports = useMemo(() => {
     const raw = Array.isArray(dailyReportsRaw) ? dailyReportsRaw : [];
     return sumMoneyForApprovedDailyReports(raw as DailyWorkReportMoney[]);
   }, [dailyReportsRaw]);
-  const earnedAll = useMemo(
+  const earnedFromBlocks = useMemo(() => {
+    let s = 0;
+    for (const b of blocksMoney) s += moneyForBlock(b, hourlyRate);
+    return Math.round(s * 100) / 100;
+  }, [blocksMoney, hourlyRate]);
+  const earnedAllLegacy = useMemo(
     () =>
       Math.round((earnedFromBlocks + earnedFromDailyReports) * 100) / 100,
     [earnedFromBlocks, earnedFromDailyReports]
   );
+
+  const earnedAllFromAttendance = useMemo(() => {
+    if (selectedEmployeeId === "all" || !selectedEmp) return null;
+    const rate = Number(selectedEmp.hourlyRate) || 0;
+    const auRaw = (selectedEmp as { authUserId?: string }).authUserId;
+    const authUserId =
+      typeof auRaw === "string" && auRaw.trim() ? auRaw.trim() : null;
+    const lite: EmployeeLite = {
+      id: String(selectedEmp.id),
+      displayName:
+        [selectedEmp.firstName, selectedEmp.lastName].filter(Boolean).join(" ").trim() ||
+        String(selectedEmp.email || selectedEmp.id),
+      hourlyRate: rate,
+      authUserId,
+    };
+    const bumpDates: string[] = [];
+    for (const b of blocksMoney) {
+      const d = String(b.date ?? "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) bumpDates.push(d);
+    }
+    const attArr = (Array.isArray(attendancePayrollRaw)
+      ? attendancePayrollRaw
+      : []) as AttendanceRow[];
+    for (const r of attArr) {
+      const ds = attendanceRowDateIso(r);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) bumpDates.push(ds);
+    }
+    const sorted = [...new Set(bumpDates)].sort();
+    if (sorted.length === 0) return 0;
+    const startIso = sorted[0]!;
+    const endIso = sorted[sorted.length - 1]!;
+    const from = new Date(
+      Number(startIso.slice(0, 4)),
+      Number(startIso.slice(5, 7)) - 1,
+      Number(startIso.slice(8, 10))
+    );
+    const to = new Date(
+      Number(endIso.slice(0, 4)),
+      Number(endIso.slice(5, 7)) - 1,
+      Number(endIso.slice(8, 10)),
+      23,
+      59,
+      59,
+      999
+    );
+    const range = computePeriodRange("custom", from, { from, to });
+    const attF = attArr.filter((r) => {
+      const ds = attendanceRowDateIso(r);
+      return ds >= startIso && ds <= endIso;
+    });
+    const dr = (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []).filter(
+      (row: Record<string, unknown>) => {
+        const d = String(row?.date ?? "").slice(0, 10);
+        return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= startIso && d <= endIso;
+      }
+    );
+    const segs = (Array.isArray(workSegmentsPayrollRaw)
+      ? workSegmentsPayrollRaw
+      : []) as WorkSegmentClient[];
+    const segF = segs.filter((s) => {
+      const dk = segmentDateIsoKey(s);
+      return dk >= startIso && dk <= endIso;
+    });
+    const rows = buildEmployeeDailyDetailRows({
+      range,
+      employee: lite,
+      attendanceRaw: attF,
+      dailyReports: dr,
+      workBlocks: blocksMoney,
+      segments: segF,
+    });
+    return totalsFromDailyDetailRows(rows).approvedKc;
+  }, [
+    selectedEmployeeId,
+    selectedEmp,
+    blocksMoney,
+    attendancePayrollRaw,
+    dailyReportsRaw,
+    workSegmentsPayrollRaw,
+  ]);
+
+  const earnedAll =
+    selectedEmployeeId !== "all" && earnedAllFromAttendance != null
+      ? earnedAllFromAttendance
+      : earnedAllLegacy;
   const paidTotal = sumPaidAdvances(advances);
   const remaining = Math.max(
     0,

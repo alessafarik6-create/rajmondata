@@ -10,6 +10,7 @@ import {
   useCompany,
 } from "@/firebase";
 import { doc, collection, query, where, limit } from "firebase/firestore";
+import { format } from "date-fns";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -21,7 +22,6 @@ import {
   getLoggedHours,
   getReviewLabel,
   moneyForBlock,
-  sumMoneyForBlocks,
   sumPayableHoursForBlocks,
   sumPaidAdvances,
   thisMonthRange,
@@ -30,6 +30,14 @@ import {
   type AdvanceDoc,
   type WorkTimeBlockMoney,
 } from "@/lib/employee-money";
+import type { AttendanceRow } from "@/lib/employee-attendance";
+import type { WorkSegmentClient } from "@/lib/work-segment-client";
+import {
+  buildEmployeeDailyDetailRows,
+  computePeriodRange,
+  totalsFromDailyDetailRows,
+  type EmployeeLite,
+} from "@/lib/attendance-overview-compute";
 import {
   Table,
   TableBody,
@@ -39,6 +47,64 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { JOB_TERMINAL_AUTO_APPROVAL_SOURCE } from "@/lib/job-terminal-auto-shared";
+
+const MONEY_FETCH_LIMIT = 3000;
+
+function mergeDocsById<T extends { id?: string }>(batches: T[][]): T[] {
+  const map = new Map<string, T>();
+  for (const batch of batches) {
+    for (const row of batch) {
+      const id = String(row?.id ?? "");
+      if (!id) continue;
+      if (!map.has(id)) map.set(id, row);
+    }
+  }
+  return Array.from(map.values());
+}
+
+function rowInDateRange(
+  row: { date?: unknown; timestamp?: unknown; startAt?: unknown },
+  startIso: string,
+  endIso: string
+): boolean {
+  const localIso = (dt: Date): string => {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, "0");
+    const day = String(dt.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  const fromUnknown = (v: unknown): Date | null => {
+    if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
+    if (v && typeof (v as { toDate?: () => Date }).toDate === "function") {
+      try {
+        const d = (v as { toDate: () => Date }).toDate();
+        return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+  const rawDate = row.date;
+  const dateFromRaw = fromUnknown(rawDate);
+  const dateFromTs = fromUnknown(row.timestamp);
+  const dateFromStart = fromUnknown(row.startAt);
+  const d =
+    (typeof rawDate === "string" && rawDate.trim().slice(0, 10)) ||
+    (rawDate instanceof Date ? localIso(rawDate) : "") ||
+    (dateFromRaw ? localIso(dateFromRaw) : "") ||
+    (dateFromTs ? localIso(dateFromTs) : "") ||
+    (dateFromStart ? localIso(dateFromStart) : "");
+  if (!d) return false;
+  const [sy, sm, sd] = startIso.split("-").map(Number);
+  const [ey, em, ed] = endIso.split("-").map(Number);
+  const [ry, rm, rd] = d.split("-").map(Number);
+  if (!sy || !sm || !sd || !ey || !em || !ed || !ry || !rm || !rd) return false;
+  const start = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
+  const end = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+  const rec = new Date(ry, rm - 1, rd, 12, 0, 0, 0);
+  return rec >= start && rec <= end;
+}
 
 export default function EmployeeMoneyPage() {
   const { user, isUserLoading } = useUser();
@@ -83,8 +149,79 @@ export default function EmployeeMoneyPage() {
 
   const silentListen = { suppressGlobalPermissionError: true as const };
 
+  const authUid =
+    typeof user?.uid === "string" && user.uid.trim() ? user.uid.trim() : "";
+  const needAltEmployeeKey =
+    Boolean(employeeId) && Boolean(authUid) && employeeId !== authUid;
+
+  const attendanceQueryPrimary = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      where("employeeId", "==", employeeId),
+      limit(MONEY_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, employeeId]);
+
+  const attendanceQueryAlt = useMemoFirebase(() => {
+    if (!firestore || !companyId || !needAltEmployeeKey) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      where("employeeId", "==", authUid),
+      limit(MONEY_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, needAltEmployeeKey, authUid]);
+
+  const dailyReportsMoneyQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "daily_work_reports"),
+      where("employeeId", "==", employeeId),
+      limit(MONEY_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, employeeId]);
+
+  const segmentsQueryPrimary = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", employeeId),
+      limit(MONEY_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, employeeId]);
+
+  const segmentsQueryAlt = useMemoFirebase(() => {
+    if (!firestore || !companyId || !needAltEmployeeKey) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", authUid),
+      limit(MONEY_FETCH_LIMIT)
+    );
+  }, [firestore, companyId, needAltEmployeeKey, authUid]);
+
   const { data: blocksRaw, isLoading: blocksLoading, error: blocksError } =
     useCollection(blocksQuery, silentListen);
+  const { data: rawAttP = [], isLoading: attLoadP } = useCollection(
+    attendanceQueryPrimary,
+    silentListen
+  );
+  const { data: rawAttA = [], isLoading: attLoadA } = useCollection(
+    attendanceQueryAlt,
+    silentListen
+  );
+  const { data: dailyReportsMoneyRaw = [], isLoading: drMoneyLoading } =
+    useCollection(dailyReportsMoneyQuery, silentListen);
+  const { data: segP = [], isLoading: segLoadP } = useCollection(
+    segmentsQueryPrimary,
+    silentListen
+  );
+  const { data: segA = [], isLoading: segLoadA } = useCollection(
+    segmentsQueryAlt,
+    silentListen
+  );
+
+  const attLoadingMoney = attLoadP || (needAltEmployeeKey ? attLoadA : false);
+  const segLoadingMoney = segLoadP || (needAltEmployeeKey ? segLoadA : false);
 
   const advancesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId) return null;
@@ -139,6 +276,88 @@ export default function EmployeeMoneyPage() {
 
   const blocksMoney = blocks as WorkTimeBlockMoney[];
 
+  const rangeStrAll = useMemo(() => {
+    const bumps = new Set<string>();
+    for (const b of blocksMoney) {
+      const d = String(b.date ?? "").slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) bumps.add(d);
+    }
+    const mergedAtt = mergeDocsById<AttendanceRow>([
+      (Array.isArray(rawAttP) ? rawAttP : []) as AttendanceRow[],
+      (Array.isArray(rawAttA) ? rawAttA : []) as AttendanceRow[],
+    ]);
+    for (const raw of mergedAtt) {
+      const ds =
+        (typeof raw.date === "string" && raw.date.trim().slice(0, 10)) || "";
+      if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) bumps.add(ds);
+    }
+    const sorted = [...bumps].sort();
+    if (sorted.length === 0) {
+      const t = format(new Date(), "yyyy-MM-dd");
+      return { start: t, end: t };
+    }
+    return { start: sorted[0]!, end: sorted[sorted.length - 1]! };
+  }, [blocksMoney, rawAttP, rawAttA]);
+
+  const employeeDisplayMoney = useMemo(() => {
+    const first = String(employeeDoc?.firstName ?? "").trim();
+    const last = String(employeeDoc?.lastName ?? "").trim();
+    const name = [first, last].filter(Boolean).join(" ").trim();
+    return (
+      name ||
+      String(employeeDoc?.email ?? profile?.email ?? employeeId ?? "").trim()
+    );
+  }, [employeeDoc, profile?.email, employeeId]);
+
+  const employeeLiteMoney: EmployeeLite | null = useMemo(() => {
+    if (!employeeId) return null;
+    const authFromDoc =
+      typeof employeeDoc?.authUserId === "string"
+        ? employeeDoc.authUserId.trim()
+        : null;
+    return {
+      id: employeeId,
+      displayName: employeeDisplayMoney || employeeId,
+      hourlyRate,
+      authUserId: authFromDoc || authUid || null,
+    };
+  }, [
+    employeeId,
+    employeeDisplayMoney,
+    hourlyRate,
+    employeeDoc?.authUserId,
+    authUid,
+  ]);
+
+  const attendanceRowsMoney = useMemo(() => {
+    const merged = mergeDocsById<AttendanceRow>([
+      (Array.isArray(rawAttP) ? rawAttP : []) as AttendanceRow[],
+      (Array.isArray(rawAttA) ? rawAttA : []) as AttendanceRow[],
+    ]);
+    return merged.filter((row) =>
+      rowInDateRange(row, rangeStrAll.start, rangeStrAll.end)
+    );
+  }, [rawAttP, rawAttA, rangeStrAll.start, rangeStrAll.end]);
+
+  const dailyReportsMoney = useMemo(() => {
+    const raw = (Array.isArray(dailyReportsMoneyRaw)
+      ? dailyReportsMoneyRaw
+      : []) as Record<string, unknown>[];
+    return raw.filter((row) =>
+      rowInDateRange(row, rangeStrAll.start, rangeStrAll.end)
+    );
+  }, [dailyReportsMoneyRaw, rangeStrAll.start, rangeStrAll.end]);
+
+  const workSegmentsMoney = useMemo(() => {
+    const merged = mergeDocsById<WorkSegmentClient>([
+      (Array.isArray(segP) ? segP : []) as WorkSegmentClient[],
+      (Array.isArray(segA) ? segA : []) as WorkSegmentClient[],
+    ]);
+    return merged.filter((row) =>
+      rowInDateRange(row, rangeStrAll.start, rangeStrAll.end)
+    );
+  }, [segP, segA, rangeStrAll.start, rangeStrAll.end]);
+
   const now = new Date();
   const tr = todayRange(now);
   const wr = thisWeekRange(now);
@@ -155,10 +374,77 @@ export default function EmployeeMoneyPage() {
     );
   }, [blocksMoney]);
 
-  const earnedToday = sumMoneyForBlocks(blocksMoney, hourlyRate, tr);
-  const earnedWeek = sumMoneyForBlocks(blocksMoney, hourlyRate, wr);
-  const earnedMonth = sumMoneyForBlocks(blocksMoney, hourlyRate, mr);
-  const earnedAll = sumMoneyForBlocks(blocksMoney, hourlyRate);
+  const earningsByRange = useMemo(() => {
+    if (!employeeLiteMoney) {
+      return { today: 0, week: 0, month: 0, all: 0 };
+    }
+    const mk = (from: Date, to: Date) => {
+      const startIso = format(from, "yyyy-MM-dd");
+      const endIso = format(to, "yyyy-MM-dd");
+      const range = computePeriodRange("custom", from, { from, to });
+      const att = attendanceRowsMoney.filter((r) =>
+        rowInDateRange(r, startIso, endIso)
+      );
+      const dr = dailyReportsMoney.filter((r) =>
+        rowInDateRange(r, startIso, endIso)
+      );
+      const wb = blocksMoney.filter((b) =>
+        rowInDateRange(b, startIso, endIso)
+      );
+      const seg = workSegmentsMoney.filter((s) =>
+        rowInDateRange(s, startIso, endIso)
+      );
+      const rows = buildEmployeeDailyDetailRows({
+        range,
+        employee: employeeLiteMoney,
+        attendanceRaw: att,
+        dailyReports: dr,
+        workBlocks: wb,
+        segments: seg,
+      });
+      return totalsFromDailyDetailRows(rows).approvedKc;
+    };
+    const n = new Date();
+    const todayP = computePeriodRange("day", n);
+    const weekP = computePeriodRange("week", n);
+    const monthP = computePeriodRange("month", n);
+    const allFrom = new Date(
+      Number(rangeStrAll.start.slice(0, 4)),
+      Number(rangeStrAll.start.slice(5, 7)) - 1,
+      Number(rangeStrAll.start.slice(8, 10))
+    );
+    const allTo = new Date(
+      Number(rangeStrAll.end.slice(0, 4)),
+      Number(rangeStrAll.end.slice(5, 7)) - 1,
+      Number(rangeStrAll.end.slice(8, 10)),
+      23,
+      59,
+      59,
+      999
+    );
+    return {
+      today: mk(todayP.start, todayP.end),
+      week: mk(weekP.start, weekP.end),
+      month: mk(monthP.start, monthP.end),
+      all: mk(allFrom, allTo),
+    };
+  }, [
+    employeeLiteMoney,
+    attendanceRowsMoney,
+    dailyReportsMoney,
+    blocksMoney,
+    workSegmentsMoney,
+    rangeStrAll.start,
+    rangeStrAll.end,
+  ]);
+
+  const earnedToday = earningsByRange.today;
+  const earnedWeek = earningsByRange.week;
+  const earnedMonth = earningsByRange.month;
+  const earnedAll = earningsByRange.all;
+
+  const moneyDataLoading =
+    blocksLoading || attLoadingMoney || drMoneyLoading || segLoadingMoney;
 
   const paidTotal = sumPaidAdvances(advances);
   const debtTotal = useMemo(
@@ -305,32 +591,32 @@ export default function EmployeeMoneyPage() {
         <Card className="border-slate-200 bg-white shadow-sm sm:col-span-2">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-semibold text-black">
-              Vyděláno (schválené × sazba)
+              Schválený výdělek (docházka + tarify)
             </CardTitle>
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-4">
             <div>
               <p className="font-medium text-slate-700">Dnes</p>
               <p className="text-lg font-bold text-black">
-                {blocksLoading ? "…" : formatKc(earnedToday)}
+                {moneyDataLoading ? "…" : formatKc(earnedToday)}
               </p>
             </div>
             <div>
               <p className="font-medium text-slate-700">Týden</p>
               <p className="text-lg font-bold text-black">
-                {blocksLoading ? "…" : formatKc(earnedWeek)}
+                {moneyDataLoading ? "…" : formatKc(earnedWeek)}
               </p>
             </div>
             <div>
               <p className="font-medium text-slate-700">Měsíc</p>
               <p className="text-lg font-bold text-black">
-                {blocksLoading ? "…" : formatKc(earnedMonth)}
+                {moneyDataLoading ? "…" : formatKc(earnedMonth)}
               </p>
             </div>
             <div>
               <p className="font-medium text-slate-700">Celkem</p>
               <p className="text-lg font-bold text-black">
-                {blocksLoading ? "…" : formatKc(earnedAll)}
+                {moneyDataLoading ? "…" : formatKc(earnedAll)}
               </p>
             </div>
           </CardContent>
@@ -347,9 +633,11 @@ export default function EmployeeMoneyPage() {
               Celkem vyděláno
             </p>
             <p className="mt-1 text-xl font-bold text-black">
-              {blocksLoading ? "…" : formatKc(earnedAll)}
+              {moneyDataLoading ? "…" : formatKc(earnedAll)}
             </p>
-            <p className="text-xs text-slate-800">Jen schválené hodiny</p>
+            <p className="text-xs text-slate-800">
+              Dle docházky, tarifů a schválených výkazů (stejná logika jako v přehledu)
+            </p>
           </div>
           <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
             <p className="text-sm font-semibold text-slate-800">
@@ -365,7 +653,7 @@ export default function EmployeeMoneyPage() {
               Zbývá k vyplacení
             </p>
             <p className="mt-1 text-xl font-bold text-black">
-              {blocksLoading || advancesLoading ? "…" : formatKc(remaining)}
+              {moneyDataLoading || advancesLoading ? "…" : formatKc(remaining)}
             </p>
             <p className="text-xs text-emerald-900">
               vyděláno − vyplacené zálohy

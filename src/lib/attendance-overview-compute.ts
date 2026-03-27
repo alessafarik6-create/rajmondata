@@ -28,11 +28,16 @@ import {
 import {
   formatKc,
   getLoggedHours,
+  getPayableHours,
   moneyForBlock,
   sumMoneyForApprovedDailyReports,
   type DailyWorkReportMoney,
   type WorkTimeBlockMoney,
 } from "@/lib/employee-money";
+import {
+  dayPayoutMapForEmployee,
+  type EmployeeDayPayoutState,
+} from "@/lib/employee-day-payout";
 
 export type PeriodMode = "day" | "week" | "month" | "custom";
 
@@ -447,6 +452,8 @@ export type EmployeeDailyDetailRow = {
   orientacniKc: number;
   schvalenoStatus: "approved" | "pending" | "none";
   paidStatus: "paid" | "unpaid" | "none";
+  /** Poznámka admina k výplatě dne (jen čtení pro zaměstnance). */
+  paidNote: string | null;
   paidKc: number;
   unpaidKc: number;
 };
@@ -462,11 +469,20 @@ export function buildEmployeeDailyDetailRows(params: {
   dailyReports: Record<string, unknown>[];
   workBlocks: WorkTimeBlockMoney[];
   segments: WorkSegmentClient[];
+  /** Volitelně: stav výplaty dne z `employee_day_payouts` (klíč = yyyy-MM-dd). */
+  dayPayoutByDate?: Map<string, EmployeeDayPayoutState>;
   /** Pro otevřené úseky (testy / deterministický výstup). */
   now?: Date;
 }): EmployeeDailyDetailRow[] {
-  const { range, employee, attendanceRaw, dailyReports, workBlocks, segments } =
-    params;
+  const {
+    range,
+    employee,
+    attendanceRaw,
+    dailyReports,
+    workBlocks,
+    segments,
+    dayPayoutByDate,
+  } = params;
   const now = params.now ?? new Date();
   const eid = employee.id;
   const auth = employee.authUserId;
@@ -568,22 +584,13 @@ export function buildEmployeeDailyDetailRows(params: {
       Math.round((hoursNum - sumTariffH - sumJobH) * 100) / 100
     );
     const orientacniKcStandard =
-      rate > 0 && hoursOutsideTariffOnly > 0
-        ? Math.round(hoursOutsideTariffOnly * rate * 100) / 100
+      rate > 0 && hoursOutsideTariffAndJob > 0
+        ? Math.round(hoursOutsideTariffAndJob * rate * 100) / 100
         : 0;
 
     orientacniKcTariff = Math.round(orientacniKcTariff * 100) / 100;
     orientacniKcJob = Math.round(orientacniKcJob * 100) / 100;
 
-    const approvedBl = (() => {
-      let s = 0;
-      for (const b of workBlocks) {
-        if (!firestoreEmployeeIdMatches(b.employeeId, employee)) continue;
-        if (String(b.date ?? "").trim() !== dateIso) continue;
-        s += moneyForBlock(b, rate);
-      }
-      return Math.round(s * 100) / 100;
-    })();
     const dayBlocks = workBlocks.filter(
       (b) =>
         firestoreEmployeeIdMatches(b.employeeId, employee) &&
@@ -615,13 +622,17 @@ export function buildEmployeeDailyDetailRows(params: {
     const dayApprovedByReport = repSt === "approved";
     const dayPendingByReport =
       Boolean(repSt) && repSt !== "approved" && repSt !== "rejected";
-    const schvalenoKcRaw = hasIncompleteAttendance
-      ? 0
-      : dayApprovedByReport
-        ? orientacniKc
-        : dayPendingByReport
-          ? 0
-          : Math.min(orientacniKc, approvedBl);
+    let schvalenoKcRaw = 0;
+    if (hasIncompleteAttendance) schvalenoKcRaw = 0;
+    else if (dayApprovedByReport) schvalenoKcRaw = orientacniKc;
+    else if (dayPendingByReport) schvalenoKcRaw = 0;
+    else if (dayBlocks.length === 0) schvalenoKcRaw = orientacniKc;
+    else {
+      const totalLogged = dayBlocks.reduce((s, b) => s + getLoggedHours(b), 0);
+      const approvedHp = dayBlocks.reduce((s, b) => s + getPayableHours(b), 0);
+      if (totalLogged <= 0.001) schvalenoKcRaw = orientacniKc;
+      else schvalenoKcRaw = orientacniKc * (approvedHp / totalLogged);
+    }
     const schvalenoKc = Math.round(Math.max(0, schvalenoKcRaw) * 100) / 100;
     const neschvalenoKc = Math.round(
       Math.max(0, orientacniKc - schvalenoKc) * 100
@@ -635,8 +646,13 @@ export function buildEmployeeDailyDetailRows(params: {
     } else if (neschvalenoKc > 0) {
       schvalenoStatus = "pending";
     }
+    const payout = dayPayoutByDate?.get(dateIso);
+    let paidNote: string | null = null;
     let paidStatus: "paid" | "unpaid" | "none" = "none";
-    if (dayBlocks.length > 0) {
+    if (payout) {
+      paidNote = payout.paidNote;
+      paidStatus = payout.paid ? "paid" : "unpaid";
+    } else if (dayBlocks.length > 0) {
       paidStatus = dayBlocks.every((b) => b.paid === true) ? "paid" : "unpaid";
     } else if (schvalenoKc > 0) {
       paidStatus = "unpaid";
@@ -672,11 +688,12 @@ export function buildEmployeeDailyDetailRows(params: {
       bloku,
       schvalenoKc,
       neschvalenoKc,
-      hourlyHoursForPay: hoursOutsideTariffOnly,
+      hourlyHoursForPay: hoursOutsideTariffAndJob,
       hasIncompleteAttendance,
       orientacniKc,
       schvalenoStatus,
       paidStatus,
+      paidNote,
       paidKc,
       unpaidKc,
     });
@@ -748,8 +765,10 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     totalStandardKc += r.orientacniKcStandard;
     totalHoursOutsideTariffJob += r.hoursOutsideTariffAndJob;
     totalHoursOutsideTariffOnly += r.hoursOutsideTariffOnly;
-    if (r.schvalenoStatus === "approved") approvedHourlyHours += r.hourlyHoursForPay;
-    else if (r.schvalenoStatus === "pending") pendingHourlyHours += r.hourlyHoursForPay;
+    if (r.schvalenoStatus === "approved")
+      approvedHourlyHours += r.hourlyHoursForPay;
+    else if (r.schvalenoStatus === "pending")
+      pendingHourlyHours += r.hourlyHoursForPay;
     if (r.paidStatus === "paid") paidDays += 1;
     else if (r.paidStatus === "unpaid") unpaidDays += 1;
     paidAmountKc += r.paidKc;
@@ -791,10 +810,18 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
   dailyReports: Record<string, unknown>[];
   workBlocks: WorkTimeBlockMoney[];
   segments: WorkSegmentClient[];
+  dayPayoutGlobalMap?: Map<string, EmployeeDayPayoutState>;
   now?: Date;
 }): DailyDetailPeriodTotals | null {
-  const { range, employees, attendanceRaw, dailyReports, workBlocks, segments } =
-    params;
+  const {
+    range,
+    employees,
+    attendanceRaw,
+    dailyReports,
+    workBlocks,
+    segments,
+    dayPayoutGlobalMap,
+  } = params;
   const now = params.now ?? new Date();
   if (employees.size === 0) return null;
   let daysWorked = 0;
@@ -824,6 +851,7 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
       dailyReports,
       workBlocks,
       segments,
+      dayPayoutByDate: dayPayoutMapForEmployee(dayPayoutGlobalMap, emp.id),
       now,
     });
     const t = totalsFromDailyDetailRows(rows);
@@ -916,6 +944,8 @@ export function buildOverviewRows(params: {
   employees: Map<string, EmployeeLite>;
   dailyReports: Record<string, unknown>[];
   workBlocks: WorkTimeBlockMoney[];
+  segments: WorkSegmentClient[];
+  dayPayoutGlobalMap?: Map<string, EmployeeDayPayoutState>;
 }): OverviewTableRow[] {
   const {
     mode,
@@ -925,6 +955,8 @@ export function buildOverviewRows(params: {
     employees,
     dailyReports,
     workBlocks,
+    segments,
+    dayPayoutGlobalMap,
   } = params;
 
   const empIds =
@@ -934,82 +966,53 @@ export function buildOverviewRows(params: {
 
   const rows: OverviewTableRow[] = [];
 
-  const moneyApproved = (eid: string) => {
-    const em = employees.get(eid);
-    const rate = em?.hourlyRate ?? 0;
-    return (
-      sumApprovedDailyReportsForEmployeeInRange(dailyReports, eid, range) +
-      sumApprovedBlocksMoneyInRange(workBlocks, eid, rate, range)
-    );
-  };
-
-  const computeOrientacniForEmployee = (eid: string, odpracovaneHodiny: number) => {
-    const em = employees.get(eid);
-    const rate = em?.hourlyRate ?? 0;
-    const pendD = sumPendingDailyReportEstimatesInRange(
-      dailyReports,
-      eid,
-      rate,
-      range
-    );
-    const pendB = sumPendingBlocksMoneyInRange(workBlocks, eid, rate, range);
-    return computeOrientacniVydelekKc({
-      odpracovaneHodiny,
-      hourlyRate: rate,
-      pendingDailyEst: pendD,
-      pendingBlockEst: pendB,
-    });
-  };
-
   if (mode === "day") {
     const dayIso = format(range.start, "yyyy-MM-dd");
     for (const eid of empIds) {
       const emp = employees.get(eid);
-      const name = emp?.displayName ?? eid;
-      const auth = emp?.authUserId;
-      const dayRows = attendanceRaw.filter((r) =>
-        attendanceRowMatchesEmployee(r, eid, auth)
-      );
-      const sums = summarizeAttendanceByDay(dayRows);
-      const one = sums.find((s) => s.date === dayIso);
-      const h = one?.hoursWorked ?? null;
-      const hoursNum = h != null && Number.isFinite(h) ? h : 0;
-      const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dayIso, auth);
-      const approved = moneyApproved(eid);
-      const total = computeOrientacniForEmployee(eid, hoursNum);
+      if (!emp) continue;
+      const detailRows = buildEmployeeDailyDetailRows({
+        range,
+        employee: emp,
+        attendanceRaw,
+        dailyReports,
+        workBlocks,
+        segments,
+        dayPayoutByDate: dayPayoutMapForEmployee(dayPayoutGlobalMap, eid),
+      });
+      const t = totalsFromDailyDetailRows(detailRows);
+      const dr = detailRows[0];
       rows.push({
         key: `${eid}-${dayIso}`,
         datumLabel: format(range.start, "EEEE d. M. yyyy", { locale: cs }),
         employeeId: eid,
-        employeeName: name,
-        prichod: one?.checkIn ?? "—",
-        odchod: one?.checkOut ?? "—",
-        odpracovanoH: h,
-        bloku: bloku,
-        schvalenoKc: approved,
-        orientacniKc: Math.max(0, Math.round((total - approved) * 100) / 100),
+        employeeName: emp.displayName ?? eid,
+        prichod: dr?.prichod ?? "—",
+        odchod: dr?.odchod ?? "—",
+        odpracovanoH: dr?.odpracovanoH ?? null,
+        bloku: dr?.bloku ?? 0,
+        schvalenoKc: t.approvedKc,
+        orientacniKc: t.pendingKc,
       });
     }
     return rows;
   }
 
-  /** Souhrn týden / měsíc — jeden řádek na zaměstnance. */
+  /** Souhrn týden / měsíc / vlastní — jeden řádek na zaměstnance (stejná logika jako denní detail). */
   for (const eid of empIds) {
     const emp = employees.get(eid);
-    const name = emp?.displayName ?? eid;
-    const auth = emp?.authUserId;
-    const dayRows = attendanceRaw.filter((r) =>
-      attendanceRowMatchesEmployee(r, eid, auth)
-    );
-    const summaries = summarizeAttendanceByDay(dayRows);
-    let totalH = 0;
-    let totalBlocks = 0;
-    for (const s of summaries) {
-      if (!dateInRange(s.date, range)) continue;
-      totalH += s.hoursWorked ?? 0;
-      totalBlocks += countAttendanceBlocksForDay(attendanceRaw, eid, s.date, auth);
-    }
-    totalH = Math.round(totalH * 100) / 100;
+    if (!emp) continue;
+    const detailRows = buildEmployeeDailyDetailRows({
+      range,
+      employee: emp,
+      attendanceRaw,
+      dailyReports,
+      workBlocks,
+      segments,
+      dayPayoutByDate: dayPayoutMapForEmployee(dayPayoutGlobalMap, eid),
+    });
+    const t = totalsFromDailyDetailRows(detailRows);
+    const blockSum = detailRows.reduce((s, r) => s + r.bloku, 0);
     const datumLabel =
       mode === "week"
         ? `Souhrn týdne (${format(range.start, "d.M.", { locale: cs })} – ${format(range.end, "d.M.yyyy", { locale: cs })})`
@@ -1021,20 +1024,13 @@ export function buildOverviewRows(params: {
       key: `${eid}-${mode}-${format(range.start, "yyyy-MM-dd")}`,
       datumLabel,
       employeeId: eid,
-      employeeName: name,
+      employeeName: emp.displayName ?? eid,
       prichod: "—",
       odchod: "—",
-      odpracovanoH: totalH > 0 ? totalH : null,
-      bloku: totalBlocks,
-      schvalenoKc: (() => {
-        const v = moneyApproved(eid);
-        return Math.round(v * 100) / 100;
-      })(),
-      orientacniKc: (() => {
-        const total = computeOrientacniForEmployee(eid, totalH);
-        const approved = moneyApproved(eid);
-        return Math.max(0, Math.round((total - approved) * 100) / 100);
-      })(),
+      odpracovanoH: t.hours > 0 ? t.hours : null,
+      bloku: blockSum,
+      schvalenoKc: t.approvedKc,
+      orientacniKc: t.pendingKc,
     });
   }
 
