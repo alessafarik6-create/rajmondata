@@ -45,6 +45,7 @@ import {
   setDoc,
   serverTimestamp,
   deleteDoc,
+  deleteField,
   writeBatch,
   getDoc,
   updateDoc,
@@ -84,6 +85,14 @@ import {
 } from "@/lib/job-media-types";
 import { uploadJobPhotoFileViaFirebaseSdk } from "@/lib/job-photo-upload";
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
+import {
+  compareDocumentsForPaymentQueue,
+  documentGrossForPayment,
+  getDocumentPaymentUrgency,
+  isDocumentEligibleForPaymentBox,
+  type CompanyDocumentPaymentRow,
+  urgencyLabel,
+} from "@/lib/company-document-payment";
 import { cn } from "@/lib/utils";
 import { logActivitySafe } from "@/lib/activity-log";
 import {
@@ -155,6 +164,13 @@ type CompanyDocumentRow = {
   assignmentType?: "job_cost" | "overhead" | "pending_assignment";
   /** ID záznamu v jobs/.../expenses pro primární doklad (ne zrcadlo jobExpense_*). */
   linkedExpenseId?: string | null;
+  /** Doklad má být uhrazen (přehled Nutno uhradit). */
+  requiresPayment?: boolean;
+  /** Splatnost (YYYY-MM-DD). */
+  dueDate?: string | null;
+  paid?: boolean;
+  paidAt?: unknown;
+  paidBy?: string | null;
 };
 
 type AssignmentType = "job_cost" | "overhead" | "pending_assignment";
@@ -326,7 +342,14 @@ export default function DocumentsPage() {
     vat: "21",
     date: new Date().toISOString().split("T")[0],
     description: "",
+    requiresPayment: false,
+    dueDate: "",
   });
+
+  const todayIso = useMemo(
+    () => new Date().toISOString().split("T")[0],
+    []
+  );
 
   const [receivedSearch, setReceivedSearch] = useState("");
   const [issuedSearch, setIssuedSearch] = useState("");
@@ -348,6 +371,8 @@ export default function DocumentsPage() {
     zakazkaId: "",
     /** Když není vybraná zakázka: nezařazeno vs. režie. */
     noJobMode: "pending" as "pending" | "overhead",
+    requiresPayment: false,
+    dueDate: "",
   });
   const [isEditSaving, setIsEditSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -373,6 +398,42 @@ export default function DocumentsPage() {
         ),
     [financialDocuments]
   );
+
+  const paymentOverviewStats = useMemo(() => {
+    const list = financialDocuments as CompanyDocumentPaymentRow[];
+    let toPay = 0;
+    let overdue = 0;
+    let totalKc = 0;
+    for (const d of list) {
+      if (!isDocumentEligibleForPaymentBox(d)) continue;
+      toPay += 1;
+      totalKc += documentGrossForPayment(d);
+      if (getDocumentPaymentUrgency(d, todayIso) === "overdue") overdue += 1;
+    }
+    return { toPay, overdue, totalKc };
+  }, [financialDocuments, todayIso]);
+
+  const markDocumentPaid = async (row: CompanyDocumentRow) => {
+    if (!companyId || !firestore || !user) return;
+    await updateDoc(doc(firestore, "companies", companyId, "documents", row.id), {
+      paid: true,
+      paidAt: serverTimestamp(),
+      paidBy: user.uid,
+      updatedAt: serverTimestamp(),
+    });
+    toast({ title: "Označeno jako zaplaceno" });
+  };
+
+  const markDocumentUnpaid = async (row: CompanyDocumentRow) => {
+    if (!companyId || !firestore) return;
+    await updateDoc(doc(firestore, "companies", companyId, "documents", row.id), {
+      paid: false,
+      paidAt: deleteField(),
+      paidBy: deleteField(),
+      updatedAt: serverTimestamp(),
+    });
+    toast({ title: "Platba zrušena" });
+  };
 
   const uploadDocumentFile = async (file: File): Promise<{
     fileUrl: string;
@@ -515,14 +576,16 @@ export default function DocumentsPage() {
           description: `Soubor byl přidán k zakázce „${selectedJob?.name ?? selectedJobId}“. V seznamu dokladů se nezobrazí (bez částky).`,
         });
         setIsAddDocOpen(false);
-        setFormData({
-          number: "",
-          entityName: "",
-          amount: "",
-          vat: "21",
-          date: new Date().toISOString().split("T")[0],
-          description: "",
-        });
+      setFormData({
+        number: "",
+        entityName: "",
+        amount: "",
+        vat: "21",
+        date: new Date().toISOString().split("T")[0],
+        description: "",
+        requiresPayment: false,
+        dueDate: "",
+      });
         setNewDocFile(null);
         setAssignmentType("pending_assignment");
         setSelectedJobId("");
@@ -552,6 +615,13 @@ export default function DocumentsPage() {
 
       if (assignmentType === "job_cost" && !selectedJobId) {
         throw new Error("Vyberte zakázku, ke které doklad patří.");
+      }
+      if (formData.requiresPayment && !formData.dueDate.trim()) {
+        toast({
+          title: "Upozornění: chybí splatnost",
+          description:
+            "Doklad je označený k úhradě, ale nemáte vyplněné datum splatnosti. Doplňte ho v přehledu úhrad nebo upravte doklad.",
+        });
       }
       const selectedJob = jobs.find((j) => j.id === selectedJobId);
       const uploadMeta = newDocFile ? await uploadDocumentFile(newDocFile) : null;
@@ -589,6 +659,9 @@ export default function DocumentsPage() {
         mimeType: uploadMeta?.mimeType ?? null,
         storagePath: uploadMeta?.storagePath ?? null,
         createdAt: serverTimestamp(),
+        requiresPayment: formData.requiresPayment,
+        dueDate: formData.dueDate.trim() || null,
+        paid: false,
       });
 
       logActivitySafe(firestore, companyId, user, profile, {
@@ -677,6 +750,8 @@ export default function DocumentsPage() {
         vat: "21",
         date: new Date().toISOString().split("T")[0],
         description: "",
+        requiresPayment: false,
+        dueDate: "",
       });
       setNewDocFile(null);
       setAssignmentType("pending_assignment");
@@ -779,6 +854,8 @@ export default function DocumentsPage() {
       poznamka: String(row.poznamka ?? row.note ?? row.description ?? ""),
       zakazkaId: row.zakazkaId ?? row.jobId ?? "",
       noJobMode: row.assignmentType === "overhead" ? "overhead" : "pending",
+      requiresPayment: row.requiresPayment === true,
+      dueDate: row.dueDate?.trim() ?? "",
     });
     setEditOpen(true);
   };
@@ -861,6 +938,17 @@ export default function DocumentsPage() {
         basePayload.jobId = null;
         basePayload.jobName = null;
         basePayload.assignmentType = "pending_assignment";
+      }
+
+      basePayload.requiresPayment = editForm.requiresPayment;
+      basePayload.dueDate = editForm.dueDate.trim() || null;
+
+      if (editForm.requiresPayment && !editForm.dueDate.trim()) {
+        toast({
+          title: "Upozornění: chybí splatnost",
+          description:
+            "Doklad je označený k úhradě bez data splatnosti. Doplňte splatnost pro správné řazení a připomínky.",
+        });
       }
 
       await updateDoc(
@@ -1312,6 +1400,37 @@ export default function DocumentsPage() {
                       className="bg-background"
                     />
                   </div>
+                  <div className="space-y-3 col-span-2 rounded-lg border border-border p-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <Label htmlFor="requires-payment-new" className="text-base">
+                          K úhradě
+                        </Label>
+                        <p className="text-xs text-muted-foreground">
+                          Zobrazí v přehledu Nutno uhradit na hlavní stránce (vyžaduje částku).
+                        </p>
+                      </div>
+                      <Switch
+                        id="requires-payment-new"
+                        checked={formData.requiresPayment}
+                        onCheckedChange={(v) =>
+                          setFormData({ ...formData, requiresPayment: v })
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="due-date-new">Splatnost</Label>
+                      <Input
+                        id="due-date-new"
+                        type="date"
+                        value={formData.dueDate}
+                        onChange={(e) =>
+                          setFormData({ ...formData, dueDate: e.target.value })
+                        }
+                        className="bg-background"
+                      />
+                    </div>
+                  </div>
                   <div className="space-y-2 col-span-2">
                     <Label>Zařazení dokladu</Label>
                     <Select
@@ -1373,6 +1492,36 @@ export default function DocumentsPage() {
         </Alert>
       ) : null}
 
+      {paymentOverviewStats.toPay > 0 ? (
+        <Card className="border-gray-300 bg-white text-gray-900 shadow-sm">
+          <CardContent className="py-4 text-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-gray-600">
+              Souhrn k úhradě
+            </p>
+            <div className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
+              <span>
+                Dokladů k úhradě:{" "}
+                <strong className="tabular-nums">{paymentOverviewStats.toPay}</strong>
+              </span>
+              <span>
+                Celkem:{" "}
+                <strong className="tabular-nums">
+                  {Math.round(paymentOverviewStats.totalKc).toLocaleString("cs-CZ")} Kč
+                </strong>
+              </span>
+              {paymentOverviewStats.overdue > 0 ? (
+                <span className="text-red-700">
+                  Po splatnosti:{" "}
+                  <strong className="tabular-nums">{paymentOverviewStats.overdue}</strong>
+                </span>
+              ) : (
+                <span className="text-gray-600">Po splatnosti: 0</span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <Tabs defaultValue="received" className="w-full min-w-0">
         <TabsList className="flex flex-wrap h-auto gap-1 p-1 mb-6">
           <TabsTrigger
@@ -1399,6 +1548,9 @@ export default function DocumentsPage() {
             onAssign={openAssignDialog}
             search={receivedSearch}
             onSearchChange={setReceivedSearch}
+            todayIso={todayIso}
+            onMarkPaid={markDocumentPaid}
+            onMarkUnpaid={markDocumentUnpaid}
           />
         </TabsContent>
 
@@ -1411,6 +1563,9 @@ export default function DocumentsPage() {
             onAssign={openAssignDialog}
             search={issuedSearch}
             onSearchChange={setIssuedSearch}
+            todayIso={todayIso}
+            onMarkPaid={markDocumentPaid}
+            onMarkUnpaid={markDocumentUnpaid}
           />
         </TabsContent>
       </Tabs>
@@ -1588,6 +1743,62 @@ export default function DocumentsPage() {
                 className="bg-background resize-y min-h-[80px]"
               />
             </div>
+            <div className="space-y-3 rounded-lg border border-border p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <Label htmlFor="edit-requires-payment">K úhradě</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Přehled na hlavní stránce a splatnost.
+                  </p>
+                </div>
+                <Switch
+                  id="edit-requires-payment"
+                  checked={editForm.requiresPayment}
+                  onCheckedChange={(v) =>
+                    setEditForm({ ...editForm, requiresPayment: v })
+                  }
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-due-date">Splatnost</Label>
+                <Input
+                  id="edit-due-date"
+                  type="date"
+                  value={editForm.dueDate}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, dueDate: e.target.value })
+                  }
+                  className="bg-background"
+                />
+              </div>
+              {editRow?.paid === true ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-950">
+                  <p className="font-medium">Zaplaceno</p>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="mt-2"
+                    onClick={() => editRow && void markDocumentUnpaid(editRow)}
+                  >
+                    Označit jako nezaplaceno
+                  </Button>
+                </div>
+              ) : editRow &&
+                editForm.requiresPayment &&
+                editRow.paid !== true &&
+                docDisplayAmounts(editRow).amountGross > 0 ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="w-full sm:w-auto"
+                  onClick={() => editRow && void markDocumentPaid(editRow)}
+                >
+                  Označit jako zaplaceno
+                </Button>
+              ) : null}
+            </div>
             <div className="space-y-2">
               <Label>Zakázka</Label>
               <Select
@@ -1707,6 +1918,9 @@ function DocumentTableReceived({
   onAssign,
   search,
   onSearchChange,
+  todayIso,
+  onMarkPaid,
+  onMarkUnpaid,
 }: {
   data: CompanyDocumentRow[];
   isLoading: boolean;
@@ -1715,9 +1929,13 @@ function DocumentTableReceived({
   onAssign: (row: CompanyDocumentRow) => void;
   search: string;
   onSearchChange: (v: string) => void;
+  todayIso: string;
+  onMarkPaid: (row: CompanyDocumentRow) => void | Promise<void>;
+  onMarkUnpaid: (row: CompanyDocumentRow) => void | Promise<void>;
 }) {
   const [jobFilter, setJobFilter] = useState<string>("__all__");
   const [typeFilter, setTypeFilter] = useState<string>("__all__");
+  const [paymentFilter, setPaymentFilter] = useState<string>("__all__");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
@@ -1772,9 +1990,37 @@ function DocumentTableReceived({
         return hay.includes(q);
       });
     }
-    list.sort((a, b) => docCreatedAtMs(b.createdAt) - docCreatedAtMs(a.createdAt));
+    if (paymentFilter !== "__all__") {
+      list = list.filter((d) => {
+        const pr = d as CompanyDocumentPaymentRow;
+        const u = getDocumentPaymentUrgency(pr, todayIso);
+        if (paymentFilter === "to_pay") {
+          return isDocumentEligibleForPaymentBox(pr);
+        }
+        if (paymentFilter === "needs_flag") return pr.requiresPayment === true;
+        if (paymentFilter === "paid") return pr.paid === true;
+        if (paymentFilter === "unpaid") return pr.paid !== true;
+        if (paymentFilter === "overdue") return u === "overdue";
+        if (paymentFilter === "due_soon") return u === "due_soon";
+        return true;
+      });
+    }
+    list.sort((a, b) => {
+      const ea = isDocumentEligibleForPaymentBox(a as CompanyDocumentPaymentRow);
+      const eb = isDocumentEligibleForPaymentBox(b as CompanyDocumentPaymentRow);
+      if (ea && eb) {
+        return compareDocumentsForPaymentQueue(
+          a as CompanyDocumentPaymentRow,
+          b as CompanyDocumentPaymentRow,
+          todayIso
+        );
+      }
+      if (ea && !eb) return -1;
+      if (!ea && eb) return 1;
+      return docCreatedAtMs(b.createdAt) - docCreatedAtMs(a.createdAt);
+    });
     return list;
-  }, [data, jobFilter, typeFilter, dateFrom, dateTo, search]);
+  }, [data, jobFilter, typeFilter, paymentFilter, dateFrom, dateTo, search, todayIso]);
 
   const fileKindLabel = (k: JobMediaFileType | "none") => {
     if (k === "pdf") return "PDF";
@@ -1845,6 +2091,23 @@ function DocumentTableReceived({
               onChange={(e) => setDateTo(e.target.value)}
             />
           </div>
+          <div className="space-y-1.5 min-w-0 sm:col-span-2 lg:col-span-4">
+            <Label className="text-xs text-muted-foreground">Platba / splatnost</Label>
+            <Select value={paymentFilter} onValueChange={setPaymentFilter}>
+              <SelectTrigger className="min-h-[44px] w-full">
+                <SelectValue placeholder="Vše" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Všechny doklady</SelectItem>
+                <SelectItem value="to_pay">K úhradě (nezaplacené)</SelectItem>
+                <SelectItem value="needs_flag">Označené k úhradě</SelectItem>
+                <SelectItem value="unpaid">Nezaplacené</SelectItem>
+                <SelectItem value="paid">Zaplacené</SelectItem>
+                <SelectItem value="overdue">Po splatnosti</SelectItem>
+                <SelectItem value="due_soon">Blíží se splatnost</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
         </div>
       </div>
       <CardContent className="p-0">
@@ -1861,6 +2124,10 @@ function DocumentTableReceived({
                   <TableHead className="min-w-[100px]">Typ</TableHead>
                   <TableHead className="min-w-[120px]">Zakázka</TableHead>
                   <TableHead className="min-w-[100px]">Datum</TableHead>
+                  <TableHead className="min-w-[88px]">K úhradě</TableHead>
+                  <TableHead className="min-w-[110px]">Splatnost</TableHead>
+                  <TableHead className="min-w-[100px]">Platba</TableHead>
+                  <TableHead className="min-w-[120px]">Stav</TableHead>
                   <TableHead className="min-w-[120px] text-right">Částka</TableHead>
                   <TableHead className="min-w-[140px]">Poznámka</TableHead>
                   <TableHead className="pr-6 text-right min-w-[220px]">Akce</TableHead>
@@ -1882,6 +2149,8 @@ function DocumentTableReceived({
                   const showAmount = !fromJobMedia && amts.amountNet > 0;
                   const title = docDisplayTitle(row);
                   const canEditRow = !fromJobMedia;
+                  const pr = row as CompanyDocumentPaymentRow;
+                  const payU = getDocumentPaymentUrgency(pr, todayIso);
 
                   const assignmentBadge =
                     row.assignmentType === "job_cost"
@@ -1981,6 +2250,56 @@ function DocumentTableReceived({
                       <TableCell className="align-top text-sm whitespace-nowrap">
                         {row.date ?? "—"}
                       </TableCell>
+                      <TableCell className="align-top text-xs">
+                        {row.requiresPayment ? (
+                          <Badge variant="secondary" className="text-[10px]">
+                            Ano
+                          </Badge>
+                        ) : (
+                          <span className="text-muted-foreground">Ne</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="align-top text-xs whitespace-nowrap">
+                        {row.dueDate?.trim() ? (
+                          <span>{row.dueDate}</span>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell className="align-top text-xs">
+                        {row.paid === true ? (
+                          <Badge className="bg-emerald-700 text-[10px] text-white hover:bg-emerald-700">
+                            Zaplaceno
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="text-[10px]">
+                            Nezaplaceno
+                          </Badge>
+                        )}
+                      </TableCell>
+                      <TableCell className="align-top text-xs">
+                        {!row.requiresPayment ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : row.paid === true ? (
+                          <span className="text-muted-foreground">—</span>
+                        ) : (
+                          <Badge
+                            className={cn(
+                              "text-[10px]",
+                              payU === "overdue" &&
+                                "border-red-700 bg-red-100 text-red-950 hover:bg-red-100",
+                              payU === "due_soon" &&
+                                "border-amber-600 bg-amber-100 text-amber-950 hover:bg-amber-100",
+                              payU === "incomplete_no_due" &&
+                                "border-amber-700 bg-yellow-50 text-yellow-950 hover:bg-yellow-50",
+                              payU === "ok" &&
+                                "border-gray-400 bg-gray-100 text-gray-900 hover:bg-gray-100"
+                            )}
+                          >
+                            {urgencyLabel(payU)}
+                          </Badge>
+                        )}
+                      </TableCell>
                       <TableCell className="align-top text-right tabular-nums text-xs sm:text-sm">
                         {showAmount ? (
                           <div className="space-y-0.5">
@@ -2018,6 +2337,28 @@ function DocumentTableReceived({
                       </TableCell>
                       <TableCell className="pr-6 align-top text-right">
                         <div className="flex flex-wrap items-center justify-end gap-1">
+                          {isDocumentEligibleForPaymentBox(pr) ? (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              className="h-8 px-2 text-[10px] shrink-0"
+                              onClick={() => void onMarkPaid(row)}
+                            >
+                              Zaplaceno
+                            </Button>
+                          ) : null}
+                          {row.paid === true && row.requiresPayment ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 px-2 text-[10px] shrink-0"
+                              onClick={() => void onMarkUnpaid(row)}
+                            >
+                              Nezaplaceno
+                            </Button>
+                          ) : null}
                           {row.fileUrl ? (
                             <Button
                               variant="outline"

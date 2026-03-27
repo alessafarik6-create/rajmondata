@@ -53,6 +53,7 @@ import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
 import { DashboardJobTasksWidget } from "@/components/jobs/dashboard-job-tasks-widget";
 import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
+import { DashboardDocumentsToPayWidget } from "@/components/portal/dashboard-documents-to-pay-widget";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
@@ -785,6 +786,10 @@ export default function CompanyDashboard() {
                 </Link>
               </CardContent>
             </Card>
+          ) : null}
+
+          {companyId ? (
+            <DashboardDocumentsToPayWidget companyId={companyId} todayIso={todayIso} />
           ) : null}
 
           {companyId ? (
