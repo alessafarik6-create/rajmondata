@@ -207,8 +207,33 @@ export async function reconcileCompanyDocumentJobExpense(params: {
     return;
   }
 
-  const amounts = companyDocumentExpenseAmounts(after);
-  if (amounts.amountNet <= 0 || amounts.amountGross <= 0) {
+  let amounts = companyDocumentExpenseAmounts(after);
+  if (amounts.amountGross <= 0) {
+    return;
+  }
+  /**
+   * Firestore pravidla vyžadují amount (bez DPH) > 0. Občas zůstane net=0 při gross>0
+   * (legacy pole, zaokrouhlení) — dopočítáme net/DPH z hrubé částky.
+   */
+  let amountNet = amounts.amountNet;
+  let vatAmt = amounts.vatAmount;
+  const vr = amounts.vatRatePercent;
+  if (amountNet <= 0 && amounts.amountGross > 0) {
+    if (!Number.isFinite(vr) || vr <= 0) {
+      amountNet = amounts.amountGross;
+      vatAmt = 0;
+    } else {
+      amountNet = roundMoney2(amounts.amountGross / (1 + vr / 100));
+      vatAmt = roundMoney2(amounts.amountGross - amountNet);
+    }
+    amounts = {
+      ...amounts,
+      amountNet,
+      vatAmount: vatAmt,
+      amountGross: amounts.amountGross,
+    };
+  }
+  if (amountNet <= 0) {
     return;
   }
 
@@ -232,11 +257,11 @@ export async function reconcileCompanyDocumentJobExpense(params: {
   const commonExpense = {
     companyId,
     jobId: nextJob,
-    amount: amounts.amountNet,
-    amountNet: amounts.amountNet,
+    amount: amountNet,
+    amountNet,
     amountGross: amounts.amountGross,
     vatRate: amounts.vatRatePercent,
-    vatAmount: amounts.vatAmount,
+    vatAmount: vatAmt,
     date: dateStr,
     note: noteText,
     dokladId: documentId,

@@ -1281,7 +1281,7 @@ export default function DocumentsPage() {
 
   return (
     <TooltipProvider delayDuration={250}>
-    <div className="mx-auto w-full max-w-6xl space-y-4 sm:space-y-5">
+    <div className="mx-auto w-full max-w-[min(100%,1600px)] px-2 sm:px-4 space-y-4 sm:space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight text-gray-950 sm:text-3xl dark:text-gray-50">
@@ -1978,11 +1978,9 @@ function DocumentTableReceived({
   const jobOptions = useMemo(() => {
     const m = new Map<string, string>();
     for (const d of data) {
-      if (d.jobId) {
-        m.set(
-          d.jobId,
-          d.jobName?.trim() || d.entityName?.trim() || d.jobId
-        );
+      const jid = (d.jobId ?? d.zakazkaId)?.trim();
+      if (jid) {
+        m.set(jid, d.jobName?.trim() || d.entityName?.trim() || jid);
       }
     }
     return [...m.entries()].sort((a, b) =>
@@ -1993,7 +1991,9 @@ function DocumentTableReceived({
   const rows = useMemo(() => {
     let list = [...data];
     if (jobFilter !== "__all__") {
-      list = list.filter((d) => d.jobId === jobFilter);
+      list = list.filter(
+        (d) => (d.jobId ?? d.zakazkaId)?.trim() === jobFilter
+      );
     }
     if (typeFilter !== "__all__") {
       list = list.filter((d) => {
@@ -2152,25 +2152,33 @@ function DocumentTableReceived({
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
           </div>
         ) : rows.length > 0 ? (
-          <div className="overflow-x-auto">
-            <Table>
+          <div className="overflow-x-auto -mx-0">
+            <Table className="min-w-[1100px] w-full table-fixed">
               <TableHeader>
                 <TableRow className="border-border">
-                  <TableHead className="pl-6 min-w-[160px]">Soubor / doklad</TableHead>
-                  <TableHead className="min-w-[100px]">Typ</TableHead>
-                  <TableHead className="min-w-[120px]">Zakázka</TableHead>
-                  <TableHead className="min-w-[100px]">Datum</TableHead>
-                  <TableHead className="min-w-[88px]">K úhradě</TableHead>
-                  <TableHead className="min-w-[110px]">Splatnost</TableHead>
-                  <TableHead className="min-w-[100px]">Platba</TableHead>
-                  <TableHead className="min-w-[120px]">Stav</TableHead>
-                  <TableHead className="min-w-[120px] text-right">Částka</TableHead>
-                  <TableHead className="min-w-[140px]">Poznámka</TableHead>
-                  <TableHead className="pr-6 text-right min-w-[220px]">Akce</TableHead>
+                  <TableHead className="pl-6 w-[18%] min-w-[130px]">
+                    Soubor / doklad
+                  </TableHead>
+                  <TableHead className="w-[8%] min-w-[72px]">Typ</TableHead>
+                  <TableHead className="w-[14%] min-w-[120px]">Zakázka</TableHead>
+                  <TableHead className="w-[8%] min-w-[88px]">Datum</TableHead>
+                  <TableHead className="w-[6%] min-w-[72px]">K úhradě</TableHead>
+                  <TableHead className="w-[8%] min-w-[88px]">Splatnost</TableHead>
+                  <TableHead className="w-[7%] min-w-[72px]">Platba</TableHead>
+                  <TableHead className="w-[9%] min-w-[88px]">Stav</TableHead>
+                  <TableHead className="w-[11%] min-w-[100px] text-right">
+                    Částka
+                  </TableHead>
+                  <TableHead className="w-[12%] min-w-[100px]">Poznámka</TableHead>
+                  <TableHead className="pr-4 text-right min-w-[200px] sticky right-0 z-30 bg-card border-l border-border shadow-[inset_1px_0_0_0_hsl(var(--border))]">
+                    Akce
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {rows.map((row) => {
+                  const jobLinkId =
+                    (row.jobId ?? row.zakazkaId)?.trim() || "";
                   const fromJobExpense =
                     row.source === JOB_EXPENSE_DOCUMENT_SOURCE ||
                     row.sourceType === "expense";
@@ -2182,7 +2190,9 @@ function DocumentTableReceived({
                     fk === "image" ? ImageIcon : FileText;
 
                   const amts = docDisplayAmounts(row);
-                  const showAmount = !fromJobMedia && amts.amountNet > 0;
+                  const showAmount =
+                    !fromJobMedia &&
+                    (amts.amountGross > 0 || amts.amountNet > 0);
                   const title = docDisplayTitle(row);
                   const canEditRow = !fromJobMedia;
                   const pr = row as CompanyDocumentPaymentRow;
@@ -2268,13 +2278,27 @@ function DocumentTableReceived({
                         </div>
                       </TableCell>
                       <TableCell className="align-top">
-                        {row.jobId ? (
-                          <span
-                            className="text-sm font-medium block truncate max-w-[12rem]"
-                            title={row.jobName ?? row.entityName ?? undefined}
-                          >
-                            {row.jobName || row.entityName || "Zakázka"}
-                          </span>
+                        {jobLinkId ? (
+                          <div className="flex flex-col gap-1.5 min-w-0">
+                            <Link
+                              href={`/portal/jobs/${jobLinkId}`}
+                              className="text-sm font-semibold text-primary hover:underline truncate"
+                              title={row.jobName ?? row.entityName ?? ""}
+                            >
+                              {row.jobName || row.entityName || "Zakázka"}
+                            </Link>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 w-fit max-w-full text-xs shrink-0"
+                              asChild
+                            >
+                              <Link href={`/portal/jobs/${jobLinkId}`}>
+                                <Briefcase className="h-3.5 w-3.5 mr-1.5 shrink-0" />
+                                Otevřít zakázku
+                              </Link>
+                            </Button>
+                          </div>
                         ) : (
                           <span className="text-sm text-muted-foreground">
                             {row.assignmentType === "pending_assignment"
@@ -2371,7 +2395,7 @@ function DocumentTableReceived({
                           {row.note || row.description || "—"}
                         </p>
                       </TableCell>
-                      <TableCell className="pr-6 align-top text-right">
+                      <TableCell className="pr-4 align-top text-right sticky right-0 z-20 bg-card border-l border-border shadow-[inset_1px_0_0_0_hsl(var(--border))]">
                         <div className="flex flex-wrap items-center justify-end gap-1">
                           {isDocumentEligibleForPaymentBox(pr) ? (
                             <Button
@@ -2412,7 +2436,7 @@ function DocumentTableReceived({
                               </a>
                             </Button>
                           ) : null}
-                          {row.jobId ? (
+                          {jobLinkId ? (
                             <Button
                               variant="secondary"
                               size="icon"
@@ -2420,7 +2444,7 @@ function DocumentTableReceived({
                               asChild
                               title="Otevřít zakázku"
                             >
-                              <Link href={`/portal/jobs/${row.jobId}`}>
+                              <Link href={`/portal/jobs/${jobLinkId}`}>
                                 <Briefcase className="h-4 w-4 shrink-0" />
                               </Link>
                             </Button>
@@ -2531,20 +2555,26 @@ function DocumentTableIssued({
           </div>
         ) : data.length > 0 ? (
           <div className="overflow-x-auto">
-            <Table>
+            <Table className="min-w-[720px] w-full">
               <TableHeader>
                 <TableRow className="border-border">
                   <TableHead className="pl-6 min-w-[140px]">Doklad</TableHead>
                   <TableHead className="min-w-[120px]">Zakázka</TableHead>
                   <TableHead className="min-w-[100px]">Datum</TableHead>
-                  <TableHead className="text-right min-w-[140px]">Částka / DPH</TableHead>
-                  <TableHead className="pr-6 text-right min-w-[120px]">Akce</TableHead>
+                  <TableHead className="text-right min-w-[140px]">
+                    Částka / DPH
+                  </TableHead>
+                  <TableHead className="pr-4 text-right min-w-[120px] sticky right-0 z-30 bg-card border-l border-border shadow-[inset_1px_0_0_0_hsl(var(--border))]">
+                    Akce
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {data.map((docRow) => {
                   const issuedAm = docDisplayAmounts(docRow);
                   const title = docDisplayTitle(docRow);
+                  const issuedJobId =
+                    (docRow.jobId ?? docRow.zakazkaId)?.trim() || "";
                   return (
                     <TableRow
                       key={docRow.id}
@@ -2566,10 +2596,27 @@ function DocumentTableIssued({
                         </div>
                       </TableCell>
                       <TableCell className="text-sm">
-                        {docRow.jobId || docRow.zakazkaId ? (
-                          <span className="font-medium block truncate max-w-[12rem]">
-                            {docRow.jobName ?? "Zakázka"}
-                          </span>
+                        {issuedJobId ? (
+                          <div className="flex flex-col gap-1 min-w-0 max-w-[14rem]">
+                            <Link
+                              href={`/portal/jobs/${issuedJobId}`}
+                              className="font-medium text-primary hover:underline truncate"
+                              title={docRow.jobName ?? ""}
+                            >
+                              {docRow.jobName ?? "Zakázka"}
+                            </Link>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 w-fit text-xs"
+                              asChild
+                            >
+                              <Link href={`/portal/jobs/${issuedJobId}`}>
+                                <Briefcase className="h-3.5 w-3.5 mr-1" />
+                                Otevřít zakázku
+                              </Link>
+                            </Button>
+                          </div>
                         ) : (
                           <span className="text-muted-foreground">
                             {docRow.assignmentType === "overhead"
@@ -2605,8 +2652,21 @@ function DocumentTableIssued({
                           )}
                         </div>
                       </TableCell>
-                      <TableCell className="pr-6 text-right">
+                      <TableCell className="pr-4 text-right sticky right-0 z-20 bg-card border-l border-border shadow-[inset_1px_0_0_0_hsl(var(--border))]">
                         <div className="flex flex-wrap justify-end gap-1">
+                          {issuedJobId ? (
+                            <Button
+                              variant="secondary"
+                              size="icon"
+                              className="h-9 w-9 shrink-0"
+                              asChild
+                              title="Otevřít zakázku"
+                            >
+                              <Link href={`/portal/jobs/${issuedJobId}`}>
+                                <Briefcase className="h-4 w-4" />
+                              </Link>
+                            </Button>
+                          ) : null}
                           <Button
                             type="button"
                             variant="ghost"
