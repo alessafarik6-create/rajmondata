@@ -53,6 +53,20 @@ service cloud.firestore {
       return hasUser() && userCompanyId() == companyId;
     }
 
+    /** Firemní doklad s evidovanou částkou (ne čistá fotodokumentace bez částky). */
+    function companyDocumentHasFinancialAmount(data) {
+      return ('castka' in data && data.castka is number && data.castka > 0) ||
+        ('amountNet' in data && data.amountNet is number && data.amountNet > 0) ||
+        ('amountGross' in data && data.amountGross is number && data.amountGross > 0) ||
+        ('amount' in data && data.amount is number && data.amount > 0);
+    }
+
+    /** Zrcadlo z médií zakázky nebo nákladů (může nemít vlastní částku jako fotky). */
+    function companyDocumentIsSyncedMirror(data) {
+      return ('source' in data && data.source == 'job-media') ||
+        ('source' in data && data.source == 'job-expense');
+    }
+
     /**
      * První vytvoření firmy při registraci (batch ještě neobsahuje users/{uid}, takže sameCompany nejde použít).
      * Dokument musí mít vlastníka = aktuální uživatel.
@@ -750,8 +764,12 @@ service cloud.firestore {
        */
       match /documents/{docId} {
         allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
-        allow create: if signedIn() && sameCompany(companyId) && isPrivileged();
-        allow update: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          (companyDocumentIsSyncedMirror(request.resource.data) ||
+            companyDocumentHasFinancialAmount(request.resource.data));
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          (companyDocumentIsSyncedMirror(request.resource.data) ||
+            companyDocumentHasFinancialAmount(request.resource.data));
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

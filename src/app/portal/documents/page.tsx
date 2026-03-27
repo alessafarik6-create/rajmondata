@@ -42,6 +42,7 @@ import {
   doc,
   collection,
   addDoc,
+  setDoc,
   serverTimestamp,
   deleteDoc,
   writeBatch,
@@ -73,8 +74,12 @@ import { JOB_EXPENSE_DOCUMENT_SOURCE } from "@/lib/job-expense-document-sync";
 import { JOB_MEDIA_DOCUMENT_SOURCE } from "@/lib/job-linked-document-sync";
 import {
   inferJobMediaItemType,
+  getJobMediaFileTypeFromFile,
+  isAllowedJobMediaFile,
   type JobMediaFileType,
 } from "@/lib/job-media-types";
+import { uploadJobPhotoFileViaFirebaseSdk } from "@/lib/job-photo-upload";
+import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import { cn } from "@/lib/utils";
 import { logActivitySafe } from "@/lib/activity-log";
 import {
@@ -261,6 +266,9 @@ async function deleteJobMediaFilesFromStorage(
   }
 }
 
+/** Stejný limit jako u nahrávání médií na kartě zakázky. */
+const MAX_JOB_PHOTO_BYTES = 20 * 1024 * 1024;
+
 export default function DocumentsPage() {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -342,12 +350,22 @@ export default function DocumentsPage() {
   );
   const [isDeleting, setIsDeleting] = useState(false);
 
+  const financialDocuments = useMemo(
+    () =>
+      ((documents ?? []) as CompanyDocumentRow[]).filter(
+        isFinancialCompanyDocument
+      ),
+    [documents]
+  );
+
   const pendingDocs = useMemo(
     () =>
-      ((documents ?? []) as CompanyDocumentRow[])
+      financialDocuments
         .filter((d) => d.assignmentType === "pending_assignment")
-        .sort((a, b) => docCreatedAtMs(b.createdAt) - docCreatedAtMs(a.createdAt)),
-    [documents]
+        .sort(
+          (a, b) => docCreatedAtMs(b.createdAt) - docCreatedAtMs(a.createdAt)
+        ),
+    [financialDocuments]
   );
 
   const uploadDocumentFile = async (file: File): Promise<{
@@ -379,16 +397,152 @@ export default function DocumentsPage() {
 
   const handleAddDocument = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyId) return;
+    if (!companyId || !firestore || !user) return;
     setIsSubmitting(true);
 
     try {
-      const amountNet = Math.max(0, Math.round(Number(formData.amount)));
+      const amountStr = formData.amount.trim();
+      const amountParsed =
+        amountStr === "" ? NaN : Number(String(amountStr).replace(",", "."));
+      const amountNet =
+        Number.isFinite(amountParsed) && amountParsed >= 0
+          ? Math.round(amountParsed)
+          : 0;
+      const hasFinancialAmount =
+        amountStr !== "" && Number.isFinite(amountParsed) && amountNet > 0;
+
+      if (!hasFinancialAmount) {
+        if (!newDocFile) {
+          toast({
+            variant: "destructive",
+            title: "Chybí částka",
+            description:
+              "Doklad musí obsahovat částku. Jinak nahrajte soubor a vyberte zakázku (zařazení „Zakázka → náklad“) — uloží se pouze jako fotodokumentace u zakázky, ne v dokladech.",
+          });
+          return;
+        }
+        if (assignmentType !== "job_cost" || !selectedJobId) {
+          toast({
+            variant: "destructive",
+            title: "Pro fotodokumentaci vyberte zakázku",
+            description:
+              "Doklad musí obsahovat částku. Bez částky lze soubor uložit jen jako fotodokumentaci — nastavte zařazení na „Zakázka → náklad“ a vyberte zakázku.",
+          });
+          return;
+        }
+        if (!isAllowedJobMediaFile(newDocFile)) {
+          toast({
+            variant: "destructive",
+            title: "Nepodporovaný soubor",
+            description: "Použijte JPG, PNG, WEBP nebo PDF.",
+          });
+          return;
+        }
+        if (newDocFile.size > MAX_JOB_PHOTO_BYTES) {
+          toast({
+            variant: "destructive",
+            title: "Soubor je příliš velký",
+            description: `Maximální velikost je ${Math.round(MAX_JOB_PHOTO_BYTES / (1024 * 1024))} MB.`,
+          });
+          return;
+        }
+
+        const { resolvedFullPath, downloadURL } =
+          await uploadJobPhotoFileViaFirebaseSdk(
+            newDocFile,
+            companyId,
+            selectedJobId
+          );
+        const photosColRef = collection(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          selectedJobId,
+          "photos"
+        );
+        const photoDocRef = doc(photosColRef);
+        const safeBaseName =
+          newDocFile.name
+            .replace(/^.*[\\/]/, "")
+            .replace(/\s+/g, " ")
+            .trim() || "photo";
+        const fileType = getJobMediaFileTypeFromFile(newDocFile);
+        const selectedJob = jobs.find((j) => j.id === selectedJobId);
+        const note = formData.description.trim() || null;
+
+        await setDoc(photoDocRef, {
+          id: photoDocRef.id,
+          companyId,
+          jobId: selectedJobId,
+          imageUrl: downloadURL,
+          url: downloadURL,
+          originalImageUrl: downloadURL,
+          downloadURL,
+          fileType,
+          storagePath: resolvedFullPath,
+          path: resolvedFullPath,
+          fileName: safeBaseName,
+          name: safeBaseName,
+          note,
+          createdAt: serverTimestamp(),
+          createdBy: user.uid,
+          uploadedBy: user.uid,
+        });
+
+        logActivitySafe(firestore, companyId, user, profile, {
+          actionType: "job.photo_from_documents_page",
+          actionLabel: "Fotodokumentace z formuláře dokladů (bez částky)",
+          entityType: "job_photo",
+          entityId: photoDocRef.id,
+          entityName: safeBaseName,
+          sourceModule: "documents",
+          route: "/portal/documents",
+          metadata: {
+            jobId: selectedJobId,
+            hadNote: Boolean(note),
+          },
+        });
+
+        toast({
+          title: "Fotodokumentace uložena",
+          description: `Soubor byl přidán k zakázce „${selectedJob?.name ?? selectedJobId}“. V seznamu dokladů se nezobrazí (bez částky).`,
+        });
+        setIsAddDocOpen(false);
+        setFormData({
+          number: "",
+          entityName: "",
+          amount: "",
+          vat: "21",
+          date: new Date().toISOString().split("T")[0],
+          description: "",
+        });
+        setNewDocFile(null);
+        setAssignmentType("pending_assignment");
+        setSelectedJobId("");
+        return;
+      }
+
       const vatRate = normalizeVatRate(Number(formData.vat));
       const { vatAmount, amountGross } = calculateVatAmountsFromNet(
         amountNet,
         vatRate
       );
+
+      if (!formData.number.trim()) {
+        toast({
+          variant: "destructive",
+          title: "Vyplňte číslo dokladu",
+        });
+        return;
+      }
+      if (!formData.entityName.trim()) {
+        toast({
+          variant: "destructive",
+          title: "Vyplňte subjekt",
+        });
+        return;
+      }
 
       if (assignmentType === "job_cost" && !selectedJobId) {
         throw new Error("Vyberte zakázku, ke které doklad patří.");
@@ -408,6 +562,8 @@ export default function DocumentsPage() {
         type: newDocType,
         amount: amountNet,
         amountNet,
+        castka: amountGross,
+        sDPH: true,
         vatRate,
         vatAmount,
         amountGross,
@@ -479,11 +635,13 @@ export default function DocumentsPage() {
       setNewDocFile(null);
       setAssignmentType("pending_assignment");
       setSelectedJobId("");
-    } catch {
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Nepodařilo se uložit doklad.";
       toast({
         variant: "destructive",
         title: "Chyba",
-        description: "Nepodařilo se uložit doklad.",
+        description: msg,
       });
     } finally {
       setIsSubmitting(false);
@@ -824,15 +982,13 @@ export default function DocumentsPage() {
   };
 
   const receivedDocsBase = useMemo(() => {
-    return (documents ?? []).filter((d) =>
-      isReceivedDoc(d as CompanyDocumentRow)
-    ) as CompanyDocumentRow[];
-  }, [documents]);
+    return financialDocuments.filter((d) => isReceivedDoc(d));
+  }, [financialDocuments]);
 
   const issuedDocs = useMemo(() => {
-    const base = (documents ?? []).filter(
-      (d) => (d as CompanyDocumentRow).type === "issued"
-    ) as CompanyDocumentRow[];
+    const base = financialDocuments.filter(
+      (d) => d.type === "issued"
+    );
     const q = issuedSearch.trim().toLowerCase();
     if (!q) return base;
     return base.filter((d) => {
@@ -841,7 +997,7 @@ export default function DocumentsPage() {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [documents, issuedSearch]);
+  }, [financialDocuments, issuedSearch]);
 
   if (isProfileLoading) {
     return (
@@ -868,8 +1024,9 @@ export default function DocumentsPage() {
         <div className="min-w-0">
           <h1 className="portal-page-title text-2xl sm:text-3xl">Firemní doklady</h1>
           <p className="portal-page-description">
-            Přehled přijatých a vydaných dokladů včetně souborů zákazek (fotodokumentace, složky,
-            náklady) — jednotná evidence bez duplicitních záznamů.
+            Přehled finančních dokladů (s částkou větší než 0). Fotodokumentace bez částky najdete u
+            zakázky v médiích; při nahrání odsud bez částky se soubor uloží jen k zakázce, ne do tohoto
+            seznamu.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -927,7 +1084,6 @@ export default function DocumentsPage() {
                     <Label htmlFor="number">Číslo dokladu</Label>
                     <Input
                       id="number"
-                      required
                       value={formData.number}
                       onChange={(e) =>
                         setFormData({ ...formData, number: e.target.value })
@@ -954,7 +1110,6 @@ export default function DocumentsPage() {
                     </Label>
                     <Input
                       id="entityName"
-                      required
                       value={formData.entityName}
                       onChange={(e) =>
                         setFormData({ ...formData, entityName: e.target.value })
@@ -967,13 +1122,19 @@ export default function DocumentsPage() {
                     <Input
                       id="amount"
                       type="number"
-                      required
+                      min={0}
+                      step="1"
+                      placeholder="0 = jen fotodokumentace (u zakázky)"
                       value={formData.amount}
                       onChange={(e) =>
                         setFormData({ ...formData, amount: e.target.value })
                       }
                       className="bg-background"
                     />
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Bez částky se neuloží jako doklad. S výběrem zakázky (náklad) se soubor uloží jen
+                      jako fotodokumentace u zakázky — v tomto seznamu dokladů se neobjeví.
+                    </p>
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="vat">DPH</Label>

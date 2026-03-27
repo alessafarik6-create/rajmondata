@@ -41,6 +41,10 @@ import {
   roundMoney2,
 } from "@/lib/vat-calculations";
 import {
+  isFinancialCompanyDocument,
+  type CompanyDocumentLike,
+} from "@/lib/company-documents-financial";
+import {
   formatKc,
   sumMoneyForApprovedDailyReports,
   type DailyWorkReportMoney,
@@ -308,6 +312,9 @@ export default function CompanyDashboard() {
   const attendanceTodayRows = attendanceTodayRaw ?? [];
   const pendingDocuments = useMemo(() => {
     const rows = (pendingDocumentsRaw ?? []) as PendingDocumentRow[];
+    const financial = rows.filter((r) =>
+      isFinancialCompanyDocument(r as CompanyDocumentLike)
+    );
     const toMs = (t: unknown) => {
       if (t && typeof (t as { toMillis?: () => number }).toMillis === "function") {
         return (t as { toMillis: () => number }).toMillis();
@@ -317,7 +324,7 @@ export default function CompanyDashboard() {
       }
       return 0;
     };
-    return [...rows].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+    return [...financial].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
   }, [pendingDocumentsRaw]);
 
   const typedJobs: JobData[] = Array.isArray(allJobsRaw)
