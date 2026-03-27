@@ -538,6 +538,33 @@ service cloud.firestore {
         allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
+      /** Dluhy zaměstnanců: admin správa, zaměstnanec pouze čtení svého. */
+      match /employee_debts/{debtId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.employeeId is string &&
+          request.resource.data.amount is number &&
+          request.resource.data.amount > 0 &&
+          request.resource.data.remainingAmount is number &&
+          request.resource.data.remainingAmount >= 0;
+        allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /** Splátky dluhů: admin zapisuje, zaměstnanec čte své. */
+      match /employee_debt_payments/{paymentId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.employeeId is string &&
+          request.resource.data.debtId is string &&
+          request.resource.data.amount is number &&
+          request.resource.data.amount > 0;
+        allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       match /attendance/{documentId} {
         allow read: if terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId));
         allow create: if (terminalCompanyMatches(companyId) || (signedIn() && sameCompany(companyId))) && attendanceJobValid(companyId);

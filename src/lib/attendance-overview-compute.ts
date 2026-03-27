@@ -446,6 +446,9 @@ export type EmployeeDailyDetailRow = {
   hasIncompleteAttendance: boolean;
   orientacniKc: number;
   schvalenoStatus: "approved" | "pending" | "none";
+  paidStatus: "paid" | "unpaid" | "none";
+  paidKc: number;
+  unpaidKc: number;
 };
 
 /**
@@ -581,6 +584,11 @@ export function buildEmployeeDailyDetailRows(params: {
       }
       return Math.round(s * 100) / 100;
     })();
+    const dayBlocks = workBlocks.filter(
+      (b) =>
+        firestoreEmployeeIdMatches(b.employeeId, employee) &&
+        String(b.date ?? "").trim() === dateIso
+    );
     const pendD = sumPendingDailyReportEstimateForDay(dailyReports, employee, dateIso);
     const pendB = sumPendingBlocksMoneyForDay(workBlocks, employee, dateIso);
 
@@ -627,6 +635,14 @@ export function buildEmployeeDailyDetailRows(params: {
     } else if (neschvalenoKc > 0) {
       schvalenoStatus = "pending";
     }
+    let paidStatus: "paid" | "unpaid" | "none" = "none";
+    if (dayBlocks.length > 0) {
+      paidStatus = dayBlocks.every((b) => b.paid === true) ? "paid" : "unpaid";
+    } else if (schvalenoKc > 0) {
+      paidStatus = "unpaid";
+    }
+    const paidKc = paidStatus === "paid" ? schvalenoKc : 0;
+    const unpaidKc = paidStatus === "unpaid" ? schvalenoKc : 0;
     const dayTitle = format(
       new Date(
         Number(dateIso.slice(0, 4)),
@@ -660,6 +676,9 @@ export function buildEmployeeDailyDetailRows(params: {
       hasIncompleteAttendance,
       orientacniKc,
       schvalenoStatus,
+      paidStatus,
+      paidKc,
+      unpaidKc,
     });
   }
   return out;
@@ -682,6 +701,10 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   approvedHourlyHours: number;
   pendingHourlyHours: number;
   invalidAttendanceDays: number;
+  paidDays: number;
+  unpaidDays: number;
+  paidAmountKc: number;
+  unpaidAmountKc: number;
 } {
   let daysWorked = 0;
   let hours = 0;
@@ -698,6 +721,10 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   let approvedHourlyHours = 0;
   let pendingHourlyHours = 0;
   let invalidAttendanceDays = 0;
+  let paidDays = 0;
+  let unpaidDays = 0;
+  let paidAmountKc = 0;
+  let unpaidAmountKc = 0;
   for (const r of rows) {
     const hasWork =
       (r.odpracovanoH != null && r.odpracovanoH > 0) ||
@@ -723,6 +750,10 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     totalHoursOutsideTariffOnly += r.hoursOutsideTariffOnly;
     if (r.schvalenoStatus === "approved") approvedHourlyHours += r.hourlyHoursForPay;
     else if (r.schvalenoStatus === "pending") pendingHourlyHours += r.hourlyHoursForPay;
+    if (r.paidStatus === "paid") paidDays += 1;
+    else if (r.paidStatus === "unpaid") unpaidDays += 1;
+    paidAmountKc += r.paidKc;
+    unpaidAmountKc += r.unpaidKc;
   }
   return {
     daysWorked,
@@ -740,6 +771,10 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     approvedHourlyHours: Math.round(approvedHourlyHours * 100) / 100,
     pendingHourlyHours: Math.round(pendingHourlyHours * 100) / 100,
     invalidAttendanceDays,
+    paidDays,
+    unpaidDays,
+    paidAmountKc: Math.round(paidAmountKc * 100) / 100,
+    unpaidAmountKc: Math.round(unpaidAmountKc * 100) / 100,
   };
 }
 
@@ -777,6 +812,10 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
   let approvedHourlyHours = 0;
   let pendingHourlyHours = 0;
   let invalidAttendanceDays = 0;
+  let paidDays = 0;
+  let unpaidDays = 0;
+  let paidAmountKc = 0;
+  let unpaidAmountKc = 0;
   for (const emp of employees.values()) {
     const rows = buildEmployeeDailyDetailRows({
       range,
@@ -803,6 +842,10 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
     approvedHourlyHours += t.approvedHourlyHours;
     pendingHourlyHours += t.pendingHourlyHours;
     invalidAttendanceDays += t.invalidAttendanceDays;
+    paidDays += t.paidDays;
+    unpaidDays += t.unpaidDays;
+    paidAmountKc += t.paidAmountKc;
+    unpaidAmountKc += t.unpaidAmountKc;
   }
   return {
     daysWorked,
@@ -820,6 +863,10 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
     approvedHourlyHours: Math.round(approvedHourlyHours * 100) / 100,
     pendingHourlyHours: Math.round(pendingHourlyHours * 100) / 100,
     invalidAttendanceDays,
+    paidDays,
+    unpaidDays,
+    paidAmountKc: Math.round(paidAmountKc * 100) / 100,
+    unpaidAmountKc: Math.round(unpaidAmountKc * 100) / 100,
   };
 }
 

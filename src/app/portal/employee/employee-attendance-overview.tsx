@@ -13,6 +13,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 import {
   Collapsible,
   CollapsibleContent,
@@ -619,6 +620,22 @@ export function EmployeeAttendanceOverview({
                   </p>
                 </div>
               </div>
+              <div className="grid gap-3 sm:grid-cols-2 print:grid-cols-2">
+                <div className="rounded-lg border border-emerald-700 bg-emerald-50 p-3">
+                  <p className="text-xs font-medium text-emerald-900">Zaplacené dny</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-emerald-900">
+                    {detailTotals.paidDays}
+                  </p>
+                  <p className="text-xs text-emerald-800">{formatKc(detailTotals.paidAmountKc)}</p>
+                </div>
+                <div className="rounded-lg border border-rose-300 bg-rose-50 p-3">
+                  <p className="text-xs font-medium text-rose-900">Nezaplacené dny</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-rose-900">
+                    {detailTotals.unpaidDays}
+                  </p>
+                  <p className="text-xs text-rose-800">{formatKc(detailTotals.unpaidAmountKc)}</p>
+                </div>
+              </div>
               {detailTotals.invalidAttendanceDays > 0 ? (
                 <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
                   {detailTotals.invalidAttendanceDays} dnů má neúplnou docházku (chybí příchod/odchod)
@@ -742,6 +759,15 @@ export function EmployeeAttendanceOverview({
                           <strong className="text-neutral-950">
                             {day.neschvalenoKc > 0 ? formatKc(day.neschvalenoKc) : "—"}
                           </strong>
+                        </span>
+                        <span>
+                          {day.paidStatus === "paid" ? (
+                            <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Zaplaceno</Badge>
+                          ) : day.paidStatus === "unpaid" ? (
+                            <Badge variant="destructive">Nezaplaceno</Badge>
+                          ) : (
+                            <Badge variant="secondary">Bez platby</Badge>
+                          )}
                         </span>
                       </div>
                     </div>

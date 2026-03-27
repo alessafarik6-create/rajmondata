@@ -41,7 +41,12 @@ export type WorkTimeBlockMoney = {
   approvedAutomatically?: boolean;
   approvalSource?: string;
   approvedAt?: unknown;
+  approved?: boolean;
+  approvedBy?: string;
   approvedBySystem?: boolean;
+  paid?: boolean;
+  paidAt?: unknown;
+  paidBy?: string;
 };
 
 export type AdvanceStatus = "paid" | "unpaid";
@@ -112,6 +117,10 @@ export function getReviewLabel(status?: string): string {
     default:
       return "Schváleno (dříve zapsáno)";
   }
+}
+
+export function isWorkBlockPaid(block: WorkTimeBlockMoney): boolean {
+  return block.paid === true;
 }
 
 /** yyyy-MM-dd v lokálním kalendáři (bez posunu UTC). */

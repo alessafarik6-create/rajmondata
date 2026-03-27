@@ -20,6 +20,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  runTransaction,
   serverTimestamp,
   type Firestore,
 } from "firebase/firestore";
@@ -55,6 +56,7 @@ import {
   sumMoneyForApprovedDailyReports,
   sumPaidAdvances,
   sumPayableHoursForBlocks,
+  isWorkBlockPaid,
   type AdvanceDoc,
   type DailyWorkReportMoney,
   type WorkTimeBlockMoney,
@@ -77,6 +79,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Switch } from "@/components/ui/switch";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   getWorklogDescriptionOriginal,
   getWorklogLanguage,
@@ -87,6 +90,32 @@ import {
 } from "@/lib/translate-to-czech";
 
 const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
+
+type EmployeeDebtReason = "tool_damage" | "loan" | "deduction" | "other";
+
+type EmployeeDebtDoc = {
+  id: string;
+  employeeId: string;
+  companyId: string;
+  amount: number;
+  remainingAmount: number;
+  date: string;
+  note?: string;
+  reason: EmployeeDebtReason;
+  status: "active" | "paid";
+  createdBy?: string;
+};
+
+type EmployeeDebtPaymentDoc = {
+  id: string;
+  debtId: string;
+  employeeId: string;
+  companyId: string;
+  amount: number;
+  date: string;
+  note?: string;
+  createdBy?: string;
+};
 
 function PayrollWorklogDescriptionCell({
   block,
@@ -419,6 +448,7 @@ function PayrollAdminPageInner() {
   const [adminNote, setAdminNote] = useState("");
   const [adjustmentReason, setAdjustmentReason] = useState("");
   const [savingReview, setSavingReview] = useState(false);
+  const [selectedBlockIds, setSelectedBlockIds] = useState<string[]>([]);
 
   const openReview = (b: WorkTimeBlockMoney) => {
     setReviewBlock(b);
@@ -473,6 +503,10 @@ function PayrollAdminPageInner() {
         approvedHours: appr,
         originalHours: reviewBlock.originalHours ?? reviewBlock.hours ?? logged,
         reviewStatus: changed ? "adjusted" : "approved",
+        approved: true,
+        approvedAt: serverTimestamp(),
+        approvedBy: user.uid,
+        approvalSource: "admin-direct",
         adminNote: adminNote.trim() || null,
         adjustmentReason: changed ? adjustmentReason.trim() : null,
         updatedAt: serverTimestamp(),
@@ -509,6 +543,10 @@ function PayrollAdminPageInner() {
         approvedHours: logged,
         originalHours: b.originalHours ?? b.hours ?? logged,
         reviewStatus: "approved",
+        approved: true,
+        approvedAt: serverTimestamp(),
+        approvedBy: user.uid,
+        approvalSource: "admin-direct",
         updatedAt: serverTimestamp(),
         reviewedAt: serverTimestamp(),
         reviewedBy: user.uid,
@@ -517,6 +555,108 @@ function PayrollAdminPageInner() {
     } catch (e) {
       console.error(e);
       toast({ variant: "destructive", title: "Chyba" });
+    }
+  };
+
+  const quickUnapprove = async (b: WorkTimeBlockMoney) => {
+    if (!firestore || !companyId || !b.id || !user) return;
+    try {
+      const ref = doc(firestore, "companies", companyId, "work_time_blocks", b.id);
+      await updateDoc(ref, {
+        reviewStatus: "pending",
+        approved: false,
+        approvedHours: null,
+        approvedAt: null,
+        approvedBy: null,
+        approvalSource: "admin-direct",
+        reviewedAt: serverTimestamp(),
+        reviewedBy: user.uid,
+        updatedAt: serverTimestamp(),
+      });
+      toast({ title: "Schválení zrušeno" });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Chyba" });
+    }
+  };
+
+  const toggleBlockPaid = async (b: WorkTimeBlockMoney, nextPaid?: boolean) => {
+    if (!firestore || !companyId || !b.id || !user) return;
+    const paid = nextPaid ?? !isWorkBlockPaid(b);
+    try {
+      const ref = doc(firestore, "companies", companyId, "work_time_blocks", b.id);
+      await updateDoc(ref, {
+        paid,
+        paidAt: paid ? serverTimestamp() : null,
+        paidBy: paid ? user.uid : null,
+        updatedAt: serverTimestamp(),
+      });
+      toast({ title: paid ? "Označeno jako zaplaceno" : "Označeno jako nezaplaceno" });
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Chyba" });
+    }
+  };
+
+  const applyBulkOnBlocks = async (
+    mode: "approve" | "unapprove" | "paid" | "unpaid"
+  ) => {
+    if (!firestore || !companyId || !user || selectedBlockIds.length === 0) return;
+    const targets = sortedBlocks.filter((b) => b.id && selectedBlockIds.includes(String(b.id)));
+    if (targets.length === 0) return;
+    try {
+      await Promise.all(
+        targets.map((b) => {
+          const ref = doc(firestore, "companies", companyId, "work_time_blocks", String(b.id));
+          if (mode === "approve") {
+            const logged = Number(b.hours) || 0;
+            return updateDoc(ref, {
+              approvedHours: logged,
+              originalHours: b.originalHours ?? b.hours ?? logged,
+              reviewStatus: "approved",
+              approved: true,
+              approvedAt: serverTimestamp(),
+              approvedBy: user.uid,
+              approvalSource: "admin-direct",
+              updatedAt: serverTimestamp(),
+              reviewedAt: serverTimestamp(),
+              reviewedBy: user.uid,
+            });
+          }
+          if (mode === "unapprove") {
+            return updateDoc(ref, {
+              reviewStatus: "pending",
+              approved: false,
+              approvedHours: null,
+              approvedAt: null,
+              approvedBy: null,
+              approvalSource: "admin-direct",
+              updatedAt: serverTimestamp(),
+              reviewedAt: serverTimestamp(),
+              reviewedBy: user.uid,
+            });
+          }
+          if (mode === "paid") {
+            return updateDoc(ref, {
+              paid: true,
+              paidAt: serverTimestamp(),
+              paidBy: user.uid,
+              updatedAt: serverTimestamp(),
+            });
+          }
+          return updateDoc(ref, {
+            paid: false,
+            paidAt: null,
+            paidBy: null,
+            updatedAt: serverTimestamp(),
+          });
+        })
+      );
+      toast({ title: "Hromadná změna byla uložena" });
+      setSelectedBlockIds([]);
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Hromadná změna selhala" });
     }
   };
 
@@ -644,6 +784,157 @@ function PayrollAdminPageInner() {
       setSavingAdvEdit(false);
     }
   };
+
+  const debtsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !selectedEmployeeId || selectedEmployeeId === "all") return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_debts"),
+      where("employeeId", "==", selectedEmployeeId),
+      limit(300)
+    );
+  }, [firestore, companyId, selectedEmployeeId]);
+  const debtPaymentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !selectedEmployeeId || selectedEmployeeId === "all") return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_debt_payments"),
+      where("employeeId", "==", selectedEmployeeId),
+      limit(500)
+    );
+  }, [firestore, companyId, selectedEmployeeId]);
+  const { data: debtsRaw = [] } = useCollection(debtsQuery);
+  const { data: debtPaymentsRaw = [] } = useCollection(debtPaymentsQuery);
+  const debts = useMemo((): EmployeeDebtDoc[] => {
+    const raw = Array.isArray(debtsRaw) ? debtsRaw : [];
+    return raw
+      .map((d: any) => ({
+        id: String(d?.id ?? ""),
+        employeeId: String(d?.employeeId ?? ""),
+        companyId: String(d?.companyId ?? ""),
+        amount: Number(d?.amount) || 0,
+        remainingAmount: Number(d?.remainingAmount) || 0,
+        date: String(d?.date ?? ""),
+        note: d?.note != null ? String(d.note) : "",
+        reason: (["tool_damage", "loan", "deduction", "other"].includes(String(d?.reason))
+          ? String(d?.reason)
+          : "other") as EmployeeDebtReason,
+        status: (Number(d?.remainingAmount) > 0 ? "active" : "paid") as "active" | "paid",
+        createdBy: d?.createdBy != null ? String(d.createdBy) : undefined,
+      }))
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }, [debtsRaw]);
+  const debtPayments = useMemo((): EmployeeDebtPaymentDoc[] => {
+    const raw = Array.isArray(debtPaymentsRaw) ? debtPaymentsRaw : [];
+    return raw
+      .map((p: any) => ({
+        id: String(p?.id ?? ""),
+        debtId: String(p?.debtId ?? ""),
+        employeeId: String(p?.employeeId ?? ""),
+        companyId: String(p?.companyId ?? ""),
+        amount: Number(p?.amount) || 0,
+        date: String(p?.date ?? ""),
+        note: p?.note != null ? String(p.note) : "",
+        createdBy: p?.createdBy != null ? String(p.createdBy) : undefined,
+      }))
+      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  }, [debtPaymentsRaw]);
+  const [newDebtAmount, setNewDebtAmount] = useState("");
+  const [newDebtDate, setNewDebtDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [newDebtReason, setNewDebtReason] = useState<EmployeeDebtReason>("other");
+  const [newDebtNote, setNewDebtNote] = useState("");
+  const [savingDebt, setSavingDebt] = useState(false);
+  const [paymentOpen, setPaymentOpen] = useState(false);
+  const [paymentDebtId, setPaymentDebtId] = useState("");
+  const [paymentAmount, setPaymentAmount] = useState("");
+  const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().split("T")[0]);
+  const [paymentNote, setPaymentNote] = useState("");
+  const addDebt = async () => {
+    if (!firestore || !companyId || !selectedEmployeeId || !user || selectedEmployeeId === "all") return;
+    const amount = Number(String(newDebtAmount).replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast({ variant: "destructive", title: "Neplatná částka dluhu" });
+      return;
+    }
+    setSavingDebt(true);
+    try {
+      await addDoc(collection(firestore, "companies", companyId, "employee_debts"), {
+        companyId,
+        employeeId: selectedEmployeeId,
+        amount,
+        remainingAmount: amount,
+        date: newDebtDate,
+        reason: newDebtReason,
+        note: newDebtNote.trim() || "",
+        status: "active",
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: user.uid,
+      });
+      toast({ title: "Dluh byl přidán" });
+      setNewDebtAmount("");
+      setNewDebtNote("");
+      setNewDebtReason("other");
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Uložení dluhu selhalo" });
+    } finally {
+      setSavingDebt(false);
+    }
+  };
+  const openDebtPayment = (debtId: string) => {
+    setPaymentDebtId(debtId);
+    setPaymentAmount("");
+    setPaymentNote("");
+    setPaymentOpen(true);
+  };
+  const saveDebtPayment = async () => {
+    if (!firestore || !companyId || !selectedEmployeeId || !user || !paymentDebtId) return;
+    const amount = Number(String(paymentAmount).replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast({ variant: "destructive", title: "Neplatná částka splátky" });
+      return;
+    }
+    try {
+      await runTransaction(firestore, async (tx) => {
+        const debtRef = doc(firestore, "companies", companyId, "employee_debts", paymentDebtId);
+        const debtSnap = await tx.get(debtRef);
+        if (!debtSnap.exists()) throw new Error("Dluh nebyl nalezen.");
+        const curr = Number(debtSnap.data().remainingAmount) || 0;
+        const next = Math.max(0, Math.round((curr - amount) * 100) / 100);
+        tx.update(debtRef, {
+          remainingAmount: next,
+          status: next > 0 ? "active" : "paid",
+          updatedAt: serverTimestamp(),
+        });
+        const payRef = doc(collection(firestore, "companies", companyId, "employee_debt_payments"));
+        tx.set(payRef, {
+          companyId,
+          employeeId: selectedEmployeeId,
+          debtId: paymentDebtId,
+          amount,
+          date: paymentDate,
+          note: paymentNote.trim() || "",
+          createdAt: serverTimestamp(),
+          createdBy: user.uid,
+        });
+      });
+      toast({ title: "Splátka byla přidána" });
+      setPaymentOpen(false);
+      setPaymentDebtId("");
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Uložení splátky selhalo" });
+    }
+  };
+  const debtTotals = useMemo(() => {
+    const totalDebt = debts.reduce((s, d) => s + (Number(d.amount) || 0), 0);
+    const remainingDebt = debts.reduce((s, d) => s + (Number(d.remainingAmount) || 0), 0);
+    const repaidDebt = Math.max(0, Math.round((totalDebt - remainingDebt) * 100) / 100);
+    return {
+      totalDebt: Math.round(totalDebt * 100) / 100,
+      remainingDebt: Math.round(remainingDebt * 100) / 100,
+      repaidDebt,
+    };
+  }, [debts]);
 
   if (isUserLoading || !user) {
     return (
@@ -824,6 +1115,13 @@ function PayrollAdminPageInner() {
                   Součty: výkaz {totalLoggedHoursSum} h · schválený čas (započitatelné){" "}
                   {totalPayableHoursSum} h
                 </p>
+                <p className="mt-1 text-sm">
+                  Zaplaceno:{" "}
+                  {
+                    sortedBlocks.filter((b) => isWorkBlockPaid(b)).length
+                  }{" "}
+                  / {sortedBlocks.length} záznamů
+                </p>
               </div>
               <Card className="border-slate-200 bg-white print:border-0 print:shadow-none">
                 <CardHeader className="print:hidden">
@@ -938,7 +1236,7 @@ function PayrollAdminPageInner() {
         </Tabs>
       ) : (
         <Tabs defaultValue="worklogs" className="w-full">
-          <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-slate-100 p-1 print:hidden sm:max-w-md">
+          <TabsList className="grid h-auto w-full grid-cols-3 gap-1 bg-slate-100 p-1 print:hidden sm:max-w-xl">
             <TabsTrigger
               value="worklogs"
               className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
@@ -950,6 +1248,12 @@ function PayrollAdminPageInner() {
               className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
             >
               Zálohy
+            </TabsTrigger>
+            <TabsTrigger
+              value="debts"
+              className="min-h-[48px] text-base font-semibold data-[state=active]:bg-white data-[state=active]:text-black"
+            >
+              Dluhy
             </TabsTrigger>
           </TabsList>
 
@@ -1022,10 +1326,34 @@ function PayrollAdminPageInner() {
                   ) : sortedBlocks.length === 0 ? (
                     <p className="text-black">Žádné bloky.</p>
                   ) : (
+                    <>
+                    <div className="mb-3 flex flex-wrap gap-2 print:hidden">
+                      <Button type="button" size="sm" variant="outline" onClick={() => applyBulkOnBlocks("approve")} disabled={selectedBlockIds.length === 0}>
+                        Schválit vybrané
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => applyBulkOnBlocks("unapprove")} disabled={selectedBlockIds.length === 0}>
+                        Zrušit schválení
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" className="border-emerald-700 text-emerald-700" onClick={() => applyBulkOnBlocks("paid")} disabled={selectedBlockIds.length === 0}>
+                        Označit zaplaceno
+                      </Button>
+                      <Button type="button" size="sm" variant="outline" className="border-rose-700 text-rose-700" onClick={() => applyBulkOnBlocks("unpaid")} disabled={selectedBlockIds.length === 0}>
+                        Označit nezaplaceno
+                      </Button>
+                    </div>
                     <div className="overflow-x-auto rounded-md border border-slate-200 print:border-slate-300">
                       <Table>
                           <TableHeader>
                             <TableRow>
+                              <TableHead className="w-[40px] print:hidden">
+                                <Checkbox
+                                  checked={selectedBlockIds.length > 0 && selectedBlockIds.length === sortedBlocks.length}
+                                  onCheckedChange={(v) =>
+                                    setSelectedBlockIds(v ? sortedBlocks.map((b) => String(b.id ?? "")).filter(Boolean) : [])
+                                  }
+                                  aria-label="Vybrat vše"
+                                />
+                              </TableHead>
                               <TableHead className="text-black">Datum</TableHead>
                               <TableHead className="text-black">Čas</TableHead>
                               <TableHead className="text-black">Zakázka</TableHead>
@@ -1035,12 +1363,26 @@ function PayrollAdminPageInner() {
                               <TableHead className="text-black">Výkaz h</TableHead>
                               <TableHead className="text-black">Schv. h</TableHead>
                               <TableHead className="text-black">Stav</TableHead>
+                              <TableHead className="text-black">Platba</TableHead>
                               <TableHead className="print:hidden">Akce</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
                             {sortedBlocks.map((b) => (
                               <TableRow key={b.id}>
+                                <TableCell className="print:hidden">
+                                  <Checkbox
+                                    checked={selectedBlockIds.includes(String(b.id ?? ""))}
+                                    onCheckedChange={(v) => {
+                                      const id = String(b.id ?? "");
+                                      if (!id) return;
+                                      setSelectedBlockIds((prev) =>
+                                        v ? (prev.includes(id) ? prev : [...prev, id]) : prev.filter((x) => x !== id)
+                                      );
+                                    }}
+                                    aria-label={`Vybrat ${b.date}`}
+                                  />
+                                </TableCell>
                                 <TableCell className="font-medium text-black">
                                   {b.date}
                                 </TableCell>
@@ -1086,6 +1428,11 @@ function PayrollAdminPageInner() {
                                     ) : null}
                                   </span>
                                 </TableCell>
+                                <TableCell>
+                                  <Badge className={isWorkBlockPaid(b) ? "bg-emerald-600 text-white hover:bg-emerald-600" : "bg-slate-200 text-black hover:bg-slate-200"}>
+                                    {isWorkBlockPaid(b) ? "Zaplaceno" : "Nezaplaceno"}
+                                  </Badge>
+                                </TableCell>
                                 <TableCell className="print:hidden">
                                   <div className="flex flex-wrap gap-2">
                                     {b.reviewStatus === "pending" && (
@@ -1109,6 +1456,25 @@ function PayrollAdminPageInner() {
                                       <Pencil className="mr-1 h-4 w-4" />
                                       Úprava
                                     </Button>
+                                    {b.reviewStatus !== "pending" ? (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        className="border-amber-500 text-amber-700"
+                                        onClick={() => quickUnapprove(b)}
+                                      >
+                                        Zrušit schválení
+                                      </Button>
+                                    ) : null}
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant={isWorkBlockPaid(b) ? "destructive" : "default"}
+                                      onClick={() => toggleBlockPaid(b)}
+                                    >
+                                      {isWorkBlockPaid(b) ? "Nezaplaceno" : "Zaplaceno"}
+                                    </Button>
                                   </div>
                                 </TableCell>
                               </TableRow>
@@ -1116,6 +1482,7 @@ function PayrollAdminPageInner() {
                           </TableBody>
                         </Table>
                     </div>
+                    </>
                   )}
                 </CardContent>
               </Card>
@@ -1342,6 +1709,93 @@ function PayrollAdminPageInner() {
               </CardContent>
             </Card>
           </TabsContent>
+          <TabsContent value="debts" className="mt-4 space-y-4">
+            <Card className="border-slate-200 bg-white">
+              <CardHeader>
+                <CardTitle className="text-lg text-black">Dluh</CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label className="text-black">Částka dluhu (Kč)</Label>
+                  <Input value={newDebtAmount} onChange={(e) => setNewDebtAmount(e.target.value)} inputMode="decimal" placeholder="např. 2500" />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-black">Datum</Label>
+                  <Input type="date" value={newDebtDate} onChange={(e) => setNewDebtDate(e.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-black">Typ dluhu</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {(["tool_damage", "loan", "deduction", "other"] as EmployeeDebtReason[]).map((r) => (
+                      <Button key={r} type="button" size="sm" variant={newDebtReason === r ? "default" : "outline"} onClick={() => setNewDebtReason(r)}>
+                        {r === "tool_damage" ? "Poškození nářadí" : r === "loan" ? "Půjčka" : r === "deduction" ? "Srážka" : "Jiný důvod"}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <div className="space-y-2 sm:col-span-2">
+                  <Label className="text-black">Poznámka / důvod</Label>
+                  <Textarea value={newDebtNote} onChange={(e) => setNewDebtNote(e.target.value)} rows={3} />
+                </div>
+                <div className="sm:col-span-2">
+                  <Button type="button" className="min-h-[44px]" onClick={addDebt} disabled={savingDebt}>
+                    {savingDebt ? <Loader2 className="h-4 w-4 animate-spin" /> : "Dluh"}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Card className="border-slate-200 bg-white"><CardContent className="pt-4"><p className="text-xs text-neutral-700">Celkové zálohy</p><p className="text-lg font-bold">{formatKc(paidTotal)}</p></CardContent></Card>
+              <Card className="border-slate-200 bg-white"><CardContent className="pt-4"><p className="text-xs text-neutral-700">Celkový dluh</p><p className="text-lg font-bold">{formatKc(debtTotals.totalDebt)}</p></CardContent></Card>
+              <Card className="border-slate-200 bg-white"><CardContent className="pt-4"><p className="text-xs text-neutral-700">Celkem splaceno</p><p className="text-lg font-bold">{formatKc(debtTotals.repaidDebt)}</p></CardContent></Card>
+              <Card className="border-slate-200 bg-white"><CardContent className="pt-4"><p className="text-xs text-neutral-700">Zbývá doplatit</p><p className="text-lg font-bold">{formatKc(debtTotals.remainingDebt)}</p></CardContent></Card>
+            </div>
+            <Card className="border-slate-200 bg-white">
+              <CardHeader><CardTitle className="text-lg text-black">Seznam dluhů a splátek</CardTitle></CardHeader>
+              <CardContent className="space-y-3">
+                {debts.length === 0 ? <p className="text-sm text-neutral-700">Žádné dluhy.</p> : debts.map((d) => {
+                  const payments = debtPayments.filter((p) => p.debtId === d.id);
+                  const repaid = Math.max(0, Math.round((d.amount - d.remainingAmount) * 100) / 100);
+                  return (
+                    <div key={d.id} className="rounded-lg border border-slate-200 p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-black">{formatKc(d.amount)} · {d.date}</p>
+                          <p className="text-xs text-neutral-700">{d.note || "Bez poznámky"}</p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge className={d.remainingAmount > 0 ? "bg-amber-600 text-white hover:bg-amber-600" : "bg-emerald-600 text-white hover:bg-emerald-600"}>
+                            {d.remainingAmount > 0 ? "Aktivní" : "Splaceno"}
+                          </Badge>
+                          {d.remainingAmount > 0 ? (
+                            <Button type="button" size="sm" onClick={() => openDebtPayment(d.id)}>Přidat splátku</Button>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-xs text-neutral-700">Splaceno: {formatKc(repaid)} · Zbývá: {formatKc(d.remainingAmount)}</div>
+                      {payments.length > 0 ? (
+                        <div className="mt-2 rounded border border-slate-200">
+                          <Table>
+                            <TableHeader><TableRow><TableHead>Datum</TableHead><TableHead>Částka</TableHead><TableHead>Poznámka</TableHead><TableHead>Zapsal</TableHead></TableRow></TableHeader>
+                            <TableBody>
+                              {payments.map((p) => (
+                                <TableRow key={p.id}>
+                                  <TableCell>{p.date}</TableCell>
+                                  <TableCell>{formatKc(p.amount)}</TableCell>
+                                  <TableCell>{p.note || "—"}</TableCell>
+                                  <TableCell>{p.createdBy || "—"}</TableCell>
+                                </TableRow>
+                              ))}
+                            </TableBody>
+                          </Table>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          </TabsContent>
         </Tabs>
       )}
 
@@ -1418,6 +1872,32 @@ function PayrollAdminPageInner() {
                 "Uložit"
               )}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-slate-200 bg-white text-black sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-black">Nová splátka dluhu</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-black">Částka (Kč)</Label>
+              <Input value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} inputMode="decimal" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-black">Datum</Label>
+              <Input type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-black">Poznámka</Label>
+              <Textarea value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} rows={3} />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPaymentOpen(false)}>Zrušit</Button>
+            <Button type="button" onClick={saveDebtPayment}>Uložit splátku</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

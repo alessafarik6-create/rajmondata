@@ -97,6 +97,24 @@ export default function EmployeeMoneyPage() {
 
   const { data: advancesRaw, isLoading: advancesLoading, error: advancesError } =
     useCollection(advancesQuery, silentListen);
+  const debtsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_debts"),
+      where("employeeId", "==", employeeId),
+      limit(300)
+    );
+  }, [firestore, companyId, employeeId]);
+  const debtPaymentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_debt_payments"),
+      where("employeeId", "==", employeeId),
+      limit(500)
+    );
+  }, [firestore, companyId, employeeId]);
+  const { data: debtsRaw = [] } = useCollection(debtsQuery, silentListen);
+  const { data: debtPaymentsRaw = [] } = useCollection(debtPaymentsQuery, silentListen);
 
   const blocks = useMemo(() => {
     const raw = Array.isArray(blocksRaw) ? blocksRaw : [];
@@ -143,6 +161,15 @@ export default function EmployeeMoneyPage() {
   const earnedAll = sumMoneyForBlocks(blocksMoney, hourlyRate);
 
   const paidTotal = sumPaidAdvances(advances);
+  const debtTotal = useMemo(
+    () => Math.round(((Array.isArray(debtsRaw) ? debtsRaw : []) as any[]).reduce((s, d) => s + (Number(d?.amount) || 0), 0) * 100) / 100,
+    [debtsRaw]
+  );
+  const debtRemaining = useMemo(
+    () => Math.round(((Array.isArray(debtsRaw) ? debtsRaw : []) as any[]).reduce((s, d) => s + (Number(d?.remainingAmount) || 0), 0) * 100) / 100,
+    [debtsRaw]
+  );
+  const debtRepaid = Math.max(0, Math.round((debtTotal - debtRemaining) * 100) / 100);
   const remaining = Math.max(0, Math.round((earnedAll - paidTotal) * 100) / 100);
 
   const sortedAdvances = useMemo(() => {
@@ -344,6 +371,13 @@ export default function EmployeeMoneyPage() {
               vyděláno − vyplacené zálohy
             </p>
           </div>
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
+            <p className="text-sm font-semibold text-rose-900">Celkový dluh</p>
+            <p className="mt-1 text-xl font-bold text-black">{formatKc(debtTotal)}</p>
+            <p className="text-xs text-rose-900">
+              Splaceno {formatKc(debtRepaid)} · zbývá {formatKc(debtRemaining)}
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -502,6 +536,7 @@ export default function EmployeeMoneyPage() {
                       <TableHead className="text-black">Hodiny</TableHead>
                       <TableHead className="text-black">Schv. h</TableHead>
                       <TableHead className="text-black">Stav</TableHead>
+                      <TableHead className="text-black">Platba</TableHead>
                       <TableHead className="text-black">Částka</TableHead>
                       <TableHead className="text-black">Popis</TableHead>
                     </TableRow>
@@ -531,6 +566,11 @@ export default function EmployeeMoneyPage() {
                               </Badge>
                             ) : null}
                           </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={b.paid === true ? "bg-emerald-600 text-white hover:bg-emerald-600" : "bg-slate-200 text-black hover:bg-slate-200"}>
+                            {b.paid === true ? "Zaplaceno" : "Nezaplaceno"}
+                          </Badge>
                         </TableCell>
                         <TableCell className="whitespace-nowrap font-medium text-black">
                           {hourlyRate > 0 && getPayableHours(b) > 0
