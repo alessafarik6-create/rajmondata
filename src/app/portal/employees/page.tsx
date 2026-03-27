@@ -797,10 +797,12 @@ export default function EmployeesPage() {
   if (!canView && profile) return null;
 
   return (
-    <div className="space-y-6 sm:space-y-8">
+    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
         <div className="min-w-0">
-          <h1 className="portal-page-title text-2xl sm:text-3xl">Správa zaměstnanců</h1>
+          <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl break-words">
+            Správa zaměstnanců
+          </h1>
           <p className="portal-page-description">Pracovníci organizace {companyId}.</p>
         </div>
         <div className="flex gap-2 sm:gap-3">
@@ -1074,27 +1076,27 @@ export default function EmployeesPage() {
       </Dialog>
 
       <Card className="bg-surface border-border overflow-hidden">
-        <div className="p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-4 justify-between">
-          <div className="relative w-80">
+        <div className="p-3 sm:p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-3 sm:gap-4 justify-between min-w-0">
+          <div className="relative w-full max-w-full sm:max-w-md sm:w-80 min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <Input placeholder="Hledat jméno nebo email..." className="pl-10 bg-background border-border" />
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" className="gap-2">
-              <Filter className="w-4 h-4" /> Filtr
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <Button variant="outline" size="sm" className="gap-2 min-h-10 sm:min-h-9 touch-manipulation">
+              <Filter className="w-4 h-4 shrink-0" /> Filtr
             </Button>
-            <Button variant="outline" size="sm" className="gap-2">
-              <Download className="w-4 h-4" /> Exportovat
+            <Button variant="outline" size="sm" className="gap-2 min-h-10 sm:min-h-9 touch-manipulation">
+              <Download className="w-4 h-4 shrink-0" /> Exportovat
             </Button>
           </div>
         </div>
-        <CardContent className="p-0">
+        <CardContent className="p-0 overflow-x-auto">
           {isLoading ? (
             <div className="flex items-center justify-center p-12">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : employees && employees.length > 0 ? (
-            <Table>
+            <Table className="min-w-[720px] w-full">
               <TableHeader>
                 <TableRow className="border-border hover:bg-transparent">
                   <TableHead className="pl-6">Zaměstnanec</TableHead>

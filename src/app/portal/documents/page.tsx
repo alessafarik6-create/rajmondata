@@ -1630,8 +1630,8 @@ function DocumentsPageContent() {
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleAddDocument} className="space-y-3 px-4 py-3 sm:px-5">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-2 col-span-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="attachment">Soubor / fotka / PDF</Label>
                     <Input
                       id="attachment"
@@ -1645,7 +1645,7 @@ function DocumentsPageContent() {
                       Na mobilu lze využít fotoaparát a doklad nahrát přímo z terénu.
                     </p>
                   </div>
-                  <div className="space-y-2 col-span-2">
+                  <div className="space-y-2 sm:col-span-2">
                     <Label>Typ dokladu</Label>
                     <div className="flex gap-2 p-1 bg-background rounded-lg border border-border">
                       <Button
@@ -1690,7 +1690,7 @@ function DocumentsPageContent() {
                       className="bg-background"
                     />
                   </div>
-                  <div className="space-y-2 col-span-2">
+                  <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="entityName">
                       {newDocType === "received" ? "Dodavatel" : "Odběratel"}
                     </Label>
@@ -1766,7 +1766,7 @@ function DocumentsPageContent() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="space-y-2 col-span-2">
+                  <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="description">Popis / Poznámka</Label>
                     <Input
                       id="description"
@@ -1780,7 +1780,7 @@ function DocumentsPageContent() {
                       className="bg-background"
                     />
                   </div>
-                  <div className="space-y-3 col-span-2 rounded-lg border border-border p-3">
+                  <div className="space-y-3 sm:col-span-2 rounded-lg border border-border p-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
                         <Label htmlFor="requires-payment-new" className="text-base">
@@ -1811,7 +1811,7 @@ function DocumentsPageContent() {
                       />
                     </div>
                   </div>
-                  <div className="space-y-2 col-span-2">
+                  <div className="space-y-2 sm:col-span-2">
                     <Label>Zařazení dokladu</Label>
                     <Select
                       value={assignmentType}
@@ -1828,7 +1828,7 @@ function DocumentsPageContent() {
                     </Select>
                   </div>
                   {assignmentType === "job_cost" ? (
-                    <div className="space-y-2 col-span-2">
+                    <div className="space-y-2 sm:col-span-2">
                       <Label>Vyberte zakázku</Label>
                       <Select value={selectedJobId} onValueChange={setSelectedJobId}>
                         <SelectTrigger className="bg-background">
@@ -2491,9 +2491,14 @@ function DocumentTableReceived({
     return "—";
   };
 
-  /** Kompaktní řádek bez min-width → žádný horizontální scroll na běžném desktopu (max-w-6xl). */
-  const receivedRowGrid =
-    "grid w-full grid-cols-[92px_minmax(0,1.35fr)_30px_minmax(0,0.95fr)_62px_minmax(0,1.15fr)_minmax(72px,0.9fr)_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0.5 px-2 py-1.5 text-[11px] leading-snug sm:text-xs [&>*]:min-w-0";
+  /**
+   * Mobil: jeden sloupec → žádné překrývání sloupců; desktop: původní kompaktní mřížka.
+   */
+  const receivedRowGrid = cn(
+    "grid w-full items-start [&>*]:min-w-0 break-words",
+    "grid-cols-1 gap-3 px-3 py-3 text-[13px] leading-relaxed sm:text-xs sm:px-2 sm:py-2 sm:gap-2",
+    "lg:grid-cols-[92px_minmax(0,1.35fr)_30px_minmax(0,0.95fr)_62px_minmax(0,1.15fr)_minmax(72px,0.9fr)_minmax(0,1fr)] lg:gap-x-1.5 lg:gap-y-0.5 lg:text-[11px] lg:leading-snug"
+  );
 
   return (
     <Card className="min-w-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
@@ -2586,16 +2591,16 @@ function DocumentTableReceived({
             <div
               className={cn(
                 receivedRowGrid,
-                "border-b border-gray-200 bg-gray-100 font-semibold text-gray-900"
+                "hidden border-b border-gray-200 bg-gray-100 font-semibold text-gray-900 lg:grid"
               )}
             >
               <span className="text-left">Akce</span>
               <span>Doklad</span>
-              <span className="text-center">Typ</span>
+              <span className="text-center lg:text-center">Typ</span>
               <span>Zakázka</span>
               <span>Datum</span>
               <span>Úhrada / splatnost / stav</span>
-              <span className="text-right tabular-nums">Částka</span>
+              <span className="text-left tabular-nums lg:text-right">Částka</span>
               <span>Poznámka</span>
             </div>
             {rows.map((row) => {
@@ -2627,27 +2632,30 @@ function DocumentTableReceived({
                     : "Nezařazeno";
 
               const iconBtn =
-                "h-7 w-7 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950";
+                "h-10 w-10 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950 sm:h-7 sm:w-7 touch-manipulation";
 
               return (
                 <div
                   key={row.id}
                   className={cn(
                     receivedRowGrid,
-                    "border-b border-gray-200 text-gray-900 hover:bg-gray-50/80",
+                    "border-b border-gray-200 text-gray-900 hover:bg-gray-50/80 max-lg:rounded-lg max-lg:border max-lg:border-gray-200 max-lg:bg-white",
                     fromJobExpense && "bg-amber-50/90",
                     fromJobMedia && "bg-sky-50/90",
                     row.assignmentType === "pending_assignment" &&
                       "bg-amber-50/90 ring-1 ring-inset ring-amber-200"
                   )}
                 >
-                  <div className="flex flex-wrap gap-0.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Akce
+                    </span>
                     {isDocumentEligibleForPaymentBox(pr) ? (
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-6 px-1 text-[9px] font-medium leading-none"
+                        className="min-h-10 px-2 text-[11px] font-medium leading-none sm:h-6 sm:min-h-0 sm:px-1 sm:text-[9px] touch-manipulation"
                         title="Označit jako zaplaceno"
                         onClick={() => void onMarkPaid(row)}
                       >
@@ -2659,7 +2667,7 @@ function DocumentTableReceived({
                         type="button"
                         variant="ghost"
                         size="sm"
-                        className="h-6 px-1 text-[9px] leading-none"
+                        className="min-h-10 px-2 text-[11px] leading-none sm:h-6 sm:min-h-0 sm:px-1 sm:text-[9px] touch-manipulation"
                         title="Označit jako nezaplaceno"
                         onClick={() => void onMarkUnpaid(row)}
                       >
@@ -2731,6 +2739,9 @@ function DocumentTableReceived({
                   </div>
 
                   <div className="min-w-0">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Doklad
+                    </span>
                     <div className="flex items-start gap-1">
                       <RowIcon
                         className={cn(
@@ -2742,7 +2753,7 @@ function DocumentTableReceived({
                         )}
                       />
                       <span
-                        className="font-medium text-gray-950 line-clamp-2"
+                        className="font-medium text-gray-950 line-clamp-2 break-words"
                         title={title}
                       >
                         {title}
@@ -2778,21 +2789,27 @@ function DocumentTableReceived({
                     </div>
                   </div>
 
-                  <div className="text-center text-gray-800">
+                  <div className="text-left text-gray-800 lg:text-center">
+                    <span className="mr-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Typ souboru
+                    </span>
                     {fileKindLabel(fk)}
                   </div>
 
                   <div className="min-w-0">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Zakázka
+                    </span>
                     {jobLinkId ? (
                       <Link
                         href={`/portal/jobs/${jobLinkId}`}
-                        className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2"
+                        className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2 break-words"
                         title={row.jobName ?? row.entityName ?? ""}
                       >
                         {row.jobName || row.entityName || "Zakázka"}
                       </Link>
                     ) : (
-                      <span className="text-gray-800 line-clamp-2">
+                      <span className="text-gray-800 line-clamp-2 break-words">
                         {row.assignmentType === "pending_assignment"
                           ? "Zařadit později"
                           : row.entityName ?? "—"}
@@ -2800,11 +2817,17 @@ function DocumentTableReceived({
                     )}
                   </div>
 
-                  <div className="whitespace-nowrap text-gray-900">
+                  <div className="whitespace-normal text-gray-900 lg:whitespace-nowrap">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Datum
+                    </span>
                     {row.date ?? "—"}
                   </div>
 
                   <div className="space-y-0.5 text-gray-900">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Úhrada / stav
+                    </span>
                     <div className="flex flex-wrap gap-x-1 gap-y-0">
                       <span>{row.requiresPayment ? "K úhr.: ano" : "K úhr.: ne"}</span>
                       <span className="text-gray-800">·</span>
@@ -2845,7 +2868,10 @@ function DocumentTableReceived({
                     </div>
                   </div>
 
-                  <div className="text-right tabular-nums text-gray-950">
+                  <div className="text-left tabular-nums text-gray-950 lg:text-right">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Částka
+                    </span>
                     {showAmount ? (
                       <div className="space-y-0">
                         <div className="text-[10px] font-medium uppercase text-gray-700">
@@ -2889,9 +2915,14 @@ function DocumentTableReceived({
                     )}
                   </div>
 
-                  <p className="line-clamp-2 break-words text-gray-900">
-                    {row.note || row.description || "—"}
-                  </p>
+                  <div className="min-w-0">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Poznámka
+                    </span>
+                    <p className="line-clamp-3 break-words text-gray-900 lg:line-clamp-2">
+                      {row.note || row.description || "—"}
+                    </p>
+                  </div>
                 </div>
               );
             })}
@@ -2941,8 +2972,11 @@ function DocumentTableIssued({
   onMarkUnpaid?: (row: CompanyDocumentRow) => void | Promise<void>;
 }) {
   const { toast } = useToast();
-  const issuedRow =
-    "grid w-full grid-cols-[88px_minmax(0,1.2fr)_minmax(0,1fr)_72px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0.5 border-b border-gray-200 px-2 py-1.5 text-[11px] leading-snug sm:text-xs [&>*]:min-w-0";
+  const issuedRow = cn(
+    "grid w-full items-start border-b border-gray-200 [&>*]:min-w-0 break-words",
+    "grid-cols-1 gap-3 px-3 py-3 text-[13px] leading-relaxed sm:text-xs sm:px-2 sm:py-2 sm:gap-2",
+    "lg:grid-cols-[88px_minmax(0,1.2fr)_minmax(0,1fr)_72px_minmax(0,1fr)] lg:gap-x-1.5 lg:gap-y-0.5 lg:text-[11px] lg:leading-snug"
+  );
 
   const merged = useMemo(() => {
     type E =
@@ -3033,18 +3067,18 @@ function DocumentTableIssued({
             <div
               className={cn(
                 issuedRow,
-                "border-b border-gray-200 bg-gray-100 font-semibold text-gray-900"
+                "hidden border-b border-gray-200 bg-gray-100 font-semibold text-gray-900 lg:grid"
               )}
             >
               <span>Akce</span>
               <span>Doklad</span>
               <span>Zakázka</span>
               <span>Datum / splatnost</span>
-              <span className="text-right tabular-nums">Částka</span>
+              <span className="text-left tabular-nums lg:text-right">Částka</span>
             </div>
             {merged.map((entry) => {
               const ib =
-                "h-7 w-7 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950";
+                "h-10 w-10 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950 sm:h-7 sm:w-7 touch-manipulation";
               if (entry.kind === "doc") {
                 const docRow = entry.row;
                 const issuedAm = docDisplayAmounts(docRow);
@@ -3054,9 +3088,15 @@ function DocumentTableIssued({
                 return (
                   <div
                     key={`doc-${docRow.id}`}
-                    className={cn(issuedRow, "text-gray-900 hover:bg-gray-50/80")}
+                    className={cn(
+                      issuedRow,
+                      "text-gray-900 hover:bg-gray-50/80 max-lg:rounded-lg max-lg:border max-lg:border-gray-200 max-lg:bg-white"
+                    )}
                   >
-                    <div className="flex flex-wrap gap-0.5">
+                    <div className="flex flex-wrap gap-1.5">
+                      <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                        Akce
+                      </span>
                       {issuedJobId ? (
                         <Button
                           variant="outline"
@@ -3103,12 +3143,18 @@ function DocumentTableIssued({
                       </Button>
                     </div>
                     <div className="min-w-0 font-medium">
+                      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                        Doklad
+                      </span>
                       <Badge variant="outline" className="mb-0.5 h-5 px-1 text-[9px]">
                         Vydaný doklad
                       </Badge>
                       <div className="flex items-start gap-1">
                         <FileDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500" />
-                        <span className="line-clamp-2 text-gray-950" title={title}>
+                        <span
+                          className="line-clamp-2 break-words text-gray-950"
+                          title={title}
+                        >
                           {title}
                         </span>
                       </div>
@@ -3119,10 +3165,13 @@ function DocumentTableIssued({
                       ) : null}
                     </div>
                     <div className="min-w-0">
+                      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                        Zakázka
+                      </span>
                       {issuedJobId ? (
                         <Link
                           href={`/portal/jobs/${issuedJobId}`}
-                          className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2"
+                          className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2 break-words"
                           title={docRow.jobName ?? ""}
                         >
                           {docRow.jobName ?? "Zakázka"}
@@ -3133,7 +3182,10 @@ function DocumentTableIssued({
                         </span>
                       )}
                     </div>
-                    <div className="space-y-0.5 whitespace-nowrap text-gray-900">
+                    <div className="space-y-0.5 whitespace-normal text-gray-900 lg:whitespace-nowrap">
+                      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                        Datum / splatnost
+                      </span>
                       <div>{docRow.date ?? "—"}</div>
                       {docRow.dueDate ? (
                         <div className="text-[10px] text-gray-600">
@@ -3141,7 +3193,10 @@ function DocumentTableIssued({
                         </div>
                       ) : null}
                     </div>
-                    <div className="text-right tabular-nums text-gray-950">
+                    <div className="text-left tabular-nums text-gray-950 lg:text-right">
+                      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                        Částka
+                      </span>
                       <div className="text-[10px] font-medium uppercase text-gray-700">
                         {docVatInfoLine(docRow)}
                       </div>
@@ -3204,10 +3259,14 @@ function DocumentTableIssued({
                   key={`inv-${inv.id}`}
                   className={cn(
                     issuedRow,
-                    "border-l-2 border-l-emerald-500/80 text-gray-900 hover:bg-gray-50/80"
+                    "text-gray-900 hover:bg-gray-50/80 max-lg:rounded-lg max-lg:border max-lg:border-emerald-200 max-lg:bg-emerald-50/40",
+                    "lg:border-l-2 lg:border-l-emerald-500/80"
                   )}
                 >
-                  <div className="flex flex-wrap gap-0.5">
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Akce
+                    </span>
                     {jid ? (
                       <Button
                         variant="outline"
@@ -3243,24 +3302,33 @@ function DocumentTableIssued({
                     </Button>
                   </div>
                   <div className="min-w-0 font-medium">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Doklad
+                    </span>
                     <div className="mb-0.5 flex flex-wrap items-center gap-1">
                       <Badge className="h-5 bg-emerald-700/90 px-1 text-[9px] text-white">
                         {invoiceDocTypeLabel(inv)}
                       </Badge>
                       {invoiceStatusBadge(String(inv.status ?? ""))}
                     </div>
-                    <span className="line-clamp-2 text-gray-950" title={invTitle}>
+                    <span
+                      className="line-clamp-2 break-words text-gray-950"
+                      title={invTitle}
+                    >
                       {invTitle}
                     </span>
-                    <span className="mt-0.5 block text-[10px] text-gray-700 line-clamp-2">
+                    <span className="mt-0.5 block text-[10px] text-gray-700 line-clamp-2 break-words">
                       {cust}
                     </span>
                   </div>
                   <div className="min-w-0">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Zakázka
+                    </span>
                     {jid ? (
                       <Link
                         href={`/portal/jobs/${jid}`}
-                        className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2"
+                        className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2 break-words"
                       >
                         {jobNameForId(jid) ?? "Zakázka"}
                       </Link>
@@ -3268,7 +3336,10 @@ function DocumentTableIssued({
                       <span className="text-gray-600">—</span>
                     )}
                   </div>
-                  <div className="space-y-0.5 whitespace-nowrap text-gray-900">
+                  <div className="space-y-0.5 whitespace-normal text-gray-900 lg:whitespace-nowrap">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Datum / splatnost
+                    </span>
                     <div>{String(inv.issueDate ?? "—")}</div>
                     {inv.dueDate ? (
                       <div className="text-[10px] text-amber-800">
@@ -3276,7 +3347,10 @@ function DocumentTableIssued({
                       </div>
                     ) : null}
                   </div>
-                  <div className="text-right tabular-nums text-gray-950">
+                  <div className="text-left tabular-nums text-gray-950 lg:text-right">
+                    <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
+                      Částka
+                    </span>
                     <div className="text-[10px] font-medium uppercase text-gray-700">
                       s DPH
                     </div>

@@ -131,6 +131,9 @@
   color: rgb(var(--portal-text));
   letter-spacing: -0.025em;
   line-height: 1.2;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 [data-portal-content] .portal-page-description,
@@ -138,6 +141,8 @@
   color: rgb(var(--portal-text-muted));
   font-size: 0.9375rem;
   margin-top: 0.5rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 [data-portal-content] .portal-kpi-value,

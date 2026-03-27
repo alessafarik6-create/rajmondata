@@ -87,7 +87,7 @@ export function EmployeePortalSidebar({
 
   const linkClass = (href: string) =>
     cn(
-      "flex items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg transition-colors min-h-[44px] sm:min-h-0 touch-manipulation",
+      "flex w-full min-w-0 items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg transition-colors min-h-[44px] sm:min-h-0 touch-manipulation",
       pathname === href ||
         (href !== "/portal/employee" && pathname.startsWith(href))
         ? "bg-sidebar-accent text-sidebar-primary font-medium"
@@ -126,12 +126,12 @@ export function EmployeePortalSidebar({
               onClick={() => handleMobileNav(link.href)}
             >
               <link.icon className="w-5 h-5 shrink-0" />
-              <span className="truncate">{link.label}</span>
+              <span className="min-w-0 flex-1 truncate text-left">{link.label}</span>
             </button>
           ) : (
             <Link key={link.href} href={link.href} className={linkClass(link.href)}>
               <link.icon className="w-5 h-5 shrink-0" />
-              <span className="truncate">{link.label}</span>
+              <span className="min-w-0 flex-1 truncate">{link.label}</span>
             </Link>
           )
         )}

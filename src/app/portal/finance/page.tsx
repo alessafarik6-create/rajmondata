@@ -274,10 +274,10 @@ export default function FinancePage() {
   const hasPie = pieData.length > 0;
 
   return (
-    <div className="space-y-6 sm:space-y-8">
+    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h1 className="portal-page-title text-2xl sm:text-3xl">
+          <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl break-words">
             Finanční centrum
           </h1>
           <p className="portal-page-description">
@@ -386,12 +386,12 @@ export default function FinancePage() {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
-        <Card>
+      <div className="grid min-w-0 grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
+        <Card className="min-w-0 overflow-hidden">
           <CardHeader>
             <CardTitle>Vývoj cashflow</CardTitle>
           </CardHeader>
-          <CardContent className="h-[300px]">
+          <CardContent className="h-[280px] min-h-[240px] sm:h-[300px]">
             {hasFlowChart && isMounted ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
@@ -447,11 +447,11 @@ export default function FinancePage() {
           </CardContent>
         </Card>
 
-        <Card>
+        <Card className="min-w-0 overflow-hidden">
           <CardHeader>
             <CardTitle>Struktura příjmů a výdajů</CardTitle>
           </CardHeader>
-          <CardContent className="h-[300px]">
+          <CardContent className="h-[280px] min-h-[240px] sm:h-[300px]">
             {hasPie && isMounted ? (
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
@@ -495,10 +495,10 @@ export default function FinancePage() {
         </CardHeader>
         <CardContent className="overflow-x-auto">
           {financeRecords && financeRecords.length > 0 ? (
-            <Table>
+            <Table className="min-w-[480px] w-full">
               <TableHeader>
                 <TableRow className="border-slate-200 hover:bg-transparent">
-                  <TableHead className="font-medium text-slate-800">
+                  <TableHead className="min-w-0 font-medium text-slate-800">
                     Popis
                   </TableHead>
                   <TableHead className="font-medium text-slate-800">

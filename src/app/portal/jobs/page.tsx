@@ -629,10 +629,10 @@ function JobsPageContent() {
   }
 
   return (
-    <div className="space-y-6 sm:space-y-8">
+    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
         <div className="min-w-0">
-          <h1 className="portal-page-title text-2xl sm:text-3xl">
+          <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl break-words">
             Zakázky a Projekty
           </h1>
           <p className="portal-page-description">
@@ -1172,10 +1172,10 @@ function JobsPageContent() {
               </Button>
             </div>
           ) : filteredJobs.length > 0 ? (
-            <Table>
+            <Table className="min-w-[520px] w-full">
               <TableHeader>
                 <TableRow className="border-slate-200 hover:bg-transparent">
-                  <TableHead className="pl-4 sm:pl-6">Zakázka</TableHead>
+                  <TableHead className="pl-4 sm:pl-6 min-w-0">Zakázka</TableHead>
                   <TableHead className="hidden md:table-cell">Zákazník</TableHead>
                   <TableHead>Stav</TableHead>
                   <TableHead className="hidden lg:table-cell">Termíny</TableHead>

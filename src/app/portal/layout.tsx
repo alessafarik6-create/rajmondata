@@ -446,7 +446,7 @@ export default function PortalLayout({
         data-portal-content
       >
         <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
-        <main className="flex-1 overflow-auto px-4 py-4 print:p-2 md:px-6 md:py-6 lg:px-8 lg:py-8">
+        <main className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 print:p-2 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8 min-w-0">
           {licenseNotice}
           {children}
         </main>
