@@ -33,6 +33,8 @@ export type JobExpenseFirestoreFields = {
   updatedAt?: unknown;
   /** Např. `folder_documents` — náklad z účetní složky. */
   source?: string;
+  /** companies/.../documents/{id} — primární doklad (ne zrcadlo jobExpense_*). */
+  dokladId?: string;
   folderId?: string;
   folderImageId?: string;
 };

@@ -71,6 +71,10 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { JOB_EXPENSE_DOCUMENT_SOURCE } from "@/lib/job-expense-document-sync";
+import {
+  reconcileCompanyDocumentJobExpense,
+  type CompanyDocumentExpenseReconcileBefore,
+} from "@/lib/document-job-expense-sync";
 import { JOB_MEDIA_DOCUMENT_SOURCE } from "@/lib/job-linked-document-sync";
 import {
   inferJobMediaItemType,
@@ -149,6 +153,8 @@ type CompanyDocumentRow = {
   uploadedBy?: string;
   uploadedByName?: string;
   assignmentType?: "job_cost" | "overhead" | "pending_assignment";
+  /** ID záznamu v jobs/.../expenses pro primární doklad (ne zrcadlo jobExpense_*). */
+  linkedExpenseId?: string | null;
 };
 
 type AssignmentType = "job_cost" | "overhead" | "pending_assignment";
@@ -619,6 +625,46 @@ export default function DocumentsPage() {
         createdAt: serverTimestamp(),
       });
 
+      const jobIdForCost =
+        assignmentType === "job_cost"
+          ? selectedJob?.id ?? selectedJobId
+          : null;
+      await reconcileCompanyDocumentJobExpense({
+        firestore,
+        companyId,
+        userId: user.uid,
+        documentId: newDocRef.id,
+        before: null,
+        after: {
+          assignmentType,
+          jobId: jobIdForCost,
+          zakazkaId: jobIdForCost,
+          number: formData.number.trim(),
+          entityName: formData.entityName.trim(),
+          nazev: formData.entityName.trim(),
+          description: formData.description.trim(),
+          date: formData.date,
+          castka: amountGross,
+          amountNet,
+          amount: amountNet,
+          amountGross,
+          vatAmount,
+          vatRate,
+          dphSazba: vatRate,
+          vat: vatRate,
+          sDPH: true,
+          type: newDocType,
+          documentKind: newDocType === "received" ? "prijate" : undefined,
+          source: undefined,
+          sourceType: undefined,
+          fileUrl: uploadMeta?.fileUrl ?? null,
+          fileName: uploadMeta?.fileName ?? null,
+          fileType: uploadMeta?.fileType ?? null,
+          mimeType: uploadMeta?.mimeType ?? null,
+          storagePath: uploadMeta?.storagePath ?? null,
+        },
+      });
+
       toast({
         title: "Doklad uložen",
         description: `Záznam ${formData.number} byl úspěšně přidán.`,
@@ -656,7 +702,7 @@ export default function DocumentsPage() {
   };
 
   const saveAssignment = async () => {
-    if (!companyId || !assigningDocId) return;
+    if (!companyId || !assigningDocId || !firestore || !user) return;
     if (assignTypeNext === "job_cost" && !assignJobIdNext) {
       toast({
         variant: "destructive",
@@ -668,16 +714,49 @@ export default function DocumentsPage() {
     const selected = jobs.find((j) => j.id === assignJobIdNext);
     const jid =
       assignTypeNext === "job_cost" ? selected?.id ?? assignJobIdNext : null;
-    await updateDoc(
-      doc(firestore, "companies", companyId, "documents", assigningDocId),
-      {
-        assignmentType: assignTypeNext,
-        jobId: jid,
-        zakazkaId: jid,
-        jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
-        updatedAt: serverTimestamp(),
-      }
+    const docRef = doc(
+      firestore,
+      "companies",
+      companyId,
+      "documents",
+      assigningDocId
     );
+    const snap = await getDoc(docRef);
+    if (!snap.exists()) {
+      toast({
+        variant: "destructive",
+        title: "Doklad nenalezen",
+        description: "Obnovte stránku a zkuste to znovu.",
+      });
+      return;
+    }
+    const beforeRow = snap.data() as CompanyDocumentRow;
+    const before: CompanyDocumentExpenseReconcileBefore = {
+      ...beforeRow,
+      id: assigningDocId,
+    };
+    await updateDoc(docRef, {
+      assignmentType: assignTypeNext,
+      jobId: jid,
+      zakazkaId: jid,
+      jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
+      updatedAt: serverTimestamp(),
+    });
+    const after: CompanyDocumentExpenseReconcileBefore = {
+      ...before,
+      assignmentType: assignTypeNext,
+      jobId: jid,
+      zakazkaId: jid,
+      jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
+    };
+    await reconcileCompanyDocumentJobExpense({
+      firestore,
+      companyId,
+      userId: user.uid,
+      documentId: assigningDocId,
+      before,
+      after,
+    });
     setAssignDialogOpen(false);
     setAssigningDocId(null);
     toast({ title: "Zařazení uloženo" });
@@ -706,7 +785,7 @@ export default function DocumentsPage() {
 
   const saveEditDocument = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!companyId || !editRow || !firestore) return;
+    if (!companyId || !editRow || !firestore || !user) return;
     if (!editForm.nazev.trim()) {
       toast({
         variant: "destructive",
@@ -788,6 +867,19 @@ export default function DocumentsPage() {
         doc(firestore, "companies", companyId, "documents", editRow.id),
         basePayload as unknown as UpdateData<DocumentData>
       );
+      const afterForExpense: CompanyDocumentExpenseReconcileBefore = {
+        ...editRow,
+        ...basePayload,
+        id: editRow.id,
+      };
+      await reconcileCompanyDocumentJobExpense({
+        firestore,
+        companyId,
+        userId: user.uid,
+        documentId: editRow.id,
+        before: { ...editRow, id: editRow.id },
+        after: afterForExpense,
+      });
       toast({ title: "Doklad uložen" });
       setEditOpen(false);
       setEditRow(null);
@@ -911,6 +1003,56 @@ export default function DocumentsPage() {
         toast({
           title: "Soubor odstraněn",
           description: "Záznam byl smazán v dokladech i u zakázky.",
+        });
+        return;
+      }
+
+      const linkedJobId =
+        row.zakazkaId?.trim() || row.jobId?.trim() || "";
+      if (
+        row.linkedExpenseId?.trim() &&
+        linkedJobId &&
+        !isExpenseLinked
+      ) {
+        const batch = writeBatch(firestore);
+        batch.delete(
+          doc(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            linkedJobId,
+            "expenses",
+            row.linkedExpenseId.trim()
+          )
+        );
+        batch.delete(doc(firestore, "companies", companyId, "documents", row.id));
+        await batch.commit();
+        if (row.storagePath?.trim()) {
+          try {
+            await deleteObject(
+              storageRef(getFirebaseStorage(), row.storagePath.trim())
+            );
+          } catch {
+            /* */
+          }
+        }
+        logActivitySafe(firestore, companyId, user, profile, {
+          actionType: "document.delete",
+          actionLabel: "Smazání dokladu s nákladem zakázky",
+          entityType: "company_document",
+          entityId: row.id,
+          entityName: row.number || row.entityName || row.id,
+          sourceModule: "documents",
+          route: "/portal/documents",
+          metadata: {
+            jobId: linkedJobId,
+            linkedExpenseId: row.linkedExpenseId.trim(),
+          },
+        });
+        toast({
+          title: "Doklad odstraněn",
+          description: "Záznam byl odebrán z dokladů i z nákladů zakázky.",
         });
         return;
       }

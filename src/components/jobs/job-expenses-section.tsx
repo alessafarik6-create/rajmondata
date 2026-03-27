@@ -5,6 +5,7 @@ import type { User } from "firebase/auth";
 import type { DocumentData } from "firebase/firestore";
 import {
   collection,
+  deleteField,
   doc,
   getDoc,
   runTransaction,
@@ -32,6 +33,7 @@ import {
   buildNewJobExpenseMirrorDocument,
   companyDocumentRefForJobExpense,
 } from "@/lib/job-expense-document-sync";
+import { COMPANY_DOCUMENT_EXPENSE_SOURCE } from "@/lib/document-job-expense-sync";
 import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
 import {
   computeExpenseAmountsFromInput,
@@ -466,62 +468,104 @@ export function JobExpensesSection({
           ? storagePath ?? null
           : (existing?.storagePath ?? null);
 
-        const mirrorRef = companyDocumentRefForJobExpense(
-          firestore,
-          companyId,
-          editingId
-        );
-        const mirrorSnap = await getDoc(mirrorRef);
-        if (!mirrorSnap.exists()) {
-          await setDoc(
-            mirrorRef,
-            buildNewJobExpenseMirrorDocument({
+        const linkedCompanyDocId =
+          existing?.source === COMPANY_DOCUMENT_EXPENSE_SOURCE
+            ? existing.dokladId?.trim() ?? ""
+            : "";
+
+        if (linkedCompanyDocId) {
+          const noteVal = noteTrimmed || null;
+          const primaryPatch: DocumentData = {
+            castka: amountGross,
+            amountNet,
+            amountGross,
+            vatAmount,
+            vatRate,
+            vat: vatRate,
+            dphSazba: vatRate,
+            sDPH: vatRate > 0,
+            amount: amountNet,
+            date: dateInput.trim(),
+            note: noteVal,
+            poznamka: noteVal,
+            description: noteVal ?? "",
+            updatedAt: serverTimestamp(),
+          };
+          if (pendingFile) {
+            primaryPatch.fileUrl = nextFileUrl;
+            primaryPatch.fileType = nextFileType;
+            primaryPatch.fileName = nextFileName;
+            primaryPatch.storagePath = nextStoragePath;
+            primaryPatch.mimeType = pendingFile.type?.trim() || null;
+          }
+          await updateDoc(
+            doc(
+              firestore,
+              "companies",
               companyId,
-              jobId,
-              jobDisplayName,
-              expenseId: editingId,
-              userId: String(existing?.createdBy ?? user.uid),
-              amountInput: amountInputStored,
-              amountType: amountTypeResolved,
-              amountNet,
-              vatRate,
-              vatAmount,
-              amountGross,
-              date: dateInput.trim(),
-              note: noteTrimmed || null,
-              fileUrl: nextFileUrl,
-              fileType: nextFileType,
-              fileName: nextFileName,
-              storagePath: nextStoragePath,
-              mimeType: pendingFile?.type?.trim() || null,
-            })
+              "documents",
+              linkedCompanyDocId
+            ),
+            primaryPatch
           );
         } else {
-          await setDoc(
-            mirrorRef,
-            buildJobExpenseMirrorMergePatch({
-              companyId,
-              jobId,
-              jobDisplayName,
-              expenseId: editingId,
-              amountInput: amountInputStored,
-              amountType: amountTypeResolved,
-              amountNet,
-              vatRate,
-              vatAmount,
-              amountGross,
-              date: dateInput.trim(),
-              note: noteTrimmed || null,
-              fileUrl: nextFileUrl,
-              fileType: nextFileType,
-              fileName: nextFileName,
-              storagePath: nextStoragePath,
-              ...(pendingFile
-                ? { mimeType: pendingFile.type?.trim() || null }
-                : {}),
-            }),
-            { merge: true }
+          const mirrorRef = companyDocumentRefForJobExpense(
+            firestore,
+            companyId,
+            editingId
           );
+          const mirrorSnap = await getDoc(mirrorRef);
+          if (!mirrorSnap.exists()) {
+            await setDoc(
+              mirrorRef,
+              buildNewJobExpenseMirrorDocument({
+                companyId,
+                jobId,
+                jobDisplayName,
+                expenseId: editingId,
+                userId: String(existing?.createdBy ?? user.uid),
+                amountInput: amountInputStored,
+                amountType: amountTypeResolved,
+                amountNet,
+                vatRate,
+                vatAmount,
+                amountGross,
+                date: dateInput.trim(),
+                note: noteTrimmed || null,
+                fileUrl: nextFileUrl,
+                fileType: nextFileType,
+                fileName: nextFileName,
+                storagePath: nextStoragePath,
+                mimeType: pendingFile?.type?.trim() || null,
+              })
+            );
+          } else {
+            await setDoc(
+              mirrorRef,
+              buildJobExpenseMirrorMergePatch({
+                companyId,
+                jobId,
+                jobDisplayName,
+                expenseId: editingId,
+                amountInput: amountInputStored,
+                amountType: amountTypeResolved,
+                amountNet,
+                vatRate,
+                vatAmount,
+                amountGross,
+                date: dateInput.trim(),
+                note: noteTrimmed || null,
+                fileUrl: nextFileUrl,
+                fileType: nextFileType,
+                fileName: nextFileName,
+                storagePath: nextStoragePath,
+                ...(pendingFile
+                  ? { mimeType: pendingFile.type?.trim() || null }
+                  : {}),
+              }),
+              { merge: true }
+            );
+          }
         }
 
         if (oldPathToRemove) {
@@ -643,9 +687,27 @@ export function JobExpensesSection({
         companyId,
         deleteTarget.id
       );
+      const dokladId =
+        deleteTarget.source === COMPANY_DOCUMENT_EXPENSE_SOURCE
+          ? deleteTarget.dokladId?.trim()
+          : "";
       const batch = writeBatch(firestore);
       batch.delete(expenseRef);
-      batch.delete(mirrorRef);
+      if (!dokladId) {
+        batch.delete(mirrorRef);
+      } else {
+        const companyDocRef = doc(
+          firestore,
+          "companies",
+          companyId,
+          "documents",
+          dokladId
+        );
+        batch.update(companyDocRef, {
+          linkedExpenseId: deleteField(),
+          updatedAt: serverTimestamp(),
+        });
+      }
       await batch.commit();
       try {
         await deleteExpenseFileFromStorage(
@@ -1065,6 +1127,14 @@ export function JobExpensesSection({
                                   >
                                     {tag} · {r.vatRate} %
                                   </Badge>
+                                  {row.source === COMPANY_DOCUMENT_EXPENSE_SOURCE ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="border-gray-400 bg-white text-xs font-medium text-gray-900"
+                                    >
+                                      Propojený doklad
+                                    </Badge>
+                                  ) : null}
                                 </div>
                                 <div className="tabular-nums">
                                   <p className={EXP.labelSm}>
@@ -1143,7 +1213,7 @@ export function JobExpensesSection({
                               <div className="order-2 tabular-nums text-gray-800 sm:order-1 dark:text-gray-200">
                                 {expenseDateLabel(row)}
                               </div>
-                              <div className="order-1 space-y-0.5 font-semibold tabular-nums sm:order-2">
+                                <div className="order-1 space-y-0.5 font-semibold tabular-nums sm:order-2">
                                 <div className="flex flex-wrap items-center gap-1">
                                   <Badge
                                     variant="secondary"
@@ -1151,6 +1221,14 @@ export function JobExpensesSection({
                                   >
                                     {tag}
                                   </Badge>
+                                  {row.source === COMPANY_DOCUMENT_EXPENSE_SOURCE ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="h-5 border-gray-400 bg-white px-1.5 text-[10px] font-medium text-gray-900"
+                                    >
+                                      Doklad
+                                    </Badge>
+                                  ) : null}
                                   <span className="text-[10px] font-medium text-gray-800 sm:text-xs dark:text-gray-200">
                                     DPH {r.vatRate} %
                                   </span>
@@ -1296,17 +1374,12 @@ export function JobExpensesSection({
       >
         <DialogContent
           className={cn(
-            "border-gray-200 bg-white text-gray-900 w-[95vw] max-h-[90vh] overflow-y-auto flex flex-col gap-0",
-            isJobDetailWide ? "max-w-2xl" : "max-w-lg"
+            "border border-gray-400 bg-white text-gray-900 w-[95vw] max-h-[90vh] overflow-y-auto flex flex-col gap-0 mx-auto",
+            "max-w-[480px] sm:max-w-[480px]"
           )}
         >
           <DialogHeader>
-            <DialogTitle
-              className={cn(
-                "font-bold text-gray-900 dark:text-gray-100",
-                isJobDetailWide && "text-xl sm:text-2xl"
-              )}
-            >
+            <DialogTitle className="text-lg font-bold text-gray-900">
               {editingId ? "Upravit náklad" : "Nový náklad"}
             </DialogTitle>
             <DialogDescription className="text-base text-gray-800 dark:text-gray-200">
@@ -1323,10 +1396,7 @@ export function JobExpensesSection({
             <div className="space-y-2">
               <Label
                 htmlFor="expense-amount-type"
-                className={cn(
-                  "font-medium text-gray-900 dark:text-gray-100",
-                  isJobDetailWide && "text-base"
-                )}
+                className="block text-sm font-medium text-gray-900"
               >
                 Zadaná částka
               </Label>
@@ -1340,7 +1410,7 @@ export function JobExpensesSection({
                   id="expense-amount-type"
                   className={cn(
                     LIGHT_SELECT_TRIGGER_CLASS,
-                    isJobDetailWide ? "min-h-12 h-12 text-base" : "min-h-[44px]"
+                    "min-h-10 h-10 text-sm bg-white text-gray-900 border-gray-400"
                   )}
                 >
                   <SelectValue />
@@ -1354,10 +1424,7 @@ export function JobExpensesSection({
             <div className="space-y-2">
               <Label
                 htmlFor="expense-vat"
-                className={cn(
-                  "font-medium text-gray-900 dark:text-gray-100",
-                  isJobDetailWide && "text-base"
-                )}
+                className="block text-sm font-medium text-gray-900"
               >
                 Sazba DPH
               </Label>
@@ -1366,7 +1433,7 @@ export function JobExpensesSection({
                   id="expense-vat"
                   className={cn(
                     LIGHT_SELECT_TRIGGER_CLASS,
-                    isJobDetailWide ? "min-h-12 h-12 text-base" : "min-h-[44px]"
+                    "min-h-10 h-10 text-sm bg-white text-gray-900 border-gray-400"
                   )}
                 >
                   <SelectValue />
@@ -1383,7 +1450,7 @@ export function JobExpensesSection({
             <div className="space-y-2">
               <Label
                 htmlFor="expense-amount"
-                className="font-medium text-gray-900 dark:text-gray-100"
+                className="block text-sm font-medium text-gray-900"
               >
                 Částka (Kč) * — {amountTypeInput === "gross" ? "s DPH" : "bez DPH"}
               </Label>
@@ -1393,7 +1460,10 @@ export function JobExpensesSection({
                 placeholder={amountTypeInput === "gross" ? "např. 1 512,50" : "např. 1 250"}
                 value={amountInput}
                 onChange={(e) => setAmountInput(e.target.value)}
-                className={cn(LIGHT_FORM_CONTROL_CLASS, "min-h-[44px]")}
+                className={cn(
+                  LIGHT_FORM_CONTROL_CLASS,
+                  "min-h-10 text-sm bg-white text-gray-900 border-gray-400"
+                )}
               />
               {(() => {
                 const n = parseMoneyAmountInput(amountInput.replace(/\s/g, " ").trim());
@@ -1407,12 +1477,7 @@ export function JobExpensesSection({
                     vatRate: rate,
                   });
                 return (
-                  <div
-                    className={cn(
-                      "rounded-md border border-gray-200 bg-gray-50 px-2.5 py-2 text-gray-900 dark:border-gray-600 dark:bg-gray-900/40 dark:text-gray-100",
-                      isJobDetailWide ? "text-base" : "text-sm"
-                    )}
-                  >
+                  <div className="rounded-md border border-gray-300 bg-white px-2.5 py-2 text-sm text-gray-900">
                     <div className="font-semibold text-gray-900 dark:text-gray-100">
                       Přepočet
                     </div>
@@ -1430,10 +1495,7 @@ export function JobExpensesSection({
             <div className="space-y-2">
               <Label
                 htmlFor="expense-date"
-                className={cn(
-                  "font-medium text-gray-900 dark:text-gray-100",
-                  isJobDetailWide && "text-base"
-                )}
+                className="block text-sm font-medium text-gray-900"
               >
                 Datum *
               </Label>
@@ -1445,39 +1507,40 @@ export function JobExpensesSection({
                 className={cn(
                   LIGHT_FORM_CONTROL_CLASS,
                   "[color-scheme:light]",
-                  isJobDetailWide ? "min-h-12 h-12 text-base" : "min-h-[44px]"
+                  "min-h-10 text-sm bg-white text-gray-900 border-gray-400"
                 )}
               />
             </div>
             <div className="space-y-2">
               <Label
                 htmlFor="expense-note"
-                className={cn(isJobDetailWide && "text-base")}
+                className="block text-sm font-medium text-gray-900"
               >
                 Poznámka / popis
               </Label>
               <Textarea
                 id="expense-note"
-                rows={isJobDetailWide ? 4 : 3}
+                rows={3}
                 placeholder="Volitelný popis…"
                 value={noteInput}
                 onChange={(e) => setNoteInput(e.target.value)}
                 className={cn(
                   LIGHT_FORM_CONTROL_CLASS,
-                  isJobDetailWide ? "min-h-[120px] text-base" : "min-h-[96px]"
+                  "min-h-[96px] text-sm bg-white text-gray-900 border-gray-400"
                 )}
               />
             </div>
 
             <div className="space-y-2">
-              <Label className="font-medium text-gray-900 dark:text-gray-100">
+              <Label className="block text-sm font-medium text-gray-900">
                 Příloha (volitelné)
               </Label>
               <div className="flex flex-col gap-2 sm:flex-row">
                 <Button
                   type="button"
                   variant="outline"
-                  className="flex-1 min-h-[44px] justify-start gap-2 border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-900"
+                  size="sm"
+                  className="flex-1 h-9 justify-start gap-2 border-gray-400 bg-white text-sm text-gray-900 hover:bg-gray-50"
                   onClick={() => galleryInputRef.current?.click()}
                 >
                   <ImageIcon className="h-4 w-4 shrink-0" />
@@ -1486,7 +1549,8 @@ export function JobExpensesSection({
                 <Button
                   type="button"
                   variant="outline"
-                  className="flex-1 min-h-[44px] justify-start gap-2 border-gray-300 bg-white text-gray-900 hover:bg-gray-50 dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-900"
+                  size="sm"
+                  className="flex-1 h-9 justify-start gap-2 border-gray-400 bg-white text-sm text-gray-900 hover:bg-gray-50"
                   onClick={() => cameraInputRef.current?.click()}
                 >
                   <Camera className="h-4 w-4 shrink-0" />
@@ -1583,11 +1647,12 @@ export function JobExpensesSection({
             </div>
           </div>
 
-          <DialogFooter className="flex-col gap-2 sm:flex-row sm:gap-0">
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end sm:gap-2">
             <Button
               type="button"
               variant="outline"
-              className="min-h-[44px] w-full border-gray-300 bg-white text-gray-900 hover:bg-gray-50 sm:w-auto dark:border-gray-600 dark:bg-gray-950 dark:text-gray-100 dark:hover:bg-gray-900"
+              size="sm"
+              className="h-9 w-full border-gray-400 bg-white text-sm text-gray-900 hover:bg-gray-50 sm:w-auto"
               disabled={submitting}
               onClick={() => {
                 setDialogOpen(false);
@@ -1598,7 +1663,8 @@ export function JobExpensesSection({
             </Button>
             <Button
               type="button"
-              className="min-h-[44px] w-full text-white sm:w-auto"
+              size="sm"
+              className="h-9 w-full text-sm text-white sm:w-auto"
               disabled={submitting}
               onClick={() => void persistExpense()}
             >

@@ -4682,6 +4682,41 @@ export default function JobDetailPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               {jobBudgetBreakdown ? (
+                <div className="space-y-2 rounded-lg border border-gray-300 bg-white px-4 py-3 text-sm text-slate-900 shadow-sm">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                    Přehled (s DPH)
+                  </p>
+                  <div className="flex justify-between gap-4 tabular-nums">
+                    <span>Rozpočet</span>
+                    <span className="font-semibold">
+                      {jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-4 tabular-nums">
+                    <span>Náklady</span>
+                    <span className="font-semibold">
+                      {jobExpenseTotals.gross.toLocaleString("cs-CZ")} Kč
+                    </span>
+                  </div>
+                  <div
+                    className={cn(
+                      "flex justify-between gap-4 border-t border-gray-200 pt-2 text-base font-semibold tabular-nums",
+                      remainingBudgetAfterExpensesGrossKc != null &&
+                        remainingBudgetAfterExpensesGrossKc < 0
+                        ? "text-destructive"
+                        : "text-slate-900"
+                    )}
+                  >
+                    <span>Zbývá</span>
+                    <span>
+                      {remainingBudgetAfterExpensesGrossKc != null
+                        ? `${remainingBudgetAfterExpensesGrossKc.toLocaleString("cs-CZ")} Kč`
+                        : "—"}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+              {jobBudgetBreakdown ? (
                 <div className="space-y-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="secondary" className="font-normal">

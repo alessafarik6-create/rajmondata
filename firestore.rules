@@ -330,7 +330,9 @@ service cloud.firestore {
               (request.resource.data.storagePath is string &&
                 request.resource.data.storagePath.size() <= 1024)) &&
             (!('vatRate' in request.resource.data) ||
-              request.resource.data.vatRate in [0, 12, 21]) &&
+              (request.resource.data.vatRate is number &&
+                request.resource.data.vatRate >= 0 &&
+                request.resource.data.vatRate <= 100)) &&
             (!('vatAmount' in request.resource.data) ||
               (request.resource.data.vatAmount is number &&
                 request.resource.data.vatAmount >= 0)) &&
@@ -339,7 +341,15 @@ service cloud.firestore {
                 request.resource.data.amountGross >= request.resource.data.amount)) &&
             (!('amountNet' in request.resource.data) ||
               (request.resource.data.amountNet is number &&
-                request.resource.data.amountNet == request.resource.data.amount));
+                request.resource.data.amountNet == request.resource.data.amount)) &&
+            (!('dokladId' in request.resource.data) ||
+              (request.resource.data.dokladId is string &&
+                request.resource.data.dokladId.size() >= 1 &&
+                request.resource.data.dokladId.size() <= 128)) &&
+            (!('source' in request.resource.data) ||
+              (request.resource.data.source is string &&
+                request.resource.data.source.size() >= 1 &&
+                request.resource.data.source.size() <= 64));
           allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             jobDetailReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
@@ -374,7 +384,9 @@ service cloud.firestore {
               (request.resource.data.storagePath is string &&
                 request.resource.data.storagePath.size() <= 1024)) &&
             (!('vatRate' in request.resource.data) ||
-              request.resource.data.vatRate in [0, 12, 21]) &&
+              (request.resource.data.vatRate is number &&
+                request.resource.data.vatRate >= 0 &&
+                request.resource.data.vatRate <= 100)) &&
             (!('vatAmount' in request.resource.data) ||
               (request.resource.data.vatAmount is number &&
                 request.resource.data.vatAmount >= 0)) &&
@@ -383,7 +395,15 @@ service cloud.firestore {
                 request.resource.data.amountGross >= request.resource.data.amount)) &&
             (!('amountNet' in request.resource.data) ||
               (request.resource.data.amountNet is number &&
-                request.resource.data.amountNet == request.resource.data.amount));
+                request.resource.data.amountNet == request.resource.data.amount)) &&
+            (!('dokladId' in request.resource.data) ||
+              (request.resource.data.dokladId is string &&
+                request.resource.data.dokladId.size() >= 1 &&
+                request.resource.data.dokladId.size() <= 128)) &&
+            (!('source' in request.resource.data) ||
+              (request.resource.data.source is string &&
+                request.resource.data.source.size() >= 1 &&
+                request.resource.data.source.size() <= 64));
           allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             jobDetailReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
