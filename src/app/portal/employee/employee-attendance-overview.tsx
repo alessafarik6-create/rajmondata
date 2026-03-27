@@ -94,7 +94,14 @@ function rowInDateRange(
     (dateFromTs ? localIso(dateFromTs) : "") ||
     (dateFromStart ? localIso(dateFromStart) : "");
   if (!d) return false;
-  return d >= startIso && d <= endIso;
+  const [sy, sm, sd] = startIso.split("-").map(Number);
+  const [ey, em, ed] = endIso.split("-").map(Number);
+  const [ry, rm, rd] = d.split("-").map(Number);
+  if (!sy || !sm || !sd || !ey || !em || !ed || !ry || !rm || !rd) return false;
+  const start = new Date(sy, sm - 1, sd, 0, 0, 0, 0);
+  const end = new Date(ey, em - 1, ed, 23, 59, 59, 999);
+  const rec = new Date(ry, rm - 1, rd, 12, 0, 0, 0);
+  return rec >= start && rec <= end;
 }
 
 const silentListen = { suppressGlobalPermissionError: true as const };
@@ -658,6 +665,20 @@ export function EmployeeAttendanceOverview({
                           </p>
                         </div>
                       </div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <div>
+                          <p className="text-xs font-medium text-neutral-800">Celková směna</p>
+                          <p className="font-semibold tabular-nums text-neutral-950">
+                            {day.totalSpanH != null ? `${day.totalSpanH} h` : "—"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-medium text-neutral-800">Pauza</p>
+                          <p className="font-semibold tabular-nums text-neutral-950">
+                            {formatHoursMinutes(day.pauseH)}
+                          </p>
+                        </div>
+                      </div>
                       {day.hasIncompleteAttendance ? (
                         <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
                           Neúplná docházka (chybí příchod nebo odchod) — den není započten do výpočtu.
@@ -756,6 +777,13 @@ export function EmployeeAttendanceOverview({
                             <span className="text-neutral-700">Odpracováno</span>
                             <p className="font-medium">
                               {day.odpracovanoH != null ? `${day.odpracovanoH} h` : "—"}
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-neutral-700">Celková směna / pauza</span>
+                            <p className="font-medium">
+                              {day.totalSpanH != null ? `${day.totalSpanH} h` : "—"} /{" "}
+                              {formatHoursMinutes(day.pauseH)}
                             </p>
                           </div>
                           <div>

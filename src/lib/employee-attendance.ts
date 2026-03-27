@@ -14,6 +14,10 @@ export type DayAttendanceSummary = {
   date: string;
   checkIn: string | null;
   checkOut: string | null;
+  /** Celková délka směny mezi check_in a check_out (hod). */
+  totalSpanHours: number | null;
+  /** Pauza za den (hod). */
+  breakHours: number;
   hoursWorked: number | null;
   /** Např. „V práci“, „Odchod“, „Neúplná docházka“ */
   statusLabel: string;
@@ -81,26 +85,48 @@ export function summarizeAttendanceByDay(
     let checkIn: Date | null = null;
     let checkOut: Date | null = null;
     let lastType: string | null = null;
+    let workingStart: Date | null = null;
+    let workMs = 0;
 
     for (const r of sorted) {
       const t = rowTime(r);
       if (!t) continue;
       const type = String(r.type || "");
       if (type === "check_in") {
-        checkIn = t;
+        if (!checkIn) checkIn = t;
+        if (!workingStart) workingStart = t;
+        lastType = type;
+      } else if (type === "break_start") {
+        if (workingStart && t > workingStart) {
+          workMs += t.getTime() - workingStart.getTime();
+        }
+        workingStart = null;
+        lastType = type;
+      } else if (type === "break_end") {
+        if (!workingStart) workingStart = t;
         lastType = type;
       } else if (type === "check_out") {
         checkOut = t;
+        if (workingStart && t > workingStart) {
+          workMs += t.getTime() - workingStart.getTime();
+        }
+        workingStart = null;
         lastType = type;
       }
     }
 
+    const totalSpanHours =
+      checkIn && checkOut && checkOut > checkIn
+        ? Math.round(((checkOut.getTime() - checkIn.getTime()) / 36e5) * 100) / 100
+        : null;
     let hoursWorked: number | null = null;
-    if (checkIn && checkOut && checkOut > checkIn) {
-      hoursWorked =
-        Math.round(((checkOut.getTime() - checkIn.getTime()) / 36e5) * 100) /
-        100;
+    if (totalSpanHours != null) {
+      hoursWorked = Math.round((workMs / 36e5) * 100) / 100;
     }
+    const breakHours =
+      totalSpanHours != null && hoursWorked != null
+        ? Math.max(0, Math.round((totalSpanHours - hoursWorked) * 100) / 100)
+        : 0;
 
     let statusLabel = "—";
     if (checkIn && checkOut) {
@@ -116,6 +142,8 @@ export function summarizeAttendanceByDay(
       date,
       checkIn: checkIn ? formatHm(checkIn) : null,
       checkOut: checkOut ? formatHm(checkOut) : null,
+      totalSpanHours,
+      breakHours,
       hoursWorked,
       statusLabel,
     });

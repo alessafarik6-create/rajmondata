@@ -422,6 +422,8 @@ export type EmployeeDailyDetailRow = {
   dayTitle: string;
   prichod: string;
   odchod: string;
+  totalSpanH: number | null;
+  pauseH: number;
   odpracovanoH: number | null;
   tariffSegments: TariffSegmentDetailRow[];
   jobSegments: JobSegmentDetailRow[];
@@ -480,6 +482,8 @@ export function buildEmployeeDailyDetailRows(params: {
   for (const dateIso of days) {
     const one = byDay.get(dateIso);
     const h = one?.hoursWorked ?? null;
+    const totalSpanH = one?.totalSpanHours ?? null;
+    const pauseH = one?.breakHours ?? 0;
     const hasIncompleteAttendance =
       Boolean(one) &&
       ((!one?.checkIn && Boolean(one?.checkOut)) ||
@@ -638,6 +642,8 @@ export function buildEmployeeDailyDetailRows(params: {
       dayTitle,
       prichod: one?.checkIn ?? "—",
       odchod: one?.checkOut ?? "—",
+      totalSpanH,
+      pauseH,
       odpracovanoH: h,
       tariffSegments,
       jobSegments,
@@ -922,6 +928,8 @@ export function buildOverviewRows(params: {
       const h = one?.hoursWorked ?? null;
       const hoursNum = h != null && Number.isFinite(h) ? h : 0;
       const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dayIso, auth);
+      const approved = moneyApproved(eid);
+      const total = computeOrientacniForEmployee(eid, hoursNum);
       rows.push({
         key: `${eid}-${dayIso}`,
         datumLabel: format(range.start, "EEEE d. M. yyyy", { locale: cs }),
@@ -931,8 +939,8 @@ export function buildOverviewRows(params: {
         odchod: one?.checkOut ?? "—",
         odpracovanoH: h,
         bloku: bloku,
-        schvalenoKc: moneyApproved(eid),
-        orientacniKc: computeOrientacniForEmployee(eid, hoursNum),
+        schvalenoKc: approved,
+        orientacniKc: Math.max(0, Math.round((total - approved) * 100) / 100),
       });
     }
     return rows;
@@ -971,8 +979,15 @@ export function buildOverviewRows(params: {
       odchod: "—",
       odpracovanoH: totalH > 0 ? totalH : null,
       bloku: totalBlocks,
-      schvalenoKc: moneyApproved(eid),
-      orientacniKc: computeOrientacniForEmployee(eid, totalH),
+      schvalenoKc: (() => {
+        const v = moneyApproved(eid);
+        return Math.round(v * 100) / 100;
+      })(),
+      orientacniKc: (() => {
+        const total = computeOrientacniForEmployee(eid, totalH);
+        const approved = moneyApproved(eid);
+        return Math.max(0, Math.round((total - approved) * 100) / 100);
+      })(),
     });
   }
 

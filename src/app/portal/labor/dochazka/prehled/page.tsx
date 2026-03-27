@@ -14,7 +14,6 @@ import {
   collection,
   doc,
   query,
-  where,
   limit,
 } from "firebase/firestore";
 import { format, subDays } from "date-fns";
@@ -99,6 +98,48 @@ function formatHoursPeriodTotal(h: number): string {
   return formatHoursMinutes(h);
 }
 
+function localDateAtMidnight(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+function localDateAtEnd(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+}
+
+function getRecordDate(row: Record<string, unknown>): Date | null {
+  const toDateMaybe = (v: unknown): Date | null => {
+    if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
+    if (typeof v === "string") {
+      const s = v.trim();
+      if (!s) return null;
+      const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) {
+        const y = Number(m[1]);
+        const mo = Number(m[2]);
+        const d = Number(m[3]);
+        return new Date(y, mo - 1, d, 12, 0, 0, 0);
+      }
+      const parsed = new Date(s);
+      return Number.isNaN(parsed.getTime()) ? null : parsed;
+    }
+    if (v && typeof (v as { toDate?: () => Date }).toDate === "function") {
+      try {
+        const d = (v as { toDate: () => Date }).toDate();
+        return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+  return (
+    toDateMaybe(row.date) ??
+    toDateMaybe(row.timestamp) ??
+    toDateMaybe(row.startAt) ??
+    toDateMaybe(row.createdAt)
+  );
+}
+
 export default function AttendanceOverviewPage() {
   const router = useRouter();
   const { user } = useUser();
@@ -164,6 +205,13 @@ export default function AttendanceOverviewPage() {
     }),
     [range]
   );
+  const normalizedRange = useMemo(
+    () => ({
+      start: localDateAtMidnight(range.start),
+      end: localDateAtEnd(range.end),
+    }),
+    [range]
+  );
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -187,44 +235,36 @@ export default function AttendanceOverviewPage() {
     const base = collection(firestore, "companies", companyId, "attendance");
     return query(
       base,
-      where("date", ">=", rangeStr.start),
-      where("date", "<=", rangeStr.end),
       limit(firestoreSafeLimit(1000))
     );
-  }, [firestore, companyId, rangeStr.start, rangeStr.end]);
+  }, [firestore, companyId]);
 
   const dailyReportsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     const base = collection(firestore, "companies", companyId, "daily_work_reports");
     return query(
       base,
-      where("date", ">=", rangeStr.start),
-      where("date", "<=", rangeStr.end),
       limit(firestoreSafeLimit(1000))
     );
-  }, [firestore, companyId, rangeStr.start, rangeStr.end]);
+  }, [firestore, companyId]);
 
   const workBlocksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     const base = collection(firestore, "companies", companyId, "work_time_blocks");
     return query(
       base,
-      where("date", ">=", rangeStr.start),
-      where("date", "<=", rangeStr.end),
       limit(firestoreSafeLimit(1000))
     );
-  }, [firestore, companyId, rangeStr.start, rangeStr.end]);
+  }, [firestore, companyId]);
 
   const workSegmentsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     const base = collection(firestore, "companies", companyId, "work_segments");
     return query(
       base,
-      where("date", ">=", rangeStr.start),
-      where("date", "<=", rangeStr.end),
       limit(firestoreSafeLimit(1000))
     );
-  }, [firestore, companyId, rangeStr.start, rangeStr.end]);
+  }, [firestore, companyId]);
 
   const {
     data: attendanceData = [],
@@ -248,28 +288,52 @@ export default function AttendanceOverviewPage() {
   } = useCollection(workSegmentsQuery, silentListen);
 
   const attendanceRows = useMemo(
-    () => (Array.isArray(attendanceData) ? attendanceData : []) as AttendanceRow[],
-    [attendanceData]
+    () =>
+      ((Array.isArray(attendanceData) ? attendanceData : []) as AttendanceRow[]).filter(
+        (row) => {
+          const d = getRecordDate(row as unknown as Record<string, unknown>);
+          if (!d) return false;
+          return d >= normalizedRange.start && d <= normalizedRange.end;
+        }
+      ),
+    [attendanceData, normalizedRange.end, normalizedRange.start]
   );
 
   const dailyReports = useMemo(
     () =>
-      (Array.isArray(dailyReportsData) ? dailyReportsData : []) as Record<
+      ((Array.isArray(dailyReportsData) ? dailyReportsData : []) as Record<
         string,
         unknown
-      >[],
-    [dailyReportsData]
+      >[]).filter((row) => {
+        const d = getRecordDate(row);
+        if (!d) return false;
+        return d >= normalizedRange.start && d <= normalizedRange.end;
+      }),
+    [dailyReportsData, normalizedRange.end, normalizedRange.start]
   );
 
   const workBlocks = useMemo(
     () =>
-      (Array.isArray(workBlocksData) ? workBlocksData : []) as WorkTimeBlockMoney[],
-    [workBlocksData]
+      ((Array.isArray(workBlocksData) ? workBlocksData : []) as WorkTimeBlockMoney[]).filter(
+        (row) => {
+          const d = getRecordDate(row as unknown as Record<string, unknown>);
+          if (!d) return false;
+          return d >= normalizedRange.start && d <= normalizedRange.end;
+        }
+      ),
+    [workBlocksData, normalizedRange.end, normalizedRange.start]
   );
 
   const workSegments = useMemo(
-    () => (Array.isArray(workSegmentsData) ? workSegmentsData : []) as WorkSegmentClient[],
-    [workSegmentsData]
+    () =>
+      ((Array.isArray(workSegmentsData) ? workSegmentsData : []) as WorkSegmentClient[]).filter(
+        (row) => {
+          const d = getRecordDate(row as unknown as Record<string, unknown>);
+          if (!d) return false;
+          return d >= normalizedRange.start && d <= normalizedRange.end;
+        }
+      ),
+    [workSegmentsData, normalizedRange.end, normalizedRange.start]
   );
 
   const filteredAttendance = useMemo(() => {
@@ -397,7 +461,7 @@ export default function AttendanceOverviewPage() {
 
   const hasEmptyExportData =
     exportVariant === "detail"
-      ? !dailyDetailRows || dailyDetailRows.length === 0
+      ? !detailTotals || detailTotals.daysWorked === 0
       : tableRows.length === 0;
 
   const loading =
@@ -682,10 +746,10 @@ export default function AttendanceOverviewPage() {
             </div>
             <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
               <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
-                Celkem odpracováno
+                Docházka celkem
               </p>
               <p className="mt-2 text-2xl font-bold tabular-nums">
-                {formatHours(detailTotals.hours)}
+                {formatHoursPeriodTotal(detailTotals.hours)}
               </p>
             </div>
             <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
@@ -698,10 +762,10 @@ export default function AttendanceOverviewPage() {
             </div>
             <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
               <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
-                Orientační výdělek
+                Neschválený výdělek
               </p>
               <p className="mt-2 text-3xl font-bold tabular-nums text-black">
-                {formatKc(detailTotals.orientacniKc)}
+                {formatKc(detailTotals.pendingKc)}
               </p>
             </div>
           </>
@@ -725,7 +789,7 @@ export default function AttendanceOverviewPage() {
             </div>
             <div className="rounded-lg border border-black bg-white p-4 shadow-sm">
               <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
-                Orientační výdělek
+                Neschválený výdělek
               </p>
               <p className="mt-2 text-3xl font-bold tabular-nums text-black">
                 {formatKc(aggregateTotals.pendingKc)}
@@ -736,7 +800,7 @@ export default function AttendanceOverviewPage() {
       </div>
 
       {showEmployeeDetail && detailTotals && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 print:grid-cols-3 print:gap-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-8 print:grid-cols-4 print:gap-2">
           <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
             <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
               Čas na tarifech
@@ -781,6 +845,22 @@ export default function AttendanceOverviewPage() {
               {formatHoursPeriodTotal(detailTotals.totalHoursOutsideTariffJob)} · {formatKc(detailTotals.totalStandardKc)}
             </p>
           </div>
+          <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+              Schválené hodinové hodiny
+            </p>
+            <p className="mt-1 text-lg font-bold tabular-nums">
+              {formatHoursMinutes(detailTotals.approvedHourlyHours)}
+            </p>
+          </div>
+          <div className="rounded-lg border border-black bg-white p-3 shadow-sm print:p-2">
+            <p className="text-xs font-medium uppercase tracking-wide text-neutral-600">
+              Neschválené hodinové hodiny
+            </p>
+            <p className="mt-1 text-lg font-bold tabular-nums">
+              {formatHoursMinutes(detailTotals.pendingHourlyHours)}
+            </p>
+          </div>
         </div>
       )}
 
@@ -816,12 +896,31 @@ export default function AttendanceOverviewPage() {
                     <p className="text-lg font-semibold tabular-nums">{day.odchod}</p>
                   </div>
                   <div>
-                    <p className="text-xs font-medium text-neutral-600">Odpracováno (docházka)</p>
+                    <p className="text-xs font-medium text-neutral-600">Docházka (po pauze)</p>
                     <p className="text-lg font-semibold tabular-nums">
                       {formatHours(day.odpracovanoH)}
                     </p>
                   </div>
                 </div>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <p className="text-xs font-medium text-neutral-600">Celková směna</p>
+                    <p className="text-lg font-semibold tabular-nums">
+                      {formatHours(day.totalSpanH)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-neutral-600">Pauza</p>
+                    <p className="text-lg font-semibold tabular-nums">
+                      {formatHoursMinutes(day.pauseH)}
+                    </p>
+                  </div>
+                </div>
+                {day.hasIncompleteAttendance ? (
+                  <div className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    Chybí příchod nebo odchod. Den není započítán do výpočtu výdělku.
+                  </div>
+                ) : null}
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div>
                     <p className="text-xs font-medium text-neutral-600">Čas na tarifech (součet)</p>
@@ -930,6 +1029,12 @@ export default function AttendanceOverviewPage() {
                             : "—"}
                     </span>
                   </div>
+                  <div>
+                    <span className="text-neutral-600">Neschválený výdělek: </span>
+                    <span className="font-bold tabular-nums">
+                      {day.neschvalenoKc > 0 ? formatKc(day.neschvalenoKc) : "—"}
+                    </span>
+                  </div>
                 </div>
               </div>
             ))}
@@ -953,12 +1058,20 @@ export default function AttendanceOverviewPage() {
                       <p className="font-medium">{day.odchod}</p>
                     </div>
                     <div>
-                      <span className="text-neutral-600">Odpracováno</span>
+                      <span className="text-neutral-600">Docházka (po pauze)</span>
                       <p className="font-medium">{formatHours(day.odpracovanoH)}</p>
                     </div>
                     <div>
                       <span className="text-neutral-600">Záznamů</span>
                       <p className="font-medium">{day.bloku}</p>
+                    </div>
+                    <div>
+                      <span className="text-neutral-600">Celková směna</span>
+                      <p className="font-medium">{formatHours(day.totalSpanH)}</p>
+                    </div>
+                    <div>
+                      <span className="text-neutral-600">Pauza</span>
+                      <p className="font-medium">{formatHoursMinutes(day.pauseH)}</p>
                     </div>
                     <div className="col-span-2">
                       <span className="text-neutral-600">Tarify / mimo tarif</span>
@@ -1023,6 +1136,11 @@ export default function AttendanceOverviewPage() {
                       </span>
                     </div>
                   </div>
+                  {day.hasIncompleteAttendance ? (
+                    <p className="mt-2 rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900">
+                      Neúplná docházka: den není započítán do výpočtu výdělku.
+                    </p>
+                  ) : null}
                 </CollapsibleContent>
               </Collapsible>
             ))}
@@ -1041,7 +1159,7 @@ export default function AttendanceOverviewPage() {
                   <TableHead className="text-black">Odpracováno</TableHead>
                   <TableHead className="text-black">Záznamů</TableHead>
                   <TableHead className="text-right text-black">Schváleno</TableHead>
-                  <TableHead className="text-right text-black">Orientačně</TableHead>
+                  <TableHead className="text-right text-black">Neschválený výdělek</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -1114,7 +1232,7 @@ export default function AttendanceOverviewPage() {
                       <span>{formatKc(row.schvalenoKc)}</span>
                     </div>
                     <div className="flex justify-between text-lg font-bold">
-                      <span className="text-neutral-600">Orientačně</span>
+                      <span className="text-neutral-600">Neschválený výdělek</span>
                       <span>{formatKc(row.orientacniKc)}</span>
                     </div>
                   </div>
