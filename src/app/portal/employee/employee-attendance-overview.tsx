@@ -61,11 +61,38 @@ function mergeDocsById<T extends { id?: string }>(batches: T[][]): T[] {
 }
 
 function rowInDateRange(
-  row: { date?: unknown },
+  row: { date?: unknown; timestamp?: unknown; startAt?: unknown },
   startIso: string,
   endIso: string
 ): boolean {
-  const d = String(row.date ?? "").trim();
+  const localIso = (dt: Date): string => {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, "0");
+    const day = String(dt.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
+  const fromUnknown = (v: unknown): Date | null => {
+    if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
+    if (v && typeof (v as { toDate?: () => Date }).toDate === "function") {
+      try {
+        const d = (v as { toDate: () => Date }).toDate();
+        return d instanceof Date && !Number.isNaN(d.getTime()) ? d : null;
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  };
+  const rawDate = row.date;
+  const dateFromRaw = fromUnknown(rawDate);
+  const dateFromTs = fromUnknown(row.timestamp);
+  const dateFromStart = fromUnknown(row.startAt);
+  const d =
+    (typeof rawDate === "string" && rawDate.trim().slice(0, 10)) ||
+    (rawDate instanceof Date ? localIso(rawDate) : "") ||
+    (dateFromRaw ? localIso(dateFromRaw) : "") ||
+    (dateFromTs ? localIso(dateFromTs) : "") ||
+    (dateFromStart ? localIso(dateFromStart) : "");
   if (!d) return false;
   return d >= startIso && d <= endIso;
 }
@@ -302,7 +329,8 @@ export function EmployeeAttendanceOverview({
 
   const handlePrint = () => window.print();
 
-  const hasEmptyExportData = dailyDetailRows.length === 0;
+  const hasEmptyExportData = detailTotals.daysWorked === 0;
+  const hasWorkInRange = detailTotals.daysWorked > 0;
 
   const hasApprovedReport = useMemo(
     () =>
@@ -532,27 +560,67 @@ export function EmployeeAttendanceOverview({
                   </p>
                 </div>
                 <div className="rounded-lg border border-neutral-950 bg-white p-3">
-                  <p className="text-xs font-medium text-neutral-800">Odpracováno celkem</p>
+                  <p className="text-xs font-medium text-neutral-800">Docházka celkem</p>
                   <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950">
-                    {detailTotals.hours > 0 ? `${detailTotals.hours} h` : "—"}
+                    {detailTotals.hours > 0 ? `${detailTotals.hours} h` : "0 h"}
                   </p>
                 </div>
                 <div className="rounded-lg border border-neutral-950 bg-white p-3">
-                  <p className="text-xs font-medium text-neutral-800">Čas na tarifech</p>
+                  <p className="text-xs font-medium text-neutral-800">Z toho tarifní čas</p>
                   <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950">
                     {formatHoursMinutes(detailTotals.totalTariffHours)}
                   </p>
                 </div>
                 <div className="rounded-lg border border-neutral-950 bg-white p-3">
-                  <p className="text-xs font-medium text-neutral-800">Čas mimo tarif</p>
+                  <p className="text-xs font-medium text-neutral-800">Z toho hodinová práce</p>
                   <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950">
                     {formatHoursMinutes(detailTotals.totalHoursOutsideTariffOnly)}
                   </p>
                 </div>
               </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 print:grid-cols-3">
+                <div className="rounded-lg border border-neutral-950 bg-white p-3">
+                  <p className="text-xs font-medium text-neutral-800">Schválený výdělek</p>
+                  <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950">
+                    {formatKc(detailTotals.approvedKc)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-neutral-950 bg-white p-3">
+                  <p className="text-xs font-medium text-neutral-800">Neschválený výdělek</p>
+                  <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950">
+                    {formatKc(detailTotals.pendingKc)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-neutral-950 bg-white p-3">
+                  <p className="text-xs font-medium text-neutral-800">Celkový výdělek</p>
+                  <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950">
+                    {formatKc(detailTotals.orientacniKc)}
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 print:grid-cols-2">
+                <div className="rounded-lg border border-neutral-950 bg-white p-3">
+                  <p className="text-xs font-medium text-neutral-800">Schválené hodinové hodiny</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-neutral-950">
+                    {formatHoursMinutes(detailTotals.approvedHourlyHours)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-neutral-950 bg-white p-3">
+                  <p className="text-xs font-medium text-neutral-800">Neschválené hodinové hodiny</p>
+                  <p className="mt-1 text-lg font-bold tabular-nums text-neutral-950">
+                    {formatHoursMinutes(detailTotals.pendingHourlyHours)}
+                  </p>
+                </div>
+              </div>
+              {detailTotals.invalidAttendanceDays > 0 ? (
+                <p className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                  {detailTotals.invalidAttendanceDays} dnů má neúplnou docházku (chybí příchod/odchod)
+                  a nebylo započteno do výpočtu hodin ani výdělku.
+                </p>
+              ) : null}
 
               <div className="hidden space-y-4 md:block print:block print:space-y-4">
-                {dailyDetailRows.length === 0 ? (
+                {!hasWorkInRange ? (
                   <p className="rounded-lg border border-dashed border-neutral-400 p-6 text-center text-neutral-800">
                     V tomto období nejsou žádné záznamy docházky.
                   </p>
@@ -590,6 +658,11 @@ export function EmployeeAttendanceOverview({
                           </p>
                         </div>
                       </div>
+                      {day.hasIncompleteAttendance ? (
+                        <p className="mt-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                          Neúplná docházka (chybí příchod nebo odchod) — den není započten do výpočtu.
+                        </p>
+                      ) : null}
                       <div className="mt-3 grid gap-3 sm:grid-cols-2">
                         <div>
                           <p className="text-xs font-medium text-neutral-800">Čas na tarifech</p>
@@ -643,6 +716,12 @@ export function EmployeeAttendanceOverview({
                                   : "—"}
                           </strong>
                         </span>
+                        <span>
+                          Neschváleno:{" "}
+                          <strong className="text-neutral-950">
+                            {day.neschvalenoKc > 0 ? formatKc(day.neschvalenoKc) : "—"}
+                          </strong>
+                        </span>
                       </div>
                     </div>
                   ))
@@ -650,7 +729,7 @@ export function EmployeeAttendanceOverview({
               </div>
 
               <div className="space-y-2 md:hidden print:hidden">
-                {dailyDetailRows.length === 0 ? (
+                {!hasWorkInRange ? (
                   <p className="text-center text-neutral-800">Žádná data v období.</p>
                 ) : (
                   dailyDetailRows.map((day) => (

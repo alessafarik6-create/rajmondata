@@ -439,6 +439,9 @@ export type EmployeeDailyDetailRow = {
   orientacniKcStandard: number;
   bloku: number;
   schvalenoKc: number;
+  neschvalenoKc: number;
+  hourlyHoursForPay: number;
+  hasIncompleteAttendance: boolean;
   orientacniKc: number;
   schvalenoStatus: "approved" | "pending" | "none";
 };
@@ -477,7 +480,12 @@ export function buildEmployeeDailyDetailRows(params: {
   for (const dateIso of days) {
     const one = byDay.get(dateIso);
     const h = one?.hoursWorked ?? null;
-    const hoursNum = h != null && Number.isFinite(h) ? h : 0;
+    const hasIncompleteAttendance =
+      Boolean(one) &&
+      ((!one?.checkIn && Boolean(one?.checkOut)) ||
+        (Boolean(one?.checkIn) && !one?.checkOut));
+    const hoursNum =
+      !hasIncompleteAttendance && h != null && Number.isFinite(h) ? h : 0;
     const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dateIso, auth);
 
     const daySegs = sortSegmentsByStart(
@@ -553,14 +561,13 @@ export function buildEmployeeDailyDetailRows(params: {
       Math.round((hoursNum - sumTariffH - sumJobH) * 100) / 100
     );
     const orientacniKcStandard =
-      rate > 0 && hoursOutsideTariffAndJob > 0
-        ? Math.round(hoursOutsideTariffAndJob * rate * 100) / 100
+      rate > 0 && hoursOutsideTariffOnly > 0
+        ? Math.round(hoursOutsideTariffOnly * rate * 100) / 100
         : 0;
 
     orientacniKcTariff = Math.round(orientacniKcTariff * 100) / 100;
     orientacniKcJob = Math.round(orientacniKcJob * 100) / 100;
 
-    const approvedDr = approvedMoneyDailyReportForDay(dailyReports, employee, dateIso);
     const approvedBl = (() => {
       let s = 0;
       for (const b of workBlocks) {
@@ -570,7 +577,6 @@ export function buildEmployeeDailyDetailRows(params: {
       }
       return Math.round(s * 100) / 100;
     })();
-    const schvalenoKc = Math.round((approvedDr + approvedBl) * 100) / 100;
     const pendD = sumPendingDailyReportEstimateForDay(dailyReports, employee, dateIso);
     const pendB = sumPendingBlocksMoneyForDay(workBlocks, employee, dateIso);
 
@@ -583,7 +589,7 @@ export function buildEmployeeDailyDetailRows(params: {
       tariffSegments.length > 0 ||
       jobSegments.length > 0;
 
-    const orientacniKc = hasSplit
+    const orientacniKcRaw = hasSplit
       ? Math.round(splitOrientacni * 100) / 100
       : computeOrientacniVydelekKc({
           odpracovaneHodiny: hoursNum,
@@ -591,11 +597,30 @@ export function buildEmployeeDailyDetailRows(params: {
           pendingDailyEst: pendD,
           pendingBlockEst: pendB,
         });
+    const orientacniKc = hasIncompleteAttendance ? 0 : orientacniKcRaw;
 
     const repSt = dailyReportStatusForDay(dailyReports, employee, dateIso);
+    const dayApprovedByReport = repSt === "approved";
+    const dayPendingByReport =
+      Boolean(repSt) && repSt !== "approved" && repSt !== "rejected";
+    const schvalenoKcRaw = hasIncompleteAttendance
+      ? 0
+      : dayApprovedByReport
+        ? orientacniKc
+        : dayPendingByReport
+          ? 0
+          : Math.min(orientacniKc, approvedBl);
+    const schvalenoKc = Math.round(Math.max(0, schvalenoKcRaw) * 100) / 100;
+    const neschvalenoKc = Math.round(
+      Math.max(0, orientacniKc - schvalenoKc) * 100
+    ) / 100;
     let schvalenoStatus: "approved" | "pending" | "none" = "none";
-    if (repSt === "approved" || schvalenoKc > 0) schvalenoStatus = "approved";
+    if (dayApprovedByReport || (schvalenoKc > 0 && neschvalenoKc === 0)) {
+      schvalenoStatus = "approved";
+    }
     else if (repSt && repSt !== "rejected" && repSt !== "approved") {
+      schvalenoStatus = "pending";
+    } else if (neschvalenoKc > 0) {
       schvalenoStatus = "pending";
     }
     const dayTitle = format(
@@ -624,6 +649,9 @@ export function buildEmployeeDailyDetailRows(params: {
       orientacniKcStandard,
       bloku,
       schvalenoKc,
+      neschvalenoKc,
+      hourlyHoursForPay: hoursOutsideTariffOnly,
+      hasIncompleteAttendance,
       orientacniKc,
       schvalenoStatus,
     });
@@ -635,6 +663,7 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   daysWorked: number;
   hours: number;
   approvedKc: number;
+  pendingKc: number;
   orientacniKc: number;
   totalTariffHours: number;
   totalTariffKc: number;
@@ -644,10 +673,14 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   totalHoursOutsideTariffJob: number;
   /** Součet (den po dni) hodin „mimo tarif“ = odpracováno − tarify. */
   totalHoursOutsideTariffOnly: number;
+  approvedHourlyHours: number;
+  pendingHourlyHours: number;
+  invalidAttendanceDays: number;
 } {
   let daysWorked = 0;
   let hours = 0;
   let approvedKc = 0;
+  let pendingKc = 0;
   let orientacniKc = 0;
   let totalTariffHours = 0;
   let totalTariffKc = 0;
@@ -656,6 +689,9 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
   let totalStandardKc = 0;
   let totalHoursOutsideTariffJob = 0;
   let totalHoursOutsideTariffOnly = 0;
+  let approvedHourlyHours = 0;
+  let pendingHourlyHours = 0;
+  let invalidAttendanceDays = 0;
   for (const r of rows) {
     const hasWork =
       (r.odpracovanoH != null && r.odpracovanoH > 0) ||
@@ -665,7 +701,9 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     if (hasWork) daysWorked += 1;
     hours += r.odpracovanoH ?? 0;
     approvedKc += r.schvalenoKc;
+    pendingKc += r.neschvalenoKc;
     orientacniKc += r.orientacniKc;
+    if (r.hasIncompleteAttendance) invalidAttendanceDays += 1;
     for (const t of r.tariffSegments) {
       totalTariffHours += t.durationH;
       totalTariffKc += t.earningsKc;
@@ -677,11 +715,14 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     totalStandardKc += r.orientacniKcStandard;
     totalHoursOutsideTariffJob += r.hoursOutsideTariffAndJob;
     totalHoursOutsideTariffOnly += r.hoursOutsideTariffOnly;
+    if (r.schvalenoStatus === "approved") approvedHourlyHours += r.hourlyHoursForPay;
+    else if (r.schvalenoStatus === "pending") pendingHourlyHours += r.hourlyHoursForPay;
   }
   return {
     daysWorked,
     hours: Math.round(hours * 100) / 100,
     approvedKc: Math.round(approvedKc * 100) / 100,
+    pendingKc: Math.round(pendingKc * 100) / 100,
     orientacniKc: Math.round(orientacniKc * 100) / 100,
     totalTariffHours: Math.round(totalTariffHours * 100) / 100,
     totalTariffKc: Math.round(totalTariffKc * 100) / 100,
@@ -690,6 +731,9 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     totalStandardKc: Math.round(totalStandardKc * 100) / 100,
     totalHoursOutsideTariffJob: Math.round(totalHoursOutsideTariffJob * 100) / 100,
     totalHoursOutsideTariffOnly: Math.round(totalHoursOutsideTariffOnly * 100) / 100,
+    approvedHourlyHours: Math.round(approvedHourlyHours * 100) / 100,
+    pendingHourlyHours: Math.round(pendingHourlyHours * 100) / 100,
+    invalidAttendanceDays,
   };
 }
 
@@ -715,6 +759,7 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
   let daysWorked = 0;
   let hours = 0;
   let approvedKc = 0;
+  let pendingKc = 0;
   let orientacniKc = 0;
   let totalTariffHours = 0;
   let totalTariffKc = 0;
@@ -723,6 +768,9 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
   let totalStandardKc = 0;
   let totalHoursOutsideTariffJob = 0;
   let totalHoursOutsideTariffOnly = 0;
+  let approvedHourlyHours = 0;
+  let pendingHourlyHours = 0;
+  let invalidAttendanceDays = 0;
   for (const emp of employees.values()) {
     const rows = buildEmployeeDailyDetailRows({
       range,
@@ -737,6 +785,7 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
     daysWorked += t.daysWorked;
     hours += t.hours;
     approvedKc += t.approvedKc;
+    pendingKc += t.pendingKc;
     orientacniKc += t.orientacniKc;
     totalTariffHours += t.totalTariffHours;
     totalTariffKc += t.totalTariffKc;
@@ -745,11 +794,15 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
     totalStandardKc += t.totalStandardKc;
     totalHoursOutsideTariffJob += t.totalHoursOutsideTariffJob;
     totalHoursOutsideTariffOnly += t.totalHoursOutsideTariffOnly;
+    approvedHourlyHours += t.approvedHourlyHours;
+    pendingHourlyHours += t.pendingHourlyHours;
+    invalidAttendanceDays += t.invalidAttendanceDays;
   }
   return {
     daysWorked,
     hours: Math.round(hours * 100) / 100,
     approvedKc: Math.round(approvedKc * 100) / 100,
+    pendingKc: Math.round(pendingKc * 100) / 100,
     orientacniKc: Math.round(orientacniKc * 100) / 100,
     totalTariffHours: Math.round(totalTariffHours * 100) / 100,
     totalTariffKc: Math.round(totalTariffKc * 100) / 100,
@@ -758,6 +811,9 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
     totalStandardKc: Math.round(totalStandardKc * 100) / 100,
     totalHoursOutsideTariffJob: Math.round(totalHoursOutsideTariffJob * 100) / 100,
     totalHoursOutsideTariffOnly: Math.round(totalHoursOutsideTariffOnly * 100) / 100,
+    approvedHourlyHours: Math.round(approvedHourlyHours * 100) / 100,
+    pendingHourlyHours: Math.round(pendingHourlyHours * 100) / 100,
+    invalidAttendanceDays,
   };
 }
 
@@ -780,6 +836,10 @@ function countAttendanceBlocksForDay(
   dayIso: string,
   authUserId?: string | null
 ): number {
+  const toLocalIso = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate()
+    ).padStart(2, "0")}`;
   return rows.filter((r) => {
     if (!attendanceRowMatchesEmployee(r, employeeDocId, authUserId)) return false;
     const ts = r.timestamp;
@@ -790,7 +850,7 @@ function countAttendanceBlocksForDay(
     }
     const dateKey =
       (r.date && String(r.date).trim()) ||
-      (t ? t.toISOString().split("T")[0] : "");
+      (t ? toLocalIso(t) : "");
     return dateKey === dayIso;
   }).length;
 }

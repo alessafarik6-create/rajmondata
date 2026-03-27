@@ -19,6 +19,13 @@ export type DayAttendanceSummary = {
   statusLabel: string;
 };
 
+function toLocalIsoDate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
 function rowTime(row: AttendanceRow): Date | null {
   const ts = row.timestamp;
   if (!ts) return null;
@@ -55,7 +62,7 @@ export function summarizeAttendanceByDay(
     const t = rowTime(r);
     const dateKey =
       (r.date && String(r.date).trim()) ||
-      (t ? t.toISOString().split("T")[0] : "");
+      (t ? toLocalIsoDate(t) : "");
     if (!dateKey) continue;
     const list = byDate.get(dateKey) || [];
     list.push(r);
@@ -153,13 +160,13 @@ export function sumHoursTodayAndWeek(
   summaries: DayAttendanceSummary[],
   now = new Date()
 ): { today: number; week: number } {
-  const todayIso = now.toISOString().split("T")[0];
+  const todayIso = toLocalIsoDate(now);
   const startOfWeek = new Date(now);
   const day = startOfWeek.getDay();
   const diff = day === 0 ? -6 : 1 - day;
   startOfWeek.setDate(startOfWeek.getDate() + diff);
   startOfWeek.setHours(0, 0, 0, 0);
-  const startIso = startOfWeek.toISOString().split("T")[0];
+  const startIso = toLocalIsoDate(startOfWeek);
 
   let today = 0;
   let week = 0;
