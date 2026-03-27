@@ -219,6 +219,12 @@ export function resolveExpenseAmounts(row: {
   amountType?: unknown;
   /** Pro starší doklady (`vat` = %). */
   vat?: unknown;
+  /** Přepočtené CZK hodnoty (EUR doklady i nové záznamy s explicitním CZK). */
+  castkaCZK?: unknown;
+  amountNetCZK?: unknown;
+  amountGrossCZK?: unknown;
+  vatAmountCZK?: unknown;
+  amountCZK?: unknown;
 }): {
   vatRate: VatRatePercent;
   amountNet: number;
@@ -229,6 +235,40 @@ export function resolveExpenseAmounts(row: {
     row.vatRate !== undefined && row.vatRate !== null ? row.vatRate : row.vat;
   const rate = normalizeVatRate(rawRate);
   const typeFromDoc = normalizeBudgetType(row.amountType);
+
+  const grossCzkCandidate = Math.max(
+    Number(row.castkaCZK ?? 0),
+    Number(row.amountGrossCZK ?? 0),
+    Number(row.amountCZK ?? 0)
+  );
+  const netCzk = roundMoney2(Number(row.amountNetCZK ?? 0));
+  const vatCzk = roundMoney2(Number(row.vatAmountCZK ?? 0));
+  const hasExplicitCzk =
+    Number.isFinite(grossCzkCandidate) && grossCzkCandidate > 0;
+  if (hasExplicitCzk) {
+    const gross = roundMoney2(grossCzkCandidate);
+    if (netCzk > 0 && gross > 0) {
+      const vat =
+        vatCzk > 0 ? vatCzk : roundMoney2(Math.max(0, gross - netCzk));
+      return {
+        vatRate: rate,
+        amountNet: netCzk,
+        vatAmount: vat,
+        amountGross: gross,
+      };
+    }
+    if (rate > 0) {
+      const net = roundMoney2(gross / (1 + rate / 100));
+      const vat = roundMoney2(gross - net);
+      return { vatRate: rate, amountNet: net, vatAmount: vat, amountGross: gross };
+    }
+    return {
+      vatRate: rate,
+      amountNet: gross,
+      vatAmount: 0,
+      amountGross: gross,
+    };
+  }
 
   const ai = row.amountInput;
   if (typeof ai === "number" && Number.isFinite(ai) && ai > 0) {

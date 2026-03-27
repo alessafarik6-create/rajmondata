@@ -22,12 +22,20 @@ import { roundMoney2 } from "@/lib/vat-calculations";
 export const COMPANY_DOCUMENT_EXPENSE_SOURCE = "company_document" as const;
 
 type DocAmountInput = CompanyDocumentLike & {
+  currency?: string;
+  amountOriginal?: number;
+  amountCZK?: number;
+  exchangeRate?: number;
   sDPH?: boolean;
   castka?: number;
+  castkaCZK?: number;
   amountNet?: number;
   amountGross?: number;
+  amountNetCZK?: number;
+  amountGrossCZK?: number;
   amount?: number;
   vatAmount?: number;
+  vatAmountCZK?: number;
   dphSazba?: number;
   vatRate?: number;
   vat?: number;
@@ -47,6 +55,51 @@ export function companyDocumentExpenseAmounts(row: DocAmountInput): {
   amountGross: number;
   vatRatePercent: number;
 } {
+  const czkGrossRaw = Number(row.castkaCZK ?? row.amountGrossCZK ?? 0);
+  const czkNetRaw = Number(row.amountNetCZK ?? 0);
+  const useStoredCzk = czkGrossRaw > 0 || czkNetRaw > 0;
+  /** Náklady zakázky v CZK — uložené přepočtené pole (EUR i nové CZK doklady). */
+  if (useStoredCzk) {
+    const sDPH = inferSDPH(row);
+    const gross = roundMoney2(
+      Number(row.castkaCZK ?? row.amountGrossCZK ?? 0)
+    );
+    if (!sDPH || gross <= 0) {
+      const c = gross > 0 ? gross : roundMoney2(Number(row.castkaCZK ?? 0));
+      return {
+        amountNet: c,
+        vatAmount: 0,
+        amountGross: c,
+        vatRatePercent: 0,
+      };
+    }
+    const rate = Number(row.dphSazba ?? row.vatRate ?? row.vat ?? 21);
+    let net = roundMoney2(Number(row.amountNetCZK ?? row.amount ?? 0));
+    let vat = roundMoney2(Number(row.vatAmountCZK ?? row.vatAmount ?? 0));
+    let g = gross;
+    if (g <= 0 && net > 0 && Number.isFinite(rate)) {
+      vat = roundMoney2((net * rate) / 100);
+      g = roundMoney2(net + vat);
+    } else if (net <= 0 && g > 0 && Number.isFinite(rate) && rate > 0) {
+      net = roundMoney2(g / (1 + rate / 100));
+      vat = roundMoney2(g - net);
+    } else if (net <= 0 && g > 0 && Number.isFinite(rate) && rate === 0) {
+      net = g;
+      vat = 0;
+    } else if (vat <= 0 && net > 0 && g > 0) {
+      vat = roundMoney2(g - net);
+    }
+    const vatRatePercent = Number.isFinite(rate)
+      ? Math.min(100, Math.max(0, Math.round(rate)))
+      : 21;
+    return {
+      amountNet: net,
+      vatAmount: vat,
+      amountGross: g,
+      vatRatePercent,
+    };
+  }
+
   const sDPH = inferSDPH(row);
   if (!sDPH) {
     const c = roundMoney2(

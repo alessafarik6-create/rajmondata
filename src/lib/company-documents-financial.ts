@@ -10,9 +10,12 @@ export type CompanyDocumentLike = {
   source?: string;
   sourceType?: string;
   castka?: unknown;
+  /** Hrubá částka v CZK (EUR doklady po přepočtu). */
+  castkaCZK?: unknown;
   amountNet?: unknown;
   amount?: unknown;
   amountGross?: unknown;
+  amountGrossCZK?: unknown;
 };
 
 /**
@@ -24,9 +27,10 @@ export function isFinancialCompanyDocument(row: CompanyDocumentLike): boolean {
   if (fromJobMedia) return false;
 
   const c = Number(row.castka ?? 0);
+  const czk = Number(row.castkaCZK ?? row.amountGrossCZK ?? 0);
   const net = Number(row.amountNet ?? row.amount ?? 0);
   const gross = Number(row.amountGross ?? 0);
-  const hasAmount = c > 0 || net > 0 || gross > 0;
+  const hasAmount = c > 0 || czk > 0 || net > 0 || gross > 0;
   if (!hasAmount) return false;
 
   return true;

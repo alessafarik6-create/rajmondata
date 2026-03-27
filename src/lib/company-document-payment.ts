@@ -18,6 +18,8 @@ export type PaymentUrgency =
   | "ok";
 
 export type CompanyDocumentPaymentRow = CompanyDocumentLike & {
+  castkaCZK?: number;
+  amountGrossCZK?: number;
   id?: string;
   nazev?: string;
   entityName?: string;
@@ -68,6 +70,8 @@ export function documentDisplayTitleForPayment(
 }
 
 export function documentGrossForPayment(row: CompanyDocumentPaymentRow): number {
+  const czkG = Number(row.castkaCZK ?? row.amountGrossCZK ?? 0);
+  if (czkG > 0) return roundMoney2(czkG);
   const c = Number(row.castka ?? 0);
   const g = Number(row.amountGross ?? 0);
   const n = Number(row.amountNet ?? row.amount ?? 0);

@@ -105,6 +105,11 @@ import {
   roundMoney2,
 } from "@/lib/vat-calculations";
 import {
+  amountsToCzk,
+  grossOriginal,
+} from "@/lib/company-document-czk";
+import { resolveEurCzkRate } from "@/lib/exchange-rate-eur-czk";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -150,6 +155,18 @@ type CompanyDocumentRow = {
   vat?: number;
   /** Uložená částka podle režimu DPH (kompatibilní s novým modelem). */
   castka?: number;
+  /** Měna vstupu (původní částky v `castka` / `amountNet` / …). */
+  currency?: "CZK" | "EUR";
+  /** Hrubá částka v původní měně (stejná soustava jako `castka`). */
+  amountOriginal?: number;
+  /** Kurz CZK za 1 EUR v okamžiku uložení (u CZK obvykle nevyplněno). */
+  exchangeRate?: number;
+  /** Hrubá částka v CZK (shodně s `castkaCZK` / `amountGrossCZK`). */
+  amountCZK?: number;
+  castkaCZK?: number;
+  amountNetCZK?: number;
+  amountGrossCZK?: number;
+  vatAmountCZK?: number;
   sDPH?: boolean;
   dphSazba?: number;
   date?: string;
@@ -202,15 +219,29 @@ function docVatInfoLine(row: CompanyDocumentRow): string {
   return `s DPH ${rate} %`;
 }
 
+function formatDocMoney(n: number, currency: "CZK" | "EUR"): string {
+  const s = roundMoney2(n).toLocaleString("cs-CZ");
+  return currency === "EUR" ? `${s} €` : `${s} Kč`;
+}
+
 /**
  * Zobrazení částek — respektuje vlastní sazbu DPH (např. 15 %), nejen 0/12/21.
+ * U EUR dokladů jsou `amountNet` / `castka` v eurech; `amountGrossCZK` je přepočet.
  */
 function docDisplayAmounts(row: CompanyDocumentRow): {
   amountNet: number;
   vatAmount: number;
   amountGross: number;
   label: string;
+  currency: "CZK" | "EUR";
+  amountGrossCZK: number;
+  showCzkHint: boolean;
 } {
+  const currency: "CZK" | "EUR" = row.currency === "EUR" ? "EUR" : "CZK";
+  const czkStored = roundMoney2(
+    Number(row.castkaCZK ?? row.amountGrossCZK ?? row.amountCZK ?? 0)
+  );
+
   const sDPH = inferSDPH(row);
   if (!sDPH) {
     const c = roundMoney2(
@@ -222,17 +253,23 @@ function docDisplayAmounts(row: CompanyDocumentRow): {
           0
       )
     );
+    const grossCzk = czkStored > 0 ? czkStored : c;
     return {
       amountNet: c,
       vatAmount: 0,
       amountGross: c,
       label: "bez DPH",
+      currency,
+      amountGrossCZK: grossCzk,
+      showCzkHint: currency === "EUR" && czkStored > 0,
     };
   }
   const rate = Number(row.dphSazba ?? row.vatRate ?? row.vat ?? 21);
   let net = roundMoney2(Number(row.amountNet ?? row.amount ?? 0));
   let gross = roundMoney2(Number(row.amountGross ?? 0));
   let vat = roundMoney2(Number(row.vatAmount ?? 0));
+  const castkaGross = roundMoney2(Number(row.castka ?? 0));
+  if (gross <= 0 && castkaGross > 0) gross = castkaGross;
   if (gross <= 0 && net > 0 && Number.isFinite(rate)) {
     vat = roundMoney2((net * rate) / 100);
     gross = roundMoney2(net + vat);
@@ -242,11 +279,15 @@ function docDisplayAmounts(row: CompanyDocumentRow): {
   } else if (vat <= 0 && net > 0 && gross > 0) {
     vat = roundMoney2(gross - net);
   }
+  const grossCzk = czkStored > 0 ? czkStored : gross;
   return {
     amountNet: net,
     vatAmount: vat,
     amountGross: gross,
     label: `s DPH ${Number.isFinite(rate) ? rate : 21} %`,
+    currency,
+    amountGrossCZK: grossCzk,
+    showCzkHint: currency === "EUR" && czkStored > 0,
   };
 }
 
@@ -348,6 +389,7 @@ export default function DocumentsPage() {
     number: "",
     entityName: "",
     amount: "",
+    currency: "CZK" as "CZK" | "EUR",
     vat: "21",
     date: new Date().toISOString().split("T")[0],
     description: "",
@@ -373,6 +415,7 @@ export default function DocumentsPage() {
   const [editForm, setEditForm] = useState({
     nazev: "",
     castka: "",
+    currency: "CZK" as "CZK" | "EUR",
     sDPH: true,
     dphSazba: "21",
     date: "",
@@ -480,12 +523,15 @@ export default function DocumentsPage() {
       const amountStr = formData.amount.trim();
       const amountParsed =
         amountStr === "" ? NaN : Number(String(amountStr).replace(",", "."));
-      const amountNet =
+      const docCurrency = formData.currency === "EUR" ? "EUR" : "CZK";
+      const amountNetRaw =
         Number.isFinite(amountParsed) && amountParsed >= 0
-          ? Math.round(amountParsed)
+          ? roundMoney2(amountParsed)
           : 0;
       const hasFinancialAmount =
-        amountStr !== "" && Number.isFinite(amountParsed) && amountNet > 0;
+        amountStr !== "" &&
+        Number.isFinite(amountParsed) &&
+        amountNetRaw > 0;
 
       if (!hasFinancialAmount) {
         if (!newDocFile) {
@@ -589,6 +635,7 @@ export default function DocumentsPage() {
         number: "",
         entityName: "",
         amount: "",
+        currency: "CZK",
         vat: "21",
         date: new Date().toISOString().split("T")[0],
         description: "",
@@ -602,10 +649,38 @@ export default function DocumentsPage() {
       }
 
       const vatRate = normalizeVatRate(Number(formData.vat));
-      const { vatAmount, amountGross } = calculateVatAmountsFromNet(
+      let amountNet: number;
+      let vatAmount: number;
+      let amountGross: number;
+      if (docCurrency === "EUR") {
+        amountNet = amountNetRaw;
+        vatAmount = roundMoney2((amountNet * vatRate) / 100);
+        amountGross = roundMoney2(amountNet + vatAmount);
+      } else {
+        const netInt = Math.round(amountNetRaw);
+        const c = calculateVatAmountsFromNet(netInt, vatRate);
+        amountNet = netInt;
+        vatAmount = c.vatAmount;
+        amountGross = c.amountGross;
+      }
+
+      let rateEurCzk = 1;
+      let rateUsedFallback = false;
+      if (docCurrency === "EUR") {
+        const r = await resolveEurCzkRate();
+        rateEurCzk = r.rate;
+        rateUsedFallback = r.usedFallback;
+      }
+      const czk = amountsToCzk(docCurrency, rateEurCzk, {
         amountNet,
-        vatRate
-      );
+        vatAmount,
+        amountGross,
+      });
+      const amountOriginal = grossOriginal({
+        amountNet,
+        vatAmount,
+        amountGross,
+      });
 
       if (!formData.number.trim()) {
         toast({
@@ -646,9 +721,17 @@ export default function DocumentsPage() {
         date: formData.date,
         type: newDocType,
         documentKind: newDocType === "received" ? "prijate" : "vydane",
+        currency: docCurrency,
+        amountOriginal,
+        amountCZK: czk.castkaCZK,
+        exchangeRate: docCurrency === "EUR" ? rateEurCzk : 1,
         amount: amountNet,
         amountNet,
         castka: amountGross,
+        castkaCZK: czk.castkaCZK,
+        amountNetCZK: czk.amountNetCZK,
+        amountGrossCZK: czk.amountGrossCZK,
+        vatAmountCZK: czk.vatAmountCZK,
         sDPH: true,
         vatRate,
         dphSazba: vatRate,
@@ -682,7 +765,7 @@ export default function DocumentsPage() {
         entityType: "company_document",
         entityId: newDocRef.id,
         entityName: formData.number?.trim() || newDocRef.id,
-        details: `${formData.entityName?.trim() || "—"} · ${amountNet} Kč bez DPH / ${amountGross} Kč s DPH`,
+        details: `${formData.entityName?.trim() || "—"} · ${amountNet} ${docCurrency === "EUR" ? "EUR" : "Kč"} bez DPH / ${amountGross} ${docCurrency === "EUR" ? "EUR" : "Kč"} s DPH (≈ ${czk.castkaCZK} Kč)`,
         sourceModule: "documents",
         route: "/portal/documents",
         metadata: {
@@ -720,7 +803,15 @@ export default function DocumentsPage() {
           nazev: formData.entityName.trim(),
           description: formData.description.trim(),
           date: formData.date,
+          currency: docCurrency,
+          amountOriginal,
+          amountCZK: czk.castkaCZK,
+          exchangeRate: docCurrency === "EUR" ? rateEurCzk : 1,
           castka: amountGross,
+          castkaCZK: czk.castkaCZK,
+          amountNetCZK: czk.amountNetCZK,
+          amountGrossCZK: czk.amountGrossCZK,
+          vatAmountCZK: czk.vatAmountCZK,
           amountNet,
           amount: amountNet,
           amountGross,
@@ -744,9 +835,9 @@ export default function DocumentsPage() {
       const financeRef = collection(firestore, "companies", companyId, "finance");
       try {
         await addDoc(financeRef, {
-          amount: amountGross,
-          amountNet,
-          amountGross,
+          amount: czk.castkaCZK,
+          amountNet: czk.amountNetCZK,
+          amountGross: czk.amountGrossCZK,
           vatRate,
           type: newDocType === "received" ? "expense" : "revenue",
           date: formData.date,
@@ -759,13 +850,18 @@ export default function DocumentsPage() {
 
       toast({
         title: "Doklad uložen",
-        description: `Záznam ${formData.number} byl úspěšně přidán.`,
+        description:
+          docCurrency === "EUR" && rateUsedFallback
+            ? `Záznam ${formData.number} byl přidán. Kurz EUR použit z poslední známé hodnoty nebo výchozího přepočtu (API nedostupné).`
+            : `Záznam ${formData.number} byl úspěšně přidán.`,
+        variant: docCurrency === "EUR" && rateUsedFallback ? "default" : undefined,
       });
       setIsAddDocOpen(false);
       setFormData({
         number: "",
         entityName: "",
         amount: "",
+        currency: "CZK",
         vat: "21",
         date: new Date().toISOString().split("T")[0],
         description: "",
@@ -879,6 +975,7 @@ export default function DocumentsPage() {
     setEditForm({
       nazev: docDisplayTitle(row),
       castka: baseAmount > 0 ? String(baseAmount) : "",
+      currency: row.currency === "EUR" ? "EUR" : "CZK",
       sDPH,
       dphSazba: rate,
       date: row.date ?? new Date().toISOString().split("T")[0],
@@ -912,12 +1009,26 @@ export default function DocumentsPage() {
       return;
     }
     const dphPct = parseVatPercentInput(editForm.dphSazba);
+    const docCurrency = editForm.currency === "EUR" ? "EUR" : "CZK";
     setIsEditSaving(true);
     try {
       const nazev = editForm.nazev.trim();
       const poznamka = editForm.poznamka.trim();
       const zid = editForm.zakazkaId.trim();
       const selectedJob = jobs.find((j) => j.id === zid);
+
+      let rateEurCzk = 1;
+      let rateUsedFallback = false;
+      if (docCurrency === "EUR") {
+        const stored = Number(editRow.exchangeRate ?? 0);
+        if (Number.isFinite(stored) && stored > 0) {
+          rateEurCzk = stored;
+        } else {
+          const r = await resolveEurCzkRate();
+          rateEurCzk = r.rate;
+          rateUsedFallback = r.usedFallback;
+        }
+      }
 
       const basePayload: Record<string, unknown> = {
         nazev,
@@ -926,6 +1037,7 @@ export default function DocumentsPage() {
         poznamka: poznamka || null,
         note: poznamka || null,
         description: poznamka || null,
+        currency: docCurrency,
         updatedAt: serverTimestamp(),
       };
 
@@ -933,6 +1045,16 @@ export default function DocumentsPage() {
         const net = roundMoney2(castkaNum);
         const vatAmount = roundMoney2((net * dphPct) / 100);
         const gross = roundMoney2(net + vatAmount);
+        const czk = amountsToCzk(docCurrency, rateEurCzk, {
+          amountNet: net,
+          vatAmount,
+          amountGross: gross,
+        });
+        const amountOriginal = grossOriginal({
+          amountNet: net,
+          vatAmount,
+          amountGross: gross,
+        });
         Object.assign(basePayload, {
           sDPH: true,
           dphSazba: dphPct,
@@ -943,9 +1065,26 @@ export default function DocumentsPage() {
           amount: net,
           vatRate: dphPct,
           vat: dphPct,
+          amountOriginal,
+          amountCZK: czk.castkaCZK,
+          exchangeRate: docCurrency === "EUR" ? rateEurCzk : 1,
+          castkaCZK: czk.castkaCZK,
+          amountNetCZK: czk.amountNetCZK,
+          amountGrossCZK: czk.amountGrossCZK,
+          vatAmountCZK: czk.vatAmountCZK,
         });
       } else {
         const c = roundMoney2(castkaNum);
+        const czk = amountsToCzk(docCurrency, rateEurCzk, {
+          amountNet: c,
+          vatAmount: 0,
+          amountGross: c,
+        });
+        const amountOriginal = grossOriginal({
+          amountNet: c,
+          vatAmount: 0,
+          amountGross: c,
+        });
         Object.assign(basePayload, {
           sDPH: false,
           dphSazba: null,
@@ -956,6 +1095,13 @@ export default function DocumentsPage() {
           vatRate: 0,
           vat: 0,
           amount: c,
+          amountOriginal,
+          amountCZK: czk.castkaCZK,
+          exchangeRate: docCurrency === "EUR" ? rateEurCzk : 1,
+          castkaCZK: czk.castkaCZK,
+          amountNetCZK: czk.amountNetCZK,
+          amountGrossCZK: czk.amountGrossCZK,
+          vatAmountCZK: czk.vatAmountCZK,
         });
       }
 
@@ -1000,7 +1146,13 @@ export default function DocumentsPage() {
         before: { ...editRow, id: editRow.id },
         after: afterForExpense,
       });
-      toast({ title: "Doklad uložen" });
+      toast({
+        title: "Doklad uložen",
+        description:
+          docCurrency === "EUR" && rateUsedFallback
+            ? "Kurz EUR byl doplněn z poslední známé hodnoty nebo výchozího přepočtu (API nedostupné)."
+            : undefined,
+      });
       setEditOpen(false);
       setEditRow(null);
     } catch {
@@ -1384,20 +1536,44 @@ export default function DocumentsPage() {
                       className="bg-background"
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="amount">Částka bez DPH</Label>
-                    <Input
-                      id="amount"
-                      type="number"
-                      min={0}
-                      step="1"
-                      placeholder="0 = jen fotodokumentace (u zakázky)"
-                      value={formData.amount}
-                      onChange={(e) =>
-                        setFormData({ ...formData, amount: e.target.value })
-                      }
-                      className="bg-background"
-                    />
+                  <div className="space-y-2 sm:col-span-2">
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
+                      <div className="space-y-2">
+                        <Label htmlFor="amount">Částka bez DPH</Label>
+                        <Input
+                          id="amount"
+                          type="number"
+                          min={0}
+                          step={formData.currency === "EUR" ? "0.01" : "1"}
+                          placeholder="0 = jen fotodokumentace (u zakázky)"
+                          value={formData.amount}
+                          onChange={(e) =>
+                            setFormData({ ...formData, amount: e.target.value })
+                          }
+                          className="bg-background"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="doc-currency">Měna</Label>
+                        <Select
+                          value={formData.currency}
+                          onValueChange={(v) =>
+                            setFormData({
+                              ...formData,
+                              currency: v === "EUR" ? "EUR" : "CZK",
+                            })
+                          }
+                        >
+                          <SelectTrigger id="doc-currency" className="bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="CZK">CZK</SelectItem>
+                            <SelectItem value="EUR">EUR</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
                     <p className="text-xs text-muted-foreground leading-relaxed">
                       Bez částky se neuloží jako doklad. S výběrem zakázky (náklad) se soubor uloží jen
                       jako fotodokumentace u zakázky — v tomto seznamu dokladů se neobjeví.
@@ -1680,23 +1856,51 @@ export default function DocumentsPage() {
                 required
               />
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="edit-castka">
-                {editForm.sDPH ? "Částka bez DPH (základ)" : "Částka"}
-              </Label>
-              <Input
-                id="edit-castka"
-                type="number"
-                min={0}
-                step="0.01"
-                required
-                value={editForm.castka}
-                onChange={(e) =>
-                  setEditForm({ ...editForm, castka: e.target.value })
-                }
-                className="bg-background"
-              />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_140px]">
+              <div className="space-y-2">
+                <Label htmlFor="edit-castka">
+                  {editForm.sDPH ? "Částka bez DPH (základ)" : "Částka"}
+                </Label>
+                <Input
+                  id="edit-castka"
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  required
+                  value={editForm.castka}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, castka: e.target.value })
+                  }
+                  className="bg-background"
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="edit-currency">Měna</Label>
+                <Select
+                  value={editForm.currency}
+                  onValueChange={(v) =>
+                    setEditForm({
+                      ...editForm,
+                      currency: v === "EUR" ? "EUR" : "CZK",
+                    })
+                  }
+                >
+                  <SelectTrigger id="edit-currency" className="bg-background">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="CZK">CZK</SelectItem>
+                    <SelectItem value="EUR">EUR</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
+            {editRow?.currency === "EUR" && editRow.exchangeRate ? (
+              <p className="text-xs text-muted-foreground">
+                Uložený kurz: 1 EUR = {Number(editRow.exchangeRate).toLocaleString("cs-CZ")}{" "}
+                Kč (při úpravě se nemění).
+              </p>
+            ) : null}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border p-3">
               <div className="space-y-0.5">
                 <Label htmlFor="edit-sdph" className="text-sm font-medium">
@@ -2429,19 +2633,34 @@ function DocumentTableReceived({
                         {inferSDPH(row) ? (
                           <>
                             <div className="text-gray-800">
-                              Základ {amts.amountNet.toLocaleString("cs-CZ")}
+                              Základ{" "}
+                              {formatDocMoney(amts.amountNet, amts.currency)}
                             </div>
                             <div className="text-[10px] text-gray-800">
-                              DPH {amts.vatAmount.toLocaleString("cs-CZ")}
+                              DPH {formatDocMoney(amts.vatAmount, amts.currency)}
                             </div>
                             <div className="font-semibold text-gray-950">
-                              {amts.amountGross.toLocaleString("cs-CZ")} Kč
+                              {formatDocMoney(amts.amountGross, amts.currency)}
                             </div>
+                            {amts.showCzkHint ? (
+                              <div className="text-[10px] text-gray-600">
+                                (≈ {amts.amountGrossCZK.toLocaleString("cs-CZ")}{" "}
+                                Kč)
+                              </div>
+                            ) : null}
                           </>
                         ) : (
-                          <div className="font-semibold text-gray-950">
-                            {amts.amountGross.toLocaleString("cs-CZ")} Kč
-                          </div>
+                          <>
+                            <div className="font-semibold text-gray-950">
+                              {formatDocMoney(amts.amountGross, amts.currency)}
+                            </div>
+                            {amts.showCzkHint ? (
+                              <div className="text-[10px] text-gray-600">
+                                (≈ {amts.amountGrossCZK.toLocaleString("cs-CZ")}{" "}
+                                Kč)
+                              </div>
+                            ) : null}
+                          </>
                         )}
                       </div>
                     ) : (
@@ -2633,19 +2852,41 @@ function DocumentTableIssued({
                     {inferSDPH(docRow) ? (
                       <>
                         <div className="text-gray-800">
-                          Základ {issuedAm.amountNet.toLocaleString("cs-CZ")}
+                          Základ{" "}
+                          {formatDocMoney(issuedAm.amountNet, issuedAm.currency)}
                         </div>
                         <div className="text-[10px] text-gray-800">
-                          DPH {issuedAm.vatAmount.toLocaleString("cs-CZ")}
+                          DPH{" "}
+                          {formatDocMoney(issuedAm.vatAmount, issuedAm.currency)}
                         </div>
                         <div className="font-semibold text-gray-950">
-                          {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
+                          {formatDocMoney(
+                            issuedAm.amountGross,
+                            issuedAm.currency
+                          )}
                         </div>
+                        {issuedAm.showCzkHint ? (
+                          <div className="text-[10px] text-gray-600">
+                            (≈{" "}
+                            {issuedAm.amountGrossCZK.toLocaleString("cs-CZ")} Kč)
+                          </div>
+                        ) : null}
                       </>
                     ) : (
-                      <div className="font-semibold text-gray-950">
-                        {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
-                      </div>
+                      <>
+                        <div className="font-semibold text-gray-950">
+                          {formatDocMoney(
+                            issuedAm.amountGross,
+                            issuedAm.currency
+                          )}
+                        </div>
+                        {issuedAm.showCzkHint ? (
+                          <div className="text-[10px] text-gray-600">
+                            (≈{" "}
+                            {issuedAm.amountGrossCZK.toLocaleString("cs-CZ")} Kč)
+                          </div>
+                        ) : null}
+                      </>
                     )}
                   </div>
                 </div>

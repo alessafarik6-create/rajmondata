@@ -167,14 +167,7 @@ export default function FinancePage() {
       const row = d as Record<string, unknown>;
       if (!isReceivedFinanceDoc(row as { type?: string; documentKind?: string }))
         continue;
-      const a = resolveExpenseAmounts({
-        amount: row.amount,
-        amountNet: row.amountNet,
-        amountGross: row.amountGross,
-        vatAmount: row.vatAmount,
-        vatRate: row.vatRate,
-        vat: row.vat,
-      });
+      const a = resolveExpenseAmounts(row);
       docsCostNet += a.amountNet;
       docsCostGross += a.amountGross;
     }
