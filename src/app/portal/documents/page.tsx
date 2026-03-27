@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -94,6 +94,17 @@ import {
   urgencyLabel,
 } from "@/lib/company-document-payment";
 import { cn } from "@/lib/utils";
+import {
+  LIGHT_FORM_CONTROL_CLASS,
+  LIGHT_SELECT_CONTENT_CLASS,
+  LIGHT_SELECT_TRIGGER_CLASS,
+} from "@/lib/light-form-control-classes";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { logActivitySafe } from "@/lib/activity-log";
 import {
   calculateVatAmountsFromNet,
@@ -1250,11 +1261,14 @@ export default function DocumentsPage() {
   }
 
   return (
-    <div className="space-y-6 sm:space-y-8">
-      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+    <TooltipProvider delayDuration={250}>
+    <div className="mx-auto w-full max-w-6xl space-y-4 sm:space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
-          <h1 className="portal-page-title text-2xl sm:text-3xl">Firemní doklady</h1>
-          <p className="portal-page-description">
+          <h1 className="text-2xl font-semibold tracking-tight text-gray-950 sm:text-3xl dark:text-gray-50">
+            Firemní doklady
+          </h1>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-gray-900 dark:text-gray-200 sm:text-[15px]">
             Přehled finančních dokladů (s částkou větší než 0). Fotodokumentace bez částky najdete u
             zakázky v médiích; při nahrání odsud bez částky se soubor uloží jen k zakázce, ne do tohoto
             seznamu.
@@ -1263,19 +1277,21 @@ export default function DocumentsPage() {
         <div className="flex flex-wrap gap-2">
           <Dialog open={isAddDocOpen} onOpenChange={setIsAddDocOpen}>
             <DialogTrigger asChild>
-              <Button className="gap-2 min-h-[44px] w-full sm:w-auto">
-                <Plus className="w-4 h-4 shrink-0" /> Přidat doklad
+              <Button className="h-10 gap-2 px-4 text-sm sm:min-h-0">
+                <Plus className="h-4 w-4 shrink-0" /> Přidat doklad
               </Button>
             </DialogTrigger>
-            <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-xl w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Nový obchodní doklad</DialogTitle>
-                <DialogDescription>
+            <DialogContent className="max-h-[90vh] w-[min(100%,28rem)] max-w-[28rem] overflow-y-auto border border-gray-200 bg-white p-0 text-gray-950 shadow-lg sm:rounded-xl">
+              <DialogHeader className="space-y-1 border-b border-gray-100 px-4 pb-3 pt-4 sm:px-5">
+                <DialogTitle className="text-lg font-semibold text-gray-950">
+                  Nový obchodní doklad
+                </DialogTitle>
+                <DialogDescription className="text-sm text-gray-800">
                   Zadejte údaje z faktury nebo účtenky pro evidenci.
                 </DialogDescription>
               </DialogHeader>
-              <form onSubmit={handleAddDocument} className="space-y-4 py-4">
-                <div className="grid grid-cols-2 gap-4">
+              <form onSubmit={handleAddDocument} className="space-y-3 px-4 py-3 sm:px-5">
+                <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-2 col-span-2">
                     <Label htmlFor="attachment">Soubor / fotka / PDF</Label>
                     <Input
