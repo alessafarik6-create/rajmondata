@@ -59,7 +59,7 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
   }, [rawDocs, todayIso]);
 
   const markPaid = async (id: string) => {
-    if (!firestore || !user?.uid) return;
+    if (!firestore || !user?.uid || !String(id ?? "").trim()) return;
     await updateDoc(doc(firestore, "companies", companyId, "documents", id), {
       paid: true,
       paidAt: serverTimestamp(),
@@ -112,7 +112,7 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
       <CardContent className="pt-0">
         <div className="max-h-[min(55vh,420px)] overflow-y-auto rounded-md border border-gray-200">
           <ul className="divide-y divide-gray-200">
-            {rows.map((row) => {
+            {rows.map((row, index) => {
               const u = getDocumentPaymentUrgency(row, todayIso);
               const gross = documentGrossForPayment(row);
               const subtitle =
@@ -124,7 +124,7 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
               const due = String(row.dueDate ?? "").trim();
               return (
                 <li
-                  key={row.id}
+                  key={row.id ?? `pay-${index}`}
                   className={cn(
                     "px-3 py-2.5 text-sm",
                     u === "overdue" && "bg-red-50",
@@ -135,7 +135,7 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
                   <div className="flex flex-col gap-1.5 sm:flex-row sm:items-start sm:justify-between sm:gap-2">
                     <div className="min-w-0 flex-1">
                       <p className="font-medium leading-snug text-gray-900 line-clamp-2">
-                        {docDisplayTitle(row as Parameters<typeof docDisplayTitle>[0])}
+                        {documentDisplayTitleForPayment(row)}
                       </p>
                       {subtitle ? (
                         <p className="text-xs text-gray-600 line-clamp-1">{subtitle}</p>
@@ -185,7 +185,7 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
                         type="button"
                         size="sm"
                         className="h-8 bg-emerald-700 text-xs text-white hover:bg-emerald-800"
-                        onClick={() => void markPaid(row.id)}
+                        onClick={() => void markPaid(row.id ?? "")}
                       >
                         Zaplaceno
                       </Button>

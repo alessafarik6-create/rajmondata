@@ -108,8 +108,10 @@ export function shouldLinkCompanyDocumentToJobExpense(
   if (row.assignmentType !== "job_cost") return false;
   if (!jobIdFromCompanyDocument(row)) return false;
   if (!isFinancialCompanyDocument(row)) return false;
+  const castkaNum = Number(row.castka ?? 0);
   const { amountGross } = companyDocumentExpenseAmounts(row);
-  return amountGross > 0;
+  /** Požadavek: zakázka + částka (preferovaně castka / výsledná částka s DPH). */
+  return castkaNum > 0 || amountGross > 0;
 }
 
 export type CompanyDocumentExpenseReconcileBefore = DocAmountInput & {

@@ -636,6 +636,7 @@ export default function DocumentsPage() {
         description: formData.description.trim(),
         date: formData.date,
         type: newDocType,
+        documentKind: newDocType === "received" ? "prijate" : "vydane",
         amount: amountNet,
         amountNet,
         castka: amountGross,
@@ -727,7 +728,7 @@ export default function DocumentsPage() {
           vat: vatRate,
           sDPH: true,
           type: newDocType,
-          documentKind: newDocType === "received" ? "prijate" : undefined,
+          documentKind: newDocType === "received" ? "prijate" : "vydane",
           source: undefined,
           sourceType: undefined,
           fileUrl: uploadMeta?.fileUrl ?? null,
@@ -1786,7 +1787,6 @@ export default function DocumentsPage() {
                 </div>
               ) : editRow &&
                 editForm.requiresPayment &&
-                editRow.paid !== true &&
                 docDisplayAmounts(editRow).amountGross > 0 ? (
                 <Button
                   type="button"
@@ -2451,6 +2451,9 @@ function DocumentTableIssued({
   onAssign,
   search,
   onSearchChange,
+  todayIso: _todayIso,
+  onMarkPaid: _onMarkPaid,
+  onMarkUnpaid: _onMarkUnpaid,
 }: {
   data: CompanyDocumentRow[];
   isLoading: boolean;
@@ -2459,6 +2462,10 @@ function DocumentTableIssued({
   onAssign: (row: CompanyDocumentRow) => void;
   search: string;
   onSearchChange: (v: string) => void;
+  /** Volitelné — rozšíření pro úhrady (vydané tabulce stačí signatura API). */
+  todayIso?: string;
+  onMarkPaid?: (row: CompanyDocumentRow) => void | Promise<void>;
+  onMarkUnpaid?: (row: CompanyDocumentRow) => void | Promise<void>;
 }) {
   return (
     <Card className="overflow-hidden min-w-0">

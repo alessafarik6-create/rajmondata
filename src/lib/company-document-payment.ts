@@ -19,6 +19,13 @@ export type PaymentUrgency =
 
 export type CompanyDocumentPaymentRow = CompanyDocumentLike & {
   id?: string;
+  nazev?: string;
+  entityName?: string;
+  number?: string;
+  fileName?: string;
+  note?: string | null;
+  poznamka?: string | null;
+  description?: string | null;
   requiresPayment?: boolean;
   dueDate?: string | null;
   paid?: boolean;
@@ -52,13 +59,12 @@ export function documentDisplayTitleForPayment(
   row: CompanyDocumentPaymentRow
 ): string {
   const n =
-    (row as { nazev?: string }).nazev?.trim() ||
+    row.nazev?.trim() ||
     row.entityName?.trim() ||
-    (row as { number?: string }).number?.trim() ||
-    (row as { fileName?: string }).fileName?.trim() ||
+    row.number?.trim() ||
+    row.fileName?.trim() ||
     "";
-  const id = (row as { id?: string }).id ?? "";
-  return n || id;
+  return n || row.id || "";
 }
 
 export function documentGrossForPayment(row: CompanyDocumentPaymentRow): number {
