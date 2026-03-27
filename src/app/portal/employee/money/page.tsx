@@ -47,6 +47,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { JOB_TERMINAL_AUTO_APPROVAL_SOURCE } from "@/lib/job-terminal-auto-shared";
+import Link from "next/link";
 
 const MONEY_FETCH_LIMIT = 3000;
 
@@ -660,10 +661,18 @@ export default function EmployeeMoneyPage() {
             </p>
           </div>
           <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
-            <p className="text-sm font-semibold text-rose-900">Celkový dluh</p>
+            <p className="text-sm font-semibold text-rose-900">Dluhy (souhrn)</p>
             <p className="mt-1 text-xl font-bold text-black">{formatKc(debtTotal)}</p>
             <p className="text-xs text-rose-900">
               Splaceno {formatKc(debtRepaid)} · zbývá {formatKc(debtRemaining)}
+            </p>
+            <p className="mt-3 text-xs text-rose-950">
+              <Link
+                href="/portal/employee/profile#employee-debts"
+                className="font-medium underline underline-offset-2 hover:text-rose-900"
+              >
+                Jednotlivé dluhy, poznámky a splátky — zobrazit na profilu
+              </Link>
             </p>
           </div>
         </CardContent>

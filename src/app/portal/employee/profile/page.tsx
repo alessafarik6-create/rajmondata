@@ -27,6 +27,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Upload, Trash2, AlertCircle, KeyRound, Briefcase } from "lucide-react";
 import Link from "next/link";
+import { EmployeeDebtsReadonlySection } from "@/components/portal/employee-debts-readonly";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const DEBUG = process.env.NODE_ENV === "development";
@@ -438,7 +439,7 @@ export default function EmployeeProfilePage() {
   }
 
   return (
-    <div className="space-y-6 max-w-2xl">
+    <div className="mx-auto max-w-4xl space-y-6">
       <div>
         <h1 className="portal-page-title text-2xl sm:text-3xl">{t("profile")}</h1>
         <p className="portal-page-description">
@@ -572,6 +573,10 @@ export default function EmployeeProfilePage() {
           </p>
         </CardContent>
       </Card>
+
+      {companyId && employeeId ? (
+        <EmployeeDebtsReadonlySection companyId={companyId} employeeId={employeeId} />
+      ) : null}
 
       <Card className="bg-white border-slate-200 shadow-sm">
         <CardHeader>

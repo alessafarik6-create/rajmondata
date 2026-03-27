@@ -113,6 +113,25 @@ import {
 
 const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
 
+function debtCreatedSortMs(d: { createdAt?: unknown; date: string }): number {
+  const v = d.createdAt;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v.getTime();
+  if (v && typeof (v as { toDate?: () => Date }).toDate === "function") {
+    try {
+      const t = (v as { toDate: () => Date }).toDate();
+      if (t instanceof Date && !Number.isNaN(t.getTime())) return t.getTime();
+    } catch {
+      /* ignore */
+    }
+  }
+  const ds = String(d.date ?? "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) {
+    const [y, m, day] = ds.split("-").map(Number);
+    return new Date(y, m - 1, day, 12, 0, 0, 0).getTime();
+  }
+  return 0;
+}
+
 function attendanceRowDateIso(r: AttendanceRow): string {
   const raw = r.date;
   if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim().slice(0, 10))) {
@@ -148,6 +167,7 @@ type EmployeeDebtDoc = {
   reason: EmployeeDebtReason;
   status: EmployeeDebtStatus;
   createdBy?: string;
+  createdAt?: unknown;
 };
 
 type EmployeeDebtPaymentDoc = {
@@ -991,8 +1011,14 @@ function PayrollAdminPageInner() {
           return "paid" as const;
         })(),
         createdBy: d?.createdBy != null ? String(d.createdBy) : undefined,
+        createdAt: d?.createdAt,
       }))
-      .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+      .sort((a, b) => {
+        const ma = debtCreatedSortMs(a);
+        const mb = debtCreatedSortMs(b);
+        if (mb !== ma) return mb - ma;
+        return String(b.date).localeCompare(String(a.date));
+      });
   }, [debtsRaw]);
   const debtPayments = useMemo((): EmployeeDebtPaymentDoc[] => {
     const raw = Array.isArray(debtPaymentsRaw) ? debtPaymentsRaw : [];
