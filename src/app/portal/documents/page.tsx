@@ -27,6 +27,8 @@ import {
   Briefcase,
   ImageIcon,
   ExternalLink,
+  Pencil,
+  Link2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -45,6 +47,8 @@ import {
   writeBatch,
   getDoc,
   updateDoc,
+  type DocumentData,
+  type UpdateData,
 } from "firebase/firestore";
 import {
   deleteObject,
@@ -76,8 +80,8 @@ import { logActivitySafe } from "@/lib/activity-log";
 import {
   calculateVatAmountsFromNet,
   normalizeVatRate,
-  resolveExpenseAmounts,
   VAT_RATE_OPTIONS,
+  roundMoney2,
 } from "@/lib/vat-calculations";
 import {
   Select,
@@ -86,6 +90,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type CompanyDocumentRow = {
   id: string;
@@ -99,17 +115,26 @@ type CompanyDocumentRow = {
   folderId?: string;
   jobId?: string;
   jobName?: string | null;
+  /** Alias k jobId pro přiřazení k zakázce. */
+  zakazkaId?: string;
   number?: string;
   entityName?: string;
+  /** Zobrazovaný název dokladu (preferováno před entityName). */
+  nazev?: string;
   amount?: number;
   amountNet?: number;
   amountGross?: number;
   vatAmount?: number;
   vatRate?: number;
   vat?: number;
+  /** Uložená částka podle režimu DPH (kompatibilní s novým modelem). */
+  castka?: number;
+  sDPH?: boolean;
+  dphSazba?: number;
   date?: string;
   description?: string;
   note?: string | null;
+  poznamka?: string | null;
   fileUrl?: string | null;
   fileType?: string | null;
   mimeType?: string | null;
@@ -122,6 +147,84 @@ type CompanyDocumentRow = {
 };
 
 type AssignmentType = "job_cost" | "overhead" | "pending_assignment";
+
+function inferSDPH(row: CompanyDocumentRow): boolean {
+  if (typeof row.sDPH === "boolean") return row.sDPH;
+  const va = Number(row.vatAmount ?? 0);
+  const vr = Number(row.dphSazba ?? row.vatRate ?? row.vat ?? 0);
+  return va > 0 || vr > 0;
+}
+
+function docDisplayTitle(row: CompanyDocumentRow): string {
+  const n =
+    row.nazev?.trim() ||
+    row.entityName?.trim() ||
+    row.number?.trim() ||
+    row.fileName?.trim() ||
+    "";
+  return n || row.id;
+}
+
+function docVatInfoLine(row: CompanyDocumentRow): string {
+  if (!inferSDPH(row)) return "bez DPH";
+  const r = Number(row.dphSazba ?? row.vatRate ?? row.vat ?? 21);
+  const rate = Number.isFinite(r) ? r : 21;
+  return `s DPH ${rate} %`;
+}
+
+/**
+ * Zobrazení částek — respektuje vlastní sazbu DPH (např. 15 %), nejen 0/12/21.
+ */
+function docDisplayAmounts(row: CompanyDocumentRow): {
+  amountNet: number;
+  vatAmount: number;
+  amountGross: number;
+  label: string;
+} {
+  const sDPH = inferSDPH(row);
+  if (!sDPH) {
+    const c = roundMoney2(
+      Number(
+        row.castka ??
+          row.amountNet ??
+          row.amountGross ??
+          row.amount ??
+          0
+      )
+    );
+    return {
+      amountNet: c,
+      vatAmount: 0,
+      amountGross: c,
+      label: "bez DPH",
+    };
+  }
+  const rate = Number(row.dphSazba ?? row.vatRate ?? row.vat ?? 21);
+  let net = roundMoney2(Number(row.amountNet ?? row.amount ?? 0));
+  let gross = roundMoney2(Number(row.amountGross ?? 0));
+  let vat = roundMoney2(Number(row.vatAmount ?? 0));
+  if (gross <= 0 && net > 0 && Number.isFinite(rate)) {
+    vat = roundMoney2((net * rate) / 100);
+    gross = roundMoney2(net + vat);
+  } else if (net <= 0 && gross > 0 && Number.isFinite(rate) && rate > 0) {
+    net = roundMoney2(gross / (1 + rate / 100));
+    vat = roundMoney2(gross - net);
+  } else if (vat <= 0 && net > 0 && gross > 0) {
+    vat = roundMoney2(gross - net);
+  }
+  return {
+    amountNet: net,
+    vatAmount: vat,
+    amountGross: gross,
+    label: `s DPH ${Number.isFinite(rate) ? rate : 21} %`,
+  };
+}
+
+function parseVatPercentInput(raw: string): number {
+  const n = Number(String(raw).replace(",", "."));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.min(100, n);
+}
 
 function isReceivedDoc(d: CompanyDocumentRow) {
   return d.type === "received" || d.documentKind === "prijate";
@@ -219,6 +322,26 @@ export default function DocumentsPage() {
     useState<AssignmentType>("pending_assignment");
   const [assignJobIdNext, setAssignJobIdNext] = useState("");
 
+  const [editOpen, setEditOpen] = useState(false);
+  const [editRow, setEditRow] = useState<CompanyDocumentRow | null>(null);
+  const [editForm, setEditForm] = useState({
+    nazev: "",
+    castka: "",
+    sDPH: true,
+    dphSazba: "21",
+    date: "",
+    poznamka: "",
+    zakazkaId: "",
+    /** Když není vybraná zakázka: nezařazeno vs. režie. */
+    noJobMode: "pending" as "pending" | "overhead",
+  });
+  const [isEditSaving, setIsEditSaving] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<CompanyDocumentRow | null>(
+    null
+  );
+  const [isDeleting, setIsDeleting] = useState(false);
+
   const pendingDocs = useMemo(
     () =>
       ((documents ?? []) as CompanyDocumentRow[])
@@ -295,6 +418,8 @@ export default function DocumentsPage() {
         uploadedByName: profileName,
         assignmentType,
         jobId: assignmentType === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
+        zakazkaId:
+          assignmentType === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
         jobName: assignmentType === "job_cost" ? selectedJob?.name ?? null : null,
         fileUrl: uploadMeta?.fileUrl ?? null,
         fileName: uploadMeta?.fileName ?? null,
@@ -383,11 +508,14 @@ export default function DocumentsPage() {
       return;
     }
     const selected = jobs.find((j) => j.id === assignJobIdNext);
+    const jid =
+      assignTypeNext === "job_cost" ? selected?.id ?? assignJobIdNext : null;
     await updateDoc(
       doc(firestore, "companies", companyId, "documents", assigningDocId),
       {
         assignmentType: assignTypeNext,
-        jobId: assignTypeNext === "job_cost" ? selected?.id ?? assignJobIdNext : null,
+        jobId: jid,
+        zakazkaId: jid,
         jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
         updatedAt: serverTimestamp(),
       }
@@ -397,11 +525,136 @@ export default function DocumentsPage() {
     toast({ title: "Zařazení uloženo" });
   };
 
-  const handleDelete = async (row: CompanyDocumentRow) => {
-    const label = row.number || row.id;
-    if (!confirm(`Opravdu chcete odstranit doklad „${label}“?`)) return;
+  const openEditDocument = (row: CompanyDocumentRow) => {
+    const sDPH = inferSDPH(row);
+    const am = docDisplayAmounts(row);
+    const baseAmount = sDPH ? am.amountNet : am.amountGross;
+    const rate = String(
+      row.dphSazba ?? row.vatRate ?? row.vat ?? 21
+    );
+    setEditRow(row);
+    setEditForm({
+      nazev: docDisplayTitle(row),
+      castka: baseAmount > 0 ? String(baseAmount) : "",
+      sDPH,
+      dphSazba: rate,
+      date: row.date ?? new Date().toISOString().split("T")[0],
+      poznamka: String(row.poznamka ?? row.note ?? row.description ?? ""),
+      zakazkaId: row.zakazkaId ?? row.jobId ?? "",
+      noJobMode: row.assignmentType === "overhead" ? "overhead" : "pending",
+    });
+    setEditOpen(true);
+  };
+
+  const saveEditDocument = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!companyId || !editRow || !firestore) return;
+    if (!editForm.nazev.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Chybí název",
+        description: "Vyplňte název dokladu.",
+      });
+      return;
+    }
+    const castkaNum = Number(String(editForm.castka).replace(",", "."));
+    if (!Number.isFinite(castkaNum) || castkaNum <= 0) {
+      toast({
+        variant: "destructive",
+        title: "Neplatná částka",
+        description: "Zadejte částku větší než 0.",
+      });
+      return;
+    }
+    const dphPct = parseVatPercentInput(editForm.dphSazba);
+    setIsEditSaving(true);
+    try {
+      const nazev = editForm.nazev.trim();
+      const poznamka = editForm.poznamka.trim();
+      const zid = editForm.zakazkaId.trim();
+      const selectedJob = jobs.find((j) => j.id === zid);
+
+      const basePayload: Record<string, unknown> = {
+        nazev,
+        entityName: nazev,
+        date: editForm.date,
+        poznamka: poznamka || null,
+        note: poznamka || null,
+        description: poznamka || null,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (editForm.sDPH) {
+        const net = roundMoney2(castkaNum);
+        const vatAmount = roundMoney2((net * dphPct) / 100);
+        const gross = roundMoney2(net + vatAmount);
+        Object.assign(basePayload, {
+          sDPH: true,
+          dphSazba: dphPct,
+          castka: gross,
+          amountNet: net,
+          vatAmount,
+          amountGross: gross,
+          amount: net,
+          vatRate: dphPct,
+          vat: dphPct,
+        });
+      } else {
+        const c = roundMoney2(castkaNum);
+        Object.assign(basePayload, {
+          sDPH: false,
+          dphSazba: null,
+          castka: c,
+          amountNet: c,
+          amountGross: c,
+          vatAmount: 0,
+          vatRate: 0,
+          vat: 0,
+          amount: c,
+        });
+      }
+
+      if (zid) {
+        basePayload.zakazkaId = zid;
+        basePayload.jobId = zid;
+        basePayload.jobName = selectedJob?.name ?? null;
+        basePayload.assignmentType = "job_cost";
+      } else {
+        basePayload.zakazkaId = null;
+        basePayload.jobId = null;
+        basePayload.jobName = null;
+        basePayload.assignmentType = "pending_assignment";
+      }
+
+      await updateDoc(
+        doc(firestore, "companies", companyId, "documents", editRow.id),
+        basePayload as unknown as UpdateData<DocumentData>
+      );
+      toast({ title: "Doklad uložen" });
+      setEditOpen(false);
+      setEditRow(null);
+    } catch {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Nepodařilo se uložit změny dokladu.",
+      });
+    } finally {
+      setIsEditSaving(false);
+    }
+  };
+
+  const requestDeleteDocument = (row: CompanyDocumentRow) => {
+    setDeleteTarget(row);
+    setDeleteOpen(true);
+  };
+
+  const performDeleteDocument = async () => {
+    const row = deleteTarget;
+    if (!row) return;
     if (!companyId) return;
 
+    setIsDeleting(true);
     const isExpenseLinked =
       row.source === JOB_EXPENSE_DOCUMENT_SOURCE ||
       row.sourceType === "expense";
@@ -563,6 +816,10 @@ export default function DocumentsPage() {
       toast({ title: "Doklad odstraněn" });
     } catch {
       toast({ variant: "destructive", title: "Chyba při mazání" });
+    } finally {
+      setIsDeleting(false);
+      setDeleteOpen(false);
+      setDeleteTarget(null);
     }
   };
 
@@ -579,7 +836,7 @@ export default function DocumentsPage() {
     const q = issuedSearch.trim().toLowerCase();
     if (!q) return base;
     return base.filter((d) => {
-      const hay = [d.number, d.entityName, d.description]
+      const hay = [d.number, d.entityName, d.nazev, d.description, d.note, d.poznamka]
         .join(" ")
         .toLowerCase();
       return hay.includes(q);
@@ -834,7 +1091,8 @@ export default function DocumentsPage() {
           <DocumentTableReceived
             data={receivedDocsBase}
             isLoading={isLoading}
-            onDelete={handleDelete}
+            onDelete={requestDeleteDocument}
+            onEdit={openEditDocument}
             onAssign={openAssignDialog}
             search={receivedSearch}
             onSearchChange={setReceivedSearch}
@@ -845,7 +1103,9 @@ export default function DocumentsPage() {
           <DocumentTableIssued
             data={issuedDocs}
             isLoading={isLoading}
-            onDelete={handleDelete}
+            onDelete={requestDeleteDocument}
+            onEdit={openEditDocument}
+            onAssign={openAssignDialog}
             search={issuedSearch}
             onSearchChange={setIssuedSearch}
           />
@@ -903,6 +1163,235 @@ export default function DocumentsPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={editOpen} onOpenChange={setEditOpen}>
+        <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-lg w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Upravit doklad</DialogTitle>
+            <DialogDescription>
+              Upravte název, částku, DPH, datum a přiřazení k zakázce.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={saveEditDocument} className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label htmlFor="edit-nazev">Název</Label>
+              <Input
+                id="edit-nazev"
+                value={editForm.nazev}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, nazev: e.target.value })
+                }
+                className="bg-background"
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-castka">
+                {editForm.sDPH ? "Částka bez DPH (základ)" : "Částka"}
+              </Label>
+              <Input
+                id="edit-castka"
+                type="number"
+                min={0}
+                step="0.01"
+                required
+                value={editForm.castka}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, castka: e.target.value })
+                }
+                className="bg-background"
+              />
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border p-3">
+              <div className="space-y-0.5">
+                <Label htmlFor="edit-sdph" className="text-sm font-medium">
+                  DPH
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Zapnuto: ukládá se základ, DPH a částka s DPH. Vypnuto: jen jedna
+                  částka.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <span className="text-sm text-muted-foreground">bez DPH</span>
+                <Switch
+                  id="edit-sdph"
+                  checked={editForm.sDPH}
+                  onCheckedChange={(v) => setEditForm({ ...editForm, sDPH: v })}
+                />
+                <span className="text-sm font-medium">s DPH</span>
+              </div>
+            </div>
+            {editForm.sDPH ? (
+              <div className="space-y-2">
+                <Label htmlFor="edit-dph">Sazba DPH (%)</Label>
+                <div className="flex flex-wrap gap-1.5">
+                  {[21, 15, 12, 0].map((r) => (
+                    <Button
+                      key={r}
+                      type="button"
+                      size="sm"
+                      variant={
+                        String(editForm.dphSazba) === String(r)
+                          ? "default"
+                          : "outline"
+                      }
+                      className="h-8 text-xs"
+                      onClick={() =>
+                        setEditForm({ ...editForm, dphSazba: String(r) })
+                      }
+                    >
+                      {r} %
+                    </Button>
+                  ))}
+                </div>
+                <Input
+                  id="edit-dph"
+                  type="number"
+                  min={0}
+                  max={100}
+                  step="0.5"
+                  placeholder="Vlastní sazba (např. 10)"
+                  value={editForm.dphSazba}
+                  onChange={(e) =>
+                    setEditForm({ ...editForm, dphSazba: e.target.value })
+                  }
+                  className="bg-background"
+                />
+              </div>
+            ) : null}
+            <div className="space-y-2">
+              <Label htmlFor="edit-date">Datum</Label>
+              <Input
+                id="edit-date"
+                type="date"
+                required
+                value={editForm.date}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, date: e.target.value })
+                }
+                className="bg-background"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="edit-poznamka">Poznámka</Label>
+              <Textarea
+                id="edit-poznamka"
+                rows={3}
+                value={editForm.poznamka}
+                onChange={(e) =>
+                  setEditForm({ ...editForm, poznamka: e.target.value })
+                }
+                className="bg-background resize-y min-h-[80px]"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Zakázka</Label>
+              <Select
+                value={editForm.zakazkaId || "__none__"}
+                onValueChange={(v) =>
+                  setEditForm({
+                    ...editForm,
+                    zakazkaId: v === "__none__" ? "" : v,
+                  })
+                }
+              >
+                <SelectTrigger className="bg-background">
+                  <SelectValue placeholder="Nepřiřazeno" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">— bez zakázky —</SelectItem>
+                  {jobs.map((j) => (
+                    <SelectItem key={j.id} value={j.id}>
+                      {j.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {!editForm.zakazkaId.trim() ? (
+                <div className="space-y-2 rounded-md border border-border p-3">
+                  <Label className="text-xs text-muted-foreground">
+                    Bez zakázky
+                  </Label>
+                  <Select
+                    value={editForm.noJobMode}
+                    onValueChange={(v) =>
+                      setEditForm({
+                        ...editForm,
+                        noJobMode: v as "pending" | "overhead",
+                      })
+                    }
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending">
+                        Musí se zařadit později
+                      </SelectItem>
+                      <SelectItem value="overhead">Režie</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              ) : null}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setEditOpen(false);
+                  setEditRow(null);
+                }}
+              >
+                Zrušit
+              </Button>
+              <Button type="submit" disabled={isEditSaving}>
+                {isEditSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Uložit"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Smazat doklad?</AlertDialogTitle>
+            <AlertDialogDescription className="text-left">
+              Opravdu chceš smazat doklad
+              {deleteTarget ? (
+                <span className="font-medium text-foreground">
+                  {" "}
+                  „{docDisplayTitle(deleteTarget)}“
+                </span>
+              ) : null}
+              ? Tuto akci nelze vrátit zpět.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isDeleting}
+              onClick={(e) => {
+                e.preventDefault();
+                void performDeleteDocument();
+              }}
+            >
+              {isDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Smazat"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -911,6 +1400,7 @@ function DocumentTableReceived({
   data,
   isLoading,
   onDelete,
+  onEdit,
   onAssign,
   search,
   onSearchChange,
@@ -918,6 +1408,7 @@ function DocumentTableReceived({
   data: CompanyDocumentRow[];
   isLoading: boolean;
   onDelete: (row: CompanyDocumentRow) => void;
+  onEdit: (row: CompanyDocumentRow) => void;
   onAssign: (row: CompanyDocumentRow) => void;
   search: string;
   onSearchChange: (v: string) => void;
@@ -964,8 +1455,10 @@ function DocumentTableReceived({
         const hay = [
           d.number,
           d.entityName,
+          d.nazev,
           d.description,
           d.note ?? "",
+          d.poznamka ?? "",
           d.jobName ?? "",
           d.sourceLabel ?? "",
           d.fileName ?? "",
@@ -1082,8 +1575,10 @@ function DocumentTableReceived({
                   const RowIcon =
                     fk === "image" ? ImageIcon : FileText;
 
-                  const amts = resolveExpenseAmounts(row);
+                  const amts = docDisplayAmounts(row);
                   const showAmount = !fromJobMedia && amts.amountNet > 0;
+                  const title = docDisplayTitle(row);
+                  const canEditRow = !fromJobMedia;
 
                   const assignmentBadge =
                     row.assignmentType === "job_cost"
@@ -1116,11 +1611,17 @@ function DocumentTableReceived({
                             />
                             <span
                               className="font-medium truncate text-sm"
-                              title={row.fileName || row.number || row.id}
+                              title={title}
                             >
-                              {row.fileName?.trim() || row.number || row.id}
+                              {title}
                             </span>
                           </div>
+                          {row.fileName?.trim() &&
+                          row.fileName.trim() !== title.trim() ? (
+                            <span className="text-xs text-muted-foreground truncate pl-6">
+                              {row.fileName}
+                            </span>
+                          ) : null}
                           <div className="flex flex-wrap gap-1">
                             <Badge variant="secondary" className="text-[10px] font-normal">
                               Přijaté
@@ -1180,12 +1681,28 @@ function DocumentTableReceived({
                       <TableCell className="align-top text-right tabular-nums text-xs sm:text-sm">
                         {showAmount ? (
                           <div className="space-y-0.5">
+                            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                              {docVatInfoLine(row)}
+                            </div>
                             <div className="text-muted-foreground">
-                              Bez DPH {amts.amountNet.toLocaleString("cs-CZ")} Kč
+                              {inferSDPH(row) ? (
+                                <>
+                                  Základ {amts.amountNet.toLocaleString("cs-CZ")} Kč
+                                </>
+                              ) : (
+                                <>Částka {amts.amountGross.toLocaleString("cs-CZ")} Kč</>
+                              )}
                             </div>
-                            <div className="font-bold text-rose-600 dark:text-rose-400">
-                              S DPH {amts.amountGross.toLocaleString("cs-CZ")} Kč
-                            </div>
+                            {inferSDPH(row) ? (
+                              <>
+                                <div className="text-muted-foreground text-[11px]">
+                                  DPH {amts.vatAmount.toLocaleString("cs-CZ")} Kč
+                                </div>
+                                <div className="font-bold text-rose-600 dark:text-rose-400">
+                                  Celkem {amts.amountGross.toLocaleString("cs-CZ")} Kč
+                                </div>
+                              </>
+                            ) : null}
                           </div>
                         ) : (
                           <span className="text-muted-foreground text-sm">—</span>
@@ -1197,13 +1714,14 @@ function DocumentTableReceived({
                         </p>
                       </TableCell>
                       <TableCell className="pr-6 align-top text-right">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
+                        <div className="flex flex-wrap items-center justify-end gap-1">
                           {row.fileUrl ? (
                             <Button
                               variant="outline"
-                              size="sm"
-                              className="min-h-[40px] shrink-0 gap-1"
+                              size="icon"
+                              className="h-9 w-9 shrink-0"
                               asChild
+                              title="Otevřít přílohu"
                             >
                               <a
                                 href={row.fileUrl}
@@ -1211,41 +1729,53 @@ function DocumentTableReceived({
                                 rel="noopener noreferrer"
                               >
                                 <ExternalLink className="h-4 w-4" />
-                                Otevřít
                               </a>
                             </Button>
                           ) : null}
                           {row.jobId ? (
                             <Button
                               variant="secondary"
-                              size="sm"
-                              className="min-h-[40px] gap-1"
+                              size="icon"
+                              className="h-9 w-9 shrink-0"
                               asChild
+                              title="Otevřít zakázku"
                             >
                               <Link href={`/portal/jobs/${row.jobId}`}>
                                 <Briefcase className="h-4 w-4 shrink-0" />
-                                Zakázka
                               </Link>
                             </Button>
                           ) : null}
-                          {row.assignmentType === "pending_assignment" ? (
+                          {canEditRow ? (
                             <Button
-                              variant="secondary"
-                              size="sm"
-                              className="min-h-[40px] gap-1"
-                              onClick={() => onAssign(row)}
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                              title="Upravit"
+                              onClick={() => onEdit(row)}
                             >
-                              Zařadit
+                              <Pencil className="h-4 w-4" />
                             </Button>
                           ) : null}
                           <Button
+                            type="button"
                             variant="ghost"
-                            size="sm"
-                            className="min-h-[40px] text-muted-foreground hover:text-destructive"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                            title="Přiřadit k zakázce"
+                            onClick={() => onAssign(row)}
+                          >
+                            <Link2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                            title="Smazat"
                             onClick={() => onDelete(row)}
                           >
                             <Trash2 className="h-4 w-4 shrink-0" />
-                            Smazat
                           </Button>
                         </div>
                       </TableCell>
@@ -1273,12 +1803,16 @@ function DocumentTableIssued({
   data,
   isLoading,
   onDelete,
+  onEdit,
+  onAssign,
   search,
   onSearchChange,
 }: {
   data: CompanyDocumentRow[];
   isLoading: boolean;
   onDelete: (row: CompanyDocumentRow) => void;
+  onEdit: (row: CompanyDocumentRow) => void;
+  onAssign: (row: CompanyDocumentRow) => void;
   search: string;
   onSearchChange: (v: string) => void;
 }) {
@@ -1313,49 +1847,111 @@ function DocumentTableIssued({
             <Table>
               <TableHeader>
                 <TableRow className="border-border">
-                  <TableHead className="pl-6">Číslo dokladu</TableHead>
-                  <TableHead>Subjekt</TableHead>
-                  <TableHead>Datum</TableHead>
-                  <TableHead className="text-right">Částka</TableHead>
-                  <TableHead className="pr-6 text-right">Akce</TableHead>
+                  <TableHead className="pl-6 min-w-[140px]">Doklad</TableHead>
+                  <TableHead className="min-w-[120px]">Zakázka</TableHead>
+                  <TableHead className="min-w-[100px]">Datum</TableHead>
+                  <TableHead className="text-right min-w-[140px]">Částka / DPH</TableHead>
+                  <TableHead className="pr-6 text-right min-w-[120px]">Akce</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {data.map((docRow) => {
-                  const issuedAm = resolveExpenseAmounts(docRow);
+                  const issuedAm = docDisplayAmounts(docRow);
+                  const title = docDisplayTitle(docRow);
                   return (
                     <TableRow
                       key={docRow.id}
                       className="border-border hover:bg-muted/30 group"
                     >
                       <TableCell className="pl-6 font-medium">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <FileDown className="w-4 h-4 text-muted-foreground opacity-50 shrink-0" />
-                          <span className="truncate">{docRow.number}</span>
+                        <div className="flex flex-col gap-0.5 min-w-0 max-w-[16rem]">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileDown className="w-4 h-4 text-muted-foreground opacity-50 shrink-0" />
+                            <span className="truncate text-sm" title={title}>
+                              {title}
+                            </span>
+                          </div>
+                          {docRow.number?.trim() && docRow.number !== title ? (
+                            <span className="text-xs text-muted-foreground pl-6 truncate">
+                              {docRow.number}
+                            </span>
+                          ) : null}
                         </div>
                       </TableCell>
-                      <TableCell>{docRow.entityName}</TableCell>
-                      <TableCell>{docRow.date}</TableCell>
+                      <TableCell className="text-sm">
+                        {docRow.jobId || docRow.zakazkaId ? (
+                          <span className="font-medium block truncate max-w-[12rem]">
+                            {docRow.jobName ?? "Zakázka"}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            {docRow.assignmentType === "overhead"
+                              ? "Režie"
+                              : "—"}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className="text-sm whitespace-nowrap">
+                        {docRow.date ?? "—"}
+                      </TableCell>
                       <TableCell className="text-right text-xs tabular-nums text-emerald-600 dark:text-emerald-400">
                         <div className="space-y-0.5">
-                          <div className="text-muted-foreground">
-                            Bez DPH {issuedAm.amountNet.toLocaleString("cs-CZ")} Kč
+                          <div className="text-[10px] uppercase text-muted-foreground">
+                            {docVatInfoLine(docRow)}
                           </div>
-                          <div className="font-bold">
-                            S DPH {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
-                          </div>
+                          {inferSDPH(docRow) ? (
+                            <>
+                              <div className="text-muted-foreground">
+                                Základ {issuedAm.amountNet.toLocaleString("cs-CZ")} Kč
+                              </div>
+                              <div className="text-[11px] text-muted-foreground">
+                                DPH {issuedAm.vatAmount.toLocaleString("cs-CZ")} Kč
+                              </div>
+                              <div className="font-bold">
+                                Celkem {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
+                              </div>
+                            </>
+                          ) : (
+                            <div className="font-bold">
+                              {issuedAm.amountGross.toLocaleString("cs-CZ")} Kč
+                            </div>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="pr-6 text-right">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => onDelete(docRow)}
-                          className="text-muted-foreground hover:text-destructive"
-                          aria-label="Smazat doklad"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
+                        <div className="flex flex-wrap justify-end gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                            title="Upravit"
+                            onClick={() => onEdit(docRow)}
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 text-muted-foreground hover:text-foreground"
+                            title="Přiřadit k zakázce"
+                            onClick={() => onAssign(docRow)}
+                          >
+                            <Link2 className="w-4 h-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => onDelete(docRow)}
+                            className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                            aria-label="Smazat doklad"
+                            title="Smazat"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
