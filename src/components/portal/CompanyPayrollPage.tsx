@@ -20,7 +20,6 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
-  runTransaction,
   serverTimestamp,
   type Firestore,
 } from "firebase/firestore";
@@ -39,6 +38,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Table,
   TableBody,
@@ -88,10 +96,16 @@ import {
   translateToCzech,
   translateToCzechSync,
 } from "@/lib/translate-to-czech";
+import {
+  deleteDebtAndAllPayments,
+  recalculateDebtAfterPaymentsChange,
+} from "@/lib/employee-debt-recalc";
 
 const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
 
 type EmployeeDebtReason = "tool_damage" | "loan" | "deduction" | "other";
+
+type EmployeeDebtStatus = "active" | "paid" | "overpaid";
 
 type EmployeeDebtDoc = {
   id: string;
@@ -102,7 +116,7 @@ type EmployeeDebtDoc = {
   date: string;
   note?: string;
   reason: EmployeeDebtReason;
-  status: "active" | "paid";
+  status: EmployeeDebtStatus;
   createdBy?: string;
 };
 
@@ -817,7 +831,14 @@ function PayrollAdminPageInner() {
         reason: (["tool_damage", "loan", "deduction", "other"].includes(String(d?.reason))
           ? String(d?.reason)
           : "other") as EmployeeDebtReason,
-        status: (Number(d?.remainingAmount) > 0 ? "active" : "paid") as "active" | "paid",
+        status: (() => {
+          const rem = Number(d?.remainingAmount) || 0;
+          if (rem < 0) return "overpaid" as const;
+          if (rem > 0) return "active" as const;
+          const st = String(d?.status ?? "");
+          if (st === "overpaid") return "overpaid" as const;
+          return "paid" as const;
+        })(),
         createdBy: d?.createdBy != null ? String(d.createdBy) : undefined,
       }))
       .sort((a, b) => String(b.date).localeCompare(String(a.date)));
@@ -847,6 +868,24 @@ function PayrollAdminPageInner() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [paymentNote, setPaymentNote] = useState("");
+  const [editingPayment, setEditingPayment] = useState<EmployeeDebtPaymentDoc | null>(null);
+  const [savingPayment, setSavingPayment] = useState(false);
+
+  const [debtEditOpen, setDebtEditOpen] = useState(false);
+  const [editingDebt, setEditingDebt] = useState<EmployeeDebtDoc | null>(null);
+  const [editDebtAmount, setEditDebtAmount] = useState("");
+  const [editDebtDate, setEditDebtDate] = useState("");
+  const [editDebtReason, setEditDebtReason] = useState<EmployeeDebtReason>("other");
+  const [editDebtNote, setEditDebtNote] = useState("");
+  const [savingDebtEdit, setSavingDebtEdit] = useState(false);
+
+  const [debtDeleteOpen, setDebtDeleteOpen] = useState(false);
+  const [debtToDelete, setDebtToDelete] = useState<EmployeeDebtDoc | null>(null);
+  const [deletingDebt, setDeletingDebt] = useState(false);
+
+  const [paymentDeleteOpen, setPaymentDeleteOpen] = useState(false);
+  const [paymentToDelete, setPaymentToDelete] = useState<EmployeeDebtPaymentDoc | null>(null);
+  const [deletingPayment, setDeletingPayment] = useState(false);
   const addDebt = async () => {
     if (!firestore || !companyId || !selectedEmployeeId || !user || selectedEmployeeId === "all") return;
     const amount = Number(String(newDebtAmount).replace(",", "."));
@@ -867,6 +906,7 @@ function PayrollAdminPageInner() {
         status: "active",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
         createdBy: user.uid,
       });
       toast({ title: "Dluh byl přidán" });
@@ -881,11 +921,23 @@ function PayrollAdminPageInner() {
     }
   };
   const openDebtPayment = (debtId: string) => {
+    setEditingPayment(null);
     setPaymentDebtId(debtId);
     setPaymentAmount("");
     setPaymentNote("");
+    setPaymentDate(new Date().toISOString().split("T")[0]);
     setPaymentOpen(true);
   };
+
+  const openPaymentEdit = (p: EmployeeDebtPaymentDoc) => {
+    setEditingPayment(p);
+    setPaymentDebtId(p.debtId);
+    setPaymentAmount(String(p.amount));
+    setPaymentDate(p.date || new Date().toISOString().split("T")[0]);
+    setPaymentNote(p.note || "");
+    setPaymentOpen(true);
+  };
+
   const saveDebtPayment = async () => {
     if (!firestore || !companyId || !selectedEmployeeId || !user || !paymentDebtId) return;
     const amount = Number(String(paymentAmount).replace(",", "."));
@@ -893,20 +945,22 @@ function PayrollAdminPageInner() {
       toast({ variant: "destructive", title: "Neplatná částka splátky" });
       return;
     }
+    setSavingPayment(true);
     try {
-      await runTransaction(firestore, async (tx) => {
-        const debtRef = doc(firestore, "companies", companyId, "employee_debts", paymentDebtId);
-        const debtSnap = await tx.get(debtRef);
-        if (!debtSnap.exists()) throw new Error("Dluh nebyl nalezen.");
-        const curr = Number(debtSnap.data().remainingAmount) || 0;
-        const next = Math.max(0, Math.round((curr - amount) * 100) / 100);
-        tx.update(debtRef, {
-          remainingAmount: next,
-          status: next > 0 ? "active" : "paid",
-          updatedAt: serverTimestamp(),
-        });
-        const payRef = doc(collection(firestore, "companies", companyId, "employee_debt_payments"));
-        tx.set(payRef, {
+      if (editingPayment?.id) {
+        await updateDoc(
+          doc(firestore, "companies", companyId, "employee_debt_payments", editingPayment.id),
+          {
+            amount,
+            date: paymentDate,
+            note: paymentNote.trim() || "",
+            updatedAt: serverTimestamp(),
+            updatedBy: user.uid,
+          }
+        );
+        toast({ title: "Splátka byla uložena" });
+      } else {
+        await addDoc(collection(firestore, "companies", companyId, "employee_debt_payments"), {
           companyId,
           employeeId: selectedEmployeeId,
           debtId: paymentDebtId,
@@ -914,15 +968,99 @@ function PayrollAdminPageInner() {
           date: paymentDate,
           note: paymentNote.trim() || "",
           createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
           createdBy: user.uid,
+          updatedBy: user.uid,
         });
-      });
-      toast({ title: "Splátka byla přidána" });
+        toast({ title: "Splátka byla přidána" });
+      }
+      await recalculateDebtAfterPaymentsChange(firestore, companyId, paymentDebtId, user.uid);
       setPaymentOpen(false);
       setPaymentDebtId("");
+      setEditingPayment(null);
     } catch (e) {
       console.error(e);
       toast({ variant: "destructive", title: "Uložení splátky selhalo" });
+    } finally {
+      setSavingPayment(false);
+    }
+  };
+
+  const confirmDeletePayment = async () => {
+    if (!firestore || !companyId || !user || !paymentToDelete?.id || !paymentToDelete.debtId) return;
+    setDeletingPayment(true);
+    try {
+      await deleteDoc(
+        doc(firestore, "companies", companyId, "employee_debt_payments", paymentToDelete.id)
+      );
+      await recalculateDebtAfterPaymentsChange(
+        firestore,
+        companyId,
+        paymentToDelete.debtId,
+        user.uid
+      );
+      toast({ title: "Splátka byla smazána" });
+      setPaymentDeleteOpen(false);
+      setPaymentToDelete(null);
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Smazání splátky selhalo" });
+    } finally {
+      setDeletingPayment(false);
+    }
+  };
+
+  const openDebtEdit = (d: EmployeeDebtDoc) => {
+    setEditingDebt(d);
+    setEditDebtAmount(String(d.amount));
+    setEditDebtDate(d.date || new Date().toISOString().split("T")[0]);
+    setEditDebtReason(d.reason);
+    setEditDebtNote(d.note || "");
+    setDebtEditOpen(true);
+  };
+
+  const saveDebtEdit = async () => {
+    if (!firestore || !companyId || !user || !editingDebt?.id) return;
+    const amount = Number(String(editDebtAmount).replace(",", "."));
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast({ variant: "destructive", title: "Neplatná částka dluhu" });
+      return;
+    }
+    setSavingDebtEdit(true);
+    try {
+      await updateDoc(doc(firestore, "companies", companyId, "employee_debts", editingDebt.id), {
+        amount,
+        date: editDebtDate,
+        reason: editDebtReason,
+        note: editDebtNote.trim() || "",
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+      });
+      await recalculateDebtAfterPaymentsChange(firestore, companyId, editingDebt.id, user.uid);
+      toast({ title: "Dluh byl uložen" });
+      setDebtEditOpen(false);
+      setEditingDebt(null);
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Uložení dluhu selhalo" });
+    } finally {
+      setSavingDebtEdit(false);
+    }
+  };
+
+  const confirmDeleteDebt = async () => {
+    if (!firestore || !companyId || !debtToDelete?.id) return;
+    setDeletingDebt(true);
+    try {
+      await deleteDebtAndAllPayments(firestore, companyId, debtToDelete.id);
+      toast({ title: "Dluh a navázané splátky byly smazány" });
+      setDebtDeleteOpen(false);
+      setDebtToDelete(null);
+    } catch (e) {
+      console.error(e);
+      toast({ variant: "destructive", title: "Smazání dluhu selhalo" });
+    } finally {
+      setDeletingDebt(false);
     }
   };
   const debtTotals = useMemo(() => {
@@ -1756,27 +1894,79 @@ function PayrollAdminPageInner() {
                 {debts.length === 0 ? <p className="text-sm text-neutral-700">Žádné dluhy.</p> : debts.map((d) => {
                   const payments = debtPayments.filter((p) => p.debtId === d.id);
                   const repaid = Math.max(0, Math.round((d.amount - d.remainingAmount) * 100) / 100);
+                  const reasonLabel =
+                    d.reason === "tool_damage"
+                      ? "Poškození nářadí"
+                      : d.reason === "loan"
+                        ? "Půjčka"
+                        : d.reason === "deduction"
+                          ? "Srážka"
+                          : "Jiný důvod";
+                  const statusBadge =
+                    d.status === "overpaid" ? (
+                      <Badge className="bg-violet-600 text-white hover:bg-violet-600">Přeplaceno</Badge>
+                    ) : d.status === "active" ? (
+                      <Badge className="bg-amber-600 text-white hover:bg-amber-600">Aktivní</Badge>
+                    ) : (
+                      <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Splaceno</Badge>
+                    );
                   return (
                     <div key={d.id} className="rounded-lg border border-slate-200 p-3">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <div>
-                          <p className="font-semibold text-black">{formatKc(d.amount)} · {d.date}</p>
-                          <p className="text-xs text-neutral-700">{d.note || "Bez poznámky"}</p>
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div className="min-w-0 space-y-1">
+                          <p className="font-semibold text-black">
+                            Částka dluhu: {formatKc(d.amount)} · {d.date}
+                          </p>
+                          <p className="text-xs text-neutral-700">
+                            Důvod: {reasonLabel}
+                            {d.note ? ` · ${d.note}` : ""}
+                          </p>
+                          <p className="text-xs text-neutral-800">
+                            Splaceno: {formatKc(repaid)} ·{" "}
+                            {d.remainingAmount < 0 ? (
+                              <>
+                                Přeplaceno o {formatKc(Math.abs(d.remainingAmount))}
+                              </>
+                            ) : (
+                              <>Zbývá: {formatKc(d.remainingAmount)}</>
+                            )}
+                          </p>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <Badge className={d.remainingAmount > 0 ? "bg-amber-600 text-white hover:bg-amber-600" : "bg-emerald-600 text-white hover:bg-emerald-600"}>
-                            {d.remainingAmount > 0 ? "Aktivní" : "Splaceno"}
-                          </Badge>
-                          {d.remainingAmount > 0 ? (
-                            <Button type="button" size="sm" onClick={() => openDebtPayment(d.id)}>Přidat splátku</Button>
-                          ) : null}
+                        <div className="flex shrink-0 flex-wrap items-center gap-1">
+                          {statusBadge}
+                          <Button type="button" size="icon" variant="ghost" className="h-9 w-9 text-black" aria-label="Upravit dluh" onClick={() => openDebtEdit(d)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-9 w-9 text-destructive"
+                            aria-label="Smazat dluh"
+                            onClick={() => {
+                              setDebtToDelete(d);
+                              setDebtDeleteOpen(true);
+                            }}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                          <Button type="button" size="sm" onClick={() => openDebtPayment(d.id)}>
+                            Přidat splátku
+                          </Button>
                         </div>
                       </div>
-                      <div className="mt-2 text-xs text-neutral-700">Splaceno: {formatKc(repaid)} · Zbývá: {formatKc(d.remainingAmount)}</div>
                       {payments.length > 0 ? (
                         <div className="mt-2 rounded border border-slate-200">
                           <Table>
-                            <TableHeader><TableRow><TableHead>Datum</TableHead><TableHead>Částka</TableHead><TableHead>Poznámka</TableHead><TableHead>Zapsal</TableHead></TableRow></TableHeader>
+                            <TableHeader>
+                              <TableRow>
+                                <TableHead>Datum</TableHead>
+                                <TableHead>Částka</TableHead>
+                                <TableHead>Poznámka</TableHead>
+                                <TableHead>Zapsal</TableHead>
+                                <TableHead className="w-[100px] text-right">Akce</TableHead>
+                              </TableRow>
+                            </TableHeader>
                             <TableBody>
                               {payments.map((p) => (
                                 <TableRow key={p.id}>
@@ -1784,6 +1974,33 @@ function PayrollAdminPageInner() {
                                   <TableCell>{formatKc(p.amount)}</TableCell>
                                   <TableCell>{p.note || "—"}</TableCell>
                                   <TableCell>{p.createdBy || "—"}</TableCell>
+                                  <TableCell className="text-right">
+                                    <div className="flex justify-end gap-1">
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8"
+                                        aria-label="Upravit splátku"
+                                        onClick={() => openPaymentEdit(p)}
+                                      >
+                                        <Pencil className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-8 w-8 text-destructive"
+                                        aria-label="Smazat splátku"
+                                        onClick={() => {
+                                          setPaymentToDelete(p);
+                                          setPaymentDeleteOpen(true);
+                                        }}
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </TableCell>
                                 </TableRow>
                               ))}
                             </TableBody>
@@ -1876,10 +2093,18 @@ function PayrollAdminPageInner() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={paymentOpen} onOpenChange={setPaymentOpen}>
+      <Dialog
+        open={paymentOpen}
+        onOpenChange={(o) => {
+          setPaymentOpen(o);
+          if (!o) setEditingPayment(null);
+        }}
+      >
         <DialogContent className="max-h-[90vh] overflow-y-auto border-slate-200 bg-white text-black sm:max-w-md">
           <DialogHeader>
-            <DialogTitle className="text-black">Nová splátka dluhu</DialogTitle>
+            <DialogTitle className="text-black">
+              {editingPayment ? "Upravit splátku" : "Nová splátka dluhu"}
+            </DialogTitle>
           </DialogHeader>
           <div className="grid gap-4 py-2">
             <div className="space-y-2">
@@ -1896,11 +2121,106 @@ function PayrollAdminPageInner() {
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setPaymentOpen(false)}>Zrušit</Button>
-            <Button type="button" onClick={saveDebtPayment}>Uložit splátku</Button>
+            <Button type="button" variant="outline" onClick={() => setPaymentOpen(false)}>
+              Zrušit
+            </Button>
+            <Button type="button" disabled={savingPayment} onClick={() => void saveDebtPayment()}>
+              {savingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={debtEditOpen} onOpenChange={setDebtEditOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto border-slate-200 bg-white text-black sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-black">Upravit dluh</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 py-2">
+            <div className="space-y-2">
+              <Label className="text-black">Částka dluhu (Kč)</Label>
+              <Input value={editDebtAmount} onChange={(e) => setEditDebtAmount(e.target.value)} inputMode="decimal" />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-black">Datum</Label>
+              <Input type="date" value={editDebtDate} onChange={(e) => setEditDebtDate(e.target.value)} />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-black">Důvod</Label>
+              <div className="flex flex-wrap gap-2">
+                {(["tool_damage", "loan", "deduction", "other"] as EmployeeDebtReason[]).map((r) => (
+                  <Button key={r} type="button" size="sm" variant={editDebtReason === r ? "default" : "outline"} onClick={() => setEditDebtReason(r)}>
+                    {r === "tool_damage" ? "Poškození nářadí" : r === "loan" ? "Půjčka" : r === "deduction" ? "Srážka" : "Jiný důvod"}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-black">Poznámka</Label>
+              <Textarea value={editDebtNote} onChange={(e) => setEditDebtNote(e.target.value)} rows={3} />
+            </div>
+            <p className="text-xs text-neutral-600">
+              Po uložení se zůstatek přepočítá ze všech splátek: zbývá = částka dluhu − součet splátek.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDebtEditOpen(false)}>
+              Zrušit
+            </Button>
+            <Button type="button" disabled={savingDebtEdit} onClick={() => void saveDebtEdit()}>
+              {savingDebtEdit ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={debtDeleteOpen} onOpenChange={setDebtDeleteOpen}>
+        <AlertDialogContent className="border-slate-200 bg-white text-black">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Smazat dluh?</AlertDialogTitle>
+            <AlertDialogDescription className="text-neutral-700">
+              {debtToDelete
+                ? `Trvale smažete dluh ${formatKc(debtToDelete.amount)} (${debtToDelete.date}) a všechny navázané splátky. Tuto akci nelze vrátit.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-slate-300">Zrušit</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingDebt}
+              onClick={() => void confirmDeleteDebt()}
+            >
+              {deletingDebt ? <Loader2 className="h-4 w-4 animate-spin" /> : "Smazat"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={paymentDeleteOpen} onOpenChange={setPaymentDeleteOpen}>
+        <AlertDialogContent className="border-slate-200 bg-white text-black">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Smazat splátku?</AlertDialogTitle>
+            <AlertDialogDescription className="text-neutral-700">
+              {paymentToDelete
+                ? `Opravdu smazat splátku ${formatKc(paymentToDelete.amount)} (${paymentToDelete.date})? Zůstatek dluhu se znovu přepočítá.`
+                : ""}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-slate-300">Zrušit</AlertDialogCancel>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deletingPayment}
+              onClick={() => void confirmDeletePayment()}
+            >
+              {deletingPayment ? <Loader2 className="h-4 w-4 animate-spin" /> : "Smazat"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
         <DialogContent className="max-h-[90vh] overflow-y-auto border-slate-200 bg-white text-black sm:max-w-lg">
