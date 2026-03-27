@@ -17,7 +17,6 @@ import {
   Settings,
   CreditCard,
   UserCircle,
-  ReceiptText,
   CreditCard as PaymentIcon,
   BarChart3,
   Tags,
@@ -82,8 +81,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     { label: 'Zakázky', href: '/portal/jobs', icon: Briefcase, roles: ['owner', 'admin', 'manager', 'employee', 'customer'], module: 'jobs' },
     { label: 'Poptávky', href: '/portal/leads', icon: Inbox, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: 'jobs' },
     { label: 'Finance', href: '/portal/finance', icon: Wallet, roles: ['owner', 'admin', 'accountant'], module: 'invoicing' },
-    { label: 'Faktury', href: '/portal/invoices', icon: ReceiptText, roles: ['owner', 'admin', 'accountant', 'customer'], module: 'invoicing' },
-    { label: 'Doklady', href: '/portal/documents', icon: FileText, roles: ['owner', 'admin', 'accountant'], module: 'invoicing' },
+    { label: 'Doklady', href: '/portal/documents', icon: FileText, roles: ['owner', 'admin', 'accountant', 'customer'], module: 'invoicing' },
     { label: 'Report', href: '/portal/report', icon: Activity, roles: ['owner', 'admin'], module: null },
     { label: 'Reporty', href: '/portal/reports', icon: BarChart3, roles: ['owner', 'admin', 'manager', 'accountant'], module: 'attendance_payroll' },
     { label: 'Předplatné', href: '/portal/billing', icon: PaymentIcon, roles: ['owner'], module: null },
@@ -116,6 +114,13 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     if (href === "/portal/dashboard" || href === "/admin/dashboard") return false;
     /** „Zaměstnanci“ jen přesná shoda — podstránky (např. payroll) mají vlastní položku. */
     if (href === "/portal/employees") return false;
+    /** Faktury jsou pod jednotnou sekcí Doklady — zvýraznit i detail / úpravu faktury. */
+    if (href === "/portal/documents") {
+      return (
+        pathname.startsWith("/portal/documents") ||
+        pathname.startsWith("/portal/invoices")
+      );
+    }
     if (href === "/portal/labor/dochazka") {
       return pathname.startsWith("/portal/labor");
     }

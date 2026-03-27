@@ -153,8 +153,8 @@ export default function InvoiceDocumentPage() {
         <AlertTitle>Doklad nelze načíst</AlertTitle>
         <AlertDescription>
           {invoiceError.message || "Zkontrolujte oprávnění nebo síť."}{" "}
-          <Link href="/portal/invoices" className="underline">
-            Zpět na faktury
+          <Link href="/portal/documents?view=issued" className="underline">
+            Zpět na doklady
           </Link>
         </AlertDescription>
       </Alert>
@@ -178,8 +178,8 @@ export default function InvoiceDocumentPage() {
         <AlertTitle>Doklad nebyl nalezen</AlertTitle>
         <AlertDescription>
           Zkontrolujte odkaz nebo oprávnění.{" "}
-          <Link href="/portal/invoices" className="underline">
-            Zpět na faktury
+          <Link href="/portal/documents?view=issued" className="underline">
+            Zpět na doklady
           </Link>
         </AlertDescription>
       </Alert>
@@ -190,7 +190,7 @@ export default function InvoiceDocumentPage() {
     <div className="mx-auto max-w-5xl space-y-4 px-2 pb-10 sm:px-0">
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="icon" asChild>
-          <Link href="/portal/invoices" aria-label="Zpět">
+          <Link href="/portal/documents?view=issued" aria-label="Zpět na doklady">
             <ChevronLeft className="h-6 w-6" />
           </Link>
         </Button>

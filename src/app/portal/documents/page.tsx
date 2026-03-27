@@ -1,7 +1,8 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { Suspense, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -21,6 +22,8 @@ import {
   ExternalLink,
   Pencil,
   Link2,
+  ReceiptText,
+  Printer,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import {
@@ -109,6 +112,8 @@ import {
   grossOriginal,
 } from "@/lib/company-document-czk";
 import { resolveEurCzkRate } from "@/lib/exchange-rate-eur-czk";
+import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
+import { printInvoiceHtmlDocument } from "@/lib/print-html";
 import {
   Select,
   SelectContent,
@@ -222,6 +227,42 @@ function docVatInfoLine(row: CompanyDocumentRow): string {
 function formatDocMoney(n: number, currency: "CZK" | "EUR"): string {
   const s = roundMoney2(n).toLocaleString("cs-CZ");
   return currency === "EUR" ? `${s} €` : `${s} Kč`;
+}
+
+function invoiceDocTypeLabel(inv: Record<string, unknown>): string {
+  const t = String(inv.type ?? "");
+  if (t === JOB_INVOICE_TYPES.ADVANCE) return "Zálohová faktura";
+  if (t === JOB_INVOICE_TYPES.TAX_RECEIPT) return "Daňový doklad (platba)";
+  if (t === JOB_INVOICE_TYPES.FINAL_INVOICE) return "Vyúčtovací faktura";
+  return "Faktura";
+}
+
+function openInvoicePrintFromRow(
+  inv: Record<string, unknown>,
+  toast: (o: {
+    variant?: "destructive";
+    title: string;
+    description: string;
+  }) => void
+) {
+  const html = inv.pdfHtml;
+  if (typeof html !== "string" || !html.trim()) {
+    toast({
+      variant: "destructive",
+      title: "Nelze tisknout",
+      description: "U dokladu není uložený náhled (pdfHtml).",
+    });
+    return;
+  }
+  const title = String(inv.invoiceNumber || inv.documentNumber || "Doklad");
+  const r = printInvoiceHtmlDocument(html, title);
+  if (r === "blocked") {
+    toast({
+      variant: "destructive",
+      title: "Tisk byl zablokován",
+      description: "Povolte vyskakovací okna pro tento web.",
+    });
+  }
 }
 
 /**
@@ -341,10 +382,20 @@ async function deleteJobMediaFilesFromStorage(
 /** Stejný limit jako u nahrávání médií na kartě zakázky. */
 const MAX_JOB_PHOTO_BYTES = 20 * 1024 * 1024;
 
-export default function DocumentsPage() {
+function DocumentsPageContent() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const viewParam = searchParams.get("view");
+  const documentsMainTab =
+    viewParam === "issued" || viewParam === "all" || viewParam === "received"
+      ? viewParam
+      : "received";
+  const setDocumentsMainTab = (v: string) => {
+    router.replace(`/portal/documents?view=${v}`, { scroll: false });
+  };
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -359,6 +410,12 @@ export default function DocumentsPage() {
   }, [firestore, companyId]);
 
   const { data: documents, isLoading } = useCollection(documentsQuery);
+  const invoicesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, "invoices");
+  }, [firestore, companyId]);
+  const { data: invoicesRaw, isLoading: isInvoicesLoading } =
+    useCollection(invoicesQuery);
   const jobsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return collection(firestore, "companies", companyId, "jobs");
@@ -462,8 +519,19 @@ export default function DocumentsPage() {
       totalKc += documentGrossForPayment(d);
       if (getDocumentPaymentUrgency(d, todayIso) === "overdue") overdue += 1;
     }
+    const invList = Array.isArray(invoicesRaw) ? invoicesRaw : [];
+    for (const raw of invList) {
+      const inv = raw as Record<string, unknown>;
+      if (inv.status === "paid") continue;
+      const gross = Number(inv.amountGross ?? inv.totalAmount ?? 0);
+      if (!Number.isFinite(gross) || gross <= 0) continue;
+      toPay += 1;
+      totalKc += roundMoney2(gross);
+      const due = String(inv.dueDate ?? "").trim();
+      if (due && due < todayIso) overdue += 1;
+    }
     return { toPay, overdue, totalKc };
-  }, [financialDocuments, todayIso]);
+  }, [financialDocuments, invoicesRaw, todayIso]);
 
   const markDocumentPaid = async (row: CompanyDocumentRow) => {
     if (!companyId || !firestore || !user) return;
@@ -1413,6 +1481,25 @@ export default function DocumentsPage() {
     });
   }, [financialDocuments, issuedSearch]);
 
+  const issuedInvoicesFiltered = useMemo(() => {
+    const raw = (invoicesRaw ?? []) as Array<
+      Record<string, unknown> & { id: string }
+    >;
+    const q = issuedSearch.trim().toLowerCase();
+    if (!q) return raw;
+    return raw.filter((inv) => {
+      const hay = [
+        inv.invoiceNumber,
+        inv.customerName,
+        inv.documentNumber,
+        String(inv.jobId ?? ""),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [invoicesRaw, issuedSearch]);
+
   if (isProfileLoading) {
     return (
       <div className="flex justify-center p-12">
@@ -1441,12 +1528,17 @@ export default function DocumentsPage() {
             Firemní doklady
           </h1>
           <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-gray-900 dark:text-gray-200 sm:text-[15px]">
-            Přehled finančních dokladů (s částkou větší než 0). Fotodokumentace bez částky najdete u
-            zakázky v médiích; při nahrání odsud bez částky se soubor uloží jen k zakázce, ne do tohoto
-            seznamu.
+            Přehled přijatých i vydaných dokladů a vystavených faktur (jednotná evidence). Zálohové a
+            vyúčtovací faktury ze zakázek jsou ve vydaných dokladech; fotodokumentace bez částky jen u
+            zakázky v médiích.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outlineLight" className="h-10 gap-2" asChild>
+            <Link href="/portal/invoices/new">
+              <ReceiptText className="h-4 w-4 shrink-0" /> Nová faktura
+            </Link>
+          </Button>
           <Dialog open={isAddDocOpen} onOpenChange={setIsAddDocOpen}>
             <DialogTrigger asChild>
               <Button className="h-10 gap-2 px-4 text-sm sm:min-h-0">
@@ -1735,8 +1827,19 @@ export default function DocumentsPage() {
         </Card>
       ) : null}
 
-      <Tabs defaultValue="received" className="w-full min-w-0">
+      <Tabs
+        value={documentsMainTab}
+        onValueChange={setDocumentsMainTab}
+        className="w-full min-w-0"
+      >
         <TabsList className="flex flex-wrap h-auto gap-1 p-1 mb-6">
+          <TabsTrigger
+            value="all"
+            className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"
+          >
+            <FileText className="w-4 h-4 shrink-0 text-slate-600" /> Všechny
+            doklady
+          </TabsTrigger>
           <TabsTrigger
             value="received"
             className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"
@@ -1751,6 +1854,46 @@ export default function DocumentsPage() {
             doklady
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="all" className="space-y-10">
+          <section className="space-y-2">
+            <h2 className="text-base font-semibold text-gray-950">
+              Přijaté doklady
+            </h2>
+            <DocumentTableReceived
+              data={receivedDocsBase}
+              isLoading={isLoading}
+              onDelete={requestDeleteDocument}
+              onEdit={openEditDocument}
+              onAssign={openAssignDialog}
+              search={receivedSearch}
+              onSearchChange={setReceivedSearch}
+              todayIso={todayIso}
+              onMarkPaid={markDocumentPaid}
+              onMarkUnpaid={markDocumentUnpaid}
+            />
+          </section>
+          <section className="space-y-2">
+            <h2 className="text-base font-semibold text-gray-950">
+              Vydané doklady a faktury
+            </h2>
+            <DocumentTableIssued
+              data={issuedDocs}
+              invoices={issuedInvoicesFiltered}
+              isLoadingInvoices={isInvoicesLoading}
+              jobs={jobs}
+              isLoading={isLoading}
+              onDelete={requestDeleteDocument}
+              onEdit={openEditDocument}
+              onAssign={openAssignDialog}
+              search={issuedSearch}
+              onSearchChange={setIssuedSearch}
+              todayIso={todayIso}
+              onMarkPaid={markDocumentPaid}
+              onMarkUnpaid={markDocumentUnpaid}
+            />
+          </section>
+        </TabsContent>
 
         <TabsContent value="received">
           <DocumentTableReceived
@@ -1770,6 +1913,9 @@ export default function DocumentsPage() {
         <TabsContent value="issued">
           <DocumentTableIssued
             data={issuedDocs}
+            invoices={issuedInvoicesFiltered}
+            isLoadingInvoices={isInvoicesLoading}
+            jobs={jobs}
             isLoading={isLoading}
             onDelete={requestDeleteDocument}
             onEdit={openEditDocument}
@@ -2691,6 +2837,9 @@ function DocumentTableReceived({
 
 function DocumentTableIssued({
   data,
+  invoices = [],
+  isLoadingInvoices = false,
+  jobs,
   isLoading,
   onDelete,
   onEdit,
@@ -2702,6 +2851,9 @@ function DocumentTableIssued({
   onMarkUnpaid: _onMarkUnpaid,
 }: {
   data: CompanyDocumentRow[];
+  invoices?: Array<Record<string, unknown> & { id: string }>;
+  isLoadingInvoices?: boolean;
+  jobs: Array<{ id: string; name: string }>;
   isLoading: boolean;
   onDelete: (row: CompanyDocumentRow) => void;
   onEdit: (row: CompanyDocumentRow) => void;
@@ -2713,8 +2865,62 @@ function DocumentTableIssued({
   onMarkPaid?: (row: CompanyDocumentRow) => void | Promise<void>;
   onMarkUnpaid?: (row: CompanyDocumentRow) => void | Promise<void>;
 }) {
+  const { toast } = useToast();
   const issuedRow =
     "grid w-full grid-cols-[88px_minmax(0,1.2fr)_minmax(0,1fr)_72px_minmax(0,1fr)] items-start gap-x-1.5 gap-y-0.5 border-b border-gray-200 px-2 py-1.5 text-[11px] leading-snug sm:text-xs [&>*]:min-w-0";
+
+  const merged = useMemo(() => {
+    type E =
+      | { kind: "doc"; row: CompanyDocumentRow; sortKey: string }
+      | {
+          kind: "inv";
+          inv: Record<string, unknown> & { id: string };
+          sortKey: string;
+        };
+    const out: E[] = [];
+    for (const row of data) {
+      out.push({
+        kind: "doc",
+        row,
+        sortKey: String(row.date ?? ""),
+      });
+    }
+    for (const inv of invoices) {
+      out.push({
+        kind: "inv",
+        inv,
+        sortKey: String(inv.issueDate ?? inv.date ?? ""),
+      });
+    }
+    out.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+    return out;
+  }, [data, invoices]);
+
+  const jobNameForId = (jid: string) =>
+    jobs.find((j) => j.id === jid)?.name ?? null;
+
+  const invoiceStatusBadge = (status: string) => {
+    switch (status) {
+      case "paid":
+        return <Badge className="h-5 bg-emerald-700 px-1.5 text-[10px] text-white">Zaplaceno</Badge>;
+      case "partially_paid":
+        return <Badge variant="secondary" className="h-5 px-1.5 text-[10px]">Částečně</Badge>;
+      case "unpaid":
+        return <Badge variant="outline" className="h-5 px-1.5 text-[10px]">Neuhrazeno</Badge>;
+      case "sent":
+        return <Badge className="h-5 bg-blue-600 px-1.5 text-[10px] text-white">Odesláno</Badge>;
+      case "draft":
+        return <Badge variant="outline" className="h-5 px-1.5 text-[10px]">Koncept</Badge>;
+      default:
+        return (
+          <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+            {status || "—"}
+          </Badge>
+        );
+    }
+  };
+
+  const loading = isLoading || isLoadingInvoices;
 
   return (
     <Card className="min-w-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
@@ -2722,13 +2928,18 @@ function DocumentTableIssued({
         <div className="relative w-full max-w-xs">
           <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-gray-500" />
           <Input
-            placeholder="Hledat ve vydaných…"
+            placeholder="Hledat ve vydaných (doklady i faktury)…"
             className="h-9 border-gray-300 bg-white pl-8 text-sm text-gray-900"
             value={search}
             onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
+          <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs" asChild>
+            <Link href="/portal/invoices/new">
+              <ReceiptText className="h-3.5 w-3.5 shrink-0" /> Nová faktura
+            </Link>
+          </Button>
           <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs">
             <Filter className="h-3.5 w-3.5 shrink-0" /> Filtr
           </Button>
@@ -2738,11 +2949,11 @@ function DocumentTableIssued({
         </div>
       </div>
       <CardContent className="p-0">
-        {isLoading ? (
+        {loading ? (
           <div className="flex justify-center p-8">
             <Loader2 className="h-7 w-7 animate-spin text-primary" />
           </div>
-        ) : data.length > 0 ? (
+        ) : merged.length > 0 ? (
           <div className="w-full overflow-hidden bg-white">
             <div
               className={cn(
@@ -2753,23 +2964,176 @@ function DocumentTableIssued({
               <span>Akce</span>
               <span>Doklad</span>
               <span>Zakázka</span>
-              <span>Datum</span>
+              <span>Datum / splatnost</span>
               <span className="text-right tabular-nums">Částka</span>
             </div>
-            {data.map((docRow) => {
-              const issuedAm = docDisplayAmounts(docRow);
-              const title = docDisplayTitle(docRow);
-              const issuedJobId =
-                (docRow.jobId ?? docRow.zakazkaId)?.trim() || "";
+            {merged.map((entry) => {
               const ib =
                 "h-7 w-7 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950";
+              if (entry.kind === "doc") {
+                const docRow = entry.row;
+                const issuedAm = docDisplayAmounts(docRow);
+                const title = docDisplayTitle(docRow);
+                const issuedJobId =
+                  (docRow.jobId ?? docRow.zakazkaId)?.trim() || "";
+                return (
+                  <div
+                    key={`doc-${docRow.id}`}
+                    className={cn(issuedRow, "text-gray-900 hover:bg-gray-50/80")}
+                  >
+                    <div className="flex flex-wrap gap-0.5">
+                      {issuedJobId ? (
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className={ib}
+                          asChild
+                          title="Zakázka"
+                        >
+                          <Link href={`/portal/jobs/${issuedJobId}`}>
+                            <Briefcase className="h-3.5 w-3.5" />
+                          </Link>
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={ib}
+                        title="Upravit"
+                        onClick={() => onEdit(docRow)}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={ib}
+                        title="Přiřadit k zakázce"
+                        onClick={() => onAssign(docRow)}
+                      >
+                        <Link2 className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => onDelete(docRow)}
+                        className={cn(ib, "hover:text-red-700")}
+                        aria-label="Smazat doklad"
+                        title="Smazat"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                    <div className="min-w-0 font-medium">
+                      <Badge variant="outline" className="mb-0.5 h-5 px-1 text-[9px]">
+                        Vydaný doklad
+                      </Badge>
+                      <div className="flex items-start gap-1">
+                        <FileDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500" />
+                        <span className="line-clamp-2 text-gray-950" title={title}>
+                          {title}
+                        </span>
+                      </div>
+                      {docRow.number?.trim() && docRow.number !== title ? (
+                        <span className="mt-0.5 block pl-4 text-[10px] text-gray-700 line-clamp-1">
+                          {docRow.number}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="min-w-0">
+                      {issuedJobId ? (
+                        <Link
+                          href={`/portal/jobs/${issuedJobId}`}
+                          className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2"
+                          title={docRow.jobName ?? ""}
+                        >
+                          {docRow.jobName ?? "Zakázka"}
+                        </Link>
+                      ) : (
+                        <span className="text-gray-800">
+                          {docRow.assignmentType === "overhead" ? "Režie" : "—"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="space-y-0.5 whitespace-nowrap text-gray-900">
+                      <div>{docRow.date ?? "—"}</div>
+                      {docRow.dueDate ? (
+                        <div className="text-[10px] text-gray-600">
+                          spl. {docRow.dueDate}
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="text-right tabular-nums text-gray-950">
+                      <div className="text-[10px] font-medium uppercase text-gray-700">
+                        {docVatInfoLine(docRow)}
+                      </div>
+                      {inferSDPH(docRow) ? (
+                        <>
+                          <div className="text-gray-800">
+                            Základ{" "}
+                            {formatDocMoney(issuedAm.amountNet, issuedAm.currency)}
+                          </div>
+                          <div className="text-[10px] text-gray-800">
+                            DPH{" "}
+                            {formatDocMoney(issuedAm.vatAmount, issuedAm.currency)}
+                          </div>
+                          <div className="font-semibold text-gray-950">
+                            {formatDocMoney(
+                              issuedAm.amountGross,
+                              issuedAm.currency
+                            )}
+                          </div>
+                          {issuedAm.showCzkHint ? (
+                            <div className="text-[10px] text-gray-600">
+                              (≈{" "}
+                              {issuedAm.amountGrossCZK.toLocaleString("cs-CZ")} Kč)
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <div className="font-semibold text-gray-950">
+                            {formatDocMoney(
+                              issuedAm.amountGross,
+                              issuedAm.currency
+                            )}
+                          </div>
+                          {issuedAm.showCzkHint ? (
+                            <div className="text-[10px] text-gray-600">
+                              (≈{" "}
+                              {issuedAm.amountGrossCZK.toLocaleString("cs-CZ")} Kč)
+                            </div>
+                          ) : null}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+              const inv = entry.inv;
+              const jid = String(inv.jobId ?? "").trim();
+              const gross = roundMoney2(
+                Number(inv.amountGross ?? inv.totalAmount ?? 0)
+              );
+              const net = roundMoney2(Number(inv.amountNet ?? 0));
+              const vat = roundMoney2(Number(inv.vatAmount ?? 0));
+              const invTitle =
+                String(inv.invoiceNumber ?? inv.documentNumber ?? inv.id) ||
+                "Faktura";
+              const cust = String(inv.customerName ?? "").trim() || "—";
               return (
                 <div
-                  key={docRow.id}
-                  className={cn(issuedRow, "text-gray-900 hover:bg-gray-50/80")}
+                  key={`inv-${inv.id}`}
+                  className={cn(
+                    issuedRow,
+                    "border-l-2 border-l-emerald-500/80 text-gray-900 hover:bg-gray-50/80"
+                  )}
                 >
                   <div className="flex flex-wrap gap-0.5">
-                    {issuedJobId ? (
+                    {jid ? (
                       <Button
                         variant="outline"
                         size="icon"
@@ -2777,117 +3141,79 @@ function DocumentTableIssued({
                         asChild
                         title="Zakázka"
                       >
-                        <Link href={`/portal/jobs/${issuedJobId}`}>
+                        <Link href={`/portal/jobs/${jid}`}>
                           <Briefcase className="h-3.5 w-3.5" />
                         </Link>
                       </Button>
                     ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className={ib}
-                      title="Upravit"
-                      onClick={() => onEdit(docRow)}
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
+                    <Button variant="ghost" size="icon" className={ib} asChild title="Detail faktury">
+                      <Link href={`/portal/invoices/${inv.id}`}>
+                        <ReceiptText className="h-3.5 w-3.5" />
+                      </Link>
+                    </Button>
+                    <Button variant="ghost" size="icon" className={ib} asChild title="Upravit">
+                      <Link href={`/portal/invoices/${inv.id}/edit`}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Link>
                     </Button>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon"
                       className={ib}
-                      title="Přiřadit k zakázce"
-                      onClick={() => onAssign(docRow)}
+                      title="Tisk / PDF"
+                      onClick={() => openInvoicePrintFromRow(inv, toast)}
                     >
-                      <Link2 className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => onDelete(docRow)}
-                      className={cn(ib, "hover:text-red-700")}
-                      aria-label="Smazat doklad"
-                      title="Smazat"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
+                      <Printer className="h-3.5 w-3.5" />
                     </Button>
                   </div>
                   <div className="min-w-0 font-medium">
-                    <div className="flex items-start gap-1">
-                      <FileDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500" />
-                      <span className="line-clamp-2 text-gray-950" title={title}>
-                        {title}
-                      </span>
+                    <div className="mb-0.5 flex flex-wrap items-center gap-1">
+                      <Badge className="h-5 bg-emerald-700/90 px-1 text-[9px] text-white">
+                        {invoiceDocTypeLabel(inv)}
+                      </Badge>
+                      {invoiceStatusBadge(String(inv.status ?? ""))}
                     </div>
-                    {docRow.number?.trim() && docRow.number !== title ? (
-                      <span className="mt-0.5 block pl-4 text-[10px] text-gray-700 line-clamp-1">
-                        {docRow.number}
-                      </span>
-                    ) : null}
+                    <span className="line-clamp-2 text-gray-950" title={invTitle}>
+                      {invTitle}
+                    </span>
+                    <span className="mt-0.5 block text-[10px] text-gray-700 line-clamp-2">
+                      {cust}
+                    </span>
                   </div>
                   <div className="min-w-0">
-                    {issuedJobId ? (
+                    {jid ? (
                       <Link
-                        href={`/portal/jobs/${issuedJobId}`}
+                        href={`/portal/jobs/${jid}`}
                         className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2"
-                        title={docRow.jobName ?? ""}
                       >
-                        {docRow.jobName ?? "Zakázka"}
+                        {jobNameForId(jid) ?? "Zakázka"}
                       </Link>
                     ) : (
-                      <span className="text-gray-800">
-                        {docRow.assignmentType === "overhead" ? "Režie" : "—"}
-                      </span>
+                      <span className="text-gray-600">—</span>
                     )}
                   </div>
-                  <div className="whitespace-nowrap text-gray-900">
-                    {docRow.date ?? "—"}
+                  <div className="space-y-0.5 whitespace-nowrap text-gray-900">
+                    <div>{String(inv.issueDate ?? "—")}</div>
+                    {inv.dueDate ? (
+                      <div className="text-[10px] text-amber-800">
+                        spl. {String(inv.dueDate)}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="text-right tabular-nums text-gray-950">
                     <div className="text-[10px] font-medium uppercase text-gray-700">
-                      {docVatInfoLine(docRow)}
+                      s DPH
                     </div>
-                    {inferSDPH(docRow) ? (
-                      <>
-                        <div className="text-gray-800">
-                          Základ{" "}
-                          {formatDocMoney(issuedAm.amountNet, issuedAm.currency)}
-                        </div>
-                        <div className="text-[10px] text-gray-800">
-                          DPH{" "}
-                          {formatDocMoney(issuedAm.vatAmount, issuedAm.currency)}
-                        </div>
-                        <div className="font-semibold text-gray-950">
-                          {formatDocMoney(
-                            issuedAm.amountGross,
-                            issuedAm.currency
-                          )}
-                        </div>
-                        {issuedAm.showCzkHint ? (
-                          <div className="text-[10px] text-gray-600">
-                            (≈{" "}
-                            {issuedAm.amountGrossCZK.toLocaleString("cs-CZ")} Kč)
-                          </div>
-                        ) : null}
-                      </>
-                    ) : (
-                      <>
-                        <div className="font-semibold text-gray-950">
-                          {formatDocMoney(
-                            issuedAm.amountGross,
-                            issuedAm.currency
-                          )}
-                        </div>
-                        {issuedAm.showCzkHint ? (
-                          <div className="text-[10px] text-gray-600">
-                            (≈{" "}
-                            {issuedAm.amountGrossCZK.toLocaleString("cs-CZ")} Kč)
-                          </div>
-                        ) : null}
-                      </>
-                    )}
+                    <div className="text-gray-800">
+                      Základ {net.toLocaleString("cs-CZ")} Kč
+                    </div>
+                    <div className="text-[10px] text-gray-800">
+                      DPH {vat.toLocaleString("cs-CZ")} Kč
+                    </div>
+                    <div className="font-semibold text-gray-950">
+                      {gross.toLocaleString("cs-CZ")} Kč
+                    </div>
                   </div>
                 </div>
               );
@@ -2895,10 +3221,24 @@ function DocumentTableIssued({
           </div>
         ) : (
           <div className="text-center py-20 text-muted-foreground">
-            Zatím nemáte žádné vydané doklady.
+            Zatím nemáte žádné vydané doklady ani faktury.
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+export default function DocumentsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center p-12">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      }
+    >
+      <DocumentsPageContent />
+    </Suspense>
   );
 }

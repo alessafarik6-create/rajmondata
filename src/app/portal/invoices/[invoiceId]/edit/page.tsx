@@ -375,8 +375,8 @@ export default function EditAdvanceInvoicePage() {
       <Alert variant="destructive" className="max-w-xl">
         <AlertTitle>Doklad nebyl nalezen</AlertTitle>
         <AlertDescription>
-          <Link href="/portal/invoices" className="underline">
-            Zpět na faktury
+          <Link href="/portal/documents?view=issued" className="underline">
+            Zpět na doklady
           </Link>
         </AlertDescription>
       </Alert>

@@ -99,7 +99,7 @@ export default function NewInvoicePage() {
       });
 
       toast({ title: "Faktura vytvořena", description: "Faktura byla úspěšně uložena jako koncept." });
-      router.push('/portal/invoices');
+      router.push("/portal/documents?view=issued");
     } catch (error) {
       toast({ variant: "destructive", title: "Chyba při ukládání" });
     } finally {
@@ -129,7 +129,7 @@ export default function NewInvoicePage() {
   return (
     <div className="max-w-4xl mx-auto space-y-8">
       <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => router.push('/portal/invoices')}>
+        <Button variant="ghost" size="icon" onClick={() => router.push("/portal/documents?view=issued")}>
           <ChevronLeft className="w-6 h-6" />
         </Button>
         <h1 className="portal-page-title">Vytvořit novou fakturu</h1>
@@ -234,7 +234,7 @@ export default function NewInvoicePage() {
         </Card>
 
         <div className="flex justify-end gap-4">
-          <Button type="button" variant="outline" onClick={() => router.push('/portal/invoices')}>Zrušit</Button>
+          <Button type="button" variant="outline" onClick={() => router.push("/portal/documents?view=issued")}>Zrušit</Button>
           <Button type="submit" disabled={isSubmitting} className="gap-2 px-8">
             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Save className="w-4 h-4" /> Uložit fakturu</>}
           </Button>

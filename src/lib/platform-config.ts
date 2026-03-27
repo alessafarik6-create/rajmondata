@@ -128,7 +128,7 @@ export function portalPathsForModule(code: PlatformModuleCode): string[] {
     case "attendance_payroll":
       return ["/portal/labor", "/portal/attendance"];
     case "invoicing":
-      return ["/portal/invoices"];
+      return ["/portal/documents", "/portal/invoices", "/portal/finance"];
     case "jobs":
       return ["/portal/jobs", "/portal/leads"];
     case "warehouse":

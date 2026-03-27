@@ -349,7 +349,7 @@ export function JobBillingInvoicesSection({
       });
       toast({
         title: "Zálohová faktura vytvořena",
-        description: "Dokument je v seznamu níže a v sekci Faktury.",
+        description: "Dokument je v seznamu níže a v Dokladech (Vydané doklady).",
       });
       if (pdfHtml) printDocHtml("Zálohová faktura", pdfHtml);
     } catch (e) {
@@ -414,7 +414,7 @@ export function JobBillingInvoicesSection({
       });
       toast({
         title: "Vlastní zálohová faktura vytvořena",
-        description: "Dokument je v seznamu a v sekci Faktury.",
+        description: "Dokument je v seznamu a v Dokladech (Vydané doklady).",
       });
       setManualOpen(false);
       if (pdfHtml) printDocHtml("Zálohová faktura", pdfHtml);
@@ -561,7 +561,7 @@ export function JobBillingInvoicesSection({
       });
       toast({
         title: "Vyúčtovací faktura vytvořena",
-        description: "Dokument je v seznamu a v sekci Faktury.",
+        description: "Dokument je v seznamu a v Dokladech (Vydané doklady).",
       });
       if (pdfHtml) printDocHtml("Vyúčtovací faktura", pdfHtml);
     } catch (e) {
