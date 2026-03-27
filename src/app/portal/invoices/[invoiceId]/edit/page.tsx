@@ -3,13 +3,14 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { doc } from "firebase/firestore";
+import { collection, doc } from "firebase/firestore";
 import {
   useUser,
   useFirestore,
   useDoc,
   useMemoFirebase,
   useCompany,
+  useCollection,
 } from "@/firebase";
 import { Button } from "@/components/ui/button";
 import { Loader2, ChevronLeft, Plus, Trash2 } from "lucide-react";
@@ -30,7 +31,9 @@ import {
   JOB_INVOICE_TYPES,
   updateAdvanceInvoiceItems,
   updateFinalSettlementInvoice,
+  updateTaxReceiptDocument,
   type ManualAdvanceLineInput,
+  type OrgBankAccountRow,
 } from "@/lib/job-billing-invoices";
 import { normalizeVatRate } from "@/lib/vat-calculations";
 import { useToast } from "@/hooks/use-toast";
@@ -88,28 +91,50 @@ export default function EditAdvanceInvoicePage() {
   );
   const { data: customerDoc } = useDoc(customerRef);
 
+  const bankAccountsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "bankAccounts")
+        : null,
+    [firestore, companyId]
+  );
+  const { data: bankAccountsRaw } = useCollection(bankAccountsColRef);
+  const orgBankAccounts = useMemo(
+    () => (Array.isArray(bankAccountsRaw) ? bankAccountsRaw : []) as OrgBankAccountRow[],
+    [bankAccountsRaw]
+  );
+
+  const legacyCompanyBank = useMemo(() => {
+    const c = company as { bankAccountNumber?: string } | null | undefined;
+    return String(c?.bankAccountNumber ?? "").trim() || null;
+  }, [company]);
+
   const [lines, setLines] = useState<ManualAdvanceLineInput[]>([]);
   const [saving, setSaving] = useState(false);
   const [initialized, setInitialized] = useState(false);
   const [totalContractGross, setTotalContractGross] = useState(0);
   const [totalAdvancePaid, setTotalAdvancePaid] = useState(0);
   const [notes, setNotes] = useState("");
+  const [issueDate, setIssueDate] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [taxSupplyDate, setTaxSupplyDate] = useState("");
+  const [variableSymbol, setVariableSymbol] = useState("");
+  const [bankAccountId, setBankAccountId] = useState<string | "">("");
+  const [paymentDate, setPaymentDate] = useState("");
+  const [taxNote, setTaxNote] = useState("");
+  const [supplierIco, setSupplierIco] = useState("");
+  const [supplierDic, setSupplierDic] = useState("");
+  const [customerIco, setCustomerIco] = useState("");
+  const [customerDic, setCustomerDic] = useState("");
+  const [contractNumber, setContractNumber] = useState("");
 
   const jobName = useMemo(() => {
     const j = jobDoc as Record<string, unknown> | null | undefined;
     return String(j?.name ?? j?.title ?? "Zakázka").trim() || "Zakázka";
   }, [jobDoc]);
 
-  const customerName = useMemo(() => {
-    const inv = invoice as Record<string, unknown> | null | undefined;
-    return String(inv?.customerName ?? "").trim() || "Odběratel";
-  }, [invoice]);
-
-  const customerAddressLines = useMemo(() => {
-    const fromCustomer = buildCustomerAddressMultiline(customerDoc);
-    if (fromCustomer.trim()) return fromCustomer;
-    return customerName;
-  }, [customerDoc, customerName]);
+  const [editCustomerName, setEditCustomerName] = useState("");
+  const [editCustomerAddress, setEditCustomerAddress] = useState("");
 
   const supplierName = useMemo(() => {
     return (
@@ -132,6 +157,53 @@ export default function EditAdvanceInvoicePage() {
     if (!invoice || initialized) return;
     const inv = invoice as Record<string, unknown>;
     const t = String(inv.type ?? "");
+
+    const today = new Date().toISOString().slice(0, 10);
+    setIssueDate(
+      typeof inv.issueDate === "string" && inv.issueDate
+        ? inv.issueDate.slice(0, 10)
+        : today
+    );
+    setDueDate(
+      typeof inv.dueDate === "string" && inv.dueDate
+        ? inv.dueDate.slice(0, 10)
+        : typeof inv.issueDate === "string" && inv.issueDate
+          ? inv.issueDate.slice(0, 10)
+          : today
+    );
+    setTaxSupplyDate(
+      typeof inv.taxSupplyDate === "string" && inv.taxSupplyDate
+        ? inv.taxSupplyDate.slice(0, 10)
+        : typeof inv.issueDate === "string" && inv.issueDate
+          ? inv.issueDate.slice(0, 10)
+          : today
+    );
+    setVariableSymbol(String(inv.variableSymbol ?? ""));
+    setBankAccountId(String(inv.bankAccountId ?? ""));
+    setPaymentDate(
+      typeof inv.paymentDate === "string" && inv.paymentDate
+        ? inv.paymentDate.slice(0, 10)
+        : ""
+    );
+    setTaxNote(String(inv.note ?? ""));
+    setContractNumber(String(inv.contractNumber ?? ""));
+    setEditCustomerName(String(inv.customerName ?? "").trim());
+
+    const co = company as { ico?: string; dic?: string } | null | undefined;
+    setSupplierIco(String(inv.supplierIco ?? co?.ico ?? ""));
+    setSupplierDic(String(inv.supplierDic ?? co?.dic ?? ""));
+    setCustomerIco(String(inv.customerIco ?? ""));
+    setCustomerDic(String(inv.customerDic ?? ""));
+
+    const fromCust = buildCustomerAddressMultiline(customerDoc);
+    setEditCustomerAddress(
+      fromCust.trim() || String(inv.customerName ?? "").trim()
+    );
+
+    if (t === JOB_INVOICE_TYPES.TAX_RECEIPT) {
+      setInitialized(true);
+      return;
+    }
     if (t === JOB_INVOICE_TYPES.ADVANCE) {
       setLines(invoiceItemsToManualLines(inv));
       setInitialized(true);
@@ -144,7 +216,7 @@ export default function EditAdvanceInvoicePage() {
       setNotes(String(inv.notes ?? ""));
       setInitialized(true);
     }
-  }, [invoice, initialized]);
+  }, [invoice, initialized, customerDoc, company]);
 
   const addLine = () => {
     setLines((prev) => [
@@ -168,16 +240,43 @@ export default function EditAdvanceInvoicePage() {
       ? String((invoice as { type?: string }).type ?? "")
       : "";
     if (!user || !companyId || !invoiceId) return;
+    const custName = editCustomerName.trim() || "Odběratel";
+    const custAddr = editCustomerAddress.trim() || custName;
     setSaving(true);
     try {
-      if (invType === JOB_INVOICE_TYPES.FINAL_INVOICE) {
+      if (invType === JOB_INVOICE_TYPES.TAX_RECEIPT) {
+        await updateTaxReceiptDocument({
+          firestore,
+          companyId,
+          invoiceId,
+          jobName,
+          customerName: custName,
+          customerAddressLines: custAddr,
+          supplierName,
+          supplierAddressLines: supplierAddressLines || supplierName,
+          userId: user.uid,
+          logoUrl,
+          issueDate: issueDate.trim() || undefined,
+          taxSupplyDate: taxSupplyDate.trim() || undefined,
+          paymentDate: paymentDate.trim() || undefined,
+          variableSymbol: variableSymbol.trim() || undefined,
+          supplierIco: supplierIco.trim() || null,
+          supplierDic: supplierDic.trim() || null,
+          customerIco: customerIco.trim() || null,
+          customerDic: customerDic.trim() || null,
+          orgBankAccounts,
+          bankAccountId: bankAccountId || null,
+          legacyCompanyBankAccount: legacyCompanyBank,
+          note: taxNote.trim() || undefined,
+        });
+      } else if (invType === JOB_INVOICE_TYPES.FINAL_INVOICE) {
         await updateFinalSettlementInvoice({
           firestore,
           companyId,
           invoiceId,
           jobName,
-          customerName,
-          customerAddressLines: customerAddressLines || customerName,
+          customerName: custName,
+          customerAddressLines: custAddr,
           supplierName,
           supplierAddressLines: supplierAddressLines || supplierName,
           userId: user.uid,
@@ -186,6 +285,18 @@ export default function EditAdvanceInvoicePage() {
           totalContractGross,
           totalAdvancePaid,
           notes: notes.trim() || undefined,
+          issueDate: issueDate.trim() || undefined,
+          dueDate: dueDate.trim() || undefined,
+          taxSupplyDate: taxSupplyDate.trim() || undefined,
+          variableSymbol: variableSymbol.trim() || undefined,
+          contractNumber: contractNumber.trim() || null,
+          supplierIco: supplierIco.trim() || null,
+          supplierDic: supplierDic.trim() || null,
+          customerIco: customerIco.trim() || null,
+          customerDic: customerDic.trim() || null,
+          orgBankAccounts,
+          bankAccountId: bankAccountId || null,
+          legacyCompanyBankAccount: legacyCompanyBank,
         });
       } else {
         await updateAdvanceInvoiceItems({
@@ -193,13 +304,24 @@ export default function EditAdvanceInvoicePage() {
           companyId,
           invoiceId,
           jobName,
-          customerName,
-          customerAddressLines: customerAddressLines || customerName,
+          customerName: custName,
+          customerAddressLines: custAddr,
           supplierName,
           supplierAddressLines: supplierAddressLines || supplierName,
           userId: user.uid,
           logoUrl,
           lines,
+          issueDate: issueDate.trim() || undefined,
+          dueDate: dueDate.trim() || undefined,
+          taxSupplyDate: taxSupplyDate.trim() || undefined,
+          variableSymbol: variableSymbol.trim() || undefined,
+          supplierIco: supplierIco.trim() || null,
+          supplierDic: supplierDic.trim() || null,
+          customerIco: customerIco.trim() || null,
+          customerDic: customerDic.trim() || null,
+          orgBankAccounts,
+          bankAccountId: bankAccountId || null,
+          legacyCompanyBankAccount: legacyCompanyBank,
         });
       }
       toast({ title: "Uloženo", description: "Položky a náhled dokladu byly aktualizovány." });
@@ -247,12 +369,17 @@ export default function EditAdvanceInvoicePage() {
 
   const invType = String((invoice as { type?: string }).type ?? "");
   const isFinal = invType === JOB_INVOICE_TYPES.FINAL_INVOICE;
-  if (invType !== JOB_INVOICE_TYPES.ADVANCE && invType !== JOB_INVOICE_TYPES.FINAL_INVOICE) {
+  const isTax = invType === JOB_INVOICE_TYPES.TAX_RECEIPT;
+  if (
+    invType !== JOB_INVOICE_TYPES.ADVANCE &&
+    invType !== JOB_INVOICE_TYPES.FINAL_INVOICE &&
+    invType !== JOB_INVOICE_TYPES.TAX_RECEIPT
+  ) {
     return (
       <Alert className="max-w-xl">
         <AlertTitle>Úprava není k dispozici</AlertTitle>
         <AlertDescription>
-          Položky lze měnit u zálohové nebo vyúčtovací faktury.{" "}
+          Úplná úprava je u zálohové faktury, vyúčtovací faktury a daňového dokladu.{" "}
           <Link href={`/portal/invoices/${invoiceId}`} className="underline">
             Zpět na doklad
           </Link>
@@ -260,6 +387,12 @@ export default function EditAdvanceInvoicePage() {
       </Alert>
     );
   }
+
+  const titleEdit = isTax
+    ? "Upravit daňový doklad"
+    : isFinal
+      ? "Upravit vyúčtovací fakturu"
+      : "Upravit zálohovou fakturu";
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-2 pb-10 sm:px-0">
@@ -269,16 +402,180 @@ export default function EditAdvanceInvoicePage() {
             <ChevronLeft className="h-6 w-6" />
           </Link>
         </Button>
-        <h1 className="text-xl font-bold text-neutral-950 sm:text-2xl">
-          {isFinal ? "Upravit vyúčtovací fakturu" : "Upravit zálohovou fakturu"}
-        </h1>
+        <h1 className="text-xl font-bold text-neutral-950 sm:text-2xl">{titleEdit}</h1>
       </div>
 
       <p className="text-sm text-neutral-700">
-        Zakázka: <strong>{jobName}</strong> · Odběratel: <strong>{customerName}</strong>
+        Zakázka: <strong>{jobName}</strong>
       </p>
 
       <div className="space-y-4 rounded-lg border border-neutral-200 bg-white p-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="sm:col-span-2">
+            <Label>Odběratel (název)</Label>
+            <Input
+              value={editCustomerName}
+              onChange={(e) => setEditCustomerName(e.target.value)}
+              className="border-neutral-950"
+            />
+          </div>
+          <div className="sm:col-span-2">
+            <Label>Adresa odběratele</Label>
+            <Textarea
+              value={editCustomerAddress}
+              onChange={(e) => setEditCustomerAddress(e.target.value)}
+              rows={3}
+              className="border-neutral-950"
+            />
+          </div>
+          <div>
+            <Label>IČO odběratele</Label>
+            <Input
+              value={customerIco}
+              onChange={(e) => setCustomerIco(e.target.value)}
+              className="border-neutral-950"
+            />
+          </div>
+          <div>
+            <Label>DIČ odběratele</Label>
+            <Input
+              value={customerDic}
+              onChange={(e) => setCustomerDic(e.target.value)}
+              className="border-neutral-950"
+            />
+          </div>
+          <div>
+            <Label>IČO dodavatele</Label>
+            <Input
+              value={supplierIco}
+              onChange={(e) => setSupplierIco(e.target.value)}
+              className="border-neutral-950"
+            />
+          </div>
+          <div>
+            <Label>DIČ dodavatele</Label>
+            <Input
+              value={supplierDic}
+              onChange={(e) => setSupplierDic(e.target.value)}
+              className="border-neutral-950"
+            />
+          </div>
+          {!isTax ? (
+            <>
+              <div>
+                <Label>Datum vystavení</Label>
+                <Input
+                  type="date"
+                  value={issueDate}
+                  onChange={(e) => setIssueDate(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>Datum zdanitelného plnění</Label>
+                <Input
+                  type="date"
+                  value={taxSupplyDate}
+                  onChange={(e) => setTaxSupplyDate(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>Splatnost</Label>
+                <Input
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <Label>Datum vystavení dokladu</Label>
+                <Input
+                  type="date"
+                  value={issueDate}
+                  onChange={(e) => setIssueDate(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>Datum zdanitelného plnění</Label>
+                <Input
+                  type="date"
+                  value={taxSupplyDate}
+                  onChange={(e) => setTaxSupplyDate(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+              <div>
+                <Label>Datum přijetí platby</Label>
+                <Input
+                  type="date"
+                  value={paymentDate}
+                  onChange={(e) => setPaymentDate(e.target.value)}
+                  className="border-neutral-950"
+                />
+              </div>
+            </>
+          )}
+          <div>
+            <Label>Variabilní symbol</Label>
+            <Input
+              value={variableSymbol}
+              onChange={(e) => setVariableSymbol(e.target.value)}
+              className="border-neutral-950"
+            />
+          </div>
+          {isFinal ? (
+            <div className="sm:col-span-2">
+              <Label>Číslo smlouvy (zobrazení)</Label>
+              <Input
+                value={contractNumber}
+                onChange={(e) => setContractNumber(e.target.value)}
+                className="border-neutral-950"
+              />
+            </div>
+          ) : null}
+          <div className="sm:col-span-2">
+            <Label>Bankovní účet pro doklad</Label>
+            <Select
+              value={bankAccountId || "__default__"}
+              onValueChange={(v) => setBankAccountId(v === "__default__" ? "" : v)}
+            >
+              <SelectTrigger className="border-neutral-950">
+                <SelectValue placeholder="Výchozí / dle firmy" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__default__">Výchozí účet organizace</SelectItem>
+                {orgBankAccounts.map((a) => (
+                  <SelectItem key={a.id} value={a.id}>
+                    {(a.name || "Účet").trim()}{" "}
+                    {a.iban
+                      ? `· ${a.iban}`
+                      : a.accountNumber && a.bankCode
+                        ? `· ${a.accountNumber}/${a.bankCode}`
+                        : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
+        {isTax ? (
+          <div>
+            <Label>Poznámka</Label>
+            <Textarea
+              value={taxNote}
+              onChange={(e) => setTaxNote(e.target.value)}
+              rows={2}
+              className="border-neutral-950"
+            />
+          </div>
+        ) : null}
         {isFinal ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
@@ -314,6 +611,8 @@ export default function EditAdvanceInvoicePage() {
             </div>
           </div>
         ) : null}
+        {!isTax ? (
+          <>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-base font-semibold">Položky</h2>
           <Button type="button" variant="outline" size="sm" className="gap-1" onClick={addLine}>
@@ -406,6 +705,13 @@ export default function EditAdvanceInvoicePage() {
             </div>
           ))}
         </div>
+          </>
+        ) : (
+          <p className="text-sm text-neutral-600">
+            Částky na daňovém dokladu jsou vázané na přijatou platbu — upravují se texty a data, ne částka
+            dokladu.
+          </p>
+        )}
 
         <div className="flex flex-wrap gap-2 pt-2">
           <Button type="button" disabled={saving} onClick={() => void handleSave()}>

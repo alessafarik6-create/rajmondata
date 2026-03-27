@@ -34,6 +34,18 @@ import {
   type InvoiceLineRow,
   type SettlementAdvanceRow,
 } from "@/lib/invoice-a4-html";
+import { allocateNextDocumentNumber } from "@/lib/invoice-number-series";
+import {
+  type OrgBankAccountRow,
+  formatBankBlockPlainLines,
+  formatCustomerPartyLines,
+  formatSupplierPartyLines,
+  resolveBankAccountForInvoice,
+  resolveInvoiceRecipient,
+  resolveInvoiceVariableSymbol,
+} from "@/lib/invoice-billing-meta";
+
+export type { OrgBankAccountRow } from "@/lib/invoice-billing-meta";
 
 export const JOB_INVOICE_TYPES = {
   ADVANCE: "advance_invoice",
@@ -49,6 +61,10 @@ export type JobInvoiceType =
 export type WorkContractLike = {
   id: string;
   contractNumber?: string | null;
+  /** Odběratel dle smlouvy o dílo */
+  contractor?: string | null;
+  bankAccountId?: string | null;
+  bankAccountNumber?: string | null;
   depositAmount?: string | number | null;
   depositPercentage?: string | number | null;
   zalohovaCastka?: string | number | null;
@@ -91,12 +107,6 @@ function splitGrossToNetVat(
     amountType: "gross",
     vatRate,
   });
-}
-
-function nextInvoiceNo(prefix: string): string {
-  const y = new Date().getFullYear();
-  const r = Math.floor(100 + Math.random() * 900);
-  return `${prefix}-${y}-${r}`;
 }
 
 export function variableSymbolFromInvoiceNumber(invoiceNumber: string): string {
@@ -263,6 +273,14 @@ export async function createAdvanceInvoiceFromContract(params: {
   budget: JobBudgetBreakdown;
   userId: string;
   logoUrl?: string | null;
+  orgBankAccounts?: OrgBankAccountRow[];
+  legacyCompanyBankAccount?: string | null;
+  supplierIco?: string | null;
+  supplierDic?: string | null;
+  customerIco?: string | null;
+  customerDic?: string | null;
+  overrideBankAccountId?: string | null;
+  taxSupplyDate?: string | null;
 }): Promise<{ invoiceId: string; invoiceNumber: string; pdfHtml: string }> {
   const gross = depositGrossKcFromContract(
     params.contract,
@@ -289,8 +307,48 @@ export async function createAdvanceInvoiceFromContract(params: {
   const due = new Date();
   due.setDate(due.getDate() + 14);
   const dueDate = due.toISOString().slice(0, 10);
-  const invoiceNumber = nextInvoiceNo("ZF");
-  const vs = variableSymbolFromInvoiceNumber(invoiceNumber);
+  const taxSupplyDate =
+    (params.taxSupplyDate && params.taxSupplyDate.trim()) || issueDate;
+
+  const invoiceNumber = await allocateNextDocumentNumber(
+    params.firestore,
+    params.companyId,
+    "ZF"
+  );
+  const vs = resolveInvoiceVariableSymbol({
+    contractNumber: params.contract.contractNumber,
+    invoiceNumber,
+  });
+
+  const bankSnap = resolveBankAccountForInvoice({
+    bankAccounts: params.orgBankAccounts ?? [],
+    contractBankAccountId: params.contract.bankAccountId,
+    contractBankAccountNumber: params.contract.bankAccountNumber,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
+    overrideBankAccountId: params.overrideBankAccountId,
+  });
+  const bankText = formatBankBlockPlainLines(bankSnap);
+
+  const recipient = resolveInvoiceRecipient({
+    contractContractor: params.contract.contractor,
+    fallbackCustomerName: params.customerName,
+    customerAddressLines: params.customerAddressLines,
+    customerIco: params.customerIco,
+    customerDic: params.customerDic,
+  });
+  const customerParty = formatCustomerPartyLines(
+    recipient.customerName,
+    recipient.customerAddressLines,
+    recipient.customerIco,
+    recipient.customerDic
+  );
+  const supplierParty = formatSupplierPartyLines({
+    companyName: params.supplierName,
+    addressLines: params.supplierAddressLines || "",
+    ico: params.supplierIco,
+    dic: params.supplierDic,
+  });
+
   const lineRow = singleLineFromGross({
     description: `Záloha dle smlouvy o dílo — zakázka ${params.jobName}`,
     amountNet,
@@ -303,15 +361,17 @@ export async function createAdvanceInvoiceFromContract(params: {
     logoUrl: params.logoUrl ?? null,
     title: "Zálohová faktura",
     supplierName: params.supplierName,
-    supplierAddressText: params.supplierAddressLines || params.supplierName,
-    customerName: params.customerName,
-    customerAddressText: params.customerAddressLines || params.customerName,
+    supplierAddressText: supplierParty,
+    customerName: recipient.customerName,
+    customerAddressText: customerParty,
     invoiceNumber,
     issueDate,
+    taxSupplyDate,
     dueDate,
     jobName: params.jobName,
     contractNumber: params.contract.contractNumber != null ? String(params.contract.contractNumber) : null,
     variableSymbol: vs,
+    bankAccountText: bankText,
     items: [lineRow],
     amountNet,
     vatAmount,
@@ -337,7 +397,7 @@ export async function createAdvanceInvoiceFromContract(params: {
       companyId: params.companyId,
       jobId: params.jobId,
       customerId: params.customerId,
-      customerName: params.customerName,
+      customerName: recipient.customerName,
       amountNet,
       vatAmount,
       amountGross,
@@ -345,6 +405,7 @@ export async function createAdvanceInvoiceFromContract(params: {
       amountType: "gross" as JobBudgetType,
       invoiceNumber,
       issueDate,
+      taxSupplyDate,
       dueDate,
       source: "contract",
       sourceContractId: params.contract.id,
@@ -353,6 +414,15 @@ export async function createAdvanceInvoiceFromContract(params: {
           ? String(params.contract.contractNumber)
           : null,
       variableSymbol: vs,
+      bankAccountId: bankSnap.bankAccountId,
+      bankAccountNumber: bankSnap.bankAccountNumber,
+      bankCode: bankSnap.bankCode,
+      iban: bankSnap.iban,
+      swift: bankSnap.swift,
+      supplierIco: params.supplierIco ?? null,
+      supplierDic: params.supplierDic ?? null,
+      customerIco: recipient.customerIco,
+      customerDic: recipient.customerDic,
       /** Stav úhrady zálohové faktury */
       status: "unpaid",
       /** Dokument je vystavený (ne koncept) */
@@ -393,6 +463,16 @@ export async function createManualAdvanceInvoice(params: {
   userId: string;
   logoUrl?: string | null;
   lines: ManualAdvanceLineInput[];
+  /** Pro VS a banku — první smlouva u zakázky, pokud existuje */
+  primaryWorkContract?: WorkContractLike | null;
+  orgBankAccounts?: OrgBankAccountRow[];
+  legacyCompanyBankAccount?: string | null;
+  supplierIco?: string | null;
+  supplierDic?: string | null;
+  customerIco?: string | null;
+  customerDic?: string | null;
+  overrideBankAccountId?: string | null;
+  taxSupplyDate?: string | null;
 }): Promise<{ invoiceId: string; invoiceNumber: string; pdfHtml: string }> {
   const { rows, amountNet, vatAmount, amountGross } = computeManualAdvanceTotals(
     params.lines
@@ -406,23 +486,65 @@ export async function createManualAdvanceInvoice(params: {
   const due = new Date();
   due.setDate(due.getDate() + 14);
   const dueDate = due.toISOString().slice(0, 10);
-  const invoiceNumber = nextInvoiceNo("ZF");
-  const vs = variableSymbolFromInvoiceNumber(invoiceNumber);
+  const taxSupplyDate =
+    (params.taxSupplyDate && params.taxSupplyDate.trim()) || issueDate;
+
+  const invoiceNumber = await allocateNextDocumentNumber(
+    params.firestore,
+    params.companyId,
+    "ZF"
+  );
+  const c = params.primaryWorkContract ?? null;
+  const vs = resolveInvoiceVariableSymbol({
+    contractNumber: c?.contractNumber,
+    invoiceNumber,
+  });
+  const bankSnap = resolveBankAccountForInvoice({
+    bankAccounts: params.orgBankAccounts ?? [],
+    contractBankAccountId: c?.bankAccountId,
+    contractBankAccountNumber: c?.bankAccountNumber,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
+    overrideBankAccountId: params.overrideBankAccountId,
+  });
+  const bankText = formatBankBlockPlainLines(bankSnap);
+
+  const recipient = resolveInvoiceRecipient({
+    contractContractor: c?.contractor,
+    fallbackCustomerName: params.customerName,
+    customerAddressLines: params.customerAddressLines,
+    customerIco: params.customerIco,
+    customerDic: params.customerDic,
+  });
+  const customerParty = formatCustomerPartyLines(
+    recipient.customerName,
+    recipient.customerAddressLines,
+    recipient.customerIco,
+    recipient.customerDic
+  );
+  const supplierParty = formatSupplierPartyLines({
+    companyName: params.supplierName,
+    addressLines: params.supplierAddressLines || "",
+    ico: params.supplierIco,
+    dic: params.supplierDic,
+  });
+
   const allSameVat = rows.every((r) => r.vatRate === rows[0].vatRate);
 
   const html = buildAdvanceInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
     title: "Zálohová faktura",
     supplierName: params.supplierName,
-    supplierAddressText: params.supplierAddressLines || params.supplierName,
-    customerName: params.customerName,
-    customerAddressText: params.customerAddressLines || params.customerName,
+    supplierAddressText: supplierParty,
+    customerName: recipient.customerName,
+    customerAddressText: customerParty,
     invoiceNumber,
     issueDate,
+    taxSupplyDate,
     dueDate,
     jobName: params.jobName,
-    contractNumber: null,
+    contractNumber: c?.contractNumber != null ? String(c.contractNumber) : null,
     variableSymbol: vs,
+    bankAccountText: bankText,
     items: rows,
     amountNet,
     vatAmount,
@@ -449,7 +571,7 @@ export async function createManualAdvanceInvoice(params: {
       companyId: params.companyId,
       jobId: params.jobId,
       customerId: params.customerId,
-      customerName: params.customerName,
+      customerName: recipient.customerName,
       amountNet,
       vatAmount,
       amountGross,
@@ -457,6 +579,7 @@ export async function createManualAdvanceInvoice(params: {
       amountType: "gross" as JobBudgetType,
       invoiceNumber,
       issueDate,
+      taxSupplyDate,
       dueDate,
       source: "manual",
       variableSymbol: vs,
@@ -469,6 +592,17 @@ export async function createManualAdvanceInvoice(params: {
       notes: "",
       createdAt: serverTimestamp(),
       createdBy: params.userId,
+      bankAccountId: bankSnap.bankAccountId,
+      bankAccountNumber: bankSnap.bankAccountNumber,
+      bankCode: bankSnap.bankCode,
+      iban: bankSnap.iban,
+      swift: bankSnap.swift,
+      supplierIco: params.supplierIco ?? null,
+      supplierDic: params.supplierDic ?? null,
+      customerIco: recipient.customerIco,
+      customerDic: recipient.customerDic,
+      contractNumber:
+        c?.contractNumber != null ? String(c.contractNumber) : null,
     });
 
     tx.set(billingMirrorRef, {
@@ -497,6 +631,17 @@ export async function updateAdvanceInvoiceItems(params: {
   userId: string;
   logoUrl?: string | null;
   lines: ManualAdvanceLineInput[];
+  issueDate?: string;
+  dueDate?: string;
+  taxSupplyDate?: string;
+  variableSymbol?: string;
+  supplierIco?: string | null;
+  supplierDic?: string | null;
+  customerIco?: string | null;
+  customerDic?: string | null;
+  orgBankAccounts?: OrgBankAccountRow[];
+  bankAccountId?: string | null;
+  legacyCompanyBankAccount?: string | null;
 }): Promise<{ pdfHtml: string }> {
   const { rows, amountNet, vatAmount, amountGross } = computeManualAdvanceTotals(
     params.lines
@@ -519,31 +664,74 @@ export async function updateAdvanceInvoiceItems(params: {
     invoiceNumber?: string;
     issueDate?: string;
     dueDate?: string;
+    taxSupplyDate?: string;
     variableSymbol?: string;
     sourceContractId?: string;
     contractNumber?: string | null;
+    bankAccountId?: string | null;
+    supplierIco?: string | null;
+    supplierDic?: string | null;
+    customerIco?: string | null;
+    customerDic?: string | null;
   };
   if (inv.type !== JOB_INVOICE_TYPES.ADVANCE) {
     throw new Error("Upravit lze jen zálohovou fakturu.");
   }
   const invoiceNumber = String(inv.invoiceNumber ?? "");
-  const issueDate = String(inv.issueDate ?? new Date().toISOString().slice(0, 10));
-  const dueDate = String(inv.dueDate ?? issueDate);
-  const vs =
-    inv.variableSymbol && String(inv.variableSymbol).trim()
-      ? String(inv.variableSymbol).trim()
-      : variableSymbolFromInvoiceNumber(invoiceNumber);
+  const issueDate = String(
+    params.issueDate ?? inv.issueDate ?? new Date().toISOString().slice(0, 10)
+  );
+  const dueDate = String(params.dueDate ?? inv.dueDate ?? issueDate);
+  const taxSupplyDate = String(
+    params.taxSupplyDate ?? inv.taxSupplyDate ?? issueDate
+  );
+  const vsRaw =
+    params.variableSymbol != null && String(params.variableSymbol).trim()
+      ? String(params.variableSymbol).trim()
+      : inv.variableSymbol && String(inv.variableSymbol).trim()
+        ? String(inv.variableSymbol).trim()
+        : variableSymbolFromInvoiceNumber(invoiceNumber);
+  const vs = vsRaw;
   const allSameVat = rows.every((r) => r.vatRate === rows[0].vatRate);
+
+  const supIco = params.supplierIco ?? inv.supplierIco ?? null;
+  const supDic = params.supplierDic ?? inv.supplierDic ?? null;
+  const custIco = params.customerIco ?? inv.customerIco ?? null;
+  const custDic = params.customerDic ?? inv.customerDic ?? null;
+
+  const bankSnap = resolveBankAccountForInvoice({
+    bankAccounts: params.orgBankAccounts ?? [],
+    contractBankAccountId: null,
+    contractBankAccountNumber: null,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
+    overrideBankAccountId:
+      params.bankAccountId !== undefined ? params.bankAccountId : inv.bankAccountId,
+  });
+  const bankText = formatBankBlockPlainLines(bankSnap);
+
+  const supplierParty = formatSupplierPartyLines({
+    companyName: params.supplierName,
+    addressLines: params.supplierAddressLines || "",
+    ico: supIco,
+    dic: supDic,
+  });
+  const customerParty = formatCustomerPartyLines(
+    params.customerName,
+    params.customerAddressLines,
+    custIco,
+    custDic
+  );
 
   const html = buildAdvanceInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
     title: "Zálohová faktura",
     supplierName: params.supplierName,
-    supplierAddressText: params.supplierAddressLines || params.supplierName,
+    supplierAddressText: supplierParty,
     customerName: params.customerName,
-    customerAddressText: params.customerAddressLines || params.customerName,
+    customerAddressText: customerParty,
     invoiceNumber,
     issueDate,
+    taxSupplyDate,
     dueDate,
     jobName: params.jobName,
     contractNumber:
@@ -551,6 +739,7 @@ export async function updateAdvanceInvoiceItems(params: {
         ? String(inv.contractNumber).trim()
         : null,
     variableSymbol: vs,
+    bankAccountText: bankText,
     items: rows,
     amountNet,
     vatAmount,
@@ -568,6 +757,19 @@ export async function updateAdvanceInvoiceItems(params: {
     pdfHtml: html,
     items: itemsRowsForFirestore(rows),
     variableSymbol: vs,
+    issueDate,
+    dueDate,
+    taxSupplyDate,
+    customerName: params.customerName,
+    supplierIco: supIco,
+    supplierDic: supDic,
+    customerIco: custIco,
+    customerDic: custDic,
+    bankAccountId: bankSnap.bankAccountId,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    iban: bankSnap.iban,
+    swift: bankSnap.swift,
     updatedAt: serverTimestamp(),
     updatedBy: params.userId,
   });
@@ -597,6 +799,17 @@ export async function createTaxReceiptForAdvancePayment(params: {
   vatRate: VatRatePercent;
   userId: string;
   logoUrl?: string | null;
+  orgBankAccounts?: OrgBankAccountRow[];
+  legacyCompanyBankAccount?: string | null;
+  supplierIco?: string | null;
+  supplierDic?: string | null;
+  customerIco?: string | null;
+  customerDic?: string | null;
+  overrideBankAccountId?: string | null;
+  /** Datum vystavení daňového dokladu — výchozí datum platby */
+  issueDate?: string | null;
+  /** Zdanitelné plnění — výchozí datum platby */
+  taxSupplyDate?: string | null;
 }): Promise<{ receiptId: string; documentNumber: string; pdfHtml: string }> {
   const paidGross = roundMoney2(params.paidGrossInput);
   if (paidGross <= 0) throw new Error("Zadejte kladnou uhrazenou částku.");
@@ -618,15 +831,77 @@ export async function createTaxReceiptForAdvancePayment(params: {
     params.vatRate
   );
 
-  const documentNumber = nextInvoiceNo("DD");
+  const advanceRefPre = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "invoices",
+    params.advanceInvoiceId
+  );
+  const advanceSnapPre = await getDoc(advanceRefPre);
+  const advPre = advanceSnapPre.exists()
+    ? (advanceSnapPre.data() as {
+        contractNumber?: string | null;
+        bankAccountId?: string | null;
+      })
+    : {};
+
+  const documentNumber = await allocateNextDocumentNumber(
+    params.firestore,
+    params.companyId,
+    "DD"
+  );
+  const vsResolved = resolveInvoiceVariableSymbol({
+    contractNumber: advPre.contractNumber,
+    invoiceNumber: documentNumber,
+  });
+  const vs =
+    (params.variableSymbol && params.variableSymbol.trim()) || vsResolved;
+
+  const issueDate =
+    (params.issueDate && params.issueDate.trim()) || params.paymentDate;
+  const taxSupplyDate =
+    (params.taxSupplyDate && params.taxSupplyDate.trim()) || params.paymentDate;
+
+  const bankSnap = resolveBankAccountForInvoice({
+    bankAccounts: params.orgBankAccounts ?? [],
+    contractBankAccountId: null,
+    contractBankAccountNumber: null,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
+    overrideBankAccountId:
+      params.overrideBankAccountId ?? advPre.bankAccountId ?? null,
+  });
+  const bankText = formatBankBlockPlainLines(bankSnap);
+
+  const recipient = resolveInvoiceRecipient({
+    contractContractor: null,
+    fallbackCustomerName: params.customerName,
+    customerAddressLines: params.customerAddressLines,
+    customerIco: params.customerIco,
+    customerDic: params.customerDic,
+  });
+  const customerParty = formatCustomerPartyLines(
+    recipient.customerName,
+    recipient.customerAddressLines,
+    recipient.customerIco,
+    recipient.customerDic
+  );
+  const supplierParty = formatSupplierPartyLines({
+    companyName: params.supplierName,
+    addressLines: params.supplierAddressLines || "",
+    ico: params.supplierIco,
+    dic: params.supplierDic,
+  });
 
   const html = buildTaxReceiptHtml({
     logoUrl: params.logoUrl ?? null,
     supplierName: params.supplierName,
-    supplierAddressText: params.supplierAddressLines || params.supplierName,
-    customerName: params.customerName,
-    customerAddressText: params.customerAddressLines || params.customerName,
+    supplierAddressText: supplierParty,
+    customerName: recipient.customerName,
+    customerAddressText: customerParty,
     documentNumber,
+    issueDate,
+    taxSupplyDate,
     paymentDate: params.paymentDate,
     relatedInvoiceNumber: params.advanceInvoiceNumber,
     jobName: params.jobName,
@@ -634,7 +909,8 @@ export async function createTaxReceiptForAdvancePayment(params: {
     vatRate: params.vatRate,
     vatAmount,
     amountGross,
-    variableSymbol: params.variableSymbol,
+    variableSymbol: vs,
+    bankAccountText: bankText,
     note: params.note,
   });
 
@@ -696,8 +972,10 @@ export async function createTaxReceiptForAdvancePayment(params: {
       jobId: params.jobId,
       relatedInvoiceId: params.advanceInvoiceId,
       customerId: params.customerId,
-      customerName: params.customerName,
+      customerName: recipient.customerName,
       paidAmount: amountGross,
+      issueDate,
+      taxSupplyDate,
       paymentDate: params.paymentDate,
       vatRate: params.vatRate,
       amountNet,
@@ -705,9 +983,18 @@ export async function createTaxReceiptForAdvancePayment(params: {
       amountGross,
       documentNumber,
       status: "paid",
-      variableSymbol: params.variableSymbol ?? "",
+      variableSymbol: vs,
       note: params.note ?? "",
       pdfHtml: html,
+      bankAccountId: bankSnap.bankAccountId,
+      bankAccountNumber: bankSnap.bankAccountNumber,
+      bankCode: bankSnap.bankCode,
+      iban: bankSnap.iban,
+      swift: bankSnap.swift,
+      supplierIco: params.supplierIco ?? null,
+      supplierDic: params.supplierDic ?? null,
+      customerIco: recipient.customerIco,
+      customerDic: recipient.customerDic,
       createdAt: serverTimestamp(),
       createdBy: params.userId,
     });
@@ -899,6 +1186,14 @@ export async function createFinalSettlementInvoice(params: {
   userId: string;
   notes?: string;
   sourceContractId?: string | null;
+  orgBankAccounts?: OrgBankAccountRow[];
+  legacyCompanyBankAccount?: string | null;
+  supplierIco?: string | null;
+  supplierDic?: string | null;
+  customerIco?: string | null;
+  customerDic?: string | null;
+  overrideBankAccountId?: string | null;
+  taxSupplyDate?: string | null;
 }): Promise<{ invoiceId: string; invoiceNumber: string; pdfHtml: string }> {
   const dup = await hasFinalSettlementInvoiceForJob(
     params.firestore,
@@ -950,20 +1245,65 @@ export async function createFinalSettlementInvoice(params: {
   const due = new Date();
   due.setDate(due.getDate() + 14);
   const dueDate = due.toISOString().slice(0, 10);
-  const invoiceNumber = nextInvoiceNo("VF");
-  const vs = variableSymbolFromInvoiceNumber(invoiceNumber);
+  const taxSupplyDate =
+    (params.taxSupplyDate && params.taxSupplyDate.trim()) || issueDate;
+
+  const invoiceNumber = await allocateNextDocumentNumber(
+    params.firestore,
+    params.companyId,
+    "FV"
+  );
+  const vs = resolveInvoiceVariableSymbol({
+    contractNumber: primaryContract?.contractNumber,
+    invoiceNumber,
+  });
+
+  const bankSnap = resolveBankAccountForInvoice({
+    bankAccounts: params.orgBankAccounts ?? [],
+    contractBankAccountId: primaryContract?.bankAccountId,
+    contractBankAccountNumber: primaryContract?.bankAccountNumber,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
+    overrideBankAccountId: params.overrideBankAccountId,
+  });
+  const bankText = formatBankBlockPlainLines(bankSnap);
+
+  const recipient = resolveInvoiceRecipient({
+    contractContractor: primaryContract?.contractor,
+    fallbackCustomerName: params.customerName,
+    customerAddressLines: params.customerAddressLines,
+    customerIco: params.customerIco,
+    customerDic: params.customerDic,
+  });
+  const customerParty = formatCustomerPartyLines(
+    recipient.customerName,
+    recipient.customerAddressLines,
+    recipient.customerIco,
+    recipient.customerDic
+  );
+  const supplierParty = formatSupplierPartyLines({
+    companyName: params.supplierName,
+    addressLines: params.supplierAddressLines || "",
+    ico: params.supplierIco,
+    dic: params.supplierDic,
+  });
 
   const html = buildFinalSettlementInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
     supplierName: params.supplierName,
-    supplierAddressText: params.supplierAddressLines || params.supplierName,
-    customerName: params.customerName,
-    customerAddressText: params.customerAddressLines || params.customerName,
+    supplierAddressText: supplierParty,
+    customerName: recipient.customerName,
+    customerAddressText: customerParty,
     invoiceNumber,
     issueDate,
+    taxSupplyDate,
     dueDate,
     jobName: params.jobName,
+    contractNumber:
+      primaryContract?.contractNumber != null
+        ? String(primaryContract.contractNumber)
+        : null,
     variableSymbol: vs,
+    bankAccountText: bankText,
     totalContractGross: settlement.totalContractGross,
     advanceRows:
       settlement.advanceRowsForHtml.length > 0
@@ -997,7 +1337,7 @@ export async function createFinalSettlementInvoice(params: {
       companyId: params.companyId,
       jobId: params.jobId,
       customerId: params.customerId,
-      customerName: params.customerName,
+      customerName: recipient.customerName,
       amountNet,
       vatAmount,
       amountGross,
@@ -1005,6 +1345,7 @@ export async function createFinalSettlementInvoice(params: {
       amountType: "gross" as JobBudgetType,
       invoiceNumber,
       issueDate,
+      taxSupplyDate,
       dueDate,
       totalContractAmount: settlement.totalContractGross,
       totalAdvancePaid: settlement.totalAdvancePaid,
@@ -1013,6 +1354,15 @@ export async function createFinalSettlementInvoice(params: {
       relatedAdvanceInvoiceIds: settlement.relatedAdvanceInvoiceIds,
       sourceContractId: params.sourceContractId ?? primaryContract?.id ?? null,
       variableSymbol: vs,
+      bankAccountId: bankSnap.bankAccountId,
+      bankAccountNumber: bankSnap.bankAccountNumber,
+      bankCode: bankSnap.bankCode,
+      iban: bankSnap.iban,
+      swift: bankSnap.swift,
+      supplierIco: params.supplierIco ?? null,
+      supplierDic: params.supplierDic ?? null,
+      customerIco: recipient.customerIco,
+      customerDic: recipient.customerDic,
       status: settlement.amountToPay <= 0 ? "paid" : "unpaid",
       issueStatus: "issued",
       pdfHtml: html,
@@ -1052,6 +1402,18 @@ export async function updateFinalSettlementInvoice(params: {
   totalContractGross: number;
   totalAdvancePaid: number;
   notes?: string;
+  issueDate?: string;
+  dueDate?: string;
+  taxSupplyDate?: string;
+  variableSymbol?: string;
+  contractNumber?: string | null;
+  supplierIco?: string | null;
+  supplierDic?: string | null;
+  customerIco?: string | null;
+  customerDic?: string | null;
+  orgBankAccounts?: OrgBankAccountRow[];
+  bankAccountId?: string | null;
+  legacyCompanyBankAccount?: string | null;
 }): Promise<{ pdfHtml: string }> {
   const { rows, amountNet, vatAmount, amountGross } = computeManualAdvanceTotals(
     params.lines
@@ -1070,21 +1432,63 @@ export async function updateFinalSettlementInvoice(params: {
     invoiceNumber?: string;
     issueDate?: string;
     dueDate?: string;
+    taxSupplyDate?: string;
     variableSymbol?: string;
     jobId?: string;
+    sourceContractId?: string | null;
+    bankAccountId?: string | null;
+    supplierIco?: string | null;
+    supplierDic?: string | null;
+    customerIco?: string | null;
+    customerDic?: string | null;
   };
   if (inv.type !== JOB_INVOICE_TYPES.FINAL_INVOICE) {
     throw new Error("Upravit lze jen vyúčtovací fakturu.");
   }
   const invoiceNumber = String(inv.invoiceNumber ?? "");
-  const issueDate = String(inv.issueDate ?? new Date().toISOString().slice(0, 10));
-  const dueDate = String(inv.dueDate ?? issueDate);
+  const issueDate = String(
+    params.issueDate ?? inv.issueDate ?? new Date().toISOString().slice(0, 10)
+  );
+  const dueDate = String(params.dueDate ?? inv.dueDate ?? issueDate);
+  const taxSupplyDate = String(
+    params.taxSupplyDate ?? inv.taxSupplyDate ?? issueDate
+  );
   const vs =
-    inv.variableSymbol && String(inv.variableSymbol).trim()
-      ? String(inv.variableSymbol).trim()
-      : variableSymbolFromInvoiceNumber(invoiceNumber);
+    params.variableSymbol != null && String(params.variableSymbol).trim()
+      ? String(params.variableSymbol).trim()
+      : inv.variableSymbol && String(inv.variableSymbol).trim()
+        ? String(inv.variableSymbol).trim()
+        : variableSymbolFromInvoiceNumber(invoiceNumber);
   const vatRateDoc = representativeVatRate(rows);
   const allSameVat = rows.every((r) => r.vatRate === rows[0].vatRate);
+
+  const supIco = params.supplierIco ?? inv.supplierIco ?? null;
+  const supDic = params.supplierDic ?? inv.supplierDic ?? null;
+  const custIco = params.customerIco ?? inv.customerIco ?? null;
+  const custDic = params.customerDic ?? inv.customerDic ?? null;
+
+  const bankSnap = resolveBankAccountForInvoice({
+    bankAccounts: params.orgBankAccounts ?? [],
+    contractBankAccountId: null,
+    contractBankAccountNumber: null,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
+    overrideBankAccountId:
+      params.bankAccountId !== undefined ? params.bankAccountId : inv.bankAccountId,
+  });
+  const bankText = formatBankBlockPlainLines(bankSnap);
+
+  const supplierParty = formatSupplierPartyLines({
+    companyName: params.supplierName,
+    addressLines: params.supplierAddressLines || "",
+    ico: supIco,
+    dic: supDic,
+  });
+  const customerParty = formatCustomerPartyLines(
+    params.customerName,
+    params.customerAddressLines,
+    custIco,
+    custDic
+  );
 
   const advanceRows: SettlementAdvanceRow[] = [
     {
@@ -1096,14 +1500,20 @@ export async function updateFinalSettlementInvoice(params: {
   const html = buildFinalSettlementInvoiceHtml({
     logoUrl: params.logoUrl ?? null,
     supplierName: params.supplierName,
-    supplierAddressText: params.supplierAddressLines || params.supplierName,
+    supplierAddressText: supplierParty,
     customerName: params.customerName,
-    customerAddressText: params.customerAddressLines || params.customerName,
+    customerAddressText: customerParty,
     invoiceNumber,
     issueDate,
+    taxSupplyDate,
     dueDate,
     jobName: params.jobName,
+    contractNumber:
+      params.contractNumber != null && String(params.contractNumber).trim()
+        ? String(params.contractNumber).trim()
+        : null,
     variableSymbol: vs,
+    bankAccountText: bankText,
     totalContractGross: roundMoney2(params.totalContractGross),
     advanceRows,
     totalAdvancePaid: roundMoney2(params.totalAdvancePaid),
@@ -1131,6 +1541,194 @@ export async function updateFinalSettlementInvoice(params: {
     items: itemsRowsForFirestore(rows),
     notes: params.notes ?? "",
     variableSymbol: vs,
+    issueDate,
+    dueDate,
+    taxSupplyDate,
+    customerName: params.customerName,
+    supplierIco: supIco,
+    supplierDic: supDic,
+    customerIco: custIco,
+    customerDic: custDic,
+    bankAccountId: bankSnap.bankAccountId,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    iban: bankSnap.iban,
+    swift: bankSnap.swift,
+    updatedAt: serverTimestamp(),
+    updatedBy: params.userId,
+  });
+
+  return { pdfHtml: html };
+}
+
+/** Úprava textů a dat daňového dokladu — částky zůstávají (vazba na finance). */
+export async function updateTaxReceiptDocument(params: {
+  firestore: Firestore;
+  companyId: string;
+  invoiceId: string;
+  jobName: string;
+  customerName: string;
+  customerAddressLines: string;
+  supplierName: string;
+  supplierAddressLines: string;
+  userId: string;
+  logoUrl?: string | null;
+  issueDate?: string;
+  taxSupplyDate?: string;
+  paymentDate?: string;
+  variableSymbol?: string;
+  supplierIco?: string | null;
+  supplierDic?: string | null;
+  customerIco?: string | null;
+  customerDic?: string | null;
+  orgBankAccounts?: OrgBankAccountRow[];
+  bankAccountId?: string | null;
+  legacyCompanyBankAccount?: string | null;
+  note?: string;
+}): Promise<{ pdfHtml: string }> {
+  const invRef = doc(
+    params.firestore,
+    "companies",
+    params.companyId,
+    "invoices",
+    params.invoiceId
+  );
+  const snap = await getDoc(invRef);
+  if (!snap.exists()) throw new Error("Doklad neexistuje.");
+  const inv = snap.data() as {
+    type?: string;
+    documentNumber?: string;
+    relatedInvoiceId?: string;
+    paymentDate?: string;
+    issueDate?: string;
+    taxSupplyDate?: string;
+    variableSymbol?: string;
+    amountNet?: number;
+    vatRate?: number;
+    vatAmount?: number;
+    amountGross?: number;
+    bankAccountId?: string | null;
+    supplierIco?: string | null;
+    supplierDic?: string | null;
+    customerIco?: string | null;
+    customerDic?: string | null;
+    note?: string;
+  };
+  if (inv.type !== JOB_INVOICE_TYPES.TAX_RECEIPT) {
+    throw new Error("Upravit lze jen daňový doklad k platbě.");
+  }
+  const relatedId = String(inv.relatedInvoiceId ?? "");
+  let relatedInvoiceNumber = "—";
+  if (relatedId) {
+    const advRef = doc(
+      params.firestore,
+      "companies",
+      params.companyId,
+      "invoices",
+      relatedId
+    );
+    const advSnap = await getDoc(advRef);
+    if (advSnap.exists()) {
+      const a = advSnap.data() as { invoiceNumber?: string };
+      relatedInvoiceNumber = String(a.invoiceNumber ?? "") || "—";
+    }
+  }
+
+  const documentNumber = String(inv.documentNumber ?? "");
+  const paymentDate = String(
+    params.paymentDate ?? inv.paymentDate ?? new Date().toISOString().slice(0, 10)
+  );
+  const issueDate = String(
+    params.issueDate ?? inv.issueDate ?? paymentDate
+  );
+  const taxSupplyDate = String(
+    params.taxSupplyDate ?? inv.taxSupplyDate ?? paymentDate
+  );
+  const vs =
+    params.variableSymbol != null && String(params.variableSymbol).trim()
+      ? String(params.variableSymbol).trim()
+      : inv.variableSymbol && String(inv.variableSymbol).trim()
+        ? String(inv.variableSymbol).trim()
+        : variableSymbolFromInvoiceNumber(documentNumber);
+
+  const supIco = params.supplierIco ?? inv.supplierIco ?? null;
+  const supDic = params.supplierDic ?? inv.supplierDic ?? null;
+  const custIco = params.customerIco ?? inv.customerIco ?? null;
+  const custDic = params.customerDic ?? inv.customerDic ?? null;
+
+  const bankSnap = resolveBankAccountForInvoice({
+    bankAccounts: params.orgBankAccounts ?? [],
+    contractBankAccountId: null,
+    contractBankAccountNumber: null,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
+    overrideBankAccountId:
+      params.bankAccountId !== undefined ? params.bankAccountId : inv.bankAccountId,
+  });
+  const bankText = formatBankBlockPlainLines(bankSnap);
+
+  const recipient = resolveInvoiceRecipient({
+    contractContractor: null,
+    fallbackCustomerName: params.customerName,
+    customerAddressLines: params.customerAddressLines,
+    customerIco: custIco,
+    customerDic: custDic,
+  });
+  const customerParty = formatCustomerPartyLines(
+    recipient.customerName,
+    recipient.customerAddressLines,
+    recipient.customerIco,
+    recipient.customerDic
+  );
+  const supplierParty = formatSupplierPartyLines({
+    companyName: params.supplierName,
+    addressLines: params.supplierAddressLines || "",
+    ico: supIco,
+    dic: supDic,
+  });
+
+  const amountNet = Number(inv.amountNet) || 0;
+  const vatRate = normalizeVatRate(Number(inv.vatRate) || 21);
+  const vatAmount = Number(inv.vatAmount) || 0;
+  const amountGross = Number(inv.amountGross) || 0;
+
+  const html = buildTaxReceiptHtml({
+    logoUrl: params.logoUrl ?? null,
+    supplierName: params.supplierName,
+    supplierAddressText: supplierParty,
+    customerName: recipient.customerName,
+    customerAddressText: customerParty,
+    documentNumber,
+    issueDate,
+    taxSupplyDate,
+    paymentDate,
+    relatedInvoiceNumber,
+    jobName: params.jobName,
+    amountNet,
+    vatRate,
+    vatAmount,
+    amountGross,
+    variableSymbol: vs,
+    bankAccountText: bankText,
+    note: params.note ?? inv.note,
+  });
+
+  await updateDoc(invRef, {
+    customerName: recipient.customerName,
+    issueDate,
+    taxSupplyDate,
+    paymentDate,
+    variableSymbol: vs,
+    pdfHtml: html,
+    note: params.note ?? inv.note ?? "",
+    supplierIco: supIco,
+    supplierDic: supDic,
+    customerIco: custIco,
+    customerDic: custDic,
+    bankAccountId: bankSnap.bankAccountId,
+    bankAccountNumber: bankSnap.bankAccountNumber,
+    bankCode: bankSnap.bankCode,
+    iban: bankSnap.iban,
+    swift: bankSnap.swift,
     updatedAt: serverTimestamp(),
     updatedBy: params.userId,
   });

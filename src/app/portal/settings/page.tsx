@@ -34,6 +34,8 @@ type CompanyBankAccountDoc = {
   iban?: string;
   swift?: string;
   currency?: string;
+  /** Výchozí účet pro doklady, pokud smlouva neurčí jinak */
+  isDefault?: boolean;
 };
 
 export default function SettingsPage() {
@@ -89,6 +91,7 @@ export default function SettingsPage() {
     iban: string;
     swift: string;
     currency: string;
+    isDefault: boolean;
   }>({
     name: '',
     accountNumber: '',
@@ -96,6 +99,7 @@ export default function SettingsPage() {
     iban: '',
     swift: '',
     currency: 'CZK',
+    isDefault: true,
   });
   const [isSavingBank, setIsSavingBank] = useState(false);
 
@@ -737,6 +741,7 @@ export default function SettingsPage() {
                           iban: '',
                           swift: '',
                           currency: 'CZK',
+                          isDefault: !(bankAccounts && bankAccounts.length > 0),
                         });
                         setBankDialogOpen(true);
                       }}
@@ -768,7 +773,14 @@ export default function SettingsPage() {
                             className="rounded-lg border border-border/60 bg-background p-4 space-y-3"
                           >
                             <div className="space-y-0.5">
-                              <div className="font-medium">{a.name || 'Účet'}</div>
+                              <div className="font-medium">
+                                {a.name || 'Účet'}
+                                {a.isDefault ? (
+                                  <span className="ml-2 text-xs font-normal text-muted-foreground">
+                                    (výchozí)
+                                  </span>
+                                ) : null}
+                              </div>
                               <div className="text-sm text-muted-foreground">
                                 {a.currency || 'CZK'}
                               </div>
@@ -798,6 +810,7 @@ export default function SettingsPage() {
                                     iban: a.iban || '',
                                     swift: a.swift || '',
                                     currency: a.currency || 'CZK',
+                                    isDefault: Boolean(a.isDefault),
                                   });
                                   setBankDialogOpen(true);
                                 }}
@@ -929,6 +942,7 @@ export default function SettingsPage() {
                               return;
                             }
 
+                            const markDefault = Boolean(bankForm.isDefault);
                             const payload = {
                               name: name || 'Účet',
                               accountNumber: accountNumber || null,
@@ -937,11 +951,30 @@ export default function SettingsPage() {
                               swift: swift || null,
                               currency,
                               companyId,
+                              isDefault: markDefault,
                               updatedAt: serverTimestamp(),
                               createdAt: serverTimestamp(),
                             };
 
                             const { createdAt: _createdAt, ...payloadForUpdate } = payload as any;
+
+                            const clearOtherDefaults = async (exceptId: string) => {
+                              const list = (bankAccounts || []) as CompanyBankAccountDoc[];
+                              for (const a of list) {
+                                if (a.id && a.id !== exceptId) {
+                                  await updateDoc(
+                                    doc(
+                                      firestore,
+                                      COMPANIES_COLLECTION,
+                                      companyId!,
+                                      'bankAccounts',
+                                      a.id
+                                    ),
+                                    { isDefault: false }
+                                  );
+                                }
+                              }
+                            };
 
                             if (bankDialogMode === 'edit' && bankForm.id) {
                               const accRef = doc(
@@ -951,6 +984,9 @@ export default function SettingsPage() {
                                 'bankAccounts',
                                 bankForm.id
                               );
+                              if (markDefault) {
+                                await clearOtherDefaults(bankForm.id);
+                              }
                               await updateDoc(accRef, {
                                 ...(payloadForUpdate as any),
                               } as any);
@@ -961,7 +997,11 @@ export default function SettingsPage() {
                                 companyId,
                                 'bankAccounts'
                               );
-                              await addDoc(bankCol, payload);
+                              const newRef = await addDoc(bankCol, payload);
+                              if (markDefault) {
+                                await clearOtherDefaults(newRef.id);
+                                await updateDoc(newRef, { isDefault: true });
+                              }
                             }
 
                             toast({
@@ -1054,6 +1094,21 @@ export default function SettingsPage() {
                               }
                               placeholder="CZK"
                               className="bg-background"
+                            />
+                          </div>
+
+                          <div className="flex flex-wrap items-center justify-between gap-3 md:col-span-2 rounded-lg border border-border p-3">
+                            <div>
+                              <Label>Výchozí účet pro doklady</Label>
+                              <p className="text-xs text-muted-foreground">
+                                Použije se u faktur, pokud smlouva neurčí jiný účet.
+                              </p>
+                            </div>
+                            <Switch
+                              checked={bankForm.isDefault}
+                              onCheckedChange={(v) =>
+                                setBankForm((p) => ({ ...p, isDefault: v }))
+                              }
                             />
                           </div>
                         </div>

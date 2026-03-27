@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
 import { doc, collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { allocateNextDocumentNumber } from '@/lib/invoice-number-series';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
@@ -36,7 +37,7 @@ export default function NewInvoicePage() {
   const [items, setItems] = useState([{ id: '1', description: '', quantity: 1, unitPrice: 0 }]);
   const [formData, setFormData] = useState({
     customerId: '',
-    invoiceNumber: `FV-${new Date().getFullYear()}-${Math.floor(100 + Math.random() * 900)}`,
+    invoiceNumber: '',
     issueDate: new Date().toISOString().split('T')[0],
     dueDate: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
     notes: ''
@@ -70,9 +71,15 @@ export default function NewInvoicePage() {
     setIsSubmitting(true);
 
     try {
+      const invoiceNumber = await allocateNextDocumentNumber(
+        firestore,
+        companyId,
+        'FA'
+      );
       const invRef = collection(firestore, 'companies', companyId, 'invoices');
       await addDoc(invRef, {
         ...formData,
+        invoiceNumber,
         items,
         totalAmount,
         vat: 21,
@@ -149,7 +156,11 @@ export default function NewInvoicePage() {
             </div>
             <div className="space-y-2">
               <Label>Číslo faktury</Label>
-              <Input value={formData.invoiceNumber} onChange={e => setFormData({...formData, invoiceNumber: e.target.value})} className="bg-background" />
+              <Input
+                readOnly
+                value="Přidělí se automaticky (řada FA-ROK-###)"
+                className="bg-muted text-muted-foreground"
+              />
             </div>
             <div className="space-y-2">
               <Label>Datum vystavení</Label>

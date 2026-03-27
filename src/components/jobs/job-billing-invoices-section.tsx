@@ -4,6 +4,7 @@ import React, { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   collection,
+  doc,
   query,
   where,
   limit,
@@ -12,6 +13,7 @@ import {
   useFirestore,
   useCollection,
   useMemoFirebase,
+  useDoc,
 } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -42,6 +44,7 @@ import {
   hasAdvanceTerms,
   JOB_INVOICE_TYPES,
   type ManualAdvanceLineInput,
+  type OrgBankAccountRow,
   type WorkContractLike,
 } from "@/lib/job-billing-invoices";
 import {
@@ -93,6 +96,58 @@ export function JobBillingInvoicesSection({
 }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
+
+  const customerRef = useMemoFirebase(
+    () =>
+      firestore && companyId && customerId
+        ? doc(firestore, "companies", companyId, "customers", String(customerId))
+        : null,
+    [firestore, companyId, customerId]
+  );
+  const { data: customerDoc } = useDoc(customerRef);
+
+  const bankAccountsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "bankAccounts")
+        : null,
+    [firestore, companyId]
+  );
+  const { data: bankAccountsRaw } = useCollection(bankAccountsColRef);
+
+  const orgBankAccounts = useMemo(
+    () => (Array.isArray(bankAccountsRaw) ? bankAccountsRaw : []) as OrgBankAccountRow[],
+    [bankAccountsRaw]
+  );
+
+  const legacyCompanyBank = useMemo(() => {
+    const c = companyDoc as { bankAccountNumber?: string } | null | undefined;
+    return String(c?.bankAccountNumber ?? "").trim() || null;
+  }, [companyDoc]);
+
+  const supplierIco = useMemo(() => {
+    const c = companyDoc as { ico?: string } | null | undefined;
+    const v = String(c?.ico ?? "").trim();
+    return v || null;
+  }, [companyDoc]);
+
+  const supplierDic = useMemo(() => {
+    const c = companyDoc as { dic?: string } | null | undefined;
+    const v = String(c?.dic ?? "").trim();
+    return v || null;
+  }, [companyDoc]);
+
+  const customerIco = useMemo(() => {
+    const c = customerDoc as { ico?: string } | null | undefined;
+    const v = String(c?.ico ?? "").trim();
+    return v || null;
+  }, [customerDoc]);
+
+  const customerDic = useMemo(() => {
+    const c = customerDoc as { dic?: string } | null | undefined;
+    const v = String(c?.dic ?? "").trim();
+    return v || null;
+  }, [customerDoc]);
 
   const printDocHtml = useCallback(
     (docTitle: string, pdfHtml: string) => {
@@ -272,6 +327,13 @@ export function JobBillingInvoicesSection({
         contract: primaryContract,
         budget: jobBudgetBreakdown,
         userId: user.uid,
+        logoUrl: organizationLogoUrl,
+        orgBankAccounts,
+        legacyCompanyBankAccount: legacyCompanyBank,
+        supplierIco,
+        supplierDic,
+        customerIco,
+        customerDic,
       });
       toast({
         title: "Zálohová faktura vytvořena",
@@ -328,6 +390,13 @@ export function JobBillingInvoicesSection({
         userId: user.uid,
         logoUrl: organizationLogoUrl,
         lines: manualLines,
+        primaryWorkContract: primaryContract,
+        orgBankAccounts,
+        legacyCompanyBankAccount: legacyCompanyBank,
+        supplierIco,
+        supplierDic,
+        customerIco,
+        customerDic,
       });
       toast({
         title: "Vlastní zálohová faktura vytvořena",
@@ -400,6 +469,12 @@ export function JobBillingInvoicesSection({
         vatRate: normalizeVatRate(jobBudgetBreakdown.vatRate),
         userId: user.uid,
         logoUrl: organizationLogoUrl,
+        orgBankAccounts,
+        legacyCompanyBankAccount: legacyCompanyBank,
+        supplierIco,
+        supplierDic,
+        customerIco,
+        customerDic,
       });
       toast({
         title: "Daňový doklad vytvořen",
@@ -459,6 +534,12 @@ export function JobBillingInvoicesSection({
         advanceInvoices: rows,
         workContractsForJob,
         sourceContractId: primary?.id ?? null,
+        orgBankAccounts,
+        legacyCompanyBankAccount: legacyCompanyBank,
+        supplierIco,
+        supplierDic,
+        customerIco,
+        customerDic,
       });
       toast({
         title: "Vyúčtovací faktura vytvořena",

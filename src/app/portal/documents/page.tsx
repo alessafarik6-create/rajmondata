@@ -44,8 +44,14 @@ import {
   deleteDoc,
   writeBatch,
   getDoc,
+  updateDoc,
 } from "firebase/firestore";
-import { deleteObject, ref as storageRef } from "firebase/storage";
+import {
+  deleteObject,
+  getDownloadURL,
+  ref as storageRef,
+  uploadBytes,
+} from "firebase/storage";
 import { getFirebaseStorage } from "@/firebase/storage";
 import {
   Dialog,
@@ -110,7 +116,12 @@ type CompanyDocumentRow = {
   fileName?: string | null;
   storagePath?: string | null;
   createdAt?: unknown;
+  uploadedBy?: string;
+  uploadedByName?: string;
+  assignmentType?: "job_cost" | "overhead" | "pending_assignment";
 };
+
+type AssignmentType = "job_cost" | "overhead" | "pending_assignment";
 
 function isReceivedDoc(d: CompanyDocumentRow) {
   return d.type === "received" || d.documentKind === "prijate";
@@ -165,10 +176,32 @@ export default function DocumentsPage() {
   }, [firestore, companyId]);
 
   const { data: documents, isLoading } = useCollection(documentsQuery);
+  const jobsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, "jobs");
+  }, [firestore, companyId]);
+  const { data: jobsRaw } = useCollection(jobsQuery);
+  const jobs = useMemo(() => {
+    const rows = Array.isArray(jobsRaw) ? jobsRaw : [];
+    return rows
+      .map((j) => ({
+        id: String((j as { id?: string }).id ?? ""),
+        name: String(
+          (j as { name?: string; title?: string }).name ??
+            (j as { title?: string }).title ??
+            "Zakázka"
+        ).trim(),
+      }))
+      .filter((j) => j.id);
+  }, [jobsRaw]);
 
   const [isAddDocOpen, setIsAddDocOpen] = useState(false);
   const [newDocType, setNewDocType] = useState<"received" | "issued">("received");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [newDocFile, setNewDocFile] = useState<File | null>(null);
+  const [assignmentType, setAssignmentType] =
+    useState<AssignmentType>("pending_assignment");
+  const [selectedJobId, setSelectedJobId] = useState<string>("");
   const [formData, setFormData] = useState({
     number: "",
     entityName: "",
@@ -180,6 +213,46 @@ export default function DocumentsPage() {
 
   const [receivedSearch, setReceivedSearch] = useState("");
   const [issuedSearch, setIssuedSearch] = useState("");
+  const [assigningDocId, setAssigningDocId] = useState<string | null>(null);
+  const [assignDialogOpen, setAssignDialogOpen] = useState(false);
+  const [assignTypeNext, setAssignTypeNext] =
+    useState<AssignmentType>("pending_assignment");
+  const [assignJobIdNext, setAssignJobIdNext] = useState("");
+
+  const pendingDocs = useMemo(
+    () =>
+      ((documents ?? []) as CompanyDocumentRow[])
+        .filter((d) => d.assignmentType === "pending_assignment")
+        .sort((a, b) => docCreatedAtMs(b.createdAt) - docCreatedAtMs(a.createdAt)),
+    [documents]
+  );
+
+  const uploadDocumentFile = async (file: File): Promise<{
+    fileUrl: string;
+    fileName: string;
+    fileType: string;
+    mimeType: string;
+    storagePath: string;
+  }> => {
+    if (!companyId || !user) throw new Error("Chybí firma nebo uživatel.");
+    const ext = file.name.includes(".") ? file.name.split(".").pop() : "";
+    const safeExt = ext ? `.${String(ext).toLowerCase()}` : "";
+    const key = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${safeExt}`;
+    const path = `companies/${companyId}/documents/uploads/${user.uid}/${key}`;
+    const ref = storageRef(getFirebaseStorage(), path);
+    await uploadBytes(ref, file, {
+      contentType: file.type || "application/octet-stream",
+    });
+    const fileUrl = await getDownloadURL(ref);
+    const top = (file.type || "").split("/")[0] || "application";
+    return {
+      fileUrl,
+      fileName: file.name || key,
+      fileType: top,
+      mimeType: file.type || "application/octet-stream",
+      storagePath: path,
+    };
+  };
 
   const handleAddDocument = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -194,7 +267,16 @@ export default function DocumentsPage() {
         vatRate
       );
 
+      if (assignmentType === "job_cost" && !selectedJobId) {
+        throw new Error("Vyberte zakázku, ke které doklad patří.");
+      }
+      const selectedJob = jobs.find((j) => j.id === selectedJobId);
+      const uploadMeta = newDocFile ? await uploadDocumentFile(newDocFile) : null;
       const colRef = collection(firestore, "companies", companyId, "documents");
+      const profileName =
+        String((profile as { displayName?: string; email?: string })?.displayName ?? "").trim() ||
+        String((profile as { email?: string })?.email ?? user?.email ?? "").trim() ||
+        "Uživatel";
       const newDocRef = await addDoc(colRef, {
         number: formData.number.trim(),
         entityName: formData.entityName.trim(),
@@ -209,6 +291,16 @@ export default function DocumentsPage() {
         vat: vatRate,
         organizationId: companyId,
         createdBy: user?.uid,
+        uploadedBy: user?.uid,
+        uploadedByName: profileName,
+        assignmentType,
+        jobId: assignmentType === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
+        jobName: assignmentType === "job_cost" ? selectedJob?.name ?? null : null,
+        fileUrl: uploadMeta?.fileUrl ?? null,
+        fileName: uploadMeta?.fileName ?? null,
+        fileType: uploadMeta?.fileType ?? null,
+        mimeType: uploadMeta?.mimeType ?? null,
+        storagePath: uploadMeta?.storagePath ?? null,
         createdAt: serverTimestamp(),
       });
 
@@ -229,6 +321,8 @@ export default function DocumentsPage() {
           amountGross,
           vatRate,
           date: formData.date,
+          assignmentType,
+          jobId: assignmentType === "job_cost" ? selectedJob?.id ?? selectedJobId : null,
         },
       });
 
@@ -257,6 +351,9 @@ export default function DocumentsPage() {
         date: new Date().toISOString().split("T")[0],
         description: "",
       });
+      setNewDocFile(null);
+      setAssignmentType("pending_assignment");
+      setSelectedJobId("");
     } catch {
       toast({
         variant: "destructive",
@@ -266,6 +363,38 @@ export default function DocumentsPage() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const openAssignDialog = (row: CompanyDocumentRow) => {
+    setAssigningDocId(row.id);
+    setAssignTypeNext(row.assignmentType ?? "pending_assignment");
+    setAssignJobIdNext(row.jobId ?? "");
+    setAssignDialogOpen(true);
+  };
+
+  const saveAssignment = async () => {
+    if (!companyId || !assigningDocId) return;
+    if (assignTypeNext === "job_cost" && !assignJobIdNext) {
+      toast({
+        variant: "destructive",
+        title: "Vyberte zakázku",
+        description: "Pro zařazení do nákladů zakázky je nutné vybrat zakázku.",
+      });
+      return;
+    }
+    const selected = jobs.find((j) => j.id === assignJobIdNext);
+    await updateDoc(
+      doc(firestore, "companies", companyId, "documents", assigningDocId),
+      {
+        assignmentType: assignTypeNext,
+        jobId: assignTypeNext === "job_cost" ? selected?.id ?? assignJobIdNext : null,
+        jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
+        updatedAt: serverTimestamp(),
+      }
+    );
+    setAssignDialogOpen(false);
+    setAssigningDocId(null);
+    toast({ title: "Zařazení uloženo" });
   };
 
   const handleDelete = async (row: CompanyDocumentRow) => {
@@ -503,6 +632,20 @@ export default function DocumentsPage() {
               <form onSubmit={handleAddDocument} className="space-y-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2 col-span-2">
+                    <Label htmlFor="attachment">Soubor / fotka / PDF</Label>
+                    <Input
+                      id="attachment"
+                      type="file"
+                      accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
+                      capture="environment"
+                      onChange={(e) => setNewDocFile(e.target.files?.[0] ?? null)}
+                      className="bg-background"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Na mobilu lze využít fotoaparát a doklad nahrát přímo z terénu.
+                    </p>
+                  </div>
+                  <div className="space-y-2 col-span-2">
                     <Label>Typ dokladu</Label>
                     <div className="flex gap-2 p-1 bg-background rounded-lg border border-border">
                       <Button
@@ -609,6 +752,39 @@ export default function DocumentsPage() {
                       className="bg-background"
                     />
                   </div>
+                  <div className="space-y-2 col-span-2">
+                    <Label>Zařazení dokladu</Label>
+                    <Select
+                      value={assignmentType}
+                      onValueChange={(v) => setAssignmentType(v as AssignmentType)}
+                    >
+                      <SelectTrigger className="bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="job_cost">Zakázka → náklad</SelectItem>
+                        <SelectItem value="overhead">Režie</SelectItem>
+                        <SelectItem value="pending_assignment">Musí se zařadit později</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {assignmentType === "job_cost" ? (
+                    <div className="space-y-2 col-span-2">
+                      <Label>Vyberte zakázku</Label>
+                      <Select value={selectedJobId} onValueChange={setSelectedJobId}>
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder="Zakázka" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {jobs.map((j) => (
+                            <SelectItem key={j.id} value={j.id}>
+                              {j.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
                 </div>
                 <DialogFooter>
                   <Button type="submit" disabled={isSubmitting} className="w-full">
@@ -627,6 +803,15 @@ export default function DocumentsPage() {
           </Button>
         </div>
       </div>
+
+      {pendingDocs.length > 0 ? (
+        <Alert className="border-amber-300 bg-amber-50">
+          <AlertTitle>Nezařazené doklady ({pendingDocs.length})</AlertTitle>
+          <AlertDescription>
+            Doklady ve stavu „musí se zařadit později“ jsou zvýrazněné a lze je rychle zařadit.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <Tabs defaultValue="received" className="w-full min-w-0">
         <TabsList className="flex flex-wrap h-auto gap-1 p-1 mb-6">
@@ -650,6 +835,7 @@ export default function DocumentsPage() {
             data={receivedDocsBase}
             isLoading={isLoading}
             onDelete={handleDelete}
+            onAssign={openAssignDialog}
             search={receivedSearch}
             onSearchChange={setReceivedSearch}
           />
@@ -665,6 +851,58 @@ export default function DocumentsPage() {
           />
         </TabsContent>
       </Tabs>
+
+      <Dialog open={assignDialogOpen} onOpenChange={setAssignDialogOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Zařadit doklad</DialogTitle>
+            <DialogDescription>
+              Nastavte, kam doklad patří: zakázka, režie nebo ponechat na později.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-2">
+              <Label>Zařazení</Label>
+              <Select
+                value={assignTypeNext}
+                onValueChange={(v) => setAssignTypeNext(v as AssignmentType)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="job_cost">Zakázka → náklad</SelectItem>
+                  <SelectItem value="overhead">Režie</SelectItem>
+                  <SelectItem value="pending_assignment">Musí se zařadit později</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {assignTypeNext === "job_cost" ? (
+              <div className="space-y-2">
+                <Label>Zakázka</Label>
+                <Select value={assignJobIdNext} onValueChange={setAssignJobIdNext}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Vyberte zakázku" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {jobs.map((j) => (
+                      <SelectItem key={j.id} value={j.id}>
+                        {j.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAssignDialogOpen(false)}>
+              Zrušit
+            </Button>
+            <Button onClick={() => void saveAssignment()}>Uložit zařazení</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -673,12 +911,14 @@ function DocumentTableReceived({
   data,
   isLoading,
   onDelete,
+  onAssign,
   search,
   onSearchChange,
 }: {
   data: CompanyDocumentRow[];
   isLoading: boolean;
   onDelete: (row: CompanyDocumentRow) => void;
+  onAssign: (row: CompanyDocumentRow) => void;
   search: string;
   onSearchChange: (v: string) => void;
 }) {
@@ -845,13 +1085,21 @@ function DocumentTableReceived({
                   const amts = resolveExpenseAmounts(row);
                   const showAmount = !fromJobMedia && amts.amountNet > 0;
 
+                  const assignmentBadge =
+                    row.assignmentType === "job_cost"
+                      ? "Zakázka"
+                      : row.assignmentType === "overhead"
+                        ? "Režie"
+                        : "Nezařazeno";
                   return (
                     <TableRow
                       key={row.id}
                       className={cn(
                         "border-border hover:bg-muted/30",
                         fromJobExpense && "bg-amber-50/50 dark:bg-amber-950/15",
-                        fromJobMedia && "bg-sky-50/60 dark:bg-sky-950/20"
+                        fromJobMedia && "bg-sky-50/60 dark:bg-sky-950/20",
+                        row.assignmentType === "pending_assignment" &&
+                          "ring-1 ring-amber-300 bg-amber-50/70 dark:bg-amber-950/20"
                       )}
                     >
                       <TableCell className="pl-6 align-top">
@@ -887,6 +1135,16 @@ function DocumentTableReceived({
                                 Média zakázky
                               </Badge>
                             ) : null}
+                            <Badge
+                              className={cn(
+                                "text-[10px] font-normal",
+                                row.assignmentType === "pending_assignment"
+                                  ? "bg-amber-600 text-white hover:bg-amber-600"
+                                  : "bg-slate-700 text-white hover:bg-slate-700"
+                              )}
+                            >
+                              {assignmentBadge}
+                            </Badge>
                           </div>
                         </div>
                       </TableCell>
@@ -910,7 +1168,9 @@ function DocumentTableReceived({
                           </span>
                         ) : (
                           <span className="text-sm text-muted-foreground">
-                            {row.entityName ?? "—"}
+                            {row.assignmentType === "pending_assignment"
+                              ? "Zařadit později"
+                              : row.entityName ?? "—"}
                           </span>
                         )}
                       </TableCell>
@@ -966,6 +1226,16 @@ function DocumentTableReceived({
                                 <Briefcase className="h-4 w-4 shrink-0" />
                                 Zakázka
                               </Link>
+                            </Button>
+                          ) : null}
+                          {row.assignmentType === "pending_assignment" ? (
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              className="min-h-[40px] gap-1"
+                              onClick={() => onAssign(row)}
+                            >
+                              Zařadit
                             </Button>
                           ) : null}
                           <Button

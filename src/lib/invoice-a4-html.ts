@@ -38,7 +38,9 @@ html, body { margin: 0; padding: 0; background: #e5e5e5; }
   box-shadow: 0 2px 12px rgba(0,0,0,0.12);
 }
 .doc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; border-bottom: 2px solid #111; padding-bottom: 10px; }
-.doc-logo img { max-height: 52px; max-width: 220px; object-fit: contain; display: block; }
+.doc-logo img { max-height: 68px; max-width: 260px; object-fit: contain; display: block; }
+.bank-box { border: 1px solid #ccc; padding: 10px; margin: 12px 0; font-size: 9.5pt; background: #fafafa; }
+.bank-box h3 { margin: 0 0 6px; font-size: 10pt; font-weight: 600; }
 .doc-title { font-size: 16pt; font-weight: 700; margin: 0 0 4px; }
 .doc-meta { font-size: 9.5pt; color: #333; }
 .doc-meta p { margin: 2px 0; }
@@ -80,6 +82,12 @@ function brJoinEscaped(text: string): string {
     .join("<br/>");
 }
 
+function bankBoxHtml(bankAccountText: string | null | undefined): string {
+  const t = (bankAccountText || "").trim();
+  if (!t) return "";
+  return `<div class="bank-box"><h3>Platební údaje</h3><div>${brJoinEscaped(t)}</div></div>`;
+}
+
 export function buildAdvanceInvoiceHtml(params: {
   logoUrl?: string | null;
   title: string;
@@ -89,10 +97,14 @@ export function buildAdvanceInvoiceHtml(params: {
   customerAddressText: string;
   invoiceNumber: string;
   issueDate: string;
+  /** Datum zdanitelného plnění — výchozí stejné jako vystavení */
+  taxSupplyDate?: string | null;
   dueDate: string;
   jobName: string;
   contractNumber?: string | null;
   variableSymbol?: string | null;
+  /** Formátovaný text účtu / IBAN pro patičku */
+  bankAccountText?: string | null;
   items: InvoiceLineRow[];
   amountNet: number;
   vatAmount: number;
@@ -107,6 +119,9 @@ export function buildAdvanceInvoiceHtml(params: {
     params.logoUrl && String(params.logoUrl).trim()
       ? `<div class="doc-logo"><img src="${escapeHtml(String(params.logoUrl).trim())}" alt="Logo"/></div>`
       : "";
+  const taxSupply =
+    (params.taxSupplyDate && String(params.taxSupplyDate).trim()) ||
+    params.issueDate;
 
   const rowsHtml = params.items
     .map(
@@ -124,6 +139,7 @@ export function buildAdvanceInvoiceHtml(params: {
     .join("");
 
   const vs = params.variableSymbol ? String(params.variableSymbol).trim() : "";
+  const bankHtml = bankBoxHtml(params.bankAccountText);
   return `<!DOCTYPE html>
 <html lang="cs">
 <head>
@@ -140,7 +156,9 @@ export function buildAdvanceInvoiceHtml(params: {
         <div class="doc-title">${escapeHtml(params.title)}</div>
         <div class="doc-meta">
           <p><strong>Číslo:</strong> ${escapeHtml(params.invoiceNumber)}</p>
-          <p><strong>Datum vystavení:</strong> ${escapeHtml(params.issueDate)} &nbsp;·&nbsp; <strong>Splatnost:</strong> ${escapeHtml(params.dueDate)}</p>
+          <p><strong>Datum vystavení:</strong> ${escapeHtml(params.issueDate)}</p>
+          <p><strong>Datum zdanitelného plnění:</strong> ${escapeHtml(taxSupply)}</p>
+          <p><strong>Splatnost:</strong> ${escapeHtml(params.dueDate)}</p>
           <p><strong>Zakázka:</strong> ${escapeHtml(params.jobName)}</p>
           ${params.contractNumber ? `<p><strong>Smlouva č.:</strong> ${escapeHtml(String(params.contractNumber))}</p>` : ""}
           ${vs ? `<p><strong>Variabilní symbol:</strong> ${escapeHtml(vs)}</p>` : ""}
@@ -154,6 +172,7 @@ export function buildAdvanceInvoiceHtml(params: {
       <div class="box"><h3>Dodavatel</h3><div>${supplierLines}</div></div>
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
+    ${bankHtml}
     <table class="items">
       <thead>
         <tr>
@@ -188,6 +207,10 @@ export function buildTaxReceiptHtml(params: {
   customerName: string;
   customerAddressText: string;
   documentNumber: string;
+  /** Datum vystavení daňového dokladu */
+  issueDate: string;
+  /** Zdanitelné plnění — u zálohy typicky datum přijetí platby */
+  taxSupplyDate?: string | null;
   paymentDate: string;
   relatedInvoiceNumber: string;
   jobName: string;
@@ -196,6 +219,7 @@ export function buildTaxReceiptHtml(params: {
   vatAmount: number;
   amountGross: number;
   variableSymbol?: string;
+  bankAccountText?: string | null;
   note?: string;
 }): string {
   const supplierLines = brJoinEscaped(params.supplierAddressText || params.supplierName);
@@ -204,6 +228,9 @@ export function buildTaxReceiptHtml(params: {
     params.logoUrl && String(params.logoUrl).trim()
       ? `<div class="doc-logo"><img src="${escapeHtml(String(params.logoUrl).trim())}" alt="Logo"/></div>`
       : "";
+  const taxSupply =
+    (params.taxSupplyDate && String(params.taxSupplyDate).trim()) || params.paymentDate;
+  const bankHtml = bankBoxHtml(params.bankAccountText);
 
   return `<!DOCTYPE html>
 <html lang="cs">
@@ -221,6 +248,8 @@ export function buildTaxReceiptHtml(params: {
         <div class="doc-title">Daňový doklad k přijaté platbě</div>
         <div class="doc-meta">
           <p><strong>Číslo dokladu:</strong> ${escapeHtml(params.documentNumber)}</p>
+          <p><strong>Datum vystavení:</strong> ${escapeHtml(params.issueDate)}</p>
+          <p><strong>Datum zdanitelného plnění:</strong> ${escapeHtml(taxSupply)}</p>
           <p><strong>Datum přijetí platby:</strong> ${escapeHtml(params.paymentDate)}</p>
           <p><strong>Vazba na zálohovou fakturu:</strong> ${escapeHtml(params.relatedInvoiceNumber)}</p>
           <p><strong>Zakázka:</strong> ${escapeHtml(params.jobName)}</p>
@@ -233,6 +262,7 @@ export function buildTaxReceiptHtml(params: {
       <div class="box"><h3>Dodavatel</h3><div>${supplierLines}</div></div>
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
+    ${bankHtml}
     <table class="totals">
       <tr><td>Základ daně</td><td>${fmtKc(params.amountNet)}</td></tr>
       <tr><td>DPH (${params.vatRate} %)</td><td>${fmtKc(params.vatAmount)}</td></tr>
@@ -261,9 +291,12 @@ export function buildFinalSettlementInvoiceHtml(params: {
   customerAddressText: string;
   invoiceNumber: string;
   issueDate: string;
+  taxSupplyDate?: string | null;
   dueDate: string;
   jobName: string;
+  contractNumber?: string | null;
   variableSymbol?: string | null;
+  bankAccountText?: string | null;
   totalContractGross: number;
   advanceRows: SettlementAdvanceRow[];
   totalAdvancePaid: number;
@@ -281,6 +314,9 @@ export function buildFinalSettlementInvoiceHtml(params: {
       ? `<div class="doc-logo"><img src="${escapeHtml(String(params.logoUrl).trim())}" alt="Logo"/></div>`
       : "";
   const vs = params.variableSymbol ? String(params.variableSymbol).trim() : "";
+  const taxSupply =
+    (params.taxSupplyDate && String(params.taxSupplyDate).trim()) || params.issueDate;
+  const bankHtml = bankBoxHtml(params.bankAccountText);
 
   const advanceTable =
     params.advanceRows.length > 0
@@ -327,8 +363,11 @@ export function buildFinalSettlementInvoiceHtml(params: {
         <div class="doc-title">Vyúčtovací faktura (konečné vyúčtování)</div>
         <div class="doc-meta">
           <p><strong>Číslo:</strong> ${escapeHtml(params.invoiceNumber)}</p>
-          <p><strong>Datum vystavení:</strong> ${escapeHtml(params.issueDate)} &nbsp;·&nbsp; <strong>Splatnost:</strong> ${escapeHtml(params.dueDate)}</p>
+          <p><strong>Datum vystavení:</strong> ${escapeHtml(params.issueDate)}</p>
+          <p><strong>Datum zdanitelného plnění:</strong> ${escapeHtml(taxSupply)}</p>
+          <p><strong>Splatnost:</strong> ${escapeHtml(params.dueDate)}</p>
           <p><strong>Zakázka:</strong> ${escapeHtml(params.jobName)}</p>
+          ${params.contractNumber ? `<p><strong>Smlouva č.:</strong> ${escapeHtml(String(params.contractNumber))}</p>` : ""}
           ${vs ? `<p><strong>Variabilní symbol:</strong> ${escapeHtml(vs)}</p>` : ""}
         </div>
       </div>
@@ -338,6 +377,7 @@ export function buildFinalSettlementInvoiceHtml(params: {
       <div class="box"><h3>Dodavatel</h3><div>${supplierLines}</div></div>
       <div class="box"><h3>Odběratel</h3><div>${customerLines}</div></div>
     </div>
+    ${bankHtml}
     <table class="totals">
       <tr><td>Celková cena zakázky (s DPH)</td><td>${fmtKc(params.totalContractGross)}</td></tr>
     </table>

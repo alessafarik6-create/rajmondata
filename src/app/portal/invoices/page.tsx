@@ -217,10 +217,11 @@ export default function InvoicesPage() {
                             </Link>
                           </DropdownMenuItem>
                           {(row.type === JOB_INVOICE_TYPES.ADVANCE ||
-                            row.type === JOB_INVOICE_TYPES.FINAL_INVOICE) && (
+                            row.type === JOB_INVOICE_TYPES.FINAL_INVOICE ||
+                            row.type === JOB_INVOICE_TYPES.TAX_RECEIPT) && (
                             <DropdownMenuItem asChild>
                               <Link href={`/portal/invoices/${inv.id}/edit`}>
-                                <Pencil className="w-4 h-4 mr-2" /> Upravit položky
+                                <Pencil className="w-4 h-4 mr-2" /> Upravit doklad
                               </Link>
                             </DropdownMenuItem>
                           )}

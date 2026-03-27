@@ -13,6 +13,7 @@ import {
   Banknote,
   PieChart,
   Inbox,
+  FileText,
 } from "lucide-react";
 import {
   Card,
@@ -118,6 +119,15 @@ type JobData = {
   customerAddress?: string;
 };
 
+type PendingDocumentRow = {
+  id: string;
+  fileName?: string | null;
+  fileType?: string | null;
+  uploadedByName?: string | null;
+  createdAt?: unknown;
+  assignmentType?: string | null;
+};
+
 export default function CompanyDashboard() {
   const { user, isUserLoading } = useUser();
   const router = useRouter();
@@ -170,6 +180,15 @@ export default function CompanyDashboard() {
       limit(500)
     );
   }, [firestore, companyId, isManagement, isAccountant]);
+
+  const pendingDocumentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return query(
+      collection(firestore, "companies", companyId, "documents"),
+      where("assignmentType", "==", "pending_assignment"),
+      limit(8)
+    );
+  }, [firestore, companyId, showAdminDashboard]);
 
   const attendanceQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -264,6 +283,7 @@ export default function CompanyDashboard() {
     data: attendanceTodayRaw,
     isLoading: attendanceTodayLoading,
   } = useCollection(attendanceTodayForDashboardQuery);
+  const { data: pendingDocumentsRaw } = useCollection(pendingDocumentsQuery);
 
   const openWorkSegmentsTodayQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !showAdminDashboard) return null;
@@ -286,6 +306,19 @@ export default function CompanyDashboard() {
   const dashboardDailyReports = dashboardDailyReportsRaw ?? [];
   const dashboardChatMessages = dashboardChatMessagesRaw ?? [];
   const attendanceTodayRows = attendanceTodayRaw ?? [];
+  const pendingDocuments = useMemo(() => {
+    const rows = (pendingDocumentsRaw ?? []) as PendingDocumentRow[];
+    const toMs = (t: unknown) => {
+      if (t && typeof (t as { toMillis?: () => number }).toMillis === "function") {
+        return (t as { toMillis: () => number }).toMillis();
+      }
+      if (t && typeof (t as { seconds?: number }).seconds === "number") {
+        return (t as { seconds: number }).seconds * 1000;
+      }
+      return 0;
+    };
+    return [...rows].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+  }, [pendingDocumentsRaw]);
 
   const typedJobs: JobData[] = Array.isArray(allJobsRaw)
     ? (allJobsRaw as JobData[])
@@ -715,6 +748,36 @@ export default function CompanyDashboard() {
                 </AlertDescription>
               </Alert>
             </Link>
+          ) : null}
+
+          {pendingDocuments.length > 0 ? (
+            <Card className="border-amber-300 bg-amber-50/80">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <FileText className="h-5 w-5 text-amber-700" />
+                  Doklady k zařazení
+                </CardTitle>
+                <CardDescription>
+                  {pendingDocuments.length} dokladů čeká na přiřazení.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {pendingDocuments.slice(0, 5).map((d) => (
+                  <div key={d.id} className="rounded border border-amber-200 bg-white/80 p-2 text-sm">
+                    <div className="font-medium truncate">{d.fileName || d.id}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {(d.uploadedByName || "Neznámý uživatel").toString()} ·{" "}
+                      {(d.fileType || "soubor").toString()}
+                    </div>
+                  </div>
+                ))}
+                <Link href="/portal/documents">
+                  <Button variant="secondary" className="min-h-[40px]">
+                    Otevřít a zařadit doklady
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
           ) : null}
 
           {companyId ? (

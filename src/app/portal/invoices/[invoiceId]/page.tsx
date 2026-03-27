@@ -96,6 +96,7 @@ export default function InvoiceDocumentPage() {
     : "";
   const isAdvance = invType === JOB_INVOICE_TYPES.ADVANCE;
   const isSettlement = invType === JOB_INVOICE_TYPES.FINAL_INVOICE;
+  const isTaxReceipt = invType === JOB_INVOICE_TYPES.TAX_RECEIPT;
 
   const handlePrint = () => {
     if (!html) {
@@ -195,11 +196,11 @@ export default function InvoiceDocumentPage() {
         </Button>
         <h1 className="text-xl font-bold text-neutral-950 sm:text-2xl">{title}</h1>
         <div className="ml-auto flex flex-wrap gap-2">
-          {isAdvance || isSettlement ? (
+          {isAdvance || isSettlement || isTaxReceipt ? (
             <Button type="button" variant="outline" className="gap-2 border-neutral-950" asChild>
               <Link href={`/portal/invoices/${invoiceId}/edit`}>
                 <Pencil className="h-4 w-4" />
-                Upravit položky
+                Upravit doklad
               </Link>
             </Button>
           ) : null}
