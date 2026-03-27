@@ -60,12 +60,20 @@ export function companyDocumentExpenseAmounts(row: DocAmountInput): {
   let net = roundMoney2(Number(row.amountNet ?? row.amount ?? 0));
   let gross = roundMoney2(Number(row.amountGross ?? 0));
   let vat = roundMoney2(Number(row.vatAmount ?? 0));
+  /** V Dokladech je hrubá částka často jen v `castka`; bez toho zůstane gross=0 a náklad se nevytvoří. */
+  const castkaGross = roundMoney2(Number(row.castka ?? 0));
+  if (gross <= 0 && castkaGross > 0) {
+    gross = castkaGross;
+  }
   if (gross <= 0 && net > 0 && Number.isFinite(rate)) {
     vat = roundMoney2((net * rate) / 100);
     gross = roundMoney2(net + vat);
   } else if (net <= 0 && gross > 0 && Number.isFinite(rate) && rate > 0) {
     net = roundMoney2(gross / (1 + rate / 100));
     vat = roundMoney2(gross - net);
+  } else if (net <= 0 && gross > 0 && Number.isFinite(rate) && rate === 0) {
+    net = gross;
+    vat = 0;
   } else if (vat <= 0 && net > 0 && gross > 0) {
     vat = roundMoney2(gross - net);
   }
@@ -102,8 +110,13 @@ export function shouldLinkCompanyDocumentToJobExpense(
   if (row.source === JOB_EXPENSE_DOCUMENT_SOURCE || row.sourceType === "expense") {
     return false;
   }
+  /** Vydaný explicitně; ostatní (vč. legacy bez type/kind) bereme jako přijatý náklad. */
   const isReceived =
-    row.type === "received" || row.documentKind === "prijate";
+    row.type === "received" ||
+    row.documentKind === "prijate" ||
+    (row.type !== "issued" &&
+      row.type !== "vydane" &&
+      row.documentKind !== "vydane");
   if (!isReceived) return false;
   if (row.assignmentType !== "job_cost") return false;
   if (!jobIdFromCompanyDocument(row)) return false;

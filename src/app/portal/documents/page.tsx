@@ -265,7 +265,13 @@ function parseVatPercentInput(raw: string): number {
 }
 
 function isReceivedDoc(d: CompanyDocumentRow) {
-  return d.type === "received" || d.documentKind === "prijate";
+  return (
+    d.type === "received" ||
+    d.documentKind === "prijate" ||
+    (d.type !== "issued" &&
+      d.type !== "vydane" &&
+      d.documentKind !== "vydane")
+  );
 }
 
 function docCreatedAtMs(t: unknown): number {
@@ -653,6 +659,7 @@ export default function DocumentsPage() {
         castka: amountGross,
         sDPH: true,
         vatRate,
+        dphSazba: vatRate,
         vatAmount,
         amountGross,
         vat: vatRate,
@@ -784,7 +791,7 @@ export default function DocumentsPage() {
   const openAssignDialog = (row: CompanyDocumentRow) => {
     setAssigningDocId(row.id);
     setAssignTypeNext(row.assignmentType ?? "pending_assignment");
-    setAssignJobIdNext(row.jobId ?? "");
+    setAssignJobIdNext((row.jobId ?? row.zakazkaId ?? "").trim());
     setAssignDialogOpen(true);
   };
 
@@ -808,45 +815,57 @@ export default function DocumentsPage() {
       "documents",
       assigningDocId
     );
-    const snap = await getDoc(docRef);
-    if (!snap.exists()) {
+    try {
+      const snap = await getDoc(docRef);
+      if (!snap.exists()) {
+        toast({
+          variant: "destructive",
+          title: "Doklad nenalezen",
+          description: "Obnovte stránku a zkuste to znovu.",
+        });
+        return;
+      }
+      const beforeRow = snap.data() as CompanyDocumentRow;
+      const before: CompanyDocumentExpenseReconcileBefore = {
+        ...beforeRow,
+        id: assigningDocId,
+      };
+      await updateDoc(docRef, {
+        assignmentType: assignTypeNext,
+        jobId: jid,
+        zakazkaId: jid,
+        jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
+        updatedAt: serverTimestamp(),
+      });
+      const after: CompanyDocumentExpenseReconcileBefore = {
+        ...before,
+        assignmentType: assignTypeNext,
+        jobId: jid,
+        zakazkaId: jid,
+        jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
+      };
+      await reconcileCompanyDocumentJobExpense({
+        firestore,
+        companyId,
+        userId: user.uid,
+        documentId: assigningDocId,
+        before,
+        after,
+      });
+      setAssignDialogOpen(false);
+      setAssigningDocId(null);
+      toast({ title: "Zařazení uloženo" });
+    } catch (e) {
+      console.error(e);
       toast({
         variant: "destructive",
-        title: "Doklad nenalezen",
-        description: "Obnovte stránku a zkuste to znovu.",
+        title: "Zařazení se nepovedlo",
+        description:
+          e instanceof Error
+            ? e.message
+            : "Zkontrolujte oprávnění a data dokladu (částka, typ přijatého dokladu).",
       });
-      return;
     }
-    const beforeRow = snap.data() as CompanyDocumentRow;
-    const before: CompanyDocumentExpenseReconcileBefore = {
-      ...beforeRow,
-      id: assigningDocId,
-    };
-    await updateDoc(docRef, {
-      assignmentType: assignTypeNext,
-      jobId: jid,
-      zakazkaId: jid,
-      jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
-      updatedAt: serverTimestamp(),
-    });
-    const after: CompanyDocumentExpenseReconcileBefore = {
-      ...before,
-      assignmentType: assignTypeNext,
-      jobId: jid,
-      zakazkaId: jid,
-      jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
-    };
-    await reconcileCompanyDocumentJobExpense({
-      firestore,
-      companyId,
-      userId: user.uid,
-      documentId: assigningDocId,
-      before,
-      after,
-    });
-    setAssignDialogOpen(false);
-    setAssigningDocId(null);
-    toast({ title: "Zařazení uloženo" });
   };
 
   const openEditDocument = (row: CompanyDocumentRow) => {
@@ -1923,6 +1942,7 @@ export default function DocumentsPage() {
         </AlertDialogContent>
       </AlertDialog>
     </div>
+    </TooltipProvider>
   );
 }
 
