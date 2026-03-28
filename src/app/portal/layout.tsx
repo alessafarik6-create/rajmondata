@@ -13,11 +13,12 @@ import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 import {
-  canAccessOrganizationModule,
-  hasActiveModuleAccess,
+  canAccessCompanyModule,
+  getCompanyLicenseModules,
+  isCompanyLicenseActive,
   isCompanyLicenseBlocking,
+  shouldShowLicensePendingNotice,
 } from "@/lib/platform-access";
-import { isOrganizationLicenseRecordActive } from "@/lib/organization-license";
 import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
@@ -156,12 +157,8 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     const skladPath = pathname.startsWith("/portal/sklad");
     const vyrobaPath = pathname.startsWith("/portal/vyroba");
     if (!skladPath && !vyrobaPath) return;
-    if (isCompanyLicenseBlocking(company)) {
-      router.replace("/portal/dashboard");
-      return;
-    }
     if (skladPath) {
-      if (!hasActiveModuleAccess(company, "sklad", platformCatalog)) {
+      if (!canAccessCompanyModule(company, "sklad", platformCatalog)) {
         router.replace("/portal/dashboard");
         return;
       }
@@ -177,7 +174,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       }
     }
     if (vyrobaPath) {
-      if (!hasActiveModuleAccess(company, "vyroba", platformCatalog)) {
+      if (!canAccessCompanyModule(company, "vyroba", platformCatalog)) {
         router.replace("/portal/dashboard");
         return;
       }
@@ -204,17 +201,17 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development" || !company || !companyId) return;
-    console.log("ORG (merged tenant):", company);
-    console.log("LICENSE:", company.license);
-    console.log("organization.license.modules:", company.license?.modules);
+    console.log("company (merged):", company);
+    console.log("company.license:", company.license);
+    console.log("company.license.status:", company.license?.status);
+    console.log("company.license.modules:", getCompanyLicenseModules(company));
     console.log("[Portal license debug]", {
       companyId,
-      isLicenseActive: isOrganizationLicenseRecordActive(company),
+      isCompanyLicenseActive: isCompanyLicenseActive(company),
       isCompanyLicenseBlocking: isCompanyLicenseBlocking(company),
-      canAccessModuleSklad: canAccessOrganizationModule(company, "sklad", platformCatalog),
-      canAccessModuleVyroba: canAccessOrganizationModule(company, "vyroba", platformCatalog),
-      hasActiveModuleAccessSklad: hasActiveModuleAccess(company, "sklad", platformCatalog),
-      hasActiveModuleAccessVyroba: hasActiveModuleAccess(company, "vyroba", platformCatalog),
+      shouldShowLicensePendingNotice: shouldShowLicensePendingNotice(company),
+      canAccessCompanyModuleSklad: canAccessCompanyModule(company, "sklad", platformCatalog),
+      canAccessCompanyModuleVyroba: canAccessCompanyModule(company, "vyroba", platformCatalog),
     });
   }, [company, companyId, platformCatalog]);
 
@@ -491,28 +488,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   const licenseNotice = (() => {
     if (isPortalEmployeeOnly || !company) return null;
-    if (isOrganizationLicenseRecordActive(company)) return null;
+    if (isCompanyLicenseActive(company)) return null;
 
-    const lic = company.license;
-    const ls = String(lic?.status ?? lic?.licenseStatus ?? "").toLowerCase();
-    if (ls === "pending") {
-      return (
-        <Alert className="mb-4 border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-50">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Licence čeká na schválení</AlertTitle>
-          <AlertDescription>
-            Účet firmy zatím nebyl aktivován superadministrátorem. Placené moduly jsou vypnuté, dokud neproběhne
-            aktivace licence.
-          </AlertDescription>
-        </Alert>
-      );
-    }
-    const hasLicenseStatusField =
-      lic &&
-      typeof lic === "object" &&
-      ((lic.status != null && String(lic.status).trim() !== "") ||
-        (lic.licenseStatus != null && String(lic.licenseStatus).trim() !== ""));
-    if (!hasLicenseStatusField && company.platformLicense?.status === "pending") {
+    if (shouldShowLicensePendingNotice(company)) {
       return (
         <Alert className="mb-4 border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-50">
           <AlertCircle className="h-4 w-4" />

@@ -34,7 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import { canAccessCompanyModule } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import { PRODUCTION_STATUS_LABELS, type ProductionRecordRow } from "@/lib/production-types";
@@ -74,8 +74,7 @@ export default function VyrobaListPage() {
 
   const accessOk =
     company &&
-    !isCompanyLicenseBlocking(company) &&
-    hasActiveModuleAccess(company, "vyroba", platformCatalog) &&
+    canAccessCompanyModule(company, "vyroba", platformCatalog) &&
     userCanAccessProductionPortal({
       role,
       globalRoles: profile?.globalRoles,
@@ -110,10 +109,7 @@ export default function VyrobaListPage() {
     [productions]
   );
 
-  const jobsModuleOn =
-    company &&
-    !isCompanyLicenseBlocking(company) &&
-    hasActiveModuleAccess(company, "jobs", platformCatalog);
+  const jobsModuleOn = company && canAccessCompanyModule(company, "jobs", platformCatalog);
 
   if (!user || !firestore || !companyId) {
     return (

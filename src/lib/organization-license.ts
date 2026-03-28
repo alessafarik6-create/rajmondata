@@ -91,17 +91,85 @@ function licenseExpirationIsPast(exp: unknown): boolean {
   return ms != null && ms <= Date.now();
 }
 
-/** Portál: licence je aktivní podle záznamu `organization.license` / `companies.license`. */
-export function isOrganizationLicenseRecordActive(
-  company: { license?: OrganizationLicenseRecord | null } | null | undefined
+export type CompanyLicenseEvaluationInput = {
+  license?: OrganizationLicenseRecord | null;
+  platformLicense?: {
+    active?: boolean;
+    status?: string;
+    expiresAt?: string | null;
+  } | null;
+};
+
+/**
+ * Jednotné „je firma licenčně aktivní“ pro portál:
+ * 1) explicitní negace v `license.status`
+ * 2) `license.status === active` (+ expirace)
+ * 3) fallback na `platformLicense` z denorm (`company_licenses`) — když `license` chybí / je neúplný
+ */
+export function isCompanyLicenseActive(
+  company: CompanyLicenseEvaluationInput | null | undefined
 ): boolean {
   const lic = company?.license;
-  if (!lic || typeof lic !== "object") return false;
-  const s = String(lic.status ?? lic.licenseStatus ?? "")
-    .trim()
-    .toLowerCase();
-  if (s !== "active") return false;
-  const exp = lic.expirationDate ?? lic.licenseExpiresAt;
-  if (licenseExpirationIsPast(exp)) return false;
-  return true;
+  if (lic && typeof lic === "object") {
+    const s = String(lic.status ?? lic.licenseStatus ?? "")
+      .trim()
+      .toLowerCase();
+    if (s === "pending" || s === "suspended" || s === "expired" || s === "inactive") {
+      return false;
+    }
+    if (s === "active") {
+      return !licenseExpirationIsPast(lic.expirationDate ?? lic.licenseExpiresAt);
+    }
+  }
+
+  const pl = company?.platformLicense;
+  if (pl && typeof pl === "object") {
+    const ps = String(pl.status ?? "").trim().toLowerCase();
+    if (ps === "pending" || ps === "expired" || ps === "suspended") return false;
+    if (pl.active === false) return false;
+    if (ps === "active" || pl.active === true) {
+      return !licenseExpirationIsPast(pl.expiresAt);
+    }
+  }
+
+  return false;
+}
+
+/** @deprecated Stejné jako isCompanyLicenseActive — ponecháno kvůli importům v kódu. */
+export function isOrganizationLicenseRecordActive(
+  company: CompanyLicenseEvaluationInput | null | undefined
+): boolean {
+  return isCompanyLicenseActive(company);
+}
+
+/** Moduly z `license.modules` (po merge dokumentů). */
+export function getCompanyLicenseModules(
+  company: { license?: OrganizationLicenseRecord | null } | null | undefined
+): Record<string, boolean> {
+  const m = company?.license?.modules;
+  if (m && typeof m === "object") return m as Record<string, boolean>;
+  return {};
+}
+
+/**
+ * Banner „čeká na schválení“ jen když licence opravdu není aktivní, ale stav je pending
+ * (ne když je firma aktivní podle platformLicense, ale chybí pole license.status).
+ */
+export function shouldShowLicensePendingNotice(
+  company: CompanyLicenseEvaluationInput | null | undefined
+): boolean {
+  if (!company) return false;
+  if (isCompanyLicenseActive(company)) return false;
+  const lic = company.license;
+  const ls = String(lic?.status ?? lic?.licenseStatus ?? "").toLowerCase();
+  if (ls === "pending") return true;
+  const hasLicenseStatusField =
+    lic &&
+    typeof lic === "object" &&
+    ((lic.status != null && String(lic.status).trim() !== "") ||
+      (lic.licenseStatus != null && String(lic.licenseStatus).trim() !== ""));
+  if (!hasLicenseStatusField && company.platformLicense?.status === "pending") {
+    return true;
+  }
+  return false;
 }

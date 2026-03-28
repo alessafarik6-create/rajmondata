@@ -19,7 +19,7 @@ import { useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from "@/fi
 import { doc } from "firebase/firestore";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { isDailyWorkLogEnabled, isWorkLogEnabled } from "@/lib/employee-report-flags";
-import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import { canAccessCompanyModule } from "@/lib/platform-access";
 import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
@@ -67,8 +67,7 @@ export function EmployeePortalSidebar({
     const showLegacyWorklog = !showDaily && isWorkLogEnabled(employeeDoc);
     const showSklad =
       company &&
-      !isCompanyLicenseBlocking(company) &&
-      hasActiveModuleAccess(company, "sklad", platformCatalog) &&
+      canAccessCompanyModule(company, "sklad", platformCatalog) &&
       userCanAccessWarehousePortal({
         role: portalRole,
         globalRoles: profile?.globalRoles,
@@ -76,8 +75,7 @@ export function EmployeePortalSidebar({
       });
     const showVyroba =
       company &&
-      !isCompanyLicenseBlocking(company) &&
-      hasActiveModuleAccess(company, "vyroba", platformCatalog) &&
+      canAccessCompanyModule(company, "vyroba", platformCatalog) &&
       userCanAccessProductionPortal({
         role: portalRole,
         globalRoles: profile?.globalRoles,

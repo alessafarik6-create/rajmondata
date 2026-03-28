@@ -34,7 +34,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import { canAccessCompanyModule } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessWarehousePortal } from "@/lib/warehouse-production-access";
 import type { InventoryItemRow, InventoryMovementRow } from "@/lib/inventory-types";
@@ -82,8 +82,7 @@ export default function SkladPage() {
 
   const accessOk =
     company &&
-    !isCompanyLicenseBlocking(company) &&
-    hasActiveModuleAccess(company, "sklad", platformCatalog) &&
+    canAccessCompanyModule(company, "sklad", platformCatalog) &&
     userCanAccessWarehousePortal({
       role,
       globalRoles: profile?.globalRoles,
@@ -157,9 +156,7 @@ export default function SkladPage() {
   const prodList = useMemo(() => (Array.isArray(productions) ? productions : []), [productions]);
 
   const vyrobaEnabled =
-    company &&
-    !isCompanyLicenseBlocking(company) &&
-    hasActiveModuleAccess(company, "vyroba", platformCatalog);
+    company && canAccessCompanyModule(company, "vyroba", platformCatalog);
 
   if (!user || !firestore || !companyId) {
     return (

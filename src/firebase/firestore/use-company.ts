@@ -99,9 +99,77 @@ function resolveTenantCompanyId(userProfile: unknown): string | undefined {
   return undefined;
 }
 
+function mergeLicenseDocuments(fromCompanies: unknown, fromOrg: unknown): unknown {
+  const c =
+    fromCompanies && typeof fromCompanies === 'object'
+      ? (fromCompanies as Record<string, unknown>)
+      : null;
+  const o = fromOrg && typeof fromOrg === 'object' ? (fromOrg as Record<string, unknown>) : null;
+  if (!c && !o) return undefined;
+  if (!c) return { ...o };
+  if (!o) return { ...c };
+  const out: Record<string, unknown> = { ...c, ...o };
+  const pickStr = (a: unknown, b: unknown) => {
+    if (b != null && String(b).trim() !== '') return b;
+    if (a != null && String(a).trim() !== '') return a;
+    return undefined;
+  };
+  const st = pickStr(c.status, o.status);
+  const lst = pickStr(c.licenseStatus, o.licenseStatus);
+  if (st !== undefined) out.status = st;
+  if (lst !== undefined) out.licenseStatus = lst;
+  const cm = c.modules;
+  const om = o.modules;
+  if (typeof cm === 'object' && cm && typeof om === 'object' && om) {
+    out.modules = { ...(cm as Record<string, unknown>), ...(om as Record<string, unknown>) };
+  } else {
+    out.modules = om ?? cm ?? out.modules;
+  }
+  const al = Array.isArray(c.enabledModules) ? c.enabledModules.length : 0;
+  const bl = Array.isArray(o.enabledModules) ? o.enabledModules.length : 0;
+  out.enabledModules =
+    bl >= al ? o.enabledModules ?? c.enabledModules : c.enabledModules ?? o.enabledModules;
+  for (const key of ['expirationDate', 'licenseExpiresAt', 'licenseType', 'maxUsers']) {
+    if (o[key] !== undefined && o[key] !== null) out[key] = o[key];
+    else if (c[key] !== undefined) out[key] = c[key];
+  }
+  return out;
+}
+
+function pickBetterPlatformLicense(fromCompanies: unknown, fromOrg: unknown): unknown {
+  const cp =
+    fromCompanies && typeof fromCompanies === 'object'
+      ? (fromCompanies as Record<string, unknown>)
+      : null;
+  const op = fromOrg && typeof fromOrg === 'object' ? (fromOrg as Record<string, unknown>) : null;
+  if (!cp) return op;
+  if (!op) return cp;
+  const score = (p: Record<string, unknown>) => {
+    const s = String(p.status ?? '').toLowerCase();
+    const active = p.active === true;
+    if (s === 'active' && active) return 4;
+    if (s === 'active') return 3;
+    if (active) return 2;
+    if (s === 'pending') return 0;
+    return 1;
+  };
+  return score(op) >= score(cp) ? op : cp;
+}
+
+function mergeModuleEntitlementsMaps(fromCompanies: unknown, fromOrg: unknown): unknown {
+  const ce =
+    fromCompanies && typeof fromCompanies === 'object'
+      ? (fromCompanies as Record<string, unknown>)
+      : null;
+  const oe =
+    fromOrg && typeof fromOrg === 'object' ? (fromOrg as Record<string, unknown>) : null;
+  if (!ce && !oe) return undefined;
+  return { ...(ce ?? {}), ...(oe ?? {}) };
+}
+
 /**
  * Superadmin čte/zapisuje `společnosti/{id}`; portál poslouchá `companies/{id}`.
- * Při rozjetých dokumentech má pravdu stejný řádek v `společnosti` jako v admin UI.
+ * Sloučení: licence + moduly z obou dokumentů; lepší `platformLicense`; org má prioritu u stavu firmy.
  */
 function mergeCompanyWithOrganizationRecord(
   id: string,
@@ -125,10 +193,9 @@ function mergeCompanyWithOrganizationRecord(
     companyName,
   };
 
-  if (o?.license != null && typeof o.license === 'object') {
-    merged.license = o.license;
-  } else if (c?.license != null) {
-    merged.license = c.license;
+  const mergedLicense = mergeLicenseDocuments(c?.license, o?.license);
+  if (mergedLicense !== undefined) {
+    merged.license = mergedLicense;
   }
 
   if (o && 'licenseId' in o && o.licenseId != null) {
@@ -137,14 +204,16 @@ function mergeCompanyWithOrganizationRecord(
     merged.licenseId = c.licenseId;
   }
 
-  if (Array.isArray(o?.enabledModuleIds)) {
-    merged.enabledModuleIds = o.enabledModuleIds;
-  } else if (Array.isArray(c?.enabledModuleIds)) {
-    merged.enabledModuleIds = c.enabledModuleIds;
-  }
+  const ae = Array.isArray(c?.enabledModuleIds) ? c.enabledModuleIds.length : 0;
+  const be = Array.isArray(o?.enabledModuleIds) ? o.enabledModuleIds.length : 0;
+  merged.enabledModuleIds =
+    be >= ae ? o?.enabledModuleIds ?? c?.enabledModuleIds : c?.enabledModuleIds ?? o?.enabledModuleIds;
 
-  merged.platformLicense = c?.platformLicense ?? o?.platformLicense;
-  merged.moduleEntitlements = c?.moduleEntitlements ?? o?.moduleEntitlements;
+  merged.platformLicense = pickBetterPlatformLicense(c?.platformLicense, o?.platformLicense);
+  const me = mergeModuleEntitlementsMaps(c?.moduleEntitlements, o?.moduleEntitlements);
+  if (me !== undefined) {
+    merged.moduleEntitlements = me;
+  }
 
   if (o && 'isActive' in o && o.isActive !== undefined) {
     merged.isActive = o.isActive;

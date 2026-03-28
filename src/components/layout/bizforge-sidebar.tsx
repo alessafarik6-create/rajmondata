@@ -29,7 +29,11 @@ import { Logo } from '@/components/ui/logo';
 import { useUser, useDoc, useFirestore, useMemoFirebase, useCompany } from '@/firebase';
 import { doc } from 'firebase/firestore';
 import type { PlatformModuleCode } from '@/lib/platform-config';
-import { hasActiveModuleAccess, isCompanyLicenseBlocking } from '@/lib/platform-access';
+import {
+  canAccessCompanyModule,
+  hasActiveModuleAccess,
+  isCompanyLicenseBlocking,
+} from '@/lib/platform-access';
 import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
@@ -129,8 +133,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     if (!link.roles.includes(role)) return false;
     if (link.module === null) return true;
     if (!company) return false;
-    if (isCompanyLicenseBlocking(company)) return false;
-    if (!hasActiveModuleAccess(company, link.module, platformCatalog)) return false;
+    if (!canAccessCompanyModule(company, link.module, platformCatalog)) return false;
     if (link.module === 'sklad') {
       return userCanAccessWarehousePortal({
         role,

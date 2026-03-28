@@ -4,9 +4,11 @@ import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import { defaultPlatformCatalogMap } from "@/lib/platform-module-catalog";
 import type { OrganizationLicenseRecord } from "@/lib/organization-license";
 import {
+  getCompanyLicenseModules,
+  isCompanyLicenseActive,
   isModuleEnabledForPlatformFromLegacyKeys,
-  isOrganizationLicenseRecordActive,
   platformModuleCodeToOrgLicenseModuleKey,
+  shouldShowLicensePendingNotice,
 } from "@/lib/organization-license";
 
 /** Firestore dokument firmy — primárně `license`; doplňkově denorm z `company_licenses`. */
@@ -50,7 +52,7 @@ export function getEffectivePlatformLicense(
 export function isCompanyLicenseBlocking(company: CompanyPlatformFields | null | undefined): boolean {
   if (!company) return true;
 
-  if (isOrganizationLicenseRecordActive(company)) return false;
+  if (isCompanyLicenseActive(company)) return false;
 
   const lic = company.license;
   const raw = lic?.status ?? lic?.licenseStatus;
@@ -109,20 +111,23 @@ export function hasActiveModuleAccess(
   if (isCompanyLicenseBlocking(company)) return false;
 
   if (!company.platformLicense) {
-    if (!isOrganizationLicenseRecordActive(company)) {
+    if (!isCompanyLicenseActive(company)) {
       return company.isActive !== false && company.active !== false;
     }
   }
 
   const orgKey = platformModuleCodeToOrgLicenseModuleKey(moduleCode);
   const lic = company.license;
-  const mods = lic?.modules as Record<string, boolean> | undefined;
+  const mods = getCompanyLicenseModules(company);
   if (orgKey) {
     if (mods && Object.prototype.hasOwnProperty.call(mods, orgKey)) {
       return Boolean(mods[orgKey]);
     }
     if (Array.isArray(lic?.enabledModules)) {
       return isModuleEnabledForPlatformFromLegacyKeys(lic.enabledModules, moduleCode);
+    }
+    if (isCompanyLicenseActive(company)) {
+      return false;
     }
   }
 
@@ -161,3 +166,8 @@ export function canAccessOrganizationModule(
 ): boolean {
   return !isCompanyLicenseBlocking(company) && hasActiveModuleAccess(company, moduleCode, globalCatalog);
 }
+
+export { getCompanyLicenseModules, isCompanyLicenseActive, shouldShowLicensePendingNotice };
+
+/** Alias podle názvosloví „company“ v portálu. */
+export const canAccessCompanyModule = canAccessOrganizationModule;
