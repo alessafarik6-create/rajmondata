@@ -194,6 +194,13 @@ export async function POST(request: NextRequest) {
     const status = typeof report.status === "string" ? report.status : "";
     const fsSplits = splitsToFirestorePayload(parsed);
 
+    const dayWorkLinesOut = parsed.map((s) => ({
+      lineNote:
+        s.lineNote && String(s.lineNote).trim()
+          ? String(s.lineNote).trim().slice(0, 4000)
+          : "",
+    }));
+
     const baseUpdate: Record<string, unknown> = {
       segmentJobSplits: fsSplits,
       segmentAllocations,
@@ -201,6 +208,7 @@ export async function POST(request: NextRequest) {
       jobName: primaryJobName,
       hoursFromAttendance: hoursSum,
       hoursConfirmed: hoursSum,
+      dayWorkLines: dayWorkLinesOut,
       note: note || FieldValue.delete(),
       description: description || FieldValue.delete(),
       estimatedLaborFromSegmentsCzk:

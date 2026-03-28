@@ -32,6 +32,7 @@ import {
   LayoutDashboard,
   FileText,
   Copy,
+  PanelRightOpen,
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import {
@@ -799,7 +800,9 @@ export function AttendancePortalPage() {
                 <CardHeader>
                   <CardTitle>Denní výkazy práce</CardTitle>
                   <CardDescription>
-                    Schvalování textových výkazů za den (navázané na docházku). Blokové výkazy zůstávají ve Výkazu práce.
+                    Schvalování textových výkazů za den (navázané na docházku). U každého záznamu použijte{" "}
+                    <span className="font-medium text-foreground">Detail</span> pro úplný přehled řádků, úpravy a
+                    smazání. Blokové výkazy zůstávají ve mzdové části portálu.
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
@@ -814,6 +817,7 @@ export function AttendancePortalPage() {
                           <TableHead>Datum</TableHead>
                           <TableHead>Zaměstnanec</TableHead>
                           <TableHead>Stav</TableHead>
+                          <TableHead className="text-right whitespace-nowrap tabular-nums">Hodiny</TableHead>
                           <TableHead>Popis</TableHead>
                           <TableHead className="text-right whitespace-nowrap">Segmenty (odhad)</TableHead>
                           <TableHead className="text-right whitespace-nowrap">K výplatě</TableHead>
@@ -833,6 +837,15 @@ export function AttendancePortalPage() {
                               <TableCell className="font-medium whitespace-nowrap">{date}</TableCell>
                               <TableCell>{String(row.employeeName || employeeId)}</TableCell>
                               <TableCell>{reportStatusBadge(st)}</TableCell>
+                              <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                                {typeof row.hoursFromAttendance === "number" &&
+                                Number.isFinite(row.hoursFromAttendance)
+                                  ? `${row.hoursFromAttendance} h`
+                                  : typeof row.hoursConfirmed === "number" &&
+                                      Number.isFinite(row.hoursConfirmed)
+                                    ? `${row.hoursConfirmed} h`
+                                    : "—"}
+                              </TableCell>
                               <TableCell className="max-w-[min(40vw,320px)] truncate text-sm text-muted-foreground">
                                 {String(row.description || "—")}
                               </TableCell>
@@ -848,36 +861,58 @@ export function AttendancePortalPage() {
                                   : "—"}
                               </TableCell>
                               <TableCell className="text-right">
-                                {st === "pending" ? (
-                                  <div className="flex flex-wrap justify-end gap-2">
-                                    <Button
-                                      size="sm"
-                                      className="bg-emerald-600 hover:bg-emerald-500"
-                                      disabled={!!reviewBusy}
-                                      onClick={() => void reviewDailyReport(employeeId, date, "approve")}
-                                    >
-                                      {busyApprove ? <Loader2 className="h-4 w-4 animate-spin" /> : "Schválit"}
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      disabled={!!reviewBusy}
-                                      onClick={() => void reviewDailyReport(employeeId, date, "return")}
-                                    >
-                                      {busyReturn ? <Loader2 className="h-4 w-4 animate-spin" /> : "Vrátit k úpravě"}
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="destructive"
-                                      disabled={!!reviewBusy}
-                                      onClick={() => void reviewDailyReport(employeeId, date, "reject")}
-                                    >
-                                      {busyReject ? <Loader2 className="h-4 w-4 animate-spin" /> : "Zamítnout"}
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <span className="text-xs text-muted-foreground">—</span>
-                                )}
+                                <div className="flex flex-wrap justify-end gap-2">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    className="border-slate-300 bg-white text-black"
+                                    onClick={() => setAdminDwrDetail({ employeeId, date })}
+                                  >
+                                    <PanelRightOpen className="mr-1 h-4 w-4" />
+                                    Detail
+                                  </Button>
+                                  {st === "pending" ? (
+                                    <>
+                                      <Button
+                                        size="sm"
+                                        className="bg-emerald-600 hover:bg-emerald-500"
+                                        disabled={!!reviewBusy}
+                                        onClick={() => void reviewDailyReport(employeeId, date, "approve")}
+                                      >
+                                        {busyApprove ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          "Schválit"
+                                        )}
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={!!reviewBusy}
+                                        onClick={() => void reviewDailyReport(employeeId, date, "return")}
+                                      >
+                                        {busyReturn ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          "Vrátit k úpravě"
+                                        )}
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="destructive"
+                                        disabled={!!reviewBusy}
+                                        onClick={() => void reviewDailyReport(employeeId, date, "reject")}
+                                      >
+                                        {busyReject ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          "Zamítnout"
+                                        )}
+                                      </Button>
+                                    </>
+                                  ) : null}
+                                </div>
                               </TableCell>
                             </TableRow>
                           );
@@ -965,6 +1000,20 @@ export function AttendancePortalPage() {
           </>
         ) : null}
       </Tabs>
+
+      {companyId && user ? (
+        <AdminDailyWorkReportDetailSheet
+          open={!!adminDwrDetail}
+          onOpenChange={(v) => {
+            if (!v) setAdminDwrDetail(null);
+          }}
+          companyId={companyId}
+          employeeId={adminDwrDetail?.employeeId ?? ""}
+          date={adminDwrDetail?.date ?? ""}
+          user={user}
+          authUid={user.uid}
+        />
+      ) : null}
     </div>
   );
 }

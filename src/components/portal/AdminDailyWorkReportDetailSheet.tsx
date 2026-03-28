@@ -45,9 +45,9 @@ import {
   effectiveSegmentDurationHours,
   type WorkSegmentClient,
 } from "@/lib/work-segment-client";
-import { Loader2, Pencil, Trash2, Save } from "lucide-react";
+import { Loader2, Trash2, Save } from "lucide-react";
 
-type UserLike = { getIdToken: () => Promise<string> };
+type UserLike = { getIdToken: () => Promise<string>; uid?: string };
 
 type EditableSplit = {
   key: string;
@@ -89,6 +89,9 @@ function inferSegmentType(row: Record<string, unknown>): string {
 
 function splitsFromReport(report: Record<string, unknown> | null | undefined): EditableSplit[] {
   const raw = report?.segmentJobSplits;
+  const dayWorkLines = Array.isArray(report?.dayWorkLines)
+    ? (report.dayWorkLines as { lineNote?: string }[])
+    : [];
   if (!Array.isArray(raw)) return [];
   return raw.map((item, i) => {
     const row = item as Record<string, unknown>;
@@ -101,6 +104,10 @@ function splitsFromReport(report: Record<string, unknown> | null | undefined): E
     const jobId = isNoJobSegmentJobId(jid) ? NO_JOB_SEGMENT_JOB_ID : jid;
     const hours =
       typeof row.hours === "number" && Number.isFinite(row.hours) ? row.hours : 0;
+    const fromSplit = typeof row.lineNote === "string" ? row.lineNote.trim() : "";
+    const fromDay =
+      typeof dayWorkLines[i]?.lineNote === "string" ? dayWorkLines[i]!.lineNote!.trim() : "";
+    const lineNote = fromSplit || fromDay;
     return {
       key: `r-${i}-${sid || "m"}`,
       segmentType: st,
@@ -108,7 +115,7 @@ function splitsFromReport(report: Record<string, unknown> | null | undefined): E
       jobId,
       jobName: typeof row.jobName === "string" ? row.jobName : "",
       hoursStr: hours > 0 ? String(hours).replace(".", ",") : "",
-      lineNote: typeof row.lineNote === "string" ? row.lineNote : "",
+      lineNote,
     };
   });
 }
@@ -126,18 +133,22 @@ export function AdminDailyWorkReportDetailSheet(props: {
   employeeId: string;
   date: string;
   user: UserLike;
+  /** Firebase Auth UID — doplní segmenty terminálu uložené pod UID (legacy). */
+  authUid?: string;
 }) {
-  const { open, onOpenChange, companyId, employeeId, date, user } = props;
+  const { open, onOpenChange, companyId, employeeId, date, user, authUid } = props;
   const firestore = useFirestore();
   const { toast } = useToast();
 
-  const rid = `${employeeId}__${date}`;
+  const hasTarget =
+    Boolean(companyId && employeeId && date && /^\d{4}-\d{2}-\d{2}$/.test(date));
+  const rid = hasTarget ? `${employeeId}__${date}` : "__pending__";
   const reportRef = useMemoFirebase(
     () =>
-      firestore && companyId
+      firestore && companyId && hasTarget
         ? doc(firestore, "companies", companyId, "daily_work_reports", rid)
         : null,
-    [firestore, companyId, rid]
+    [firestore, companyId, rid, hasTarget]
   );
 
   const { data: report, isLoading: reportLoading } = useDoc<Record<string, unknown>>(reportRef);
@@ -158,15 +169,42 @@ export function AdminDailyWorkReportDetailSheet(props: {
   const { data: jobsRaw = [] } = useCollection(jobsQuery);
 
   const segmentsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !employeeId || !date) return null;
+    if (!firestore || !companyId || !employeeId || !date || !hasTarget) return null;
     return query(
       collection(firestore, "companies", companyId, "work_segments"),
       where("employeeId", "==", employeeId),
       where("date", "==", date),
       limit(120)
     );
-  }, [firestore, companyId, employeeId, date]);
-  const { data: segmentsRaw = [] } = useCollection(segmentsQuery);
+  }, [firestore, companyId, employeeId, date, hasTarget]);
+
+  const segmentsUidQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !date || !authUid || authUid === employeeId || !hasTarget) {
+      return null;
+    }
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("employeeId", "==", authUid),
+      where("date", "==", date),
+      limit(120)
+    );
+  }, [firestore, companyId, employeeId, date, authUid, hasTarget]);
+
+  const { data: segmentsRawEmp = [] } = useCollection(segmentsQuery);
+  const { data: segmentsRawUid = [] } = useCollection(segmentsUidQuery);
+
+  const segmentsRaw = useMemo(() => {
+    const byId = new Map<string, WorkSegmentClient>();
+    for (const s of segmentsRawEmp as WorkSegmentClient[]) {
+      const id = String((s as { id?: string }).id ?? "");
+      if (id) byId.set(id, { ...s, id });
+    }
+    for (const s of segmentsRawUid as WorkSegmentClient[]) {
+      const id = String((s as { id?: string }).id ?? "");
+      if (id && !byId.has(id)) byId.set(id, { ...s, id });
+    }
+    return [...byId.values()];
+  }, [segmentsRawEmp, segmentsRawUid]);
 
   const jobsOptions = useMemo(() => {
     const list = (Array.isArray(jobsRaw) ? jobsRaw : []) as { id?: string; name?: string }[];
@@ -291,9 +329,9 @@ export function AdminDailyWorkReportDetailSheet(props: {
     }
   };
 
-  const buildPayloadSplits = () => {
+  const buildPayloadSplitsFromRows = (rowList: EditableSplit[]) => {
     const out: Record<string, unknown>[] = [];
-    for (const r of rows) {
+    for (const r of rowList) {
       const h = parseHoursLocal(r.hoursStr);
       if (h == null) continue;
       const jid = isNoJobSegmentJobId(r.jobId) ? NO_JOB_SEGMENT_JOB_ID : r.jobId.trim();
@@ -312,8 +350,8 @@ export function AdminDailyWorkReportDetailSheet(props: {
   };
 
   const save = async () => {
-    if (!user || !companyId) return;
-    const payloadSplits = buildPayloadSplits();
+    if (!user || !companyId || !hasTarget) return;
+    const payloadSplits = buildPayloadSplitsFromRows(rows);
     if (payloadSplits.length === 0) {
       toast({
         variant: "destructive",
@@ -361,14 +399,63 @@ export function AdminDailyWorkReportDetailSheet(props: {
     }
   };
 
-  const confirmDeleteRow = () => {
-    if (!deleteRowKey) return;
-    setRows((prev) => prev.filter((x) => x.key !== deleteRowKey));
+  const confirmDeleteRow = async () => {
+    const rowKey = deleteRowKey;
+    if (!rowKey || !user || !companyId || !hasTarget) return;
     setDeleteRowKey(null);
+    const nextRows = rows.filter((x) => x.key !== rowKey);
+    const payloadSplits = buildPayloadSplitsFromRows(nextRows);
+    if (payloadSplits.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Nelze smazat",
+        description: "Výkaz musí obsahovat alespoň jeden řádek s platnými hodinami.",
+      });
+      return;
+    }
+    setSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/daily-work-reports/admin-update", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          companyId,
+          employeeId,
+          date,
+          action: "save",
+          segmentJobSplits: payloadSplits,
+          note,
+          description,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; hoursSum?: number };
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: data.error || "Smazání řádku se nezdařilo.",
+        });
+        return;
+      }
+      setRows(nextRows);
+      setDeleteRowKey(null);
+      toast({
+        title: "Řádek smazán",
+        description: `Změny uloženy (${data.hoursSum ?? "?"} h). Náklady zakázky byly přepočteny u schváleného výkazu.`,
+      });
+    } catch {
+      toast({ variant: "destructive", title: "Chyba", description: "Síťová chyba." });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const deleteWholeReport = async () => {
-    if (!user || !companyId) return;
+    if (!user || !companyId || !hasTarget) return;
     setDeletingWhole(true);
     try {
       const idToken = await user.getIdToken();
@@ -409,7 +496,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
 
   return (
     <>
-      <Sheet open={open} onOpenChange={onOpenChange}>
+      <Sheet open={open && hasTarget} onOpenChange={onOpenChange}>
         <SheetContent
           side="right"
           className="flex w-full max-w-full flex-col border-slate-200 bg-white text-neutral-950 sm:max-w-2xl"
@@ -469,6 +556,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                     </div>
                   ) : null}
                   <div className="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2">
+                    <div>Vytvořeno: {tsLabel(report.createdAt)}</div>
                     <div>Odesláno: {tsLabel(report.submittedAt)}</div>
                     <div>Upraveno: {tsLabel(report.updatedAt)}</div>
                   </div>
@@ -679,21 +767,28 @@ export function AdminDailyWorkReportDetailSheet(props: {
         </SheetContent>
       </Sheet>
 
-      <AlertDialog open={!!deleteRowKey} onOpenChange={(v) => !v && setDeleteRowKey(null)}>
+      <AlertDialog
+        open={!!deleteRowKey}
+        onOpenChange={(v) => {
+          if (!v && !saving) setDeleteRowKey(null);
+        }}
+      >
         <AlertDialogContent className="border-slate-200 bg-white text-neutral-950">
           <AlertDialogHeader>
             <AlertDialogTitle>Smazat řádek?</AlertDialogTitle>
             <AlertDialogDescription className="text-neutral-700">
-              Řádek bude odebrán ze seznamu. Pro trvalé uložení klikněte na „Uložit změny“.
+              Řádek bude trvale odstraněn z výkazu a změna se ihned uloží. U schváleného výkazu se přepočítají
+              součty i náklady zakázky.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel className="border-slate-300">Zrušit</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={confirmDeleteRow}
+              disabled={saving}
+              onClick={() => void confirmDeleteRow()}
             >
-              Odebrat z výkazu
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Smazat a uložit"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
