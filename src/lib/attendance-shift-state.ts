@@ -14,11 +14,16 @@ export function isShiftOpenFromSorted(sorted: AttendanceEventLite[]): boolean {
   return last.type !== "check_out";
 }
 
-/** Odpracované hodiny za den včetně rozjeté směně do `now`. */
-export function computeWorkedHoursFromDayEvents(sorted: AttendanceEventLite[], nowMs: number): number {
+/**
+ * Stav po zpracování řady událostí: uzavřený odpracovaný čas a případná rozjetá směna.
+ * Jednotná logika pro terminál i denní souhrn (více příchodů/odchodů, pauza).
+ */
+export function reduceAttendanceWorkState(sorted: AttendanceEventLite[]): {
+  closedWorkMs: number;
+  accruingStartMs: number | null;
+} {
   let workMs = 0;
   let accruing: number | null = null;
-
   for (const e of sorted) {
     const t = e.timestampMs;
     const ty = e.type;
@@ -34,8 +39,20 @@ export function computeWorkedHoursFromDayEvents(sorted: AttendanceEventLite[], n
       /* odchod bez příchodu — ignoruj */
     }
   }
-  if (accruing != null) {
-    workMs += nowMs - accruing;
+  return { closedWorkMs: workMs, accruingStartMs: accruing };
+}
+
+/** Odpracovaný čas jen z uzavřených intervalů (bez rozjeté směně až do `now`). */
+export function computeWorkedMillisecondsClosedIntervals(sorted: AttendanceEventLite[]): number {
+  return reduceAttendanceWorkState(sorted).closedWorkMs;
+}
+
+/** Odpracované hodiny za den včetně rozjeté směně do `now`. */
+export function computeWorkedHoursFromDayEvents(sorted: AttendanceEventLite[], nowMs: number): number {
+  const { closedWorkMs, accruingStartMs } = reduceAttendanceWorkState(sorted);
+  let workMs = closedWorkMs;
+  if (accruingStartMs != null) {
+    workMs += nowMs - accruingStartMs;
   }
   return Math.round((workMs / 36e5) * 100) / 100;
 }

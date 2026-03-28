@@ -2,6 +2,8 @@
  * Agregace záznamů docházky (Firestore: type check_in / check_out / …) na úroveň dne.
  */
 
+import { reduceAttendanceWorkState, type AttendanceEventLite } from "@/lib/attendance-shift-state";
+
 export type AttendanceRow = {
   id?: string;
   type?: string;
@@ -48,7 +50,19 @@ function formatHm(d: Date): string {
 }
 
 /**
- * Seskupí záznamy podle `date` (YYYY-MM-DD) a dopočítá příchod/odchod/hodiny.
+ * Kalendářní den záznamu v **lokálním** čase prohlížeče (ne pole `date` z API).
+ * API často ukládá `date` jako UTC (`toISOString().split("T")[0]`), takže o půlnoci lokálně
+ * skončí událost pod jiným dnem než kalendář zaměstnance — výkaz pak bere špatný den.
+ */
+export function attendanceRowCalendarDateKey(r: AttendanceRow): string {
+  const t = rowTime(r);
+  if (t) return toLocalIsoDate(t);
+  const d = r.date && String(r.date).trim();
+  return d || "";
+}
+
+/**
+ * Seskupí záznamy podle kalendářního dne (čas z `timestamp` v lokálním pásmu) a dopočítá příchod/odchod/hodiny.
  */
 export function summarizeAttendanceByDay(
   rows: AttendanceRow[],
@@ -63,10 +77,7 @@ export function summarizeAttendanceByDay(
 
   const byDate = new Map<string, AttendanceRow[]>();
   for (const r of filtered) {
-    const t = rowTime(r);
-    const dateKey =
-      (r.date && String(r.date).trim()) ||
-      (t ? toLocalIsoDate(t) : "");
+    const dateKey = attendanceRowCalendarDateKey(r);
     if (!dateKey) continue;
     const list = byDate.get(dateKey) || [];
     list.push(r);
@@ -85,8 +96,6 @@ export function summarizeAttendanceByDay(
     let checkIn: Date | null = null;
     let checkOut: Date | null = null;
     let lastType: string | null = null;
-    let workingStart: Date | null = null;
-    let workMs = 0;
 
     for (const r of sorted) {
       const t = rowTime(r);
@@ -94,25 +103,22 @@ export function summarizeAttendanceByDay(
       const type = String(r.type || "");
       if (type === "check_in") {
         if (!checkIn) checkIn = t;
-        if (!workingStart) workingStart = t;
         lastType = type;
       } else if (type === "break_start") {
-        if (workingStart && t > workingStart) {
-          workMs += t.getTime() - workingStart.getTime();
-        }
-        workingStart = null;
         lastType = type;
       } else if (type === "break_end") {
-        if (!workingStart) workingStart = t;
         lastType = type;
       } else if (type === "check_out") {
         checkOut = t;
-        if (workingStart && t > workingStart) {
-          workMs += t.getTime() - workingStart.getTime();
-        }
-        workingStart = null;
         lastType = type;
       }
+    }
+
+    const events: AttendanceEventLite[] = [];
+    for (const r of sorted) {
+      const t = rowTime(r);
+      if (!t) continue;
+      events.push({ type: String(r.type || ""), timestampMs: t.getTime() });
     }
 
     const totalSpanHours =
@@ -121,7 +127,8 @@ export function summarizeAttendanceByDay(
         : null;
     let hoursWorked: number | null = null;
     if (totalSpanHours != null) {
-      hoursWorked = Math.round((workMs / 36e5) * 100) / 100;
+      const { closedWorkMs } = reduceAttendanceWorkState(events);
+      hoursWorked = Math.round((closedWorkMs / 36e5) * 100) / 100;
     }
     const breakHours =
       totalSpanHours != null && hoursWorked != null

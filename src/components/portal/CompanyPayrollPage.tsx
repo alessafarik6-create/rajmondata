@@ -71,8 +71,9 @@ import {
 } from "@/lib/employee-money";
 import { format } from "date-fns";
 import type { AttendanceRow } from "@/lib/employee-attendance";
+import { attendanceRowCalendarDateKey } from "@/lib/employee-attendance";
 import type { WorkSegmentClient } from "@/lib/work-segment-client";
-import { segmentDateIsoKey } from "@/lib/work-segment-client";
+import { segmentCalendarDateIsoKey } from "@/lib/work-segment-client";
 import {
   buildEmployeeDailyDetailRows,
   computePeriodRange,
@@ -130,26 +131,6 @@ function debtCreatedSortMs(d: { createdAt?: unknown; date: string }): number {
     return new Date(y, m - 1, day, 12, 0, 0, 0).getTime();
   }
   return 0;
-}
-
-function attendanceRowDateIso(r: AttendanceRow): string {
-  const raw = r.date;
-  if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim().slice(0, 10))) {
-    return raw.trim().slice(0, 10);
-  }
-  const ts = r.timestamp;
-  if (ts instanceof Date && !Number.isNaN(ts.getTime())) {
-    return format(ts, "yyyy-MM-dd");
-  }
-  if (ts && typeof (ts as { toDate?: () => Date }).toDate === "function") {
-    try {
-      const d = (ts as { toDate: () => Date }).toDate();
-      if (d instanceof Date && !Number.isNaN(d.getTime())) return format(d, "yyyy-MM-dd");
-    } catch {
-      /* ignore */
-    }
-  }
-  return "";
 }
 
 type EmployeeDebtReason = "tool_damage" | "loan" | "deduction" | "other";
@@ -469,7 +450,7 @@ function PayrollAdminPageInner() {
       ? attendancePayrollRaw
       : []) as AttendanceRow[];
     for (const r of attArr) {
-      const ds = attendanceRowDateIso(r);
+      const ds = attendanceRowCalendarDateKey(r);
       if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) bumpDates.push(ds);
     }
     const sorted = [...new Set(bumpDates)].sort();
@@ -492,7 +473,7 @@ function PayrollAdminPageInner() {
     );
     const range = computePeriodRange("custom", from, { from, to });
     const attF = attArr.filter((r) => {
-      const ds = attendanceRowDateIso(r);
+      const ds = attendanceRowCalendarDateKey(r);
       return ds >= startIso && ds <= endIso;
     });
     const dr = (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []).filter(
@@ -505,7 +486,7 @@ function PayrollAdminPageInner() {
       ? workSegmentsPayrollRaw
       : []) as WorkSegmentClient[];
     const segF = segs.filter((s) => {
-      const dk = segmentDateIsoKey(s);
+      const dk = segmentCalendarDateIsoKey(s);
       return dk >= startIso && dk <= endIso;
     });
     const rows = buildEmployeeDailyDetailRows({

@@ -139,7 +139,7 @@ export function segmentStartEndDisplay(seg: WorkSegmentClient): {
 }
 
 /**
- * Den úseku jako YYYY-MM-DD — pole `date` může být řetězec nebo Firestore Timestamp.
+ * Den úseku jako YYYY-MM-DD — pole `date` v dokumentu (často UTC den ze serveru při zápisu).
  */
 export function segmentDateIsoKey(seg: { date?: unknown }): string {
   const d = seg?.date;
@@ -158,6 +158,18 @@ export function segmentDateIsoKey(seg: { date?: unknown }): string {
   return "";
 }
 
+/**
+ * Kalendářní den úseku v **lokálním** čase začátku (`startAt`), aby seděl s výběrem dne ve výkazu.
+ * Když `startAt` chybí, fallback na uložené pole `date`.
+ */
+export function segmentCalendarDateIsoKey(seg: WorkSegmentClient): string {
+  const start = tsToDate(seg.startAt);
+  if (start && !Number.isNaN(start.getTime())) {
+    return format(start, "yyyy-MM-dd");
+  }
+  return segmentDateIsoKey(seg);
+}
+
 /** Uzavřené segmenty z terminálu pro daný den. */
 export function closedTerminalSegmentsForDay(
   segments: WorkSegmentClient[] | null | undefined,
@@ -167,7 +179,7 @@ export function closedTerminalSegmentsForDay(
   return list.filter(
     (s) =>
       s.closed === true &&
-      segmentDateIsoKey(s) === dayIso &&
+      segmentCalendarDateIsoKey(s) === dayIso &&
       (s.sourceType === "job" || s.sourceType === "tariff")
   );
 }

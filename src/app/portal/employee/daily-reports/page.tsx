@@ -22,7 +22,11 @@ import { Input } from "@/components/ui/input";
 import { Loader2, AlertCircle, Plus, Trash2, Lock } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
-import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
+import {
+  attendanceRowCalendarDateKey,
+  summarizeAttendanceByDay,
+  type AttendanceRow as AttendanceRowType,
+} from "@/lib/employee-attendance";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
 import { cn } from "@/lib/utils";
@@ -33,7 +37,7 @@ import {
   buildWorkDayId,
   closedTerminalSegmentsForDay,
   getTerminalSegmentLockKind,
-  segmentDateIsoKey,
+  segmentCalendarDateIsoKey,
   segmentTimeRangeLabel,
   sortSegmentsByStart,
 } from "@/lib/work-segment-client";
@@ -58,6 +62,7 @@ import {
   isCompleteAttendanceSummary,
   isDayReportableForWorklog,
 } from "@/lib/daily-work-report-time-cap";
+import { logDailyWorkReportDayDebug } from "@/lib/daily-work-report-day-debug";
 
 /** Tolerance pro srovnání součtu řádků s interním stropem (bez falešných překročení kvůli float). */
 const SUM_COMPARE_EPS = 1e-6;
@@ -410,7 +415,7 @@ export default function EmployeeDailyReportsPage() {
     const ms = format(startOfMonth(calendarMonth), "yyyy-MM-dd");
     const me = format(endOfMonth(calendarMonth), "yyyy-MM-dd");
     return workSegmentsAll.filter((s) => {
-      const d = segmentDateIsoKey(s);
+      const d = segmentCalendarDateIsoKey(s);
       return d.length >= 10 && d >= ms && d <= me;
     });
   }, [workSegmentsAll, calendarMonth]);
@@ -420,7 +425,7 @@ export default function EmployeeDailyReportsPage() {
     const m = new Map<string, WorkSegmentClient[]>();
     for (const s of raw) {
       const row = s as WorkSegmentClient;
-      const dk = segmentDateIsoKey(row);
+      const dk = segmentCalendarDateIsoKey(row);
       if (!dk) continue;
       const arr = m.get(dk) ?? [];
       arr.push({ ...row, id: String(row.id ?? "") } as WorkSegmentClient);
@@ -517,7 +522,7 @@ export default function EmployeeDailyReportsPage() {
   /** Sloučení rozsahu workDayId + záložního dotazu employeeId+date pro stejný den. */
   const workSegmentsForDay = useMemo(() => {
     if (!dayKey) return [] as WorkSegmentClient[];
-    const fromRange = workSegmentsAll.filter((s) => segmentDateIsoKey(s) === dayKey);
+    const fromRange = workSegmentsAll.filter((s) => segmentCalendarDateIsoKey(s) === dayKey);
     const alt = Array.isArray(workSegmentsDayAltData) ? workSegmentsDayAltData : [];
     const byId = new Map<string, WorkSegmentClient>();
     for (const s of fromRange) {
@@ -967,13 +972,64 @@ export default function EmployeeDailyReportsPage() {
     zbýváCap <= SUM_COMPARE_EPS;
 
   useEffect(() => {
-    if (process.env.NODE_ENV !== "development") return;
-    console.log({
-      workedHours: dayWorkedCap,
-      segmentsCount: closedSegments.length,
-      canEdit: formEditableByAttendance && !effectiveFormLocked,
+    if (process.env.NODE_ENV !== "development" || !dayKey) return;
+    const rowsToday = (attendanceBlocks as AttendanceRowType[]).filter(
+      (r) => attendanceRowCalendarDateKey(r) === dayKey
+    );
+    logDailyWorkReportDayDebug({
+      dayIso: dayKey,
+      attendanceGrouping: "timestamp_local",
+      attendance: daySummary
+        ? {
+            checkInHm: daySummary.checkIn,
+            checkOutHm: daySummary.checkOut,
+            totalSpanHours: daySummary.totalSpanHours,
+            breakHours: daySummary.breakHours,
+            hoursWorkedNet: daySummary.hoursWorked,
+            statusLabel: daySummary.statusLabel,
+          }
+        : null,
+      terminal: {
+        closedSegmentCount: closedSegments.length,
+        sumClosedHours: round2(segmentTotal),
+        tariffHours: round2(tariffSum),
+        jobLockedHours: round2(jobTerminalSumOnly),
+        unlockedHours: round2(unlockedSum),
+      },
+      caps: {
+        dayWorkedCapHours: round2(dayWorkedCap),
+        lockedSumHours: round2(lockedSum),
+        availableForManualRowsHours: round2(availableHoursRaw),
+        formHoursCapHours: round2(formHoursCap),
+      },
+      formState: {
+        rowCount: dayFormRows.length,
+        sumUnlockedLineHours: allocatedUnlocked,
+        totalAllocatedWithLockedHours: rozdělenoCelkem,
+        zbýváDoStropuSměnyHours: zbýváCap,
+        zbýváVŘádcíchHours: zbýváVeFormuláři,
+      },
     });
-  }, [dayKey, dayWorkedCap, closedSegments.length, formEditableByAttendance, effectiveFormLocked]);
+    console.debug("[daily-report-day] rawAttendanceRowsThisLocalDay", rowsToday.length, rowsToday);
+  }, [
+    dayKey,
+    attendanceBlocks,
+    daySummary,
+    closedSegments.length,
+    segmentTotal,
+    tariffSum,
+    jobTerminalSumOnly,
+    unlockedSum,
+    dayWorkedCap,
+    lockedSum,
+    availableHoursRaw,
+    formHoursCap,
+    dayFormRows.length,
+    allocatedUnlocked,
+    rozdělenoCelkem,
+    zbýváCap,
+    zbýváVeFormuláři,
+  ]);
 
   if (isUserLoading || !user) {
     return (

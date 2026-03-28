@@ -14,12 +14,15 @@ import {
 } from "date-fns";
 import { cs } from "date-fns/locale";
 import type { AttendanceRow } from "@/lib/employee-attendance";
-import { summarizeAttendanceByDay } from "@/lib/employee-attendance";
+import {
+  attendanceRowCalendarDateKey,
+  summarizeAttendanceByDay,
+} from "@/lib/employee-attendance";
 import { computeSegmentAmount } from "@/lib/work-segment-rates";
 import type { WorkSegmentClient } from "@/lib/work-segment-client";
 import {
   parseSegmentHourlyRateCzk,
-  segmentDateIsoKey,
+  segmentCalendarDateIsoKey,
   segmentDurationForOverview,
   segmentStartEndDisplay,
   segmentStartTimestamp,
@@ -515,7 +518,7 @@ export function buildEmployeeDailyDetailRows(params: {
       segments.filter(
         (s) =>
           firestoreEmployeeIdMatches(s.employeeId, employee) &&
-          segmentDateIsoKey(s) === dateIso &&
+          segmentCalendarDateIsoKey(s) === dateIso &&
           (String(s.sourceType ?? "") === "tariff" || String(s.sourceType ?? "") === "job")
       )
     );
@@ -917,22 +920,9 @@ function countAttendanceBlocksForDay(
   dayIso: string,
   authUserId?: string | null
 ): number {
-  const toLocalIso = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
-      d.getDate()
-    ).padStart(2, "0")}`;
   return rows.filter((r) => {
     if (!attendanceRowMatchesEmployee(r, employeeDocId, authUserId)) return false;
-    const ts = r.timestamp;
-    let t: Date | null = null;
-    if (ts instanceof Date) t = ts;
-    else if (ts && typeof (ts as { toDate?: () => Date }).toDate === "function") {
-      t = (ts as { toDate: () => Date }).toDate();
-    }
-    const dateKey =
-      (r.date && String(r.date).trim()) ||
-      (t ? toLocalIso(t) : "");
-    return dateKey === dayIso;
+    return attendanceRowCalendarDateKey(r) === dayIso;
   }).length;
 }
 
