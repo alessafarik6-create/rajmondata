@@ -31,8 +31,15 @@ export type JobExpenseFirestoreFields = {
   createdBy: string;
   createdAt?: unknown;
   updatedAt?: unknown;
-  /** Např. `folder_documents` — náklad z účetní složky. */
+  /** Např. `folder_documents` — náklad z účetní složky; `daily_work_report` — schválený výkaz práce. */
   source?: string;
+  /** ID dokumentu daily_work_reports (např. employeeId__yyyy-MM-dd). */
+  sourceReportId?: string;
+  /** Index řádku v poli segmentJobSplits. */
+  sourceReportRowIndex?: number;
+  sourceEmployeeId?: string;
+  workReportHours?: number;
+  workReportHourlyRateCzk?: number;
   /** companies/.../documents/{id} — primární doklad (ne zrcadlo jobExpense_*). */
   dokladId?: string;
   folderId?: string;

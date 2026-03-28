@@ -3,6 +3,10 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { parseHourlyRate } from "@/lib/attendance-shift-state";
 import { sumAutoJobTerminalBlockPayableCzkForDay } from "@/lib/job-terminal-auto-approve";
+import {
+  deleteWorkReportLaborJobExpenses,
+  syncApprovedWorkReportLaborJobExpenses,
+} from "@/lib/daily-work-report-job-labor-expenses";
 import { applyApprovedJobLaborFromSegments } from "@/lib/work-segment-server";
 
 type Body = {
@@ -96,6 +100,9 @@ export async function POST(request: NextRequest) {
     }
 
     const report = snap.data() as Record<string, unknown>;
+    const prevLaborLinks = report.workReportLaborExpenseLinks as
+      | { jobId?: string; expenseId?: string }[]
+      | undefined;
     const adminNote =
       typeof body.adminNote === "string" && body.adminNote.trim() ? body.adminNote.trim() : null;
 
@@ -144,6 +151,25 @@ export async function POST(request: NextRequest) {
             ? 0
             : fallbackPay;
 
+      await deleteWorkReportLaborJobExpenses(
+        db,
+        companyId,
+        Array.isArray(prevLaborLinks)
+          ? prevLaborLinks
+              .filter((x) => x && typeof x.jobId === "string" && typeof x.expenseId === "string")
+              .map((x) => ({ jobId: x.jobId!, expenseId: x.expenseId! }))
+          : undefined
+      );
+
+      const laborLinks = await syncApprovedWorkReportLaborJobExpenses({
+        db,
+        companyId,
+        reportDocId: rid,
+        report,
+        employeeHourlyRateCzk: hourlyRate,
+        createdByUid: callerUid,
+      });
+
       await ref.update({
         status: "approved",
         payableAmountCzk,
@@ -151,6 +177,7 @@ export async function POST(request: NextRequest) {
         hourlyRateSnapshot: hourlyRate > 0 ? hourlyRate : FieldValue.delete(),
         segmentPayTotalCzk:
           totalClosedSegmentPayCzk > 0 ? totalClosedSegmentPayCzk : FieldValue.delete(),
+        workReportLaborExpenseLinks: laborLinks.length > 0 ? laborLinks : [],
         reviewedAt: FieldValue.serverTimestamp(),
         reviewedByUid: callerUid,
         reviewedByName: reviewerName,
@@ -160,11 +187,22 @@ export async function POST(request: NextRequest) {
 
       console.log("Daily work report approved by admin");
     } else if (action === "reject") {
+      await deleteWorkReportLaborJobExpenses(
+        db,
+        companyId,
+        Array.isArray(prevLaborLinks)
+          ? prevLaborLinks
+              .filter((x) => x && typeof x.jobId === "string" && typeof x.expenseId === "string")
+              .map((x) => ({ jobId: x.jobId!, expenseId: x.expenseId! }))
+          : undefined
+      );
+
       await ref.update({
         status: "rejected",
         payableAmountCzk: FieldValue.delete(),
         payableHoursSnapshot: FieldValue.delete(),
         hourlyRateSnapshot: FieldValue.delete(),
+        workReportLaborExpenseLinks: FieldValue.delete(),
         reviewedAt: FieldValue.serverTimestamp(),
         reviewedByUid: callerUid,
         reviewedByName: reviewerName,
@@ -174,11 +212,22 @@ export async function POST(request: NextRequest) {
 
       console.log("Daily work report rejected by admin");
     } else {
+      await deleteWorkReportLaborJobExpenses(
+        db,
+        companyId,
+        Array.isArray(prevLaborLinks)
+          ? prevLaborLinks
+              .filter((x) => x && typeof x.jobId === "string" && typeof x.expenseId === "string")
+              .map((x) => ({ jobId: x.jobId!, expenseId: x.expenseId! }))
+          : undefined
+      );
+
       await ref.update({
         status: "returned",
         payableAmountCzk: FieldValue.delete(),
         payableHoursSnapshot: FieldValue.delete(),
         hourlyRateSnapshot: FieldValue.delete(),
+        workReportLaborExpenseLinks: FieldValue.delete(),
         reviewedAt: FieldValue.serverTimestamp(),
         reviewedByUid: callerUid,
         reviewedByName: reviewerName,

@@ -33,6 +33,7 @@ import {
   buildNewJobExpenseMirrorDocument,
   companyDocumentRefForJobExpense,
 } from "@/lib/job-expense-document-sync";
+import { DAILY_WORK_REPORT_JOB_EXPENSE_SOURCE } from "@/lib/daily-work-report-job-labor-expenses-constants";
 import { COMPANY_DOCUMENT_EXPENSE_SOURCE } from "@/lib/document-job-expense-sync";
 import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
 import {
@@ -86,6 +87,10 @@ import {
 } from "@/lib/light-form-control-classes";
 
 /** Typografie nákladů — tmavé popisky, černá čísla (detail zakázky = světlý režim) */
+function isDailyWorkReportLaborExpense(row: JobExpenseRow): boolean {
+  return row.source === DAILY_WORK_REPORT_JOB_EXPENSE_SOURCE;
+}
+
 const EXP = {
   h1: "text-gray-950 font-bold tracking-tight",
   h2: "font-semibold text-gray-950",
@@ -276,6 +281,15 @@ export function JobExpensesSection({
   };
 
   const openEdit = (row: JobExpenseRow) => {
+    if (isDailyWorkReportLaborExpense(row)) {
+      toast({
+        title: "Úprava z výkazu práce",
+        description:
+          "Tento náklad vznikl ze schváleného výkazu práce. Změňte výkaz u zaměstnance a nechte ho znovu schválit.",
+        variant: "destructive",
+      });
+      return;
+    }
     setEditingId(row.id);
     const r = resolveExpenseAmounts(row);
     const rawIn = row.amountInput;
@@ -670,6 +684,16 @@ export function JobExpensesSection({
   };
 
   const confirmDelete = async () => {
+    if (deleteTarget && isDailyWorkReportLaborExpense(deleteTarget)) {
+      toast({
+        title: "Smazání nelze",
+        description:
+          "Náklad je vázaný na schválený výkaz práce. Odeberte řádek ve výkazu nebo vraťte výkaz k úpravě.",
+        variant: "destructive",
+      });
+      setDeleteTarget(null);
+      return;
+    }
     if (!deleteTarget || !firestore || !companyId || !jobId?.trim()) {
       toast({
         title: "Chybí kontext zakázky",
@@ -1026,6 +1050,7 @@ export function JobExpensesSection({
                       {visibleExpenses.map((row) => {
                         const attachmentKind = inferJobMediaItemType(row);
                         const r = resolveExpenseAmounts(row);
+                        const fromWorkReport = isDailyWorkReportLaborExpense(row);
                         const tag =
                           normalizeBudgetType(row.amountType) === "gross"
                             ? "s DPH"
@@ -1132,6 +1157,14 @@ export function JobExpensesSection({
                                       Propojený doklad
                                     </Badge>
                                   ) : null}
+                                  {fromWorkReport ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="border-blue-200 bg-blue-50 text-xs font-medium text-blue-950"
+                                    >
+                                      Výkaz práce
+                                    </Badge>
+                                  ) : null}
                                 </div>
                                 <div className="tabular-nums">
                                   <p className={EXP.labelSm}>
@@ -1170,7 +1203,7 @@ export function JobExpensesSection({
                                   {attachmentBlock}
                                 </div>
                                 <div className="flex justify-end gap-1 sm:justify-end">
-                                  {canEdit ? (
+                                  {canEdit && !fromWorkReport ? (
                                     <>
                                       <Button
                                         type="button"
@@ -1224,6 +1257,14 @@ export function JobExpensesSection({
                                       className="h-5 border-gray-300 bg-white px-1.5 text-[10px] font-medium text-gray-900"
                                     >
                                       Doklad
+                                    </Badge>
+                                  ) : null}
+                                  {fromWorkReport ? (
+                                    <Badge
+                                      variant="outline"
+                                      className="h-5 border-blue-200 bg-blue-50 px-1.5 text-[10px] font-medium text-blue-950"
+                                    >
+                                      Výkaz
                                     </Badge>
                                   ) : null}
                                   <span className="text-[10px] font-medium text-gray-700 sm:text-xs">
@@ -1310,7 +1351,7 @@ export function JobExpensesSection({
                                 )}
                               </div>
                               <div className="order-5 flex justify-end gap-0.5 sm:justify-end">
-                                {canEdit ? (
+                                {canEdit && !fromWorkReport ? (
                                   <>
                                     <Button
                                       type="button"
