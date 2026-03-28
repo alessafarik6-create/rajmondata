@@ -13,6 +13,7 @@ import {
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   query,
   limit,
@@ -503,6 +504,7 @@ export default function AttendanceOverviewPage() {
       dailyReports,
       workBlocks,
       segments: workSegments,
+      dayPayoutGlobalMap,
     });
   }, [
     employeeFilter,
@@ -512,6 +514,7 @@ export default function AttendanceOverviewPage() {
     dailyReports,
     workBlocks,
     workSegments,
+    dayPayoutGlobalMap,
   ]);
 
   const exportVariant: "detail" | "summary" =
@@ -650,8 +653,9 @@ export default function AttendanceOverviewPage() {
           paidNote:
             payoutFormNote.trim().slice(0, MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN) ||
             null,
-          paidAt: serverTimestamp(),
-          paidBy: user.uid,
+          ...(payoutFormPaid
+            ? { paidAt: serverTimestamp(), paidBy: user.uid }
+            : { paidAt: deleteField(), paidBy: deleteField() }),
           updatedAt: serverTimestamp(),
         },
         { merge: true }

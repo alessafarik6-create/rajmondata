@@ -41,6 +41,11 @@ import {
   dayPayoutMapForEmployee,
   type EmployeeDayPayoutState,
 } from "@/lib/employee-day-payout";
+import {
+  computePayrollDisplayEarningsKc,
+  computePayrollDisplayHourlyHours,
+  effectiveSchvalenoStatusForDisplay,
+} from "@/lib/payroll-entry-display";
 
 export type PeriodMode = "day" | "week" | "month" | "custom";
 
@@ -459,6 +464,10 @@ export type EmployeeDailyDetailRow = {
   paidNote: string | null;
   paidKc: number;
   unpaidKc: number;
+  /** Hodiny „mimo tarif i zakázku“ započtené do schváleného souhrnu (včetně vlivu výplaty dne). */
+  payrollApprovedHourlyH: number;
+  /** Hodiny započtené do neschváleného souhrnu. */
+  payrollPendingHourlyH: number;
 };
 
 /**
@@ -636,17 +645,16 @@ export function buildEmployeeDailyDetailRows(params: {
       if (totalLogged <= 0.001) schvalenoKcRaw = orientacniKc;
       else schvalenoKcRaw = orientacniKc * (approvedHp / totalLogged);
     }
-    const schvalenoKc = Math.round(Math.max(0, schvalenoKcRaw) * 100) / 100;
-    const neschvalenoKc = Math.round(
-      Math.max(0, orientacniKc - schvalenoKc) * 100
+    const workSchvalenoKc = Math.round(Math.max(0, schvalenoKcRaw) * 100) / 100;
+    const workNeschvalenoKc = Math.round(
+      Math.max(0, orientacniKc - workSchvalenoKc) * 100
     ) / 100;
     let schvalenoStatus: "approved" | "pending" | "none" = "none";
-    if (dayApprovedByReport || (schvalenoKc > 0 && neschvalenoKc === 0)) {
+    if (dayApprovedByReport || (workSchvalenoKc > 0 && workNeschvalenoKc === 0)) {
       schvalenoStatus = "approved";
-    }
-    else if (repSt && repSt !== "rejected" && repSt !== "approved") {
+    } else if (repSt && repSt !== "rejected" && repSt !== "approved") {
       schvalenoStatus = "pending";
-    } else if (neschvalenoKc > 0) {
+    } else if (workNeschvalenoKc > 0) {
       schvalenoStatus = "pending";
     }
     const payout = dayPayoutByDate?.get(dateIso);
@@ -657,11 +665,42 @@ export function buildEmployeeDailyDetailRows(params: {
       paidStatus = payout.paid ? "paid" : "unpaid";
     } else if (dayBlocks.length > 0) {
       paidStatus = dayBlocks.every((b) => b.paid === true) ? "paid" : "unpaid";
-    } else if (schvalenoKc > 0) {
+    } else if (workSchvalenoKc > 0) {
       paidStatus = "unpaid";
     }
-    const paidKc = paidStatus === "paid" ? schvalenoKc : 0;
-    const unpaidKc = paidStatus === "unpaid" ? schvalenoKc : 0;
+
+    const paidForDay = paidStatus === "paid";
+    const { payrollApprovedKc, payrollUnapprovedKc } = computePayrollDisplayEarningsKc({
+      orientacniKc,
+      workSchvalenoKc,
+      workNeschvalenoKc,
+      dayApprovedByDailyReport: dayApprovedByReport,
+      schvalenoStatus,
+      paidForDay,
+    });
+    const schvalenoKc = payrollApprovedKc;
+    const neschvalenoKc = payrollUnapprovedKc;
+    const displaySchvalenoStatus = effectiveSchvalenoStatusForDisplay(
+      schvalenoStatus,
+      paidStatus
+    );
+    const { approvedH: payrollApprovedHourlyH, pendingH: payrollPendingHourlyH } =
+      computePayrollDisplayHourlyHours({
+        hourlyHoursForPay: hoursOutsideTariffAndJob,
+        orientacniKc,
+        workSchvalenoKc,
+        workNeschvalenoKc,
+        dayApprovedByDailyReport: dayApprovedByReport,
+        schvalenoStatus,
+        paidForDay,
+        hasIncompleteAttendance,
+      });
+
+    const paidKc = paidForDay ? Math.round(Math.max(0, orientacniKc) * 100) / 100 : 0;
+    const unpaidKc =
+      paidStatus === "unpaid" && orientacniKc > 0
+        ? Math.round(Math.max(0, orientacniKc) * 100) / 100
+        : 0;
     const dayTitle = format(
       new Date(
         Number(dateIso.slice(0, 4)),
@@ -694,11 +733,13 @@ export function buildEmployeeDailyDetailRows(params: {
       hourlyHoursForPay: hoursOutsideTariffAndJob,
       hasIncompleteAttendance,
       orientacniKc,
-      schvalenoStatus,
+      schvalenoStatus: displaySchvalenoStatus,
       paidStatus,
       paidNote,
       paidKc,
       unpaidKc,
+      payrollApprovedHourlyH,
+      payrollPendingHourlyH,
     });
   }
   return out;
@@ -768,10 +809,8 @@ export function totalsFromDailyDetailRows(rows: EmployeeDailyDetailRow[]): {
     totalStandardKc += r.orientacniKcStandard;
     totalHoursOutsideTariffJob += r.hoursOutsideTariffAndJob;
     totalHoursOutsideTariffOnly += r.hoursOutsideTariffOnly;
-    if (r.schvalenoStatus === "approved")
-      approvedHourlyHours += r.hourlyHoursForPay;
-    else if (r.schvalenoStatus === "pending")
-      pendingHourlyHours += r.hourlyHoursForPay;
+    approvedHourlyHours += r.payrollApprovedHourlyH;
+    pendingHourlyHours += r.payrollPendingHourlyH;
     if (r.paidStatus === "paid") paidDays += 1;
     else if (r.paidStatus === "unpaid") unpaidDays += 1;
     paidAmountKc += r.paidKc;
