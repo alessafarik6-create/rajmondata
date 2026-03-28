@@ -1,13 +1,18 @@
 /**
- * Jednotná logika „schválený / neschválený výdělek“ pro přehled docházky a výplaty dne.
+ * Jednotná logika „schválený / neschválený výdělek“ a výplaty dne.
  *
- * Pravidlo: zaplacený den (`paid === true`) se pro účely výdělku bere jako schválený
- * a nikdy nesmí spadat do neschváleného sloupce.
+ * Schválený sloupec smí ukazovat částku jen pokud je práce **explicitně** schválená
+ * (schválený denní výkaz nebo plně schválené work_time_bloky), nebo je den **zaplacený**.
+ * Zaplacený den bere celý orientační výdělek jako schválený pro zobrazení.
  */
+
+import { getLoggedHours, getPayableHours, type WorkTimeBlockMoney } from "@/lib/employee-money";
 
 export type PayrollPaidStatus = "paid" | "unpaid" | "none";
 
 export type PayrollSchvalenoStatus = "approved" | "pending" | "none";
+
+const BLOCK_EPS = 0.02;
 
 function roundMoney2(n: number): number {
   return Math.round(Math.max(0, n) * 100) / 100;
@@ -17,24 +22,71 @@ export function isEntryPaid(paidStatus: PayrollPaidStatus): boolean {
   return paidStatus === "paid";
 }
 
-/** Schválení práce (výkaz / bloky) — bez náhrady přes výplatu dne. */
-export function isWorkApprovedForPayroll(params: {
-  dayApprovedByDailyReport: boolean;
-  schvalenoStatus: PayrollSchvalenoStatus;
-}): boolean {
-  if (params.dayApprovedByDailyReport) return true;
-  return params.schvalenoStatus === "approved";
+/** Alias: den vyplacen přes výplatu dne (nebo ekvivalent). */
+export function isDayPaid(paidStatus: PayrollPaidStatus): boolean {
+  return isEntryPaid(paidStatus);
 }
 
-/** Pro zobrazení souhrnů: schváleno pro výplatu = práce schválena nebo den vyplacen. */
+/**
+ * Práce u dne je explicitně schválená: schválený denní výkaz, nebo všechny bloky
+ * mají reviewStatus approved/adjusted a součet schválených hodin pokrývá odpracované.
+ * Bloky bez reviewStatus se nepovažují za schválené (legacy).
+ */
+export function isExplicitWorkApprovedForDay(params: {
+  dayApprovedByDailyReport: boolean;
+  dayBlocks: WorkTimeBlockMoney[];
+}): boolean {
+  if (params.dayApprovedByDailyReport) return true;
+  const blocks = params.dayBlocks;
+  if (blocks.length === 0) return false;
+  let totalLogged = 0;
+  let totalPayable = 0;
+  for (const b of blocks) {
+    const logged = getLoggedHours(b);
+    totalLogged += logged;
+    const st = String(b.reviewStatus ?? "").trim();
+    if (st === "pending" || st === "rejected") return false;
+    if (st === "approved" || st === "adjusted") {
+      totalPayable += getPayableHours(b);
+      continue;
+    }
+    return false;
+  }
+  return totalLogged > BLOCK_EPS && totalPayable >= totalLogged - BLOCK_EPS;
+}
+
+/** Schválení práce v DB — bez náhrady zaplacením dne. */
+export function isWorkApprovedForPayroll(explicitWorkApproved: boolean): boolean {
+  return explicitWorkApproved;
+}
+
+/** Pro sloupce výdělku: schváleno = explicitně schválená práce nebo zaplacený den. */
+export function isDayApprovedForEarningsDisplay(params: {
+  explicitWorkApproved: boolean;
+  paidForDay: boolean;
+}): boolean {
+  return params.explicitWorkApproved || params.paidForDay === true;
+}
+
+/** Alias: `approved === true || paid === true` pro zobrazení výdělku. */
+export function isDayApproved(params: {
+  explicitWorkApproved: boolean;
+  paidForDay: boolean;
+}): boolean {
+  return isDayApprovedForEarningsDisplay(params);
+}
+
+/** @deprecated použijte isDayApprovedForEarningsDisplay */
 export function isEntryApprovedForPayroll(params: {
   workApproved: boolean;
   paidForDay: boolean;
 }): boolean {
-  return params.workApproved || params.paidForDay === true;
+  return isDayApprovedForEarningsDisplay({
+    explicitWorkApproved: params.workApproved,
+    paidForDay: params.paidForDay,
+  });
 }
 
-/** Neschváleno pro výplatu jen pokud není ani schválená práce ani výplata dne. */
 export function isEntryUnapprovedForPayroll(params: {
   workApproved: boolean;
   paidForDay: boolean;
@@ -44,11 +96,10 @@ export function isEntryUnapprovedForPayroll(params: {
 
 export type PayrollDisplayMoneyInput = {
   orientacniKc: number;
-  /** Částka schválená z výkazu/bloků (před úpravou o výplatu dne). */
+  /** Poměrná část z bloků (interně); do UI schváleného sloupce jde jen při explicitWorkApproved nebo paid. */
   workSchvalenoKc: number;
   workNeschvalenoKc: number;
-  dayApprovedByDailyReport: boolean;
-  schvalenoStatus: PayrollSchvalenoStatus;
+  explicitWorkApproved: boolean;
   paidForDay: boolean;
 };
 
@@ -69,10 +120,7 @@ export function computePayrollDisplayEarningsKc(
   p: PayrollDisplayMoneyInput
 ): { payrollApprovedKc: number; payrollUnapprovedKc: number } {
   const o = roundMoney2(p.orientacniKc);
-  const workApproved = isWorkApprovedForPayroll({
-    dayApprovedByDailyReport: p.dayApprovedByDailyReport,
-    schvalenoStatus: p.schvalenoStatus,
-  });
+  const workApproved = isWorkApprovedForPayroll(p.explicitWorkApproved);
 
   if (p.paidForDay) {
     return { payrollApprovedKc: o, payrollUnapprovedKc: 0 };
@@ -91,8 +139,7 @@ export type PayrollDisplayHourlyInput = {
   orientacniKc: number;
   workSchvalenoKc: number;
   workNeschvalenoKc: number;
-  dayApprovedByDailyReport: boolean;
-  schvalenoStatus: PayrollSchvalenoStatus;
+  explicitWorkApproved: boolean;
   paidForDay: boolean;
   hasIncompleteAttendance: boolean;
 };
@@ -109,10 +156,7 @@ export function computePayrollDisplayHourlyHours(
   const oh = Number(p.hourlyHoursForPay);
   if (!Number.isFinite(oh) || oh <= H_EPS) return { approvedH: 0, pendingH: 0 };
 
-  const workApproved = isWorkApprovedForPayroll({
-    dayApprovedByDailyReport: p.dayApprovedByDailyReport,
-    schvalenoStatus: p.schvalenoStatus,
-  });
+  const workApproved = isWorkApprovedForPayroll(p.explicitWorkApproved);
 
   if (p.paidForDay) {
     return { approvedH: Math.round(oh * 100) / 100, pendingH: 0 };
@@ -138,4 +182,21 @@ export function effectiveSchvalenoStatusForDisplay(
 ): PayrollSchvalenoStatus {
   if (paidStatus === "paid") return "approved";
   return schvalenoStatus;
+}
+
+/** Text badge podle výplaty dne (žádná platba = Bez platby). */
+export function getPaymentBadgeLabel(paidStatus: PayrollPaidStatus): "Zaplaceno" | "Nezaplaceno" | "Bez platby" {
+  if (paidStatus === "paid") return "Zaplaceno";
+  if (paidStatus === "unpaid") return "Nezaplaceno";
+  return "Bez platby";
+}
+
+/** Schválená částka pro kartu dne (stejná logika jako souhrny). */
+export function getApprovedEarningsKc(p: PayrollDisplayMoneyInput): number {
+  return getPayrollApprovedDisplayKc(p);
+}
+
+/** Neschválená částka pro kartu dne. */
+export function getUnapprovedEarningsKc(p: PayrollDisplayMoneyInput): number {
+  return getPayrollUnapprovedDisplayKc(p);
 }

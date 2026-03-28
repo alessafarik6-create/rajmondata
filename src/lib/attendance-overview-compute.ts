@@ -45,6 +45,7 @@ import {
   computePayrollDisplayEarningsKc,
   computePayrollDisplayHourlyHours,
   effectiveSchvalenoStatusForDisplay,
+  isExplicitWorkApprovedForDay,
 } from "@/lib/payroll-entry-display";
 
 export type PeriodMode = "day" | "week" | "month" | "custom";
@@ -638,23 +639,32 @@ export function buildEmployeeDailyDetailRows(params: {
     if (hasIncompleteAttendance) schvalenoKcRaw = 0;
     else if (dayApprovedByReport) schvalenoKcRaw = orientacniKc;
     else if (dayPendingByReport) schvalenoKcRaw = 0;
-    else if (dayBlocks.length === 0) schvalenoKcRaw = orientacniKc;
-    else {
+    else if (dayBlocks.length === 0) {
+      schvalenoKcRaw = 0;
+    } else {
       const totalLogged = dayBlocks.reduce((s, b) => s + getLoggedHours(b), 0);
       const approvedHp = dayBlocks.reduce((s, b) => s + getPayableHours(b), 0);
-      if (totalLogged <= 0.001) schvalenoKcRaw = orientacniKc;
+      if (totalLogged <= 0.001) schvalenoKcRaw = 0;
       else schvalenoKcRaw = orientacniKc * (approvedHp / totalLogged);
     }
     const workSchvalenoKc = Math.round(Math.max(0, schvalenoKcRaw) * 100) / 100;
     const workNeschvalenoKc = Math.round(
       Math.max(0, orientacniKc - workSchvalenoKc) * 100
     ) / 100;
+
+    const explicitWorkApproved = isExplicitWorkApprovedForDay({
+      dayApprovedByDailyReport: dayApprovedByReport,
+      dayBlocks,
+    });
+
     let schvalenoStatus: "approved" | "pending" | "none" = "none";
-    if (dayApprovedByReport || (workSchvalenoKc > 0 && workNeschvalenoKc === 0)) {
+    if (explicitWorkApproved) {
       schvalenoStatus = "approved";
     } else if (repSt && repSt !== "rejected" && repSt !== "approved") {
       schvalenoStatus = "pending";
-    } else if (workNeschvalenoKc > 0) {
+    } else if (dayBlocks.length > 0 && workNeschvalenoKc > 0) {
+      schvalenoStatus = "pending";
+    } else if (orientacniKc > 0) {
       schvalenoStatus = "pending";
     }
     const payout = dayPayoutByDate?.get(dateIso);
@@ -665,7 +675,7 @@ export function buildEmployeeDailyDetailRows(params: {
       paidStatus = payout.paid ? "paid" : "unpaid";
     } else if (dayBlocks.length > 0) {
       paidStatus = dayBlocks.every((b) => b.paid === true) ? "paid" : "unpaid";
-    } else if (workSchvalenoKc > 0) {
+    } else if (orientacniKc > 0) {
       paidStatus = "unpaid";
     }
 
@@ -674,8 +684,7 @@ export function buildEmployeeDailyDetailRows(params: {
       orientacniKc,
       workSchvalenoKc,
       workNeschvalenoKc,
-      dayApprovedByDailyReport: dayApprovedByReport,
-      schvalenoStatus,
+      explicitWorkApproved,
       paidForDay,
     });
     const schvalenoKc = payrollApprovedKc;
@@ -690,8 +699,7 @@ export function buildEmployeeDailyDetailRows(params: {
         orientacniKc,
         workSchvalenoKc,
         workNeschvalenoKc,
-        dayApprovedByDailyReport: dayApprovedByReport,
-        schvalenoStatus,
+        explicitWorkApproved,
         paidForDay,
         hasIncompleteAttendance,
       });
