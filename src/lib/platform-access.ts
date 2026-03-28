@@ -2,16 +2,18 @@ import type { PlatformModuleCode } from "@/lib/platform-config";
 import { isModuleEntitlementActiveNow } from "@/lib/platform-config";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import { defaultPlatformCatalogMap } from "@/lib/platform-module-catalog";
+import type { OrganizationLicenseRecord } from "@/lib/organization-license";
+import {
+  isModuleEnabledForPlatformFromLegacyKeys,
+  isOrganizationLicenseRecordActive,
+  platformModuleCodeToOrgLicenseModuleKey,
+} from "@/lib/organization-license";
 
-/** Firestore dokument firmy (část) — platformLicense / moduleEntitlements z denormalizace. */
+/** Firestore dokument firmy — primárně `license`; doplňkově denorm z `company_licenses`. */
 export type CompanyPlatformFields = {
   active?: boolean;
   isActive?: boolean;
-  /** Legacy pole z dialogu superadmina (`buildLicenseForFirestore` → `companies.license`). */
-  license?: {
-    status?: string;
-    licenseStatus?: string;
-  };
+  license?: OrganizationLicenseRecord;
   platformLicense?: {
     active?: boolean;
     status?: string;
@@ -24,8 +26,8 @@ export type CompanyPlatformFields = {
 };
 
 /**
- * Jednotný zdroj pravdy pro UI: pokud je na `companies` legacy `license.status === active`,
- * ale denorm `platformLicense` zůstalo `pending` (starší zápis / nesync), bereme aktivní licenci.
+ * Fallback: legacy `license.status === active` při `platformLicense.status === pending`
+ * (starší nesync mezi zápisy).
  */
 export function getEffectivePlatformLicense(
   company: CompanyPlatformFields | null | undefined
@@ -47,6 +49,15 @@ export function getEffectivePlatformLicense(
 
 export function isCompanyLicenseBlocking(company: CompanyPlatformFields | null | undefined): boolean {
   if (!company) return true;
+
+  if (isOrganizationLicenseRecordActive(company)) return false;
+
+  const lic = company.license;
+  const raw = lic?.status ?? lic?.licenseStatus;
+  if (lic && typeof lic === "object" && raw != null && String(raw).trim() !== "") {
+    return true;
+  }
+
   const pl = getEffectivePlatformLicense(company);
   if (!pl) {
     return company.isActive === false || company.active === false;
@@ -86,9 +97,8 @@ function getOrgModuleEntitlementRecord(
 }
 
 /**
- * Přístup k modulu v portálu.
- * Primárně z dokumentu organizace (`moduleEntitlements` z `company_licenses`).
- * Pokud u daného kódu chybí explicitní záznam → fallback na globální katalog (`platform_modules` + výchozí z kódu).
+ * Přístup k modulu: nejdřív `license.modules` / `license.enabledModules`,
+ * pak `moduleEntitlements` + katalog.
  */
 export function hasActiveModuleAccess(
   company: CompanyPlatformFields | null | undefined,
@@ -96,11 +106,25 @@ export function hasActiveModuleAccess(
   globalCatalog?: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null
 ): boolean {
   if (!company) return false;
-  /** Staré dokumenty bez platformLicense — zachovat přístup, pokud je účet aktivní. */
-  if (!company.platformLicense) {
-    return company.isActive !== false && company.active !== false;
-  }
   if (isCompanyLicenseBlocking(company)) return false;
+
+  if (!company.platformLicense) {
+    if (!isOrganizationLicenseRecordActive(company)) {
+      return company.isActive !== false && company.active !== false;
+    }
+  }
+
+  const orgKey = platformModuleCodeToOrgLicenseModuleKey(moduleCode);
+  const lic = company.license;
+  const mods = lic?.modules as Record<string, boolean> | undefined;
+  if (orgKey) {
+    if (mods && Object.prototype.hasOwnProperty.call(mods, orgKey)) {
+      return Boolean(mods[orgKey]);
+    }
+    if (Array.isArray(lic?.enabledModules)) {
+      return isModuleEnabledForPlatformFromLegacyKeys(lic.enabledModules, moduleCode);
+    }
+  }
 
   const catalog =
     globalCatalog != null && Object.keys(globalCatalog).length > 0
@@ -127,4 +151,13 @@ export function hasActiveModuleAccess(
   }
 
   return result;
+}
+
+/** `isActive && moduleEnabled` — jednotné pro sidebar / guard. */
+export function canAccessOrganizationModule(
+  company: CompanyPlatformFields | null | undefined,
+  moduleCode: PlatformModuleCode,
+  globalCatalog?: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null
+): boolean {
+  return !isCompanyLicenseBlocking(company) && hasActiveModuleAccess(company, moduleCode, globalCatalog);
 }

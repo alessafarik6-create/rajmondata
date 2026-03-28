@@ -19,11 +19,18 @@ export type CompanyProfile = {
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 
-  /** Legacy licence z superadmin dialogu (`companies.license`). */
+  /** Licence organizace (`companies.license`) — jednotný zdroj pro portál. */
   license?: {
     status?: string;
     licenseStatus?: string;
     enabledModules?: string[];
+    modules?: {
+      jobs?: boolean;
+      attendance?: boolean;
+      finance?: boolean;
+      sklad?: boolean;
+      vyroba?: boolean;
+    };
     licenseType?: string;
     expirationDate?: string | null;
     maxUsers?: number | null;

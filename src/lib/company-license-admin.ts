@@ -81,6 +81,15 @@ export function platformLicensePatchFromLegacyDialog(
       },
     };
   }
+  if (raw === "pending" || raw === "inactive") {
+    return {
+      platformLicense: {
+        active: false,
+        status: raw === "pending" ? "pending" : "suspended",
+        expiresAt,
+      },
+    };
+  }
   return {
     platformLicense: {
       active: true,

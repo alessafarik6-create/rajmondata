@@ -2,6 +2,7 @@ import type { CompanyLicenseDoc, PlatformModuleCode } from "@/lib/platform-confi
 import { PLATFORM_MODULE_CODES } from "@/lib/platform-config";
 import { COMPANY_LICENSES_COLLECTION } from "@/lib/firestore-collections";
 import type { ModuleKey } from "@/lib/license-modules";
+import { buildOrganizationLicenseModulesFromModuleKeys } from "@/lib/organization-license";
 
 export { COMPANY_LICENSES_COLLECTION };
 
@@ -74,16 +75,16 @@ export function companyDocPlatformFields(license: CompanyLicenseDoc) {
     };
   }
   const legacyEnabled = platformCodesToLegacyModuleKeys(license.enabledModules);
-  const legacyStatus =
+  const licenseStatusForPortal =
     license.status === "pending"
-      ? "suspended"
+      ? "pending"
       : license.status === "expired"
         ? "expired"
         : license.status === "suspended"
           ? "suspended"
           : license.active
             ? "active"
-            : "suspended";
+            : "inactive";
   return {
     platformLicense: {
       active: license.active,
@@ -96,10 +97,11 @@ export function companyDocPlatformFields(license: CompanyLicenseDoc) {
     enabledModuleIds: legacyEnabled,
     license: {
       licenseType: "starter",
-      status: legacyStatus,
+      status: licenseStatusForPortal,
       expirationDate: license.expiresAt,
       maxUsers: null,
       enabledModules: legacyEnabled,
+      modules: buildOrganizationLicenseModulesFromModuleKeys(legacyEnabled),
     },
   };
 }

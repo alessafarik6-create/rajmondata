@@ -29,6 +29,7 @@ import {
   writeCompanyLicenseAndDenorm,
   type CompanyLicenseUpdatePayload,
 } from "./company-license-admin";
+import { buildOrganizationLicenseModulesFromModuleKeys } from "./organization-license";
 
 /** @deprecated Use ORGANIZATIONS_COLLECTION from firestore-collections */
 export const COMPANIES_COLLECTION_LEGACY = ORGANIZATIONS_COLLECTION;
@@ -80,7 +81,12 @@ export function normalizeCompanyFromFirestore(
   const licenseType: LicenseConfig["licenseType"] =
     rawLicenseType === "professional" || rawLicenseType === "enterprise" ? rawLicenseType : "starter";
   const status: LicenseConfig["status"] =
-    rawStatus === "expired" || rawStatus === "suspended" ? rawStatus : "active";
+    rawStatus === "expired" ||
+    rawStatus === "suspended" ||
+    rawStatus === "pending" ||
+    rawStatus === "inactive"
+      ? rawStatus
+      : "active";
 
   const licenseConfig: LicenseConfig & { licenseExpiresAt?: string | null } = {
     licenseType,
@@ -118,6 +124,9 @@ function buildLicenseForFirestore(update: LicenseUpdate): Record<string, unknown
   const enabledModules = Array.isArray(update.enabledModules)
     ? update.enabledModules.filter((k) => toModuleKey(k) !== null)
     : [];
+  const modules = buildOrganizationLicenseModulesFromModuleKeys(
+    enabledModules as ModuleKey[]
+  );
 
   return {
     licenseType,
@@ -125,6 +134,7 @@ function buildLicenseForFirestore(update: LicenseUpdate): Record<string, unknown
     expirationDate,
     maxUsers: update.maxUsers ?? null,
     enabledModules,
+    modules,
   };
 }
 

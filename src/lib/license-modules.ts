@@ -41,6 +41,8 @@ export type LicenseType = (typeof LICENSE_TYPES)[number]["value"];
 
 export const LICENSE_STATUSES = [
   { value: "active", label: "Aktivní" },
+  { value: "pending", label: "Čeká na schválení" },
+  { value: "inactive", label: "Neaktivní" },
   { value: "expired", label: "Expirovaná" },
   { value: "suspended", label: "Pozastavená" },
 ] as const;

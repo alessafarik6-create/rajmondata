@@ -12,11 +12,8 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
-import {
-  getEffectivePlatformLicense,
-  hasActiveModuleAccess,
-  isCompanyLicenseBlocking,
-} from "@/lib/platform-access";
+import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import { isOrganizationLicenseRecordActive } from "@/lib/organization-license";
 import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
@@ -203,13 +200,11 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development" || !company || !companyId) return;
-    const eff = getEffectivePlatformLicense(company);
+    console.log("ORG:", company);
+    console.log("LICENSE:", company.license);
     console.log("[Portal license debug]", {
       companyId,
-      platformLicense: company.platformLicense,
-      license: (company as { license?: unknown }).license,
-      moduleEntitlements: company.moduleEntitlements,
-      effectivePlatformLicense: eff,
+      licenseActive: isOrganizationLicenseRecordActive(company),
       isCompanyLicenseBlocking: isCompanyLicenseBlocking(company),
       sklad: hasActiveModuleAccess(company, "sklad", platformCatalog),
       vyroba: hasActiveModuleAccess(company, "vyroba", platformCatalog),
@@ -489,9 +484,28 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   const licenseNotice = (() => {
     if (isPortalEmployeeOnly || !company) return null;
-    const pl = getEffectivePlatformLicense(company);
-    if (!pl) return null;
-    if (pl.status === "pending") {
+    if (isOrganizationLicenseRecordActive(company)) return null;
+
+    const lic = company.license;
+    const ls = String(lic?.status ?? lic?.licenseStatus ?? "").toLowerCase();
+    if (ls === "pending") {
+      return (
+        <Alert className="mb-4 border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-50">
+          <AlertCircle className="h-4 w-4" />
+          <AlertTitle>Licence čeká na schválení</AlertTitle>
+          <AlertDescription>
+            Účet firmy zatím nebyl aktivován superadministrátorem. Placené moduly jsou vypnuté, dokud neproběhne
+            aktivace licence.
+          </AlertDescription>
+        </Alert>
+      );
+    }
+    const hasLicenseStatusField =
+      lic &&
+      typeof lic === "object" &&
+      ((lic.status != null && String(lic.status).trim() !== "") ||
+        (lic.licenseStatus != null && String(lic.licenseStatus).trim() !== ""));
+    if (!hasLicenseStatusField && company.platformLicense?.status === "pending") {
       return (
         <Alert className="mb-4 border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-50">
           <AlertCircle className="h-4 w-4" />
