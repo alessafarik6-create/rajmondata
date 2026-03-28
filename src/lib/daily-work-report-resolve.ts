@@ -97,6 +97,28 @@ export async function resolveSegmentJobSplits(
   primaryJobName: string | null;
 }> {
   const assigned = new Set(parseAssignedWorklogJobIds(emp));
+  const jobInfoCache = new Map<string, { exists: boolean; name: string | null }>();
+
+  const loadJobInfo = async (jid: string) => {
+    let cached = jobInfoCache.get(jid);
+    if (!cached) {
+      const jobSnap = await db
+        .collection("companies")
+        .doc(companyId)
+        .collection("jobs")
+        .doc(jid)
+        .get();
+      cached = {
+        exists: jobSnap.exists,
+        name: jobSnap.exists
+          ? String((jobSnap.data() as { name?: string })?.name || "").trim() || null
+          : null,
+      };
+      jobInfoCache.set(jid, cached);
+    }
+    return cached;
+  };
+
   const list = Array.isArray(rawSplits) ? rawSplits : [];
   if (list.length === 0) {
     throw new Error("Chybí rozdělení času podle zakázek — doplňte alespoň jeden řádek u každého úseku.");
@@ -162,7 +184,12 @@ export async function resolveSegmentJobSplits(
       if (lockMode === "tariff_terminal") {
         throw new Error("U tarifového úseku z terminálu nelze přiřadit zakázku — pouze popis práce.");
       }
+      const jobInfo = await loadJobInfo(jid);
+      if (!jobInfo.exists) {
+        throw new Error("Vybraná zakázka neexistuje.");
+      }
       if (
+        assigned.size > 0 &&
         !assigned.has(jid) &&
         !(locked && lockMode === "job_terminal" && jid === termJobId)
       ) {
@@ -260,15 +287,8 @@ export async function resolveSegmentJobSplits(
     for (const r of rows) {
       let jobName: string | null = null;
       if (!isNoJobSegmentJobId(r.jobId)) {
-        const jobSnap = await db
-          .collection("companies")
-          .doc(companyId)
-          .collection("jobs")
-          .doc(r.jobId)
-          .get();
-        jobName = jobSnap.exists
-          ? String((jobSnap.data() as { name?: string })?.name || "").trim() || null
-          : null;
+        const info = await loadJobInfo(r.jobId);
+        jobName = info.name;
       }
 
       segmentJobSplits.push({
@@ -350,26 +370,26 @@ async function resolveManualJobSplitRows(
     if (!Number.isFinite(hr) || hr <= 0) {
       throw new Error("Počet hodin musí být kladné číslo.");
     }
+    let jobName: string | null = null;
     if (isNoJobSegmentJobId(jid)) {
       jid = NO_JOB_SEGMENT_JOB_ID;
-    } else if (!assigned.has(jid)) {
-      throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
-    }
-    const hoursRounded = roundHours(hr);
-    sum += hoursRounded;
-
-    let jobName: string | null = null;
-    if (!isNoJobSegmentJobId(jid)) {
+    } else {
       const jobSnap = await db
         .collection("companies")
         .doc(companyId)
         .collection("jobs")
         .doc(jid)
         .get();
-      jobName = jobSnap.exists
-        ? String((jobSnap.data() as { name?: string })?.name || "").trim() || null
-        : null;
+      if (!jobSnap.exists) {
+        throw new Error("Vybraná zakázka neexistuje.");
+      }
+      if (assigned.size > 0 && !assigned.has(jid)) {
+        throw new Error("Zakázka není zaměstnanci přiřazena pro výkaz práce.");
+      }
+      jobName = String((jobSnap.data() as { name?: string })?.name || "").trim() || null;
     }
+    const hoursRounded = roundHours(hr);
+    sum += hoursRounded;
 
     segmentJobSplits.push({
       segmentId: null,

@@ -332,6 +332,12 @@ export async function POST(request: NextRequest) {
       );
     } catch (normErr) {
       const msg = normErr instanceof Error ? normErr.message : "Neplatné řádky výkazu.";
+      console.warn("[employee/daily-work-report] normalize segmentJobSplits failed", {
+        companyId,
+        employeeId,
+        date,
+        message: msg,
+      });
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
@@ -380,6 +386,13 @@ export async function POST(request: NextRequest) {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Neplatná data výkazu.";
+      console.warn("[employee/daily-work-report] resolve splits failed", {
+        companyId,
+        employeeId,
+        date,
+        message: msg,
+        stack: err instanceof Error ? err.stack : undefined,
+      });
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
