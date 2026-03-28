@@ -21,6 +21,8 @@ import {
   BarChart3,
   Tags,
   Activity,
+  Package,
+  Factory,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -28,6 +30,10 @@ import { useUser, useDoc, useFirestore, useMemoFirebase, useCompany } from '@/fi
 import { doc } from 'firebase/firestore';
 import type { PlatformModuleCode } from '@/lib/platform-config';
 import { hasActiveModuleAccess, isCompanyLicenseBlocking } from '@/lib/platform-access';
+import {
+  userCanAccessProductionPortal,
+  userCanAccessWarehousePortal,
+} from '@/lib/warehouse-production-access';
 
 export type BizForgeSidebarProps = {
   /**
@@ -48,12 +54,30 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     [firestore, user?.uid]
   );
   const { data: userProfile } = useDoc(userRef);
-  const { company } = useCompany();
+  const { company, companyId } = useCompany();
 
   const isSuperAdmin = userProfile?.globalRoles?.includes('super_admin');
   const isAdminArea = pathname.startsWith('/admin');
-  
+
   const role = userProfile?.role || 'employee';
+
+  const employeeRowRef = useMemoFirebase(
+    () =>
+      firestore &&
+      companyId &&
+      userProfile?.employeeId &&
+      role === 'employee'
+        ? doc(
+            firestore,
+            'companies',
+            companyId,
+            'employees',
+            String(userProfile.employeeId)
+          )
+        : null,
+    [firestore, companyId, userProfile?.employeeId, role]
+  );
+  const { data: employeeRow } = useDoc(employeeRowRef);
 
   const adminLinks = [
     { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },
@@ -104,7 +128,22 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     if (link.module === null) return true;
     if (!company) return false;
     if (isCompanyLicenseBlocking(company)) return false;
-    return hasActiveModuleAccess(company, link.module);
+    if (!hasActiveModuleAccess(company, link.module)) return false;
+    if (link.module === 'sklad') {
+      return userCanAccessWarehousePortal({
+        role,
+        globalRoles: userProfile?.globalRoles,
+        employeeRow: employeeRow as { canAccessWarehouse?: boolean } | null,
+      });
+    }
+    if (link.module === 'vyroba') {
+      return userCanAccessProductionPortal({
+        role,
+        globalRoles: userProfile?.globalRoles,
+        employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
+      });
+    }
+    return true;
   });
 
   const links = isAdminArea ? adminLinks : portalLinks;
@@ -123,6 +162,12 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     }
     if (href === "/portal/labor/dochazka") {
       return pathname.startsWith("/portal/labor");
+    }
+    if (href === "/portal/sklad") {
+      return pathname.startsWith("/portal/sklad");
+    }
+    if (href === "/portal/vyroba") {
+      return pathname.startsWith("/portal/vyroba");
     }
     return pathname.startsWith(`${href}/`);
   };

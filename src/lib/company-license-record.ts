@@ -1,4 +1,5 @@
 import type { CompanyLicenseDoc, PlatformModuleCode } from "@/lib/platform-config";
+import { PLATFORM_MODULE_CODES } from "@/lib/platform-config";
 import { COMPANY_LICENSES_COLLECTION } from "@/lib/firestore-collections";
 import type { ModuleKey } from "@/lib/license-modules";
 
@@ -11,8 +12,32 @@ export function platformCodesToLegacyModuleKeys(codes: PlatformModuleCode[]): Mo
     if (c === "attendance_payroll") out.push("attendance");
     else if (c === "invoicing") out.push("invoices");
     else if (c === "jobs") out.push("jobs");
+    else if (c === "sklad") out.push("sklad");
+    else if (c === "vyroba") out.push("vyroba");
   }
   return [...new Set(out)];
+}
+
+/** Legacy checkboxy v superadmin „Organizace“ → stav platformních modulů v `company_licenses`. */
+const LEGACY_KEYS_FOR_PLATFORM: { [K in PlatformModuleCode]?: readonly ModuleKey[] } = {
+  attendance_payroll: ["attendance", "mobile_terminal"],
+  invoicing: ["invoices", "finance", "documents"],
+  jobs: ["jobs"],
+  sklad: ["sklad"],
+  vyroba: ["vyroba"],
+};
+
+export function buildPlatformModulesSyncFromLegacy(
+  enabled: ModuleKey[]
+): Partial<Record<PlatformModuleCode, { active: boolean }>> {
+  const set = new Set(enabled);
+  const out: Partial<Record<PlatformModuleCode, { active: boolean }>> = {};
+  for (const code of PLATFORM_MODULE_CODES) {
+    const keys = LEGACY_KEYS_FOR_PLATFORM[code];
+    if (!keys) continue;
+    out[code] = { active: keys.some((k) => set.has(k)) };
+  }
+  return out;
 }
 
 export function createPendingCompanyLicense(companyId: string): CompanyLicenseDoc {

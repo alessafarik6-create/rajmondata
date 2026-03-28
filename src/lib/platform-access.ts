@@ -42,7 +42,10 @@ export function hasActiveModuleAccess(
     return company.isActive !== false && company.active !== false;
   }
   if (isCompanyLicenseBlocking(company)) return false;
-  const ent = company.moduleEntitlements?.[moduleCode];
+  /** Zpětná kompatibilita: starší licence používaly kód `warehouse` místo `sklad`. */
+  const ent =
+    company.moduleEntitlements?.[moduleCode] ??
+    (moduleCode === "sklad" ? company.moduleEntitlements?.["warehouse"] : undefined);
   return isModuleEntitlementActiveNow(
     ent
       ? {

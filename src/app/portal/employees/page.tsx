@@ -156,6 +156,8 @@ export default function EmployeesPage() {
   const [orgSettingsEmp, setOrgSettingsEmp] = useState<any | null>(null);
   const [orgSettingsRole, setOrgSettingsRole] = useState<'employee' | 'orgAdmin'>('employee');
   const [orgSettingsTerminalVisible, setOrgSettingsTerminalVisible] = useState(true);
+  const [orgSettingsCanWarehouse, setOrgSettingsCanWarehouse] = useState(false);
+  const [orgSettingsCanProduction, setOrgSettingsCanProduction] = useState(false);
   const [orgSettingsSaving, setOrgSettingsSaving] = useState(false);
   
   const [qrEmployee, setQrEmployee] = useState<any | null>(null);
@@ -771,6 +773,8 @@ export default function EmployeesPage() {
           employeeId: orgSettingsEmp.id,
           role: orgSettingsRole,
           visibleInAttendanceTerminal: orgSettingsTerminalVisible,
+          canAccessWarehouse: orgSettingsCanWarehouse,
+          canAccessProduction: orgSettingsCanProduction,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -1009,13 +1013,14 @@ export default function EmployeesPage() {
         <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
-              Role a terminál docházky
+              Role, terminál a moduly sklad / výroba
             </DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
               {orgSettingsEmp
                 ? `${orgSettingsEmp.firstName} ${orgSettingsEmp.lastName}`
                 : ""}{" "}
-              — oprávnění v rámci vaší organizace a viditelnost na veřejné docházce.
+              — oprávnění v organizaci, terminál docházky a přístup ke skladu a výrobě (u běžného
+              zaměstnance jen pokud je modul ve firmě zapnutý a zde povolený).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
@@ -1048,6 +1053,37 @@ export default function EmployeesPage() {
                 id="org-settings-terminal"
                 checked={orgSettingsTerminalVisible}
                 onCheckedChange={setOrgSettingsTerminalVisible}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+              <div className="min-w-0 space-y-0.5">
+                <Label htmlFor="org-settings-warehouse" className={INVITE_LABEL_CLASS}>
+                  Přístup ke skladu
+                </Label>
+                <p className="text-[10px] text-gray-600">
+                  Běžný zaměstnanec uvidí modul Sklad jen s tímto příznakem (a zapnutým modulem u
+                  licence).
+                </p>
+              </div>
+              <Switch
+                id="org-settings-warehouse"
+                checked={orgSettingsCanWarehouse}
+                onCheckedChange={setOrgSettingsCanWarehouse}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+              <div className="min-w-0 space-y-0.5">
+                <Label htmlFor="org-settings-production" className={INVITE_LABEL_CLASS}>
+                  Přístup k výrobě
+                </Label>
+                <p className="text-[10px] text-gray-600">
+                  Stejně jako sklad — jen vybraní zaměstnanci.
+                </p>
+              </div>
+              <Switch
+                id="org-settings-production"
+                checked={orgSettingsCanProduction}
+                onCheckedChange={setOrgSettingsCanProduction}
               />
             </div>
           </div>
@@ -1317,9 +1353,17 @@ export default function EmployeesPage() {
                                         emp as { visibleInAttendanceTerminal?: boolean }
                                       )
                                     );
+                                    setOrgSettingsCanWarehouse(
+                                      (emp as { canAccessWarehouse?: boolean }).canAccessWarehouse ===
+                                        true
+                                    );
+                                    setOrgSettingsCanProduction(
+                                      (emp as { canAccessProduction?: boolean }).canAccessProduction ===
+                                        true
+                                    );
                                   }}
                                 >
-                                  <Edit2 className="w-4 h-4 mr-2" /> Role a terminál docházky
+                                  <Edit2 className="w-4 h-4 mr-2" /> Role, terminál a sklad / výroba
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>

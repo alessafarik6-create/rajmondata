@@ -82,6 +82,22 @@ export function buildJobExpenseStorageObjectPath(
   return `companies/${companyId}/jobs/${jobId}/expenses/${safe}`;
 }
 
+/** Podklady výroby: companies/{companyId}/production/{productionId}/attachments/... */
+export function buildProductionAttachmentStorageObjectPath(
+  companyId: string,
+  productionId: string,
+  fileNamePart: string
+): string {
+  const base =
+    String(fileNamePart)
+      .replace(/^.*[\\/]/, "")
+      .replace(/\s+/g, " ")
+      .trim() || "file";
+  const safe = base.replace(/[\\/]/g, "_");
+  const stamp = Date.now();
+  return `companies/${companyId}/production/${productionId}/attachments/${stamp}_${safe}`;
+}
+
 export function buildJobFolderImageStorageObjectPath(
   companyId: string,
   jobId: string,

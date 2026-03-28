@@ -11,6 +11,8 @@ export const AVAILABLE_MODULES = [
   { key: "reports", label: "Reporty" },
   { key: "mobile_terminal", label: "Mobilní terminál" },
   { key: "subscriptions", label: "Předplatné / Fakturace" },
+  { key: "sklad", label: "Sklad" },
+  { key: "vyroba", label: "Výroba" },
 ] as const;
 
 export type ModuleKey = (typeof AVAILABLE_MODULES)[number]["key"];
@@ -25,6 +27,8 @@ export const MODULE_KEYS: ModuleKey[] = [
   "reports",
   "mobile_terminal",
   "subscriptions",
+  "sklad",
+  "vyroba",
 ];
 
 export const LICENSE_TYPES = [

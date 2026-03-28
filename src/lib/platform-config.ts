@@ -9,7 +9,8 @@ export const PLATFORM_MODULE_CODES = [
   "attendance_payroll",
   "invoicing",
   "jobs",
-  "warehouse",
+  "sklad",
+  "vyroba",
 ] as const;
 
 export type PlatformModuleCode = (typeof PLATFORM_MODULE_CODES)[number];
@@ -62,9 +63,19 @@ export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
     configurableBySuperadmin: true,
   },
   {
-    code: "warehouse",
-    name: "Sklady",
-    description: "Skladové hospodářství.",
+    code: "sklad",
+    name: "Sklad",
+    description: "Skladové položky, naskladnění, vyskladnění a historie pohybů.",
+    activeGlobally: true,
+    defaultEnabled: false,
+    basePriceCzk: 399,
+    billingType: "per_company",
+    configurableBySuperadmin: true,
+  },
+  {
+    code: "vyroba",
+    name: "Výroba",
+    description: "Výrobní záznamy, zakázky, materiál ze skladu a podklady.",
     activeGlobally: true,
     defaultEnabled: false,
     basePriceCzk: 399,
@@ -131,8 +142,10 @@ export function portalPathsForModule(code: PlatformModuleCode): string[] {
       return ["/portal/documents", "/portal/invoices", "/portal/finance"];
     case "jobs":
       return ["/portal/jobs", "/portal/leads"];
-    case "warehouse":
-      return ["/portal/warehouse"];
+    case "sklad":
+      return ["/portal/sklad"];
+    case "vyroba":
+      return ["/portal/vyroba"];
     default:
       return [];
   }

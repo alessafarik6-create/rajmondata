@@ -2,7 +2,8 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useUser, useCompany, useFirebase } from "@/firebase";
+import { useUser, useCompany, useFirebase, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
+import { doc } from "firebase/firestore";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
@@ -11,7 +12,11 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
-import { isCompanyLicenseBlocking } from "@/lib/platform-access";
+import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import {
+  userCanAccessProductionPortal,
+  userCanAccessWarehousePortal,
+} from "@/lib/warehouse-production-access";
 import { ActivitySessionBridge } from "@/components/portal/activity-session-bridge";
 
 const REDIRECT_GRACE_MS = 2500;
@@ -52,12 +57,37 @@ export default function PortalLayout({
     companyError: companyHookError,
   } = useCompany();
 
+  const firestore = useFirestore();
+
+  const profileEmployeeRef = useMemoFirebase(
+    () =>
+      firestore &&
+      companyId &&
+      profile?.employeeId &&
+      profile?.role === "employee"
+        ? doc(
+            firestore,
+            "companies",
+            companyId,
+            "employees",
+            String(profile.employeeId)
+          )
+        : null,
+    [firestore, companyId, profile?.employeeId, profile?.role]
+  );
+  const { data: profileEmployeeRow } = useDoc<Record<string, unknown>>(profileEmployeeRef);
+
   const isPortalEmployeeOnly =
     profile?.role === "employee" &&
     !(Array.isArray(profile?.globalRoles) &&
       profile.globalRoles.includes("super_admin"));
 
-  const isEmployeePortalPath = pathname.startsWith("/portal/employee");
+  /** Zaměstnanec může mimo /portal/employee jen tyto větve (docházka, sklad, výroba). */
+  const isEmployeeAllowedBranchPath =
+    pathname.startsWith("/portal/employee") ||
+    pathname.startsWith("/portal/labor") ||
+    pathname.startsWith("/portal/sklad") ||
+    pathname.startsWith("/portal/vyroba");
 
   /** Načítání profilu z Firestore — bez automatického doplňování dokumentu (žádný nový auth účet). */
   const waitingForProfileResolution = isProfileLoading;
@@ -70,7 +100,7 @@ export default function PortalLayout({
       isProfileLoading,
       isUserLoading,
       isPortalEmployeeOnly,
-      isEmployeePortalPath,
+      isEmployeeAllowedBranchPath,
       waitingForProfileResolution,
       hasProfile: !!profile,
       profileError: profileError?.message ?? null,
@@ -81,7 +111,7 @@ export default function PortalLayout({
     isProfileLoading,
     isUserLoading,
     isPortalEmployeeOnly,
-    isEmployeePortalPath,
+    isEmployeeAllowedBranchPath,
     waitingForProfileResolution,
     profile,
     profileError,
@@ -95,15 +125,66 @@ export default function PortalLayout({
 
   useEffect(() => {
     if (!profile || isProfileLoading) return;
-    if (isPortalEmployeeOnly && !isEmployeePortalPath) {
+    if (isPortalEmployeeOnly && !isEmployeeAllowedBranchPath) {
       router.replace("/portal/employee");
     }
   }, [
     profile,
     isProfileLoading,
     isPortalEmployeeOnly,
-    isEmployeePortalPath,
+    isEmployeeAllowedBranchPath,
     router,
+  ]);
+
+  /** Moduly sklad / výroba — licence + role / přiřazení zaměstnance; blokace přímého URL. */
+  useEffect(() => {
+    if (!profile || isProfileLoading || !company) return;
+    const skladPath = pathname.startsWith("/portal/sklad");
+    const vyrobaPath = pathname.startsWith("/portal/vyroba");
+    if (!skladPath && !vyrobaPath) return;
+    if (isCompanyLicenseBlocking(company)) {
+      router.replace("/portal/dashboard");
+      return;
+    }
+    if (skladPath) {
+      if (!hasActiveModuleAccess(company, "sklad")) {
+        router.replace("/portal/dashboard");
+        return;
+      }
+      if (
+        !userCanAccessWarehousePortal({
+          role: String(profile.role || "employee"),
+          globalRoles: profile.globalRoles as string[] | undefined,
+          employeeRow: profileEmployeeRow as { canAccessWarehouse?: boolean } | null,
+        })
+      ) {
+        router.replace("/portal/dashboard");
+        return;
+      }
+    }
+    if (vyrobaPath) {
+      if (!hasActiveModuleAccess(company, "vyroba")) {
+        router.replace("/portal/dashboard");
+        return;
+      }
+      if (
+        !userCanAccessProductionPortal({
+          role: String(profile.role || "employee"),
+          globalRoles: profile.globalRoles as string[] | undefined,
+          employeeRow: profileEmployeeRow as { canAccessProduction?: boolean } | null,
+        })
+      ) {
+        router.replace("/portal/dashboard");
+        return;
+      }
+    }
+  }, [
+    profile,
+    isProfileLoading,
+    company,
+    pathname,
+    router,
+    profileEmployeeRow,
   ]);
 
   useEffect(() => {
@@ -357,7 +438,7 @@ export default function PortalLayout({
     );
   }
 
-  if (isPortalEmployeeOnly && !isEmployeePortalPath) {
+  if (isPortalEmployeeOnly && !isEmployeeAllowedBranchPath) {
     if (shellTimedOut) {
       return (
         <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4">

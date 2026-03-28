@@ -155,12 +155,26 @@ export async function getCompanyLicenseDoc(
   return snap.data() as CompanyLicenseDoc;
 }
 
+/** Starší dokumenty měly modul `warehouse`; nahrazeno kódem `sklad`. */
+export function normalizeLegacyWarehouseModule(license: CompanyLicenseDoc): CompanyLicenseDoc {
+  const w = license.modules["warehouse"];
+  if (!w || license.modules["sklad"]) return license;
+  const { warehouse: _drop, ...restMods } = license.modules;
+  return {
+    ...license,
+    modules: {
+      ...restMods,
+      sklad: { ...w, moduleCode: "sklad" },
+    },
+  };
+}
+
 export async function ensureCompanyLicenseDoc(
   db: Firestore,
   companyId: string
 ): Promise<CompanyLicenseDoc> {
   const existing = await getCompanyLicenseDoc(db, companyId);
-  if (existing) return existing;
+  if (existing) return normalizeLegacyWarehouseModule(existing);
   return createPendingCompanyLicense(companyId);
 }
 

@@ -49,6 +49,38 @@ service cloud.firestore {
         'super_admin' in userDoc().globalRoles;
     }
 
+    /** Modul Sklad — zaměstnanec jen s canAccessWarehouse na svém profilu employees/{id}. */
+    function employeeWarehouseFlag(companyId) {
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      return exists(empRef) &&
+        'canAccessWarehouse' in get(empRef).data &&
+        get(empRef).data.canAccessWarehouse == true;
+    }
+
+    /** Modul Výroba — zaměstnanec jen s canAccessProduction. */
+    function employeeProductionFlag(companyId) {
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      return exists(empRef) &&
+        'canAccessProduction' in get(empRef).data &&
+        get(empRef).data.canAccessProduction == true;
+    }
+
+    function warehouseModuleUser(companyId) {
+      return signedIn() && sameCompany(companyId) && (
+        userRole() in ['owner', 'admin', 'manager'] ||
+        (userRole() == 'employee' && ownEmployeeId() != null && employeeWarehouseFlag(companyId)) ||
+        isSuperAdminFirebase()
+      );
+    }
+
+    function productionModuleUser(companyId) {
+      return signedIn() && sameCompany(companyId) && (
+        userRole() in ['owner', 'admin', 'manager'] ||
+        (userRole() == 'employee' && ownEmployeeId() != null && employeeProductionFlag(companyId)) ||
+        isSuperAdminFirebase()
+      );
+    }
+
     function sameCompany(companyId) {
       return hasUser() && userCompanyId() == companyId;
     }
@@ -189,6 +221,24 @@ service cloud.firestore {
         /** Hash PINu terminálu — pouze Admin SDK / API (klient nesmí číst ani zapisovat). */
         match /private/{docId} {
           allow read, write: if false;
+        }
+      }
+
+      /** Sklad — položky a pohyby */
+      match /inventoryItems/{itemId} {
+        allow read, write: if warehouseModuleUser(companyId);
+      }
+
+      match /inventoryMovements/{movId} {
+        allow read, write: if warehouseModuleUser(companyId);
+      }
+
+      /** Výroba — záznamy a přílohy (sklad může dopisovat materiál při přesunu ze skladu). */
+      match /production/{prodId} {
+        allow read, write: if productionModuleUser(companyId) || warehouseModuleUser(companyId);
+
+        match /attachments/{attId} {
+          allow read, write: if productionModuleUser(companyId) || warehouseModuleUser(companyId);
         }
       }
 

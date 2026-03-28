@@ -11,6 +11,10 @@ type Body = {
   /** Role v organizaci — přepíše companies/.../employees.role a users.role. */
   role?: string;
   visibleInAttendanceTerminal?: boolean;
+  /** Přístup k modulu Sklad (jen běžný zaměstnanec; owner/admin/manager mají vždy). */
+  canAccessWarehouse?: boolean;
+  /** Přístup k modulu Výroba. */
+  canAccessProduction?: boolean;
 };
 
 /**
@@ -92,10 +96,15 @@ export async function PATCH(request: NextRequest) {
 
   const hasOrgRole = typeof body.role === "string";
   const hasVisible = typeof body.visibleInAttendanceTerminal === "boolean";
+  const hasWh = typeof body.canAccessWarehouse === "boolean";
+  const hasPr = typeof body.canAccessProduction === "boolean";
 
-  if (!hasOrgRole && !hasVisible) {
+  if (!hasOrgRole && !hasVisible && !hasWh && !hasPr) {
     return NextResponse.json(
-      { error: "Pošlete role a/nebo visibleInAttendanceTerminal." },
+      {
+        error:
+          "Pošlete role, visibleInAttendanceTerminal a/nebo canAccessWarehouse / canAccessProduction.",
+      },
       { status: 400 }
     );
   }
@@ -120,6 +129,12 @@ export async function PATCH(request: NextRequest) {
   }
   if (hasVisible) {
     patch.visibleInAttendanceTerminal = body.visibleInAttendanceTerminal;
+  }
+  if (hasWh) {
+    patch.canAccessWarehouse = body.canAccessWarehouse;
+  }
+  if (hasPr) {
+    patch.canAccessProduction = body.canAccessProduction;
   }
 
   await empRef.set(patch, { merge: true });

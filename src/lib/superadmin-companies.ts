@@ -15,12 +15,16 @@ import {
   COMPANY_LICENSES_COLLECTION,
 } from "./firestore-collections";
 import type { CompanyLicenseDoc } from "./platform-config";
-import { createPendingCompanyLicense } from "./company-license-record";
+import {
+  buildPlatformModulesSyncFromLegacy,
+  createPendingCompanyLicense,
+} from "./company-license-record";
 import {
   applyExpiredLicenseStatus,
   ensureCompanyLicenseDoc,
   estimateMonthlyLicenseCzk,
   mergeCompanyLicenseUpdate,
+  normalizeLegacyWarehouseModule,
   writeCompanyLicenseAndDenorm,
   type CompanyLicenseUpdatePayload,
 } from "./company-license-admin";
@@ -147,7 +151,9 @@ export async function getCompanies(db: Firestore) {
   return docs.map((doc, i) => {
     const data = doc.data() as Record<string, unknown>;
     let companyLicense: CompanyLicenseDoc = licenseSnaps[i]?.exists
-      ? applyExpiredLicenseStatus(licenseSnaps[i].data() as CompanyLicenseDoc)
+      ? applyExpiredLicenseStatus(
+          normalizeLegacyWarehouseModule(licenseSnaps[i].data() as CompanyLicenseDoc)
+        )
       : createPendingCompanyLicense(doc.id);
 
     const ec = employeeCounts[i] ?? 0;
@@ -186,7 +192,9 @@ export async function getCompany(db: Firestore, id: string): Promise<CompanyWith
   const base = normalizeCompanyFromFirestore(doc.data() as Record<string, unknown>, doc.id);
   const licSnap = await db.collection(COMPANY_LICENSES_COLLECTION).doc(id).get();
   const companyLicense = licSnap.exists
-    ? applyExpiredLicenseStatus(licSnap.data() as CompanyLicenseDoc)
+    ? applyExpiredLicenseStatus(
+        normalizeLegacyWarehouseModule(licSnap.data() as CompanyLicenseDoc)
+      )
     : createPendingCompanyLicense(id);
 
   return { ...base, companyLicense };
@@ -217,6 +225,20 @@ export async function updateCompany(
     updates.license = license;
     updates.licenseId = license.licenseType as string;
     updates.enabledModuleIds = license.enabledModules;
+
+    const enabledKeys = (license.enabledModules as string[]).filter((k): k is ModuleKey =>
+      MODULE_KEYS.includes(k as ModuleKey)
+    );
+    const nowIso = new Date().toISOString();
+    const existingLic = await ensureCompanyLicenseDoc(db, id);
+    const syncModules = buildPlatformModulesSyncFromLegacy(enabledKeys);
+    let mergedFromLegacy = mergeCompanyLicenseUpdate(
+      existingLic,
+      { modules: syncModules },
+      nowIso
+    );
+    mergedFromLegacy = applyExpiredLicenseStatus(mergedFromLegacy);
+    await writeCompanyLicenseAndDenorm(db, id, mergedFromLegacy);
   }
 
   if (payload.companyLicense && typeof payload.companyLicense === "object") {

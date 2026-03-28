@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { PLATFORM_MODULES_COLLECTION } from "@/lib/firestore-collections";
+import { DEFAULT_PLATFORM_MODULES } from "@/lib/platform-config";
 import { ensureAllPlatformData } from "@/lib/superadmin-platform-seed";
 
 export async function GET() {
@@ -18,6 +19,15 @@ export async function GET() {
 
   try {
     await ensureAllPlatformData(db);
+    const batchSeed = db.batch();
+    for (const m of DEFAULT_PLATFORM_MODULES) {
+      batchSeed.set(
+        db.collection(PLATFORM_MODULES_COLLECTION).doc(m.code),
+        { ...m, updatedAt: FieldValue.serverTimestamp() },
+        { merge: true }
+      );
+    }
+    await batchSeed.commit();
     const snap = await db.collection(PLATFORM_MODULES_COLLECTION).get();
     const modules = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     return NextResponse.json({ modules });

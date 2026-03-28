@@ -10,13 +10,20 @@ import {
   UserCircle,
   Wallet,
   MessageSquare,
+  Package,
+  Factory,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
-import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { isDailyWorkLogEnabled, isWorkLogEnabled } from "@/lib/employee-report-flags";
+import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import {
+  userCanAccessProductionPortal,
+  userCanAccessWarehousePortal,
+} from "@/lib/warehouse-production-access";
 
 export type EmployeePortalSidebarProps = {
   mobileSheetClose?: () => void;
@@ -50,10 +57,31 @@ export function EmployeePortalSidebar({
     [firestore, profile?.companyId, profile?.employeeId]
   );
   const { data: employeeDoc } = useDoc<any>(employeeRef);
+  const { company } = useCompany();
+  const portalRole = String(profile?.role || "employee");
 
   const links = useMemo(() => {
     const showDaily = isDailyWorkLogEnabled(employeeDoc);
     const showLegacyWorklog = !showDaily && isWorkLogEnabled(employeeDoc);
+    const showSklad =
+      company &&
+      !isCompanyLicenseBlocking(company) &&
+      hasActiveModuleAccess(company, "sklad") &&
+      userCanAccessWarehousePortal({
+        role: portalRole,
+        globalRoles: profile?.globalRoles,
+        employeeRow: employeeDoc,
+      });
+    const showVyroba =
+      company &&
+      !isCompanyLicenseBlocking(company) &&
+      hasActiveModuleAccess(company, "vyroba") &&
+      userCanAccessProductionPortal({
+        role: portalRole,
+        globalRoles: profile?.globalRoles,
+        employeeRow: employeeDoc,
+      });
+
     const all = [
       { label: t("home"), href: "/portal/employee", icon: LayoutDashboard },
       { label: t("attendance"), href: "/portal/labor/dochazka", icon: Clock },
@@ -72,8 +100,10 @@ export function EmployeePortalSidebar({
                 href: "/portal/employee/worklogs",
                 icon: CalendarDays,
               },
-            ]
-          : []),
+          ]
+        : []),
+      ...(showSklad ? [{ label: "Sklad", href: "/portal/sklad", icon: Package }] : []),
+      ...(showVyroba ? [{ label: "Výroba", href: "/portal/vyroba", icon: Factory }] : []),
       { label: t("money"), href: "/portal/employee/money", icon: Wallet },
       {
         label: t("messages"),
@@ -83,13 +113,18 @@ export function EmployeePortalSidebar({
       { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
     ];
     return all;
-  }, [t, employeeDoc]);
+  }, [t, employeeDoc, company, portalRole, profile?.globalRoles]);
 
   const linkClass = (href: string) =>
     cn(
       "flex w-full min-w-0 items-center gap-3 px-3 py-3 sm:py-2.5 rounded-lg transition-colors min-h-[44px] sm:min-h-0 touch-manipulation",
       pathname === href ||
-        (href !== "/portal/employee" && pathname.startsWith(href))
+        (href !== "/portal/employee" &&
+          href !== "/portal/sklad" &&
+          href !== "/portal/vyroba" &&
+          pathname.startsWith(href)) ||
+        (href === "/portal/sklad" && pathname.startsWith("/portal/sklad")) ||
+        (href === "/portal/vyroba" && pathname.startsWith("/portal/vyroba"))
         ? "bg-sidebar-accent text-sidebar-primary font-medium"
         : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-primary"
     );
