@@ -43,6 +43,7 @@ import {
 } from "@/lib/work-segment-client";
 import {
   type DayFormRow,
+  type DailyReportJobSplitPayload,
   buildAttendanceOnlySplits,
   buildFullSegmentJobSplits,
   effectiveLockedUnlocked,
@@ -52,6 +53,10 @@ import {
   segmentDurationHours,
   sumClosedSegmentHours,
 } from "@/lib/daily-work-report-day-form";
+import {
+  DAILY_REPORT_ROW_SOURCE_MANUAL,
+  DAILY_REPORT_ROW_SOURCE_TERMINAL,
+} from "@/lib/daily-work-report-constants";
 import { isJobTerminalAutoApprovedSegmentData } from "@/lib/job-terminal-auto-shared";
 import { isDailyReportLockedBy24hRule } from "@/lib/daily-report-24h-lock";
 import {
@@ -800,21 +805,33 @@ export default function EmployeeDailyReportsPage() {
     setSaving(true);
     try {
       const idToken = await user.getIdToken();
-      const segmentJobSplits = segmentJobSplitsBuilt.map((s) => {
-        const h =
-          typeof s.hours === "number" && Number.isFinite(s.hours)
-            ? Math.round(s.hours * 100) / 100
-            : (() => {
-                const t = String(s.hours ?? "").trim().replace(",", ".");
-                const n = Number(t);
-                return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
-              })();
-        return {
-          segmentId: String(s.segmentId),
-          jobId: s.jobId != null && String(s.jobId).trim() !== "" ? String(s.jobId) : null,
-          hours: h,
-        };
-      });
+      const segmentJobSplits = (segmentJobSplitsBuilt as DailyReportJobSplitPayload[]).map(
+        (s) => {
+          const h =
+            typeof s.hours === "number" && Number.isFinite(s.hours)
+              ? Math.round(s.hours * 100) / 100
+              : (() => {
+                  const t = String(s.hours ?? "").trim().replace(",", ".");
+                  const n = Number(t);
+                  return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0;
+                })();
+          const jid = s.jobId != null && String(s.jobId).trim() !== "" ? String(s.jobId) : null;
+          if (s.segmentType === DAILY_REPORT_ROW_SOURCE_MANUAL) {
+            return {
+              segmentType: DAILY_REPORT_ROW_SOURCE_MANUAL,
+              segmentId: null,
+              jobId: jid,
+              hours: h,
+            };
+          }
+          return {
+            segmentType: DAILY_REPORT_ROW_SOURCE_TERMINAL,
+            segmentId: String(s.segmentId),
+            jobId: jid,
+            hours: h,
+          };
+        }
+      );
       const dayWorkLines = dayFormRows.map((r) => ({
         lineNote: String(r.lineNote ?? "").trim(),
       }));

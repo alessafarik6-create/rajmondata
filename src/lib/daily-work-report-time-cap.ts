@@ -47,7 +47,7 @@ export function computeDayWorkedCap(params: {
 /**
  * Strop hodin pro ruční řádky výkazu (mimo tarif a uzamčenou zakázku z terminálu).
  * Když terminál nemá žádné „volné“ úseky, ale směna má část mimo tarif/zakázku (např. jen tarif
- * uprostřed dne), zbývající čas se stejně vykazuje ručně přes `MANUAL_ATTENDANCE_SEGMENT_ID`.
+ * uprostřed dne), zbývající čas se vykazuje ručně (`segmentType: manual` v API).
  */
 export function computeManualFormHoursCap(params: {
   dayWorkedCapHours: number;

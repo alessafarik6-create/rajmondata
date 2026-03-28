@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
-import { MANUAL_ATTENDANCE_SEGMENT_ID } from "@/lib/daily-work-report-constants";
+import {
+  DAILY_REPORT_ROW_SOURCE_MANUAL,
+  DAILY_REPORT_ROW_SOURCE_TERMINAL,
+  isLegacyVirtualManualSegmentId,
+} from "@/lib/daily-work-report-constants";
 import {
   estimateLaborFromJobSplits,
   resolveAttendanceOnlyJobSplits,
   resolveSegmentJobSplits,
+  resolveTerminalPlusManualJobSplits,
 } from "@/lib/daily-work-report-resolve";
 import { isDailyReportPastEditDeadline } from "@/lib/daily-report-24h-lock";
 
@@ -21,9 +26,19 @@ type Body = {
   /** @deprecated použijte segmentJobSplits */
   segmentAllocations?: Array<{ segmentId?: string; jobId?: string }>;
   /** Rozdělení hodin mezi zakázky po uzavřených úsecích terminálu. */
-  segmentJobSplits?: Array<{ segmentId?: string; jobId?: string; hours?: unknown }>;
+  segmentJobSplits?: Array<{
+    segmentId?: string | null;
+    segmentType?: string;
+    jobId?: string | null;
+    hours?: unknown;
+  }>;
   /** Alias pro segmentJobSplits (stejný formát). */
-  rows?: Array<{ segmentId?: string; jobId?: string; hours?: unknown }>;
+  rows?: Array<{
+    segmentId?: string | null;
+    segmentType?: string;
+    jobId?: string | null;
+    hours?: unknown;
+  }>;
   /** Volitelné poznámky k řádkům hlavního denního formuláře (odpovídají pořadí řádků u odemčených úseků). */
   dayWorkLines?: Array<{ lineNote?: string }>;
   /** Poznámky k uzamčeným úsekům (segmentId → text), např. tarif nebo zakázka z terminálu. */
@@ -32,7 +47,9 @@ type Body = {
   mode?: "draft" | "submit";
 };
 
-type NormalizedSplitRow = { segmentId: string; jobId: string; hours: number };
+type NormalizedSplitRow =
+  | { kind: "manual"; jobId: string; hours: number }
+  | { kind: "terminal"; segmentId: string; jobId: string; hours: number };
 
 /** Hodiny z klienta: číslo, řetězec „1,5“ / „1.5“; Firestore nesmí dostat NaN ani undefined. */
 function parseHoursField(raw: unknown): number {
@@ -46,11 +63,13 @@ function parseHoursField(raw: unknown): number {
 
 /**
  * Sjednotí řádky výkazu před validací (segmentJobSplits nebo alias rows).
+ * Ruční řádky: segmentType „manual“, případně prázdný segmentId; terminál: segmentId z work_segments.
+ * Staré klienty: virtuální segmentId (legacy) se bere jako ruční řádek.
  */
 function normalizeSegmentJobSplitsFromBody(raw: unknown, label: string): NormalizedSplitRow[] {
   if (!Array.isArray(raw) || raw.length === 0) {
     throw new Error(
-      `Chybí pole ${label} — očekává se neprázdné pole řádků (segmentId, jobId, hours).`
+      `Chybí pole ${label} — očekává se neprázdné pole řádků (segmentId / segmentType, jobId, hours).`
     );
   }
   const out: NormalizedSplitRow[] = [];
@@ -60,24 +79,56 @@ function normalizeSegmentJobSplitsFromBody(raw: unknown, label: string): Normali
       throw new Error(`Řádek ${i + 1}: neplatná struktura (očekává se objekt).`);
     }
     const row = item as Record<string, unknown>;
-    const segmentId = String(row.segmentId ?? "").trim();
+    const stRaw = String(row.segmentType ?? "").trim();
+    const sidRaw = row.segmentId;
+    const segmentId =
+      sidRaw === null || sidRaw === undefined ? "" : String(sidRaw).trim();
+    const legacyManual = isLegacyVirtualManualSegmentId(segmentId);
+
+    if (stRaw === DAILY_REPORT_ROW_SOURCE_TERMINAL && !segmentId) {
+      throw new Error(`Řádek ${i + 1}: u řádku z terminálu je povinný segmentId.`);
+    }
+
+    const manual =
+      stRaw === DAILY_REPORT_ROW_SOURCE_MANUAL ||
+      legacyManual ||
+      (segmentId === "" && stRaw !== DAILY_REPORT_ROW_SOURCE_TERMINAL);
+
     const jobIdRaw = row.jobId;
     const jobId =
       jobIdRaw === null || jobIdRaw === undefined ? "" : String(jobIdRaw).trim();
     const hoursNum = parseHoursField(row.hours);
-    if (!segmentId) {
-      throw new Error(`Řádek ${i + 1}: chybí segmentId (úsek docházky / virtuální řádek).`);
-    }
     if (!Number.isFinite(hoursNum) || hoursNum <= 0) {
       throw new Error(
         `Řádek ${i + 1}: neplatný počet hodin — zadejte kladné číslo (např. 1,5 nebo 1.5).`
       );
     }
-    out.push({
-      segmentId,
-      jobId,
-      hours: Math.round(hoursNum * 100) / 100,
-    });
+    const hours = Math.round(hoursNum * 100) / 100;
+
+    if (manual) {
+      if (stRaw === DAILY_REPORT_ROW_SOURCE_MANUAL && segmentId && !legacyManual) {
+        throw new Error(
+          `Řádek ${i + 1}: u ruční práce (segmentType „${DAILY_REPORT_ROW_SOURCE_MANUAL}“) neuvedujte segmentId z terminálu.`
+        );
+      }
+      out.push({ kind: "manual", jobId, hours });
+      continue;
+    }
+
+    if (!segmentId) {
+      throw new Error(
+        `Řádek ${i + 1}: chybí segmentId nebo pro ruční práci uveďte segmentType „${DAILY_REPORT_ROW_SOURCE_MANUAL}“.`
+      );
+    }
+
+    if (stRaw === "" || stRaw === DAILY_REPORT_ROW_SOURCE_TERMINAL) {
+      out.push({ kind: "terminal", segmentId, jobId, hours });
+      continue;
+    }
+
+    throw new Error(
+      `Řádek ${i + 1}: neznámý segmentType „${stRaw}“. Použijte „${DAILY_REPORT_ROW_SOURCE_MANUAL}“ nebo „${DAILY_REPORT_ROW_SOURCE_TERMINAL}“.`
+    );
   }
   return out;
 }
@@ -284,13 +335,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 400 });
     }
 
-    const isManualOnly = normalizedSplits.every(
-      (r) => r.segmentId === MANUAL_ATTENDANCE_SEGMENT_ID
-    );
+    const manualRows = normalizedSplits
+      .filter((r): r is Extract<NormalizedSplitRow, { kind: "manual" }> => r.kind === "manual")
+      .map((r) => ({ jobId: r.jobId, hours: r.hours }));
+    const terminalRows = normalizedSplits
+      .filter((r): r is Extract<NormalizedSplitRow, { kind: "terminal" }> => r.kind === "terminal")
+      .map((r) => ({ segmentId: r.segmentId, jobId: r.jobId, hours: r.hours }));
 
     let resolved: Awaited<ReturnType<typeof resolveSegmentJobSplits>>;
     try {
-      if (isManualOnly) {
+      if (terminalRows.length === 0) {
         resolved = await resolveAttendanceOnlyJobSplits(
           db,
           companyId,
@@ -298,17 +352,29 @@ export async function POST(request: NextRequest) {
           callerUid,
           date,
           emp,
-          normalizedSplits,
+          manualRows,
           mode
         );
-      } else {
+      } else if (manualRows.length === 0) {
         resolved = await resolveSegmentJobSplits(
           db,
           companyId,
           employeeId,
           date,
           emp,
-          normalizedSplits,
+          terminalRows.map((r) => ({ segmentId: r.segmentId, jobId: r.jobId, hours: r.hours })),
+          mode
+        );
+      } else {
+        resolved = await resolveTerminalPlusManualJobSplits(
+          db,
+          companyId,
+          employeeId,
+          callerUid,
+          date,
+          emp,
+          terminalRows,
+          manualRows,
           mode
         );
       }
