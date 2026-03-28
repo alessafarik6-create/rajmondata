@@ -49,7 +49,15 @@ import {
 } from "@/lib/daily-work-report-day-form";
 import { isJobTerminalAutoApprovedSegmentData } from "@/lib/job-terminal-auto-shared";
 import { isDailyReportLockedBy24hRule } from "@/lib/daily-report-24h-lock";
-import { buildDayCalendarMarkerMap } from "@/lib/daily-report-calendar-state";
+import {
+  buildDayCalendarMarkerMap,
+  type DayCalendarMarker,
+} from "@/lib/daily-report-calendar-state";
+import {
+  computeDayWorkedCap,
+  isCompleteAttendanceSummary,
+  isDayReportableForWorklog,
+} from "@/lib/daily-work-report-time-cap";
 
 /** Tolerance pro srovnání součtu řádků s interním stropem (bez falešných překročení kvůli float). */
 const SUM_COMPARE_EPS = 1e-6;
@@ -423,7 +431,7 @@ export default function EmployeeDailyReportsPage() {
 
   const lock24hEnabled = company?.enableDailyReport24hLock === true;
 
-  const markerMap = useMemo(
+  const calendarCellMap = useMemo(
     () =>
       buildDayCalendarMarkerMap(calendarMonth, {
         attendanceBlocks,
@@ -442,18 +450,32 @@ export default function EmployeeDailyReportsPage() {
       segmentsByDate,
       reportsByDate,
       lock24hEnabled,
-      selectedDay,
     ]
   );
 
   const calendarModifiers = useMemo(() => {
     const mk =
-      (pred: (st: string) => boolean) =>
+      (pred: (st: DayCalendarMarker) => boolean) =>
       (d: Date) => {
         const key = format(d, "yyyy-MM-dd");
-        const st = markerMap.get(key);
+        const st = calendarCellMap.get(key)?.marker;
         return st != null && pred(st);
       };
+    const punchWork = (d: Date) => {
+      const key = format(d, "yyyy-MM-dd");
+      const c = calendarCellMap.get(key);
+      return Boolean(c && c.marker !== "no_shift" && c.hasCompletePunchAttendance);
+    };
+    const segmentsOnly = (d: Date) => {
+      const key = format(d, "yyyy-MM-dd");
+      const c = calendarCellMap.get(key);
+      return Boolean(
+        c &&
+          c.marker !== "no_shift" &&
+          !c.hasCompletePunchAttendance &&
+          c.terminalSegmentHours > 0.001
+      );
+    };
     return {
       calNoShift: mk((s) => s === "no_shift"),
       calWorkNoReport: mk((s) => s === "work_no_report"),
@@ -463,30 +485,34 @@ export default function EmployeeDailyReportsPage() {
       calReturned: mk((s) => s === "returned"),
       calRejected: mk((s) => s === "rejected"),
       calLocked: mk((s) => s === "locked_timeout"),
+      calPunchWork: punchWork,
+      calSegmentsOnlyWork: segmentsOnly,
     };
-  }, [markerMap]);
+  }, [calendarCellMap]);
 
   const calendarModifiersClassNames = {
     calNoShift:
-      "border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-100 rounded-md",
+      "border border-neutral-400 bg-neutral-100 text-neutral-900 hover:bg-neutral-100 rounded-md min-h-10 min-w-10 text-base",
     calWorkNoReport:
-      "border-2 border-amber-600 bg-amber-100 text-amber-950 hover:bg-amber-100 rounded-md",
+      "border-2 border-amber-600 bg-amber-100 text-amber-950 hover:bg-amber-100 rounded-md min-h-10 min-w-10 text-base",
     calDraft:
-      "border-2 border-orange-600 bg-orange-100 text-neutral-950 hover:bg-orange-100 rounded-md",
+      "border-2 border-orange-600 bg-orange-100 text-neutral-950 hover:bg-orange-100 rounded-md min-h-10 min-w-10 text-base",
     calPending:
-      "border-2 border-amber-800 bg-amber-200 text-neutral-950 hover:bg-amber-200 rounded-md",
+      "border-2 border-amber-800 bg-amber-200 text-neutral-950 hover:bg-amber-200 rounded-md min-h-10 min-w-10 text-base",
     calApproved:
-      "border-2 border-emerald-700 bg-emerald-100 text-emerald-950 hover:bg-emerald-100 rounded-md",
+      "border-2 border-emerald-700 bg-emerald-100 text-emerald-950 hover:bg-emerald-100 rounded-md min-h-10 min-w-10 text-base",
     calReturned:
-      "border-2 border-violet-700 bg-violet-100 text-violet-950 hover:bg-violet-100 rounded-md",
+      "border-2 border-violet-700 bg-violet-100 text-violet-950 hover:bg-violet-100 rounded-md min-h-10 min-w-10 text-base",
     calRejected:
-      "border-2 border-red-700 bg-red-100 text-red-950 hover:bg-red-100 rounded-md",
+      "border-2 border-red-700 bg-red-100 text-red-950 hover:bg-red-100 rounded-md min-h-10 min-w-10 text-base",
     calLocked:
-      "border-2 border-neutral-950 bg-slate-200 text-neutral-950 hover:bg-slate-200 rounded-md ring-2 ring-neutral-950/30",
+      "border-2 border-neutral-950 bg-slate-200 text-neutral-950 hover:bg-slate-200 rounded-md ring-2 ring-neutral-950/30 min-h-10 min-w-10 text-base",
+    calPunchWork: "ring-2 ring-emerald-600 ring-offset-2 ring-offset-white",
+    calSegmentsOnlyWork: "ring-2 ring-sky-600 ring-offset-2 ring-offset-white",
   };
 
   const dayKey = selectedDay ? format(selectedDay, "yyyy-MM-dd") : "";
-  const selectedDayMarker = dayKey ? markerMap.get(dayKey) : undefined;
+  const selectedDayMarker = dayKey ? calendarCellMap.get(dayKey)?.marker : undefined;
 
   /** Sloučení rozsahu workDayId + záložního dotazu employeeId+date pro stejný den. */
   const workSegmentsForDay = useMemo(() => {
@@ -572,9 +598,10 @@ export default function EmployeeDailyReportsPage() {
     if (segmentsDayLoading) return;
     if (!closedSegments.length) {
       setJobTerminalLineNotes({});
-      const att = daySummary?.hoursWorked ?? null;
-      const dayCapInit =
-        att != null && Number.isFinite(att) ? att : 0;
+      const dayCapInit = computeDayWorkedCap({
+        daySummary,
+        segmentTotalHours: 0,
+      });
       let merged = mergeAttendanceOnlyRowsFromReport(existingReport ?? undefined);
       if (merged.length === 0 && dayCapInit > SUM_COMPARE_EPS) {
         merged = [
@@ -603,11 +630,10 @@ export default function EmployeeDailyReportsPage() {
     const lockedSumInit = sumClosedSegmentHours(locked);
     const unlockedSumInit = sumClosedSegmentHours(unlocked);
     const segmentTotalInit = sumClosedSegmentHours(closedSegments);
-    const att = daySummary?.hoursWorked ?? null;
-    const dayCapInit =
-      att != null && Number.isFinite(att) && segmentTotalInit > 0
-        ? Math.min(att, segmentTotalInit)
-        : att ?? segmentTotalInit;
+    const dayCapInit = computeDayWorkedCap({
+      daySummary,
+      segmentTotalHours: segmentTotalInit,
+    });
     const availableInit = Math.max(0, dayCapInit - lockedSumInit);
     const formCapInit =
       unlocked.length === 0 ? 0 : Math.min(unlockedSumInit, availableInit);
@@ -703,11 +729,10 @@ export default function EmployeeDailyReportsPage() {
     const { locked: lockedForCap } = effectiveLockedUnlocked(closedSegments);
     const lockedSumPost = sumClosedSegmentHours(lockedForCap);
     const segmentTotalPost = sumClosedSegmentHours(closedSegments);
-    const att = daySummary?.hoursWorked ?? null;
-    const dayWorkedCapPost =
-      att != null && Number.isFinite(att) && segmentTotalPost > 0
-        ? Math.min(att, segmentTotalPost)
-        : att ?? segmentTotalPost;
+    const dayWorkedCapPost = computeDayWorkedCap({
+      daySummary,
+      segmentTotalHours: segmentTotalPost,
+    });
 
     const splitErr = validateDayForm(
       closedSegments,
@@ -848,14 +873,15 @@ export default function EmployeeDailyReportsPage() {
   const lockedSum = useMemo(() => sumClosedSegmentHours(lockedFromTerminal), [lockedFromTerminal]);
   const unlockedSum = useMemo(() => sumClosedSegmentHours(unlockedSegments), [unlockedSegments]);
   const attendanceHours = daySummary?.hoursWorked ?? null;
-  /** Horní strop hodin pro výkaz: min(docházka, součet úseků terminálu), jinak co je k dispozici. */
-  const dayWorkedCap = useMemo(() => {
-    if (attendanceHours != null && Number.isFinite(attendanceHours) && segmentTotal > 0) {
-      return Math.min(attendanceHours, segmentTotal);
-    }
-    if (attendanceHours != null && Number.isFinite(attendanceHours)) return attendanceHours;
-    return segmentTotal;
-  }, [attendanceHours, segmentTotal]);
+  /** Strop hodin pro výkaz: při kompletní docházce čisté hodiny z příchodu/odchodu (− pauza), jinak součet úseků terminálu. */
+  const dayWorkedCap = useMemo(
+    () =>
+      computeDayWorkedCap({
+        daySummary,
+        segmentTotalHours: segmentTotal,
+      }),
+    [daySummary, segmentTotal]
+  );
   /** Úseky z terminálu přesahují odpracovaný čas z docházky — výkaz nelze spolehlivě srovnat. */
   const dataAttendanceTooLow =
     attendanceHours != null &&
@@ -881,8 +907,14 @@ export default function EmployeeDailyReportsPage() {
     availableHoursRaw,
     dayWorkedCap,
   ]);
-  /** Jediná podmínka pro úpravu řádků: odpracovaný čas > 0 (úseky z terminálu nejsou povinné). */
-  const formEditableByAttendance = dayWorkedCap > SUM_COMPARE_EPS && !dailyWorkLogOff;
+  /** Den musí mít kompletní docházku nebo aspoň úseky terminálu; strop hodin > 0. */
+  const formEditableByAttendance =
+    isDayReportableForWorklog({
+      daySummary,
+      segmentTotalHours: segmentTotal,
+    }) &&
+    dayWorkedCap > SUM_COMPARE_EPS &&
+    !dailyWorkLogOff;
   const hoursDisabled = effectiveFormLocked || !formEditableByAttendance;
   const jobSelectDisabled = effectiveFormLocked || !formEditableByAttendance;
   const segmentsFetchFailed =
@@ -902,6 +934,37 @@ export default function EmployeeDailyReportsPage() {
     Math.abs(attendanceHours - segmentTotal) > ATTENDANCE_SEG_EPS &&
     !dataAttendanceTooLow;
   const noTimeLeftToSplit = availableHoursRaw <= SUM_COMPARE_EPS;
+  /** Docházka udává více hodin k rozvržení než součet „volných“ úseků terminálu — formulář je omezen na úseky. */
+  const hoursLimitedByUnlockedSegments =
+    closedSegments.length > 0 &&
+    unlockedSegments.length > 0 &&
+    availableHoursRaw > unlockedSum + ATTENDANCE_SEG_EPS;
+  const attendanceLongerThanTerminal =
+    attendanceHours != null &&
+    Number.isFinite(attendanceHours) &&
+    closedSegments.length > 0 &&
+    attendanceHours > segmentTotal + ATTENDANCE_SEG_EPS &&
+    !dataAttendanceTooLow;
+  const cannotReportReason = useMemo(() => {
+    if (dailyWorkLogOff || !dayKey) return null;
+    if (dayWorkedCap > SUM_COMPARE_EPS) return null;
+    if (!daySummary && segmentTotal <= SUM_COMPARE_EPS) {
+      return "Pro tento den nejsou záznamy docházky ani uzavřené úseky z terminálu — nelze vykázat práci.";
+    }
+    if (
+      daySummary &&
+      !isCompleteAttendanceSummary(daySummary) &&
+      segmentTotal <= SUM_COMPARE_EPS
+    ) {
+      return "Chybí příchod nebo odchod (nebo docházka není kompletní) a chybí úseky z terminálu — výkaz zatím nelze vyplnit.";
+    }
+    return null;
+  }, [dailyWorkLogOff, dayKey, daySummary, dayWorkedCap, segmentTotal]);
+  const timeFullySplit =
+    dayWorkedCap > SUM_COMPARE_EPS &&
+    !overCap &&
+    !overUnlocked &&
+    zbýváCap <= SUM_COMPARE_EPS;
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
@@ -1049,7 +1112,7 @@ export default function EmployeeDailyReportsPage() {
                 locale={cs}
                 modifiers={calendarModifiers}
                 modifiersClassNames={calendarModifiersClassNames}
-                className="rounded-lg border-2 border-neutral-950 bg-white p-2"
+                className="rounded-lg border-2 border-neutral-950 bg-white p-2 sm:p-3 [&_.cell]:h-11 [&_.cell]:w-11 [&_.cell]:min-h-[2.75rem] [&_.cell]:min-w-[2.75rem] [&_button.day]:h-full [&_button.day]:min-h-[2.75rem] [&_button.day]:w-full [&_button.day]:min-w-[2.75rem] [&_button.day]:text-base"
               />
             </div>
             {selectedDayMarker ? (
@@ -1076,12 +1139,20 @@ export default function EmployeeDailyReportsPage() {
                 </Badge>
               </div>
             ) : null}
-            <div className="mt-4 space-y-2 border-t-2 border-neutral-950 pt-3 text-[11px] leading-snug text-neutral-900">
+            <div className="mt-4 space-y-2 border-t-2 border-neutral-950 pt-3 text-xs leading-relaxed text-neutral-900 sm:text-[11px] sm:leading-snug">
               <p className="font-semibold text-neutral-950">Legenda kalendáře</p>
-              <ul className="grid gap-1.5 sm:grid-cols-2">
+              <ul className="grid gap-2 sm:grid-cols-2 sm:gap-1.5">
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3.5 w-3.5 shrink-0 rounded border-2 border-emerald-600 bg-white" />{" "}
+                  Byl v práci (docházka z terminálu)
+                </li>
+                <li className="flex items-center gap-2">
+                  <span className="inline-block h-3.5 w-3.5 shrink-0 rounded border-2 border-sky-600 bg-white" />{" "}
+                  Jen úseky terminálu (bez kompletní docházky)
+                </li>
                 <li className="flex items-center gap-2">
                   <span className="inline-block h-3 w-3 shrink-0 rounded border border-neutral-400 bg-neutral-100" />{" "}
-                  Bez docházky
+                  Bez docházky / bez práce
                 </li>
                 <li className="flex items-center gap-2">
                   <span className="inline-block h-3 w-3 shrink-0 rounded border-2 border-amber-600 bg-amber-100" />{" "}
@@ -1117,6 +1188,91 @@ export default function EmployeeDailyReportsPage() {
         </Card>
 
         <div className="space-y-5">
+          {selectedDay && dayKey ? (
+            <div className="space-y-4 rounded-xl border-2 border-neutral-950 bg-neutral-50 p-4 sm:p-6">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-600">
+                  Vybraný den
+                </p>
+                <p className="text-xl font-bold leading-tight text-neutral-950 sm:text-2xl">
+                  {format(selectedDay, "EEEE d. MMMM yyyy", { locale: cs })}
+                </p>
+              </div>
+              {cannotReportReason ? (
+                <Alert variant="destructive" className="border-2 border-red-800 bg-red-50 text-base">
+                  <AlertCircle className="h-5 w-5" />
+                  <AlertTitle>Nelze vykazovat</AlertTitle>
+                  <AlertDescription className="text-base text-red-950">
+                    {cannotReportReason}
+                  </AlertDescription>
+                </Alert>
+              ) : dayWorkedCap > SUM_COMPARE_EPS ? (
+                <div className="space-y-4 text-base leading-relaxed text-neutral-900">
+                  <p className="font-semibold text-neutral-950">
+                    Co jste dělali za práci? Musíte vykázat tento den podle odpracovaného času — tarif a čas
+                    uzamčený zakázkou v terminálu se do řádků neopisuje.
+                  </p>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-4">
+                      <p className="text-sm font-medium text-neutral-700">Docházka celkem (čistá práce)</p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-neutral-950">
+                        {daySummary?.hoursWorked != null
+                          ? `${round2(daySummary.hoursWorked)} h`
+                          : `${round2(dayWorkedCap)} h`}
+                      </p>
+                      <p className="mt-1 text-sm text-neutral-600">
+                        Příchod až odchod minus pauza; bez tarifního času.
+                      </p>
+                    </div>
+                    <div className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-4">
+                      <p className="text-sm font-medium text-neutral-700">Tarifní čas (terminál)</p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-neutral-950">
+                        {tariffSum > 0 ? `${round2(tariffSum)} h` : "0 h"}
+                      </p>
+                      <p className="mt-1 text-sm text-neutral-600">Započte se automaticky, nevyplňujte znovu.</p>
+                    </div>
+                    <div className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-4 sm:col-span-2">
+                      <p className="text-sm font-medium text-neutral-700">
+                        K vykázání do řádků (zbývá z čisté práce po odečtení tarifu a zakázky z terminálu)
+                      </p>
+                      <p className="mt-1 text-2xl font-bold tabular-nums text-emerald-800">
+                        až {round2(formHoursCap)} h
+                      </p>
+                      <p className="mt-1 text-sm text-neutral-600">
+                        Součet řádků nesmí překročit tuto hodnotu. Už rozděleno:{" "}
+                        <span className="font-semibold tabular-nums text-neutral-950">
+                          {allocatedUnlocked} h
+                        </span>
+                        {" · "}zbývá v řádcích:{" "}
+                        <span className="font-semibold tabular-nums text-neutral-950">
+                          {zbýváVeFormuláři} h
+                        </span>
+                        {" · "}celkem s terminálem:{" "}
+                        <span className="font-semibold tabular-nums text-neutral-950">
+                          {rozdělenoCelkem} h / {round2(dayWorkedCap)} h
+                        </span>
+                        {hoursLimitedByUnlockedSegments ? (
+                          <>
+                            {" "}
+                            Po odečtení tarifu a zakázky z terminálu by šlo teoreticky rozvrhnout ještě{" "}
+                            <span className="font-semibold tabular-nums">
+                              {round2(availableHoursRaw)} h
+                            </span>
+                            , ale úseky terminálu dovolí jen {round2(unlockedSum)} h v řádcích.
+                          </>
+                        ) : null}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-base text-neutral-800">
+                  Pro tento den není k dispozici žádný čas k vykázání.
+                </p>
+              )}
+            </div>
+          ) : null}
+
           <Card className={cn(cardBox, "overflow-hidden")}>
             <CardHeader className="space-y-1 pb-2">
               <CardTitle className={cardTitle}>Docházka pro {dayKey}</CardTitle>
@@ -1124,7 +1280,7 @@ export default function EmployeeDailyReportsPage() {
                 Shrnutí záznamů příchodu a odchodu
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3 text-sm leading-relaxed text-neutral-900">
+            <CardContent className="space-y-3 text-base leading-relaxed text-neutral-900 sm:text-sm">
               {attendanceLoading ? (
                 <p className="flex items-center gap-2 text-neutral-800">
                   <Loader2 className="h-4 w-4 animate-spin" /> Načítám…
@@ -1139,8 +1295,24 @@ export default function EmployeeDailyReportsPage() {
                     <span className="font-medium text-neutral-950">Odchod:</span>{" "}
                     {daySummary.checkOut ?? "—"}
                   </p>
+                  {daySummary.totalSpanHours != null ? (
+                    <p>
+                      <span className="font-medium text-neutral-950">Mezi příchodem a odchodem:</span>{" "}
+                      <span className="font-semibold tabular-nums text-neutral-950">
+                        {daySummary.totalSpanHours} h
+                      </span>
+                    </p>
+                  ) : null}
+                  {daySummary.breakHours > 0 ? (
+                    <p>
+                      <span className="font-medium text-neutral-950">Pauza (odhad):</span>{" "}
+                      <span className="font-semibold tabular-nums text-neutral-950">
+                        {daySummary.breakHours} h
+                      </span>
+                    </p>
+                  ) : null}
                   <p>
-                    <span className="font-medium text-neutral-950">Odpracováno (odhad):</span>{" "}
+                    <span className="font-medium text-neutral-950">Čistá práce (− pauza):</span>{" "}
                     <span className="font-semibold tabular-nums text-neutral-950">
                       {daySummary.hoursWorked != null ? `${daySummary.hoursWorked} h` : "—"}
                     </span>
@@ -1299,9 +1471,25 @@ export default function EmployeeDailyReportsPage() {
               </div>
 
               {segmentsDayLoading ? (
-                <p className="flex items-center gap-2 text-sm text-neutral-900">
+                <p className="flex items-center gap-2 text-base text-neutral-900 sm:text-sm">
                   <Loader2 className="h-4 w-4 animate-spin" /> Načítám úseky pro výkaz…
                 </p>
+              ) : null}
+
+              {!segmentsDayLoading && hoursLimitedByUnlockedSegments && !dataAttendanceTooLow ? (
+                <Alert className="border-2 border-amber-600 bg-amber-50 text-amber-950">
+                  <AlertCircle className="h-5 w-5 text-amber-800" />
+                  <AlertTitle className="text-base">Čas z docházky a úseky terminálu</AlertTitle>
+                  <AlertDescription className="text-base text-amber-950">
+                    Podle docházky lze do výkazu rozvrhnout až{" "}
+                    <strong className="tabular-nums">{round2(availableHoursRaw)} h</strong> mimo tarif a
+                    zakázku z terminálu, ale v terminálu je jen{" "}
+                    <strong className="tabular-nums">{round2(unlockedSum)} h</strong> v „volných“ úsecích.
+                    Do řádků proto zadejte nejvýše{" "}
+                    <strong className="tabular-nums">{round2(formHoursCap)} h</strong>. Pokud úseky nesedí s
+                    realitou, kontaktujte administrátora.
+                  </AlertDescription>
+                </Alert>
               ) : null}
 
               {!segmentsDayLoading &&
@@ -1389,10 +1577,10 @@ export default function EmployeeDailyReportsPage() {
                   ) : null}
 
                   {capMismatch ? (
-                    <p className="text-xs leading-relaxed text-neutral-900">
-                      Pozn.: součet úseků z terminálu ({segmentTotal} h) se liší od docházky (
-                      {attendanceHours} h). Rozvržení se váže na úseky terminálu; docházku vidíte v kartě
-                      výše.
+                    <p className="text-sm leading-relaxed text-neutral-900 sm:text-xs">
+                      {attendanceLongerThanTerminal
+                        ? `Docházka (${attendanceHours} h) je delší než součet úseků z terminálu (${segmentTotal} h). Hodiny ve výkazu se rozdělují jen v rámci úseků terminálu — viz horní souhrn a případné upozornění.`
+                        : `Pozn.: součet úseků z terminálu (${segmentTotal} h) se liší od docházky (${attendanceHours} h). Rozvržení se váže na úseky terminálu; docházku vidíte v kartě výše.`}
                     </p>
                   ) : null}
                 </div>
@@ -1400,54 +1588,78 @@ export default function EmployeeDailyReportsPage() {
 
               {!segmentsDayLoading && dayWorkedCap > 0 ? (
                 <div className="space-y-5">
+                  {timeFullySplit ? (
+                    <p className="rounded-xl border-2 border-emerald-700 bg-emerald-50 px-4 py-4 text-base font-medium text-emerald-950 sm:text-sm">
+                      {noTimeLeftToSplit && formHoursCap <= SUM_COMPARE_EPS
+                        ? status === "approved"
+                          ? "Celý den je pokrytý tarifem a zakázkou z terminálu — řádky výkazu nejsou potřeba. Výkaz je schválen."
+                          : status === "pending"
+                            ? "Celý den pokrývá tarif a zakázka z terminálu — výkaz čeká na schválení."
+                            : "Celý odpracovaný čas pokrývají tarif a zakázka z terminálu — do řádků není co doplňovat. Uložte nebo odešlete výkaz."
+                        : status === "approved"
+                          ? "Všechny hodiny jsou rozvrženy v souladu s časem — výkaz je schválen, není co doplňovat."
+                          : status === "pending"
+                            ? "Čas máte v řádcích rozvržení v plné výši — výkaz čeká na schválení."
+                            : "Čas máte v řádcích rozvržení v plné výši — můžete uložit koncept nebo odeslat ke schválení."}
+                    </p>
+                  ) : null}
                   <div
                     className={cn(
-                      "grid grid-cols-1 gap-3 rounded-lg border-2 px-3 py-3 text-sm sm:grid-cols-2 lg:grid-cols-5",
+                      "grid grid-cols-1 gap-4 rounded-xl border-2 px-4 py-5 text-base sm:grid-cols-2 sm:text-sm lg:grid-cols-5",
                       overCap || overUnlocked
                         ? "border-red-600 bg-red-50"
                         : "border-neutral-950 bg-white"
                     )}
                   >
-                    <div>
-                      <span className="font-medium text-neutral-950">Odpracováno celkem</span>
-                      <p className="font-semibold tabular-nums text-neutral-950">
-                        {dayWorkedCap > 0 ? `${dayWorkedCap} h` : "—"}
+                    <div className="min-w-0">
+                      <span className="font-semibold text-neutral-950">Docházka celkem (strop)</span>
+                      <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950 sm:text-lg">
+                        {dayWorkedCap > 0 ? `${round2(dayWorkedCap)} h` : "—"}
                       </p>
-                      <p className="text-xs text-neutral-900">Strop z docházky a úseků</p>
-                    </div>
-                    <div>
-                      <span className="font-medium text-neutral-950">Čas v tarifech</span>
-                      <p className="font-semibold tabular-nums text-neutral-950">
-                        {tariffSum > 0 ? `${tariffSum} h` : "—"}
-                      </p>
-                      <p className="text-xs text-neutral-900">Automaticky, bez formuláře</p>
-                    </div>
-                    <div>
-                      <span className="font-medium text-neutral-950">Dostupný pro výkaz</span>
-                      <p className="font-semibold tabular-nums text-neutral-950">
-                        {dayWorkedCap > 0 ? `${dostupnýProŘádkyZobrazení} h` : "—"}
-                      </p>
-                      <p className="text-xs text-neutral-900">Odpracováno − tarif − zakázka z terminálu</p>
-                    </div>
-                    <div>
-                      <span className="font-medium text-neutral-950">Rozděleno</span>
-                      <p className="font-semibold tabular-nums text-neutral-950">{allocatedUnlocked} h</p>
-                      <p className="text-xs text-neutral-900">
-                        Ve formuláři · celkem s terminálem {rozdělenoCelkem} h · zbývá ve formuláři{" "}
-                        {zbýváVeFormuláři} h
+                      <p className="mt-1 text-sm text-neutral-700 sm:text-xs">
+                        Čistá práce z příchodu/odchodu nebo součet úseků, pokud docházka chybí.
                       </p>
                     </div>
-                    <div>
-                      <span className="font-medium text-neutral-950">Zbývá</span>
+                    <div className="min-w-0">
+                      <span className="font-semibold text-neutral-950">Tarifní čas</span>
+                      <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950 sm:text-lg">
+                        {tariffSum > 0 ? `${round2(tariffSum)} h` : "0 h"}
+                      </p>
+                      <p className="mt-1 text-sm text-neutral-700 sm:text-xs">Z terminálu, bez řádků výkazu.</p>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="font-semibold text-neutral-950">K vykázání (řádky, max.)</span>
+                      <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950 sm:text-lg">
+                        {dayWorkedCap > 0 ? `${round2(formHoursCap)} h` : "—"}
+                      </p>
+                      <p className="mt-1 text-sm text-neutral-700 sm:text-xs">
+                        {hoursLimitedByUnlockedSegments
+                          ? `Z docházky po odečtení tarifu/zakázky: ${round2(availableHoursRaw)} h — do řádků však jen ${round2(formHoursCap)} h (úseky terminálu).`
+                          : "Po odečtení tarifu a zakázky z terminálu; omezeno i délkou volných úseků."}
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="font-semibold text-neutral-950">Už rozděleno v řádcích</span>
+                      <p className="mt-1 text-xl font-bold tabular-nums text-neutral-950 sm:text-lg">
+                        {allocatedUnlocked} h
+                      </p>
+                      <p className="mt-1 text-sm text-neutral-700 sm:text-xs">
+                        Zbývá v řádcích: {zbýváVeFormuláři} h · s terminálem celkem {rozdělenoCelkem} h
+                      </p>
+                    </div>
+                    <div className="min-w-0">
+                      <span className="font-semibold text-neutral-950">Zbývá do stropu směny</span>
                       <p
                         className={cn(
-                          "font-semibold tabular-nums",
+                          "mt-1 text-xl font-bold tabular-nums sm:text-lg",
                           (overCap || zbýváCap < -SUM_COMPARE_EPS) && "text-red-700"
                         )}
                       >
                         {overCap ? "—" : `${zbýváCap} h`}
                       </p>
-                      <p className="text-xs text-neutral-900">Do stropu odpracování</p>
+                      <p className="mt-1 text-sm text-neutral-700 sm:text-xs">
+                        Rozdělený čas + tarif/zakázka z terminálu vs. odpracováno.
+                      </p>
                     </div>
                   </div>
                   {typeof existingReport?.estimatedLaborFromSegmentsCzk === "number" &&
@@ -1473,48 +1685,50 @@ export default function EmployeeDailyReportsPage() {
                 </div>
               ) : null}
 
-              <div className="space-y-3 rounded-lg border-2 border-neutral-950 bg-white p-4">
-                <p className="text-sm font-medium text-neutral-950">
-                  Hlavní řádky výkazu — hodiny, popis, zakázka
-                </p>
-                <p className="text-xs text-neutral-900">
-                  {closedSegments.length === 0
-                    ? formEditableByAttendance
-                      ? `Bez úseků z terminálu vyplňte hodiny podle docházky — celkem až ${round2(formHoursCap)} h; součet řádků musí odpovídat odpracovanému času.`
-                      : "Pro vyplnění výkazu potřebujete v docházce kladný odpracovaný čas."
-                    : formHoursCap > SUM_COMPARE_EPS
-                      ? `Řádky se čerpají na úseky z terminálu v čase. Součet hodin musí odpovídat až ${round2(formHoursCap)} h (bez tarifů a uzamčených zakázek z terminálu).`
-                      : noTimeLeftToSplit
-                        ? "Žádné hodiny k ručnímu rozvržení — zůstaly jen tarify a zakázky uzamčené z terminálu."
-                        : "Hodiny nelze upravit (např. funkce vypnutá nebo uzamčení výkazu). Popis a zakázku lze měnit jen pokud to stav dovolí."}
-                </p>
+              <div className="space-y-4 rounded-xl border-2 border-neutral-950 bg-white p-4 sm:p-5">
+                <div>
+                  <p className="text-lg font-semibold text-neutral-950 sm:text-base">
+                    Rozdělení práce do řádků
+                  </p>
+                  <p className="mt-1 text-base text-neutral-800 sm:text-sm">
+                    {closedSegments.length === 0
+                      ? formEditableByAttendance
+                        ? `Kolik hodin jste na čem pracoval? Součet řádků musí dát dohromady ${round2(formHoursCap)} h (podle docházky). Zbývá vykázat ještě ${zbýváVeFormuláři} h v řádcích.`
+                        : "Pro vyplnění výkazu potřebujete kompletní docházku nebo úseky z terminálu."
+                      : formHoursCap > SUM_COMPARE_EPS
+                        ? `Kolik hodin jste na čem pracoval? Do řádků dejte nejvýše ${round2(formHoursCap)} h (bez tarifu a zakázky z terminálu). Zbývá v řádcích: ${zbýváVeFormuláři} h.`
+                        : noTimeLeftToSplit
+                          ? "Žádné hodiny k ručnímu rozvržení — zůstaly jen tarify a zakázky uzamčené z terminálu."
+                          : "Hodiny nelze upravit (funkce vypnutá nebo uzamčení výkazu)."}
+                  </p>
+                </div>
                 {jobsLoading ? (
-                  <p className="flex items-center gap-2 text-xs text-neutral-900">
+                  <p className="flex items-center gap-2 text-base text-neutral-900 sm:text-sm">
                     <Loader2 className="h-4 w-4 animate-spin text-neutral-950" />
                     Načítání přiřazených zakázek…
                   </p>
                 ) : assignedJobIds.length === 0 ? (
-                  <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-2 text-xs text-neutral-900">
+                  <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-3 text-base text-neutral-900 sm:text-sm">
                     Nemáte přiřazené žádné zakázky — v rozbalovacím poli je jen „Bez zakázky / interní práce“.
                   </p>
                 ) : (
-                  <p className="text-xs text-neutral-900">
-                    Vyberte zakázku nebo ponechte „Bez zakázky / interní práce“ (nezávisle na terminálu).
+                  <p className="text-base text-neutral-800 sm:text-sm">
+                    Zakázku volte z přiřazení — nebo ponechte interní práci bez zakázky.
                   </p>
                 )}
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {dayFormRows.map((row) => (
                     <div
                       key={row.rowId}
-                      className="flex flex-col gap-3 rounded-lg border-2 border-neutral-950 bg-white p-3 lg:grid lg:grid-cols-[100px_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-3"
+                      className="flex flex-col gap-4 rounded-xl border-2 border-neutral-950 bg-white p-4 lg:grid lg:grid-cols-[120px_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-4"
                     >
-                      <div className="w-full space-y-1.5 lg:w-auto">
-                        <Label className="text-xs font-medium text-neutral-950">
-                          Hodiny <span className="text-red-700">*</span>
+                      <div className="w-full space-y-2 lg:w-auto">
+                        <Label className="text-sm font-medium text-neutral-950 sm:text-xs">
+                          Kolik hodin jste na tom pracoval? <span className="text-red-700">*</span>
                         </Label>
                         <Input
                           inputMode="decimal"
-                          className="h-11 min-h-[44px] border-2 border-neutral-950 tabular-nums text-neutral-950"
+                          className="h-14 min-h-[52px] border-2 border-neutral-950 px-4 text-lg tabular-nums text-neutral-950 sm:h-12 sm:text-base"
                           placeholder="např. 1,5"
                           value={row.hoursStr}
                           onChange={(e) =>
@@ -1527,12 +1741,14 @@ export default function EmployeeDailyReportsPage() {
                           disabled={hoursDisabled}
                         />
                       </div>
-                      <div className="min-w-0 space-y-1.5">
-                        <Label className="text-xs font-medium text-neutral-950">Popis práce</Label>
+                      <div className="min-w-0 space-y-2">
+                        <Label className="text-sm font-medium text-neutral-950 sm:text-xs">
+                          Co jste dělali?
+                        </Label>
                         <Textarea
-                          rows={2}
-                          className="min-h-[72px] border-2 border-neutral-950 text-neutral-950"
-                          placeholder="Co jste dělali (povinné u řádku bez zakázky)…"
+                          rows={3}
+                          className="min-h-[96px] border-2 border-neutral-950 px-4 py-3 text-base text-neutral-950 sm:min-h-[80px] sm:text-sm"
+                          placeholder="Stručně popište práci (u řádku bez zakázky je popis povinný)…"
                           value={row.lineNote}
                           onChange={(e) =>
                             setDayFormRows((prev) =>
@@ -1544,11 +1760,11 @@ export default function EmployeeDailyReportsPage() {
                           disabled={effectiveFormLocked || dailyWorkLogOff}
                         />
                       </div>
-                      <div className="min-w-0 space-y-1.5">
-                        <Label className="text-xs font-medium text-neutral-950">Zakázka</Label>
-                        <p className="text-[10px] leading-tight text-neutral-800">volitelné</p>
+                      <div className="min-w-0 space-y-2">
+                        <Label className="text-sm font-medium text-neutral-950 sm:text-xs">Zakázka</Label>
+                        <p className="text-sm text-neutral-600 sm:text-xs">volitelné</p>
                         <select
-                          className="mt-1 flex h-11 min-h-[44px] w-full rounded-md border-2 border-neutral-950 bg-white px-3 text-sm text-neutral-950"
+                          className="mt-1 flex h-14 min-h-[52px] w-full rounded-md border-2 border-neutral-950 bg-white px-4 text-lg text-neutral-950 sm:h-12 sm:text-base"
                           value={row.jobId}
                           onChange={(e) =>
                             setDayFormRows((prev) =>
@@ -1567,12 +1783,12 @@ export default function EmployeeDailyReportsPage() {
                           ))}
                         </select>
                       </div>
-                      <div className="flex justify-end lg:justify-center">
+                      <div className="flex justify-stretch pt-1 lg:justify-center">
                         <Button
                           type="button"
                           variant="outline"
                           size="icon"
-                          className="h-11 w-11 min-h-[44px] min-w-[44px] shrink-0 border-2 border-neutral-950 bg-white"
+                          className="h-14 w-full min-h-[52px] min-w-0 border-2 border-neutral-950 bg-white sm:h-12 sm:w-12 sm:min-w-[48px] lg:size-12"
                           disabled={
                             effectiveFormLocked || dailyWorkLogOff || dayFormRows.length <= 1
                           }
@@ -1631,8 +1847,8 @@ export default function EmployeeDailyReportsPage() {
                   value={note}
                   onChange={(e) => setNote(e.target.value)}
                   disabled={effectiveFormLocked}
-                  rows={2}
-                  className="border-2 border-neutral-950 text-neutral-950"
+                  rows={3}
+                  className="min-h-[88px] border-2 border-neutral-950 px-4 py-3 text-base text-neutral-950 sm:text-sm"
                 />
               </div>
 
