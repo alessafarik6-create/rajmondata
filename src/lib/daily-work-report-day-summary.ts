@@ -4,7 +4,8 @@
  */
 
 import { format } from "date-fns";
-import type { DayAttendanceSummary } from "@/lib/employee-attendance";
+import type { AttendanceRow, DayAttendanceSummary } from "@/lib/employee-attendance";
+import { attendanceRowDate } from "@/lib/employee-attendance";
 import type { WorkSegmentClient } from "@/lib/work-segment-client";
 import { getTerminalSegmentLockKind, sortSegmentsByStart } from "@/lib/work-segment-client";
 import {
@@ -37,6 +38,48 @@ function sumManualRowHours(
 
 function hoursToMinutes(h: number): number {
   return Math.round(h * 60 * 100) / 100;
+}
+
+function normalizeSavedReportDateKey(v: unknown): string | null {
+  if (v == null) return null;
+  if (typeof v === "string") {
+    const s = v.trim();
+    return s.length >= 10 ? s.slice(0, 10) : s || null;
+  }
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return format(v, "yyyy-MM-dd");
+  }
+  const td = (v as { toDate?: () => Date }).toDate;
+  if (typeof td === "function") {
+    const d = td.call(v);
+    if (d instanceof Date && !Number.isNaN(d.getTime())) {
+      return format(d, "yyyy-MM-dd");
+    }
+  }
+  return null;
+}
+
+function sumSavedSegmentJobSplitsHours(report: unknown): number | null {
+  const splits = (report as Record<string, unknown>)?.segmentJobSplits;
+  if (!Array.isArray(splits)) return null;
+  let s = 0;
+  for (const x of splits) {
+    const h = Number((x as Record<string, unknown>).hours);
+    if (Number.isFinite(h) && h > 0) s += h;
+  }
+  return Math.round(s * 100) / 100;
+}
+
+function buildAttendanceForensicTimeline(
+  rows: AttendanceRow[]
+): Array<{ type: string; at: string }> {
+  const out: Array<{ type: string; at: string }> = [];
+  for (const r of rows) {
+    const t = attendanceRowDate(r);
+    if (!t) continue;
+    out.push({ type: String(r.type || ""), at: t.toISOString() });
+  }
+  return out;
 }
 
 export type GrossWorkSource = "attendance_net_complete" | "terminal_closed_sum" | "none";
@@ -97,6 +140,38 @@ export type DayReportCalculationSummary = {
     closedSegmentCount: number;
     attendanceRowsForDay: number;
   };
+  /** Porovnání dvou dnů: stejná pole v konzoli / globalThis (dev). */
+  forensic: DayReportForensic;
+};
+
+export type DayReportForensic = {
+  dayKey: string;
+  employeeId: string;
+  attendanceEventTimeline: Array<{ type: string; at: string }>;
+  pauseMinutes: number | null;
+  /** Krok 1 — čistá práce z docházky (null = nekompletní / chybí). */
+  attendanceWorkedMinutes: number | null;
+  /** Krok 2 — tarif z terminálu (min). */
+  tariffMinutes: number;
+  /** Krok 3 — uzamčená zakázka z terminálu (min). */
+  lockedProjectTerminalMinutes: number;
+  /** Součet uzavřených úseků terminálu (min). */
+  terminalClosedSumMinutes: number;
+  /** Skutečný strop dne po computeDayWorkedCap (min). */
+  dayWorkedCapMinutes: number;
+  /** Krok 4 — dostupné pro ruční výkaz po odečtu tarifu + job lock (min, ≥ 0). */
+  reportableMinutes: number;
+  /** Krok 5 — součet ručních řádků ve formuláři (min). */
+  existingManualReportedMinutes: number;
+  /** Krok 6 — zbývá k celkovému stropu směny (min). */
+  remainingMinutes: number;
+  remainingInFormCapMinutes: number;
+  grossWorkSource: GrossWorkSource;
+  savedReport: {
+    documentDateKey: string | null;
+    matchesSelectedDayKey: boolean;
+    segmentJobSplitsSumHours: number | null;
+  };
 };
 
 /**
@@ -111,9 +186,15 @@ export function calculateDayReportSummary(params: {
   dayFormRows: DayFormRow[];
   parseHours: (s: string) => number | null;
   attendanceSegEpsHours?: number;
+  /** Preferujte seznam řádků — počet se odvodí; jinak předejte jen počet. */
+  attendanceRowsForDayList?: AttendanceRow[];
   attendanceRowsForDay?: number;
+  /** Aktuální dokument výkazu (stejný den jako dayIso u ref). */
+  existingReport?: Record<string, unknown> | null;
 }): DayReportCalculationSummary {
   const eps = params.attendanceSegEpsHours ?? 0.02;
+  const attendanceRowCount =
+    params.attendanceRowsForDayList?.length ?? params.attendanceRowsForDay ?? 0;
   const segs = sortSegmentsByStart(params.closedTerminalSegmentsForLocalDay);
   const segmentTotalH = sumClosedSegmentHours(segs);
   const { locked, unlocked } = effectiveLockedUnlocked(segs);
@@ -182,6 +263,44 @@ export function calculateDayReportSummary(params: {
             "daily_work_reports (řádky formuláře)",
           ];
 
+  const rawReportableH = dayWorkedCapH - lockedSumH;
+  if (rawReportableH < -1e-6 && typeof process !== "undefined" && process.env.NODE_ENV === "development") {
+    console.warn("[rajmon/day-report] Reportovatelný fond před ořezem na 0 je záporný", {
+      dayIso: params.dayIso,
+      rawReportableH,
+      dayWorkedCapH,
+      lockedSumH,
+    });
+  }
+
+  const docDateKey = normalizeSavedReportDateKey(params.existingReport?.date);
+  const forensic: DayReportForensic = {
+    dayKey: params.dayIso,
+    employeeId: params.employeeId,
+    attendanceEventTimeline: buildAttendanceForensicTimeline(
+      params.attendanceRowsForDayList ?? []
+    ),
+    pauseMinutes: pauseMin,
+    attendanceWorkedMinutes:
+      attendanceNetH != null && Number.isFinite(attendanceNetH)
+        ? hoursToMinutes(attendanceNetH)
+        : null,
+    tariffMinutes: hoursToMinutes(tariffH),
+    lockedProjectTerminalMinutes: hoursToMinutes(jobLockH),
+    terminalClosedSumMinutes: hoursToMinutes(segmentTotalH),
+    dayWorkedCapMinutes: hoursToMinutes(dayWorkedCapH),
+    reportableMinutes: hoursToMinutes(availableH),
+    existingManualReportedMinutes: hoursToMinutes(manualH),
+    remainingMinutes: hoursToMinutes(zbýváCapH),
+    remainingInFormCapMinutes: hoursToMinutes(zbýváFormH),
+    grossWorkSource: grossSrc,
+    savedReport: {
+      documentDateKey: docDateKey,
+      matchesSelectedDayKey: docDateKey != null && docDateKey === params.dayIso,
+      segmentJobSplitsSumHours: sumSavedSegmentJobSplitsHours(params.existingReport),
+    },
+  };
+
   return {
     dayIso: params.dayIso,
     employeeId: params.employeeId,
@@ -234,7 +353,8 @@ export function calculateDayReportSummary(params: {
     },
     counts: {
       closedSegmentCount: segs.length,
-      attendanceRowsForDay: params.attendanceRowsForDay ?? 0,
+      attendanceRowsForDay: attendanceRowCount,
     },
+    forensic,
   };
 }

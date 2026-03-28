@@ -24,9 +24,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import {
   attendanceRowCalendarDateKey,
-  summarizeAttendanceByDay,
+  getDayAttendanceSummaryForLocalDay,
   type AttendanceRow as AttendanceRowType,
-} from "@/lib/employee-attendance";
+} from "@/lib/daily-work-report-day-pipeline";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
 import { cn } from "@/lib/utils";
@@ -571,13 +571,14 @@ export default function EmployeeDailyReportsPage() {
     [closedSegments]
   );
 
-  const daySummary = useMemo(() => {
-    const summaries = summarizeAttendanceByDay(attendanceBlocks as any[], {
-      employeeId,
-      authUid: user?.uid,
-    });
-    return summaries.find((s) => s.date === dayKey) ?? null;
-  }, [attendanceBlocks, dayKey, employeeId, user?.uid]);
+  const { summary: daySummary, rowsForDay: attendanceRowsThisDay } = useMemo(
+    () =>
+      getDayAttendanceSummaryForLocalDay(attendanceBlocks as AttendanceRowType[], dayKey ?? "", {
+        employeeId,
+        authUid: user?.uid,
+      }),
+    [attendanceBlocks, dayKey, employeeId, user?.uid]
+  );
 
   const [note, setNote] = useState("");
   /** Jeden hlavní formulář pro odemčené úseky (čas → zakázky / popis v pořadí úseků). */
@@ -877,13 +878,6 @@ export default function EmployeeDailyReportsPage() {
     [lockedFromTerminal]
   );
 
-  const attendanceRowsForDayCount = useMemo(() => {
-    if (!dayKey) return 0;
-    return (attendanceBlocks as AttendanceRowType[]).filter(
-      (r) => attendanceRowCalendarDateKey(r) === dayKey
-    ).length;
-  }, [attendanceBlocks, dayKey]);
-
   /** Jednotný výpočet pro celý den (žádné odlišné větve bez dokumentace). */
   const dayReport = useMemo(
     () =>
@@ -895,7 +889,8 @@ export default function EmployeeDailyReportsPage() {
         dayFormRows,
         parseHours: parseHoursInput,
         attendanceSegEpsHours: ATTENDANCE_SEG_EPS,
-        attendanceRowsForDay: attendanceRowsForDayCount,
+        attendanceRowsForDayList: attendanceRowsThisDay,
+        existingReport: existingReport ?? null,
       }),
     [
       dayKey,
@@ -903,9 +898,17 @@ export default function EmployeeDailyReportsPage() {
       daySummary,
       closedSegments,
       dayFormRows,
-      attendanceRowsForDayCount,
+      attendanceRowsThisDay,
+      existingReport,
     ]
   );
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development" || !dayKey) return;
+    const w = globalThis as unknown as { __RAJMON_DAY_REPORT_FORENSIC__?: unknown };
+    w.__RAJMON_DAY_REPORT_FORENSIC__ = dayReport.forensic;
+    console.debug("[rajmon] Day report forensic — porovnej dva dny:", dayReport.forensic);
+  }, [dayKey, dayReport.forensic]);
 
   const h = dayReport.hours;
   const segmentTotal = h.segmentTotal;
@@ -1433,16 +1436,6 @@ export default function EmployeeDailyReportsPage() {
               ) : null}
             </CardHeader>
             <CardContent className="space-y-6 sm:space-y-7">
-              {process.env.NODE_ENV === "development" && dayKey ? (
-                <details className="rounded-lg border-2 border-dashed border-violet-600 bg-violet-50/90 p-3 text-neutral-900">
-                  <summary className="cursor-pointer select-none text-sm font-semibold text-violet-950">
-                    Diagnostika výpočtu (dev) — minuty, zdroje, příznaky
-                  </summary>
-                  <pre className="mt-2 max-h-[min(50vh,480px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-snug">
-                    {JSON.stringify(dayReport, null, 2)}
-                  </pre>
-                </details>
-              ) : null}
               <div className="rounded-lg border-2 border-neutral-950 bg-white p-4 text-sm leading-relaxed text-neutral-900">
                 <p className="font-medium text-neutral-950">Jak funguje výkaz za den</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">

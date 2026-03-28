@@ -61,6 +61,62 @@ export function attendanceRowCalendarDateKey(r: AttendanceRow): string {
   return d || "";
 }
 
+/** Čas události docházky (Firestore Timestamp nebo Date). */
+export function attendanceRowDate(row: AttendanceRow): Date | null {
+  return rowTime(row);
+}
+
+/**
+ * Řádky docházky pro jeden lokální den (`dayKey` = YYYY-MM-DD), stejné pravidlo jako u výkazu práce.
+ */
+export function filterAttendanceRowsForLocalDay(
+  rows: AttendanceRow[],
+  dayKey: string,
+  options?: { employeeId?: string; authUid?: string }
+): AttendanceRow[] {
+  const key = String(dayKey).trim();
+  if (!key) return [];
+  const { employeeId, authUid } = options || {};
+  return rows
+    .filter((r) => {
+      if (employeeId || authUid) {
+        const eid = r.employeeId;
+        if (!(eid === employeeId || (authUid && eid === authUid))) return false;
+      }
+      return attendanceRowCalendarDateKey(r) === key;
+    })
+    .sort((a, b) => (rowTime(a)?.getTime() ?? 0) - (rowTime(b)?.getTime() ?? 0));
+}
+
+/**
+ * Souhrn docházky jen ze záznamů patřících do `dayKey` (ne `find` přes celý měsíc).
+ */
+export function getDayAttendanceSummaryForLocalDay(
+  allRows: AttendanceRow[],
+  dayKey: string,
+  options?: { employeeId?: string; authUid?: string }
+): { summary: DayAttendanceSummary | null; rowsForDay: AttendanceRow[] } {
+  const rowsForDay = filterAttendanceRowsForLocalDay(allRows, dayKey, options);
+  if (rowsForDay.length === 0) return { summary: null, rowsForDay };
+  const summaries = summarizeAttendanceByDay(rowsForDay, options);
+  const summary =
+    summaries.length === 1
+      ? summaries[0]
+      : summaries.find((s) => s.date === dayKey) ?? summaries[0] ?? null;
+  if (
+    typeof process !== "undefined" &&
+    process.env.NODE_ENV === "development" &&
+    summary &&
+    summary.date !== dayKey
+  ) {
+    console.warn("[rajmon/daily-report] Attendance summary.date !== dayKey", {
+      dayKey,
+      summaryDate: summary.date,
+    });
+  }
+  return { summary, rowsForDay };
+}
+
 /**
  * Seskupí záznamy podle kalendářního dne (čas z `timestamp` v lokálním pásmu) a dopočítá příchod/odchod/hodiny.
  */
