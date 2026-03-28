@@ -18,16 +18,24 @@ import {
   userCanAccessWarehousePortal,
 } from "@/lib/warehouse-production-access";
 import { ActivitySessionBridge } from "@/components/portal/activity-session-bridge";
+import {
+  PlatformModuleCatalogProvider,
+  useMergedPlatformModuleCatalog,
+} from "@/contexts/platform-module-catalog-context";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
 const SHELL_LOADING_TIMEOUT_MS = 30000;
 
-export default function PortalLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function PortalLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <PlatformModuleCatalogProvider>
+      <PortalLayoutContent>{children}</PortalLayoutContent>
+    </PlatformModuleCatalogProvider>
+  );
+}
+
+function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   const { user, isUserLoading, userError } = useUser();
   const { areServicesAvailable, firebaseConfigError } = useFirebase();
   const router = useRouter();
@@ -147,7 +155,7 @@ export default function PortalLayout({
       return;
     }
     if (skladPath) {
-      if (!hasActiveModuleAccess(company, "sklad")) {
+      if (!hasActiveModuleAccess(company, "sklad", platformCatalog)) {
         router.replace("/portal/dashboard");
         return;
       }
@@ -185,6 +193,7 @@ export default function PortalLayout({
     pathname,
     router,
     profileEmployeeRow,
+    platformCatalog,
   ]);
 
   useEffect(() => {

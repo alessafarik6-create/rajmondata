@@ -953,8 +953,10 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    /** Katalog modulů — čtení pro přihlášené (výchozí pro menu / fallback u firmy); zápis jen Admin SDK. */
     match /platform_modules/{docId} {
-      allow read, write: if false;
+      allow read: if signedIn();
+      allow write: if false;
     }
 
     match /platform_seo/{docId} {
