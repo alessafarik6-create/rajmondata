@@ -47,6 +47,7 @@ import {
   buildFullSegmentJobSplits,
   effectiveLockedUnlocked,
   mergeAttendanceOnlyRowsFromReport,
+  mergeManualSplitsFromReport,
   mergeUnlockedRowsFromReport,
   segmentDurationHours,
   sumClosedSegmentHours,
@@ -63,6 +64,7 @@ import {
 } from "@/lib/daily-work-report-day-summary";
 import {
   computeDayWorkedCap,
+  computeManualFormHoursCap,
   isCompleteAttendanceSummary,
   isDayReportableForWorklog,
 } from "@/lib/daily-work-report-time-cap";
@@ -195,8 +197,12 @@ function validateDayForm(
   const { unlocked } = effectiveLockedUnlocked(closedSegments);
   const unlockedSum = sumClosedSegmentHours(unlocked);
   const availableHoursRaw = Math.max(0, dayWorkedCap - lockedSum);
-  const formCap =
-    unlocked.length === 0 ? 0 : Math.min(unlockedSum, availableHoursRaw);
+  const formCap = computeManualFormHoursCap({
+    dayWorkedCapHours: dayWorkedCap,
+    lockedSumHours: lockedSum,
+    unlockedSumHours: unlockedSum,
+    hasTerminalSegments: closedSegments.length > 0,
+  });
 
   for (const r of dayFormRows) {
     const h = parseHoursInput(r.hoursStr);
@@ -206,7 +212,7 @@ function validateDayForm(
     }
   }
 
-  if (unlocked.length > 0) {
+  if (unlocked.length > 0 || formCap > SUM_COMPARE_EPS) {
     for (const r of dayFormRows) {
       const h = parseHoursInput(r.hoursStr);
       const jid = String(r.jobId || "").trim();
@@ -223,11 +229,11 @@ function validateDayForm(
   }
 
   const sum = sumDayFormHours(dayFormRows);
-  if (unlocked.length > 0) {
+  if (unlocked.length > 0 || formCap > SUM_COMPARE_EPS) {
     if (sum > formCap + SUM_COMPARE_EPS) {
       return `Součet hodin v řádcích (${sum} h) překračuje dostupný čas pro výkaz (${round2(formCap)} h, bez tarifů a uzamčených zakázek z terminálu).`;
     }
-    if (sum < formCap - SUM_COMPARE_EPS) {
+    if (mode === "submit" && sum < formCap - SUM_COMPARE_EPS) {
       return `Rozdělte celkem ${round2(formCap)} h (zbývá ${round2(formCap - sum)} h).`;
     }
   }
@@ -647,10 +653,16 @@ export default function EmployeeDailyReportsPage() {
       daySummary,
       segmentTotalHours: segmentTotalInit,
     });
-    const availableInit = Math.max(0, dayCapInit - lockedSumInit);
-    const formCapInit =
-      unlocked.length === 0 ? 0 : Math.min(unlockedSumInit, availableInit);
-    let merged = mergeUnlockedRowsFromReport(unlocked, existingReport);
+    const formCapInit = computeManualFormHoursCap({
+      dayWorkedCapHours: dayCapInit,
+      lockedSumHours: lockedSumInit,
+      unlockedSumHours: unlockedSumInit,
+      hasTerminalSegments: true,
+    });
+    let merged =
+      unlocked.length > 0
+        ? mergeUnlockedRowsFromReport(unlocked, existingReport)
+        : mergeManualSplitsFromReport(existingReport);
     if (merged.length === 0 && formCapInit > SUM_COMPARE_EPS) {
       merged = [
         {
@@ -1642,7 +1654,9 @@ export default function EmployeeDailyReportsPage() {
                       <p className="mt-1 text-sm text-neutral-700 sm:text-xs">
                         {hoursLimitedByUnlockedSegments
                           ? `Z docházky po odečtení tarifu/zakázky: ${round2(availableHoursRaw)} h — do řádků však jen ${round2(formHoursCap)} h (úseky terminálu).`
-                          : "Po odečtení tarifu a zakázky z terminálu; omezeno i délkou volných úseků."}
+                          : unlockedSegments.length === 0 && closedSegments.length > 0
+                            ? `Po odečtení tarifu a uzamčené zakázky z terminálu zbývá ${round2(availableHoursRaw)} h — tyto hodiny se vykazují ručně v řádcích (bez „volného“ úseku na terminálu).`
+                            : "Po odečtení tarifu a zakázky z terminálu; omezeno i délkou volných úseků."}
                       </p>
                     </div>
                     <div className="min-w-0">

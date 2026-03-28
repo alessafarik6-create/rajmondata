@@ -44,6 +44,26 @@ export function computeDayWorkedCap(params: {
   return seg;
 }
 
+/**
+ * Strop hodin pro ruční řádky výkazu (mimo tarif a uzamčenou zakázku z terminálu).
+ * Když terminál nemá žádné „volné“ úseky, ale směna má část mimo tarif/zakázku (např. jen tarif
+ * uprostřed dne), zbývající čas se stejně vykazuje ručně přes `MANUAL_ATTENDANCE_SEGMENT_ID`.
+ */
+export function computeManualFormHoursCap(params: {
+  dayWorkedCapHours: number;
+  lockedSumHours: number;
+  unlockedSumHours: number;
+  hasTerminalSegments: boolean;
+}): number {
+  const cap = Math.max(0, round2(params.dayWorkedCapHours));
+  const locked = Math.max(0, round2(params.lockedSumHours));
+  const pool = Math.max(0, round2(cap - locked));
+  if (!params.hasTerminalSegments) return cap;
+  const unlockedSum = Math.max(0, round2(params.unlockedSumHours));
+  if (unlockedSum <= 0) return pool;
+  return Math.min(unlockedSum, pool);
+}
+
 /** Lze za den vůbec vyplňovat výkaz (kompletní docházka nebo aspoň úseky terminálu). */
 export function isDayReportableForWorklog(params: {
   daySummary: DayAttendanceSummary | null | undefined;

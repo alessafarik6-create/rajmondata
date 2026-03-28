@@ -15,6 +15,7 @@ import {
 } from "@/lib/daily-work-report-day-form";
 import {
   computeDayWorkedCap,
+  computeManualFormHoursCap,
   isCompleteAttendanceSummary,
   round2,
 } from "@/lib/daily-work-report-time-cap";
@@ -214,12 +215,12 @@ export function calculateDayReportSummary(params: {
   const attendanceNetH = daySummary?.hoursWorked ?? null;
 
   const availableH = Math.max(0, dayWorkedCapH - lockedSumH);
-  const formCapH =
-    segs.length === 0
-      ? Math.max(0, dayWorkedCapH)
-      : unlocked.length === 0
-        ? 0
-        : Math.min(unlockedSumH, availableH);
+  const formCapH = computeManualFormHoursCap({
+    dayWorkedCapHours: dayWorkedCapH,
+    lockedSumHours: lockedSumH,
+    unlockedSumHours: unlockedSumH,
+    hasTerminalSegments: segs.length > 0,
+  });
 
   const manualH = sumManualRowHours(params.dayFormRows, params.parseHours);
   const totalAllocH = Math.round((lockedSumH + manualH) * 100) / 100;

@@ -220,7 +220,9 @@ export function buildFullSegmentJobSplits(
 ): Array<{ segmentId: string; jobId: string; hours: number }> {
   const { locked, unlocked } = effectiveLockedUnlocked(closedSegments);
   const head = buildLockedTerminalSplits(locked);
-  if (unlocked.length === 0) return head;
+  if (unlocked.length === 0) {
+    return [...head, ...buildAttendanceOnlySplits(dayFormRows, parseHours)];
+  }
   const tail = sequentialFillUnlockedSegments(unlocked, dayFormRows, parseHours);
   return [...head, ...tail];
 }
@@ -240,6 +242,43 @@ export function buildAttendanceOnlySplits(
       segmentId: MANUAL_ATTENDANCE_SEGMENT_ID,
       jobId: jid,
       hours: Math.round(h * 100) / 100,
+    });
+  }
+  return out;
+}
+
+/**
+ * Ruční řádky z `segmentJobSplits` s `MANUAL_ATTENDANCE_SEGMENT_ID` (např. den s tarifem z terminálu
+ * a zbytkem směny jen v docházce — bez odemčených úseků).
+ */
+export function mergeManualSplitsFromReport(
+  report: Record<string, unknown> | null | undefined
+): DayFormRow[] {
+  const saved = report?.segmentJobSplits as
+    | Array<{ segmentId?: string; jobId?: string; hours?: number }>
+    | undefined;
+  if (!saved?.length) return [];
+  const notes = Array.isArray(report?.dayWorkLines)
+    ? (report.dayWorkLines as { lineNote?: string }[])
+    : [];
+  const out: DayFormRow[] = [];
+  let noteIdx = 0;
+  let rowCounter = 0;
+  for (const item of saved) {
+    if (String(item.segmentId ?? "").trim() !== MANUAL_ATTENDANCE_SEGMENT_ID) continue;
+    const hr = typeof item.hours === "number" && Number.isFinite(item.hours) ? item.hours : 0;
+    if (hr <= 0) continue;
+    const rawJid = String(item.jobId || "").trim();
+    const jid = isNoJobSegmentJobId(rawJid) ? "" : rawJid;
+    const rawLine = notes[noteIdx];
+    const note =
+      rawLine && typeof rawLine.lineNote === "string" ? rawLine.lineNote : "";
+    noteIdx += 1;
+    out.push({
+      rowId: `load-manual-${rowCounter++}`,
+      jobId: jid,
+      hoursStr: String(hr).replace(".", ","),
+      lineNote: note,
     });
   }
   return out;
