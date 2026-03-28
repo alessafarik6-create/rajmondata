@@ -875,6 +875,11 @@ export default function EmployeeDailyReportsPage() {
   const effectiveFormLocked = formLocked || isLockedBy24h;
   const dailyWorkLogOff = !isDailyWorkLogEnabled(employeeDoc);
 
+  const employeeHourlyRateCzk = useMemo(() => {
+    const n = Number((employeeDoc as { hourlyRate?: unknown } | undefined)?.hourlyRate);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }, [employeeDoc]);
+
   const { locked: lockedFromTerminal, unlocked: unlockedSegments } = useMemo(
     () => effectiveLockedUnlocked(closedSegments),
     [closedSegments]
@@ -935,12 +940,15 @@ export default function EmployeeDailyReportsPage() {
   const rozdělenoCelkem = h.rozdělenoCelkem;
   const zbýváCap = h.zbýváCap;
   const zbýváVeFormuláři = h.zbýváVeFormuláři;
+  const orientacniCastkaPredSchvalenimKc = useMemo(() => {
+    if (employeeHourlyRateCzk <= 0 || formHoursCap <= SUM_COMPARE_EPS) return null;
+    return Math.round(formHoursCap * employeeHourlyRateCzk * 100) / 100;
+  }, [employeeHourlyRateCzk, formHoursCap]);
   const dataAttendanceTooLow = dayReport.flags.segmentSumExceedsAttendance;
   const overCap = dayReport.flags.overCap;
   const overUnlocked = dayReport.flags.overUnlocked;
 
   const attendanceHours = daySummary?.hoursWorked ?? null;
-  const dostupnýProŘádkyZobrazení = round2(availableHoursRaw);
   /** Den musí mít kompletní docházku nebo aspoň úseky terminálu; strop hodin > 0. */
   const formEditableByAttendance =
     isDayReportableForWorklog({
@@ -1040,7 +1048,7 @@ export default function EmployeeDailyReportsPage() {
   const cardDesc = "text-sm text-neutral-900";
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 sm:space-y-8 px-2 sm:px-0">
+    <div className="mx-auto max-w-6xl space-y-6 sm:space-y-8 px-3 sm:px-4 lg:px-0">
       <div className="rounded-xl border-2 border-neutral-950 bg-white p-4 sm:p-6">
         <h1 className="text-2xl font-bold tracking-tight text-neutral-950 sm:text-3xl">
           Výkaz práce
@@ -1110,7 +1118,7 @@ export default function EmployeeDailyReportsPage() {
       ) : null}
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,280px)_1fr]">
-        <Card className={cn(cardBox, "overflow-hidden")}>
+        <Card className={cn(cardBox, "order-2 overflow-hidden lg:order-1")}>
           <CardHeader className="space-y-1 pb-2">
             <CardTitle className={cardTitle}>Den</CardTitle>
             <CardDescription className={cardDesc}>Vyberte pracovní den</CardDescription>
@@ -1206,14 +1214,14 @@ export default function EmployeeDailyReportsPage() {
           </CardContent>
         </Card>
 
-        <div className="space-y-5">
+        <div className="order-1 space-y-5 lg:order-2">
           {selectedDay && dayKey ? (
-            <div className="space-y-4 rounded-xl border-2 border-neutral-950 bg-neutral-50 p-4 sm:p-6">
-              <div>
+            <div className="space-y-4">
+              <div className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-3 sm:px-5 sm:py-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-neutral-600">
                   Vybraný den
                 </p>
-                <p className="text-xl font-bold leading-tight text-neutral-950 sm:text-2xl">
+                <p className="text-lg font-bold leading-tight text-neutral-950 sm:text-xl">
                   {format(selectedDay, "EEEE d. MMMM yyyy", { locale: cs })}
                 </p>
               </div>
@@ -1226,62 +1234,44 @@ export default function EmployeeDailyReportsPage() {
                   </AlertDescription>
                 </Alert>
               ) : dayWorkedCap > SUM_COMPARE_EPS ? (
-                <div className="space-y-4 text-base leading-relaxed text-neutral-900">
-                  <p className="font-semibold text-neutral-950">
-                    Co jste dělali za práci? Musíte vykázat tento den podle odpracovaného času — tarif a čas
-                    uzamčený zakázkou v terminálu se do řádků neopisuje.
+                <div className="rounded-2xl border-2 border-neutral-950 bg-gradient-to-b from-white to-neutral-50 p-5 shadow-sm sm:p-7">
+                  <h2 className="text-xl font-bold leading-snug text-neutral-950 sm:text-2xl">
+                    Rozdělte práci podle svých odpracovaných hodin
+                  </h2>
+                  <p className="mt-2 text-base leading-relaxed text-neutral-700 sm:text-lg">
+                    Uveďte, co jste dělali a kolik hodin jste na tom strávili v každém řádku.
                   </p>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-4">
-                      <p className="text-sm font-medium text-neutral-700">Docházka celkem (čistá práce)</p>
-                      <p className="mt-1 text-2xl font-bold tabular-nums text-neutral-950">
-                        {daySummary?.hoursWorked != null
-                          ? `${round2(daySummary.hoursWorked)} h`
-                          : `${round2(dayWorkedCap)} h`}
+                  <div className="mt-5 rounded-2xl border-2 border-neutral-950 bg-white px-5 py-6 sm:px-7 sm:py-8">
+                    <p className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
+                      K rozdělení do řádků
+                    </p>
+                    <p className="mt-2 text-4xl font-black tabular-nums tracking-tight text-neutral-950 sm:text-5xl">
+                      {round2(formHoursCap)} h
+                    </p>
+                    {employeeHourlyRateCzk > 0 && orientacniCastkaPredSchvalenimKc != null ? (
+                      <div className="mt-5 border-t-2 border-neutral-200 pt-5">
+                        <p className="text-sm font-medium text-neutral-800">
+                          Orientační částka před schválením
+                        </p>
+                        <p className="mt-1 text-2xl font-bold tabular-nums text-orange-600 sm:text-3xl">
+                          {formatKc(orientacniCastkaPredSchvalenimKc)}
+                        </p>
+                        <p className="mt-2 text-xs leading-relaxed text-neutral-600">
+                          Přibližně {round2(formHoursCap)} h × {employeeHourlyRateCzk} Kč/h — skutečná částka po
+                          schválení může být jiná (tarify, zakázky).
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="mt-4 text-sm text-neutral-500">
+                        Hodinová sazba u profilu není nastavena — orientační částku nelze spočítat.
                       </p>
-                      <p className="mt-1 text-sm text-neutral-600">
-                        Příchod až odchod minus pauza; bez tarifního času.
-                      </p>
-                    </div>
-                    <div className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-4">
-                      <p className="text-sm font-medium text-neutral-700">Tarifní čas (terminál)</p>
-                      <p className="mt-1 text-2xl font-bold tabular-nums text-neutral-950">
-                        {tariffSum > 0 ? `${round2(tariffSum)} h` : "0 h"}
-                      </p>
-                      <p className="mt-1 text-sm text-neutral-600">Započte se automaticky, nevyplňujte znovu.</p>
-                    </div>
-                    <div className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-4 sm:col-span-2">
-                      <p className="text-sm font-medium text-neutral-700">
-                        K vykázání do řádků (zbývá z čisté práce po odečtení tarifu a zakázky z terminálu)
-                      </p>
-                      <p className="mt-1 text-2xl font-bold tabular-nums text-emerald-800">
-                        až {round2(formHoursCap)} h
-                      </p>
-                      <p className="mt-1 text-sm text-neutral-600">
-                        Součet řádků nesmí překročit tuto hodnotu. Už rozděleno:{" "}
-                        <span className="font-semibold tabular-nums text-neutral-950">
-                          {allocatedUnlocked} h
-                        </span>
-                        {" · "}zbývá v řádcích:{" "}
-                        <span className="font-semibold tabular-nums text-neutral-950">
-                          {zbýváVeFormuláři} h
-                        </span>
-                        {" · "}celkem s terminálem:{" "}
-                        <span className="font-semibold tabular-nums text-neutral-950">
-                          {rozdělenoCelkem} h / {round2(dayWorkedCap)} h
-                        </span>
-                        {hoursLimitedByUnlockedSegments ? (
-                          <>
-                            {" "}
-                            Po odečtení tarifu a zakázky z terminálu by šlo teoreticky rozvrhnout ještě{" "}
-                            <span className="font-semibold tabular-nums">
-                              {round2(availableHoursRaw)} h
-                            </span>
-                            , ale úseky terminálu dovolí jen {round2(unlockedSum)} h v řádcích.
-                          </>
-                        ) : null}
-                      </p>
-                    </div>
+                    )}
+                    <p className="mt-4 text-base text-neutral-800">
+                      Zbývá doplnit v řádcích:{" "}
+                      <span className="font-bold tabular-nums text-neutral-950">{zbýváVeFormuláři} h</span>
+                      {" · "}Už vyplněno:{" "}
+                      <span className="font-semibold tabular-nums text-neutral-950">{allocatedUnlocked} h</span>
+                    </p>
                   </div>
                 </div>
               ) : (
@@ -1291,119 +1281,6 @@ export default function EmployeeDailyReportsPage() {
               )}
             </div>
           ) : null}
-
-          <Card className={cn(cardBox, "overflow-hidden")}>
-            <CardHeader className="space-y-1 pb-2">
-              <CardTitle className={cardTitle}>Docházka pro {dayKey}</CardTitle>
-              <CardDescription className={cardDesc}>
-                Shrnutí záznamů příchodu a odchodu
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-base leading-relaxed text-neutral-900 sm:text-sm">
-              {attendanceLoading ? (
-                <p className="flex items-center gap-2 text-neutral-800">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Načítám…
-                </p>
-              ) : daySummary ? (
-                <>
-                  <p>
-                    <span className="font-medium text-neutral-950">Příchod:</span>{" "}
-                    {daySummary.checkIn ?? "—"}
-                  </p>
-                  <p>
-                    <span className="font-medium text-neutral-950">Odchod:</span>{" "}
-                    {daySummary.checkOut ?? "—"}
-                  </p>
-                  {daySummary.totalSpanHours != null ? (
-                    <p>
-                      <span className="font-medium text-neutral-950">Mezi příchodem a odchodem:</span>{" "}
-                      <span className="font-semibold tabular-nums text-neutral-950">
-                        {daySummary.totalSpanHours} h
-                      </span>
-                    </p>
-                  ) : null}
-                  {daySummary.breakHours > 0 ? (
-                    <p>
-                      <span className="font-medium text-neutral-950">Pauza (odhad):</span>{" "}
-                      <span className="font-semibold tabular-nums text-neutral-950">
-                        {daySummary.breakHours} h
-                      </span>
-                    </p>
-                  ) : null}
-                  <p>
-                    <span className="font-medium text-neutral-950">Čistá práce (− pauza):</span>{" "}
-                    <span className="font-semibold tabular-nums text-neutral-950">
-                      {daySummary.hoursWorked != null ? `${daySummary.hoursWorked} h` : "—"}
-                    </span>
-                  </p>
-                  <p className="text-neutral-900">{daySummary.statusLabel}</p>
-                </>
-              ) : (
-                <p className="text-neutral-900">Pro tento den nejsou záznamy docházky.</p>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className={cn(cardBox, "overflow-hidden")}>
-            <CardHeader className="space-y-1 pb-2">
-              <CardTitle className={cardTitle}>Úseky práce (terminál)</CardTitle>
-              <CardDescription className={cardDesc}>
-                Evidence z docházky — částky jsou orientační do schválení výkazu administrátorem.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-neutral-900">
-              {segmentsDayLoading ? (
-                <p className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin" /> Načítám segmenty…
-                </p>
-              ) : closedSegments.length === 0 ? (
-                <p>
-                  Za tento den nejsou k dispozici žádné uzavřené úseky z terminálu — výkaz můžete vyplnit z
-                  odpracované docházky (viz karta výše). Úseky z terminálu jsou jen doplňkový přehled.
-                </p>
-              ) : (
-                <ul className="space-y-3">
-                  {closedSegments.map((seg: WorkSegmentClient) => {
-                    const st = seg.sourceType === "tariff" ? "Tarif" : "Zakázka";
-                    const name =
-                      typeof seg.displayName === "string"
-                        ? seg.displayName
-                        : String(seg.jobName || seg.tariffName || "—");
-                    const dh = segmentDurationHours(seg);
-                    const h = dh > 0 ? `${dh} h` : "—";
-                    const amt =
-                      typeof seg.totalAmountCzk === "number"
-                        ? formatKc(seg.totalAmountCzk)
-                        : "—";
-                    const lk = getTerminalSegmentLockKind(seg);
-                    const lockHint =
-                      lk === "none"
-                        ? "Úsek lze rozvrhnout ve výkazu"
-                        : lk === "tariff_terminal"
-                          ? "Tarif — automaticky, bez formuláře"
-                          : "Uzamčeno z terminálu — v hlavním formuláři se nevyplňuje";
-                    return (
-                      <li
-                        key={seg.id}
-                        className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border-2 border-neutral-950 bg-white px-3 py-3"
-                      >
-                        <div>
-                          <span className="text-xs font-semibold uppercase text-neutral-950">{st}</span>
-                          <p className="font-semibold text-neutral-950">{name}</p>
-                          <p className="text-xs text-neutral-900">{segmentTimeRangeLabel(seg)}</p>
-                          <p className="mt-1 text-[11px] text-neutral-900">{lockHint}</p>
-                        </div>
-                        <div className="text-right text-xs tabular-nums text-neutral-950">
-                          <p>{h}</p>
-                          <p className="text-neutral-800">{amt}</p>
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </CardContent>
-          </Card>
 
           <Card className={cn(cardBox, "overflow-hidden")}>
             <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-3 pb-2">
@@ -1447,48 +1324,7 @@ export default function EmployeeDailyReportsPage() {
                 <Loader2 className="h-5 w-5 animate-spin text-neutral-950" />
               ) : null}
             </CardHeader>
-            <CardContent className="space-y-6 sm:space-y-7">
-              <div className="rounded-lg border-2 border-neutral-950 bg-white p-4 text-sm leading-relaxed text-neutral-900">
-                <p className="font-medium text-neutral-950">Jak funguje výkaz za den</p>
-                <ul className="mt-2 list-disc space-y-1 pl-5">
-                  <li>
-                    <strong className="text-neutral-950">Úseky z terminálu</strong> jsou jen informativní
-                    přehled (včetně tarifů).
-                  </li>
-                  <li>
-                    <strong className="text-neutral-950">Tarif</strong> z terminálu se započte automaticky,
-                    odečte se z času pro výkaz a <strong className="text-neutral-950">nevyplňuje se</strong> —
-                    oceňuje se podle ceníku tarifu.
-                  </li>
-                  <li>
-                    <strong className="text-neutral-950">Hlavní formulář</strong> pod tím slouží jen k
-                    rozdělení zbývajícího času (bez tarifů): hodiny, popis, volitelná zakázka; řádky se
-                    čerpají na úseky bez výběru v terminálu.
-                  </li>
-                </ul>
-              </div>
-
-              <div className="rounded-lg border-2 border-neutral-950 bg-white p-4 text-sm text-neutral-900">
-                <p className="font-medium text-neutral-950">Ruční výběr zakázky</p>
-                <p className="mt-1 text-xs leading-relaxed text-neutral-800">
-                  Zakázky níže jsou přiřazené k vašemu účtu v systému — nezávisle na tom, co jste vybrali na
-                  terminálu docházky.
-                </p>
-                {jobsLoading ? (
-                  <p className="mt-2 flex items-center gap-2 text-xs text-neutral-900">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Načítání přiřazených zakázek…
-                  </p>
-                ) : assignedJobIds.length === 0 ? (
-                  <p className="mt-2 text-sm font-medium text-neutral-950">Nemáte přiřazené žádné zakázky.</p>
-                ) : (
-                  <p className="mt-2 text-sm text-neutral-900">
-                    U každého řádku hlavního výkazu je pole <strong className="text-neutral-950">Zakázka</strong>{" "}
-                    ({assignedJobs.length} přiřazených) — můžete zvolit zakázku nebo „Bez zakázky / interní práce“.
-                  </p>
-                )}
-              </div>
-
+            <CardContent className="space-y-5 sm:space-y-6 px-4 py-5 sm:px-6 sm:py-7 lg:px-8 lg:py-8">
               {segmentsDayLoading ? (
                 <p className="flex items-center gap-2 text-base text-neutral-900 sm:text-sm">
                   <Loader2 className="h-4 w-4 animate-spin" /> Načítám úseky pro výkaz…
@@ -1598,17 +1434,225 @@ export default function EmployeeDailyReportsPage() {
                   {capMismatch ? (
                     <p className="text-sm leading-relaxed text-neutral-900 sm:text-xs">
                       {attendanceLongerThanTerminal
-                        ? `Docházka (${attendanceHours} h) je delší než součet úseků z terminálu (${segmentTotal} h). Hodiny ve výkazu se rozdělují jen v rámci úseků terminálu — viz horní souhrn a případné upozornění.`
-                        : `Pozn.: součet úseků z terminálu (${segmentTotal} h) se liší od docházky (${attendanceHours} h). Rozvržení se váže na úseky terminálu; docházku vidíte v kartě výše.`}
+                        ? `Docházka (${attendanceHours} h) je delší než součet úseků z terminálu (${segmentTotal} h). Hodiny ve výkazu se rozdělují jen v rámci úseků terminálu — viz souhrn níže a upozornění výše.`
+                        : `Pozn.: součet úseků z terminálu (${segmentTotal} h) se liší od docházky (${attendanceHours} h). Rozvržení se váže na úseky terminálu; docházku najdete v sekci níže.`}
                     </p>
                   ) : null}
                 </div>
               ) : null}
 
+              <div className="space-y-5 rounded-2xl border-2 border-neutral-950 bg-white p-4 sm:space-y-6 sm:p-6 lg:p-8">
+                <div>
+                  <p className="text-xl font-bold text-neutral-950 sm:text-2xl">
+                    Rozdělení práce do řádků
+                  </p>
+                  <p className="mt-2 text-base leading-relaxed text-neutral-800 sm:text-lg">
+                    {closedSegments.length === 0
+                      ? formEditableByAttendance
+                        ? `Kolik hodin jste na čem pracoval? Součet řádků musí dát dohromady ${round2(formHoursCap)} h (podle docházky). Zbývá vykázat ještě ${zbýváVeFormuláři} h v řádcích.`
+                        : "Pro vyplnění výkazu potřebujete kompletní docházku nebo úseky z terminálu."
+                      : formHoursCap > SUM_COMPARE_EPS
+                        ? `Kolik hodin jste na čem pracoval? Do řádků dejte nejvýše ${round2(formHoursCap)} h (bez tarifu a zakázky z terminálu). Zbývá v řádcích: ${zbýváVeFormuláři} h.`
+                        : noTimeLeftToSplit
+                          ? "Žádné hodiny k ručnímu rozvržení — zůstaly jen tarify a zakázky uzamčené z terminálu."
+                          : "Hodiny nelze upravit (funkce vypnutá nebo uzamčení výkazu)."}
+                  </p>
+                </div>
+                {jobsLoading ? (
+                  <p className="flex items-center gap-2 text-base text-neutral-900 sm:text-sm">
+                    <Loader2 className="h-4 w-4 animate-spin text-neutral-950" />
+                    Načítání přiřazených zakázek…
+                  </p>
+                ) : assignedJobIds.length === 0 ? (
+                  <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-3 text-base text-neutral-900 sm:text-sm">
+                    Nemáte přiřazené žádné zakázky — v rozbalovacím poli je jen „Bez zakázky / interní práce“.
+                  </p>
+                ) : (
+                  <p className="text-base text-neutral-800 sm:text-lg">
+                    Zakázku volte z přiřazení — nebo ponechte interní práci bez zakázky.
+                  </p>
+                )}
+                <div className="space-y-5 sm:space-y-6">
+                  {dayFormRows.map((row) => (
+                    <div
+                      key={row.rowId}
+                      className="flex flex-col gap-5 rounded-2xl border-2 border-neutral-950 bg-neutral-50/80 p-4 sm:p-5 lg:grid lg:grid-cols-[minmax(0,7rem)_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-5"
+                    >
+                      <div className="w-full space-y-2 lg:w-auto">
+                        <Label className="text-base font-semibold text-neutral-950">
+                          Hodiny <span className="text-red-700">*</span>
+                        </Label>
+                        <Input
+                          inputMode="decimal"
+                          className="h-16 min-h-[56px] border-2 border-neutral-950 px-4 text-xl tabular-nums text-neutral-950"
+                          placeholder="např. 1,5"
+                          value={row.hoursStr}
+                          onChange={(e) =>
+                            setDayFormRows((prev) =>
+                              prev.map((x) =>
+                                x.rowId === row.rowId ? { ...x, hoursStr: e.target.value } : x
+                              )
+                            )
+                          }
+                          disabled={hoursDisabled}
+                        />
+                      </div>
+                      <div className="min-w-0 space-y-2">
+                        <Label className="text-base font-semibold text-neutral-950">Co jste dělali?</Label>
+                        <Textarea
+                          rows={3}
+                          className="min-h-[120px] border-2 border-neutral-950 px-4 py-3 text-lg leading-relaxed text-neutral-950"
+                          placeholder="Stručně popište práci (u řádku bez zakázky je popis povinný)…"
+                          value={row.lineNote}
+                          onChange={(e) =>
+                            setDayFormRows((prev) =>
+                              prev.map((x) =>
+                                x.rowId === row.rowId ? { ...x, lineNote: e.target.value } : x
+                              )
+                            )
+                          }
+                          disabled={effectiveFormLocked || dailyWorkLogOff}
+                        />
+                      </div>
+                      <div className="min-w-0 space-y-2">
+                        <Label className="text-base font-semibold text-neutral-950">Zakázka</Label>
+                        <p className="text-sm text-neutral-600">volitelné</p>
+                        <select
+                          className="mt-1 flex h-16 min-h-[56px] w-full rounded-md border-2 border-neutral-950 bg-white px-4 text-lg text-neutral-950"
+                          value={row.jobId}
+                          onChange={(e) =>
+                            setDayFormRows((prev) =>
+                              prev.map((x) =>
+                                x.rowId === row.rowId ? { ...x, jobId: e.target.value } : x
+                              )
+                            )
+                          }
+                          disabled={jobSelectDisabled}
+                        >
+                          <option value="">Bez zakázky / interní práce</option>
+                          {assignedJobs.map((j) => (
+                            <option key={j.id} value={j.id}>
+                              {j.name || j.id}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="flex justify-stretch pt-1 lg:justify-center">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-16 w-full min-h-[56px] min-w-0 border-2 border-neutral-950 bg-white lg:size-14"
+                          disabled={
+                            effectiveFormLocked || dailyWorkLogOff || dayFormRows.length <= 1
+                          }
+                          onClick={() =>
+                            setDayFormRows((prev) => {
+                              const next = prev.filter((x) => x.rowId !== row.rowId);
+                              return next.length > 0
+                                ? next
+                                : [
+                                    {
+                                      rowId: newSplitRowId(),
+                                      jobId: "",
+                                      hoursStr: "",
+                                      lineNote: "",
+                                    },
+                                  ];
+                            })
+                          }
+                          aria-label="Smazat řádek"
+                        >
+                          <Trash2 className="h-5 w-5" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-[52px] w-full border-2 border-neutral-950 bg-white px-6 text-base font-semibold text-neutral-950 hover:bg-neutral-100 sm:text-lg"
+                  disabled={hoursDisabled}
+                  onClick={() =>
+                    setDayFormRows((prev) => [
+                      ...prev,
+                      {
+                        rowId: newSplitRowId(),
+                        jobId: "",
+                        hoursStr: "",
+                        lineNote: "",
+                      },
+                    ])
+                  }
+                >
+                  <Plus className="mr-2 h-5 w-5" />
+                  Přidat řádek
+                </Button>
+              </div>
+
+              <div className="space-y-3 rounded-xl border-2 border-neutral-950 bg-white p-4 sm:p-5">
+                <Label htmlFor="dr-note" className="text-base font-semibold text-neutral-950">
+                  Poznámka k výkazu
+                </Label>
+                <Textarea
+                  id="dr-note"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  disabled={effectiveFormLocked}
+                  rows={3}
+                  className="min-h-[100px] border-2 border-neutral-950 px-4 py-3 text-lg text-neutral-950"
+                />
+              </div>
+
+              {status === "pending" ? (
+                <p className="rounded-xl border-2 border-neutral-950 bg-white px-4 py-4 text-base text-neutral-950">
+                  Výkaz čeká na schválení. Úpravy nejsou možné, dokud ho administrátor nevrátí nebo
+                  nezamítne.
+                </p>
+              ) : null}
+
+              <div className="flex flex-col gap-3 sm:gap-4">
+                <Button
+                  type="button"
+                  className="min-h-[56px] w-full bg-orange-600 text-base font-bold text-white hover:bg-orange-700 sm:min-h-[60px] sm:text-lg"
+                  disabled={
+                    saving ||
+                    privileged ||
+                    effectiveFormLocked ||
+                    dailyWorkLogOff ||
+                    dayWorkedCap <= SUM_COMPARE_EPS ||
+                    dataAttendanceTooLow
+                  }
+                  onClick={() => void postReport("submit")}
+                >
+                  {saving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Odeslat ke schválení"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="min-h-[56px] w-full border-2 border-neutral-950 bg-white text-base font-semibold text-neutral-950 hover:bg-neutral-50 sm:min-h-[52px] sm:text-lg"
+                  disabled={
+                    saving ||
+                    privileged ||
+                    effectiveFormLocked ||
+                    dailyWorkLogOff ||
+                    dayWorkedCap <= SUM_COMPARE_EPS ||
+                    dataAttendanceTooLow
+                  }
+                  onClick={() => void postReport("draft")}
+                >
+                  {saving ? <Loader2 className="h-6 w-6 animate-spin" /> : "Uložit rozpracováno"}
+                </Button>
+              </div>
+
               {!segmentsDayLoading && dayWorkedCap > 0 ? (
-                <div className="space-y-5">
+                <div className="space-y-5 border-t-2 border-neutral-200 pt-6">
+                  <p className="text-sm font-semibold uppercase tracking-wide text-neutral-600">
+                    Souhrn a kontrola
+                  </p>
                   {timeFullySplit ? (
-                    <p className="rounded-xl border-2 border-emerald-700 bg-emerald-50 px-4 py-4 text-base font-medium text-emerald-950 sm:text-sm">
+                    <p className="rounded-xl border-2 border-emerald-700 bg-emerald-50 px-4 py-4 text-base font-medium text-emerald-950">
                       {noTimeLeftToSplit && formHoursCap <= SUM_COMPARE_EPS
                         ? status === "approved"
                           ? "Celý den je pokrytý tarifem a zakázkou z terminálu — řádky výkazu nejsou potřeba. Výkaz je schválen."
@@ -1692,7 +1736,7 @@ export default function EmployeeDailyReportsPage() {
                     </p>
                   ) : null}
                   {(overCap || overUnlocked) && (
-                    <p className="text-sm font-medium text-red-700">
+                    <p className="text-base font-medium text-red-700">
                       Součet hodin překračuje dostupný čas — upravte řádky ve výkazu.
                     </p>
                   )}
@@ -1705,217 +1749,165 @@ export default function EmployeeDailyReportsPage() {
                   ) : null}
                 </div>
               ) : null}
+            </CardContent>
+          </Card>
 
-              <div className="space-y-4 rounded-xl border-2 border-neutral-950 bg-white p-4 sm:p-5">
-                <div>
-                  <p className="text-lg font-semibold text-neutral-950 sm:text-base">
-                    Rozdělení práce do řádků
-                  </p>
-                  <p className="mt-1 text-base text-neutral-800 sm:text-sm">
-                    {closedSegments.length === 0
-                      ? formEditableByAttendance
-                        ? `Kolik hodin jste na čem pracoval? Součet řádků musí dát dohromady ${round2(formHoursCap)} h (podle docházky). Zbývá vykázat ještě ${zbýváVeFormuláři} h v řádcích.`
-                        : "Pro vyplnění výkazu potřebujete kompletní docházku nebo úseky z terminálu."
-                      : formHoursCap > SUM_COMPARE_EPS
-                        ? `Kolik hodin jste na čem pracoval? Do řádků dejte nejvýše ${round2(formHoursCap)} h (bez tarifu a zakázky z terminálu). Zbývá v řádcích: ${zbýváVeFormuláři} h.`
-                        : noTimeLeftToSplit
-                          ? "Žádné hodiny k ručnímu rozvržení — zůstaly jen tarify a zakázky uzamčené z terminálu."
-                          : "Hodiny nelze upravit (funkce vypnutá nebo uzamčení výkazu)."}
-                  </p>
-                </div>
+          {selectedDay && dayKey ? (
+            <>
+              <Card className={cn(cardBox, "overflow-hidden")}>
+                <CardHeader className="space-y-1 pb-2">
+                  <CardTitle className={cardTitle}>Docházka pro {dayKey}</CardTitle>
+                  <CardDescription className={cardDesc}>
+                    Shrnutí záznamů příchodu a odchodu
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-base leading-relaxed text-neutral-900 sm:text-sm">
+                  {attendanceLoading ? (
+                    <p className="flex items-center gap-2 text-neutral-800">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Načítám…
+                    </p>
+                  ) : daySummary ? (
+                    <>
+                      <p>
+                        <span className="font-medium text-neutral-950">Příchod:</span>{" "}
+                        {daySummary.checkIn ?? "—"}
+                      </p>
+                      <p>
+                        <span className="font-medium text-neutral-950">Odchod:</span>{" "}
+                        {daySummary.checkOut ?? "—"}
+                      </p>
+                      {daySummary.totalSpanHours != null ? (
+                        <p>
+                          <span className="font-medium text-neutral-950">Mezi příchodem a odchodem:</span>{" "}
+                          <span className="font-semibold tabular-nums text-neutral-950">
+                            {daySummary.totalSpanHours} h
+                          </span>
+                        </p>
+                      ) : null}
+                      {daySummary.breakHours > 0 ? (
+                        <p>
+                          <span className="font-medium text-neutral-950">Pauza (odhad):</span>{" "}
+                          <span className="font-semibold tabular-nums text-neutral-950">
+                            {daySummary.breakHours} h
+                          </span>
+                        </p>
+                      ) : null}
+                      <p>
+                        <span className="font-medium text-neutral-950">Čistá práce (− pauza):</span>{" "}
+                        <span className="font-semibold tabular-nums text-neutral-950">
+                          {daySummary.hoursWorked != null ? `${daySummary.hoursWorked} h` : "—"}
+                        </span>
+                      </p>
+                      <p className="text-neutral-900">{daySummary.statusLabel}</p>
+                    </>
+                  ) : (
+                    <p className="text-neutral-900">Pro tento den nejsou záznamy docházky.</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className={cn(cardBox, "overflow-hidden")}>
+                <CardHeader className="space-y-1 pb-2">
+                  <CardTitle className={cardTitle}>Úseky práce (terminál)</CardTitle>
+                  <CardDescription className={cardDesc}>
+                    Evidence z docházky — částky jsou orientační do schválení výkazu administrátorem.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 text-sm text-neutral-900">
+                  {segmentsDayLoading ? (
+                    <p className="flex items-center gap-2">
+                      <Loader2 className="h-4 w-4 animate-spin" /> Načítám segmenty…
+                    </p>
+                  ) : closedSegments.length === 0 ? (
+                    <p>
+                      Za tento den nejsou k dispozici žádné uzavřené úseky z terminálu — výkaz můžete vyplnit z
+                      odpracované docházky. Úseky z terminálu jsou jen doplňkový přehled.
+                    </p>
+                  ) : (
+                    <ul className="space-y-3">
+                      {closedSegments.map((seg: WorkSegmentClient) => {
+                        const st = seg.sourceType === "tariff" ? "Tarif" : "Zakázka";
+                        const name =
+                          typeof seg.displayName === "string"
+                            ? seg.displayName
+                            : String(seg.jobName || seg.tariffName || "—");
+                        const dh = segmentDurationHours(seg);
+                        const h = dh > 0 ? `${dh} h` : "—";
+                        const amt =
+                          typeof seg.totalAmountCzk === "number"
+                            ? formatKc(seg.totalAmountCzk)
+                            : "—";
+                        const lk = getTerminalSegmentLockKind(seg);
+                        const lockHint =
+                          lk === "none"
+                            ? "Úsek lze rozvrhnout ve výkazu"
+                            : lk === "tariff_terminal"
+                              ? "Tarif — automaticky, bez formuláře"
+                              : "Uzamčeno z terminálu — v hlavním formuláři se nevyplňuje";
+                        return (
+                          <li
+                            key={seg.id}
+                            className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border-2 border-neutral-950 bg-white px-3 py-3"
+                          >
+                            <div>
+                              <span className="text-xs font-semibold uppercase text-neutral-950">{st}</span>
+                              <p className="font-semibold text-neutral-950">{name}</p>
+                              <p className="text-xs text-neutral-900">{segmentTimeRangeLabel(seg)}</p>
+                              <p className="mt-1 text-[11px] text-neutral-900">{lockHint}</p>
+                            </div>
+                            <div className="text-right text-xs tabular-nums text-neutral-950">
+                              <p>{h}</p>
+                              <p className="text-neutral-800">{amt}</p>
+                            </div>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="rounded-xl border-2 border-neutral-950 bg-white p-4 text-sm leading-relaxed text-neutral-900 sm:p-5">
+                <p className="text-base font-semibold text-neutral-950">Jak funguje výkaz za den</p>
+                <ul className="mt-3 list-disc space-y-2 pl-5 text-neutral-800">
+                  <li>
+                    <strong className="text-neutral-950">Úseky z terminálu</strong> jsou jen informativní přehled
+                    (včetně tarifů).
+                  </li>
+                  <li>
+                    <strong className="text-neutral-950">Tarif</strong> z terminálu se započte automaticky, odečte
+                    se z času pro výkaz a <strong className="text-neutral-950">nevyplňuje se</strong> — oceňuje se
+                    podle ceníku tarifu.
+                  </li>
+                  <li>
+                    <strong className="text-neutral-950">Hlavní formulář</strong> slouží k rozdělení zbývajícího
+                    času: hodiny, popis, volitelná zakázka.
+                  </li>
+                </ul>
+              </div>
+
+              <div className="rounded-xl border-2 border-neutral-950 bg-white p-4 text-sm text-neutral-900 sm:p-5">
+                <p className="text-base font-semibold text-neutral-950">Ruční výběr zakázky</p>
+                <p className="mt-2 text-sm leading-relaxed text-neutral-800">
+                  Zakázky ve formuláři jsou přiřazené k vašemu účtu — nezávisle na tom, co jste vybrali na terminálu
+                  docházky.
+                </p>
                 {jobsLoading ? (
-                  <p className="flex items-center gap-2 text-base text-neutral-900 sm:text-sm">
-                    <Loader2 className="h-4 w-4 animate-spin text-neutral-950" />
+                  <p className="mt-2 flex items-center gap-2 text-sm text-neutral-900">
+                    <Loader2 className="h-4 w-4 animate-spin" />
                     Načítání přiřazených zakázek…
                   </p>
                 ) : assignedJobIds.length === 0 ? (
-                  <p className="rounded-lg border-2 border-neutral-950 bg-white px-3 py-3 text-base text-neutral-900 sm:text-sm">
-                    Nemáte přiřazené žádné zakázky — v rozbalovacím poli je jen „Bez zakázky / interní práce“.
-                  </p>
+                  <p className="mt-2 text-sm font-medium text-neutral-950">Nemáte přiřazené žádné zakázky.</p>
                 ) : (
-                  <p className="text-base text-neutral-800 sm:text-sm">
-                    Zakázku volte z přiřazení — nebo ponechte interní práci bez zakázky.
+                  <p className="mt-2 text-sm text-neutral-800">
+                    U každého řádku je pole <strong className="text-neutral-950">Zakázka</strong> (
+                    {assignedJobs.length} přiřazených).
                   </p>
                 )}
-                <div className="space-y-4">
-                  {dayFormRows.map((row) => (
-                    <div
-                      key={row.rowId}
-                      className="flex flex-col gap-4 rounded-xl border-2 border-neutral-950 bg-white p-4 lg:grid lg:grid-cols-[120px_1fr_minmax(0,1fr)_auto] lg:items-end lg:gap-4"
-                    >
-                      <div className="w-full space-y-2 lg:w-auto">
-                        <Label className="text-sm font-medium text-neutral-950 sm:text-xs">
-                          Kolik hodin jste na tom pracoval? <span className="text-red-700">*</span>
-                        </Label>
-                        <Input
-                          inputMode="decimal"
-                          className="h-14 min-h-[52px] border-2 border-neutral-950 px-4 text-lg tabular-nums text-neutral-950 sm:h-12 sm:text-base"
-                          placeholder="např. 1,5"
-                          value={row.hoursStr}
-                          onChange={(e) =>
-                            setDayFormRows((prev) =>
-                              prev.map((x) =>
-                                x.rowId === row.rowId ? { ...x, hoursStr: e.target.value } : x
-                              )
-                            )
-                          }
-                          disabled={hoursDisabled}
-                        />
-                      </div>
-                      <div className="min-w-0 space-y-2">
-                        <Label className="text-sm font-medium text-neutral-950 sm:text-xs">
-                          Co jste dělali?
-                        </Label>
-                        <Textarea
-                          rows={3}
-                          className="min-h-[96px] border-2 border-neutral-950 px-4 py-3 text-base text-neutral-950 sm:min-h-[80px] sm:text-sm"
-                          placeholder="Stručně popište práci (u řádku bez zakázky je popis povinný)…"
-                          value={row.lineNote}
-                          onChange={(e) =>
-                            setDayFormRows((prev) =>
-                              prev.map((x) =>
-                                x.rowId === row.rowId ? { ...x, lineNote: e.target.value } : x
-                              )
-                            )
-                          }
-                          disabled={effectiveFormLocked || dailyWorkLogOff}
-                        />
-                      </div>
-                      <div className="min-w-0 space-y-2">
-                        <Label className="text-sm font-medium text-neutral-950 sm:text-xs">Zakázka</Label>
-                        <p className="text-sm text-neutral-600 sm:text-xs">volitelné</p>
-                        <select
-                          className="mt-1 flex h-14 min-h-[52px] w-full rounded-md border-2 border-neutral-950 bg-white px-4 text-lg text-neutral-950 sm:h-12 sm:text-base"
-                          value={row.jobId}
-                          onChange={(e) =>
-                            setDayFormRows((prev) =>
-                              prev.map((x) =>
-                                x.rowId === row.rowId ? { ...x, jobId: e.target.value } : x
-                              )
-                            )
-                          }
-                          disabled={jobSelectDisabled}
-                        >
-                          <option value="">Bez zakázky / interní práce</option>
-                          {assignedJobs.map((j) => (
-                            <option key={j.id} value={j.id}>
-                              {j.name || j.id}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex justify-stretch pt-1 lg:justify-center">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="icon"
-                          className="h-14 w-full min-h-[52px] min-w-0 border-2 border-neutral-950 bg-white sm:h-12 sm:w-12 sm:min-w-[48px] lg:size-12"
-                          disabled={
-                            effectiveFormLocked || dailyWorkLogOff || dayFormRows.length <= 1
-                          }
-                          onClick={() =>
-                            setDayFormRows((prev) => {
-                              const next = prev.filter((x) => x.rowId !== row.rowId);
-                              return next.length > 0
-                                ? next
-                                : [
-                                    {
-                                      rowId: newSplitRowId(),
-                                      jobId: "",
-                                      hoursStr: "",
-                                      lineNote: "",
-                                    },
-                                  ];
-                            })
-                          }
-                          aria-label="Smazat řádek"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  className="min-h-[44px] w-full border-2 border-neutral-950 bg-white text-neutral-950 hover:bg-neutral-100 sm:w-auto"
-                  disabled={hoursDisabled}
-                  onClick={() =>
-                    setDayFormRows((prev) => [
-                      ...prev,
-                      {
-                        rowId: newSplitRowId(),
-                        jobId: "",
-                        hoursStr: "",
-                        lineNote: "",
-                      },
-                    ])
-                  }
-                >
-                  <Plus className="mr-2 h-4 w-4" />
-                  Přidat řádek
-                </Button>
               </div>
-
-              <div className="space-y-2 rounded-lg border-2 border-neutral-950 bg-white p-4">
-                <Label htmlFor="dr-note" className="text-neutral-950">
-                  Poznámka
-                </Label>
-                <Textarea
-                  id="dr-note"
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  disabled={effectiveFormLocked}
-                  rows={3}
-                  className="min-h-[88px] border-2 border-neutral-950 px-4 py-3 text-base text-neutral-950 sm:text-sm"
-                />
-              </div>
-
-              {status === "pending" ? (
-                <p className="rounded-lg border-2 border-neutral-950 bg-white px-4 py-3 text-sm text-neutral-950">
-                  Výkaz čeká na schválení. Úpravy nejsou možné, dokud ho administrátor nevrátí nebo
-                  nezamítne.
-                </p>
-              ) : null}
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                <Button
-                  type="button"
-                  variant="default"
-                  className="min-h-[48px] w-full sm:w-auto"
-                  disabled={
-                    saving ||
-                    privileged ||
-                    effectiveFormLocked ||
-                    dailyWorkLogOff ||
-                    dayWorkedCap <= SUM_COMPARE_EPS ||
-                    dataAttendanceTooLow
-                  }
-                  onClick={() => void postReport("draft")}
-                >
-                  {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : "Uložit rozpracováno"}
-                </Button>
-                <Button
-                  type="button"
-                  variant="success"
-                  className="min-h-[48px] w-full sm:w-auto"
-                  disabled={
-                    saving ||
-                    privileged ||
-                    effectiveFormLocked ||
-                    dailyWorkLogOff ||
-                    dayWorkedCap <= SUM_COMPARE_EPS ||
-                    dataAttendanceTooLow
-                  }
-                  onClick={() => void postReport("submit")}
-                >
-                  {saving ? <Loader2 className="h-5 w-5 animate-spin" /> : "Odeslat ke schválení"}
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+            </>
+          ) : null}
         </div>
       </div>
     </div>
