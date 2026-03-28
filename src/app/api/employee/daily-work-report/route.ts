@@ -367,6 +367,7 @@ export async function POST(request: NextRequest) {
           companyId,
           employeeId,
           date,
+          callerUid,
           emp,
           terminalRows.map((r) => ({ segmentId: r.segmentId, jobId: r.jobId, hours: r.hours })),
           mode

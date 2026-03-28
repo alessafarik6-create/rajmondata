@@ -2,7 +2,7 @@
  * Serverová validace rozdělení času denního výkazu mezi zakázky (uzavřené segmenty terminálu).
  */
 
-import type { Firestore } from "firebase-admin/firestore";
+import type { Firestore, QueryDocumentSnapshot } from "firebase-admin/firestore";
 import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 import {
   DAILY_REPORT_ROW_SOURCE_MANUAL,
@@ -19,6 +19,9 @@ import {
 } from "@/lib/work-segment-rates";
 
 const EPS = 0.02;
+
+/** Stejné minimum jako `FILTER_MIN_DURATION` v `daily-work-report-day-form.ts`. */
+const MIN_SEGMENT_HOURS_DAILY_REPORT = 0.0001;
 
 export type SegmentAllocOut = {
   segmentId: string | null;
@@ -78,6 +81,52 @@ function segmentLockedFromTerminalData(d: Record<string, unknown>): {
 }
 
 /**
+ * Sloučí stejné zdroje segmentů jako klient výkazu: workDayId, employeeId+date a případně auth uid.
+ */
+async function fetchWorkSegmentDocsForDailyReport(
+  db: Firestore,
+  companyId: string,
+  employeeId: string,
+  callerUid: string,
+  date: string
+): Promise<Map<string, QueryDocumentSnapshot>> {
+  const col = db.collection("companies").doc(companyId).collection("work_segments");
+  const workDayId = `${employeeId}__${date}`;
+  const tasks = [
+    col.where("workDayId", "==", workDayId).get(),
+    col.where("employeeId", "==", employeeId).where("date", "==", date).get(),
+  ];
+  if (callerUid && callerUid !== employeeId) {
+    tasks.push(col.where("employeeId", "==", callerUid).where("date", "==", date).get());
+    tasks.push(col.where("workDayId", "==", `${callerUid}__${date}`).get());
+  }
+  const snaps = await Promise.all(tasks);
+  const byId = new Map<string, QueryDocumentSnapshot>();
+  for (const snap of snaps) {
+    for (const d of snap.docs) {
+      byId.set(d.id, d);
+    }
+  }
+  return byId;
+}
+
+/** Uzavřené úseky job/tarif s kladnou délkou — odpovídá `closedTerminalSegmentsInDayScopedList` + `effectiveLockedUnlocked` na klientovi. */
+function closedReportableTerminalSegmentIds(
+  segmentById: Map<string, QueryDocumentSnapshot>
+): Set<string> {
+  const out = new Set<string>();
+  for (const docSnap of segmentById.values()) {
+    const d = docSnap.data() as Record<string, unknown>;
+    if (d.closed !== true) continue;
+    const st = String(d.sourceType || "").trim();
+    if (st !== "job" && st !== "tariff") continue;
+    if (segmentDurationFromDoc(d) <= MIN_SEGMENT_HOURS_DAILY_REPORT) continue;
+    out.add(docSnap.id);
+  }
+  return out;
+}
+
+/**
  * Rozdělení času mezi zakázky (podle uzavřených segmentů).
  * Součet hodin na segment nesmí překročit durationHours; při odeslání ke schválení musí být celý čas rozvržen.
  */
@@ -86,6 +135,7 @@ export async function resolveSegmentJobSplits(
   companyId: string,
   employeeId: string,
   date: string,
+  callerUid: string,
   emp: Record<string, unknown>,
   rawSplits: Array<{ segmentId?: string; jobId?: string; hours?: unknown }> | undefined,
   mode: "draft" | "submit"
@@ -121,31 +171,30 @@ export async function resolveSegmentJobSplits(
 
   const list = Array.isArray(rawSplits) ? rawSplits : [];
   if (list.length === 0) {
-    throw new Error("Chybí rozdělení času podle zakázek — doplňte alespoň jeden řádek u každého úseku.");
+    throw new Error(
+      "Chybí rozdělení času — doplňte alespoň jeden řádek u každého úseku terminálu (zakázka je volitelná)."
+    );
   }
 
-  const segSnap = await db
-    .collection("companies")
-    .doc(companyId)
-    .collection("work_segments")
-    .where("employeeId", "==", employeeId)
-    .where("date", "==", date)
-    .get();
-
-  const byId = new Map(segSnap.docs.map((d) => [d.id, d]));
-  const closedIds = new Set(
-    segSnap.docs
-      .filter((d) => (d.data() as { closed?: boolean }).closed === true)
-      .map((d) => d.id)
+  const segmentById = await fetchWorkSegmentDocsForDailyReport(
+    db,
+    companyId,
+    employeeId,
+    callerUid,
+    date
   );
+  const closedIds = closedReportableTerminalSegmentIds(segmentById);
 
   if (closedIds.size === 0) {
     throw new Error(
-      "Pro tento den nejsou žádné uzavřené úseky z docházkového terminálu — nelze uložit výkaz."
+      "Pro tento den nejsou žádné uzavřené úseky z terminálu (job/tarif) s kladnou délkou — nelze uložit výkaz."
     );
   }
 
   const bySegment = new Map<string, Array<{ jobId: string; hours: number }>>();
+  const expectedWorkDayId = `${employeeId}__${date}`;
+  const expectedWorkDayIdAuth =
+    callerUid && callerUid !== employeeId ? `${callerUid}__${date}` : "";
   for (const row of list) {
     const sid = String(row.segmentId || "").trim();
     let jid = String(row.jobId ?? "").trim();
@@ -157,12 +206,21 @@ export async function resolveSegmentJobSplits(
       throw new Error("Počet hodin musí být kladné číslo.");
     }
 
-    const docSnap = byId.get(sid);
+    const docSnap = segmentById.get(sid);
     if (!docSnap) {
       throw new Error(`Úsek ${sid} neexistuje nebo nepatří k tomuto dni.`);
     }
     const d = docSnap.data() as Record<string, unknown>;
-    if (String(d.employeeId || "") !== employeeId || String(d.date || "") !== date) {
+    const segEid = String(d.employeeId || "").trim();
+    if (segEid !== employeeId && segEid !== callerUid) {
+      throw new Error("Neplatný segment.");
+    }
+    const segDate = String(d.date || "").trim();
+    const segWd = String(d.workDayId || "").trim();
+    const wdOk =
+      segWd === expectedWorkDayId ||
+      (expectedWorkDayIdAuth !== "" && segWd === expectedWorkDayIdAuth);
+    if (segDate !== date && !wdOk) {
       throw new Error("Neplatný segment.");
     }
     if (d.closed !== true) {
@@ -212,10 +270,12 @@ export async function resolveSegmentJobSplits(
   for (const id of closedIds) {
     const rows = bySegment.get(id);
     if (!rows || rows.length === 0) {
-      throw new Error("U každého uzavřeného úseku docházky musíte přidat alespoň jeden řádek s zakázkou a hodinami.");
+      throw new Error(
+        "U každého uzavřeného úseku terminálu přidejte alespoň jeden řádek s počtem hodin. Zakázka je volitelná (může jít o interní práci bez zakázky)."
+      );
     }
 
-    const docSnap = byId.get(id)!;
+    const docSnap = segmentById.get(id)!;
     const d = docSnap.data() as Record<string, unknown>;
     const duration = segmentDurationFromDoc(d);
     if (duration <= 0) {
@@ -458,6 +518,7 @@ export async function resolveTerminalPlusManualJobSplits(
     companyId,
     employeeId,
     date,
+    callerUid,
     emp,
     terminalRows.map((r) => ({ segmentId: r.segmentId, jobId: r.jobId, hours: r.hours })),
     mode
