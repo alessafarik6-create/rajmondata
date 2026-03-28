@@ -25,6 +25,7 @@ import {
   estimateMonthlyLicenseCzk,
   mergeCompanyLicenseUpdate,
   normalizeLegacyWarehouseModule,
+  platformLicensePatchFromLegacyDialog,
   writeCompanyLicenseAndDenorm,
   type CompanyLicenseUpdatePayload,
 } from "./company-license-admin";
@@ -221,22 +222,22 @@ export async function updateCompany(
   }
 
   if (payload.license && typeof payload.license === "object") {
-    const license = buildLicenseForFirestore(payload.license);
-    updates.license = license;
-    updates.licenseId = license.licenseType as string;
-    updates.enabledModuleIds = license.enabledModules;
+    const licenseFs = buildLicenseForFirestore(payload.license);
+    updates.license = licenseFs;
+    updates.licenseId = licenseFs.licenseType as string;
+    updates.enabledModuleIds = licenseFs.enabledModules;
 
-    const enabledKeys = (license.enabledModules as string[]).filter((k): k is ModuleKey =>
+    const enabledKeys = (licenseFs.enabledModules as string[]).filter((k): k is ModuleKey =>
       MODULE_KEYS.includes(k as ModuleKey)
     );
     const nowIso = new Date().toISOString();
     const existingLic = await ensureCompanyLicenseDoc(db, id);
     const syncModules = buildPlatformModulesSyncFromLegacy(enabledKeys);
-    let mergedFromLegacy = mergeCompanyLicenseUpdate(
-      existingLic,
-      { modules: syncModules },
-      nowIso
-    );
+    const platformFromDialog = platformLicensePatchFromLegacyDialog(licenseFs, payload.license);
+    let mergedFromLegacy = mergeCompanyLicenseUpdate(existingLic, {
+      ...platformFromDialog,
+      modules: syncModules,
+    }, nowIso);
     mergedFromLegacy = applyExpiredLicenseStatus(mergedFromLegacy);
     await writeCompanyLicenseAndDenorm(db, id, mergedFromLegacy);
   }

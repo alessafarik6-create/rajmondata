@@ -46,6 +46,50 @@ export type CompanyLicenseUpdatePayload = {
   employeePricing?: { perEmployeeCzk?: number };
 };
 
+/**
+ * Dialog „Licence a moduly“ zapisuje legacy `license` na organizaci.
+ * Portál řídí viditelnost modulů podle `platformLicense` / `moduleEntitlements` z `company_licenses`
+ * (denorm na `companies`). Bez tohoto patch zůstane licence „pending“ a menu skryje vše.
+ */
+export function platformLicensePatchFromLegacyDialog(
+  licenseFirestore: Record<string, unknown>,
+  update: { expirationDate?: string | null; licenseExpiresAt?: string | null }
+): CompanyLicenseUpdatePayload {
+  const raw = String(licenseFirestore.status ?? "active").toLowerCase();
+  const expRaw =
+    (licenseFirestore.expirationDate as string | null | undefined) ??
+    update.expirationDate ??
+    update.licenseExpiresAt ??
+    null;
+  const expiresAt = expRaw && String(expRaw).trim() !== "" ? String(expRaw) : null;
+
+  if (raw === "expired") {
+    return {
+      platformLicense: {
+        active: false,
+        status: "expired",
+        expiresAt,
+      },
+    };
+  }
+  if (raw === "suspended") {
+    return {
+      platformLicense: {
+        active: false,
+        status: "suspended",
+        expiresAt,
+      },
+    };
+  }
+  return {
+    platformLicense: {
+      active: true,
+      status: "active",
+      expiresAt,
+    },
+  };
+}
+
 function recalcAttendancePricing(license: CompanyLicenseDoc): CompanyLicenseDoc {
   const n = license.employeePricing.lastEmployeeCount;
   const per = license.employeePricing.perEmployeeCzk;

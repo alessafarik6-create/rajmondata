@@ -99,16 +99,5 @@ export function hasActiveModuleAccess(
     result = Boolean(globalRow?.activeGlobally);
   }
 
-  if (process.env.NODE_ENV === "development") {
-    console.log("[hasActiveModuleAccess]", moduleCode, {
-      ORG_MODULES: company.moduleEntitlements,
-      explicitOrgEntitlement: explicit,
-      GLOBAL_MODULES: catalog,
-      GLOBAL_MODULE_ROW: globalRow,
-      usedSource: explicit ? "organization" : "globalFallback",
-      result,
-    });
-  }
-
   return result;
 }
