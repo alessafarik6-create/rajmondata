@@ -24,6 +24,7 @@ import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
 } from "@/lib/warehouse-production-access";
+import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 
 export type EmployeePortalSidebarProps = {
   mobileSheetClose?: () => void;
@@ -59,6 +60,7 @@ export function EmployeePortalSidebar({
   const { data: employeeDoc } = useDoc<any>(employeeRef);
   const { company } = useCompany();
   const portalRole = String(profile?.role || "employee");
+  const platformCatalog = useMergedPlatformModuleCatalog();
 
   const links = useMemo(() => {
     const showDaily = isDailyWorkLogEnabled(employeeDoc);
@@ -66,7 +68,7 @@ export function EmployeePortalSidebar({
     const showSklad =
       company &&
       !isCompanyLicenseBlocking(company) &&
-      hasActiveModuleAccess(company, "sklad") &&
+      hasActiveModuleAccess(company, "sklad", platformCatalog) &&
       userCanAccessWarehousePortal({
         role: portalRole,
         globalRoles: profile?.globalRoles,
@@ -75,7 +77,7 @@ export function EmployeePortalSidebar({
     const showVyroba =
       company &&
       !isCompanyLicenseBlocking(company) &&
-      hasActiveModuleAccess(company, "vyroba") &&
+      hasActiveModuleAccess(company, "vyroba", platformCatalog) &&
       userCanAccessProductionPortal({
         role: portalRole,
         globalRoles: profile?.globalRoles,
@@ -113,7 +115,7 @@ export function EmployeePortalSidebar({
       { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
     ];
     return all;
-  }, [t, employeeDoc, company, portalRole, profile?.globalRoles]);
+  }, [t, employeeDoc, company, portalRole, profile?.globalRoles, platformCatalog]);
 
   const linkClass = (href: string) =>
     cn(

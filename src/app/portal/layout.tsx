@@ -66,6 +66,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   } = useCompany();
 
   const firestore = useFirestore();
+  const platformCatalog = useMergedPlatformModuleCatalog();
 
   const profileEmployeeRef = useMemoFirebase(
     () =>
@@ -171,7 +172,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       }
     }
     if (vyrobaPath) {
-      if (!hasActiveModuleAccess(company, "vyroba")) {
+      if (!hasActiveModuleAccess(company, "vyroba", platformCatalog)) {
         router.replace("/portal/dashboard");
         return;
       }

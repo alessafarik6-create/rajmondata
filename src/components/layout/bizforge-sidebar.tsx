@@ -34,6 +34,7 @@ import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
 } from '@/lib/warehouse-production-access';
+import { useMergedPlatformModuleCatalog } from '@/contexts/platform-module-catalog-context';
 
 export type BizForgeSidebarProps = {
   /**
@@ -78,6 +79,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     [firestore, companyId, userProfile?.employeeId, role]
   );
   const { data: employeeRow } = useDoc(employeeRowRef);
+  const platformCatalog = useMergedPlatformModuleCatalog();
 
   const adminLinks = [
     { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },
@@ -128,7 +130,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     if (link.module === null) return true;
     if (!company) return false;
     if (isCompanyLicenseBlocking(company)) return false;
-    if (!hasActiveModuleAccess(company, link.module)) return false;
+    if (!hasActiveModuleAccess(company, link.module, platformCatalog)) return false;
     if (link.module === 'sklad') {
       return userCanAccessWarehousePortal({
         role,

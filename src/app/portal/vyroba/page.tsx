@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import { PRODUCTION_STATUS_LABELS, type ProductionRecordRow } from "@/lib/production-types";
 import {
@@ -53,6 +54,7 @@ export default function VyrobaListPage() {
   const { toast } = useToast();
   const router = useRouter();
   const { company, companyId } = useCompany();
+  const platformCatalog = useMergedPlatformModuleCatalog();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -73,7 +75,7 @@ export default function VyrobaListPage() {
   const accessOk =
     company &&
     !isCompanyLicenseBlocking(company) &&
-    hasActiveModuleAccess(company, "vyroba") &&
+    hasActiveModuleAccess(company, "vyroba", platformCatalog) &&
     userCanAccessProductionPortal({
       role,
       globalRoles: profile?.globalRoles,
@@ -111,7 +113,7 @@ export default function VyrobaListPage() {
   const jobsModuleOn =
     company &&
     !isCompanyLicenseBlocking(company) &&
-    hasActiveModuleAccess(company, "jobs");
+    hasActiveModuleAccess(company, "jobs", platformCatalog);
 
   if (!user || !firestore || !companyId) {
     return (

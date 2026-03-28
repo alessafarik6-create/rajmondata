@@ -20,18 +20,20 @@ import {
   deleteUser,
   type User,
 } from 'firebase/auth';
-import { doc, writeBatch, serverTimestamp } from 'firebase/firestore';
+import { doc, writeBatch, serverTimestamp, getDocs, collection } from 'firebase/firestore';
 import { useToast } from '@/hooks/use-toast';
 import {
   ORGANIZATIONS_COLLECTION,
   COMPANIES_COLLECTION,
   USERS_COLLECTION,
   COMPANY_LICENSES_COLLECTION,
+  PLATFORM_MODULES_COLLECTION,
 } from '@/lib/firestore-collections';
+import { companyDocPlatformFields, createPendingCompanyLicense } from '@/lib/company-license-record';
 import {
-  createPendingCompanyLicense,
-  companyDocPlatformFields,
-} from '@/lib/company-license-record';
+  buildMergedPlatformCatalogMap,
+  companyLicenseFromCatalogForNewOrg,
+} from '@/lib/platform-module-catalog';
 
 type LookupCompanyAddress = {
   street: string;
@@ -281,7 +283,16 @@ export default function RegisterPage() {
 
       // 3. Minimální metadata firmy — žádné demo záznamy, žádné subkolekce (zakázky, zákazníci, …).
       // Kolekce jako jobs / customers / jobTemplates se vytvoří až při prvním použití.
-      const pendingLicense = createPendingCompanyLicense(companyId);
+      // Licence: výchozí moduly z globálního katalogu platform_modules (+ fallback z kódu).
+      let pendingLicense = createPendingCompanyLicense(companyId);
+      try {
+        const modSnap = await getDocs(collection(db, PLATFORM_MODULES_COLLECTION));
+        const catalogDocs = modSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const catalogMap = buildMergedPlatformCatalogMap(catalogDocs);
+        pendingLicense = companyLicenseFromCatalogForNewOrg(companyId, catalogMap);
+      } catch (e) {
+        console.warn("[register] platform_modules read failed, using empty license modules", e);
+      }
       const platformDenorm = companyDocPlatformFields(pendingLicense);
       const companyPayload = {
         id: companyId,

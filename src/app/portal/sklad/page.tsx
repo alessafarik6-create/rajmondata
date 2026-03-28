@@ -35,6 +35,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessWarehousePortal } from "@/lib/warehouse-production-access";
 import type { InventoryItemRow, InventoryMovementRow } from "@/lib/inventory-types";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -61,6 +62,7 @@ export default function SkladPage() {
   const { toast } = useToast();
   const router = useRouter();
   const { company, companyId } = useCompany();
+  const platformCatalog = useMergedPlatformModuleCatalog();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -81,7 +83,7 @@ export default function SkladPage() {
   const accessOk =
     company &&
     !isCompanyLicenseBlocking(company) &&
-    hasActiveModuleAccess(company, "sklad") &&
+    hasActiveModuleAccess(company, "sklad", platformCatalog) &&
     userCanAccessWarehousePortal({
       role,
       globalRoles: profile?.globalRoles,
@@ -157,7 +159,7 @@ export default function SkladPage() {
   const vyrobaEnabled =
     company &&
     !isCompanyLicenseBlocking(company) &&
-    hasActiveModuleAccess(company, "vyroba");
+    hasActiveModuleAccess(company, "vyroba", platformCatalog);
 
   if (!user || !firestore || !companyId) {
     return (
