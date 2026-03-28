@@ -56,6 +56,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
 import { formatKc } from "@/lib/employee-money";
+import { AdminDailyWorkReportDetailSheet } from "@/components/portal/AdminDailyWorkReportDetailSheet";
 
 type AttendanceType = "check_in" | "break_start" | "break_end" | "check_out";
 
@@ -150,6 +151,9 @@ export function AttendancePortalPage() {
   const [currentTime, setCurrentTime] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<AttendanceType | null>(null);
   const [reviewBusy, setReviewBusy] = useState<string | null>(null);
+  const [adminDwrDetail, setAdminDwrDetail] = useState<{ employeeId: string; date: string } | null>(
+    null
+  );
 
   useEffect(() => {
     const updateTime = () => {
@@ -225,7 +229,7 @@ export function AttendancePortalPage() {
     return query(
       collection(firestore, "companies", companyId, "daily_work_reports"),
       orderBy("updatedAt", "desc"),
-      limit(120)
+      limit(800)
     );
   }, [firestore, companyId, isAttendancePrivileged]);
 
