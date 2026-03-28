@@ -126,6 +126,7 @@ function localDateAtEnd(d: Date): Date {
 }
 
 function getRecordDate(row: Record<string, unknown>): Date | null {
+  if (row == null || typeof row !== "object") return null;
   const toDateMaybe = (v: unknown): Date | null => {
     if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
     if (typeof v === "string") {
@@ -378,6 +379,7 @@ export default function AttendanceOverviewPage() {
     () =>
       ((Array.isArray(workSegmentsData) ? workSegmentsData : []) as WorkSegmentClient[]).filter(
         (row) => {
+          if (row == null || typeof row !== "object") return false;
           const d = getRecordDate(row as unknown as Record<string, unknown>);
           if (!d) return false;
           return d >= normalizedRange.start && d <= normalizedRange.end;
@@ -853,11 +855,19 @@ export default function AttendanceOverviewPage() {
             </SelectTrigger>
             <SelectContent className="border-black bg-white text-black">
               <SelectItem value={ALL}>Všichni zaměstnanci</SelectItem>
-              {[...employees.values()].map((e) => (
-                <SelectItem key={e.id} value={e.id}>
-                  {e.displayName}
-                </SelectItem>
-              ))}
+              {[...employees.values()]
+                .filter(
+                  (e) =>
+                    e != null &&
+                    typeof e === "object" &&
+                    typeof e.id === "string" &&
+                    e.id.length > 0
+                )
+                .map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.displayName}
+                  </SelectItem>
+                ))}
             </SelectContent>
           </Select>
         </div>

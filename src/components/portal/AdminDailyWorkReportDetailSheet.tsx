@@ -166,7 +166,8 @@ export function AdminDailyWorkReportDetailSheet(props: {
     if (!firestore || !companyId) return null;
     return query(collection(firestore, "companies", companyId, "jobs"), limit(400));
   }, [firestore, companyId]);
-  const { data: jobsRaw = [] } = useCollection(jobsQuery);
+  const { data: jobsRawUntyped } = useCollection(jobsQuery);
+  const jobsRaw = jobsRawUntyped ?? [];
 
   const segmentsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId || !date || !hasTarget) return null;
@@ -190,28 +191,34 @@ export function AdminDailyWorkReportDetailSheet(props: {
     );
   }, [firestore, companyId, employeeId, date, authUid, hasTarget]);
 
-  const { data: segmentsRawEmp = [] } = useCollection(segmentsQuery);
-  const { data: segmentsRawUid = [] } = useCollection(segmentsUidQuery);
+  const { data: segmentsRawEmpUntyped } = useCollection(segmentsQuery);
+  const { data: segmentsRawUidUntyped } = useCollection(segmentsUidQuery);
+  const segmentsRawEmp = segmentsRawEmpUntyped ?? [];
+  const segmentsRawUid = segmentsRawUidUntyped ?? [];
 
   const segmentsRaw = useMemo(() => {
     const byId = new Map<string, WorkSegmentClient>();
-    for (const s of segmentsRawEmp as WorkSegmentClient[]) {
-      const id = String((s as { id?: string }).id ?? "");
-      if (id) byId.set(id, { ...s, id });
-    }
-    for (const s of segmentsRawUid as WorkSegmentClient[]) {
-      const id = String((s as { id?: string }).id ?? "");
-      if (id && !byId.has(id)) byId.set(id, { ...s, id });
-    }
+    const walk = (arr: unknown) => {
+      if (!Array.isArray(arr)) return;
+      for (const s of arr) {
+        if (s == null || typeof s !== "object") continue;
+        const id = String((s as { id?: string }).id ?? "").trim();
+        if (!id) continue;
+        byId.set(id, { ...(s as WorkSegmentClient), id });
+      }
+    };
+    walk(segmentsRawEmp);
+    walk(segmentsRawUid);
     return [...byId.values()];
   }, [segmentsRawEmp, segmentsRawUid]);
 
   const jobsOptions = useMemo(() => {
     const list = (Array.isArray(jobsRaw) ? jobsRaw : []) as { id?: string; name?: string }[];
     return list
+      .filter((j): j is { id?: string; name?: string } => j != null && typeof j === "object")
       .map((j) => ({
-        id: String(j.id ?? ""),
-        name: String(j.name ?? j.id ?? "").trim() || String(j.id ?? ""),
+        id: String(j.id ?? "").trim(),
+        name: String(j.name ?? j.id ?? "").trim() || String(j.id ?? "").trim(),
       }))
       .filter((j) => j.id);
   }, [jobsRaw]);
@@ -222,6 +229,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
     const list = (Array.isArray(jobsRaw) ? jobsRaw : []) as Record<string, unknown>[];
     const m = new Map<string, number>();
     for (const j of list) {
+      if (j == null || typeof j !== "object") continue;
       const id = String(j.id ?? "").trim();
       if (!id) continue;
       const hr = Number(j.hourlyRate);

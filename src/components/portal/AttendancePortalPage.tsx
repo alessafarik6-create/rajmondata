@@ -1011,7 +1011,7 @@ export function AttendancePortalPage() {
           employeeId={adminDwrDetail?.employeeId ?? ""}
           date={adminDwrDetail?.date ?? ""}
           user={user}
-          authUid={user.uid}
+          authUid={user?.uid ?? ""}
         />
       ) : null}
     </div>

@@ -172,6 +172,7 @@ export function firestoreEmployeeIdMatches(
   recordEmployeeId: unknown,
   emp: EmployeeLite
 ): boolean {
+  if (!emp || typeof emp.id !== "string" || !emp.id.trim()) return false;
   const rid = String(recordEmployeeId ?? "");
   if (rid === emp.id) return true;
   if (emp.authUserId && rid === emp.authUserId) return true;
@@ -497,10 +498,18 @@ export function buildEmployeeDailyDetailRows(params: {
     dayPayoutByDate,
   } = params;
   const now = params.now ?? new Date();
+  if (!employee || typeof employee.id !== "string" || !String(employee.id).trim()) {
+    return [];
+  }
+  const safeSegments = Array.isArray(segments)
+    ? segments.filter(
+        (s): s is WorkSegmentClient => s != null && typeof s === "object"
+      )
+    : [];
   const eid = employee.id;
   const auth = employee.authUserId;
   const dayRows = attendanceRaw.filter((r) =>
-    attendanceRowMatchesEmployee(r, eid, auth)
+    r != null && typeof r === "object" && attendanceRowMatchesEmployee(r, eid, auth)
   );
   const summaries = summarizeAttendanceByDay(dayRows, {
     employeeId: eid,
@@ -525,7 +534,7 @@ export function buildEmployeeDailyDetailRows(params: {
     const bloku = countAttendanceBlocksForDay(attendanceRaw, eid, dateIso, auth);
 
     const daySegs = sortSegmentsByStart(
-      segments.filter(
+      safeSegments.filter(
         (s) =>
           firestoreEmployeeIdMatches(s.employeeId, employee) &&
           segmentCalendarDateIsoKey(s) === dateIso &&
@@ -540,7 +549,9 @@ export function buildEmployeeDailyDetailRows(params: {
     let orientacniKcTariff = 0;
     let orientacniKcJob = 0;
 
+    let segmentFallbackCounter = 0;
     for (const seg of daySegs) {
+      if (seg == null || typeof seg !== "object") continue;
       const st = String(seg.sourceType ?? "");
       const disp = segmentStartEndDisplay(seg);
       const { durationH, earningsKc, rate: r } = segmentEarningsForOverview(
@@ -549,12 +560,15 @@ export function buildEmployeeDailyDetailRows(params: {
         now
       );
       const rateKc = r != null ? r : parseSegmentHourlyRateCzk(seg);
+      const segmentRowId =
+        String(seg.id ?? "").trim() ||
+        `seg-${dateIso}-${segmentFallbackCounter++}`;
 
       if (st === "tariff") {
         if (!segmentStartTimestamp(seg)) continue;
         const label = String(seg.tariffName || seg.displayName || "").trim();
         tariffSegments.push({
-          id: seg.id,
+          id: segmentRowId,
           label: label ? `Tarif ${label}` : "Tarif",
           startHm: disp.startHm,
           endHm: disp.endHm,
@@ -571,7 +585,7 @@ export function buildEmployeeDailyDetailRows(params: {
           seg as unknown as Record<string, unknown>
         );
         jobSegments.push({
-          id: seg.id,
+          id: segmentRowId,
           label: jn ? `Zakázka: ${jn}` : "Zakázka",
           startHm: disp.startHm,
           endHm: disp.endHm,
@@ -894,6 +908,7 @@ export function aggregateDailyDetailTotalsForAllEmployees(params: {
   let paidAmountKc = 0;
   let unpaidAmountKc = 0;
   for (const emp of employees.values()) {
+    if (!emp || typeof emp.id !== "string" || !emp.id.trim()) continue;
     const rows = buildEmployeeDailyDetailRows({
       range,
       employee: emp,
