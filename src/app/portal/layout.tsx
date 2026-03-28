@@ -12,7 +12,11 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
-import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import {
+  canAccessOrganizationModule,
+  hasActiveModuleAccess,
+  isCompanyLicenseBlocking,
+} from "@/lib/platform-access";
 import { isOrganizationLicenseRecordActive } from "@/lib/organization-license";
 import {
   userCanAccessProductionPortal,
@@ -200,14 +204,17 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development" || !company || !companyId) return;
-    console.log("ORG:", company);
+    console.log("ORG (merged tenant):", company);
     console.log("LICENSE:", company.license);
+    console.log("organization.license.modules:", company.license?.modules);
     console.log("[Portal license debug]", {
       companyId,
-      licenseActive: isOrganizationLicenseRecordActive(company),
+      isLicenseActive: isOrganizationLicenseRecordActive(company),
       isCompanyLicenseBlocking: isCompanyLicenseBlocking(company),
-      sklad: hasActiveModuleAccess(company, "sklad", platformCatalog),
-      vyroba: hasActiveModuleAccess(company, "vyroba", platformCatalog),
+      canAccessModuleSklad: canAccessOrganizationModule(company, "sklad", platformCatalog),
+      canAccessModuleVyroba: canAccessOrganizationModule(company, "vyroba", platformCatalog),
+      hasActiveModuleAccessSklad: hasActiveModuleAccess(company, "sklad", platformCatalog),
+      hasActiveModuleAccessVyroba: hasActiveModuleAccess(company, "vyroba", platformCatalog),
     });
   }, [company, companyId, platformCatalog]);
 

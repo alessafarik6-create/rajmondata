@@ -67,6 +67,30 @@ export function isModuleEnabledForPlatformFromLegacyKeys(
   }
 }
 
+function licenseExpirationIsPast(exp: unknown): boolean {
+  if (exp == null) return false;
+  if (typeof exp === "string" && exp.trim() === "") return false;
+  let ms: number | null = null;
+  if (
+    typeof exp === "object" &&
+    exp !== null &&
+    "toMillis" in exp &&
+    typeof (exp as { toMillis: () => number }).toMillis === "function"
+  ) {
+    ms = (exp as { toMillis: () => number }).toMillis();
+  } else if (
+    typeof exp === "object" &&
+    exp !== null &&
+    typeof (exp as { seconds?: number }).seconds === "number"
+  ) {
+    ms = (exp as { seconds: number }).seconds * 1000;
+  } else {
+    const t = Date.parse(String(exp));
+    ms = Number.isNaN(t) ? null : t;
+  }
+  return ms != null && ms <= Date.now();
+}
+
 /** Portál: licence je aktivní podle záznamu `organization.license` / `companies.license`. */
 export function isOrganizationLicenseRecordActive(
   company: { license?: OrganizationLicenseRecord | null } | null | undefined
@@ -78,9 +102,6 @@ export function isOrganizationLicenseRecordActive(
     .toLowerCase();
   if (s !== "active") return false;
   const exp = lic.expirationDate ?? lic.licenseExpiresAt;
-  if (exp != null && String(exp).trim() !== "") {
-    const t = Date.parse(String(exp));
-    if (!Number.isNaN(t) && t <= Date.now()) return false;
-  }
+  if (licenseExpirationIsPast(exp)) return false;
   return true;
 }

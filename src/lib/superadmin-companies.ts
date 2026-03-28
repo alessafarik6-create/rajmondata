@@ -284,7 +284,8 @@ export async function updateCompany(
 
   const hasOrgUpdates = Object.keys(updates).length > 1;
   if (hasOrgUpdates) {
-    await db.collection(ORGANIZATIONS_COLLECTION).doc(id).update(updates);
-    await db.collection(COMPANIES_COLLECTION).doc(id).update(updates);
+    /** `set` + merge: vytvoří `companies/{id}` pokud chybí; `update` by po prvním úspěšném zápisu do společnosti mohl nechat portál bez pole `license`. */
+    await db.collection(ORGANIZATIONS_COLLECTION).doc(id).set(updates, { merge: true });
+    await db.collection(COMPANIES_COLLECTION).doc(id).set(updates, { merge: true });
   }
 }

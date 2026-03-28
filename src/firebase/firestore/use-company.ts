@@ -3,7 +3,10 @@
 import { useEffect, useMemo } from 'react';
 import { doc, type Timestamp } from 'firebase/firestore';
 import { useUser, useFirestore, useMemoFirebase, useDoc } from '@/firebase';
-import { COMPANIES_COLLECTION } from '@/lib/firestore-collections';
+import {
+  COMPANIES_COLLECTION,
+  ORGANIZATIONS_COLLECTION,
+} from '@/lib/firestore-collections';
 
 export type CompanyProfile = {
   id: string;
@@ -19,7 +22,7 @@ export type CompanyProfile = {
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 
-  /** Licence organizace (`companies.license`) — jednotný zdroj pro portál. */
+  /** Licence — po merge se bere z `společnosti` (stejný zdroj jako superadmin), jinak z `companies`. */
   license?: {
     status?: string;
     licenseStatus?: string;
@@ -63,7 +66,7 @@ export type CompanyProfile = {
 
   /**
    * Structured company address.
-   * Used by "Smlouva o dílo" (Dodavatel) + settings form.
+   * Used for "Smlouva o dílo" (Dodavatel) + settings form.
    */
   companyAddressStreetAndNumber?: string;
   companyAddressCity?: string;
@@ -81,7 +84,79 @@ export type CompanyProfile = {
   organizationLogoUrl?: string | null;
 };
 
-/** Jednotný výstup: companyId pouze z `users/{uid}.companyId` (žádné URL). */
+function resolveTenantCompanyId(userProfile: unknown): string | undefined {
+  if (!userProfile || typeof userProfile !== 'object') return undefined;
+  const u = userProfile as Record<string, unknown>;
+  const raw = u.companyId ?? u.organizationId;
+  if (typeof raw === 'string' && raw.trim().length > 0) return raw.trim();
+  if (typeof raw === 'number' && Number.isFinite(raw)) return String(raw);
+  if (raw && typeof raw === 'object' && 'path' in raw) {
+    const p = String((raw as { path?: string }).path ?? '');
+    const seg = p.split('/').filter(Boolean);
+    const last = seg[seg.length - 1];
+    if (last) return last;
+  }
+  return undefined;
+}
+
+/**
+ * Superadmin čte/zapisuje `společnosti/{id}`; portál poslouchá `companies/{id}`.
+ * Při rozjetých dokumentech má pravdu stejný řádek v `společnosti` jako v admin UI.
+ */
+function mergeCompanyWithOrganizationRecord(
+  id: string,
+  fromCompanies: (CompanyProfile & { id: string }) | null,
+  fromOrg: Record<string, unknown> | null
+): (CompanyProfile & { id: string }) | null {
+  if (!fromCompanies && !fromOrg) return null;
+  const c = fromCompanies as Record<string, unknown> | null;
+  const o = fromOrg;
+
+  const companyName =
+    (c?.companyName as string) ||
+    (c?.name as string) ||
+    (o?.companyName as string) ||
+    (o?.name as string) ||
+    'Organization';
+
+  const merged: Record<string, unknown> = {
+    ...(c ?? {}),
+    id,
+    companyName,
+  };
+
+  if (o?.license != null && typeof o.license === 'object') {
+    merged.license = o.license;
+  } else if (c?.license != null) {
+    merged.license = c.license;
+  }
+
+  if (o && 'licenseId' in o && o.licenseId != null) {
+    merged.licenseId = o.licenseId;
+  } else if (c?.licenseId != null) {
+    merged.licenseId = c.licenseId;
+  }
+
+  if (Array.isArray(o?.enabledModuleIds)) {
+    merged.enabledModuleIds = o.enabledModuleIds;
+  } else if (Array.isArray(c?.enabledModuleIds)) {
+    merged.enabledModuleIds = c.enabledModuleIds;
+  }
+
+  merged.platformLicense = c?.platformLicense ?? o?.platformLicense;
+  merged.moduleEntitlements = c?.moduleEntitlements ?? o?.moduleEntitlements;
+
+  if (o && 'isActive' in o && o.isActive !== undefined) {
+    merged.isActive = o.isActive;
+  }
+  if (o && 'active' in o && o.active !== undefined) {
+    merged.active = o.active;
+  }
+
+  return merged as CompanyProfile & { id: string };
+}
+
+/** Jednotný výstup: companyId z `users/{uid}.companyId` (nebo `organizationId`); dokument `companies` + merge licence z `společnosti`. */
 export function useCompany() {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -97,13 +172,10 @@ export function useCompany() {
     error: profileError,
   } = useDoc<any>(userRef);
 
-  const companyId = useMemo(() => {
-    const raw = userProfile?.companyId;
-    if (typeof raw === 'string' && raw.trim().length > 0) {
-      return raw.trim();
-    }
-    return undefined;
-  }, [userProfile?.companyId]);
+  const companyId = useMemo(
+    () => resolveTenantCompanyId(userProfile),
+    [userProfile],
+  );
 
   const companyRef = useMemoFirebase(
     () =>
@@ -113,25 +185,54 @@ export function useCompany() {
     [firestore, companyId],
   );
 
+  const orgRef = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? doc(firestore, ORGANIZATIONS_COLLECTION, companyId)
+        : null,
+    [firestore, companyId],
+  );
+
   const {
-    data: company,
+    data: companyFromDb,
     isLoading: companyLoading,
     error: companyError,
   } = useDoc<CompanyProfile>(companyRef);
 
+  const {
+    data: orgFromDb,
+    isLoading: orgLoading,
+    error: orgError,
+  } = useDoc<Record<string, unknown>>(orgRef);
+
+  const company = useMemo(
+    () =>
+      companyId
+        ? mergeCompanyWithOrganizationRecord(
+            companyId,
+            companyFromDb,
+            orgFromDb,
+          )
+        : null,
+    [companyId, companyFromDb, orgFromDb],
+  );
+
+  const tenantDocsLoading = companyLoading || orgLoading;
+
   /** Profil uživatele + dokument firmy — dokud běží kterýkoli dotaz. */
   const isLoading =
-    profileLoading || (Boolean(companyId) && companyLoading);
+    profileLoading || (Boolean(companyId) && tenantDocsLoading);
 
   const companyDocMissing =
     Boolean(companyId) &&
     !profileLoading &&
-    !companyLoading &&
+    !tenantDocsLoading &&
     !profileError &&
     !companyError &&
+    !orgError &&
     company == null;
 
-  const error = profileError ?? companyError;
+  const error = profileError ?? companyError ?? orgError;
 
   const companyName =
     company?.companyName ||
@@ -143,7 +244,16 @@ export function useCompany() {
     if (process.env.NODE_ENV !== 'development') return;
     try {
       console.log('USER:', user);
-      console.log('COMPANY ID (from users/{uid}.companyId):', companyId);
+      console.log('COMPANY ID (users.companyId | organizationId):', companyId);
+      console.log(
+        'TENANT PATHS:',
+        companyId
+          ? {
+              companies: `${COMPANIES_COLLECTION}/${companyId}`,
+              organizations: `${ORGANIZATIONS_COLLECTION}/${companyId}`,
+            }
+          : null,
+      );
     } catch {
       /* ignore logging failures */
     }
@@ -152,17 +262,17 @@ export function useCompany() {
   return {
     /** Dokument `users/{uid}` */
     userProfile,
-    /** Firestore `companies/{user.companyId}` */
+    /** Sloučený profil: `companies/{id}` + licence z `společnosti/{id}` */
     company,
     companyName,
-    /** Vždy z `userProfile.companyId` (trim), jinak undefined */
+    /** Vždy z profilu uživatele (trim), jinak undefined */
     companyId,
     isLoading,
     profileLoading,
-    companyLoading,
+    companyLoading: tenantDocsLoading,
     error,
     companyDocMissing,
     profileError,
-    companyError,
+    companyError: companyError ?? orgError,
   };
 }
