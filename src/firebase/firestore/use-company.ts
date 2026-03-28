@@ -19,6 +19,16 @@ export type CompanyProfile = {
   createdAt?: Timestamp;
   updatedAt?: Timestamp;
 
+  /** Legacy licence z superadmin dialogu (`companies.license`). */
+  license?: {
+    status?: string;
+    licenseStatus?: string;
+    enabledModules?: string[];
+    licenseType?: string;
+    expirationDate?: string | null;
+    maxUsers?: number | null;
+  };
+
   /** Globální licence (denormalizace z company_licenses). */
   platformLicense?: {
     active?: boolean;

@@ -12,7 +12,11 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
-import { hasActiveModuleAccess, isCompanyLicenseBlocking } from "@/lib/platform-access";
+import {
+  getEffectivePlatformLicense,
+  hasActiveModuleAccess,
+  isCompanyLicenseBlocking,
+} from "@/lib/platform-access";
 import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
@@ -196,6 +200,21 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     profileEmployeeRow,
     platformCatalog,
   ]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development" || !company || !companyId) return;
+    const eff = getEffectivePlatformLicense(company);
+    console.log("[Portal license debug]", {
+      companyId,
+      platformLicense: company.platformLicense,
+      license: (company as { license?: unknown }).license,
+      moduleEntitlements: company.moduleEntitlements,
+      effectivePlatformLicense: eff,
+      isCompanyLicenseBlocking: isCompanyLicenseBlocking(company),
+      sklad: hasActiveModuleAccess(company, "sklad", platformCatalog),
+      vyroba: hasActiveModuleAccess(company, "vyroba", platformCatalog),
+    });
+  }, [company, companyId, platformCatalog]);
 
   useEffect(() => {
     if (isUserLoading) {
@@ -469,8 +488,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     : BizForgeSidebar;
 
   const licenseNotice = (() => {
-    if (isPortalEmployeeOnly || !company?.platformLicense) return null;
-    const pl = company.platformLicense;
+    if (isPortalEmployeeOnly || !company) return null;
+    const pl = getEffectivePlatformLicense(company);
+    if (!pl) return null;
     if (pl.status === "pending") {
       return (
         <Alert className="mb-4 border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-50">

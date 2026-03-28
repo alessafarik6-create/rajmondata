@@ -7,6 +7,11 @@ import { defaultPlatformCatalogMap } from "@/lib/platform-module-catalog";
 export type CompanyPlatformFields = {
   active?: boolean;
   isActive?: boolean;
+  /** Legacy pole z dialogu superadmina (`buildLicenseForFirestore` → `companies.license`). */
+  license?: {
+    status?: string;
+    licenseStatus?: string;
+  };
   platformLicense?: {
     active?: boolean;
     status?: string;
@@ -18,9 +23,31 @@ export type CompanyPlatformFields = {
   >;
 };
 
+/**
+ * Jednotný zdroj pravdy pro UI: pokud je na `companies` legacy `license.status === active`,
+ * ale denorm `platformLicense` zůstalo `pending` (starší zápis / nesync), bereme aktivní licenci.
+ */
+export function getEffectivePlatformLicense(
+  company: CompanyPlatformFields | null | undefined
+): CompanyPlatformFields["platformLicense"] | undefined {
+  if (!company) return undefined;
+  const pl = company.platformLicense;
+  const leg = company.license;
+  const raw = leg?.status ?? leg?.licenseStatus;
+  const legacy = typeof raw === "string" ? raw.trim().toLowerCase() : "";
+  if (pl && pl.status === "pending" && legacy === "active") {
+    return {
+      ...pl,
+      active: true,
+      status: "active",
+    };
+  }
+  return pl;
+}
+
 export function isCompanyLicenseBlocking(company: CompanyPlatformFields | null | undefined): boolean {
   if (!company) return true;
-  const pl = company.platformLicense;
+  const pl = getEffectivePlatformLicense(company);
   if (!pl) {
     return company.isActive === false || company.active === false;
   }
