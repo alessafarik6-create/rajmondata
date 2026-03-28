@@ -184,6 +184,22 @@ export function closedTerminalSegmentsForDay(
   );
 }
 
+/**
+ * Uzavřené úseky job/tariff — použít jen když už máte seznam segmentů **jen pro jeden lokální den**
+ * (např. po `segmentCalendarDateIsoKey === dayKey`). Bez druhého denního filtru, aby se nic nevyřadilo
+ * kvůli rozporu uloženého `date` vs. `startAt`.
+ */
+export function closedTerminalSegmentsInDayScopedList(
+  segments: WorkSegmentClient[] | null | undefined
+): WorkSegmentClient[] {
+  const list = Array.isArray(segments) ? segments : [];
+  return list.filter(
+    (s) =>
+      s.closed === true &&
+      (s.sourceType === "job" || s.sourceType === "tariff")
+  );
+}
+
 export function segmentTimeRangeLabel(seg: WorkSegmentClient): string {
   const a = tsToDate(seg.startAt);
   const b = tsToDate(seg.endAt);

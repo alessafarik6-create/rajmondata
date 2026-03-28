@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { format, startOfMonth, endOfMonth, min, max } from "date-fns";
+import { addDays, format, max, min, startOfMonth, endOfMonth, subDays } from "date-fns";
 import { cs } from "date-fns/locale";
 import {
   useUser,
@@ -35,7 +35,7 @@ import { isDailyWorkLogEnabled } from "@/lib/employee-report-flags";
 import {
   type WorkSegmentClient,
   buildWorkDayId,
-  closedTerminalSegmentsForDay,
+  closedTerminalSegmentsInDayScopedList,
   getTerminalSegmentLockKind,
   segmentCalendarDateIsoKey,
   segmentTimeRangeLabel,
@@ -58,11 +58,14 @@ import {
   type DayCalendarMarker,
 } from "@/lib/daily-report-calendar-state";
 import {
+  calculateDayReportSummary,
+  localDayKeyFromDate,
+} from "@/lib/daily-work-report-day-summary";
+import {
   computeDayWorkedCap,
   isCompleteAttendanceSummary,
   isDayReportableForWorklog,
 } from "@/lib/daily-work-report-time-cap";
-import { logDailyWorkReportDayDebug } from "@/lib/daily-work-report-day-debug";
 
 /** Tolerance pro srovnání součtu řádků s interním stropem (bez falešných překročení kvůli float). */
 const SUM_COMPARE_EPS = 1e-6;
@@ -373,12 +376,15 @@ export default function EmployeeDailyReportsPage() {
    */
   const workSegmentsDayAltQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId || !selectedDay) return null;
-    const dk = format(selectedDay, "yyyy-MM-dd");
+    /** Uložené pole `date` na segmentu často odpovídá UTC dni serveru — přidáme ±1 lokální den a pak filtrujeme podle `startAt`. */
+    const dk = localDayKeyFromDate(selectedDay);
+    const dPrev = localDayKeyFromDate(subDays(selectedDay, 1));
+    const dNext = localDayKeyFromDate(addDays(selectedDay, 1));
     return query(
       collection(firestore, "companies", companyId, "work_segments"),
       where("employeeId", "==", employeeId),
-      where("date", "==", dk),
-      limit(300)
+      where("date", "in", [dPrev, dk, dNext]),
+      limit(800)
     );
   }, [firestore, companyId, employeeId, selectedDay]);
 
@@ -516,7 +522,7 @@ export default function EmployeeDailyReportsPage() {
     calSegmentsOnlyWork: "ring-2 ring-sky-600 ring-offset-2 ring-offset-white",
   };
 
-  const dayKey = selectedDay ? format(selectedDay, "yyyy-MM-dd") : "";
+  const dayKey = selectedDay ? localDayKeyFromDate(selectedDay) : "";
   const selectedDayMarker = dayKey ? calendarCellMap.get(dayKey)?.marker : undefined;
 
   /** Sloučení rozsahu workDayId + záložního dotazu employeeId+date pro stejný den. */
@@ -530,6 +536,7 @@ export default function EmployeeDailyReportsPage() {
       byId.set(id, { ...s, id });
     }
     for (const s of alt) {
+      if (segmentCalendarDateIsoKey(s) !== dayKey) continue;
       const id = String(s.id ?? "");
       if (!byId.has(id)) {
         byId.set(id, { ...s, id });
@@ -556,8 +563,8 @@ export default function EmployeeDailyReportsPage() {
       ...s,
       id: String(s.id ?? ""),
     })) as WorkSegmentClient[];
-    return sortSegmentsByStart(closedTerminalSegmentsForDay(withId, dayKey));
-  }, [workSegmentsForDay, dayKey]);
+    return sortSegmentsByStart(closedTerminalSegmentsInDayScopedList(withId));
+  }, [workSegmentsForDay]);
 
   const closedSegmentIdsKey = useMemo(
     () => closedSegments.map((s: WorkSegmentClient) => s.id).join("|"),
@@ -869,49 +876,56 @@ export default function EmployeeDailyReportsPage() {
       lockedFromTerminal.filter((s) => getTerminalSegmentLockKind(s) === "job_terminal"),
     [lockedFromTerminal]
   );
-  const tariffSum = useMemo(() => sumClosedSegmentHours(tariffSegments), [tariffSegments]);
-  const jobTerminalSumOnly = useMemo(
-    () => sumClosedSegmentHours(jobTerminalSegments),
-    [jobTerminalSegments]
-  );
-  const segmentTotal = useMemo(() => sumClosedSegmentHours(closedSegments), [closedSegments]);
-  const lockedSum = useMemo(() => sumClosedSegmentHours(lockedFromTerminal), [lockedFromTerminal]);
-  const unlockedSum = useMemo(() => sumClosedSegmentHours(unlockedSegments), [unlockedSegments]);
-  const attendanceHours = daySummary?.hoursWorked ?? null;
-  /** Strop hodin pro výkaz: při kompletní docházce čisté hodiny z příchodu/odchodu (− pauza), jinak součet úseků terminálu. */
-  const dayWorkedCap = useMemo(
+
+  const attendanceRowsForDayCount = useMemo(() => {
+    if (!dayKey) return 0;
+    return (attendanceBlocks as AttendanceRowType[]).filter(
+      (r) => attendanceRowCalendarDateKey(r) === dayKey
+    ).length;
+  }, [attendanceBlocks, dayKey]);
+
+  /** Jednotný výpočet pro celý den (žádné odlišné větve bez dokumentace). */
+  const dayReport = useMemo(
     () =>
-      computeDayWorkedCap({
+      calculateDayReportSummary({
+        dayIso: dayKey,
+        employeeId: employeeId ?? "",
         daySummary,
-        segmentTotalHours: segmentTotal,
+        closedTerminalSegmentsForLocalDay: closedSegments,
+        dayFormRows,
+        parseHours: parseHoursInput,
+        attendanceSegEpsHours: ATTENDANCE_SEG_EPS,
+        attendanceRowsForDay: attendanceRowsForDayCount,
       }),
-    [daySummary, segmentTotal]
+    [
+      dayKey,
+      employeeId,
+      daySummary,
+      closedSegments,
+      dayFormRows,
+      attendanceRowsForDayCount,
+    ]
   );
-  /** Úseky z terminálu přesahují odpracovaný čas z docházky — výkaz nelze spolehlivě srovnat. */
-  const dataAttendanceTooLow =
-    attendanceHours != null &&
-    Number.isFinite(attendanceHours) &&
-    segmentTotal > attendanceHours + ATTENDANCE_SEG_EPS;
-  /** Odpracováno − tarif − zakázka z terminálu (stejné jako dostupný čas pro ruční řádky). */
-  const availableHoursRaw = useMemo(
-    () => Math.max(0, dayWorkedCap - lockedSum),
-    [dayWorkedCap, lockedSum]
-  );
+
+  const h = dayReport.hours;
+  const segmentTotal = h.segmentTotal;
+  const tariffSum = h.tariffSum;
+  const jobTerminalSumOnly = h.jobTerminalSumOnly;
+  const lockedSum = h.lockedSum;
+  const unlockedSum = h.unlockedSum;
+  const dayWorkedCap = h.dayWorkedCap;
+  const availableHoursRaw = h.availableHoursRaw;
+  const formHoursCap = h.formHoursCap;
+  const allocatedUnlocked = h.allocatedUnlocked;
+  const rozdělenoCelkem = h.rozdělenoCelkem;
+  const zbýváCap = h.zbýváCap;
+  const zbýváVeFormuláři = h.zbýváVeFormuláři;
+  const dataAttendanceTooLow = dayReport.flags.segmentSumExceedsAttendance;
+  const overCap = dayReport.flags.overCap;
+  const overUnlocked = dayReport.flags.overUnlocked;
+
+  const attendanceHours = daySummary?.hoursWorked ?? null;
   const dostupnýProŘádkyZobrazení = round2(availableHoursRaw);
-  /** Strop hodin v hlavním formuláři — bez terminálu = celá odpracovaná docházka; s terminálem = min(odemčené úseky, dostupný čas). */
-  const formHoursCap = useMemo(() => {
-    if (closedSegments.length === 0) {
-      return Math.max(0, dayWorkedCap);
-    }
-    if (unlockedSegments.length === 0) return 0;
-    return Math.min(unlockedSum, availableHoursRaw);
-  }, [
-    closedSegments.length,
-    unlockedSegments.length,
-    unlockedSum,
-    availableHoursRaw,
-    dayWorkedCap,
-  ]);
   /** Den musí mít kompletní docházku nebo aspoň úseky terminálu; strop hodin > 0. */
   const formEditableByAttendance =
     isDayReportableForWorklog({
@@ -927,12 +941,6 @@ export default function EmployeeDailyReportsPage() {
     Boolean(segmentsQueryError) &&
     Boolean(segmentsDayAltError) &&
     closedSegments.length === 0;
-  const allocatedUnlocked = sumDayFormHours(dayFormRows);
-  const rozdělenoCelkem = Math.round((lockedSum + allocatedUnlocked) * 100) / 100;
-  const zbýváCap = Math.round((dayWorkedCap - rozdělenoCelkem) * 100) / 100;
-  const zbýváVeFormuláři = Math.round((formHoursCap - allocatedUnlocked) * 100) / 100;
-  const overCap = rozdělenoCelkem > dayWorkedCap + SUM_COMPARE_EPS;
-  const overUnlocked = allocatedUnlocked > formHoursCap + SUM_COMPARE_EPS;
   const capMismatch =
     attendanceHours != null &&
     Number.isFinite(attendanceHours) &&
@@ -970,66 +978,6 @@ export default function EmployeeDailyReportsPage() {
     !overCap &&
     !overUnlocked &&
     zbýváCap <= SUM_COMPARE_EPS;
-
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "development" || !dayKey) return;
-    const rowsToday = (attendanceBlocks as AttendanceRowType[]).filter(
-      (r) => attendanceRowCalendarDateKey(r) === dayKey
-    );
-    logDailyWorkReportDayDebug({
-      dayIso: dayKey,
-      attendanceGrouping: "timestamp_local",
-      attendance: daySummary
-        ? {
-            checkInHm: daySummary.checkIn,
-            checkOutHm: daySummary.checkOut,
-            totalSpanHours: daySummary.totalSpanHours,
-            breakHours: daySummary.breakHours,
-            hoursWorkedNet: daySummary.hoursWorked,
-            statusLabel: daySummary.statusLabel,
-          }
-        : null,
-      terminal: {
-        closedSegmentCount: closedSegments.length,
-        sumClosedHours: round2(segmentTotal),
-        tariffHours: round2(tariffSum),
-        jobLockedHours: round2(jobTerminalSumOnly),
-        unlockedHours: round2(unlockedSum),
-      },
-      caps: {
-        dayWorkedCapHours: round2(dayWorkedCap),
-        lockedSumHours: round2(lockedSum),
-        availableForManualRowsHours: round2(availableHoursRaw),
-        formHoursCapHours: round2(formHoursCap),
-      },
-      formState: {
-        rowCount: dayFormRows.length,
-        sumUnlockedLineHours: allocatedUnlocked,
-        totalAllocatedWithLockedHours: rozdělenoCelkem,
-        zbýváDoStropuSměnyHours: zbýváCap,
-        zbýváVŘádcíchHours: zbýváVeFormuláři,
-      },
-    });
-    console.debug("[daily-report-day] rawAttendanceRowsThisLocalDay", rowsToday.length, rowsToday);
-  }, [
-    dayKey,
-    attendanceBlocks,
-    daySummary,
-    closedSegments.length,
-    segmentTotal,
-    tariffSum,
-    jobTerminalSumOnly,
-    unlockedSum,
-    dayWorkedCap,
-    lockedSum,
-    availableHoursRaw,
-    formHoursCap,
-    dayFormRows.length,
-    allocatedUnlocked,
-    rozdělenoCelkem,
-    zbýváCap,
-    zbýváVeFormuláři,
-  ]);
 
   if (isUserLoading || !user) {
     return (
@@ -1485,6 +1433,16 @@ export default function EmployeeDailyReportsPage() {
               ) : null}
             </CardHeader>
             <CardContent className="space-y-6 sm:space-y-7">
+              {process.env.NODE_ENV === "development" && dayKey ? (
+                <details className="rounded-lg border-2 border-dashed border-violet-600 bg-violet-50/90 p-3 text-neutral-900">
+                  <summary className="cursor-pointer select-none text-sm font-semibold text-violet-950">
+                    Diagnostika výpočtu (dev) — minuty, zdroje, příznaky
+                  </summary>
+                  <pre className="mt-2 max-h-[min(50vh,480px)] overflow-auto whitespace-pre-wrap break-words text-[11px] leading-snug">
+                    {JSON.stringify(dayReport, null, 2)}
+                  </pre>
+                </details>
+              ) : null}
               <div className="rounded-lg border-2 border-neutral-950 bg-white p-4 text-sm leading-relaxed text-neutral-900">
                 <p className="font-medium text-neutral-950">Jak funguje výkaz za den</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
