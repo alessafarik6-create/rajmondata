@@ -29,6 +29,7 @@ import {
   PlatformModuleCatalogProvider,
   useMergedPlatformModuleCatalog,
 } from "@/contexts/platform-module-catalog-context";
+import { isBindableFirestoreInstance } from "@/lib/firestore-instance-guard";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -74,23 +75,23 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   const platformCatalog = useMergedPlatformModuleCatalog();
 
-  const profileEmployeeRef = useMemoFirebase(
-    () =>
-      areServicesAvailable &&
-      firestore &&
-      companyId &&
-      profile?.employeeId &&
-      profile?.role === "employee"
-        ? doc(
-            firestore,
-            "companies",
-            companyId,
-            "employees",
-            String(profile.employeeId)
-          )
-        : null,
-    [areServicesAvailable, firestore, companyId, profile?.employeeId, profile?.role]
-  );
+  const profileEmployeeRef = useMemoFirebase(() => {
+    if (
+      !isBindableFirestoreInstance(areServicesAvailable, firestore) ||
+      !companyId ||
+      !profile?.employeeId ||
+      profile?.role !== "employee"
+    ) {
+      return null;
+    }
+    return doc(
+      firestore,
+      "companies",
+      companyId,
+      "employees",
+      String(profile.employeeId)
+    );
+  }, [areServicesAvailable, firestore, companyId, profile?.employeeId, profile?.role]);
   const { data: profileEmployeeRow } = useDoc<Record<string, unknown>>(profileEmployeeRef);
 
   const isPortalEmployeeOnly =

@@ -1,9 +1,10 @@
 "use client";
 
 import React, { createContext, useContext, useMemo } from "react";
-import { collection } from "firebase/firestore";
+import { collection, type Firestore } from "firebase/firestore";
 import { useFirebase, useCollection, useMemoFirebase } from "@/firebase";
 import { PLATFORM_MODULES_COLLECTION } from "@/lib/firestore-collections";
+import { isBindableFirestoreInstance } from "@/lib/firestore-instance-guard";
 import type { PlatformModuleCode } from "@/lib/platform-config";
 import {
   buildMergedPlatformCatalogMap,
@@ -21,13 +22,12 @@ const PlatformModuleCatalogContext = createContext<MergedPlatformCatalog | null>
  */
 export function PlatformModuleCatalogProvider({ children }: { children: React.ReactNode }) {
   const { firestore, areServicesAvailable } = useFirebase();
-  const modulesQuery = useMemoFirebase(
-    () =>
-      areServicesAvailable && firestore
-        ? collection(firestore, PLATFORM_MODULES_COLLECTION)
-        : null,
-    [areServicesAvailable, firestore]
-  );
+  const modulesQuery = useMemoFirebase(() => {
+    if (!isBindableFirestoreInstance(areServicesAvailable, firestore)) {
+      return null;
+    }
+    return collection(firestore as Firestore, PLATFORM_MODULES_COLLECTION);
+  }, [areServicesAvailable, firestore]);
   const { data } = useCollection(modulesQuery, {
     suppressGlobalPermissionError: true,
   });
