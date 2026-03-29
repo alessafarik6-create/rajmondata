@@ -43,6 +43,7 @@ import {
   depositGrossKcFromContract,
   hasAdvanceTerms,
   JOB_INVOICE_TYPES,
+  type JobBankLike,
   type ManualAdvanceLineInput,
   type OrgBankAccountRow,
   type WorkContractLike,
@@ -119,6 +120,18 @@ export function JobBillingInvoicesSection({
     () => (Array.isArray(bankAccountsRaw) ? bankAccountsRaw : []) as OrgBankAccountRow[],
     [bankAccountsRaw]
   );
+
+  const jobBank: JobBankLike | null = useMemo(() => {
+    const j = job as { bankAccountId?: unknown; bankAccountNumber?: unknown } | null | undefined;
+    if (!j) return null;
+    const id = j.bankAccountId != null ? String(j.bankAccountId).trim() : "";
+    const num = j.bankAccountNumber != null ? String(j.bankAccountNumber).trim() : "";
+    if (!id && !num) return null;
+    return {
+      bankAccountId: id || null,
+      bankAccountNumber: num || null,
+    };
+  }, [job]);
 
   const legacyCompanyBank = useMemo(() => {
     const c = companyDoc as { bankAccountNumber?: string } | null | undefined;
@@ -337,6 +350,7 @@ export function JobBillingInvoicesSection({
         supplierAddressLines:
           supplierAddressLines || supplierName,
         contract: primaryContract,
+        jobBank,
         budget: jobBudgetBreakdown,
         userId: user.uid,
         logoUrl: organizationLogoUrl,
@@ -405,6 +419,7 @@ export function JobBillingInvoicesSection({
         logoUrl: organizationLogoUrl,
         lines: manualLines,
         primaryWorkContract: primaryContract,
+        jobBank,
         orgBankAccounts,
         legacyCompanyBankAccount: legacyCompanyBank,
         supplierIco,
@@ -551,6 +566,7 @@ export function JobBillingInvoicesSection({
         budget: jobBudgetBreakdown,
         advanceInvoices: rows,
         workContractsForJob,
+        jobBank,
         sourceContractId: primary?.id ?? null,
         orgBankAccounts,
         legacyCompanyBankAccount: legacyCompanyBank,

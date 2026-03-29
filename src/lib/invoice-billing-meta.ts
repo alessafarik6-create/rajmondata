@@ -18,6 +18,15 @@ export type OrgBankAccountRow = {
   isDefault?: boolean | null;
 };
 
+export type PaymentAccountSource =
+  | "override"
+  | "contract"
+  | "job"
+  | "parent_invoice"
+  | "organization"
+  | "legacy"
+  | null;
+
 export type ResolvedBankSnapshot = {
   bankAccountId: string | null;
   bankAccountNumber: string | null;
@@ -26,7 +35,63 @@ export type ResolvedBankSnapshot = {
   swift: string | null;
   /** Jednořádkový text pro patičku / box */
   displayPrimary: string;
+  /** Název účtu z organizace (bankAccounts), pokud jde o výběr z kolekce */
+  accountName: string | null;
+  /** Odkud pochází účet pro QR / platební údaje */
+  source: PaymentAccountSource;
 };
+
+/**
+ * Rozparsuje „123456789/0100“, „19-123456789/0100“ nebo IBAN (CZ…).
+ */
+export function parsePaymentAccountString(raw: string | null | undefined): {
+  accountNumber: string | null;
+  bankCode: string | null;
+  iban: string | null;
+} {
+  const t = String(raw ?? "").trim();
+  if (!t) return { accountNumber: null, bankCode: null, iban: null };
+  const compact = t.replace(/\s+/g, "");
+  const ibanCandidate = compact.replace(/\s/g, "").toUpperCase();
+  if (/^CZ[0-9]{2}[0-9]{10,30}$/.test(ibanCandidate)) {
+    return { accountNumber: null, bankCode: null, iban: ibanCandidate };
+  }
+  const parts = compact.split("/");
+  if (parts.length >= 2) {
+    const code = parts.pop()!.replace(/\s/g, "");
+    const acc = parts.join("/").replace(/\s/g, "");
+    if (/^\d{4}$/.test(code) && acc.length > 0) {
+      return { accountNumber: acc, bankCode: code, iban: null };
+    }
+  }
+  return { accountNumber: null, bankCode: null, iban: null };
+}
+
+function resolvedFromParsedLine(
+  parsed: ReturnType<typeof parsePaymentAccountString>,
+  fallbackDisplay: string,
+  source: PaymentAccountSource
+): ResolvedBankSnapshot {
+  const iban = parsed.iban || null;
+  const acc = parsed.accountNumber || null;
+  const code = parsed.bankCode || null;
+  const display =
+    iban != null
+      ? `IBAN: ${iban}`
+      : acc && code
+        ? `${acc}/${code}`
+        : fallbackDisplay.trim() || "—";
+  return {
+    bankAccountId: null,
+    bankAccountNumber: acc,
+    bankCode: code,
+    iban,
+    swift: null,
+    displayPrimary: display,
+    accountName: null,
+    source,
+  };
+}
 
 function pickDefaultAccount(
   accounts: OrgBankAccountRow[]
@@ -43,35 +108,105 @@ function formatCzechAccount(a: OrgBankAccountRow): string {
   return acc || "";
 }
 
+function finalizeBankSnapForQrDebug(snap: ResolvedBankSnapshot): ResolvedBankSnapshot {
+  if (process.env.NODE_ENV === "development") {
+    console.log("QR account source", snap);
+    console.log("QR source type", snap.source);
+  }
+  return snap;
+}
+
+export type ResolvePaymentAccountInput = {
+  bankAccounts: OrgBankAccountRow[];
+  /** Ruční výběr účtu na faktuře / dokladu */
+  overrideBankAccountId?: string | null;
+  contract?: { bankAccountId?: string | null; bankAccountNumber?: string | null } | null;
+  job?: { bankAccountId?: string | null; bankAccountNumber?: string | null } | null;
+  /** bankAccountId uložený na navázané zálohové faktuře (daňový doklad) */
+  parentDocumentBankAccountId?: string | null;
+  legacyCompanyBankLine?: string | null;
+};
+
 /**
- * Priorita: smlouva (bankAccountId / číslo) → výchozí účet organizace.
- * Ruční výběr předáváte jako overrideId.
+ * Jednotné rozlišení účtu pro QR a platební box (priorita viz `resolveBankAccountForInvoice`).
+ */
+export function resolvePaymentAccount(input: ResolvePaymentAccountInput): ResolvedBankSnapshot {
+  return resolveBankAccountForInvoice({
+    bankAccounts: input.bankAccounts,
+    overrideBankAccountId: input.overrideBankAccountId,
+    contractBankAccountId: input.contract?.bankAccountId,
+    contractBankAccountNumber: input.contract?.bankAccountNumber,
+    jobBankAccountId: input.job?.bankAccountId,
+    jobBankAccountNumber: input.job?.bankAccountNumber,
+    parentDocumentBankAccountId: input.parentDocumentBankAccountId,
+    legacyCompanyBankLine: input.legacyCompanyBankLine,
+  });
+}
+
+/**
+ * Priorita: ruční výběr na dokladu → účet ze smlouvy (id / text) → účet zakázky (id / text)
+ * → účet z navázaného dokladu (záloha) → výchozí účet organizace → legacy řádek firmy.
  */
 export function resolveBankAccountForInvoice(params: {
   bankAccounts: OrgBankAccountRow[];
-  /** bankAccountId ze smlouvy o dílo */
   contractBankAccountId?: string | null;
-  /** volitelné číslo účtu ze smlouvy (text) */
   contractBankAccountNumber?: string | null;
-  /** výběr uživatele při vytvoření / editaci */
+  jobBankAccountId?: string | null;
+  jobBankAccountNumber?: string | null;
+  parentDocumentBankAccountId?: string | null;
   overrideBankAccountId?: string | null;
-  /** legacy řádek z company.bankAccountNumber */
   legacyCompanyBankLine?: string | null;
 }): ResolvedBankSnapshot {
   const accounts = params.bankAccounts || [];
-  const byId = (id: string | null | undefined) =>
-    id ? accounts.find((a) => a.id === id) ?? null : null;
+  const byId = (id: string | null | undefined) => {
+    if (id == null || String(id).trim() === "") return null;
+    return accounts.find((a) => a.id === String(id).trim()) ?? null;
+  };
 
   let chosen: OrgBankAccountRow | null = null;
+  let source: PaymentAccountSource = null;
 
   if (params.overrideBankAccountId) {
     chosen = byId(params.overrideBankAccountId);
+    if (chosen) source = "override";
   }
   if (!chosen && params.contractBankAccountId) {
     chosen = byId(params.contractBankAccountId);
+    if (chosen) source = "contract";
+  }
+  if (!chosen) {
+    const cText = (params.contractBankAccountNumber || "").trim();
+    if (cText) {
+      const p = parsePaymentAccountString(cText);
+      if (p.iban || (p.accountNumber && p.bankCode)) {
+        return finalizeBankSnapForQrDebug(
+          resolvedFromParsedLine(p, cText, "contract")
+        );
+      }
+    }
+  }
+  if (!chosen && params.jobBankAccountId) {
+    chosen = byId(params.jobBankAccountId);
+    if (chosen) source = "job";
+  }
+  if (!chosen) {
+    const jText = (params.jobBankAccountNumber || "").trim();
+    if (jText) {
+      const p = parsePaymentAccountString(jText);
+      if (p.iban || (p.accountNumber && p.bankCode)) {
+        return finalizeBankSnapForQrDebug(
+          resolvedFromParsedLine(p, jText, "job")
+        );
+      }
+    }
+  }
+  if (!chosen && params.parentDocumentBankAccountId) {
+    chosen = byId(params.parentDocumentBankAccountId);
+    if (chosen) source = "parent_invoice";
   }
   if (!chosen && accounts.length > 0) {
     chosen = pickDefaultAccount(accounts);
+    if (chosen) source = "organization";
   }
 
   if (chosen) {
@@ -81,32 +216,51 @@ export function resolveBankAccountForInvoice(params: {
     const displayPrimary = iban
       ? `IBAN: ${iban}${swift ? ` · SWIFT: ${swift}` : ""}`
       : cz || iban || (params.legacyCompanyBankLine || "").trim() || "—";
-    return {
+    const name = (chosen.name || "").trim() || null;
+    return finalizeBankSnapForQrDebug({
       bankAccountId: chosen.id,
       bankAccountNumber: (chosen.accountNumber || "").trim() || null,
       bankCode: (chosen.bankCode || "").trim() || null,
       iban: iban || null,
       swift: swift || null,
       displayPrimary,
-    };
+      accountName: name,
+      source,
+    });
   }
 
   const legacy = (params.legacyCompanyBankLine || "").trim();
+  if (legacy) {
+    const p = parsePaymentAccountString(legacy);
+    if (p.iban || (p.accountNumber && p.bankCode)) {
+      return finalizeBankSnapForQrDebug(
+        resolvedFromParsedLine(p, legacy, "legacy")
+      );
+    }
+  }
+
   const manual = (params.contractBankAccountNumber || "").trim();
-  const line = manual || legacy;
-  return {
+  const jFall = (params.jobBankAccountNumber || "").trim();
+  const line = manual || jFall || legacy;
+  return finalizeBankSnapForQrDebug({
     bankAccountId: null,
     bankAccountNumber: null,
     bankCode: null,
     iban: null,
     swift: null,
     displayPrimary: line || "—",
-  };
+    accountName: null,
+    source: null,
+  });
 }
 
 /** Text do HTML boxu „Platební údaje“ */
 export function formatBankBlockPlainLines(snap: ResolvedBankSnapshot): string {
   const lines: string[] = [];
+  const accName = (snap.accountName || "").trim();
+  if (accName) {
+    lines.push(`Účet: ${accName}`);
+  }
   const iban = (snap.iban || "").trim();
   const swift = (snap.swift || "").trim();
   const acc = (snap.bankAccountNumber || "").trim();
@@ -329,10 +483,20 @@ export function buildInvoicePaymentQr(params: {
   if (!Number.isFinite(amount) || amount <= 0) missing.push("částka");
   if (!vs) missing.push("variabilní symbol");
   if (missing.length > 0) {
+    const noAccount = missing.includes("číslo účtu");
+    const rest = missing.filter((m) => m !== "číslo účtu");
+    let warning: string;
+    if (noAccount && rest.length === 0) {
+      warning = "Chybí číslo účtu pro QR platbu.";
+    } else if (noAccount) {
+      warning = `Chybí číslo účtu pro QR platbu. Doplňte také: ${rest.join(", ")}.`;
+    } else {
+      warning = `QR platba nelze vytvořit (chybí: ${missing.join(", ")}).`;
+    }
     return {
       spd: "",
       qrUrl: "",
-      warning: `QR platba nelze vytvořit (chybí: ${missing.join(", ")}).`,
+      warning,
     };
   }
   const spdParts = [

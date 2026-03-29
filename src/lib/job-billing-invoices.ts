@@ -41,7 +41,7 @@ import {
   formatBankBlockPlainLines,
   formatCustomerPartyLines,
   formatSupplierPartyLines,
-  resolveBankAccountForInvoice,
+  resolvePaymentAccount,
   resolveInvoiceRecipient,
   resolveInvoiceVariableSymbol,
 } from "@/lib/invoice-billing-meta";
@@ -73,6 +73,66 @@ export type WorkContractLike = {
   zalohovaCastka?: string | number | null;
   zalohovaProcenta?: string | number | null;
 };
+
+/** Volitelný výchozí / vybraný účet přímo na zakázce (jobs/{id}). */
+export type JobBankLike = {
+  bankAccountId?: string | null;
+  bankAccountNumber?: string | null;
+};
+
+async function loadWorkContractBankSnapshot(
+  firestore: Firestore,
+  companyId: string,
+  jobId: string | undefined,
+  sourceContractId: string | null | undefined
+): Promise<{ bankAccountId: string | null; bankAccountNumber: string | null } | null> {
+  const jid = String(jobId ?? "").trim();
+  const cid = String(sourceContractId ?? "").trim();
+  if (!jid || !cid) return null;
+  try {
+    const cref = doc(
+      firestore,
+      "companies",
+      companyId,
+      "jobs",
+      jid,
+      "workContracts",
+      cid
+    );
+    const cs = await getDoc(cref);
+    if (!cs.exists()) return null;
+    const d = cs.data() as { bankAccountId?: unknown; bankAccountNumber?: unknown };
+    return {
+      bankAccountId: d.bankAccountId != null ? String(d.bankAccountId).trim() : null,
+      bankAccountNumber:
+        d.bankAccountNumber != null ? String(d.bankAccountNumber).trim() : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function loadJobBankSnapshot(
+  firestore: Firestore,
+  companyId: string,
+  jobId: string | undefined
+): Promise<{ bankAccountId: string | null; bankAccountNumber: string | null } | null> {
+  const jid = String(jobId ?? "").trim();
+  if (!jid) return null;
+  try {
+    const jref = doc(firestore, "companies", companyId, "jobs", jid);
+    const js = await getDoc(jref);
+    if (!js.exists()) return null;
+    const d = js.data() as { bankAccountId?: unknown; bankAccountNumber?: unknown };
+    return {
+      bankAccountId: d.bankAccountId != null ? String(d.bankAccountId).trim() : null,
+      bankAccountNumber:
+        d.bankAccountNumber != null ? String(d.bankAccountNumber).trim() : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 function paymentMessageForInvoice(invoiceNumber: string, jobName: string): string {
   const inv = String(invoiceNumber || "").trim();
@@ -282,6 +342,8 @@ export async function createAdvanceInvoiceFromContract(params: {
   supplierName: string;
   supplierAddressLines: string;
   contract: WorkContractLike;
+  /** Účet zakázky (jobs/{id}) — po smlouvě, před výchozím účtem organizace. */
+  jobBank?: JobBankLike | null;
   budget: JobBudgetBreakdown;
   userId: string;
   logoUrl?: string | null;
@@ -332,12 +394,12 @@ export async function createAdvanceInvoiceFromContract(params: {
     invoiceNumber,
   });
 
-  const bankSnap = resolveBankAccountForInvoice({
+  const bankSnap = resolvePaymentAccount({
     bankAccounts: params.orgBankAccounts ?? [],
-    contractBankAccountId: params.contract.bankAccountId,
-    contractBankAccountNumber: params.contract.bankAccountNumber,
-    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
     overrideBankAccountId: params.overrideBankAccountId,
+    contract: params.contract,
+    job: params.jobBank ?? null,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
   const bankText = formatBankBlockPlainLines(bankSnap);
 
@@ -498,6 +560,8 @@ export async function createManualAdvanceInvoice(params: {
   lines: ManualAdvanceLineInput[];
   /** Pro VS a banku — první smlouva u zakázky, pokud existuje */
   primaryWorkContract?: WorkContractLike | null;
+  /** Účet zakázky (jobs/{id}). */
+  jobBank?: JobBankLike | null;
   orgBankAccounts?: OrgBankAccountRow[];
   legacyCompanyBankAccount?: string | null;
   supplierIco?: string | null;
@@ -532,12 +596,12 @@ export async function createManualAdvanceInvoice(params: {
     contractNumber: c?.contractNumber,
     invoiceNumber,
   });
-  const bankSnap = resolveBankAccountForInvoice({
+  const bankSnap = resolvePaymentAccount({
     bankAccounts: params.orgBankAccounts ?? [],
-    contractBankAccountId: c?.bankAccountId,
-    contractBankAccountNumber: c?.bankAccountNumber,
-    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
     overrideBankAccountId: params.overrideBankAccountId,
+    contract: c,
+    job: params.jobBank ?? null,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
   const bankText = formatBankBlockPlainLines(bankSnap);
 
@@ -720,6 +784,7 @@ export async function updateAdvanceInvoiceItems(params: {
     dueDate?: string;
     taxSupplyDate?: string;
     variableSymbol?: string;
+    jobId?: string;
     sourceContractId?: string;
     contractNumber?: string | null;
     bankAccountId?: string | null;
@@ -753,13 +818,34 @@ export async function updateAdvanceInvoiceItems(params: {
   const custIco = params.customerIco ?? inv.customerIco ?? null;
   const custDic = params.customerDic ?? inv.customerDic ?? null;
 
-  const bankSnap = resolveBankAccountForInvoice({
+  const jobIdStr = String(inv.jobId ?? "").trim();
+  let contractBank: { bankAccountId: string | null; bankAccountNumber: string | null } | null =
+    null;
+  let jobBankSnap: { bankAccountId: string | null; bankAccountNumber: string | null } | null =
+    null;
+  if (jobIdStr) {
+    jobBankSnap = await loadJobBankSnapshot(
+      params.firestore,
+      params.companyId,
+      jobIdStr
+    );
+    const sc = String(inv.sourceContractId ?? "").trim();
+    if (sc) {
+      contractBank = await loadWorkContractBankSnapshot(
+        params.firestore,
+        params.companyId,
+        jobIdStr,
+        sc
+      );
+    }
+  }
+  const bankSnap = resolvePaymentAccount({
     bankAccounts: params.orgBankAccounts ?? [],
-    contractBankAccountId: null,
-    contractBankAccountNumber: null,
-    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
     overrideBankAccountId:
       params.bankAccountId !== undefined ? params.bankAccountId : inv.bankAccountId,
+    contract: contractBank,
+    job: jobBankSnap,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
   const bankText = formatBankBlockPlainLines(bankSnap);
 
@@ -924,6 +1010,7 @@ export async function createTaxReceiptForAdvancePayment(params: {
     ? (advanceSnapPre.data() as {
         contractNumber?: string | null;
         bankAccountId?: string | null;
+        sourceContractId?: string | null;
       })
     : {};
 
@@ -944,13 +1031,26 @@ export async function createTaxReceiptForAdvancePayment(params: {
   const taxSupplyDate =
     (params.taxSupplyDate && params.taxSupplyDate.trim()) || params.paymentDate;
 
-  const bankSnap = resolveBankAccountForInvoice({
+  const contractSnapPre = await loadWorkContractBankSnapshot(
+    params.firestore,
+    params.companyId,
+    params.jobId,
+    advPre.sourceContractId
+  );
+  const jobSnapPre = await loadJobBankSnapshot(
+    params.firestore,
+    params.companyId,
+    params.jobId
+  );
+  const parentAdvBankId =
+    advPre.bankAccountId != null ? String(advPre.bankAccountId).trim() : null;
+  const bankSnap = resolvePaymentAccount({
     bankAccounts: params.orgBankAccounts ?? [],
-    contractBankAccountId: null,
-    contractBankAccountNumber: null,
+    overrideBankAccountId: params.overrideBankAccountId ?? null,
+    contract: contractSnapPre,
+    job: jobSnapPre,
+    parentDocumentBankAccountId: parentAdvBankId,
     legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
-    overrideBankAccountId:
-      params.overrideBankAccountId ?? advPre.bankAccountId ?? null,
   });
   const bankText = formatBankBlockPlainLines(bankSnap);
 
@@ -1283,6 +1383,8 @@ export async function createFinalSettlementInvoice(params: {
     amountGross?: unknown;
   }>;
   workContractsForJob: WorkContractLike[];
+  /** Účet zakázky (jobs/{id}). */
+  jobBank?: JobBankLike | null;
   userId: string;
   notes?: string;
   sourceContractId?: string | null;
@@ -1358,12 +1460,12 @@ export async function createFinalSettlementInvoice(params: {
     invoiceNumber,
   });
 
-  const bankSnap = resolveBankAccountForInvoice({
+  const bankSnap = resolvePaymentAccount({
     bankAccounts: params.orgBankAccounts ?? [],
-    contractBankAccountId: primaryContract?.bankAccountId,
-    contractBankAccountNumber: primaryContract?.bankAccountNumber,
-    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
     overrideBankAccountId: params.overrideBankAccountId,
+    contract: primaryContract,
+    job: params.jobBank ?? null,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
   const bankText = formatBankBlockPlainLines(bankSnap);
 
@@ -1588,13 +1690,38 @@ export async function updateFinalSettlementInvoice(params: {
   const custIco = params.customerIco ?? inv.customerIco ?? null;
   const custDic = params.customerDic ?? inv.customerDic ?? null;
 
-  const bankSnap = resolveBankAccountForInvoice({
+  const jobIdFinal = String(inv.jobId ?? "").trim();
+  let contractBankFinal: {
+    bankAccountId: string | null;
+    bankAccountNumber: string | null;
+  } | null = null;
+  let jobBankFinal: {
+    bankAccountId: string | null;
+    bankAccountNumber: string | null;
+  } | null = null;
+  if (jobIdFinal) {
+    jobBankFinal = await loadJobBankSnapshot(
+      params.firestore,
+      params.companyId,
+      jobIdFinal
+    );
+    const scf = String(inv.sourceContractId ?? "").trim();
+    if (scf) {
+      contractBankFinal = await loadWorkContractBankSnapshot(
+        params.firestore,
+        params.companyId,
+        jobIdFinal,
+        scf
+      );
+    }
+  }
+  const bankSnap = resolvePaymentAccount({
     bankAccounts: params.orgBankAccounts ?? [],
-    contractBankAccountId: null,
-    contractBankAccountNumber: null,
-    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
     overrideBankAccountId:
       params.bankAccountId !== undefined ? params.bankAccountId : inv.bankAccountId,
+    contract: contractBankFinal,
+    job: jobBankFinal,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
   const bankText = formatBankBlockPlainLines(bankSnap);
 
@@ -1747,6 +1874,7 @@ export async function updateTaxReceiptDocument(params: {
     type?: string;
     documentNumber?: string;
     relatedInvoiceId?: string;
+    jobId?: string;
     paymentDate?: string;
     issueDate?: string;
     taxSupplyDate?: string;
@@ -1767,6 +1895,8 @@ export async function updateTaxReceiptDocument(params: {
   }
   const relatedId = String(inv.relatedInvoiceId ?? "");
   let relatedInvoiceNumber = "—";
+  let parentAdvBankId: string | null = null;
+  let advanceSourceContractId: string | null = null;
   if (relatedId) {
     const advRef = doc(
       params.firestore,
@@ -1777,8 +1907,16 @@ export async function updateTaxReceiptDocument(params: {
     );
     const advSnap = await getDoc(advRef);
     if (advSnap.exists()) {
-      const a = advSnap.data() as { invoiceNumber?: string };
+      const a = advSnap.data() as {
+        invoiceNumber?: string;
+        bankAccountId?: string | null;
+        sourceContractId?: string | null;
+      };
       relatedInvoiceNumber = String(a.invoiceNumber ?? "") || "—";
+      parentAdvBankId =
+        a.bankAccountId != null ? String(a.bankAccountId).trim() : null;
+      advanceSourceContractId =
+        a.sourceContractId != null ? String(a.sourceContractId).trim() : null;
     }
   }
 
@@ -1804,13 +1942,38 @@ export async function updateTaxReceiptDocument(params: {
   const custIco = params.customerIco ?? inv.customerIco ?? null;
   const custDic = params.customerDic ?? inv.customerDic ?? null;
 
-  const bankSnap = resolveBankAccountForInvoice({
+  const jobIdTax = String(inv.jobId ?? "").trim();
+  let contractBankTax: {
+    bankAccountId: string | null;
+    bankAccountNumber: string | null;
+  } | null = null;
+  let jobBankTax: {
+    bankAccountId: string | null;
+    bankAccountNumber: string | null;
+  } | null = null;
+  if (jobIdTax) {
+    jobBankTax = await loadJobBankSnapshot(
+      params.firestore,
+      params.companyId,
+      jobIdTax
+    );
+    if (advanceSourceContractId) {
+      contractBankTax = await loadWorkContractBankSnapshot(
+        params.firestore,
+        params.companyId,
+        jobIdTax,
+        advanceSourceContractId
+      );
+    }
+  }
+  const bankSnap = resolvePaymentAccount({
     bankAccounts: params.orgBankAccounts ?? [],
-    contractBankAccountId: null,
-    contractBankAccountNumber: null,
-    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
     overrideBankAccountId:
       params.bankAccountId !== undefined ? params.bankAccountId : inv.bankAccountId,
+    contract: contractBankTax,
+    job: jobBankTax,
+    parentDocumentBankAccountId: parentAdvBankId,
+    legacyCompanyBankLine: params.legacyCompanyBankAccount ?? null,
   });
   const bankText = formatBankBlockPlainLines(bankSnap);
 
