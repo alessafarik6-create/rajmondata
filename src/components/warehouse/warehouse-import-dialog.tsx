@@ -279,6 +279,11 @@ export function WarehouseImportDialog({
             const snap = await tx.get(itemRef);
             if (!snap.exists()) throw new Error(`Položka ${d.mergeTargetId} neexistuje.`);
             const cur = snap.data() as InventoryItemRow;
+            if (cur.isDeleted === true) {
+              throw new Error(
+                "Cílová položka byla odstraněna z přehledu. Vyberte jinou položku nebo vytvořte novou."
+              );
+            }
             const prev = Number(cur.quantity ?? 0);
             tx.update(itemRef, {
               quantity: prev + d.quantity,
@@ -315,13 +320,16 @@ export function WarehouseImportDialog({
             companyId,
             name: d.name.trim(),
             sku: d.sku.trim() || null,
+            materialCategory: null,
             unit: d.unit.trim() || "ks",
             quantity: d.quantity,
             unitPrice: d.unitPrice,
             vatRate: d.vatRate,
             supplier: d.supplier.trim() || null,
             note: null,
+            imageUrl: null,
             source: sourceKind === "csv" ? "csv-import" : "pdf-import",
+            isDeleted: false,
             createdAt: serverTimestamp(),
             createdBy: userId,
             updatedAt: serverTimestamp(),

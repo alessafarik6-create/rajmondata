@@ -36,3 +36,16 @@ export function userCanAccessProductionPortal(params: {
   }
   return false;
 }
+
+/**
+ * Úprava / měkké smazání skladových položek — pouze vlastník, admin nebo manažer (ne běžný zaměstnanec se skladem).
+ */
+export function userCanManageWarehouseInventory(params: {
+  role: string;
+  globalRoles?: string[] | null;
+}): boolean {
+  if (Array.isArray(params.globalRoles) && params.globalRoles.includes("super_admin")) {
+    return true;
+  }
+  return ["owner", "admin", "manager"].includes(params.role);
+}
