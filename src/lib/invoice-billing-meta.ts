@@ -67,6 +67,95 @@ export function parsePaymentAccountString(raw: string | null | undefined): {
   return { accountNumber: null, bankCode: null, iban: null };
 }
 
+/** MOD 97-10 pro číselný řetězec (IBAN kontrola / výpočet kontrolních číslic). */
+function mod97NumericString(digits: string): number {
+  let remainder = 0;
+  for (let i = 0; i < digits.length; i++) {
+    const d = digits.charCodeAt(i) - 48;
+    if (d < 0 || d > 9) return NaN;
+    remainder = (remainder * 10 + d) % 97;
+  }
+  return remainder;
+}
+
+/** Přesune první 4 znaky na konec a převede písmena na číslice (ISO 13616). */
+function ibanToExpandedNumeric(ibanRaw: string): string | null {
+  const iban = ibanRaw.replace(/\s/g, "").toUpperCase();
+  if (iban.length < 8) return null;
+  const rearranged = iban.slice(4) + iban.slice(0, 4);
+  let out = "";
+  for (let i = 0; i < rearranged.length; i++) {
+    const ch = rearranged[i]!;
+    if (ch >= "0" && ch <= "9") {
+      out += ch;
+    } else if (ch >= "A" && ch <= "Z") {
+      out += String(ch.charCodeAt(0) - 55);
+    } else {
+      return null;
+    }
+  }
+  return out;
+}
+
+export function validateIbanMod97(iban: string): boolean {
+  const expanded = ibanToExpandedNumeric(iban);
+  if (!expanded) return false;
+  const r = mod97NumericString(expanded);
+  return r === 1;
+}
+
+/**
+ * Český účet → IBAN pro SPD (CZ + kontrolní číslice + 4× kód banky + 16× číslo účtu doplněné zleva nulami).
+ * @param accountNumber např. "2192111088" nebo "19-2192111088"
+ * @param bankCode 4 číslice, např. "5500"
+ */
+export function convertToIban(
+  accountNumber: string | null | undefined,
+  bankCode: string | null | undefined
+): string | null {
+  const code = String(bankCode ?? "").replace(/\s/g, "");
+  if (!/^\d{4}$/.test(code)) return null;
+  const digitsOnly = String(accountNumber ?? "").replace(/\D/g, "");
+  if (!digitsOnly) return null;
+  const stripped = digitsOnly.replace(/^0+/, "") || "0";
+  if (stripped.length > 16) return null;
+  const padded = stripped.padStart(16, "0");
+  const bban = code + padded;
+  const tmp = bban + "123500";
+  const r = mod97NumericString(tmp);
+  if (!Number.isFinite(r)) return null;
+  const check = String(98 - r).padStart(2, "0");
+  const iban = `CZ${check}${bban}`;
+  return validateIbanMod97(iban) ? iban : null;
+}
+
+/** IBAN pro pole ACC ve SPD — vždy platný IBAN, nikdy tvar číslo/kód. */
+function resolveIbanForPaymentQr(params: {
+  iban?: string | null;
+  bankAccountNumber?: string | null;
+  bankCode?: string | null;
+}): string | null {
+  const existing = normalizeLine(params.iban).replace(/\s/g, "").toUpperCase();
+  if (existing.length >= 15 && /^[A-Z]{2}\d{2}/.test(existing)) {
+    if (validateIbanMod97(existing)) return existing;
+  }
+  const accRaw = normalizeLine(params.bankAccountNumber);
+  const codeRaw = normalizeLine(params.bankCode);
+  if (accRaw && codeRaw) {
+    const fromParts = convertToIban(accRaw, codeRaw);
+    if (fromParts) return fromParts;
+  }
+  if (accRaw && (accRaw.includes("/") || !codeRaw)) {
+    const p = parsePaymentAccountString(accRaw);
+    if (p.iban && validateIbanMod97(p.iban)) return p.iban.toUpperCase();
+    if (p.accountNumber && p.bankCode) {
+      const c = convertToIban(p.accountNumber, p.bankCode);
+      if (c) return c;
+    }
+  }
+  return null;
+}
+
 function resolvedFromParsedLine(
   parsed: ReturnType<typeof parsePaymentAccountString>,
   fallbackDisplay: string,
@@ -452,19 +541,6 @@ export type InvoiceQrSnapshot = {
   warning: string | null;
 };
 
-function normalizePaymentAccount(params: {
-  iban?: string | null;
-  bankAccountNumber?: string | null;
-  bankCode?: string | null;
-}): string | null {
-  const iban = normalizeLine(params.iban).replace(/\s+/g, "");
-  if (iban) return iban;
-  const acc = normalizeLine(params.bankAccountNumber).replace(/\s+/g, "");
-  const code = normalizeLine(params.bankCode).replace(/\s+/g, "");
-  if (acc && code) return `${acc}/${code}`;
-  return null;
-}
-
 /** Vytvoří SPD řetězec + URL QR obrázku, nebo warning pokud chybí povinné údaje. */
 export function buildInvoicePaymentQr(params: {
   iban?: string | null;
@@ -474,22 +550,23 @@ export function buildInvoicePaymentQr(params: {
   variableSymbol?: string | null;
   message?: string | null;
 }): InvoiceQrSnapshot | null {
-  const acc = normalizePaymentAccount(params);
+  const ibanForQr = resolveIbanForPaymentQr(params);
   const amount = Number(params.amountGross ?? 0);
   const vs = normalizeLine(params.variableSymbol);
   const msg = normalizeLine(params.message).slice(0, 60);
   const missing: string[] = [];
-  if (!acc) missing.push("číslo účtu");
+  if (!ibanForQr) missing.push("IBAN pro QR");
   if (!Number.isFinite(amount) || amount <= 0) missing.push("částka");
   if (!vs) missing.push("variabilní symbol");
   if (missing.length > 0) {
-    const noAccount = missing.includes("číslo účtu");
-    const rest = missing.filter((m) => m !== "číslo účtu");
+    const noIban = missing.includes("IBAN pro QR");
+    const rest = missing.filter((m) => m !== "IBAN pro QR");
     let warning: string;
-    if (noAccount && rest.length === 0) {
-      warning = "Chybí číslo účtu pro QR platbu.";
-    } else if (noAccount) {
-      warning = `Chybí číslo účtu pro QR platbu. Doplňte také: ${rest.join(", ")}.`;
+    if (noIban && rest.length === 0) {
+      warning =
+        "QR platbu nelze vytvořit — z čísla účtu se nepodařilo sestavit platný IBAN (zkontrolujte číslo účtu a kód banky).";
+    } else if (noIban) {
+      warning = `QR platbu nelze vytvořit — chybí platný IBAN pro SPD. Doplňte také: ${rest.join(", ")}.`;
     } else {
       warning = `QR platba nelze vytvořit (chybí: ${missing.join(", ")}).`;
     }
@@ -501,13 +578,17 @@ export function buildInvoicePaymentQr(params: {
   }
   const spdParts = [
     "SPD*1.0",
-    `ACC:${acc}`,
+    `ACC:${ibanForQr}`,
     `AM:${amount.toFixed(2)}`,
     "CC:CZK",
     `X-VS:${vs}`,
     `MSG:${msg || vs}`,
   ];
   const spd = spdParts.join("*");
+  if (process.env.NODE_ENV === "development") {
+    console.log("QR IBAN", ibanForQr);
+    console.log("QR payload", spd);
+  }
   const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encodeURIComponent(
     spd
   )}`;
