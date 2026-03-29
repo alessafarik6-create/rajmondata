@@ -29,16 +29,54 @@ import { Logo } from '@/components/ui/logo';
 import { useUser, useDoc, useFirestore, useMemoFirebase, useCompany } from '@/firebase';
 import { doc } from 'firebase/firestore';
 import type { PlatformModuleCode } from '@/lib/platform-config';
+import { isModuleKeyEnabled } from '@/lib/license-modules';
 import {
   canAccessCompanyModule,
+  getEffectiveModulesMerged,
   getResolvedMenuModules,
-  isCompanyLicenseBlocking,
+  isLicenseExplicitlyRevokedForPortal,
 } from '@/lib/platform-access';
 import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
 } from '@/lib/warehouse-production-access';
 import { useMergedPlatformModuleCatalog } from '@/contexts/platform-module-catalog-context';
+
+type PortalLinkDef = {
+  label: string;
+  href: string;
+  icon: typeof LayoutDashboard;
+  roles: string[];
+  module: PlatformModuleCode | null;
+  menuGateKeys?: readonly string[];
+};
+
+const adminLinksStatic = [
+  { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },
+  { label: 'Organizace', href: '/admin/companies', icon: Building2 },
+  { label: 'Moduly', href: '/admin/modules', icon: Briefcase },
+  { label: 'Ceník', href: '/admin/pricing', icon: Tags },
+  { label: 'SEO', href: '/admin/seo', icon: FileText },
+  { label: 'Nastavení platformy', href: '/admin/platform-settings', icon: Settings },
+  { label: 'Licence', href: '/admin/licenses', icon: ShieldCheck },
+  { label: 'Fakturace', href: '/admin/billing', icon: CreditCard },
+];
+
+const portalLinksRawStatic: PortalLinkDef[] = [
+  { label: 'Přehled', href: '/portal/dashboard', icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'accountant', 'employee', 'customer'], module: null },
+  { label: 'Zaměstnanci', href: '/portal/employees', icon: Users, roles: ['owner', 'admin', 'manager'], module: 'attendance_payroll', menuGateKeys: ['dochazka', 'attendance', 'mobile_terminal', 'terminal', 'reporty', 'reports'] },
+  { label: 'Práce a mzdy', href: '/portal/labor/dochazka', icon: Wallet, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: 'attendance_payroll', menuGateKeys: ['dochazka', 'attendance', 'mobile_terminal', 'terminal', 'reporty', 'reports'] },
+  { label: 'Zákazníci', href: '/portal/customers', icon: UserCircle, roles: ['owner', 'admin', 'manager', 'accountant'], module: 'jobs', menuGateKeys: ['zakazky', 'jobs'] },
+  { label: 'Zakázky', href: '/portal/jobs', icon: Briefcase, roles: ['owner', 'admin', 'manager', 'employee', 'customer'], module: 'jobs', menuGateKeys: ['zakazky', 'jobs'] },
+  { label: 'Poptávky', href: '/portal/leads', icon: Inbox, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: 'jobs', menuGateKeys: ['zakazky', 'jobs'] },
+  { label: 'Finance', href: '/portal/finance', icon: Wallet, roles: ['owner', 'admin', 'accountant'], module: 'invoicing', menuGateKeys: ['finance', 'faktury', 'invoices', 'doklady', 'documents'] },
+  { label: 'Doklady', href: '/portal/documents', icon: FileText, roles: ['owner', 'admin', 'accountant', 'customer'], module: 'invoicing', menuGateKeys: ['finance', 'faktury', 'invoices', 'doklady', 'documents'] },
+  { label: 'Report', href: '/portal/report', icon: Activity, roles: ['owner', 'admin'], module: null },
+  { label: 'Reporty', href: '/portal/reports', icon: BarChart3, roles: ['owner', 'admin', 'manager', 'accountant'], module: 'attendance_payroll', menuGateKeys: ['dochazka', 'attendance', 'mobile_terminal', 'terminal', 'reporty', 'reports'] },
+  { label: 'Předplatné', href: '/portal/billing', icon: PaymentIcon, roles: ['owner'], module: null },
+  { label: 'Zprávy', href: '/portal/chat', icon: MessageSquare, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: null },
+  { label: 'Nastavení', href: '/portal/settings', icon: Settings, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: null },
+];
 
 export type BizForgeSidebarProps = {
   /**
@@ -85,78 +123,90 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   const { data: employeeRow } = useDoc(employeeRowRef);
   const platformCatalog = useMergedPlatformModuleCatalog();
 
+  const organizationModules = company?.modules ?? {};
+  const licenseModulesNested = company?.license?.modules ?? {};
+  const effectiveModules = useMemo(() => getEffectiveModulesMerged(company), [company]);
   const modules = useMemo(() => getResolvedMenuModules(company), [company]);
-  useEffect(() => {
-    console.log('MODULES:', modules);
-  }, [modules]);
+  const isModuleEnabled = (key: string) => isModuleKeyEnabled(effectiveModules, key);
 
-  const adminLinks = [
-    { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },
-    { label: 'Organizace', href: '/admin/companies', icon: Building2 },
-    { label: 'Moduly', href: '/admin/modules', icon: Briefcase },
-    { label: 'Ceník', href: '/admin/pricing', icon: Tags },
-    { label: 'SEO', href: '/admin/seo', icon: FileText },
-    { label: 'Nastavení platformy', href: '/admin/platform-settings', icon: Settings },
-    { label: 'Licence', href: '/admin/licenses', icon: ShieldCheck },
-    { label: 'Fakturace', href: '/admin/billing', icon: CreditCard },
-  ];
-
-  // Modul (`null` = vždy po schválení účtu; jinak placený modul platformy)
-  const portalLinksRaw: Array<{
-    label: string;
-    href: string;
-    icon: typeof LayoutDashboard;
-    roles: string[];
-    module: PlatformModuleCode | null;
-  }> = [
-    { label: 'Přehled', href: '/portal/dashboard', icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'accountant', 'employee', 'customer'], module: null },
-    { label: 'Zaměstnanci', href: '/portal/employees', icon: Users, roles: ['owner', 'admin', 'manager'], module: 'attendance_payroll' },
-    { label: 'Práce a mzdy', href: '/portal/labor/dochazka', icon: Wallet, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: 'attendance_payroll' },
-    { label: 'Zákazníci', href: '/portal/customers', icon: UserCircle, roles: ['owner', 'admin', 'manager', 'accountant'], module: 'jobs' },
-    { label: 'Zakázky', href: '/portal/jobs', icon: Briefcase, roles: ['owner', 'admin', 'manager', 'employee', 'customer'], module: 'jobs' },
-    { label: 'Poptávky', href: '/portal/leads', icon: Inbox, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: 'jobs' },
-    { label: 'Finance', href: '/portal/finance', icon: Wallet, roles: ['owner', 'admin', 'accountant'], module: 'invoicing' },
-    { label: 'Doklady', href: '/portal/documents', icon: FileText, roles: ['owner', 'admin', 'accountant', 'customer'], module: 'invoicing' },
-    { label: 'Report', href: '/portal/report', icon: Activity, roles: ['owner', 'admin'], module: null },
-    { label: 'Reporty', href: '/portal/reports', icon: BarChart3, roles: ['owner', 'admin', 'manager', 'accountant'], module: 'attendance_payroll' },
-    { label: 'Předplatné', href: '/portal/billing', icon: PaymentIcon, roles: ['owner'], module: null },
-    { label: 'Zprávy', href: '/portal/chat', icon: MessageSquare, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: null },
-    { label: 'Nastavení', href: '/portal/settings', icon: Settings, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: null },
-  ];
-
-  const portalLinks = portalLinksRaw.filter((link) => {
-    if (link.href === '/portal/report') {
+  const portalLinks = useMemo(() => {
+    return portalLinksRawStatic.filter((link) => {
+      if (link.href === '/portal/report') {
+        if (!company) return false;
+        return (
+          role === 'owner' ||
+          role === 'admin' ||
+          (Array.isArray(userProfile?.globalRoles) &&
+            userProfile.globalRoles.includes('super_admin'))
+        );
+      }
+      if (!link.roles.includes(role)) return false;
+      if (link.module === null) return true;
       if (!company) return false;
-      if (isCompanyLicenseBlocking(company)) return false;
-      return (
-        role === 'owner' ||
-        role === 'admin' ||
-        (Array.isArray(userProfile?.globalRoles) &&
-          userProfile.globalRoles.includes('super_admin'))
-      );
-    }
-    if (!link.roles.includes(role)) return false;
-    if (link.module === null) return true;
-    if (!company) return false;
-    if (!canAccessCompanyModule(company, link.module, platformCatalog)) return false;
-    if (link.module === 'sklad') {
-      return userCanAccessWarehousePortal({
-        role,
-        globalRoles: userProfile?.globalRoles,
-        employeeRow: employeeRow as { canAccessWarehouse?: boolean } | null,
-      });
-    }
-    if (link.module === 'vyroba') {
-      return userCanAccessProductionPortal({
-        role,
-        globalRoles: userProfile?.globalRoles,
-        employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
-      });
-    }
-    return true;
-  });
 
-  const links = isAdminArea ? adminLinks : portalLinks;
+      const gateKeys = link.menuGateKeys;
+      const anyGate =
+        gateKeys && gateKeys.length > 0
+          ? gateKeys.some((k) => isModuleEnabled(k))
+          : false;
+      const catalogOrEntitlements = canAccessCompanyModule(
+        company,
+        link.module,
+        platformCatalog
+      );
+      const revoked = isLicenseExplicitlyRevokedForPortal(company);
+      const moduleOk = (!revoked && anyGate) || catalogOrEntitlements;
+      if (!moduleOk) return false;
+
+      if (link.module === 'sklad') {
+        return userCanAccessWarehousePortal({
+          role,
+          globalRoles: userProfile?.globalRoles,
+          employeeRow: employeeRow as { canAccessWarehouse?: boolean } | null,
+        });
+      }
+      if (link.module === 'vyroba') {
+        return userCanAccessProductionPortal({
+          role,
+          globalRoles: userProfile?.globalRoles,
+          employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
+        });
+      }
+      return true;
+    });
+  }, [
+    company,
+    role,
+    userProfile?.globalRoles,
+    platformCatalog,
+    employeeRow,
+    effectiveModules,
+  ]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return;
+    console.log('[BizForgeSidebar] menu debug', {
+      organizationModules,
+      licenseModules: licenseModulesNested,
+      effectiveModules,
+      resolvedMenuModules: modules,
+      licenseStatus: company?.license?.status ?? null,
+      licenseLicenseStatus: company?.license?.licenseStatus ?? null,
+      role,
+      filteredMenuLabels: portalLinks.map((l) => l.label),
+    });
+  }, [
+    company?.license?.status,
+    company?.license?.licenseStatus,
+    effectiveModules,
+    licenseModulesNested,
+    modules,
+    organizationModules,
+    portalLinks,
+    role,
+  ]);
+
+  const links = isAdminArea ? adminLinksStatic : portalLinks;
 
   const isPortalLinkActive = (href: string) => {
     if (pathname === href) return true;

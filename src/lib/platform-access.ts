@@ -6,6 +6,8 @@ import {
   MODULE_KEYS,
   ORG_MENU_MODULE_KEYS,
   buildMergedFirestoreModulesMap,
+  expandModuleRecordAliases,
+  orMergeModuleRecords,
   type ModuleKey,
 } from "@/lib/license-modules";
 import type { OrganizationLicenseRecord } from "@/lib/organization-license";
@@ -82,21 +84,7 @@ export function isCompanyLicenseBlocking(company: CompanyPlatformFields | null |
   return false;
 }
 
-const TOP_LEVEL_MODULE_DOC_KEYS = new Set<string>([
-  ...MODULE_KEYS,
-  ...ORG_MENU_MODULE_KEYS,
-]);
-
-function companyDocumentHasTopLevelModules(company: CompanyPlatformFields): boolean {
-  const m = company.modules;
-  if (!m || typeof m !== "object") return false;
-  for (const k of TOP_LEVEL_MODULE_DOC_KEYS) {
-    if (Object.prototype.hasOwnProperty.call(m, k)) return true;
-  }
-  return false;
-}
-
-/** Menu: české klíče (`zakazky`, …) nebo anglické z superadminu / `license.modules`. */
+/** Menu: české klíče (`zakazky`, …) nebo anglické z licence / superadminu (včetně aliasů po expand). */
 function isPlatformModuleEnabledFromModuleMap(
   m: Record<string, boolean>,
   moduleCode: PlatformModuleCode
@@ -105,7 +93,14 @@ function isPlatformModuleEnabledFromModuleMap(
     case "jobs":
       return Boolean(m.zakazky ?? m.jobs);
     case "attendance_payroll":
-      return Boolean(m.dochazka || m.terminal || m.attendance || m.mobile_terminal);
+      return Boolean(
+        m.dochazka ||
+          m.terminal ||
+          m.attendance ||
+          m.mobile_terminal ||
+          m.reporty ||
+          m.reports
+      );
     case "invoicing":
       return Boolean(
         m.faktury || m.doklady || m.finance || m.invoices || m.documents
@@ -130,33 +125,59 @@ function moduleKeysFromNestedLicenseMods(mods: Record<string, boolean>): ModuleK
 }
 
 /**
- * Efektivní mapa pro menu: primárně `organization.modules` (merged company),
- * jinak sestavená z `license.enabledModules` / `license.modules`.
+ * Vrstva z licence: `license.modules` (včetně cizích klíčů) + `enabledModules` + odvozené z nested polí (OR).
  */
-function resolveEffectiveModuleMapForMenu(
-  company: CompanyPlatformFields
-): Record<string, boolean> | null {
-  if (companyDocumentHasTopLevelModules(company) && company.modules) {
-    return company.modules as Record<string, boolean>;
+function buildLicenseDerivedModuleLayer(company: CompanyPlatformFields): Record<string, boolean> {
+  const nested = getCompanyLicenseModules(company);
+  const rawFlat: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(nested)) {
+    if (typeof v === "boolean") rawFlat[k] = v;
   }
+  const parts: Record<string, boolean>[] = [rawFlat];
   const en = company.license?.enabledModules;
   if (Array.isArray(en) && en.length > 0) {
     const valid = en.filter((x): x is ModuleKey =>
       (MODULE_KEYS as readonly string[]).includes(x)
     );
     if (valid.length > 0) {
-      return buildMergedFirestoreModulesMap(valid);
+      parts.push(buildMergedFirestoreModulesMap(valid));
     }
   }
-  const nested = getCompanyLicenseModules(company);
   const keysFromNested = moduleKeysFromNestedLicenseMods(nested);
   if (keysFromNested.length > 0) {
-    return buildMergedFirestoreModulesMap(keysFromNested);
+    parts.push(buildMergedFirestoreModulesMap(keysFromNested));
   }
-  return null;
+  return orMergeModuleRecords(...parts);
 }
 
-/** Pro sidebar / debug: sloučená mapa modulů (default false pro známé klíče). */
+/**
+ * Jednotná mapa: `{ ...licenseVrstva, ...organization.modules }` + aliasy.
+ * Organizace (`companies` / `společnosti` top-level `modules`) přepisuje shodné klíče z licence.
+ */
+export function getEffectiveModulesMerged(
+  company: CompanyPlatformFields | null | undefined
+): Record<string, boolean> {
+  if (!company) return {};
+  const fromLicense = buildLicenseDerivedModuleLayer(company);
+  const org =
+    company.modules && typeof company.modules === "object"
+      ? (company.modules as Record<string, boolean>)
+      : {};
+  return expandModuleRecordAliases({ ...fromLicense, ...org });
+}
+
+/** Licence výslovně neplatná pro moduly portálu (ne „pending“ — ten nesmí schovat zapnuté moduly z admina). */
+export function isLicenseExplicitlyRevokedForPortal(
+  company: CompanyPlatformFields | null | undefined
+): boolean {
+  if (!company) return false;
+  const s = String(company.license?.status ?? company.license?.licenseStatus ?? "")
+    .trim()
+    .toLowerCase();
+  return s === "expired" || s === "suspended" || s === "inactive";
+}
+
+/** Pro sidebar / debug: `effectiveModules` + výchozí false u známých klíčů. */
 export function getResolvedMenuModules(
   company: CompanyPlatformFields | null | undefined
 ): Record<string, boolean> {
@@ -164,9 +185,8 @@ export function getResolvedMenuModules(
   for (const k of MODULE_KEYS) empty[k] = false;
   for (const k of ORG_MENU_MODULE_KEYS) empty[k] = false;
   if (!company) return empty;
-  const r = resolveEffectiveModuleMapForMenu(company);
-  if (r) return { ...empty, ...r };
-  return empty;
+  const r = getEffectiveModulesMerged(company);
+  return { ...empty, ...r };
 }
 
 function orgHasExplicitModuleEntitlement(
@@ -194,8 +214,8 @@ function getOrgModuleEntitlementRecord(
 }
 
 /**
- * Přístup k modulu: `company.modules` (org + české klíče), pak `license.enabledModules` / `license.modules`,
- * jinak `moduleEntitlements` / katalog (starší dokumenty).
+ * Přístup k modulu: sloučené `license` + top-level `modules` organizace;
+ * při zapnutém modulu neblokuje jen kvůli `platformLicense.pending` (moduly ze superadmina zůstanou vidět).
  */
 export function hasActiveModuleAccess(
   company: CompanyPlatformFields | null | undefined,
@@ -203,12 +223,13 @@ export function hasActiveModuleAccess(
   globalCatalog?: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null
 ): boolean {
   if (!company) return false;
-  if (isCompanyLicenseBlocking(company)) return false;
 
-  const menuMap = resolveEffectiveModuleMapForMenu(company);
-  if (menuMap) {
-    return isPlatformModuleEnabledFromModuleMap(menuMap, moduleCode);
+  const effective = getEffectiveModulesMerged(company);
+  if (isPlatformModuleEnabledFromModuleMap(effective, moduleCode)) {
+    return !isLicenseExplicitlyRevokedForPortal(company);
   }
+
+  if (isCompanyLicenseBlocking(company)) return false;
 
   if (!company.platformLicense) {
     if (!isCompanyLicenseActive(company)) {
@@ -258,13 +279,13 @@ export function hasActiveModuleAccess(
   return result;
 }
 
-/** `isActive && moduleEnabled` — jednotné pro sidebar / guard. */
+/** Jednotné pro sidebar / guard — blokace licence se uplatní až ve `hasActiveModuleAccess` (po kontrole effective modulů). */
 export function canAccessOrganizationModule(
   company: CompanyPlatformFields | null | undefined,
   moduleCode: PlatformModuleCode,
   globalCatalog?: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null
 ): boolean {
-  return !isCompanyLicenseBlocking(company) && hasActiveModuleAccess(company, moduleCode, globalCatalog);
+  return hasActiveModuleAccess(company, moduleCode, globalCatalog);
 }
 
 export { getCompanyLicenseModules, isCompanyLicenseActive, shouldShowLicensePendingNotice };

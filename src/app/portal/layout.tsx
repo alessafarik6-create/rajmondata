@@ -15,6 +15,7 @@ import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 import {
   canAccessCompanyModule,
   getCompanyLicenseModules,
+  getEffectiveModulesMerged,
   isCompanyLicenseActive,
   isCompanyLicenseBlocking,
   shouldShowLicensePendingNotice,
@@ -201,20 +202,23 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development" || !company || !companyId) return;
+    const effectiveModules = getEffectiveModulesMerged(company);
     console.log("company (merged):", company);
-    console.log("company.modules (top-level, menu):", company.modules);
+    console.log("organization.modules (top-level):", company.modules);
+    console.log("license.modules (nested):", getCompanyLicenseModules(company));
+    console.log("effectiveModules (license layer ∪ org, +aliasy):", effectiveModules);
     console.log("company.license:", company.license);
     console.log("company.license.status:", company.license?.status);
-    console.log("company.license.modules (nested):", getCompanyLicenseModules(company));
     console.log("[Portal license debug]", {
       companyId,
+      role: profile?.role ?? null,
       isCompanyLicenseActive: isCompanyLicenseActive(company),
       isCompanyLicenseBlocking: isCompanyLicenseBlocking(company),
       shouldShowLicensePendingNotice: shouldShowLicensePendingNotice(company),
       canAccessCompanyModuleSklad: canAccessCompanyModule(company, "sklad", platformCatalog),
       canAccessCompanyModuleVyroba: canAccessCompanyModule(company, "vyroba", platformCatalog),
     });
-  }, [company, companyId, platformCatalog]);
+  }, [company, companyId, platformCatalog, profile?.role]);
 
   useEffect(() => {
     if (isUserLoading) {

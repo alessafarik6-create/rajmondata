@@ -55,6 +55,8 @@ export const ORG_MENU_MODULE_KEYS = [
   "faktury",
   "doklady",
   "terminal",
+  "reporty",
+  "predplatne",
 ] as const;
 
 export type OrgMenuModuleKey = (typeof ORG_MENU_MODULE_KEYS)[number];
@@ -72,7 +74,96 @@ export function buildOrgMenuModuleMapFromEnabledKeys(
     terminal: set.has("mobile_terminal"),
     sklad: set.has("sklad"),
     vyroba: set.has("vyroba"),
+    reporty: set.has("reports"),
+    predplatne: set.has("subscriptions"),
   };
+}
+
+/**
+ * Synonyma napříč dokumenty (projects / warehouse / billing …) → kanonické klíče v jedné mapě.
+ */
+const MODULE_KEY_ALIASES: Record<string, readonly string[]> = {
+  projects: ["jobs", "zakazky"],
+  zakazky: ["jobs", "zakazky"],
+  jobs: ["jobs", "zakazky"],
+  warehouse: ["sklad"],
+  sklad: ["sklad"],
+  production: ["vyroba"],
+  vyroba: ["vyroba"],
+  attendance: ["attendance", "dochazka"],
+  dochazka: ["attendance", "dochazka"],
+  mobile_terminal: ["mobile_terminal", "terminal"],
+  terminal: ["mobile_terminal", "terminal"],
+  invoices: ["invoices", "faktury"],
+  faktury: ["invoices", "faktury"],
+  documents: ["documents", "doklady"],
+  doklady: ["documents", "doklady"],
+  finance: ["finance"],
+  subscriptions: ["subscriptions", "predplatne"],
+  predplatne: ["subscriptions", "predplatne"],
+  reports: ["reports", "reporty"],
+  reporty: ["reports", "reporty"],
+  billing: ["faktury", "subscriptions", "predplatne", "invoices"],
+};
+
+/** Sloučení více zdrojů modulů — true vyhrává (OR). */
+export function orMergeModuleRecords(
+  ...parts: Array<Record<string, boolean | undefined> | null | undefined>
+): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const p of parts) {
+    if (!p || typeof p !== "object") continue;
+    for (const [k, v] of Object.entries(p)) {
+      if (typeof v !== "boolean") continue;
+      out[k] = Boolean(out[k]) || v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Podle aliasů doplní související klíče (např. `warehouse` → `sklad`).
+ */
+export function expandModuleRecordAliases(
+  raw: Record<string, boolean | undefined>
+): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v !== "boolean") continue;
+    const expansion = MODULE_KEY_ALIASES[k];
+    if (expansion) {
+      for (const ck of expansion) {
+        out[ck] = Boolean(out[ck]) || v;
+      }
+    } else {
+      out[k] = Boolean(out[k]) || v;
+    }
+  }
+  return out;
+}
+
+/** `...(license?.modules||{})` pak `...(organization?.modules||{})` — organizace přepíše stejné klíče; pak aliasy. */
+export function mergeLicenseAndOrganizationModuleLayers(
+  licenseModules: Record<string, boolean | undefined> | null | undefined,
+  organizationModules: Record<string, boolean | undefined> | null | undefined
+): Record<string, boolean> {
+  const lic =
+    licenseModules && typeof licenseModules === "object" ? licenseModules : {};
+  const org =
+    organizationModules && typeof organizationModules === "object"
+      ? organizationModules
+      : {};
+  return expandModuleRecordAliases({
+    ...lic,
+    ...org,
+  } as Record<string, boolean>);
+}
+
+export function isModuleKeyEnabled(
+  effectiveModules: Record<string, boolean | null | undefined> | null | undefined,
+  key: string
+): boolean {
+  return Boolean(effectiveModules?.[key]);
 }
 
 /** Zápis do Firestore: anglické klíče (superadmin checkboxy) + české klíče (menu organizace). */
