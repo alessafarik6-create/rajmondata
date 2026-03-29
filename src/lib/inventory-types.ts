@@ -8,6 +8,12 @@ export type InventoryItemRow = {
   unit: string;
   quantity: number;
   unitPrice?: number | null;
+  /** Sazba DPH v % (volitelné — import CSV/PDF). */
+  vatRate?: number | null;
+  /** Preferovaný dodavatel u položky (volitelné). */
+  supplier?: string | null;
+  /** csv-import | pdf-import apod. */
+  source?: string | null;
   note?: string | null;
   createdAt?: unknown;
   createdBy: string;

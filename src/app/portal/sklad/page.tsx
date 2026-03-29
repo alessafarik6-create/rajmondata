@@ -12,7 +12,7 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 import { useRouter } from "next/navigation";
-import { Plus, Minus, History, Loader2, Factory } from "lucide-react";
+import { Plus, Minus, History, Loader2, Factory, Upload } from "lucide-react";
 import {
   useUser,
   useFirebase,
@@ -46,6 +46,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { WarehouseImportDialog } from "@/components/warehouse/warehouse-import-dialog";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -129,6 +130,7 @@ export default function SkladPage() {
 
   const [inOpen, setInOpen] = useState(false);
   const [outOpen, setOutOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const [inItemId, setInItemId] = useState<string>("");
@@ -419,6 +421,14 @@ export default function SkladPage() {
           >
             <Minus className="h-4 w-4" /> Vyskladnit
           </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="gap-2 border-slate-300 bg-white text-slate-900"
+            onClick={() => setImportOpen(true)}
+          >
+            <Upload className="h-4 w-4" /> Import PDF / CSV
+          </Button>
         </div>
       </div>
 
@@ -637,6 +647,17 @@ export default function SkladPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {user && firestore && companyId ? (
+        <WarehouseImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          firestore={firestore}
+          companyId={companyId}
+          userId={user.uid}
+          items={itemList}
+        />
+      ) : null}
 
       <Dialog open={outOpen} onOpenChange={setOutOpen}>
         <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-md" data-portal-dialog>
