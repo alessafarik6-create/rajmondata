@@ -21,7 +21,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Table,
   TableBody,
   TableCell,
   TableHead,
@@ -37,6 +36,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import type { InventoryItemRow } from "@/lib/inventory-types";
+import { cn } from "@/lib/utils";
 import {
   extractTextFromPdfBuffer,
   parseWarehouseImportCsv,
@@ -365,227 +365,274 @@ export function WarehouseImportDialog({
   return (
     <Dialog open={open} onOpenChange={handleClose}>
       <DialogContent
-        className="bg-white border-slate-200 text-slate-900 max-w-4xl max-h-[90vh] flex flex-col"
+        className={cn(
+          "bg-white border-slate-200 text-slate-900",
+          "flex !flex-col gap-0 overflow-hidden p-0 shadow-xl",
+          "w-[calc(100vw-1rem)] max-w-[calc(100vw-1rem)]",
+          "sm:w-[min(90vw,92rem)] sm:max-w-[min(90vw,92rem)]",
+          "h-[min(92dvh,calc(100vh-1rem))] max-h-[min(92dvh,calc(100vh-1rem))]"
+        )}
         data-portal-dialog
       >
-        <DialogHeader>
-          <DialogTitle>Import PDF / CSV</DialogTitle>
-        </DialogHeader>
-
-        {step === "pick" ? (
-          <div className="space-y-4 py-4">
-            <p className="text-sm text-slate-600">
-              Nahrajte CSV nebo PDF. Zobrazí se náhled — nic se neuloží, dokud nepotvrdíte
-              „Naskladnit“.
-            </p>
-            <input
-              ref={inputRef}
-              type="file"
-              accept=".csv,.pdf,text/csv,application/pdf"
-              className="hidden"
-              onChange={(ev) => void onFile(ev)}
-            />
-            <Button
-              type="button"
-              variant="outline"
-              className="gap-2 w-full sm:w-auto"
-              disabled={parsing}
-              onClick={() => inputRef.current?.click()}
-            >
-              {parsing ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <FileUp className="h-4 w-4" />
-              )}
-              Vybrat soubor
-            </Button>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-3 min-h-0 flex-1 overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm text-slate-600">
-                Zdroj: {sourceKind === "csv" ? "CSV" : "PDF"} — upravte řádky a vyřešte případné
-                duplicity.
+        <div className="shrink-0 border-b border-slate-200 bg-white px-4 py-4 pr-12 sm:px-6 sm:py-5">
+          <DialogHeader className="space-y-1">
+            <DialogTitle className="text-xl sm:text-2xl">Import PDF / CSV</DialogTitle>
+            {step === "preview" ? (
+              <p className="text-sm text-slate-600 pt-1">
+                Zdroj: <span className="font-medium">{sourceKind === "csv" ? "CSV" : "PDF"}</span> —
+                upravte řádky a duplicity. Scrolluje se tabulka níže.
               </p>
-              <Button type="button" size="sm" variant="outline" className="gap-1" onClick={addBlankRow}>
-                <Plus className="h-4 w-4" /> Přidat řádek
+            ) : null}
+          </DialogHeader>
+        </div>
+
+        <div
+          className={cn(
+            "min-h-0 flex-1 px-4 py-4 sm:px-6 sm:py-5",
+            step === "pick" ? "overflow-y-auto overflow-x-hidden" : "flex flex-col overflow-hidden"
+          )}
+        >
+          {step === "pick" ? (
+            <div className="space-y-4">
+              <p className="text-sm text-slate-600 max-w-2xl">
+                Nahrajte CSV nebo PDF. Zobrazí se náhled — nic se neuloží, dokud nepotvrdíte
+                „Naskladnit“.
+              </p>
+              <input
+                ref={inputRef}
+                type="file"
+                accept=".csv,.pdf,text/csv,application/pdf"
+                className="hidden"
+                onChange={(ev) => void onFile(ev)}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-2 w-full sm:w-auto h-11"
+                disabled={parsing}
+                onClick={() => inputRef.current?.click()}
+              >
+                {parsing ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <FileUp className="h-4 w-4" />
+                )}
+                Vybrat soubor
               </Button>
             </div>
-            <div className="border rounded-md overflow-auto max-h-[50vh]">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="min-w-[140px]">Název</TableHead>
-                    <TableHead className="w-24">MJ</TableHead>
-                    <TableHead className="w-24 text-right">Množství</TableHead>
-                    <TableHead className="w-28 text-right">Cena</TableHead>
-                    <TableHead className="w-20 text-right">DPH %</TableHead>
-                    <TableHead className="min-w-[100px]">Dodavatel</TableHead>
-                    <TableHead className="min-w-[180px]">Duplicita</TableHead>
-                    <TableHead className="w-12" />
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {drafts.map((d) => (
-                    <TableRow key={d.localId}>
-                      <TableCell className="align-top p-2">
-                        <Input
-                          className="h-8 text-sm"
-                          value={d.name}
-                          onChange={(e) => updateDraft(d.localId, { name: e.target.value })}
-                        />
-                        <Input
-                          className="h-7 text-xs mt-1"
-                          placeholder="Kód / SKU"
-                          value={d.sku}
-                          onChange={(e) => updateDraft(d.localId, { sku: e.target.value })}
-                        />
-                      </TableCell>
-                      <TableCell className="align-top p-2">
-                        <Input
-                          className="h-8 text-sm"
-                          value={d.unit}
-                          onChange={(e) => updateDraft(d.localId, { unit: e.target.value })}
-                        />
-                      </TableCell>
-                      <TableCell className="align-top p-2">
-                        <Input
-                          className="h-8 text-sm text-right"
-                          value={String(d.quantity)}
-                          onChange={(e) => {
-                            const n = Number(String(e.target.value).replace(",", "."));
-                            updateDraft(d.localId, {
-                              quantity: Number.isFinite(n) && n >= 0 ? n : 0,
-                            });
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell className="align-top p-2">
-                        <Input
-                          className="h-8 text-sm text-right"
-                          value={String(d.unitPrice)}
-                          onChange={(e) => {
-                            const n = Number(String(e.target.value).replace(",", "."));
-                            updateDraft(d.localId, {
-                              unitPrice: Number.isFinite(n) && n >= 0 ? n : 0,
-                            });
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell className="align-top p-2">
-                        <Input
-                          className="h-8 text-sm text-right"
-                          placeholder="—"
-                          value={d.vatRate != null ? String(d.vatRate) : ""}
-                          onChange={(e) => {
-                            const t = e.target.value.trim();
-                            if (t === "") {
-                              updateDraft(d.localId, { vatRate: null });
-                              return;
-                            }
-                            const n = Number(t.replace(",", "."));
-                            updateDraft(d.localId, {
-                              vatRate: Number.isFinite(n) && n >= 0 ? n : null,
-                            });
-                          }}
-                        />
-                      </TableCell>
-                      <TableCell className="align-top p-2">
-                        <Input
-                          className="h-8 text-sm"
-                          value={d.supplier}
-                          onChange={(e) => updateDraft(d.localId, { supplier: e.target.value })}
-                        />
-                      </TableCell>
-                      <TableCell className="align-top p-2 text-xs">
-                        {d.duplicateMatches.length === 0 ? (
-                          <span className="text-slate-500">—</span>
-                        ) : (
-                          <div className="space-y-2">
-                            <RadioGroup
-                              value={d.action}
-                              onValueChange={(v) =>
-                                updateDraft(d.localId, {
-                                  action: v === "merge" ? "merge" : "new",
-                                })
-                              }
-                              className="gap-1"
-                            >
-                              <div className="flex items-center gap-2">
-                                <RadioGroupItem value="merge" id={`m-${d.localId}`} />
-                                <Label htmlFor={`m-${d.localId}`} className="font-normal text-xs">
-                                  Zvýšit množství
-                                </Label>
-                              </div>
-                              <div className="flex items-center gap-2">
-                                <RadioGroupItem value="new" id={`n-${d.localId}`} />
-                                <Label htmlFor={`n-${d.localId}`} className="font-normal text-xs">
-                                  Nová položka
-                                </Label>
-                              </div>
-                            </RadioGroup>
-                            {d.action === "merge" ? (
-                              <Select
-                                value={d.mergeTargetId ?? ""}
-                                onValueChange={(v) => updateDraft(d.localId, { mergeTargetId: v })}
-                              >
-                                <SelectTrigger className="h-8 text-xs">
-                                  <SelectValue placeholder="Vyberte položku" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {d.duplicateMatches.map((m) => (
-                                    <SelectItem key={m.id} value={m.id}>
-                                      {m.name} ({m.quantity} {m.unit})
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : null}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="align-top p-1">
-                        <Button
-                          type="button"
-                          size="icon"
-                          variant="ghost"
-                          className="h-8 w-8"
-                          onClick={() => removeDraft(d.localId)}
-                          aria-label="Smazat řádek"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </TableCell>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden">
+              <div className="flex shrink-0 flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-slate-600">
+                  <span className="font-medium text-slate-800">{drafts.length}</span> řádků v náhledu
+                </p>
+                <Button type="button" variant="outline" className="gap-2 h-10" onClick={addBlankRow}>
+                  <Plus className="h-4 w-4" /> Přidat řádek
+                </Button>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-slate-200 bg-slate-50/40">
+                <table className="w-full min-w-[960px] caption-bottom border-collapse text-sm">
+                  <TableHeader className="sticky top-0 z-30 bg-slate-100 shadow-[0_1px_0_0_rgb(226_232_240)] [&_tr]:border-slate-200">
+                    <TableRow className="border-slate-200 hover:bg-transparent">
+                      <TableHead className="min-w-[220px] max-w-[320px] whitespace-normal py-3 pl-4 pr-3">
+                        Název / kód
+                      </TableHead>
+                      <TableHead className="w-28 min-w-[5.5rem] py-3 px-3">MJ</TableHead>
+                      <TableHead className="w-32 min-w-[7rem] py-3 px-3 text-right">
+                        Množství
+                      </TableHead>
+                      <TableHead className="w-36 min-w-[8rem] py-3 px-3 text-right">Cena</TableHead>
+                      <TableHead className="w-24 min-w-[5rem] py-3 px-3 text-right">DPH %</TableHead>
+                      <TableHead className="min-w-[160px] max-w-[220px] py-3 px-3">
+                        Dodavatel
+                      </TableHead>
+                      <TableHead className="min-w-[200px] w-[220px] py-3 px-3">Duplicita</TableHead>
+                      <TableHead className="w-14 min-w-[3rem] py-3 pr-4 pl-2" />
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {drafts.map((d) => (
+                      <TableRow key={d.localId} className="border-slate-200 bg-white">
+                        <TableCell className="align-top py-3 pl-4 pr-3">
+                          <Input
+                            className="h-10 text-sm"
+                            value={d.name}
+                            onChange={(e) => updateDraft(d.localId, { name: e.target.value })}
+                            placeholder="Název položky"
+                          />
+                          <Input
+                            className="h-9 text-sm mt-2"
+                            placeholder="Kód / SKU"
+                            value={d.sku}
+                            onChange={(e) => updateDraft(d.localId, { sku: e.target.value })}
+                          />
+                        </TableCell>
+                        <TableCell className="align-top py-3 px-3">
+                          <Input
+                            className="h-10 text-sm"
+                            value={d.unit}
+                            onChange={(e) => updateDraft(d.localId, { unit: e.target.value })}
+                          />
+                        </TableCell>
+                        <TableCell className="align-top py-3 px-3">
+                          <Input
+                            className="h-10 text-sm text-right tabular-nums"
+                            value={String(d.quantity)}
+                            onChange={(e) => {
+                              const n = Number(String(e.target.value).replace(",", "."));
+                              updateDraft(d.localId, {
+                                quantity: Number.isFinite(n) && n >= 0 ? n : 0,
+                              });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell className="align-top py-3 px-3">
+                          <Input
+                            className="h-10 text-sm text-right tabular-nums"
+                            value={String(d.unitPrice)}
+                            onChange={(e) => {
+                              const n = Number(String(e.target.value).replace(",", "."));
+                              updateDraft(d.localId, {
+                                unitPrice: Number.isFinite(n) && n >= 0 ? n : 0,
+                              });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell className="align-top py-3 px-3">
+                          <Input
+                            className="h-10 text-sm text-right tabular-nums"
+                            placeholder="—"
+                            value={d.vatRate != null ? String(d.vatRate) : ""}
+                            onChange={(e) => {
+                              const t = e.target.value.trim();
+                              if (t === "") {
+                                updateDraft(d.localId, { vatRate: null });
+                                return;
+                              }
+                              const n = Number(t.replace(",", "."));
+                              updateDraft(d.localId, {
+                                vatRate: Number.isFinite(n) && n >= 0 ? n : null,
+                              });
+                            }}
+                          />
+                        </TableCell>
+                        <TableCell className="align-top py-3 px-3">
+                          <Input
+                            className="h-10 text-sm"
+                            value={d.supplier}
+                            onChange={(e) => updateDraft(d.localId, { supplier: e.target.value })}
+                            placeholder="Volitelně"
+                          />
+                        </TableCell>
+                        <TableCell className="align-top py-3 px-3 text-sm">
+                          {d.duplicateMatches.length === 0 ? (
+                            <span className="text-slate-500">—</span>
+                          ) : (
+                            <div className="space-y-2.5">
+                              <RadioGroup
+                                value={d.action}
+                                onValueChange={(v) =>
+                                  updateDraft(d.localId, {
+                                    action: v === "merge" ? "merge" : "new",
+                                  })
+                                }
+                                className="gap-1"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <RadioGroupItem value="merge" id={`m-${d.localId}`} />
+                                  <Label
+                                    htmlFor={`m-${d.localId}`}
+                                    className="font-normal text-sm leading-snug"
+                                  >
+                                    Zvýšit množství
+                                  </Label>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <RadioGroupItem value="new" id={`n-${d.localId}`} />
+                                  <Label
+                                    htmlFor={`n-${d.localId}`}
+                                    className="font-normal text-sm leading-snug"
+                                  >
+                                    Nová položka
+                                  </Label>
+                                </div>
+                              </RadioGroup>
+                              {d.action === "merge" ? (
+                                <Select
+                                  value={d.mergeTargetId ?? ""}
+                                  onValueChange={(v) => updateDraft(d.localId, { mergeTargetId: v })}
+                                >
+                                  <SelectTrigger className="h-10 text-sm">
+                                    <SelectValue placeholder="Vyberte položku" />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    {d.duplicateMatches.map((m) => (
+                                      <SelectItem key={m.id} value={m.id}>
+                                        {m.name} ({m.quantity} {m.unit})
+                                      </SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              ) : null}
+                            </div>
+                          )}
+                        </TableCell>
+                        <TableCell className="align-top py-3 pr-4 pl-2">
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-10 w-10 shrink-0"
+                            onClick={() => removeDraft(d.localId)}
+                            aria-label="Smazat řádek"
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </table>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
-        <DialogFooter className="gap-2 sm:gap-0">
-          {step === "preview" ? (
+        <div className="shrink-0 border-t border-slate-200 bg-slate-50/95 px-4 py-4 backdrop-blur-sm sm:px-6">
+          <DialogFooter className="gap-2 sm:gap-3 sm:justify-end flex-col-reverse sm:flex-row">
+            {step === "preview" ? (
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 w-full sm:w-auto"
+                onClick={() => {
+                  reset();
+                  setStep("pick");
+                }}
+              >
+                Znovu nahrát
+              </Button>
+            ) : null}
             <Button
               type="button"
               variant="outline"
-              onClick={() => {
-                reset();
-                setStep("pick");
-              }}
+              className="h-11 w-full sm:w-auto"
+              onClick={() => handleClose(false)}
             >
-              Znovu nahrát
+              Zrušit
             </Button>
-          ) : null}
-          <Button type="button" variant="outline" onClick={() => handleClose(false)}>
-            Zrušit
-          </Button>
-          {step === "preview" ? (
-            <Button type="button" disabled={saving || drafts.length === 0} onClick={() => void submit()}>
-              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Naskladnit"}
-            </Button>
-          ) : null}
-        </DialogFooter>
+            {step === "preview" ? (
+              <Button
+                type="button"
+                className="h-11 w-full sm:w-auto"
+                disabled={saving || drafts.length === 0}
+                onClick={() => void submit()}
+              >
+                {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Naskladnit"}
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );
