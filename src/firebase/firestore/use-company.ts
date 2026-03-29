@@ -7,6 +7,7 @@ import {
   COMPANIES_COLLECTION,
   ORGANIZATIONS_COLLECTION,
 } from '@/lib/firestore-collections';
+import { MODULE_KEYS } from '@/lib/license-modules';
 
 export type CompanyProfile = {
   id: string;
@@ -51,6 +52,10 @@ export type CompanyProfile = {
     string,
     { active?: boolean; expiresAt?: string | null; activatedAt?: string | null }
   >;
+  /**
+   * Top-level `modules` na `companies` / `společnosti` — stejné klíče jako v superadminu (MODULE_KEYS).
+   */
+  modules?: Record<string, boolean>;
   active?: boolean;
   isActive?: boolean;
 
@@ -156,6 +161,23 @@ function pickBetterPlatformLicense(fromCompanies: unknown, fromOrg: unknown): un
   return score(op) >= score(cp) ? op : cp;
 }
 
+function mergeTopLevelCompanyModules(c: unknown, o: unknown): Record<string, boolean> | undefined {
+  const cm = c && typeof c === 'object' ? (c as Record<string, boolean>) : null;
+  const om = o && typeof o === 'object' ? (o as Record<string, boolean>) : null;
+  if (!cm && !om) return undefined;
+  const out: Record<string, boolean> = {};
+  for (const k of MODULE_KEYS) {
+    if (om && Object.prototype.hasOwnProperty.call(om, k)) {
+      out[k] = Boolean(om[k]);
+    } else if (cm && Object.prototype.hasOwnProperty.call(cm, k)) {
+      out[k] = Boolean(cm[k]);
+    } else {
+      out[k] = false;
+    }
+  }
+  return out;
+}
+
 function mergeModuleEntitlementsMaps(fromCompanies: unknown, fromOrg: unknown): unknown {
   const ce =
     fromCompanies && typeof fromCompanies === 'object'
@@ -213,6 +235,11 @@ function mergeCompanyWithOrganizationRecord(
   const me = mergeModuleEntitlementsMaps(c?.moduleEntitlements, o?.moduleEntitlements);
   if (me !== undefined) {
     merged.moduleEntitlements = me;
+  }
+
+  const topMods = mergeTopLevelCompanyModules(c?.modules, o?.modules);
+  if (topMods !== undefined) {
+    merged.modules = topMods;
   }
 
   if (o && 'isActive' in o && o.isActive !== undefined) {
@@ -312,21 +339,18 @@ export function useCompany() {
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development') return;
     try {
-      console.log('USER:', user);
-      console.log('COMPANY ID (users.companyId | organizationId):', companyId);
-      console.log(
-        'TENANT PATHS:',
-        companyId
-          ? {
-              companies: `${COMPANIES_COLLECTION}/${companyId}`,
-              organizations: `${ORGANIZATIONS_COLLECTION}/${companyId}`,
-            }
-          : null,
-      );
+      console.log('[useCompany] companyId:', companyId);
+      console.log('[useCompany] company.modules (merged):', company?.modules);
+      console.log('[useCompany] loading:', {
+        profileLoading,
+        companyLoading,
+        orgLoading,
+        tenantDocsLoading,
+      });
     } catch {
       /* ignore logging failures */
     }
-  }, [user, companyId]);
+  }, [user, companyId, company?.modules, profileLoading, companyLoading, orgLoading, tenantDocsLoading]);
 
   return {
     /** Dokument `users/{uid}` */

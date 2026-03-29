@@ -1,7 +1,7 @@
 import type { CompanyLicenseDoc, PlatformModuleCode } from "@/lib/platform-config";
 import { PLATFORM_MODULE_CODES } from "@/lib/platform-config";
 import { COMPANY_LICENSES_COLLECTION } from "@/lib/firestore-collections";
-import type { ModuleKey } from "@/lib/license-modules";
+import { buildTopLevelModuleMapFromKeys, type ModuleKey } from "@/lib/license-modules";
 import { buildOrganizationLicenseModulesFromModuleKeys } from "@/lib/organization-license";
 
 export { COMPANY_LICENSES_COLLECTION };
@@ -95,6 +95,7 @@ export function companyDocPlatformFields(license: CompanyLicenseDoc) {
     },
     moduleEntitlements: entitlements,
     enabledModuleIds: legacyEnabled,
+    modules: buildTopLevelModuleMapFromKeys(legacyEnabled),
     license: {
       licenseType: "starter",
       status: licenseStatusForPortal,

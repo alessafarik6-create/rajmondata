@@ -2,6 +2,7 @@ import type { PlatformModuleCode } from "@/lib/platform-config";
 import { isModuleEntitlementActiveNow } from "@/lib/platform-config";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import { defaultPlatformCatalogMap } from "@/lib/platform-module-catalog";
+import { MODULE_KEYS } from "@/lib/license-modules";
 import type { OrganizationLicenseRecord } from "@/lib/organization-license";
 import {
   getCompanyLicenseModules,
@@ -11,10 +12,12 @@ import {
   shouldShowLicensePendingNotice,
 } from "@/lib/organization-license";
 
-/** Firestore dokument firmy — primárně `license`; doplňkově denorm z `company_licenses`. */
+/** Firestore dokument firmy — `modules` (top-level) z superadmina; doplňkově `license` / `company_licenses`. */
 export type CompanyPlatformFields = {
   active?: boolean;
   isActive?: boolean;
+  /** Top-level mapa modulů na `companies` / `společnosti` (klíče jako v superadmin Organizace). */
+  modules?: Record<string, boolean>;
   license?: OrganizationLicenseRecord;
   platformLicense?: {
     active?: boolean;
@@ -74,6 +77,35 @@ export function isCompanyLicenseBlocking(company: CompanyPlatformFields | null |
   return false;
 }
 
+function companyDocumentHasTopLevelModules(company: CompanyPlatformFields): boolean {
+  const m = company.modules;
+  if (!m || typeof m !== "object") return false;
+  return MODULE_KEYS.some((k) => Object.prototype.hasOwnProperty.call(m, k));
+}
+
+/** Menu portálu podle `company.modules` (mapování platformního kódu → legacy klíče). */
+function isPlatformModuleEnabledByTopLevelModules(
+  company: CompanyPlatformFields,
+  moduleCode: PlatformModuleCode
+): boolean {
+  const m = company.modules;
+  if (!m || typeof m !== "object") return false;
+  switch (moduleCode) {
+    case "jobs":
+      return Boolean(m.jobs);
+    case "attendance_payroll":
+      return Boolean(m.attendance || m.mobile_terminal);
+    case "invoicing":
+      return Boolean(m.invoices || m.finance || m.documents);
+    case "sklad":
+      return Boolean(m.sklad);
+    case "vyroba":
+      return Boolean(m.vyroba);
+    default:
+      return false;
+  }
+}
+
 function orgHasExplicitModuleEntitlement(
   company: CompanyPlatformFields,
   moduleCode: PlatformModuleCode
@@ -99,8 +131,8 @@ function getOrgModuleEntitlementRecord(
 }
 
 /**
- * Přístup k modulu: nejdřív `license.modules` / `license.enabledModules`,
- * pak `moduleEntitlements` + katalog.
+ * Přístup k modulu: pokud existuje top-level `company.modules`, řídí se výhradně jím;
+ * jinak fallback na `license` / `moduleEntitlements` / katalog (starší dokumenty).
  */
 export function hasActiveModuleAccess(
   company: CompanyPlatformFields | null | undefined,
@@ -109,6 +141,10 @@ export function hasActiveModuleAccess(
 ): boolean {
   if (!company) return false;
   if (isCompanyLicenseBlocking(company)) return false;
+
+  if (companyDocumentHasTopLevelModules(company)) {
+    return isPlatformModuleEnabledByTopLevelModules(company, moduleCode);
+  }
 
   if (!company.platformLicense) {
     if (!isCompanyLicenseActive(company)) {

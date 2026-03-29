@@ -6,6 +6,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import {
   DEFAULT_LICENSE,
   MODULE_KEYS,
+  buildTopLevelModuleMapFromKeys,
   type LicenseConfig,
   type ModuleKey,
 } from "./license-modules";
@@ -18,6 +19,7 @@ import type { CompanyLicenseDoc } from "./platform-config";
 import {
   buildPlatformModulesSyncFromLegacy,
   createPendingCompanyLicense,
+  platformCodesToLegacyModuleKeys,
 } from "./company-license-record";
 import {
   applyExpiredLicenseStatus,
@@ -236,10 +238,10 @@ export async function updateCompany(
     updates.license = licenseFs;
     updates.licenseId = licenseFs.licenseType as string;
     updates.enabledModuleIds = licenseFs.enabledModules;
-
     const enabledKeys = (licenseFs.enabledModules as string[]).filter((k): k is ModuleKey =>
       MODULE_KEYS.includes(k as ModuleKey)
     );
+    updates.modules = buildTopLevelModuleMapFromKeys(enabledKeys);
     const nowIso = new Date().toISOString();
     const existingLic = await ensureCompanyLicenseDoc(db, id);
     const syncModules = buildPlatformModulesSyncFromLegacy(enabledKeys);
@@ -261,6 +263,12 @@ export async function updateCompany(
       merged = { ...merged, activatedBy: merged.activatedBy ?? options.actorLabel };
     }
     await writeCompanyLicenseAndDenorm(db, id, merged);
+
+    const legacyFromPlatform = platformCodesToLegacyModuleKeys(merged.enabledModules);
+    const modulesSync = buildTopLevelModuleMapFromKeys(legacyFromPlatform);
+    const modulesPatch = { modules: modulesSync, updatedAt: new Date() };
+    await db.collection(ORGANIZATIONS_COLLECTION).doc(id).set(modulesPatch, { merge: true });
+    await db.collection(COMPANIES_COLLECTION).doc(id).set(modulesPatch, { merge: true });
 
     if (merged.active && existing.status === "pending" && merged.status === "active") {
       console.info("[Platform]", "Superadmin activated company license", { companyId: id });

@@ -31,6 +31,18 @@ export const MODULE_KEYS: ModuleKey[] = [
   "vyroba",
 ];
 
+/** Top-level `companies/{id}.modules` / `společnosti/{id}.modules` — stejné klíče jako v superadmin checkboxech. */
+export function buildTopLevelModuleMapFromKeys(
+  enabled: readonly ModuleKey[]
+): Record<ModuleKey, boolean> {
+  const set = new Set(enabled);
+  const out = {} as Record<ModuleKey, boolean>;
+  for (const k of MODULE_KEYS) {
+    out[k] = set.has(k);
+  }
+  return out;
+}
+
 export const LICENSE_TYPES = [
   { value: "starter", label: "Starter" },
   { value: "professional", label: "Professional" },

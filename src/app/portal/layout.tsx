@@ -202,9 +202,10 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (process.env.NODE_ENV !== "development" || !company || !companyId) return;
     console.log("company (merged):", company);
+    console.log("company.modules (top-level, menu):", company.modules);
     console.log("company.license:", company.license);
     console.log("company.license.status:", company.license?.status);
-    console.log("company.license.modules:", getCompanyLicenseModules(company));
+    console.log("company.license.modules (nested):", getCompanyLicenseModules(company));
     console.log("[Portal license debug]", {
       companyId,
       isCompanyLicenseActive: isCompanyLicenseActive(company),
