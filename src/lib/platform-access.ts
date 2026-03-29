@@ -3,19 +3,15 @@ import { isModuleEntitlementActiveNow } from "@/lib/platform-config";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import { defaultPlatformCatalogMap } from "@/lib/platform-module-catalog";
 import {
-  MODULE_KEYS,
-  ORG_MENU_MODULE_KEYS,
-  buildMergedFirestoreModulesMap,
-  expandModuleRecordAliases,
+  CANONICAL_MODULE_KEYS,
+  normalizeModuleKey,
+  normalizeModules,
   orMergeModuleRecords,
-  type ModuleKey,
 } from "@/lib/license-modules";
 import type { OrganizationLicenseRecord } from "@/lib/organization-license";
 import {
   getCompanyLicenseModules,
   isCompanyLicenseActive,
-  isModuleEnabledForPlatformFromLegacyKeys,
-  platformModuleCodeToOrgLicenseModuleKey,
   shouldShowLicensePendingNotice,
 } from "@/lib/organization-license";
 
@@ -84,27 +80,18 @@ export function isCompanyLicenseBlocking(company: CompanyPlatformFields | null |
   return false;
 }
 
-/** Menu: české klíče (`zakazky`, …) nebo anglické z licence / superadminu (včetně aliasů po expand). */
+/** Menu podle kanonických klíčů (po normalizeModules). */
 function isPlatformModuleEnabledFromModuleMap(
   m: Record<string, boolean>,
   moduleCode: PlatformModuleCode
 ): boolean {
   switch (moduleCode) {
     case "jobs":
-      return Boolean(m.zakazky ?? m.jobs);
+      return Boolean(m.zakazky);
     case "attendance_payroll":
-      return Boolean(
-        m.dochazka ||
-          m.terminal ||
-          m.attendance ||
-          m.mobile_terminal ||
-          m.reporty ||
-          m.reports
-      );
+      return Boolean(m.dochazka || m.terminal || m.reporty);
     case "invoicing":
-      return Boolean(
-        m.faktury || m.doklady || m.finance || m.invoices || m.documents
-      );
+      return Boolean(m.finance || m.faktury || m.doklady);
     case "sklad":
       return Boolean(m.sklad);
     case "vyroba":
@@ -114,40 +101,21 @@ function isPlatformModuleEnabledFromModuleMap(
   }
 }
 
-function moduleKeysFromNestedLicenseMods(mods: Record<string, boolean>): ModuleKey[] {
-  const out: ModuleKey[] = [];
-  if (mods.jobs) out.push("jobs");
-  if (mods.attendance) out.push("attendance", "mobile_terminal");
-  if (mods.finance) out.push("finance", "invoices", "documents");
-  if (mods.sklad) out.push("sklad");
-  if (mods.vyroba) out.push("vyroba");
-  return out;
-}
-
 /**
- * Vrstva z licence: `license.modules` (včetně cizích klíčů) + `enabledModules` + odvozené z nested polí (OR).
+ * Vrstva z licence: `license.modules` (legacy + kanonické) + `enabledModules` → normalizace na kanonické klíče.
  */
 function buildLicenseDerivedModuleLayer(company: CompanyPlatformFields): Record<string, boolean> {
   const nested = getCompanyLicenseModules(company);
-  const rawFlat: Record<string, boolean> = {};
+  const rawNested: Record<string, boolean> = {};
   for (const [k, v] of Object.entries(nested)) {
-    if (typeof v === "boolean") rawFlat[k] = v;
+    if (typeof v === "boolean") rawNested[k] = v;
   }
-  const parts: Record<string, boolean>[] = [rawFlat];
-  const en = company.license?.enabledModules;
-  if (Array.isArray(en) && en.length > 0) {
-    const valid = en.filter((x): x is ModuleKey =>
-      (MODULE_KEYS as readonly string[]).includes(x)
-    );
-    if (valid.length > 0) {
-      parts.push(buildMergedFirestoreModulesMap(valid));
-    }
+  const fromArr: Record<string, boolean> = {};
+  for (const x of company.license?.enabledModules ?? []) {
+    const c = normalizeModuleKey(String(x));
+    if (c) fromArr[c] = true;
   }
-  const keysFromNested = moduleKeysFromNestedLicenseMods(nested);
-  if (keysFromNested.length > 0) {
-    parts.push(buildMergedFirestoreModulesMap(keysFromNested));
-  }
-  return orMergeModuleRecords(...parts);
+  return normalizeModules(orMergeModuleRecords(rawNested, fromArr));
 }
 
 /**
@@ -163,7 +131,7 @@ export function getEffectiveModulesMerged(
     company.modules && typeof company.modules === "object"
       ? (company.modules as Record<string, boolean>)
       : {};
-  return expandModuleRecordAliases({ ...fromLicense, ...org });
+  return normalizeModules(orMergeModuleRecords(fromLicense, org));
 }
 
 /** Licence výslovně neplatná pro moduly portálu (ne „pending“ — ten nesmí schovat zapnuté moduly z admina). */
@@ -182,8 +150,7 @@ export function getResolvedMenuModules(
   company: CompanyPlatformFields | null | undefined
 ): Record<string, boolean> {
   const empty: Record<string, boolean> = {};
-  for (const k of MODULE_KEYS) empty[k] = false;
-  for (const k of ORG_MENU_MODULE_KEYS) empty[k] = false;
+  for (const k of CANONICAL_MODULE_KEYS) empty[k] = false;
   if (!company) return empty;
   const r = getEffectiveModulesMerged(company);
   return { ...empty, ...r };
@@ -237,19 +204,8 @@ export function hasActiveModuleAccess(
     }
   }
 
-  const orgKey = platformModuleCodeToOrgLicenseModuleKey(moduleCode);
-  const lic = company.license;
-  const mods = getCompanyLicenseModules(company);
-  if (orgKey) {
-    if (mods && Object.prototype.hasOwnProperty.call(mods, orgKey)) {
-      return Boolean(mods[orgKey]);
-    }
-    if (Array.isArray(lic?.enabledModules)) {
-      return isModuleEnabledForPlatformFromLegacyKeys(lic.enabledModules, moduleCode);
-    }
-    if (isCompanyLicenseActive(company)) {
-      return false;
-    }
+  if (isCompanyLicenseActive(company)) {
+    return false;
   }
 
   const catalog =

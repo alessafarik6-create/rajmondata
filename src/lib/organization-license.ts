@@ -1,4 +1,9 @@
-import type { ModuleKey } from "@/lib/license-modules";
+import {
+  buildCanonicalModulesMapFromEnabled,
+  normalizeEnabledModuleIds,
+  type CanonicalModuleKey,
+  type ModuleKey,
+} from "@/lib/license-modules";
 import type { PlatformModuleCode } from "@/lib/platform-config";
 
 /**
@@ -22,17 +27,11 @@ export type OrganizationLicenseRecord = {
   modules?: Partial<OrganizationLicenseModules> | Record<string, boolean>;
 };
 
+/** Plochá mapa kanonických klíčů pro `license.modules` (kompatibilní zápis do Firestore). */
 export function buildOrganizationLicenseModulesFromModuleKeys(
   enabled: readonly ModuleKey[]
-): OrganizationLicenseModules {
-  const set = new Set(enabled);
-  return {
-    jobs: set.has("jobs"),
-    attendance: set.has("attendance") || set.has("mobile_terminal"),
-    finance: set.has("finance") || set.has("invoices") || set.has("documents"),
-    sklad: set.has("sklad"),
-    vyroba: set.has("vyroba"),
-  };
+): Record<string, boolean> {
+  return buildCanonicalModulesMapFromEnabled(enabled as readonly CanonicalModuleKey[]);
 }
 
 export function platformModuleCodeToOrgLicenseModuleKey(
@@ -50,14 +49,14 @@ export function isModuleEnabledForPlatformFromLegacyKeys(
   enabledModules: string[] | undefined,
   moduleCode: PlatformModuleCode
 ): boolean {
-  const set = new Set(enabledModules ?? []);
+  const set = new Set(normalizeEnabledModuleIds(enabledModules ?? []));
   switch (moduleCode) {
     case "jobs":
-      return set.has("jobs");
+      return set.has("zakazky");
     case "attendance_payroll":
-      return set.has("attendance") || set.has("mobile_terminal");
+      return set.has("dochazka") || set.has("terminal") || set.has("reporty");
     case "invoicing":
-      return set.has("invoices") || set.has("finance") || set.has("documents");
+      return set.has("faktury") || set.has("doklady") || set.has("finance");
     case "sklad":
       return set.has("sklad");
     case "vyroba":

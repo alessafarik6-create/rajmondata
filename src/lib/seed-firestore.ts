@@ -8,7 +8,10 @@
 import type { User } from 'firebase/auth';
 import type { Firestore } from 'firebase/firestore';
 import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { DEFAULT_LICENSE } from '@/lib/license-modules';
+import {
+  DEFAULT_LICENSE,
+  buildCanonicalModulesMapFromEnabled,
+} from '@/lib/license-modules';
 
 /**
  * Generates a default company ID for a user (stable per user).
@@ -24,6 +27,7 @@ function labelFromAuthUser(user: User): string {
 /** Minimální dokument firmy — bez subkolekcí a bez demo záznamů. */
 function minimalCompanyDoc(companyId: string, ownerId: string, displayLabel: string) {
   const enabledModules = [...DEFAULT_LICENSE.enabledModules];
+  const modules = buildCanonicalModulesMapFromEnabled(enabledModules);
   return {
     id: companyId,
     companyName: displayLabel,
@@ -41,8 +45,10 @@ function minimalCompanyDoc(companyId: string, ownerId: string, displayLabel: str
       expirationDate: null,
       maxUsers: DEFAULT_LICENSE.maxUsers,
       enabledModules,
+      modules,
     },
     enabledModuleIds: enabledModules,
+    modules,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   };

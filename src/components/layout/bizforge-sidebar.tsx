@@ -29,7 +29,7 @@ import { Logo } from '@/components/ui/logo';
 import { useUser, useDoc, useFirestore, useMemoFirebase, useCompany } from '@/firebase';
 import { doc } from 'firebase/firestore';
 import type { PlatformModuleCode } from '@/lib/platform-config';
-import { isModuleKeyEnabled } from '@/lib/license-modules';
+import { isModuleKeyEnabled, normalizeModules } from '@/lib/license-modules';
 import {
   canAccessCompanyModule,
   getEffectiveModulesMerged,
@@ -185,23 +185,29 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development') return;
-    console.log('[BizForgeSidebar] menu debug', {
-      organizationModules,
-      licenseModules: licenseModulesNested,
-      effectiveModules,
-      resolvedMenuModules: modules,
-      licenseStatus: company?.license?.status ?? null,
-      licenseLicenseStatus: company?.license?.licenseStatus ?? null,
-      role,
-      filteredMenuLabels: portalLinks.map((l) => l.label),
-    });
+    const licRaw = (company?.license?.modules ?? {}) as Record<string, boolean>;
+    const orgRaw = (company?.modules ?? {}) as Record<string, boolean>;
+    const normalizedLicenseModules = normalizeModules(licRaw);
+    const normalizedOrganizationModules = normalizeModules(orgRaw);
+    const effectiveMergedDocOnly = {
+      ...normalizedLicenseModules,
+      ...normalizedOrganizationModules,
+    };
+    const visibleMenuItems = portalLinks.map((l) => l.label);
+    console.log('license.modules raw', company?.license?.modules);
+    console.log('organization.modules raw', company?.modules);
+    console.log('normalizedLicenseModules', normalizedLicenseModules);
+    console.log('normalizedOrganizationModules', normalizedOrganizationModules);
+    console.log('effectiveModules (doc layers only)', effectiveMergedDocOnly);
+    console.log('effectiveModules (full, incl. enabledModules)', effectiveModules);
+    console.log('visible menu items', visibleMenuItems);
+    console.log('[BizForgeSidebar] role', role);
   }, [
+    company?.license?.modules,
+    company?.modules,
     company?.license?.status,
     company?.license?.licenseStatus,
     effectiveModules,
-    licenseModulesNested,
-    modules,
-    organizationModules,
     portalLinks,
     role,
   ]);

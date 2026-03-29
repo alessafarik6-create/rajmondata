@@ -1,29 +1,39 @@
 import type { CompanyLicenseDoc, PlatformModuleCode } from "@/lib/platform-config";
 import { PLATFORM_MODULE_CODES } from "@/lib/platform-config";
 import { COMPANY_LICENSES_COLLECTION } from "@/lib/firestore-collections";
-import { buildMergedFirestoreModulesMap, type ModuleKey } from "@/lib/license-modules";
-import { buildOrganizationLicenseModulesFromModuleKeys } from "@/lib/organization-license";
+import {
+  buildCanonicalModulesMapFromEnabled,
+  type CanonicalModuleKey,
+  type ModuleKey,
+} from "@/lib/license-modules";
 
 export { COMPANY_LICENSES_COLLECTION };
 
-/** Mapování kódů platformních modulů na legacy klíče v `license-modules` (menu / starší části). */
-export function platformCodesToLegacyModuleKeys(codes: PlatformModuleCode[]): ModuleKey[] {
-  const out: ModuleKey[] = [];
+/** Mapování platformních modulů na kanonické klíče ve Firestore. */
+export function platformCodesToCanonicalModuleKeys(
+  codes: PlatformModuleCode[]
+): CanonicalModuleKey[] {
+  const out: CanonicalModuleKey[] = [];
   for (const c of codes) {
-    if (c === "attendance_payroll") out.push("attendance");
-    else if (c === "invoicing") out.push("invoices");
-    else if (c === "jobs") out.push("jobs");
+    if (c === "jobs") out.push("zakazky");
+    else if (c === "attendance_payroll")
+      out.push("dochazka", "terminal", "reporty");
+    else if (c === "invoicing") out.push("faktury", "doklady", "finance");
     else if (c === "sklad") out.push("sklad");
     else if (c === "vyroba") out.push("vyroba");
   }
   return [...new Set(out)];
 }
 
-/** Legacy checkboxy v superadmin „Organizace“ → stav platformních modulů v `company_licenses`. */
-const LEGACY_KEYS_FOR_PLATFORM: { [K in PlatformModuleCode]?: readonly ModuleKey[] } = {
-  attendance_payroll: ["attendance", "mobile_terminal"],
-  invoicing: ["invoices", "finance", "documents"],
-  jobs: ["jobs"],
+/** @deprecated Použij platformCodesToCanonicalModuleKeys. */
+export const platformCodesToLegacyModuleKeys = platformCodesToCanonicalModuleKeys;
+
+const CANONICAL_KEYS_FOR_PLATFORM: {
+  [K in PlatformModuleCode]?: readonly CanonicalModuleKey[];
+} = {
+  attendance_payroll: ["dochazka", "terminal", "reporty"],
+  invoicing: ["faktury", "finance", "doklady"],
+  jobs: ["zakazky"],
   sklad: ["sklad"],
   vyroba: ["vyroba"],
 };
@@ -34,7 +44,7 @@ export function buildPlatformModulesSyncFromLegacy(
   const set = new Set(enabled);
   const out: Partial<Record<PlatformModuleCode, { active: boolean }>> = {};
   for (const code of PLATFORM_MODULE_CODES) {
-    const keys = LEGACY_KEYS_FOR_PLATFORM[code];
+    const keys = CANONICAL_KEYS_FOR_PLATFORM[code];
     if (!keys) continue;
     out[code] = { active: keys.some((k) => set.has(k)) };
   }
@@ -74,7 +84,7 @@ export function companyDocPlatformFields(license: CompanyLicenseDoc) {
       activatedAt: v.activatedAt,
     };
   }
-  const legacyEnabled = platformCodesToLegacyModuleKeys(license.enabledModules);
+  const canonicalEnabled = platformCodesToCanonicalModuleKeys(license.enabledModules);
   const licenseStatusForPortal =
     license.status === "pending"
       ? "pending"
@@ -85,6 +95,7 @@ export function companyDocPlatformFields(license: CompanyLicenseDoc) {
           : license.active
             ? "active"
             : "inactive";
+  const modulesFlat = buildCanonicalModulesMapFromEnabled(canonicalEnabled);
   return {
     platformLicense: {
       active: license.active,
@@ -94,15 +105,15 @@ export function companyDocPlatformFields(license: CompanyLicenseDoc) {
       activatedBy: license.activatedBy,
     },
     moduleEntitlements: entitlements,
-    enabledModuleIds: legacyEnabled,
-    modules: buildMergedFirestoreModulesMap(legacyEnabled),
+    enabledModuleIds: canonicalEnabled,
+    modules: modulesFlat,
     license: {
       licenseType: "starter",
       status: licenseStatusForPortal,
       expirationDate: license.expiresAt,
       maxUsers: null,
-      enabledModules: legacyEnabled,
-      modules: buildOrganizationLicenseModulesFromModuleKeys(legacyEnabled),
+      enabledModules: canonicalEnabled,
+      modules: modulesFlat,
     },
   };
 }

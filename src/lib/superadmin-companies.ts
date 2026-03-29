@@ -5,8 +5,8 @@
 import type { Firestore } from "firebase-admin/firestore";
 import {
   DEFAULT_LICENSE,
-  MODULE_KEYS,
-  buildMergedFirestoreModulesMap,
+  buildCanonicalModulesMapFromEnabled,
+  normalizeEnabledModuleIds,
   type LicenseConfig,
   type ModuleKey,
 } from "./license-modules";
@@ -19,7 +19,7 @@ import type { CompanyLicenseDoc } from "./platform-config";
 import {
   buildPlatformModulesSyncFromLegacy,
   createPendingCompanyLicense,
-  platformCodesToLegacyModuleKeys,
+  platformCodesToCanonicalModuleKeys,
 } from "./company-license-record";
 import {
   applyExpiredLicenseStatus,
@@ -31,7 +31,6 @@ import {
   writeCompanyLicenseAndDenorm,
   type CompanyLicenseUpdatePayload,
 } from "./company-license-admin";
-import { buildOrganizationLicenseModulesFromModuleKeys } from "./organization-license";
 
 /** @deprecated Use ORGANIZATIONS_COLLECTION from firestore-collections */
 export const COMPANIES_COLLECTION_LEGACY = ORGANIZATIONS_COLLECTION;
@@ -61,10 +60,6 @@ export interface LicenseUpdate {
   enabledModules?: string[];
 }
 
-function toModuleKey(s: string): ModuleKey | null {
-  return MODULE_KEYS.includes(s as ModuleKey) ? (s as ModuleKey) : null;
-}
-
 export function normalizeCompanyFromFirestore(
   data: Record<string, unknown>,
   id: string
@@ -73,7 +68,7 @@ export function normalizeCompanyFromFirestore(
   const enabledModuleIds = data.enabledModuleIds as string[] | undefined;
   const rawModules = (license.enabledModules as string[] | undefined) ?? enabledModuleIds ?? [];
   const enabledModules = Array.isArray(rawModules)
-    ? rawModules.map(toModuleKey).filter((k): k is ModuleKey => k !== null)
+    ? normalizeEnabledModuleIds(rawModules.map((x) => String(x)))
     : [];
 
   const expirationDate =
@@ -124,11 +119,9 @@ function buildLicenseForFirestore(update: LicenseUpdate): Record<string, unknown
   const licenseType = update.licenseType ?? "starter";
   const status = update.status ?? update.licenseStatus ?? "active";
   const enabledModules = Array.isArray(update.enabledModules)
-    ? update.enabledModules.filter((k) => toModuleKey(k) !== null)
+    ? normalizeEnabledModuleIds(update.enabledModules.map((k) => String(k)))
     : [];
-  const modules = buildOrganizationLicenseModulesFromModuleKeys(
-    enabledModules as ModuleKey[]
-  );
+  const modules = buildCanonicalModulesMapFromEnabled(enabledModules);
 
   return {
     licenseType,
@@ -238,10 +231,10 @@ export async function updateCompany(
     updates.license = licenseFs;
     updates.licenseId = licenseFs.licenseType as string;
     updates.enabledModuleIds = licenseFs.enabledModules;
-    const enabledKeys = (licenseFs.enabledModules as string[]).filter((k): k is ModuleKey =>
-      MODULE_KEYS.includes(k as ModuleKey)
+    const enabledKeys = normalizeEnabledModuleIds(
+      (licenseFs.enabledModules as string[]).map((k) => String(k))
     );
-    updates.modules = buildMergedFirestoreModulesMap(enabledKeys);
+    updates.modules = buildCanonicalModulesMapFromEnabled(enabledKeys);
     const nowIso = new Date().toISOString();
     const existingLic = await ensureCompanyLicenseDoc(db, id);
     const syncModules = buildPlatformModulesSyncFromLegacy(enabledKeys);
@@ -264,8 +257,8 @@ export async function updateCompany(
     }
     await writeCompanyLicenseAndDenorm(db, id, merged);
 
-    const legacyFromPlatform = platformCodesToLegacyModuleKeys(merged.enabledModules);
-    const modulesSync = buildMergedFirestoreModulesMap(legacyFromPlatform);
+    const canonicalFromPlatform = platformCodesToCanonicalModuleKeys(merged.enabledModules);
+    const modulesSync = buildCanonicalModulesMapFromEnabled(canonicalFromPlatform);
     const modulesPatch = { modules: modulesSync, updatedAt: new Date() };
     await db.collection(ORGANIZATIONS_COLLECTION).doc(id).set(modulesPatch, { merge: true });
     await db.collection(COMPANIES_COLLECTION).doc(id).set(modulesPatch, { merge: true });
