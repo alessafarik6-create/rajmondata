@@ -51,6 +51,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import Link from "next/link";
 import { formatKc } from "@/lib/employee-money";
 import { AdminDailyWorkReportDetailSheet } from "@/components/portal/AdminDailyWorkReportDetailSheet";
+import { EmployeeAttendanceOverview } from "@/app/portal/employee/employee-attendance-overview";
 
 /** Veřejná cesta terminálu — pouze z kanonického companyId (žádná jiná adresa do QR). */
 function buildAttendanceTerminalPath(companyId: string): string {
@@ -146,22 +147,6 @@ export function AttendancePortalPage() {
     null
   );
 
-  useEffect(() => {
-    const updateTime = () => {
-      setCurrentTime(
-        new Date().toLocaleTimeString("cs-CZ", {
-          hour: "2-digit",
-          minute: "2-digit",
-          second: "2-digit",
-        })
-      );
-    };
-
-    updateTime();
-    const timer = setInterval(updateTime, 1000);
-    return () => clearInterval(timer);
-  }, []);
-
   const userRef = useMemoFirebase(
     () =>
       areServicesAvailable && user && firestore
@@ -189,6 +174,64 @@ export function AttendancePortalPage() {
     role === "manager" ||
     role === "accountant";
 
+  /** Terminál (odkaz, QR, hodiny) jen pro správcovské role — ne v zobrazení běžného zaměstnance. */
+  const showTerminalWidgets = isAttendancePrivileged;
+
+  /**
+   * Zaměstnanec bez správcovských práv — stejné chování na /portal/labor/dochazka i v employee větvi.
+   */
+  const isEmployeePortal = role === "employee" && !isAttendancePrivileged;
+
+  useEffect(() => {
+    if (!showTerminalWidgets) {
+      setCurrentTime(null);
+      return;
+    }
+    const updateTime = () => {
+      setCurrentTime(
+        new Date().toLocaleTimeString("cs-CZ", {
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+        })
+      );
+    };
+
+    updateTime();
+    const timer = setInterval(updateTime, 1000);
+    return () => clearInterval(timer);
+  }, [showTerminalWidgets]);
+
+  const profileEmployeeId = (profile as { employeeId?: string } | null)?.employeeId as
+    | string
+    | undefined;
+
+  const employeeRowRef = useMemoFirebase(
+    () =>
+      areServicesAvailable && firestore && companyId && profileEmployeeId
+        ? doc(firestore, "companies", companyId, "employees", profileEmployeeId)
+        : null,
+    [areServicesAvailable, firestore, companyId, profileEmployeeId]
+  );
+  const { data: employeeRow } = useDoc<Record<string, unknown>>(employeeRowRef);
+
+  const hourlyRateEmployee = useMemo(() => {
+    const fromEmp = Number(employeeRow?.hourlyRate);
+    const fromUser = Number((profile as { hourlyRate?: unknown } | null)?.hourlyRate);
+    if (Number.isFinite(fromEmp) && fromEmp > 0) return fromEmp;
+    if (Number.isFinite(fromUser) && fromUser > 0) return fromUser;
+    return 0;
+  }, [employeeRow?.hourlyRate, profile]);
+
+  const employeeDisplayName =
+    (profile as { displayName?: string })?.displayName ||
+    [(profile as { firstName?: string })?.firstName, (profile as { lastName?: string })?.lastName]
+      .filter(Boolean)
+      .join(" ")
+      .trim() ||
+    user?.email ||
+    "Zaměstnanec";
+
   /**
    * Dotaz na attendance jen pro oprávněné role (přehled firmy).
    * Pro role `employee` (a jiné neprivilegované) se nespouští — vyhýbá se složenému indexu
@@ -197,9 +240,6 @@ export function AttendancePortalPage() {
   const attendanceQueryEnabled = Boolean(
     areServicesAvailable && firestore && companyId && user && isAttendancePrivileged
   );
-
-  /** Úder příchod/pauza/odchod z webu na této stránce není pro zaměstnance (jen terminál). */
-  const showAttendanceActions = false;
 
   const attendanceQuery = useMemoFirebase(() => {
     if (!attendanceQueryEnabled) return null;
@@ -245,9 +285,9 @@ export function AttendancePortalPage() {
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
     console.log("role", role);
-    console.log("showAttendanceActions", showAttendanceActions);
-    console.log("attendance query enabled", attendanceQueryEnabled);
-  }, [role, showAttendanceActions, attendanceQueryEnabled]);
+    console.log("isEmployeePortal", isEmployeePortal);
+    console.log("showTerminalWidgets", showTerminalWidgets);
+  }, [role, isEmployeePortal, showTerminalWidgets]);
 
   const reviewDailyReport = async (
     employeeId: string,
@@ -366,49 +406,57 @@ export function AttendancePortalPage() {
           <div className="portal-page-description">
             Organizace:{" "}
             <span className="font-semibold text-primary">{orgLabel}</span>
+            {!showTerminalWidgets ? (
+              <p className="mt-2 text-sm font-normal text-muted-foreground">
+                Níže je váš osobní přehled docházky a souvisejících údajů. Terminál a správa pro celou firmu
+                mají pouze oprávnění administrátora.
+              </p>
+            ) : null}
           </div>
         </div>
 
-        <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-end sm:gap-4 lg:flex-1">
-          {terminalPath ? (
-            <Link
-              href={terminalPath}
-              className="inline-flex min-w-0 shrink-0"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
-                <Smartphone className="h-4 w-4 shrink-0" />
-                Přihlášení zaměstnance
-              </Button>
-            </Link>
-          ) : null}
+        {showTerminalWidgets ? (
+          <div className="flex w-full flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-start sm:justify-end sm:gap-4 lg:flex-1">
+            {terminalPath ? (
+              <Link
+                href={terminalPath}
+                className="inline-flex min-w-0 shrink-0"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button className="min-h-[44px] w-full gap-2 sm:w-auto">
+                  <Smartphone className="h-4 w-4 shrink-0" />
+                  Přihlášení zaměstnance
+                </Button>
+              </Link>
+            ) : null}
 
-          <div className="flex min-w-0 w-full justify-end sm:ml-auto sm:max-w-full">
-            <div className="flex max-w-full flex-wrap items-start justify-end gap-3 rounded-xl border border-slate-200 bg-white p-3 text-right shadow-sm sm:gap-4 sm:p-4">
-              <div className="min-w-[160px] shrink text-right">
-                <p className="font-mono text-3xl font-bold text-primary sm:text-4xl">
-                  {currentTime || "--:--:--"}
-                </p>
-                <p className="text-sm font-medium text-muted-foreground">
-                  {new Date().toLocaleDateString("cs-CZ", {
-                    weekday: "long",
-                    day: "numeric",
-                    month: "long",
-                    year: "numeric",
-                  })}
-                </p>
+            <div className="flex min-w-0 w-full justify-end sm:ml-auto sm:max-w-full">
+              <div className="flex max-w-full flex-wrap items-start justify-end gap-3 rounded-xl border border-slate-200 bg-white p-3 text-right shadow-sm sm:gap-4 sm:p-4">
+                <div className="min-w-[160px] shrink text-right">
+                  <p className="font-mono text-3xl font-bold text-primary sm:text-4xl">
+                    {currentTime || "--:--:--"}
+                  </p>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    {new Date().toLocaleDateString("cs-CZ", {
+                      weekday: "long",
+                      day: "numeric",
+                      month: "long",
+                      year: "numeric",
+                    })}
+                  </p>
+                </div>
+                {terminalPath ? (
+                  <AttendanceTerminalQrSection
+                    terminalPath={terminalPath}
+                    qrSize={80}
+                    className="flex shrink-0 flex-col items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/80 p-2"
+                  />
+                ) : null}
               </div>
-              {terminalPath ? (
-                <AttendanceTerminalQrSection
-                  terminalPath={terminalPath}
-                  qrSize={80}
-                  className="flex shrink-0 flex-col items-center gap-2 rounded-lg border border-slate-100 bg-slate-50/80 p-2"
-                />
-              ) : null}
             </div>
           </div>
-        </div>
+        ) : null}
       </div>
 
       {isAttendancePrivileged ? (
@@ -761,35 +809,25 @@ export function AttendancePortalPage() {
               </Card>
             </TabsContent>
       </Tabs>
+      ) : companyId && profileEmployeeId && user ? (
+        <EmployeeAttendanceOverview
+          companyId={companyId}
+          employeeId={profileEmployeeId}
+          authUserId={user.uid}
+          employeeDisplayName={employeeDisplayName}
+          companyName={companyName}
+          hourlyRate={hourlyRateEmployee}
+        />
       ) : (
-        <div className="space-y-6 rounded-xl border border-slate-200 bg-white p-6 shadow-sm">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Docházka přes terminál</h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Příchody, odchody a pauzy se zapisují na sdíleném terminálu s PINem — ne přes webová tlačítka v portálu.
-            </p>
-            <p className="mt-3 text-sm text-muted-foreground">
-              Přehled hodin a orientačního výdělku najdete na{" "}
-              <Link
-                href="/portal/employee"
-                className="font-medium text-primary underline underline-offset-2"
-              >
-                přehledu zaměstnance
-              </Link>
-              . Denní výkaz vyplňujete v sekci Denní výkazy.
-            </p>
-            {terminalPath ? (
-              <div className="mt-4">
-                <Link href={terminalPath} target="_blank" rel="noopener noreferrer">
-                  <Button type="button" className="min-h-[44px] gap-2">
-                    <Smartphone className="h-4 w-4 shrink-0" />
-                    Otevřít přihlášení do práce (terminál)
-                  </Button>
-                </Link>
-              </div>
-            ) : null}
-          </div>
-        </div>
+        <Card className="border-border bg-surface">
+          <CardHeader>
+            <CardTitle>Docházka</CardTitle>
+            <CardDescription>
+              Pro zobrazení osobního přehledu chybí propojení účtu se záznamem zaměstnance. Kontaktujte
+              administrátora.
+            </CardDescription>
+          </CardHeader>
+        </Card>
       )}
 
       {companyId && user && isAttendancePrivileged ? (
