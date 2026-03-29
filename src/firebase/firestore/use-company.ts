@@ -7,7 +7,7 @@ import {
   COMPANIES_COLLECTION,
   ORGANIZATIONS_COLLECTION,
 } from '@/lib/firestore-collections';
-import { MODULE_KEYS } from '@/lib/license-modules';
+import { MODULE_KEYS, ORG_MENU_MODULE_KEYS } from '@/lib/license-modules';
 
 export type CompanyProfile = {
   id: string;
@@ -161,12 +161,14 @@ function pickBetterPlatformLicense(fromCompanies: unknown, fromOrg: unknown): un
   return score(op) >= score(cp) ? op : cp;
 }
 
+const MERGED_TOP_LEVEL_MODULE_KEYS = [...MODULE_KEYS, ...ORG_MENU_MODULE_KEYS] as const;
+
 function mergeTopLevelCompanyModules(c: unknown, o: unknown): Record<string, boolean> | undefined {
   const cm = c && typeof c === 'object' ? (c as Record<string, boolean>) : null;
   const om = o && typeof o === 'object' ? (o as Record<string, boolean>) : null;
   if (!cm && !om) return undefined;
   const out: Record<string, boolean> = {};
-  for (const k of MODULE_KEYS) {
+  for (const k of MERGED_TOP_LEVEL_MODULE_KEYS) {
     if (om && Object.prototype.hasOwnProperty.call(om, k)) {
       out[k] = Boolean(om[k]);
     } else if (cm && Object.prototype.hasOwnProperty.call(cm, k)) {

@@ -6,7 +6,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import {
   DEFAULT_LICENSE,
   MODULE_KEYS,
-  buildTopLevelModuleMapFromKeys,
+  buildMergedFirestoreModulesMap,
   type LicenseConfig,
   type ModuleKey,
 } from "./license-modules";
@@ -241,7 +241,7 @@ export async function updateCompany(
     const enabledKeys = (licenseFs.enabledModules as string[]).filter((k): k is ModuleKey =>
       MODULE_KEYS.includes(k as ModuleKey)
     );
-    updates.modules = buildTopLevelModuleMapFromKeys(enabledKeys);
+    updates.modules = buildMergedFirestoreModulesMap(enabledKeys);
     const nowIso = new Date().toISOString();
     const existingLic = await ensureCompanyLicenseDoc(db, id);
     const syncModules = buildPlatformModulesSyncFromLegacy(enabledKeys);
@@ -265,7 +265,7 @@ export async function updateCompany(
     await writeCompanyLicenseAndDenorm(db, id, merged);
 
     const legacyFromPlatform = platformCodesToLegacyModuleKeys(merged.enabledModules);
-    const modulesSync = buildTopLevelModuleMapFromKeys(legacyFromPlatform);
+    const modulesSync = buildMergedFirestoreModulesMap(legacyFromPlatform);
     const modulesPatch = { modules: modulesSync, updatedAt: new Date() };
     await db.collection(ORGANIZATIONS_COLLECTION).doc(id).set(modulesPatch, { merge: true });
     await db.collection(COMPANIES_COLLECTION).doc(id).set(modulesPatch, { merge: true });

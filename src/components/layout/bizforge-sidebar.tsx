@@ -1,7 +1,7 @@
 
 "use client";
 
-import React from 'react';
+import React, { useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { 
@@ -31,7 +31,7 @@ import { doc } from 'firebase/firestore';
 import type { PlatformModuleCode } from '@/lib/platform-config';
 import {
   canAccessCompanyModule,
-  hasActiveModuleAccess,
+  getResolvedMenuModules,
   isCompanyLicenseBlocking,
 } from '@/lib/platform-access';
 import {
@@ -84,6 +84,11 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   );
   const { data: employeeRow } = useDoc(employeeRowRef);
   const platformCatalog = useMergedPlatformModuleCatalog();
+
+  const modules = useMemo(() => getResolvedMenuModules(company), [company]);
+  useEffect(() => {
+    console.log('MODULES:', modules);
+  }, [modules]);
 
   const adminLinks = [
     { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },

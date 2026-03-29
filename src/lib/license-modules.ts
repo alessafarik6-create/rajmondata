@@ -43,6 +43,48 @@ export function buildTopLevelModuleMapFromKeys(
   return out;
 }
 
+/**
+ * České / doménové klíče na dokumentu organizace (`modules`) — menu portálu je z nich čte (s fallbackem na license).
+ */
+export const ORG_MENU_MODULE_KEYS = [
+  "zakazky",
+  "dochazka",
+  "finance",
+  "sklad",
+  "vyroba",
+  "faktury",
+  "doklady",
+  "terminal",
+] as const;
+
+export type OrgMenuModuleKey = (typeof ORG_MENU_MODULE_KEYS)[number];
+
+export function buildOrgMenuModuleMapFromEnabledKeys(
+  enabled: readonly ModuleKey[]
+): Record<OrgMenuModuleKey, boolean> {
+  const set = new Set(enabled);
+  return {
+    zakazky: set.has("jobs"),
+    dochazka: set.has("attendance"),
+    faktury: set.has("invoices"),
+    finance: set.has("finance"),
+    doklady: set.has("documents"),
+    terminal: set.has("mobile_terminal"),
+    sklad: set.has("sklad"),
+    vyroba: set.has("vyroba"),
+  };
+}
+
+/** Zápis do Firestore: anglické klíče (superadmin checkboxy) + české klíče (menu organizace). */
+export function buildMergedFirestoreModulesMap(
+  enabled: readonly ModuleKey[]
+): Record<string, boolean> {
+  return {
+    ...buildTopLevelModuleMapFromKeys(enabled),
+    ...buildOrgMenuModuleMapFromEnabledKeys(enabled),
+  };
+}
+
 export const LICENSE_TYPES = [
   { value: "starter", label: "Starter" },
   { value: "professional", label: "Professional" },
