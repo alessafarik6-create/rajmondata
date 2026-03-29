@@ -4943,6 +4943,7 @@ export default function JobDetailPage() {
               }
               user={user}
               canManage={canManageFolders}
+              canSoftDeleteInvoices={isAdmin}
               jobStatus={
                 job && typeof (job as { status?: string }).status === "string"
                   ? String((job as { status: string }).status)

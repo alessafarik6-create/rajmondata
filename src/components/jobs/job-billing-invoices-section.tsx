@@ -57,6 +57,7 @@ import {
 } from "@/components/ui/select";
 import type { User } from "firebase/auth";
 import { cn } from "@/lib/utils";
+import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { printInvoiceHtmlDocument } from "@/lib/print-html";
 
 const VAT_OPTIONS = [0, 12, 21] as const;
@@ -75,6 +76,8 @@ type Props = {
   companyDisplayName: string;
   user: User | null;
   canManage: boolean;
+  /** Mazání faktur (měkké) — jen vlastník / admin / super_admin. */
+  canSoftDeleteInvoices?: boolean;
   /** Stav zakázky (např. dokončená) — pro vyúčtovací fakturu. */
   jobStatus: string;
 };
@@ -93,6 +96,7 @@ export function JobBillingInvoicesSection({
   companyDisplayName,
   user,
   canManage,
+  canSoftDeleteInvoices = false,
   jobStatus,
 }: Props) {
   const firestore = useFirestore();
@@ -248,7 +252,9 @@ export function JobBillingInvoicesSection({
     useCollection(jobInvoicesQuery);
 
   const jobInvoices = useMemo(() => {
-    const rows = Array.isArray(jobInvoicesRaw) ? jobInvoicesRaw : [];
+    const rows = (Array.isArray(jobInvoicesRaw) ? jobInvoicesRaw : []).filter(
+      (inv) => isActiveFirestoreDoc(inv as { isDeleted?: unknown })
+    );
     return [...rows].sort((a, b) => {
       const ta = (a as { createdAt?: unknown }).createdAt;
       const tb = (b as { createdAt?: unknown }).createdAt;
@@ -592,7 +598,20 @@ export function JobBillingInvoicesSection({
   };
 
   const handleDeleteInvoice = async (invoiceId: string) => {
-    if (!window.confirm("Opravdu smazat tento doklad? Akci nelze vrátit.")) return;
+    if (!canSoftDeleteInvoices || !user?.uid) {
+      toast({
+        variant: "destructive",
+        title: "Nedostatečné oprávnění",
+        description: "Smazat doklad může pouze administrátor organizace.",
+      });
+      return;
+    }
+    if (
+      !window.confirm(
+        "Chceš opravdu smazat tento doklad? Akci nelze vrátit."
+      )
+    )
+      return;
     setDeletingId(invoiceId);
     try {
       await deleteJobInvoice({
@@ -600,6 +619,7 @@ export function JobBillingInvoicesSection({
         companyId,
         jobId,
         invoiceId,
+        userId: user.uid,
       });
       toast({ title: "Doklad byl smazán" });
     } catch (e) {
@@ -821,7 +841,10 @@ export function JobBillingInvoicesSection({
                           </Button>
                         ) : null}
                         {canManage &&
-                        (t === JOB_INVOICE_TYPES.ADVANCE || t === JOB_INVOICE_TYPES.FINAL_INVOICE) ? (
+                        canSoftDeleteInvoices &&
+                        (t === JOB_INVOICE_TYPES.ADVANCE ||
+                          t === JOB_INVOICE_TYPES.FINAL_INVOICE ||
+                          t === JOB_INVOICE_TYPES.TAX_RECEIPT) ? (
                           <Button
                             type="button"
                             variant="ghost"

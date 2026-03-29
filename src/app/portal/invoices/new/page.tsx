@@ -85,6 +85,7 @@ export default function NewInvoicePage() {
         vat: 21,
         status: 'draft',
         organizationId: companyId,
+        isDeleted: false,
         createdAt: serverTimestamp()
       });
 

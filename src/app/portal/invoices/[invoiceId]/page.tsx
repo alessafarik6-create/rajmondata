@@ -186,8 +186,22 @@ export default function InvoiceDocumentPage() {
     );
   }
 
+  const isInvoiceDeleted =
+    (invoice as { isDeleted?: boolean }).isDeleted === true;
+
   return (
     <div className="mx-auto max-w-5xl space-y-4 px-2 pb-10 sm:px-0">
+      {isInvoiceDeleted ? (
+        <Alert className="border-amber-300 bg-amber-50 text-neutral-950">
+          <AlertTitle>Doklad je v koši</AlertTitle>
+          <AlertDescription>
+            Tento doklad byl odstraněn z běžných přehledů; záznam a přílohy zůstávají uložené.{" "}
+            <Link href="/portal/documents?view=trash" className="font-medium underline">
+              Otevřít koš
+            </Link>
+          </AlertDescription>
+        </Alert>
+      ) : null}
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="icon" asChild>
           <Link href="/portal/documents?view=issued" aria-label="Zpět na doklady">

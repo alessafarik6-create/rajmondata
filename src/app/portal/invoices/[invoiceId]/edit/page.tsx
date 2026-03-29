@@ -383,6 +383,20 @@ export default function EditAdvanceInvoicePage() {
     );
   }
 
+  if ((invoice as { isDeleted?: boolean }).isDeleted === true) {
+    return (
+      <Alert className="max-w-xl border-amber-300 bg-amber-50">
+        <AlertTitle>Doklad je v koši</AlertTitle>
+        <AlertDescription className="space-y-2">
+          <p>Smazaný doklad nelze upravovat.</p>
+          <Link href="/portal/documents?view=trash" className="font-medium underline">
+            Zobrazit koš
+          </Link>
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
   const invType = String((invoice as { type?: string }).type ?? "");
   const isFinal = invType === JOB_INVOICE_TYPES.FINAL_INVOICE;
   const isTax = invType === JOB_INVOICE_TYPES.TAX_RECEIPT;

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { Suspense, useMemo, useState } from "react";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,20 +39,13 @@ import {
   addDoc,
   setDoc,
   serverTimestamp,
-  deleteDoc,
   deleteField,
-  writeBatch,
   getDoc,
   updateDoc,
   type DocumentData,
   type UpdateData,
 } from "firebase/firestore";
-import {
-  deleteObject,
-  getDownloadURL,
-  ref as storageRef,
-  uploadBytes,
-} from "firebase/storage";
+import { getDownloadURL, ref as storageRef, uploadBytes } from "firebase/storage";
 import { getFirebaseStorage } from "@/firebase/storage";
 import {
   Dialog,
@@ -113,6 +106,7 @@ import {
   grossOriginal,
 } from "@/lib/company-document-czk";
 import { resolveEurCzkRate } from "@/lib/exchange-rate-eur-czk";
+import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
 import { printInvoiceHtmlDocument } from "@/lib/print-html";
 import {
@@ -199,6 +193,8 @@ type CompanyDocumentRow = {
   paid?: boolean;
   paidAt?: unknown;
   paidBy?: string | null;
+  /** Měkké smazání — doklad zůstává ve Firestore. */
+  isDeleted?: boolean;
 };
 
 type AssignmentType = "job_cost" | "overhead" | "pending_assignment";
@@ -368,20 +364,6 @@ function inferDocRowFileKind(
   return inferJobMediaItemType(row);
 }
 
-async function deleteJobMediaFilesFromStorage(
-  paths: Array<string | undefined | null>
-) {
-  for (const p of paths) {
-    if (typeof p === "string" && p.trim()) {
-      try {
-        await deleteObject(storageRef(getFirebaseStorage(), p.trim()));
-      } catch {
-        /* */
-      }
-    }
-  }
-}
-
 /** Stejný limit jako u nahrávání médií na kartě zakázky. */
 const MAX_JOB_PHOTO_BYTES = 20 * 1024 * 1024;
 
@@ -393,7 +375,10 @@ function DocumentsPageContent() {
   const searchParams = useSearchParams();
   const viewParam = searchParams.get("view");
   const documentsMainTab =
-    viewParam === "issued" || viewParam === "all" || viewParam === "received"
+    viewParam === "issued" ||
+    viewParam === "all" ||
+    viewParam === "received" ||
+    viewParam === "trash"
       ? viewParam
       : "received";
   const setDocumentsMainTab = (v: string) => {
@@ -492,27 +477,80 @@ function DocumentsPageContent() {
     null
   );
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteInvoiceOpen, setDeleteInvoiceOpen] = useState(false);
+  const [deleteInvoiceTarget, setDeleteInvoiceTarget] = useState<{
+    id: string;
+    label: string;
+  } | null>(null);
+  const [isDeletingInvoice, setIsDeletingInvoice] = useState(false);
 
-  const financialDocuments = useMemo(
+  const canSoftDelete = useMemo(() => {
+    const r = String((profile as { role?: string })?.role ?? "");
+    const gr = (profile as { globalRoles?: string[] })?.globalRoles;
+    return (
+      r === "owner" ||
+      r === "admin" ||
+      (Array.isArray(gr) && gr.includes("super_admin"))
+    );
+  }, [profile]);
+
+  useEffect(() => {
+    if (isProfileLoading) return;
+    if (viewParam === "trash" && !canSoftDelete) {
+      router.replace("/portal/documents?view=received", { scroll: false });
+    }
+  }, [viewParam, canSoftDelete, isProfileLoading, router]);
+
+  const financialDocumentsActive = useMemo(
     () =>
       ((documents ?? []) as CompanyDocumentRow[]).filter(
-        isFinancialCompanyDocument
+        (d) => isFinancialCompanyDocument(d) && isActiveFirestoreDoc(d)
       ),
     [documents]
   );
 
+  const financialDocumentsDeleted = useMemo(
+    () =>
+      ((documents ?? []) as CompanyDocumentRow[]).filter(
+        (d) => isFinancialCompanyDocument(d) && d.isDeleted === true
+      ),
+    [documents]
+  );
+
+  const financialDocuments =
+    documentsMainTab === "trash"
+      ? financialDocumentsDeleted
+      : financialDocumentsActive;
+
+  const invoicesActiveList = useMemo(() => {
+    const raw = Array.isArray(invoicesRaw) ? invoicesRaw : [];
+    return raw.filter((inv) =>
+      isActiveFirestoreDoc(inv as { isDeleted?: unknown })
+    );
+  }, [invoicesRaw]);
+
+  const invoicesDeletedList = useMemo(() => {
+    const raw = Array.isArray(invoicesRaw) ? invoicesRaw : [];
+    return raw.filter(
+      (inv) => (inv as { isDeleted?: unknown }).isDeleted === true
+    );
+  }, [invoicesRaw]);
+
+  const invoicesForCurrentView =
+    documentsMainTab === "trash" ? invoicesDeletedList : invoicesActiveList;
+
   const pendingDocs = useMemo(
     () =>
-      financialDocuments
+      financialDocumentsActive
         .filter((d) => d.assignmentType === "pending_assignment")
         .sort(
           (a, b) => docCreatedAtMs(b.createdAt) - docCreatedAtMs(a.createdAt)
         ),
-    [financialDocuments]
+    [financialDocumentsActive]
   );
 
   const paymentOverviewStats = useMemo(() => {
-    const list = financialDocuments as CompanyDocumentPaymentRow[];
+    const list = financialDocumentsActive as CompanyDocumentPaymentRow[];
     let toPay = 0;
     let overdue = 0;
     let totalKc = 0;
@@ -522,7 +560,7 @@ function DocumentsPageContent() {
       totalKc += documentGrossForPayment(d);
       if (getDocumentPaymentUrgency(d, todayIso) === "overdue") overdue += 1;
     }
-    const invList = Array.isArray(invoicesRaw) ? invoicesRaw : [];
+    const invList = invoicesActiveList;
     for (const raw of invList) {
       const inv = raw as Record<string, unknown>;
       if (inv.status === "paid") continue;
@@ -534,7 +572,7 @@ function DocumentsPageContent() {
       if (due && due < todayIso) overdue += 1;
     }
     return { toPay, overdue, totalKc };
-  }, [financialDocuments, invoicesRaw, todayIso]);
+  }, [financialDocumentsActive, invoicesActiveList, todayIso]);
 
   const markDocumentPaid = async (row: CompanyDocumentRow) => {
     if (!companyId || !firestore || !user) return;
@@ -851,6 +889,7 @@ function DocumentsPageContent() {
         requiresPayment: formData.requiresPayment,
         dueDate: formData.dueDate.trim() || null,
         paid: false,
+        isDeleted: false,
       });
 
       logActivitySafe(firestore, companyId, user, profile, {
@@ -1289,252 +1328,102 @@ function DocumentsPageContent() {
   };
 
   const requestDeleteDocument = (row: CompanyDocumentRow) => {
+    if (!canSoftDelete) {
+      toast({
+        variant: "destructive",
+        title: "Nedostatečné oprávnění",
+        description: "Smazat doklad může pouze administrátor organizace.",
+      });
+      return;
+    }
     setDeleteTarget(row);
     setDeleteOpen(true);
   };
 
+  const requestDeleteInvoice = (inv: Record<string, unknown> & { id: string }) => {
+    if (!canSoftDelete) {
+      toast({
+        variant: "destructive",
+        title: "Nedostatečné oprávnění",
+        description: "Smazat fakturu může pouze administrátor organizace.",
+      });
+      return;
+    }
+    const label =
+      String(inv.invoiceNumber ?? inv.documentNumber ?? inv.id).trim() || inv.id;
+    setDeleteInvoiceTarget({ id: inv.id, label });
+    setDeleteInvoiceOpen(true);
+  };
+
   const performDeleteDocument = async () => {
     const row = deleteTarget;
-    if (!row) return;
-    if (!companyId) return;
+    if (!row || !companyId || !firestore || !user?.uid) return;
+    if (!canSoftDelete) return;
 
     setIsDeleting(true);
-    const isExpenseLinked =
-      row.source === JOB_EXPENSE_DOCUMENT_SOURCE ||
-      row.sourceType === "expense";
-    const isJobMediaRow =
-      row.source === JOB_MEDIA_DOCUMENT_SOURCE || row.sourceType === "job";
-
     try {
-      if (isJobMediaRow && row.jobId && row.sourceId) {
-        const kind = row.jobLinkedKind ?? "legacyPhoto";
-        if (kind === "folderImage" && !row.folderId) {
-          toast({
-            variant: "destructive",
-            title: "Nelze smazat",
-            description: "U tohoto záznamu chybí vazba na složku zakázky.",
-          });
-          return;
-        }
-
-        if (kind === "folderImage" && row.folderId) {
-          const imgRef = doc(
-            firestore,
-            "companies",
-            companyId,
-            "jobs",
-            row.jobId,
-            "folders",
-            row.folderId,
-            "images",
-            row.sourceId
-          );
-          const snap = await getDoc(imgRef);
-          if (snap.exists()) {
-            const dat = snap.data() as {
-              storagePath?: string;
-              path?: string;
-              annotatedStoragePath?: string;
-            };
-            await deleteJobMediaFilesFromStorage([
-              dat.storagePath,
-              dat.path,
-              dat.annotatedStoragePath,
-            ]);
-          } else {
-            await deleteJobMediaFilesFromStorage([row.storagePath]);
-          }
-          const batch = writeBatch(firestore);
-          batch.delete(imgRef);
-          batch.delete(doc(firestore, "companies", companyId, "documents", row.id));
-          await batch.commit();
-        } else {
-          const photoRef = doc(
-            firestore,
-            "companies",
-            companyId,
-            "jobs",
-            row.jobId,
-            "photos",
-            row.sourceId
-          );
-          const snap = await getDoc(photoRef);
-          if (snap.exists()) {
-            const dat = snap.data() as {
-              storagePath?: string;
-              path?: string;
-              fullPath?: string;
-              annotatedStoragePath?: string;
-            };
-            await deleteJobMediaFilesFromStorage([
-              dat.storagePath,
-              dat.path,
-              dat.fullPath,
-              dat.annotatedStoragePath,
-            ]);
-          } else {
-            await deleteJobMediaFilesFromStorage([row.storagePath]);
-          }
-          const batch = writeBatch(firestore);
-          batch.delete(photoRef);
-          batch.delete(doc(firestore, "companies", companyId, "documents", row.id));
-          await batch.commit();
-          logActivitySafe(firestore, companyId, user, profile, {
-            actionType: "document.delete",
-            actionLabel: "Smazání fotky zakázky",
-            entityType: "job_photo",
-            entityId: row.sourceId ?? row.id,
-            entityName: row.fileName || row.number || row.id,
-            sourceModule: "documents",
-            route: "/portal/documents",
-            metadata: {
-              jobId: row.jobId,
-              documentsMirrorId: row.id,
-              fileName: row.fileName,
-            },
-          });
-        }
-        toast({
-          title: "Soubor odstraněn",
-          description: "Záznam byl smazán v dokladech i u zakázky.",
-        });
-        return;
-      }
-
-      const linkedJobId =
-        row.zakazkaId?.trim() || row.jobId?.trim() || "";
-      if (
-        row.linkedExpenseId?.trim() &&
-        linkedJobId &&
-        !isExpenseLinked
-      ) {
-        const batch = writeBatch(firestore);
-        batch.delete(
-          doc(
-            firestore,
-            "companies",
-            companyId,
-            "jobs",
-            linkedJobId,
-            "expenses",
-            row.linkedExpenseId.trim()
-          )
-        );
-        batch.delete(doc(firestore, "companies", companyId, "documents", row.id));
-        await batch.commit();
-        if (row.storagePath?.trim()) {
-          try {
-            await deleteObject(
-              storageRef(getFirebaseStorage(), row.storagePath.trim())
-            );
-          } catch {
-            /* */
-          }
-        }
-        logActivitySafe(firestore, companyId, user, profile, {
-          actionType: "document.delete",
-          actionLabel: "Smazání dokladu s nákladem zakázky",
-          entityType: "company_document",
-          entityId: row.id,
-          entityName: row.number || row.entityName || row.id,
-          sourceModule: "documents",
-          route: "/portal/documents",
-          metadata: {
-            jobId: linkedJobId,
-            linkedExpenseId: row.linkedExpenseId.trim(),
-          },
-        });
-        toast({
-          title: "Doklad odstraněn",
-          description: "Záznam byl odebrán z dokladů i z nákladů zakázky.",
-        });
-        return;
-      }
-
-      if (isExpenseLinked && row.sourceId && row.jobId) {
-        const batch = writeBatch(firestore);
-        batch.delete(
-          doc(
-            firestore,
-            "companies",
-            companyId,
-            "jobs",
-            row.jobId,
-            "expenses",
-            row.sourceId
-          )
-        );
-        batch.delete(doc(firestore, "companies", companyId, "documents", row.id));
-        await batch.commit();
-        if (row.storagePath?.trim()) {
-          try {
-            await deleteObject(
-              storageRef(getFirebaseStorage(), row.storagePath.trim())
-            );
-          } catch {
-            /* */
-          }
-        }
-        toast({
-          title: "Doklad a náklad odstraněny",
-          description: "Záznam byl smazán v dokladech i u zakázky.",
-        });
-        return;
-      }
-
-      if (row.storagePath?.trim()) {
-        try {
-          await deleteObject(
-            storageRef(getFirebaseStorage(), row.storagePath.trim())
-          );
-        } catch {
-          /* */
-        }
-      }
-      if (user?.uid) {
-        try {
-          await reconcileCompanyDocumentJobIncome({
-            firestore,
-            companyId,
-            userId: user.uid,
-            documentId: row.id,
-            before: { ...row, id: row.id },
-            after: {
-              ...row,
-              id: row.id,
-              assignmentType: "pending_assignment",
-              jobId: null,
-              zakazkaId: null,
-              jobName: null,
-            },
-          });
-        } catch (e) {
-          console.error("documents: job income reconcile before delete", e);
-        }
-      }
-      await deleteDoc(doc(firestore, "companies", companyId, "documents", row.id));
+      await updateDoc(
+        doc(firestore, "companies", companyId, "documents", row.id),
+        {
+          isDeleted: true,
+          deletedAt: serverTimestamp(),
+          deletedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        } as unknown as UpdateData<DocumentData>
+      );
       logActivitySafe(firestore, companyId, user, profile, {
-        actionType: "document.delete",
-        actionLabel: "Smazání firemního dokladu",
+        actionType: "document.soft_delete",
+        actionLabel: "Skrytí dokladu (koš)",
         entityType: "company_document",
         entityId: row.id,
         entityName: row.number || row.entityName || row.id,
         sourceModule: "documents",
         route: "/portal/documents",
-        metadata: {
-          docType: row.type,
-          amount: row.amount,
-          fileName: row.fileName,
-          hadFile: Boolean(row.storagePath || row.fileUrl),
-        },
+        metadata: { docType: row.type },
       });
-      toast({ title: "Doklad odstraněn" });
+      toast({ title: "Doklad byl smazán" });
     } catch {
       toast({ variant: "destructive", title: "Chyba při mazání" });
     } finally {
       setIsDeleting(false);
       setDeleteOpen(false);
       setDeleteTarget(null);
+    }
+  };
+
+  const performDeleteInvoice = async () => {
+    const t = deleteInvoiceTarget;
+    if (!t || !companyId || !firestore || !user?.uid) return;
+    if (!canSoftDelete) return;
+
+    setIsDeletingInvoice(true);
+    try {
+      await updateDoc(
+        doc(firestore, "companies", companyId, "invoices", t.id),
+        {
+          isDeleted: true,
+          deletedAt: serverTimestamp(),
+          deletedBy: user.uid,
+          updatedAt: serverTimestamp(),
+          updatedBy: user.uid,
+        } as unknown as UpdateData<DocumentData>
+      );
+      logActivitySafe(firestore, companyId, user, profile, {
+        actionType: "invoice.soft_delete",
+        actionLabel: "Skrytí faktury (koš)",
+        entityType: "invoice",
+        entityId: t.id,
+        entityName: t.label,
+        sourceModule: "documents",
+        route: "/portal/documents",
+      });
+      toast({ title: "Doklad byl smazán" });
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při mazání faktury" });
+    } finally {
+      setIsDeletingInvoice(false);
+      setDeleteInvoiceOpen(false);
+      setDeleteInvoiceTarget(null);
     }
   };
 
@@ -1557,7 +1446,7 @@ function DocumentsPageContent() {
   }, [financialDocuments, issuedSearch]);
 
   const issuedInvoicesFiltered = useMemo(() => {
-    const raw = (invoicesRaw ?? []) as Array<
+    const raw = invoicesForCurrentView as Array<
       Record<string, unknown> & { id: string }
     >;
     const q = issuedSearch.trim().toLowerCase();
@@ -1573,7 +1462,7 @@ function DocumentsPageContent() {
         .toLowerCase();
       return hay.includes(q);
     });
-  }, [invoicesRaw, issuedSearch]);
+  }, [invoicesForCurrentView, issuedSearch]);
 
   if (isProfileLoading) {
     return (
@@ -1928,6 +1817,15 @@ function DocumentsPageContent() {
             <FileText className="w-4 h-4 shrink-0 text-emerald-500" /> Vydané
             doklady
           </TabsTrigger>
+          {canSoftDelete ? (
+            <TabsTrigger
+              value="trash"
+              className="gap-2 min-h-[44px] sm:min-h-0 flex-1 sm:flex-initial"
+            >
+              <Trash2 className="w-4 h-4 shrink-0 text-slate-500" />
+              Koš
+            </TabsTrigger>
+          ) : null}
         </TabsList>
 
         <TabsContent value="all" className="space-y-10">
@@ -1946,6 +1844,8 @@ function DocumentsPageContent() {
               todayIso={todayIso}
               onMarkPaid={markDocumentPaid}
               onMarkUnpaid={markDocumentUnpaid}
+              readOnlyTrash={false}
+              showDeleteButton={canSoftDelete}
             />
           </section>
           <section className="space-y-2">
@@ -1959,6 +1859,7 @@ function DocumentsPageContent() {
               jobs={jobs}
               isLoading={isLoading}
               onDelete={requestDeleteDocument}
+              onDeleteInvoice={requestDeleteInvoice}
               onEdit={openEditDocument}
               onAssign={openAssignDialog}
               search={issuedSearch}
@@ -1966,6 +1867,8 @@ function DocumentsPageContent() {
               todayIso={todayIso}
               onMarkPaid={markDocumentPaid}
               onMarkUnpaid={markDocumentUnpaid}
+              readOnlyTrash={false}
+              showDeleteButton={canSoftDelete}
             />
           </section>
         </TabsContent>
@@ -1982,6 +1885,8 @@ function DocumentsPageContent() {
             todayIso={todayIso}
             onMarkPaid={markDocumentPaid}
             onMarkUnpaid={markDocumentUnpaid}
+            readOnlyTrash={false}
+            showDeleteButton={canSoftDelete}
           />
         </TabsContent>
 
@@ -1993,6 +1898,7 @@ function DocumentsPageContent() {
             jobs={jobs}
             isLoading={isLoading}
             onDelete={requestDeleteDocument}
+            onDeleteInvoice={requestDeleteInvoice}
             onEdit={openEditDocument}
             onAssign={openAssignDialog}
             search={issuedSearch}
@@ -2000,7 +1906,61 @@ function DocumentsPageContent() {
             todayIso={todayIso}
             onMarkPaid={markDocumentPaid}
             onMarkUnpaid={markDocumentUnpaid}
+            readOnlyTrash={false}
+            showDeleteButton={canSoftDelete}
           />
+        </TabsContent>
+
+        <TabsContent value="trash" className="space-y-8">
+          <Alert className="border-gray-200 bg-gray-50 text-gray-900">
+            <AlertTitle>Koš</AlertTitle>
+            <AlertDescription>
+              Doklady a faktury zůstávají uložené ve Firestore a přílohy ve Storage; v běžných
+              přehledech se už nezobrazují.
+            </AlertDescription>
+          </Alert>
+          <section className="space-y-2">
+            <h2 className="text-base font-semibold text-gray-950">
+              Smazané přijaté doklady
+            </h2>
+            <DocumentTableReceived
+              data={receivedDocsBase}
+              isLoading={isLoading}
+              onDelete={requestDeleteDocument}
+              onEdit={openEditDocument}
+              onAssign={openAssignDialog}
+              search={receivedSearch}
+              onSearchChange={setReceivedSearch}
+              todayIso={todayIso}
+              onMarkPaid={markDocumentPaid}
+              onMarkUnpaid={markDocumentUnpaid}
+              readOnlyTrash
+              showDeleteButton={false}
+            />
+          </section>
+          <section className="space-y-2">
+            <h2 className="text-base font-semibold text-gray-950">
+              Smazané vydané doklady a faktury
+            </h2>
+            <DocumentTableIssued
+              data={issuedDocs}
+              invoices={issuedInvoicesFiltered}
+              isLoadingInvoices={isInvoicesLoading}
+              jobs={jobs}
+              isLoading={isLoading}
+              onDelete={requestDeleteDocument}
+              onDeleteInvoice={requestDeleteInvoice}
+              onEdit={openEditDocument}
+              onAssign={openAssignDialog}
+              search={issuedSearch}
+              onSearchChange={setIssuedSearch}
+              todayIso={todayIso}
+              onMarkPaid={markDocumentPaid}
+              onMarkUnpaid={markDocumentUnpaid}
+              readOnlyTrash
+              showDeleteButton={false}
+            />
+          </section>
         </TabsContent>
       </Tabs>
 
@@ -2337,15 +2297,15 @@ function DocumentsPageContent() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Smazat doklad?</AlertDialogTitle>
-            <AlertDialogDescription className="text-left">
-              Opravdu chceš smazat doklad
+            <AlertDialogDescription className="text-left space-y-2">
+              <span>
+                Chceš opravdu smazat tento doklad? Akci nelze vrátit.
+              </span>
               {deleteTarget ? (
-                <span className="font-medium text-foreground">
-                  {" "}
+                <span className="block font-medium text-foreground">
                   „{docDisplayTitle(deleteTarget)}“
                 </span>
               ) : null}
-              ? Tuto akci nelze vrátit zpět.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -2359,6 +2319,41 @@ function DocumentsPageContent() {
               }}
             >
               {isDeleting ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Smazat"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={deleteInvoiceOpen} onOpenChange={setDeleteInvoiceOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Smazat fakturu?</AlertDialogTitle>
+            <AlertDialogDescription className="text-left space-y-2">
+              <span>
+                Chceš opravdu smazat tento doklad? Akci nelze vrátit.
+              </span>
+              {deleteInvoiceTarget ? (
+                <span className="block font-medium text-foreground">
+                  „{deleteInvoiceTarget.label}“
+                </span>
+              ) : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeletingInvoice}>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={isDeletingInvoice}
+              onClick={(e) => {
+                e.preventDefault();
+                void performDeleteInvoice();
+              }}
+            >
+              {isDeletingInvoice ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 "Smazat"
@@ -2383,6 +2378,8 @@ function DocumentTableReceived({
   todayIso,
   onMarkPaid,
   onMarkUnpaid,
+  readOnlyTrash = false,
+  showDeleteButton = true,
 }: {
   data: CompanyDocumentRow[];
   isLoading: boolean;
@@ -2394,6 +2391,10 @@ function DocumentTableReceived({
   todayIso: string;
   onMarkPaid: (row: CompanyDocumentRow) => void | Promise<void>;
   onMarkUnpaid: (row: CompanyDocumentRow) => void | Promise<void>;
+  /** Koš — bez úprav a mazání. */
+  readOnlyTrash?: boolean;
+  /** Skrýt ikonu koše (např. pro nepřihlášené role). */
+  showDeleteButton?: boolean;
 }) {
   const [jobFilter, setJobFilter] = useState<string>("__all__");
   const [typeFilter, setTypeFilter] = useState<string>("__all__");
@@ -2620,7 +2621,7 @@ function DocumentTableReceived({
                 !fromJobMedia &&
                 (amts.amountGross > 0 || amts.amountNet > 0);
               const title = docDisplayTitle(row);
-              const canEditRow = !fromJobMedia;
+              const canEditRow = !fromJobMedia && !readOnlyTrash;
               const pr = row as CompanyDocumentPaymentRow;
               const payU = getDocumentPaymentUrgency(pr, todayIso);
 
@@ -2650,7 +2651,7 @@ function DocumentTableReceived({
                     <span className="w-full text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
                       Akce
                     </span>
-                    {isDocumentEligibleForPaymentBox(pr) ? (
+                    {!readOnlyTrash && isDocumentEligibleForPaymentBox(pr) ? (
                       <Button
                         type="button"
                         variant="outline"
@@ -2662,7 +2663,7 @@ function DocumentTableReceived({
                         Zapl.
                       </Button>
                     ) : null}
-                    {row.paid === true && row.requiresPayment ? (
+                    {!readOnlyTrash && row.paid === true && row.requiresPayment ? (
                       <Button
                         type="button"
                         variant="ghost"
@@ -2716,26 +2717,30 @@ function DocumentTableReceived({
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
                     ) : null}
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className={iconBtn}
-                      title="Přiřadit"
-                      onClick={() => onAssign(row)}
-                    >
-                      <Link2 className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className={cn(iconBtn, "hover:text-red-700")}
-                      title="Smazat"
-                      onClick={() => onDelete(row)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
+                    {!readOnlyTrash ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={iconBtn}
+                        title="Přiřadit"
+                        onClick={() => onAssign(row)}
+                      >
+                        <Link2 className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
+                    {showDeleteButton && !readOnlyTrash ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={cn(iconBtn, "hover:text-red-700")}
+                        title="Smazat"
+                        onClick={() => onDelete(row)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
                   </div>
 
                   <div className="min-w-0">
@@ -2766,6 +2771,11 @@ function DocumentTableReceived({
                       >
                         Přijaté
                       </Badge>
+                      {readOnlyTrash ? (
+                        <Badge className="h-5 bg-red-700 px-1.5 text-[10px] text-white hover:bg-red-700">
+                          Smazáno
+                        </Badge>
+                      ) : null}
                       {fromJobExpense ? (
                         <Badge className="h-5 bg-amber-600 px-1.5 text-[10px] font-normal hover:bg-amber-600">
                           Náklad Z
@@ -2948,6 +2958,7 @@ function DocumentTableIssued({
   jobs,
   isLoading,
   onDelete,
+  onDeleteInvoice,
   onEdit,
   onAssign,
   search,
@@ -2955,6 +2966,8 @@ function DocumentTableIssued({
   todayIso: _todayIso,
   onMarkPaid: _onMarkPaid,
   onMarkUnpaid: _onMarkUnpaid,
+  readOnlyTrash = false,
+  showDeleteButton = true,
 }: {
   data: CompanyDocumentRow[];
   invoices?: Array<Record<string, unknown> & { id: string }>;
@@ -2962,6 +2975,7 @@ function DocumentTableIssued({
   jobs: Array<{ id: string; name: string }>;
   isLoading: boolean;
   onDelete: (row: CompanyDocumentRow) => void;
+  onDeleteInvoice: (inv: Record<string, unknown> & { id: string }) => void;
   onEdit: (row: CompanyDocumentRow) => void;
   onAssign: (row: CompanyDocumentRow) => void;
   search: string;
@@ -2970,6 +2984,8 @@ function DocumentTableIssued({
   todayIso?: string;
   onMarkPaid?: (row: CompanyDocumentRow) => void | Promise<void>;
   onMarkUnpaid?: (row: CompanyDocumentRow) => void | Promise<void>;
+  readOnlyTrash?: boolean;
+  showDeleteButton?: boolean;
 }) {
   const { toast } = useToast();
   const issuedRow = cn(
@@ -3044,11 +3060,13 @@ function DocumentTableIssued({
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
-          <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs" asChild>
-            <Link href="/portal/invoices/new">
-              <ReceiptText className="h-3.5 w-3.5 shrink-0" /> Nová faktura
-            </Link>
-          </Button>
+          {!readOnlyTrash ? (
+            <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs" asChild>
+              <Link href="/portal/invoices/new">
+                <ReceiptText className="h-3.5 w-3.5 shrink-0" /> Nová faktura
+              </Link>
+            </Button>
+          ) : null}
           <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs">
             <Filter className="h-3.5 w-3.5 shrink-0" /> Filtr
           </Button>
@@ -3110,37 +3128,43 @@ function DocumentTableIssued({
                           </Link>
                         </Button>
                       ) : null}
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className={ib}
-                        title="Upravit"
-                        onClick={() => onEdit(docRow)}
-                      >
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        className={ib}
-                        title="Přiřadit k zakázce"
-                        onClick={() => onAssign(docRow)}
-                      >
-                        <Link2 className="h-3.5 w-3.5" />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => onDelete(docRow)}
-                        className={cn(ib, "hover:text-red-700")}
-                        aria-label="Smazat doklad"
-                        title="Smazat"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      {!readOnlyTrash ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={ib}
+                          title="Upravit"
+                          onClick={() => onEdit(docRow)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : null}
+                      {!readOnlyTrash ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className={ib}
+                          title="Přiřadit k zakázce"
+                          onClick={() => onAssign(docRow)}
+                        >
+                          <Link2 className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : null}
+                      {showDeleteButton && !readOnlyTrash ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => onDelete(docRow)}
+                          className={cn(ib, "hover:text-red-700")}
+                          aria-label="Smazat doklad"
+                          title="Smazat"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : null}
                     </div>
                     <div className="min-w-0 font-medium">
                       <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
@@ -3149,6 +3173,11 @@ function DocumentTableIssued({
                       <Badge variant="outline" className="mb-0.5 h-5 px-1 text-[9px]">
                         Vydaný doklad
                       </Badge>
+                      {readOnlyTrash ? (
+                        <Badge className="mb-0.5 ml-1 h-5 bg-red-700 px-1 text-[9px] text-white hover:bg-red-700">
+                          Smazáno
+                        </Badge>
+                      ) : null}
                       <div className="flex items-start gap-1">
                         <FileDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500" />
                         <span
@@ -3285,11 +3314,13 @@ function DocumentTableIssued({
                         <ReceiptText className="h-3.5 w-3.5" />
                       </Link>
                     </Button>
-                    <Button variant="ghost" size="icon" className={ib} asChild title="Upravit">
-                      <Link href={`/portal/invoices/${inv.id}/edit`}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Link>
-                    </Button>
+                    {!readOnlyTrash ? (
+                      <Button variant="ghost" size="icon" className={ib} asChild title="Upravit">
+                        <Link href={`/portal/invoices/${inv.id}/edit`}>
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                    ) : null}
                     <Button
                       type="button"
                       variant="ghost"
@@ -3300,6 +3331,19 @@ function DocumentTableIssued({
                     >
                       <Printer className="h-3.5 w-3.5" />
                     </Button>
+                    {showDeleteButton && !readOnlyTrash ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={cn(ib, "hover:text-red-700")}
+                        title="Smazat fakturu"
+                        aria-label="Smazat fakturu"
+                        onClick={() => onDeleteInvoice(inv)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
                   </div>
                   <div className="min-w-0 font-medium">
                     <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
@@ -3310,6 +3354,11 @@ function DocumentTableIssued({
                         {invoiceDocTypeLabel(inv)}
                       </Badge>
                       {invoiceStatusBadge(String(inv.status ?? ""))}
+                      {readOnlyTrash ? (
+                        <Badge className="h-5 bg-red-700 px-1 text-[9px] text-white hover:bg-red-700">
+                          Smazáno
+                        </Badge>
+                      ) : null}
                     </div>
                     <span
                       className="line-clamp-2 break-words text-gray-950"

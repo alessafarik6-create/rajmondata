@@ -5,7 +5,6 @@
 import type { Firestore } from "firebase/firestore";
 import {
   collection,
-  deleteDoc,
   doc,
   getDoc,
   getDocs,
@@ -17,6 +16,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
+import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import {
   computeExpenseAmountsFromInput,
   normalizeVatRate,
@@ -296,6 +296,7 @@ export async function findExistingAdvanceForContract(
   const snap = await getDocs(q);
   for (const d of snap.docs) {
     const x = d.data() as { type?: string; sourceContractId?: string };
+    if (!isActiveFirestoreDoc(x)) continue;
     if (
       x.type === JOB_INVOICE_TYPES.ADVANCE &&
       x.sourceContractId === sourceContractId
@@ -323,6 +324,7 @@ export async function sumTaxReceiptsPaidGrossForAdvance(
       type?: string;
       amountGross?: unknown;
     };
+    if (!isActiveFirestoreDoc(x)) continue;
     if (x.type !== JOB_INVOICE_TYPES.TAX_RECEIPT) continue;
     s += Number(x.amountGross) || 0;
   }
@@ -1355,7 +1357,8 @@ export async function hasFinalSettlementInvoiceForJob(
   );
   const snap = await getDocs(q);
   for (const d of snap.docs) {
-    const x = d.data() as { type?: string };
+    const x = d.data() as { type?: string; isDeleted?: unknown };
+    if (!isActiveFirestoreDoc(x)) continue;
     if (x.type === JOB_INVOICE_TYPES.FINAL_INVOICE) return true;
   }
   return false;
@@ -2069,6 +2072,7 @@ export async function deleteJobInvoice(params: {
   companyId: string;
   jobId: string;
   invoiceId: string;
+  userId: string;
 }): Promise<void> {
   const invRef = doc(
     params.firestore,
@@ -2077,43 +2081,34 @@ export async function deleteJobInvoice(params: {
     "invoices",
     params.invoiceId
   );
-  const mirrorRef = doc(
-    params.firestore,
-    "companies",
-    params.companyId,
-    "jobs",
-    params.jobId,
-    "billingDocuments",
-    params.invoiceId
-  );
   const snap = await getDoc(invRef);
   if (!snap.exists()) throw new Error("Doklad neexistuje.");
   const data = snap.data() as {
     type?: string;
     paidGrossReceived?: number;
     jobId?: string;
+    isDeleted?: unknown;
   };
+  if (data.isDeleted === true) {
+    throw new Error("Doklad je již smazaný.");
+  }
   if (data.jobId !== params.jobId) {
     throw new Error("Doklad nepatří k této zakázce.");
-  }
-  if (data.type === JOB_INVOICE_TYPES.TAX_RECEIPT) {
-    throw new Error(
-      "Smazání daňového dokladu zatím není podporováno (vazby na platby a finance)."
-    );
   }
   if (data.type === JOB_INVOICE_TYPES.ADVANCE) {
     const paid = Number(data.paidGrossReceived) || 0;
     if (paid > 0.01) {
       throw new Error(
-        "Zálohovou fakturu s připsanými platbami nelze smazat. Nejdřív odeberte související úhrady."
+        "Zálohovou fakturu s připsanými platbami nelze skrýt. Nejdřív vyřešte související úhrady."
       );
     }
   }
 
-  await deleteDoc(invRef);
-  try {
-    await deleteDoc(mirrorRef);
-  } catch {
-    /* mirror může chybět u starých záznamů */
-  }
+  await updateDoc(invRef, {
+    isDeleted: true,
+    deletedAt: serverTimestamp(),
+    deletedBy: params.userId,
+    updatedAt: serverTimestamp(),
+    updatedBy: params.userId,
+  });
 }
