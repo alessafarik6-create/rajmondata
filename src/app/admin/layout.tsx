@@ -6,6 +6,7 @@ import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
+import { isGlobalAdminAppPath } from "@/lib/global-admin-shell";
 
 type AdminSession = {
   username: string;
@@ -124,6 +125,20 @@ export default function AdminLayout({
       cancelled = true;
     };
   }, [pathname]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (pathname === "/admin/login" || !session) return;
+    if (!isGlobalAdminAppPath(pathname)) return;
+    const r = String(session.role ?? "").toLowerCase();
+    const isSuperAdmin =
+      r.includes("super") || session.username?.toLowerCase() === "superadmin";
+    console.log("isSuperAdmin", isSuperAdmin);
+    console.log(
+      "modules",
+      "(tenant org modules not loaded on /admin — useCompany skips companies/společnosti)",
+    );
+  }, [pathname, session]);
 
   if (pathname === "/admin/login") {
     return <>{children}</>;

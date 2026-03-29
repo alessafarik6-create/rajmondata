@@ -1,9 +1,11 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import { usePathname } from "next/navigation";
 import { collection, query, orderBy, limit } from "firebase/firestore";
 import { useUser, useFirestore, useMemoFirebase, useCollection, useCompany } from "@/firebase";
 import { applyAppBadgeCount } from "@/lib/app-badge";
+import { isGlobalAdminAppPath } from "@/lib/global-admin-shell";
 
 type ChatRow = {
   senderRole?: string;
@@ -12,8 +14,11 @@ type ChatRow = {
 
 /**
  * Nepřečtené zprávy od zaměstnanců (stejná logika jako na dashboardu).
+ * Na `/admin/*` se neodbavuje Firestore dotaz — globální administrace nesmí záviset na tenant datech.
  */
 export function useUnreadEmployeeChatCount() {
+  const pathname = usePathname() ?? "";
+  const skipForGlobalAdminShell = isGlobalAdminAppPath(pathname);
   const { user } = useUser();
   const firestore = useFirestore();
   const { companyId, userProfile, isLoading: companyCtxLoading } = useCompany();
@@ -22,13 +27,15 @@ export function useUnreadEmployeeChatCount() {
   const showAdminMessaging = ["owner", "admin", "manager", "accountant"].includes(role);
 
   const chatQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !showAdminMessaging) return null;
+    if (skipForGlobalAdminShell || !firestore || !companyId || !showAdminMessaging) {
+      return null;
+    }
     return query(
       collection(firestore, "companies", companyId, "chat"),
       orderBy("createdAt", "desc"),
       limit(500)
     );
-  }, [firestore, companyId, showAdminMessaging]);
+  }, [skipForGlobalAdminShell, firestore, companyId, showAdminMessaging]);
 
   const { data: chatRows = [], isLoading } = useCollection(chatQuery);
 
@@ -40,18 +47,33 @@ export function useUnreadEmployeeChatCount() {
   }, [chatRows]);
 
   useEffect(() => {
-    if (!showAdminMessaging || !companyId || companyCtxLoading) return;
+    if (
+      skipForGlobalAdminShell ||
+      !showAdminMessaging ||
+      !companyId ||
+      companyCtxLoading
+    ) {
+      return;
+    }
     console.log("Unread employee messages count", { count, companyId });
-  }, [count, companyId, companyCtxLoading, showAdminMessaging]);
+  }, [
+    skipForGlobalAdminShell,
+    count,
+    companyId,
+    companyCtxLoading,
+    showAdminMessaging,
+  ]);
 
   useEffect(() => {
-    if (!user || !showAdminMessaging) return;
+    if (skipForGlobalAdminShell || !user || !showAdminMessaging) return;
     applyAppBadgeCount(count);
-  }, [count, user, showAdminMessaging]);
+  }, [skipForGlobalAdminShell, count, user, showAdminMessaging]);
 
   return {
-    count,
-    isLoading: companyCtxLoading || (showAdminMessaging && isLoading),
-    showBadge: showAdminMessaging,
+    count: skipForGlobalAdminShell ? 0 : count,
+    isLoading: skipForGlobalAdminShell
+      ? false
+      : companyCtxLoading || (showAdminMessaging && isLoading),
+    showBadge: skipForGlobalAdminShell ? false : showAdminMessaging,
   };
 }

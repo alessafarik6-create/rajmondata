@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useMemo } from 'react';
+import { usePathname } from 'next/navigation';
 import { doc, type Timestamp } from 'firebase/firestore';
 import { useUser, useFirebase, useMemoFirebase, useDoc } from '@/firebase';
+import { isGlobalAdminAppPath } from '@/lib/global-admin-shell';
 import {
   COMPANIES_COLLECTION,
   ORGANIZATIONS_COLLECTION,
@@ -258,6 +260,8 @@ function mergeCompanyWithOrganizationRecord(
 export function useCompany() {
   const { user } = useUser();
   const { firestore, areServicesAvailable } = useFirebase();
+  const pathname = usePathname() ?? '';
+  const suppressTenantFirestore = isGlobalAdminAppPath(pathname);
 
   const userRef = useMemoFirebase(
     () =>
@@ -280,18 +284,24 @@ export function useCompany() {
 
   const companyRef = useMemoFirebase(
     () =>
-      areServicesAvailable && firestore && companyId
+      areServicesAvailable &&
+      firestore &&
+      companyId &&
+      !suppressTenantFirestore
         ? doc(firestore, COMPANIES_COLLECTION, companyId)
         : null,
-    [areServicesAvailable, firestore, companyId],
+    [areServicesAvailable, firestore, companyId, suppressTenantFirestore],
   );
 
   const orgRef = useMemoFirebase(
     () =>
-      areServicesAvailable && firestore && companyId
+      areServicesAvailable &&
+      firestore &&
+      companyId &&
+      !suppressTenantFirestore
         ? doc(firestore, ORGANIZATIONS_COLLECTION, companyId)
         : null,
-    [areServicesAvailable, firestore, companyId],
+    [areServicesAvailable, firestore, companyId, suppressTenantFirestore],
   );
 
   const {
@@ -335,17 +345,23 @@ export function useCompany() {
 
   const error = profileError ?? companyError ?? orgError;
 
-  const companyName =
-    company?.companyName ||
-    // backward compatibility with existing "name" field
-    (company as any)?.name ||
-    'Organization';
+  const companyName = suppressTenantFirestore
+    ? ''
+    : company?.companyName ||
+      // backward compatibility with existing "name" field
+      (company as any)?.name ||
+      'Organization';
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development') return;
     try {
+      const isSuperAdminFirebase =
+        Array.isArray((userProfile as { globalRoles?: string[] })?.globalRoles) &&
+        (userProfile as { globalRoles: string[] }).globalRoles.includes('super_admin');
+      console.log('[useCompany] isSuperAdmin (Firebase globalRoles)', isSuperAdminFirebase);
+      console.log('[useCompany] suppressTenantFirestore (global /admin shell)', suppressTenantFirestore);
       console.log('[useCompany] companyId:', companyId);
-      console.log('[useCompany] company.modules (merged):', company?.modules);
+      console.log('[useCompany] modules (merged, null on admin shell)', company?.modules);
       console.log('[useCompany] loading:', {
         profileLoading,
         companyLoading,
@@ -355,7 +371,17 @@ export function useCompany() {
     } catch {
       /* ignore logging failures */
     }
-  }, [user, companyId, company?.modules, profileLoading, companyLoading, orgLoading, tenantDocsLoading]);
+  }, [
+    user,
+    userProfile,
+    companyId,
+    company?.modules,
+    profileLoading,
+    companyLoading,
+    orgLoading,
+    tenantDocsLoading,
+    suppressTenantFirestore,
+  ]);
 
   return {
     /** Dokument `users/{uid}` */

@@ -200,6 +200,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   const effectiveModules = useMemo(() => getEffectiveModulesMerged(company), [company]);
 
   const portalLinks = useMemo((): PortalNavLink[] => {
+    if (isAdminArea) return [];
     const ctx = {
       role,
       globalRoles: userProfile?.globalRoles,
@@ -217,6 +218,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
       })
     );
   }, [
+    isAdminArea,
     company,
     role,
     userProfile?.globalRoles,
@@ -226,7 +228,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   ]);
 
   useEffect(() => {
-    if (process.env.NODE_ENV !== 'development') return;
+    if (process.env.NODE_ENV !== 'development' || isAdminArea) return;
 
     const licRaw = (company?.license?.modules ?? {}) as Record<string, boolean>;
     const orgRaw = (company?.modules ?? {}) as Record<string, boolean>;
@@ -267,6 +269,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     console.log('visible menu labels', portalLinks.map((l) => l.label));
     console.log('[BizForgeSidebar] role', role);
   }, [
+    isAdminArea,
     company?.license?.modules,
     company?.modules,
     company?.license?.status,
