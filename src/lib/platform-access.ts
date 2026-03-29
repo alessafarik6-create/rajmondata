@@ -81,7 +81,7 @@ export function isCompanyLicenseBlocking(company: CompanyPlatformFields | null |
 }
 
 /** Menu podle kanonických klíčů (po normalizeModules). */
-function isPlatformModuleEnabledFromModuleMap(
+export function isPlatformModuleEnabledFromModuleMap(
   m: Record<string, boolean>,
   moduleCode: PlatformModuleCode
 ): boolean {
@@ -132,6 +132,18 @@ export function getEffectiveModulesMerged(
       ? (company.modules as Record<string, boolean>)
       : {};
   return normalizeModules(orMergeModuleRecords(fromLicense, org));
+}
+
+/** Je u organizace zapnutý daný platformní modul (po sloučení licence + top-level modules)? */
+export function isPlatformModuleEnabledForOrganization(
+  company: CompanyPlatformFields | null | undefined,
+  moduleCode: PlatformModuleCode
+): boolean {
+  if (!company) return false;
+  return isPlatformModuleEnabledFromModuleMap(
+    getEffectiveModulesMerged(company),
+    moduleCode
+  );
 }
 
 /** Licence výslovně neplatná pro moduly portálu (ne „pending“ — ten nesmí schovat zapnuté moduly z admina). */

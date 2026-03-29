@@ -5,6 +5,11 @@
 export const PLATFORM_SEO_DOC = "home";
 export const PLATFORM_SETTINGS_DOC = "default";
 
+/**
+ * Stabilní ID dokumentů v `platform_modules/{code}` a v licenci (`enabledModules`).
+ * Kanonické klíče menu (`zakazky`, `dochazka`, `faktury`, …) jsou mapované v
+ * `company-license-record` / `platform-access` — dokumenty ve Firestore se nemění.
+ */
 export const PLATFORM_MODULE_CODES = [
   "attendance_payroll",
   "invoicing",
@@ -23,7 +28,14 @@ export type PlatformModuleDef = {
   description: string;
   activeGlobally: boolean;
   defaultEnabled: boolean;
+  /** Základní cena firmy / měsíc (Kč) — zarovnáno s priceMonthly při měně CZK. */
   basePriceCzk: number;
+  /** Cena za měsíc (zobrazování a předplatné); výchozí = basePriceCzk. */
+  priceMonthly: number;
+  currency: string;
+  billingPeriod: "monthly" | "yearly";
+  /** Zda se modul účtuje jako placený (false = zdarma v přehledu předplatného). */
+  isPaid: boolean;
   billingType: "per_company" | "per_employee" | "flat";
   configurableBySuperadmin: boolean;
   /** Pouze u attendance_payroll — cena za zaměstnance / měsíc */
@@ -38,6 +50,10 @@ export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
     activeGlobally: true,
     defaultEnabled: false,
     basePriceCzk: 0,
+    priceMonthly: 0,
+    currency: "CZK",
+    billingPeriod: "monthly",
+    isPaid: true,
     billingType: "per_employee",
     configurableBySuperadmin: true,
     employeePriceCzk: 49,
@@ -49,6 +65,10 @@ export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
     activeGlobally: true,
     defaultEnabled: false,
     basePriceCzk: 299,
+    priceMonthly: 299,
+    currency: "CZK",
+    billingPeriod: "monthly",
+    isPaid: true,
     billingType: "per_company",
     configurableBySuperadmin: true,
   },
@@ -59,6 +79,10 @@ export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
     activeGlobally: true,
     defaultEnabled: false,
     basePriceCzk: 199,
+    priceMonthly: 199,
+    currency: "CZK",
+    billingPeriod: "monthly",
+    isPaid: true,
     billingType: "per_company",
     configurableBySuperadmin: true,
   },
@@ -69,6 +93,10 @@ export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
     activeGlobally: true,
     defaultEnabled: false,
     basePriceCzk: 399,
+    priceMonthly: 399,
+    currency: "CZK",
+    billingPeriod: "monthly",
+    isPaid: true,
     billingType: "per_company",
     configurableBySuperadmin: true,
   },
@@ -79,6 +107,10 @@ export const DEFAULT_PLATFORM_MODULES: PlatformModuleDef[] = [
     activeGlobally: true,
     defaultEnabled: false,
     basePriceCzk: 399,
+    priceMonthly: 399,
+    currency: "CZK",
+    billingPeriod: "monthly",
+    isPaid: true,
     billingType: "per_company",
     configurableBySuperadmin: true,
   },
