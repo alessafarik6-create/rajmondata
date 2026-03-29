@@ -19,7 +19,11 @@ import { useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from "@/fi
 import { doc } from "firebase/firestore";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { isDailyWorkLogEnabled, isWorkLogEnabled } from "@/lib/employee-report-flags";
-import { canAccessCompanyModule } from "@/lib/platform-access";
+import {
+  canAccessCompanyModule,
+  getEffectiveModulesMerged,
+} from "@/lib/platform-access";
+import { isModuleKeyEnabled } from "@/lib/license-modules";
 import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
@@ -62,11 +66,28 @@ export function EmployeePortalSidebar({
   const portalRole = String(profile?.role || "employee");
   const platformCatalog = useMergedPlatformModuleCatalog();
 
+  const effectiveModules = useMemo(
+    () => getEffectiveModulesMerged(company),
+    [company]
+  );
+
   const links = useMemo(() => {
-    const showDaily = isDailyWorkLogEnabled(employeeDoc);
-    const showLegacyWorklog = !showDaily && isWorkLogEnabled(employeeDoc);
+    const apOk =
+      company &&
+      canAccessCompanyModule(company, "attendance_payroll", platformCatalog);
+    const showAttendance =
+      apOk &&
+      isModuleKeyEnabled(effectiveModules, "dochazka");
+    const showWorklogSection =
+      apOk &&
+      (isModuleKeyEnabled(effectiveModules, "dochazka") ||
+        isModuleKeyEnabled(effectiveModules, "reporty"));
+    const showDaily = showWorklogSection && isDailyWorkLogEnabled(employeeDoc);
+    const showLegacyWorklog =
+      showWorklogSection && !showDaily && isWorkLogEnabled(employeeDoc);
     const showSklad =
       company &&
+      isModuleKeyEnabled(effectiveModules, "sklad") &&
       canAccessCompanyModule(company, "sklad", platformCatalog) &&
       userCanAccessWarehousePortal({
         role: portalRole,
@@ -75,6 +96,7 @@ export function EmployeePortalSidebar({
       });
     const showVyroba =
       company &&
+      isModuleKeyEnabled(effectiveModules, "vyroba") &&
       canAccessCompanyModule(company, "vyroba", platformCatalog) &&
       userCanAccessProductionPortal({
         role: portalRole,
@@ -84,7 +106,9 @@ export function EmployeePortalSidebar({
 
     const all = [
       { label: t("home"), href: "/portal/employee", icon: LayoutDashboard },
-      { label: t("attendance"), href: "/portal/labor/dochazka", icon: Clock },
+      ...(showAttendance
+        ? [{ label: t("attendance"), href: "/portal/labor/dochazka", icon: Clock }]
+        : []),
       ...(showDaily
         ? [
             {
@@ -100,8 +124,8 @@ export function EmployeePortalSidebar({
                 href: "/portal/employee/worklogs",
                 icon: CalendarDays,
               },
-          ]
-        : []),
+            ]
+          : []),
       ...(showSklad ? [{ label: "Sklad", href: "/portal/sklad", icon: Package }] : []),
       ...(showVyroba ? [{ label: "Výroba", href: "/portal/vyroba", icon: Factory }] : []),
       { label: t("money"), href: "/portal/employee/money", icon: Wallet },
@@ -113,7 +137,15 @@ export function EmployeePortalSidebar({
       { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
     ];
     return all;
-  }, [t, employeeDoc, company, portalRole, profile?.globalRoles, platformCatalog]);
+  }, [
+    t,
+    employeeDoc,
+    company,
+    portalRole,
+    profile?.globalRoles,
+    platformCatalog,
+    effectiveModules,
+  ]);
 
   const linkClass = (href: string) =>
     cn(

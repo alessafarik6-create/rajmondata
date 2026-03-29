@@ -23,6 +23,11 @@ export const MODULE_DEFINITIONS: {
     label: string;
     menuLabel: string;
     aliases: readonly string[];
+    /**
+     * false = klíč zůstává v licenci pro přístup (např. veřejný terminál), ale nesmí generovat
+     * samostatnou položku v levém menu portálu — viz `portal-menu-config.ts`.
+     */
+    exposesSidebarItem?: boolean;
   };
 } = {
   zakazky: {
@@ -51,8 +56,9 @@ export const MODULE_DEFINITIONS: {
     aliases: ["documents"],
   },
   terminal: {
-    label: "Mobilní terminál",
+    label: "Mobilní terminál (terminál docházky)",
     menuLabel: "Terminál",
+    exposesSidebarItem: false,
     aliases: [
       "mobileTerminal",
       "mobile_terminal",
@@ -216,6 +222,11 @@ export type OrgMenuModuleKey = CanonicalModuleKey;
 export const AVAILABLE_MODULES = CANONICAL_MODULE_KEYS.map((key) => ({
   key,
   label: MODULE_DEFINITIONS[key].label,
+  /** Volitelná nápověda v dialogu licence (Firestore se nemění). */
+  adminHint:
+    key === "terminal"
+      ? "Není samostatná položka v levém menu portálu — řídí přístup k veřejnému terminálu docházky (/attendance-login), spolu s modulem Docházka."
+      : undefined,
 }));
 
 export const LICENSE_TYPES = [

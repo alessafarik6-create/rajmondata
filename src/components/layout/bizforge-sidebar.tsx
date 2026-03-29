@@ -4,16 +4,16 @@
 import React, { useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { 
-  LayoutDashboard, 
-  Building2, 
-  Users, 
+import {
+  LayoutDashboard,
+  Building2,
+  Users,
   Briefcase,
   Inbox,
-  Wallet, 
-  MessageSquare, 
-  FileText, 
-  ShieldCheck, 
+  Wallet,
+  MessageSquare,
+  FileText,
+  ShieldCheck,
   Settings,
   CreditCard,
   UserCircle,
@@ -23,33 +23,33 @@ import {
   Activity,
   Package,
   Factory,
+  Landmark,
+  Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
 import { useUser, useDoc, useFirestore, useMemoFirebase, useCompany } from '@/firebase';
 import { doc } from 'firebase/firestore';
-import type { PlatformModuleCode } from '@/lib/platform-config';
-import { isModuleKeyEnabled, normalizeModules } from '@/lib/license-modules';
+import { normalizeModules } from '@/lib/license-modules';
 import {
   canAccessCompanyModule,
   getEffectiveModulesMerged,
-  getResolvedMenuModules,
   isLicenseExplicitlyRevokedForPortal,
+  type CompanyPlatformFields,
 } from '@/lib/platform-access';
 import {
   userCanAccessProductionPortal,
   userCanAccessWarehousePortal,
 } from '@/lib/warehouse-production-access';
 import { useMergedPlatformModuleCatalog } from '@/contexts/platform-module-catalog-context';
-
-type PortalLinkDef = {
-  label: string;
-  href: string;
-  icon: typeof LayoutDashboard;
-  roles: string[];
-  module: PlatformModuleCode | null;
-  menuGateKeys?: readonly string[];
-};
+import {
+  hiddenBecauseNotSidebarModule,
+  licenseKeysSatisfied,
+  parentLicenseKeysSatisfied,
+  PORTAL_SIDEBAR_MENU_DEFS,
+  type PortalSidebarMenuDef,
+} from '@/lib/portal-menu-config';
+import type { LucideIcon } from 'lucide-react';
 
 const adminLinksStatic = [
   { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },
@@ -62,21 +62,95 @@ const adminLinksStatic = [
   { label: 'Fakturace', href: '/admin/billing', icon: CreditCard },
 ];
 
-const portalLinksRawStatic: PortalLinkDef[] = [
-  { label: 'Přehled', href: '/portal/dashboard', icon: LayoutDashboard, roles: ['owner', 'admin', 'manager', 'accountant', 'employee', 'customer'], module: null },
-  { label: 'Zaměstnanci', href: '/portal/employees', icon: Users, roles: ['owner', 'admin', 'manager'], module: 'attendance_payroll', menuGateKeys: ['dochazka', 'attendance', 'mobile_terminal', 'terminal', 'reporty', 'reports'] },
-  { label: 'Práce a mzdy', href: '/portal/labor/dochazka', icon: Wallet, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: 'attendance_payroll', menuGateKeys: ['dochazka', 'attendance', 'mobile_terminal', 'terminal', 'reporty', 'reports'] },
-  { label: 'Zákazníci', href: '/portal/customers', icon: UserCircle, roles: ['owner', 'admin', 'manager', 'accountant'], module: 'jobs', menuGateKeys: ['zakazky', 'jobs'] },
-  { label: 'Zakázky', href: '/portal/jobs', icon: Briefcase, roles: ['owner', 'admin', 'manager', 'employee', 'customer'], module: 'jobs', menuGateKeys: ['zakazky', 'jobs'] },
-  { label: 'Poptávky', href: '/portal/leads', icon: Inbox, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: 'jobs', menuGateKeys: ['zakazky', 'jobs'] },
-  { label: 'Finance', href: '/portal/finance', icon: Wallet, roles: ['owner', 'admin', 'accountant'], module: 'invoicing', menuGateKeys: ['finance', 'faktury', 'invoices', 'doklady', 'documents'] },
-  { label: 'Doklady', href: '/portal/documents', icon: FileText, roles: ['owner', 'admin', 'accountant', 'customer'], module: 'invoicing', menuGateKeys: ['finance', 'faktury', 'invoices', 'doklady', 'documents'] },
-  { label: 'Report', href: '/portal/report', icon: Activity, roles: ['owner', 'admin'], module: null },
-  { label: 'Reporty', href: '/portal/reports', icon: BarChart3, roles: ['owner', 'admin', 'manager', 'accountant'], module: 'attendance_payroll', menuGateKeys: ['dochazka', 'attendance', 'mobile_terminal', 'terminal', 'reporty', 'reports'] },
-  { label: 'Předplatné', href: '/portal/billing', icon: PaymentIcon, roles: ['owner'], module: null },
-  { label: 'Zprávy', href: '/portal/chat', icon: MessageSquare, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: null },
-  { label: 'Nastavení', href: '/portal/settings', icon: Settings, roles: ['owner', 'admin', 'manager', 'accountant', 'employee'], module: null },
-];
+const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
+  overview: LayoutDashboard,
+  employees: Users,
+  labor: Wallet,
+  customers: UserCircle,
+  jobs: Briefcase,
+  leads: Inbox,
+  finance: Landmark,
+  invoices: Receipt,
+  documents: FileText,
+  sklad: Package,
+  vyroba: Factory,
+  reports: BarChart3,
+  activity: Activity,
+  billing: PaymentIcon,
+  chat: MessageSquare,
+  settings: Settings,
+};
+
+type PortalNavLink = { label: string; href: string; icon: LucideIcon };
+
+function isPortalMenuItemVisible(
+  def: PortalSidebarMenuDef,
+  ctx: {
+    role: string;
+    globalRoles: string[] | undefined;
+    company: CompanyPlatformFields | null | undefined;
+    effectiveModules: Record<string, boolean>;
+    platformCatalog: ReturnType<typeof useMergedPlatformModuleCatalog>;
+    employeeRow: Record<string, unknown> | null;
+  }
+): boolean {
+  const { role, globalRoles, company, effectiveModules, platformCatalog, employeeRow } = ctx;
+
+  if (!def.roles.includes(role)) return false;
+
+  if (def.id === 'activity') {
+    const elevated =
+      role === 'owner' ||
+      role === 'admin' ||
+      (Array.isArray(globalRoles) && globalRoles.includes('super_admin'));
+    if (!elevated) return false;
+  }
+
+  if (def.type === 'system') return true;
+
+  if (!company) return false;
+
+  if (isLicenseExplicitlyRevokedForPortal(company)) return false;
+
+  if (def.type === 'child') {
+    if (!parentLicenseKeysSatisfied(def.parentLicenseKeys, effectiveModules)) return false;
+  }
+
+  if (def.type === 'module' || def.type === 'child') {
+    if (def.type === 'module' && !licenseKeysSatisfied(def.licenseKeys, effectiveModules)) {
+      return false;
+    }
+    if (
+      def.type === 'child' &&
+      def.licenseKeys?.length &&
+      !licenseKeysSatisfied(def.licenseKeys, effectiveModules)
+    ) {
+      return false;
+    }
+  }
+
+  if (def.platformModuleCode) {
+    if (!canAccessCompanyModule(company, def.platformModuleCode, platformCatalog)) {
+      return false;
+    }
+    if (def.platformModuleCode === 'sklad') {
+      return userCanAccessWarehousePortal({
+        role,
+        globalRoles,
+        employeeRow: employeeRow as { canAccessWarehouse?: boolean } | null,
+      });
+    }
+    if (def.platformModuleCode === 'vyroba') {
+      return userCanAccessProductionPortal({
+        role,
+        globalRoles,
+        employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
+      });
+    }
+  }
+
+  return true;
+}
 
 export type BizForgeSidebarProps = {
   /**
@@ -123,57 +197,25 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
   const { data: employeeRow } = useDoc(employeeRowRef);
   const platformCatalog = useMergedPlatformModuleCatalog();
 
-  const organizationModules = company?.modules ?? {};
-  const licenseModulesNested = company?.license?.modules ?? {};
   const effectiveModules = useMemo(() => getEffectiveModulesMerged(company), [company]);
-  const modules = useMemo(() => getResolvedMenuModules(company), [company]);
-  const isModuleEnabled = (key: string) => isModuleKeyEnabled(effectiveModules, key);
 
-  const portalLinks = useMemo(() => {
-    return portalLinksRawStatic.filter((link) => {
-      if (link.href === '/portal/report') {
-        if (!company) return false;
-        return (
-          role === 'owner' ||
-          role === 'admin' ||
-          (Array.isArray(userProfile?.globalRoles) &&
-            userProfile.globalRoles.includes('super_admin'))
-        );
-      }
-      if (!link.roles.includes(role)) return false;
-      if (link.module === null) return true;
-      if (!company) return false;
+  const portalLinks = useMemo((): PortalNavLink[] => {
+    const ctx = {
+      role,
+      globalRoles: userProfile?.globalRoles,
+      company,
+      effectiveModules,
+      platformCatalog,
+      employeeRow: (employeeRow as Record<string, unknown> | null) ?? null,
+    };
 
-      const gateKeys = link.menuGateKeys;
-      const anyGate =
-        gateKeys && gateKeys.length > 0
-          ? gateKeys.some((k) => isModuleEnabled(k))
-          : false;
-      const catalogOrEntitlements = canAccessCompanyModule(
-        company,
-        link.module,
-        platformCatalog
-      );
-      const revoked = isLicenseExplicitlyRevokedForPortal(company);
-      const moduleOk = (!revoked && anyGate) || catalogOrEntitlements;
-      if (!moduleOk) return false;
-
-      if (link.module === 'sklad') {
-        return userCanAccessWarehousePortal({
-          role,
-          globalRoles: userProfile?.globalRoles,
-          employeeRow: employeeRow as { canAccessWarehouse?: boolean } | null,
-        });
-      }
-      if (link.module === 'vyroba') {
-        return userCanAccessProductionPortal({
-          role,
-          globalRoles: userProfile?.globalRoles,
-          employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
-        });
-      }
-      return true;
-    });
+    return PORTAL_SIDEBAR_MENU_DEFS.filter((def) => isPortalMenuItemVisible(def, ctx)).map(
+      (def) => ({
+        label: def.label,
+        href: def.href,
+        icon: PORTAL_MENU_ICONS[def.id] ?? LayoutDashboard,
+      })
+    );
   }, [
     company,
     role,
@@ -185,6 +227,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
 
   useEffect(() => {
     if (process.env.NODE_ENV !== 'development') return;
+
     const licRaw = (company?.license?.modules ?? {}) as Record<string, boolean>;
     const orgRaw = (company?.modules ?? {}) as Record<string, boolean>;
     const normalizedLicenseModules = normalizeModules(licRaw);
@@ -193,14 +236,35 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
       ...normalizedLicenseModules,
       ...normalizedOrganizationModules,
     };
-    const visibleMenuItems = portalLinks.map((l) => l.label);
+
+    const ctx = {
+      role,
+      globalRoles: userProfile?.globalRoles,
+      company,
+      effectiveModules,
+      platformCatalog,
+      employeeRow: (employeeRow as Record<string, unknown> | null) ?? null,
+    };
+
+    const visibleDefs = PORTAL_SIDEBAR_MENU_DEFS.filter((def) =>
+      isPortalMenuItemVisible(def, ctx)
+    );
+    const visibleSystemItems = visibleDefs.filter((d) => d.type === 'system').map((d) => d.label);
+    const visibleModuleItems = visibleDefs.filter((d) => d.type === 'module').map((d) => d.label);
+    const visibleChildItems = visibleDefs.filter((d) => d.type === 'child').map((d) => d.label);
+
+    console.log('effectiveModules', effectiveModules);
+    console.log('visibleSystemItems', visibleSystemItems);
+    console.log('visibleModuleItems', visibleModuleItems);
+    console.log('visibleChildItems', visibleChildItems);
+    console.log('hiddenBecauseNotSidebarModule', [...hiddenBecauseNotSidebarModule]);
+
     console.log('license.modules raw', company?.license?.modules);
     console.log('organization.modules raw', company?.modules);
     console.log('normalizedLicenseModules', normalizedLicenseModules);
     console.log('normalizedOrganizationModules', normalizedOrganizationModules);
     console.log('effectiveModules (doc layers only)', effectiveMergedDocOnly);
-    console.log('effectiveModules (full, incl. enabledModules)', effectiveModules);
-    console.log('visible menu items', visibleMenuItems);
+    console.log('visible menu labels', portalLinks.map((l) => l.label));
     console.log('[BizForgeSidebar] role', role);
   }, [
     company?.license?.modules,
@@ -210,6 +274,9 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     effectiveModules,
     portalLinks,
     role,
+    userProfile?.globalRoles,
+    platformCatalog,
+    employeeRow,
   ]);
 
   const links = isAdminArea ? adminLinksStatic : portalLinks;
@@ -219,12 +286,11 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     if (href === "/portal/dashboard" || href === "/admin/dashboard") return false;
     /** „Zaměstnanci“ jen přesná shoda — podstránky (např. payroll) mají vlastní položku. */
     if (href === "/portal/employees") return false;
-    /** Faktury jsou pod jednotnou sekcí Doklady — zvýraznit i detail / úpravu faktury. */
     if (href === "/portal/documents") {
-      return (
-        pathname.startsWith("/portal/documents") ||
-        pathname.startsWith("/portal/invoices")
-      );
+      return pathname.startsWith("/portal/documents");
+    }
+    if (href === "/portal/invoices") {
+      return pathname.startsWith("/portal/invoices");
     }
     if (href === "/portal/labor/dochazka") {
       return pathname.startsWith("/portal/labor");

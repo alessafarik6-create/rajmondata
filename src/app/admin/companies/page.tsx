@@ -396,13 +396,19 @@ export default function AdminCompaniesPage() {
                   {AVAILABLE_MODULES.map((mod) => (
                     <label
                       key={mod.key}
-                      className="flex items-center gap-2 cursor-pointer text-sm text-slate-700"
+                      className="flex items-start gap-2 cursor-pointer text-sm text-slate-700"
                     >
                       <Switch
+                        className="mt-0.5 shrink-0"
                         checked={(editForm.enabledModules || []).includes(mod.key)}
                         onCheckedChange={() => toggleModule(mod.key)}
                       />
-                      {mod.label}
+                      <span className="flex min-w-0 flex-col gap-0.5">
+                        <span>{mod.label}</span>
+                        {"adminHint" in mod && mod.adminHint ? (
+                          <span className="text-xs font-normal text-slate-500">{mod.adminHint}</span>
+                        ) : null}
+                      </span>
                     </label>
                   ))}
                 </div>
