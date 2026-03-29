@@ -37,8 +37,18 @@ html, body { margin: 0; padding: 0; background: #e5e5e5; }
   padding: 14mm 16mm;
   box-shadow: 0 2px 12px rgba(0,0,0,0.12);
 }
-.doc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 14px; border-bottom: 2px solid #111; padding-bottom: 10px; }
-.doc-logo img { max-height: 68px; max-width: 260px; object-fit: contain; display: block; }
+.doc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; margin-bottom: 14px; border-bottom: 2px solid #111; padding-bottom: 12px; }
+.doc-header > div:first-child { min-width: 0; }
+.doc-logo { flex-shrink: 0; margin-bottom: 8px; max-width: 100%; }
+.doc-logo img {
+  max-height: 100px;
+  max-width: 340px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  object-position: left top;
+  display: block;
+}
 .bank-box { border: 1px solid #ccc; padding: 10px; margin: 12px 0; font-size: 9.5pt; background: #fafafa; }
 .bank-box h3 { margin: 0 0 6px; font-size: 10pt; font-weight: 600; }
 .doc-title { font-size: 16pt; font-weight: 700; margin: 0 0 4px; }
