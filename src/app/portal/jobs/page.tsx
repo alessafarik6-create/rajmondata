@@ -32,6 +32,7 @@ import {
   ListTodo,
   Search,
   Tag,
+  Camera,
 } from "lucide-react";
 import {
   useFirestore,
@@ -70,6 +71,7 @@ import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-
 import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
+import { MeasurementPhotoCaptureDialog } from "@/components/jobs/measurement-photo-capture-dialog";
 import {
   JOB_TAG_CUSTOM_VALUE,
   JOB_TAG_PRESETS,
@@ -189,6 +191,9 @@ function JobsPageContent() {
   const showTasksButton =
     !!companyId && profile?.role !== "customer";
 
+  const showMeasurementPhotoEntry =
+    !!companyId && !!user && !!firestore && profile?.role !== "customer";
+
   const customersQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     return collection(firestore, "companies", companyId, "customers");
@@ -277,6 +282,8 @@ function JobsPageContent() {
   const [workContractTemplatesManagerOpen, setWorkContractTemplatesManagerOpen] =
     useState(false);
   const [tasksDialogOpen, setTasksDialogOpen] = useState(false);
+  const [measurementPhotoDialogOpen, setMeasurementPhotoDialogOpen] =
+    useState(false);
   useEffect(() => {
     if (!isAdmin && workContractTemplatesManagerOpen) {
       setWorkContractTemplatesManagerOpen(false);
@@ -651,6 +658,29 @@ function JobsPageContent() {
               </Button>
             </Link>
           )}
+          {showMeasurementPhotoEntry ? (
+            <>
+              <Button
+                type="button"
+                variant="secondary"
+                className="gap-2 min-h-[44px]"
+                onClick={() => setMeasurementPhotoDialogOpen(true)}
+              >
+                <Camera className="w-4 h-4 shrink-0" />
+                Foto zaměření
+              </Button>
+              <MeasurementPhotoCaptureDialog
+                open={measurementPhotoDialogOpen}
+                onOpenChange={setMeasurementPhotoDialogOpen}
+                firestore={firestore}
+                companyId={companyId}
+                userId={user.uid}
+                jobs={jobs as { id: string; name?: string }[]}
+                customers={customers as { id: string; companyName?: string; firstName?: string; lastName?: string }[]}
+                profile={profile as Record<string, unknown> | null | undefined}
+              />
+            </>
+          ) : null}
           {isAdmin && (
             <>
               <Link href="/portal/jobs/templates">

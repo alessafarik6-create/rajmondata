@@ -2,10 +2,10 @@
 "use client";
 import { Loader2 } from "lucide-react";
 
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, query, where } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -24,12 +24,24 @@ import {
 import { Separator } from '@/components/ui/separator';
 import Link from 'next/link';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { useToast } from '@/hooks/use-toast';
+import { getJobMediaPreviewUrl, formatMediaDate } from '@/lib/job-media-types';
+import type { MeasurementPhotoStatus } from '@/lib/measurement-photos';
 
 export default function CustomerDetailPage() {
   const { customerId } = useParams();
   const router = useRouter();
   const { user } = useUser();
   const firestore = useFirestore();
+  const { toast } = useToast();
 
   const userRef = useMemoFirebase(() => user && firestore ? doc(firestore, 'users', user.uid) : null, [firestore, user]);
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
@@ -48,6 +60,64 @@ export default function CustomerDetailPage() {
   }, [firestore, companyId, customerId]);
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
+
+  const measurementPhotosQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !customerId) return null;
+    return query(
+      collection(firestore, 'companies', companyId, 'measurement_photos'),
+      where('customerId', '==', customerId as string)
+    );
+  }, [firestore, companyId, customerId]);
+
+  const { data: measurementPhotos, isLoading: measurementPhotosLoading } =
+    useCollection(measurementPhotosQuery);
+
+  const [transferPhotoId, setTransferPhotoId] = useState<string | null>(null);
+  const [transferJobId, setTransferJobId] = useState('');
+  const [transferSaving, setTransferSaving] = useState(false);
+
+  const handleTransferMeasurementPhotoToJob = async () => {
+    if (!firestore || !companyId || !transferPhotoId || !transferJobId.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'Vyberte zakázku',
+        description: 'Zvolte zakázku, ke které chcete foto přiřadit.',
+      });
+      return;
+    }
+    setTransferSaving(true);
+    try {
+      await updateDoc(
+        doc(
+          firestore,
+          'companies',
+          companyId,
+          'measurement_photos',
+          transferPhotoId
+        ),
+        {
+          jobId: transferJobId.trim(),
+          status: 'linked' as MeasurementPhotoStatus,
+          updatedAt: serverTimestamp(),
+        }
+      );
+      toast({
+        title: 'Foto zaměření bylo přiřazeno k zakázce',
+        description: 'Fotku najdete v detailu zakázky v sekci Foto zaměření.',
+      });
+      setTransferPhotoId(null);
+      setTransferJobId('');
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: 'destructive',
+        title: 'Přiřazení se nezdařilo',
+        description: 'Zkuste to znovu nebo kontaktujte správce.',
+      });
+    } finally {
+      setTransferSaving(false);
+    }
+  };
 
   if (isProfileLoading) {
     return (
@@ -168,6 +238,73 @@ export default function CustomerDetailPage() {
 
         <div className="lg:col-span-2 space-y-6">
           <Card className="bg-surface border-border">
+            <CardHeader>
+              <CardTitle>Foto zaměření</CardTitle>
+              <CardDescription>
+                Snímky s kótami uložené k tomuto zákazníkovi. Po přiřazení k zakázce se zobrazí i u zakázky.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {measurementPhotosLoading ? (
+                <div className="flex justify-center p-6">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                </div>
+              ) : measurementPhotos && measurementPhotos.length > 0 ? (
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                  {measurementPhotos.map((p: Record<string, unknown> & { id: string; jobId?: string }) => {
+                    const url = getJobMediaPreviewUrl({
+                      annotatedImageUrl: typeof p.annotatedImageUrl === 'string' ? p.annotatedImageUrl : undefined,
+                      imageUrl: typeof p.originalImageUrl === 'string' ? p.originalImageUrl : undefined,
+                    });
+                    const hasJob = typeof p.jobId === 'string' && p.jobId.length > 0;
+                    return (
+                      <div key={p.id} className="rounded-lg border border-border overflow-hidden bg-background/40">
+                        <div className="aspect-square bg-muted/30">
+                          {url ? (
+                            <img src={url} alt="" className="h-full w-full object-cover" />
+                          ) : (
+                            <div className="flex h-full items-center justify-center text-xs text-muted-foreground p-2">
+                              Bez náhledu
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-2 space-y-2">
+                          <p className="text-[10px] text-muted-foreground">
+                            {formatMediaDate(p.createdAt)}
+                          </p>
+                          {hasJob ? (
+                            <Link
+                              href={`/portal/jobs/${p.jobId}`}
+                              className="text-xs text-primary hover:underline block"
+                            >
+                              Otevřít zakázku
+                            </Link>
+                          ) : (
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="sm"
+                              className="w-full h-8 text-xs"
+                              onClick={() => {
+                                setTransferPhotoId(p.id);
+                                setTransferJobId('');
+                              }}
+                            >
+                              Převést k zakázce
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">Zatím žádné foto zaměření u tohoto zákazníka.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-surface border-border">
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
                 <CardTitle>Historie zakázek</CardTitle>
@@ -236,6 +373,47 @@ export default function CustomerDetailPage() {
           </Card>
         </div>
       </div>
+
+      <Dialog open={Boolean(transferPhotoId)} onOpenChange={(o) => !o && setTransferPhotoId(null)}>
+        <DialogContent className="bg-white border-slate-200 text-slate-900 sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Převést foto zaměření k zakázce</DialogTitle>
+            <DialogDescription>
+              Vyberte zakázku tohoto zákazníka. Fotografie včetně anotací se zobrazí v detailu zakázky.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <label className="text-sm font-medium" htmlFor="cust-mp-job">
+              Zakázka
+            </label>
+            <select
+              id="cust-mp-job"
+              className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={transferJobId}
+              onChange={(e) => setTransferJobId(e.target.value)}
+            >
+              <option value="">— vyberte —</option>
+              {(jobs ?? []).filter((j: { id?: string }) => j.id).map((j: { id: string; name?: string }) => (
+                <option key={j.id} value={j.id}>
+                  {j.name || j.id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setTransferPhotoId(null)}>
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              disabled={transferSaving || !transferJobId.trim()}
+              onClick={() => void handleTransferMeasurementPhotoToJob()}
+            >
+              {transferSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Přiřadit'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

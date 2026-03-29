@@ -613,6 +613,44 @@ service cloud.firestore {
       }
 
       /**
+       * Foto zaměření s anotacemi — companies/{companyId}/measurement_photos/{photoId}
+       */
+      match /measurement_photos/{photoId} {
+        allow read: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() ||
+          resource.data.createdBy == request.auth.uid ||
+          (resource.data.jobId is string && resource.data.jobId.size() > 0 &&
+            jobDetailReadAccess(companyId, resource.data.jobId)) ||
+          (resource.data.customerId is string && resource.data.customerId.size() > 0)
+        );
+        allow create: if signedIn() && sameCompany(companyId) &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.sourceType == 'measurement-photo' &&
+          request.resource.data.createdBy == request.auth.uid && (
+            (request.resource.data.jobId is string && request.resource.data.jobId.size() > 0 &&
+              jobDetailReadAccess(companyId, request.resource.data.jobId)) ||
+            (!('jobId' in request.resource.data) || request.resource.data.jobId == null)
+          );
+        allow update: if signedIn() && sameCompany(companyId) &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId && (
+            isPrivileged() ||
+            (resource.data.createdBy == request.auth.uid &&
+              (!(resource.data.jobId is string) || resource.data.jobId.size() == 0 ||
+                jobDetailReadAccess(companyId, resource.data.jobId)) &&
+              (!(request.resource.data.jobId is string) || request.resource.data.jobId.size() == 0 ||
+                jobDetailReadAccess(companyId, request.resource.data.jobId)))
+          );
+        allow delete: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() ||
+          (resource.data.createdBy == request.auth.uid && (
+            (!(resource.data.jobId is string) || resource.data.jobId.size() == 0) ||
+            jobDetailReadAccess(companyId, resource.data.jobId)
+          ))
+        );
+      }
+
+      /**
        * Zálohy / výplaty: companies/{companyId}/advances/{advanceId}
        * Pole: amount (number), date (string), employeeId, companyId, note, status (paid|unpaid),
        * createdAt, updatedAt, createdBy (uid).

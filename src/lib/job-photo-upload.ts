@@ -396,3 +396,111 @@ export async function uploadJobFolderImageBlobViaFirebaseSdk(
 
   return { storagePath, downloadURL: downloadURL.trim() };
 }
+
+/**
+ * Foto zaměření (před / mimo konkrétní jobs/{jobId}/photos).
+ * companies/{companyId}/measurement_photos/{photoDocId}/{timestamp}-{filename}
+ */
+export function buildMeasurementPhotoStorageObjectPath(
+  companyId: string,
+  photoDocId: string,
+  fileNamePart: string
+): string {
+  const base =
+    String(fileNamePart)
+      .replace(/^.*[\\/]/, "")
+      .replace(/\s+/g, " ")
+      .trim() || "photo";
+  const safe = base.replace(/[\\/]/g, "_");
+  return `companies/${companyId}/measurement_photos/${photoDocId}/${Date.now()}-${safe}`;
+}
+
+export async function uploadMeasurementPhotoFileViaFirebaseSdk(
+  file: File,
+  companyId: string,
+  photoDocId: string
+): Promise<{
+  storagePath: string;
+  resolvedFullPath: string;
+  downloadURL: string;
+  uploadResult: UploadResult;
+}> {
+  const safeBaseName =
+    file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
+  const storagePath = buildMeasurementPhotoStorageObjectPath(
+    companyId,
+    photoDocId,
+    safeBaseName
+  );
+
+  const storage = getFirebaseStorage();
+  const storageRef = ref(storage, storagePath);
+
+  const uploadResult = await promiseWithTimeout(
+    uploadBytes(storageRef, file),
+    JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
+    "Nahrávání foto zaměření do Firebase Storage"
+  );
+
+  if (!uploadResult?.ref) {
+    throw new Error("Upload foto zaměření skončil bez platné reference.");
+  }
+
+  const resolvedFullPath =
+    typeof uploadResult.ref.fullPath === "string" &&
+    uploadResult.ref.fullPath.length > 0
+      ? uploadResult.ref.fullPath
+      : storagePath;
+
+  const downloadURL = await promiseWithTimeout(
+    getDownloadURL(uploadResult.ref),
+    JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
+    "Získání download URL (foto zaměření)"
+  );
+
+  if (typeof downloadURL !== "string" || !downloadURL.trim()) {
+    throw new Error("Úložiště nevrátilo platnou adresu ke stažení.");
+  }
+
+  return {
+    storagePath,
+    resolvedFullPath,
+    downloadURL: downloadURL.trim(),
+    uploadResult,
+  };
+}
+
+export async function uploadMeasurementPhotoBlobViaFirebaseSdk(
+  blob: Blob,
+  companyId: string,
+  photoDocId: string,
+  objectFileName: string,
+  contentType = "image/png"
+): Promise<{ storagePath: string; downloadURL: string }> {
+  const storagePath = buildMeasurementPhotoStorageObjectPath(
+    companyId,
+    photoDocId,
+    objectFileName
+  );
+
+  const storage = getFirebaseStorage();
+  const storageRef = ref(storage, storagePath);
+
+  await promiseWithTimeout(
+    uploadBytes(storageRef, blob, { contentType }),
+    JOB_PHOTO_UPLOAD_BYTES_TIMEOUT_MS,
+    "Nahrání anotovaného foto zaměření"
+  );
+
+  const downloadURL = await promiseWithTimeout(
+    getDownloadURL(storageRef),
+    JOB_PHOTO_DOWNLOAD_URL_TIMEOUT_MS,
+    "Získání URL anotovaného foto zaměření"
+  );
+
+  if (typeof downloadURL !== "string" || !downloadURL.trim()) {
+    throw new Error("Úložiště nevrátilo platnou URL pro anotované foto zaměření.");
+  }
+
+  return { storagePath, downloadURL: downloadURL.trim() };
+}

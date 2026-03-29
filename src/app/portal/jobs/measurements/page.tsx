@@ -53,6 +53,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { linkMeasurementPhotosToConvertedJob } from "@/lib/measurement-photos";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Loader2,
@@ -517,9 +518,24 @@ function JobMeasurementsPageContent() {
         measurementUpdate as never
       );
 
+      let linkedPhotos = 0;
+      try {
+        linkedPhotos = await linkMeasurementPhotosToConvertedJob(
+          firestore,
+          companyId,
+          m.id,
+          jobRef.id
+        );
+      } catch (linkErr) {
+        console.error("[measurements] linkMeasurementPhotosToConvertedJob", linkErr);
+      }
+
       toast({
         title: "Převod dokončen",
-        description: "Zakázka byla vytvořena. Můžete navázat smlouvou o dílo.",
+        description:
+          linkedPhotos > 0
+            ? `Zakázka byla vytvořena. ${linkedPhotos} foto zaměření bylo přiřazeno k zakázce.`
+            : "Zakázka byla vytvořena. Můžete navázat smlouvou o dílo.",
       });
       setConvertTarget(null);
       setConvertReconvert(false);

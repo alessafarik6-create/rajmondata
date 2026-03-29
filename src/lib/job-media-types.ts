@@ -4,7 +4,9 @@
 
 export type JobMediaFirestorePath =
   | { kind: "photos" }
-  | { kind: "folderImages"; folderId: string };
+  | { kind: "folderImages"; folderId: string }
+  /** Foto zaměření — companies/{companyId}/measurement_photos/{id} */
+  | { kind: "measurementPhotos" };
 
 /** Rozšíření záznamu fotky pro editor anotací (Firestore cíl updateDoc). */
 export type JobPhotoAnnotationTarget = {
@@ -24,6 +26,8 @@ export type JobPhotoAnnotationTarget = {
   annotationsJson?: string;
   /** Cíl zápisu anotací a načtení annotationData */
   annotationTarget: JobMediaFirestorePath;
+  /** Pro kind === measurementPhotos — stejné jako id dokumentu v measurement_photos */
+  measurementPhotoId?: string;
 };
 
 /** Typ vlastní složky u zakázky (v Firestore pole `type`). */

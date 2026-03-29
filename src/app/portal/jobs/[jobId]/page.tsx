@@ -15,10 +15,13 @@ import {
   uploadJobPhotoFileViaFirebaseSdk,
   uploadJobPhotoBlobViaFirebaseSdk,
   uploadJobFolderImageBlobViaFirebaseSdk,
+  uploadMeasurementPhotoBlobViaFirebaseSdk,
 } from "@/lib/job-photo-upload";
 import {
   isAllowedJobMediaFile,
   getJobMediaFileTypeFromFile,
+  getJobMediaPreviewUrl,
+  formatMediaDate,
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
@@ -298,13 +301,38 @@ function getScaleAwareSizes(canvas: HTMLCanvasElement) {
   return { fontSize, lineWidth, endpointRadius, arrowLen, hitRadius };
 }
 
-function getPhotoStorageFullPath(p: PhotoDoc): string {
+function getPhotoStorageFullPath(
+  p: PhotoDoc | JobPhotoAnnotationTarget
+): string {
   const raw = p as PhotoDoc & Record<string, unknown>;
   const candidates = [raw.storagePath, raw.path, raw.fullPath];
   for (const c of candidates) {
     if (typeof c === "string" && c.trim()) return c.trim();
   }
   return "";
+}
+
+function measurementDocToAnnotationTarget(
+  row: Record<string, unknown> & { id: string }
+): JobPhotoAnnotationTarget {
+  const originalImageUrl =
+    typeof row.originalImageUrl === "string" ? row.originalImageUrl : "";
+  return {
+    id: row.id,
+    imageUrl: originalImageUrl,
+    originalImageUrl,
+    annotatedImageUrl:
+      typeof row.annotatedImageUrl === "string" ? row.annotatedImageUrl : undefined,
+    storagePath:
+      typeof row.storagePath === "string" ? row.storagePath : undefined,
+    annotatedStoragePath:
+      typeof row.annotatedStoragePath === "string"
+        ? row.annotatedStoragePath
+        : undefined,
+    annotationData: row.annotationData,
+    annotationTarget: { kind: "measurementPhotos" },
+    measurementPhotoId: row.id,
+  };
 }
 
 function isUsablePhotoRow(p: unknown): p is PhotoDoc & { id: string } {
@@ -447,6 +475,7 @@ export default function JobDetailPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const openedSodFromQueryRef = useRef(false);
+  const openedMpFromQueryRef = useRef<string | null>(null);
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -557,6 +586,25 @@ export default function JobDetailPage() {
     [firestore, companyId, jobId]
   );
   const { data: photos } = useCollection(photosColRef);
+
+  const measurementPhotosQueryRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? query(
+            collection(firestore, "companies", companyId, "measurement_photos"),
+            where("jobId", "==", jobId as string)
+          )
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const {
+    data: measurementPhotosRaw,
+    isLoading: measurementPhotosLoading,
+  } = useCollection(measurementPhotosQueryRef);
+
+  const [measurementLightboxDocId, setMeasurementLightboxDocId] = useState<
+    string | null
+  >(null);
 
   const expensesQueryRef = useMemoFirebase(
     () =>
@@ -1721,6 +1769,50 @@ export default function JobDetailPage() {
     void openContractDialog();
     router.replace(`/portal/jobs/${jobId}`, { scroll: false });
   }, [job, jobId, searchParams, openContractDialog, router]);
+
+  useEffect(() => {
+    openedMpFromQueryRef.current = null;
+  }, [jobId]);
+
+  useEffect(() => {
+    const mp = searchParams.get("mp");
+    if (!mp) {
+      openedMpFromQueryRef.current = null;
+      return;
+    }
+    if (!companyId || !jobId || !firestore) return;
+    if (measurementPhotosLoading) return;
+    const list = measurementPhotosRaw ?? [];
+    const row = list.find((x: { id?: string }) => x.id === mp) as
+      | (Record<string, unknown> & { id: string })
+      | undefined;
+    if (!row) {
+      if (openedMpFromQueryRef.current !== mp) {
+        openedMpFromQueryRef.current = mp;
+        toast({
+          variant: "destructive",
+          title: "Foto zaměření",
+          description: "Záznam nebyl nalezen nebo k této zakázce nepatří.",
+        });
+      }
+      router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+      return;
+    }
+    if (openedMpFromQueryRef.current === mp) return;
+    openedMpFromQueryRef.current = mp;
+    setPhotoToEdit(measurementDocToAnnotationTarget(row));
+    setEditorOpen(true);
+    router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+  }, [
+    searchParams,
+    measurementPhotosLoading,
+    measurementPhotosRaw,
+    companyId,
+    jobId,
+    firestore,
+    router,
+    toast,
+  ]);
 
   const openWorkContract = useCallback(
     async (contractId: string, mode: "view" | "edit") => {
@@ -3497,7 +3589,9 @@ export default function JobDetailPage() {
       return;
     }
 
-    if (!companyId || !jobId || !photoToEdit || !firestore) {
+    const isMeasurementSave =
+      photoToEdit?.annotationTarget?.kind === "measurementPhotos";
+    if (!companyId || !photoToEdit || !firestore || (!isMeasurementSave && !jobId)) {
       toast({
         variant: "destructive",
         title: "Chyba při exportu",
@@ -3654,7 +3748,7 @@ export default function JobDetailPage() {
             updatedAt: serverTimestamp(),
           }
         );
-      } else {
+      } else if (target.kind === "folderImages") {
         const up = await uploadJobFolderImageBlobViaFirebaseSdk(
           blob,
           companyId,
@@ -3684,43 +3778,79 @@ export default function JobDetailPage() {
             updatedAt: serverTimestamp(),
           }
         );
+      } else if (target.kind === "measurementPhotos") {
+        const up = await uploadMeasurementPhotoBlobViaFirebaseSdk(
+          blob,
+          companyId,
+          photoToEdit.id,
+          `${photoToEdit.id}-annotated.png`
+        );
+        annotatedPath = up.storagePath;
+        annotatedUrl = up.downloadURL;
+        await updateDoc(
+          doc(
+            firestore,
+            "companies",
+            companyId,
+            "measurement_photos",
+            photoToEdit.id
+          ),
+          {
+            originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+            annotatedImageUrl: annotatedUrl,
+            annotatedStoragePath: annotatedPath,
+            annotationData,
+            updatedAt: serverTimestamp(),
+          }
+        );
+      } else {
+        throw new Error("Neznámý cíl anotace.");
       }
 
-      try {
-        const mirrorPatch = buildJobMediaMirrorAnnotatedUrlPatch({
-          fileUrl: annotatedUrl,
-          jobDisplayName: job?.name?.trim() ?? null,
-        });
-        if (target.kind === "photos") {
-          await setDoc(
-            companyDocumentRefForJobLegacyPhoto(
-              firestore,
-              companyId,
-              photoToEdit.id
-            ),
-            mirrorPatch,
-            { merge: true }
-          );
-        } else {
-          await setDoc(
-            companyDocumentRefForJobFolderImage(
-              firestore,
-              companyId,
-              target.folderId,
-              photoToEdit.id
-            ),
-            mirrorPatch,
-            { merge: true }
-          );
+      if (target.kind === "photos" || target.kind === "folderImages") {
+        try {
+          const mirrorPatch = buildJobMediaMirrorAnnotatedUrlPatch({
+            fileUrl: annotatedUrl,
+            jobDisplayName: job?.name?.trim() ?? null,
+          });
+          if (target.kind === "photos") {
+            await setDoc(
+              companyDocumentRefForJobLegacyPhoto(
+                firestore,
+                companyId,
+                photoToEdit.id
+              ),
+              mirrorPatch,
+              { merge: true }
+            );
+          } else {
+            await setDoc(
+              companyDocumentRefForJobFolderImage(
+                firestore,
+                companyId,
+                target.folderId,
+                photoToEdit.id
+              ),
+              mirrorPatch,
+              { merge: true }
+            );
+          }
+        } catch (mirrorErr) {
+          console.error("[JobDetailPage] dokument mirror po anotaci", mirrorErr);
         }
-      } catch (mirrorErr) {
-        console.error("[JobDetailPage] dokument mirror po anotaci", mirrorErr);
       }
 
-      toast({
-        title: "Fotografie upravena",
-        description: "Kóty a poznámky byly uloženy.",
-      });
+      toast(
+        target.kind === "measurementPhotos"
+          ? {
+              title: "Anotace byly aktualizovány",
+              description: "Kóty a poznámky u foto zaměření byly uloženy.",
+            }
+          : {
+              title: "Fotografie upravena",
+              description: "Kóty a poznámky byly uloženy.",
+            }
+      );
 
       setEditorOpen(false);
       setPhotoToEdit(null);
@@ -3731,6 +3861,55 @@ export default function JobDetailPage() {
         variant: "destructive",
         title: jobPhotoUploadErrorTitle(err),
         description: describeStorageUploadFailure(err),
+      });
+    }
+  };
+
+  const handleDeleteMeasurementPhoto = async (
+    row: Record<string, unknown> & { id: string; createdBy?: string }
+  ) => {
+    if (!companyId || !firestore || !user) return;
+    const canDel = canManageFolders || row.createdBy === user.uid;
+    if (!canDel) {
+      toast({
+        variant: "destructive",
+        title: "Nelze smazat",
+        description: "Chybí oprávnění ke smazání tohoto záznamu.",
+      });
+      return;
+    }
+    if (!window.confirm("Smazat foto zaměření včetně souborů ve Storage?")) return;
+    try {
+      const sp = typeof row.storagePath === "string" ? row.storagePath : "";
+      const asp =
+        typeof row.annotatedStoragePath === "string"
+          ? row.annotatedStoragePath
+          : "";
+      if (sp) {
+        try {
+          await deleteObject(ref(getFirebaseStorage(), sp));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (asp) {
+        try {
+          await deleteObject(ref(getFirebaseStorage(), asp));
+        } catch {
+          /* ignore */
+        }
+      }
+      await deleteDoc(
+        doc(firestore, "companies", companyId, "measurement_photos", row.id)
+      );
+      setMeasurementLightboxDocId((prev) => (prev === row.id ? null : prev));
+      toast({ title: "Foto zaměření bylo odstraněno" });
+    } catch (e) {
+      console.error("[JobDetailPage] delete measurement photo", e);
+      toast({
+        variant: "destructive",
+        title: "Smazání se nezdařilo",
+        description: "Zkuste to znovu.",
       });
     }
   };
@@ -4284,6 +4463,13 @@ export default function JobDetailPage() {
       });
     }
   };
+
+  const measurementLightboxRow = useMemo(() => {
+    if (!measurementLightboxDocId || !measurementPhotosRaw) return null;
+    return measurementPhotosRaw.find(
+      (x: { id?: string }) => x.id === measurementLightboxDocId
+    ) as (Record<string, unknown> & { id: string }) | undefined;
+  }, [measurementLightboxDocId, measurementPhotosRaw]);
 
   if (isLoading) {
     return (
@@ -4988,6 +5174,174 @@ export default function JobDetailPage() {
         </div>
       </div>
       </div>
+
+      {user && companyId && jobId ? (
+        <section
+          className={JD.sectionBand}
+          aria-labelledby="job-measurement-photos-heading"
+        >
+          <div className={JD.sectionBandInner}>
+            <h2
+              id="job-measurement-photos-heading"
+              className="text-lg font-semibold tracking-tight text-slate-900"
+            >
+              Foto zaměření
+            </h2>
+            {measurementPhotosLoading ? (
+              <p className="mt-2 text-sm text-muted-foreground">Načítání…</p>
+            ) : !measurementPhotosRaw?.length ? (
+              <p className="mt-2 text-sm text-muted-foreground">
+                Zatím žádné foto zaměření u této zakázky.
+              </p>
+            ) : (
+              <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {(measurementPhotosRaw ?? []).map((raw) => {
+                  const row = raw as Record<string, unknown> & {
+                    id: string;
+                    createdBy?: string;
+                  };
+                  const preview = getJobMediaPreviewUrl({
+                    annotatedImageUrl:
+                      typeof row.annotatedImageUrl === "string"
+                        ? row.annotatedImageUrl
+                        : undefined,
+                    imageUrl:
+                      typeof row.originalImageUrl === "string"
+                        ? row.originalImageUrl
+                        : undefined,
+                  });
+                  const titleStr =
+                    typeof row.title === "string" && row.title.trim()
+                      ? row.title.trim()
+                      : "Foto zaměření";
+                  const canDel =
+                    canManageFolders || row.createdBy === user?.uid;
+                  return (
+                    <div
+                      key={row.id}
+                      className="group relative rounded-lg border border-slate-200 bg-slate-50 overflow-hidden"
+                    >
+                      <button
+                        type="button"
+                        className="block w-full aspect-square bg-black/5"
+                        onClick={() => setMeasurementLightboxDocId(row.id)}
+                      >
+                        {preview ? (
+                          <img
+                            src={preview}
+                            alt=""
+                            className="h-full w-full object-cover"
+                          />
+                        ) : (
+                          <span className="text-xs text-muted-foreground p-2">
+                            Bez náhledu
+                          </span>
+                        )}
+                      </button>
+                      <div className="p-2 space-y-1">
+                        <p
+                          className="text-xs font-medium text-slate-900 truncate"
+                          title={titleStr}
+                        >
+                          {titleStr}
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {formatMediaDate(row.createdAt)}
+                        </p>
+                        <div className="flex flex-wrap gap-1">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            className="h-8 text-xs"
+                            onClick={() => {
+                              setPhotoToEdit(
+                                measurementDocToAnnotationTarget(row)
+                              );
+                              setEditorOpen(true);
+                            }}
+                          >
+                            <Edit2 className="w-3 h-3 mr-1" />
+                            Anotovat
+                          </Button>
+                          {canDel ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 text-xs text-destructive"
+                              onClick={() =>
+                                void handleDeleteMeasurementPhoto(row)
+                              }
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </Button>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      <Dialog
+        open={Boolean(measurementLightboxDocId)}
+        onOpenChange={(open) => {
+          if (!open) setMeasurementLightboxDocId(null);
+        }}
+      >
+        <DialogContent className="max-w-[min(96vw,900px)] bg-white border-slate-200">
+          <DialogHeader>
+            <DialogTitle>Náhled — foto zaměření</DialogTitle>
+            <DialogDescription className="sr-only">
+              Velký náhled fotografie se zaměřením.
+            </DialogDescription>
+          </DialogHeader>
+          {measurementLightboxRow ? (
+            <img
+              src={getJobMediaPreviewUrl({
+                annotatedImageUrl:
+                  typeof measurementLightboxRow.annotatedImageUrl === "string"
+                    ? measurementLightboxRow.annotatedImageUrl
+                    : undefined,
+                imageUrl:
+                  typeof measurementLightboxRow.originalImageUrl === "string"
+                    ? measurementLightboxRow.originalImageUrl
+                    : undefined,
+              })}
+              alt=""
+              className="max-h-[75vh] w-auto max-w-full mx-auto rounded-md"
+            />
+          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            {measurementLightboxRow ? (
+              <Button
+                type="button"
+                onClick={() => {
+                  setMeasurementLightboxDocId(null);
+                  setPhotoToEdit(
+                    measurementDocToAnnotationTarget(measurementLightboxRow)
+                  );
+                  setEditorOpen(true);
+                }}
+              >
+                Upravit anotace
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setMeasurementLightboxDocId(null)}
+            >
+              Zavřít
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {user && companyId && jobId ? (
         <section

@@ -1866,7 +1866,7 @@ export function JobMediaSection({
                 noteUpdatedBy: user.uid,
               }
         );
-      } else {
+      } else if (noteCtx.path.kind === "folderImages") {
         await updateDoc(
           doc(
             firestore,
@@ -1891,6 +1891,25 @@ export function JobMediaSection({
                 noteUpdatedBy: user.uid,
               }
         );
+      } else if (noteCtx.path.kind === "measurementPhotos") {
+        await updateDoc(
+          doc(
+            firestore,
+            "companies",
+            companyId,
+            "measurement_photos",
+            noteCtx.imageId
+          ),
+          text
+            ? {
+                note: text,
+                updatedAt: serverTimestamp(),
+              }
+            : {
+                note: deleteField(),
+                updatedAt: serverTimestamp(),
+              }
+        );
       }
 
       const mirrorPatch = buildJobMediaMirrorNoteOnlyPatch({
@@ -1908,7 +1927,7 @@ export function JobMediaSection({
           mirrorPatch,
           { merge: true }
         );
-      } else {
+      } else if (noteCtx.path.kind === "folderImages") {
         await setDoc(
           companyDocumentRefForJobFolderImage(
             firestore,
@@ -1927,7 +1946,11 @@ export function JobMediaSection({
           actionType: "job_media.note_update",
           actionLabel: text ? "Úprava poznámky u média" : "Odstranění poznámky u média",
           entityType:
-            noteCtx.path.kind === "photos" ? "job_photo" : "job_folder_image",
+            noteCtx.path.kind === "photos"
+              ? "job_photo"
+              : noteCtx.path.kind === "folderImages"
+                ? "job_folder_image"
+                : "measurement_photo",
           entityId: noteCtx.imageId,
           entityName: noteCtx.fileNameHint,
           sourceModule: "jobs",
