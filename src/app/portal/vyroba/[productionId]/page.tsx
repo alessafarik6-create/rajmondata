@@ -17,7 +17,7 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 import { ArrowLeft, Loader2, Upload } from "lucide-react";
 import {
   useUser,
-  useFirestore,
+  useFirebase,
   useDoc,
   useCollection,
   useMemoFirebase,
@@ -57,24 +57,31 @@ export default function VyrobaDetailPage() {
   const productionId = String(params?.productionId || "");
   const router = useRouter();
   const { user } = useUser();
-  const firestore = useFirestore();
+  const { firestore, areServicesAvailable } = useFirebase();
   const { toast } = useToast();
   const { company, companyId } = useCompany();
   const platformCatalog = useMergedPlatformModuleCatalog();
 
   const userRef = useMemoFirebase(
-    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
-    [firestore, user?.uid]
+    () =>
+      areServicesAvailable && user && firestore
+        ? doc(firestore, "users", user.uid)
+        : null,
+    [areServicesAvailable, firestore, user?.uid]
   );
   const { data: profile } = useDoc<any>(userRef);
   const role = String(profile?.role || "employee");
 
   const employeeRef = useMemoFirebase(
     () =>
-      firestore && companyId && profile?.employeeId && role === "employee"
+      areServicesAvailable &&
+      firestore &&
+      companyId &&
+      profile?.employeeId &&
+      role === "employee"
         ? doc(firestore, "companies", companyId, "employees", String(profile.employeeId))
         : null,
-    [firestore, companyId, profile?.employeeId, role]
+    [areServicesAvailable, firestore, companyId, profile?.employeeId, role]
   );
   const { data: employeeRow } = useDoc(employeeRef);
 
@@ -97,13 +104,13 @@ export default function VyrobaDetailPage() {
   const { data: prod, isLoading: prodLoading } = useDoc<ProductionRecordRow>(prodRef);
 
   const attQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !productionId) return null;
+    if (!areServicesAvailable || !firestore || !companyId || !productionId) return null;
     return query(
       collection(firestore, "companies", companyId, "production", productionId, "attachments"),
       orderBy("createdAt", "desc"),
       limit(100)
     );
-  }, [firestore, companyId, productionId]);
+  }, [areServicesAvailable, firestore, companyId, productionId]);
 
   const { data: attachments, isLoading: attLoading } = useCollection(attQuery);
 
@@ -121,7 +128,7 @@ export default function VyrobaDetailPage() {
     else setNoteDraft("");
   }, [prod?.note, prod?.id]);
 
-  if (!user || !firestore || !companyId || !productionId) {
+  if (!user || !areServicesAvailable || !companyId || !productionId) {
     return (
       <div className="flex justify-center py-16">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -199,7 +206,7 @@ export default function VyrobaDetailPage() {
   };
 
   const onUploadFile = async (file: File | null) => {
-    if (!file || !user) return;
+    if (!file || !user || !areServicesAvailable || !firestore) return;
     setUploading(true);
     try {
       const storage = getFirebaseStorage();

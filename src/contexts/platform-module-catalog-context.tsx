@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useMemo } from "react";
 import { collection } from "firebase/firestore";
-import { useFirestore, useCollection, useMemoFirebase } from "@/firebase";
+import { useFirebase, useCollection, useMemoFirebase } from "@/firebase";
 import { PLATFORM_MODULES_COLLECTION } from "@/lib/firestore-collections";
 import type { PlatformModuleCode } from "@/lib/platform-config";
 import {
@@ -20,10 +20,13 @@ const PlatformModuleCatalogContext = createContext<MergedPlatformCatalog | null>
  * Použití v portálu pro `hasActiveModuleAccess(..., catalog)` a fallback při chybějícím org. záznamu.
  */
 export function PlatformModuleCatalogProvider({ children }: { children: React.ReactNode }) {
-  const firestore = useFirestore();
+  const { firestore, areServicesAvailable } = useFirebase();
   const modulesQuery = useMemoFirebase(
-    () => (firestore ? collection(firestore, PLATFORM_MODULES_COLLECTION) : null),
-    [firestore]
+    () =>
+      areServicesAvailable && firestore
+        ? collection(firestore, PLATFORM_MODULES_COLLECTION)
+        : null,
+    [areServicesAvailable, firestore]
   );
   const { data } = useCollection(modulesQuery, {
     suppressGlobalPermissionError: true,

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
-import { useUser, useCompany, useFirebase, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
+import { useUser, useCompany, useFirebase, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
@@ -44,7 +44,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
 function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   const { user, isUserLoading, userError } = useUser();
-  const { areServicesAvailable, firebaseConfigError } = useFirebase();
+  const { firestore, areServicesAvailable, firebaseConfigError } = useFirebase();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -72,11 +72,11 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     companyError: companyHookError,
   } = useCompany();
 
-  const firestore = useFirestore();
   const platformCatalog = useMergedPlatformModuleCatalog();
 
   const profileEmployeeRef = useMemoFirebase(
     () =>
+      areServicesAvailable &&
       firestore &&
       companyId &&
       profile?.employeeId &&
@@ -89,7 +89,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
             String(profile.employeeId)
           )
         : null,
-    [firestore, companyId, profile?.employeeId, profile?.role]
+    [areServicesAvailable, firestore, companyId, profile?.employeeId, profile?.role]
   );
   const { data: profileEmployeeRow } = useDoc<Record<string, unknown>>(profileEmployeeRef);
 

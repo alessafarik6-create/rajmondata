@@ -15,7 +15,7 @@ import {
 import { Factory, Loader2, Plus } from "lucide-react";
 import {
   useUser,
-  useFirestore,
+  useFirebase,
   useDoc,
   useCollection,
   useMemoFirebase,
@@ -50,25 +50,32 @@ const CARD = "border-slate-200 bg-white text-slate-900";
 
 export default function VyrobaListPage() {
   const { user } = useUser();
-  const firestore = useFirestore();
+  const { firestore, areServicesAvailable } = useFirebase();
   const { toast } = useToast();
   const router = useRouter();
   const { company, companyId } = useCompany();
   const platformCatalog = useMergedPlatformModuleCatalog();
 
   const userRef = useMemoFirebase(
-    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
-    [firestore, user?.uid]
+    () =>
+      areServicesAvailable && user && firestore
+        ? doc(firestore, "users", user.uid)
+        : null,
+    [areServicesAvailable, firestore, user?.uid]
   );
   const { data: profile } = useDoc<any>(userRef);
   const role = String(profile?.role || "employee");
 
   const employeeRef = useMemoFirebase(
     () =>
-      firestore && companyId && profile?.employeeId && role === "employee"
+      areServicesAvailable &&
+      firestore &&
+      companyId &&
+      profile?.employeeId &&
+      role === "employee"
         ? doc(firestore, "companies", companyId, "employees", String(profile.employeeId))
         : null,
-    [firestore, companyId, profile?.employeeId, role]
+    [areServicesAvailable, firestore, companyId, profile?.employeeId, role]
   );
   const { data: employeeRow } = useDoc(employeeRef);
 
@@ -82,18 +89,18 @@ export default function VyrobaListPage() {
     });
 
   const jobsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
+    if (!areServicesAvailable || !firestore || !companyId) return null;
     return query(collection(firestore, "companies", companyId, "jobs"), limit(300));
-  }, [firestore, companyId]);
+  }, [areServicesAvailable, firestore, companyId]);
 
   const prodQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
+    if (!areServicesAvailable || !firestore || !companyId) return null;
     return query(
       collection(firestore, "companies", companyId, "production"),
       orderBy("updatedAt", "desc"),
       limit(200)
     );
-  }, [firestore, companyId]);
+  }, [areServicesAvailable, firestore, companyId]);
 
   const { data: jobs } = useCollection(jobsQuery);
   const { data: productions, isLoading } = useCollection(prodQuery);
@@ -135,7 +142,7 @@ export default function VyrobaListPage() {
   }
 
   const createProduction = async () => {
-    if (!user) return;
+    if (!user || !areServicesAvailable || !firestore || !companyId) return;
     const t = title.trim();
     if (!t) {
       toast({ variant: "destructive", title: "Zadejte název výroby." });

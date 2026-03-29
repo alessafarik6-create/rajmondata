@@ -37,7 +37,7 @@ import {
 import { QRCodeSVG } from "qrcode.react";
 import {
   useUser,
-  useFirestore,
+  useFirebase,
   useDoc,
   useMemoFirebase,
   useCollection,
@@ -147,7 +147,7 @@ function AttendanceTerminalQrSection({
 export function AttendancePortalPage() {
   const { user } = useUser();
   const searchParams = useSearchParams();
-  const firestore = useFirestore();
+  const { firestore, areServicesAvailable } = useFirebase();
   const { toast } = useToast();
   const [currentTime, setCurrentTime] = useState<string | null>(null);
   const [lastAction, setLastAction] = useState<AttendanceType | null>(null);
@@ -173,8 +173,11 @@ export function AttendancePortalPage() {
   }, []);
 
   const userRef = useMemoFirebase(
-    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
-    [firestore, user?.uid]
+    () =>
+      areServicesAvailable && user && firestore
+        ? doc(firestore, "users", user.uid)
+        : null,
+    [areServicesAvailable, firestore, user?.uid]
   );
 
   const { data: profile, isLoading: profileLoading } = useDoc(userRef);
@@ -196,7 +199,7 @@ export function AttendancePortalPage() {
     role === "accountant";
 
   const attendanceQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !user) return null;
+    if (!areServicesAvailable || !firestore || !companyId || !user) return null;
 
     const base = collection(firestore, "companies", companyId, "attendance");
     if (isAttendancePrivileged) {
@@ -218,7 +221,14 @@ export function AttendancePortalPage() {
       orderBy("timestamp", "desc"),
       limit(100)
     );
-  }, [firestore, companyId, user?.uid, isAttendancePrivileged, profileEmployeeId]);
+  }, [
+    areServicesAvailable,
+    firestore,
+    companyId,
+    user?.uid,
+    isAttendancePrivileged,
+    profileEmployeeId,
+  ]);
 
   const {
     data: historyData = [],
@@ -226,13 +236,14 @@ export function AttendancePortalPage() {
   } = useCollection(attendanceQuery);
 
   const dailyReportsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !isAttendancePrivileged) return null;
+    if (!areServicesAvailable || !firestore || !companyId || !isAttendancePrivileged)
+      return null;
     return query(
       collection(firestore, "companies", companyId, "daily_work_reports"),
       orderBy("updatedAt", "desc"),
       limit(800)
     );
-  }, [firestore, companyId, isAttendancePrivileged]);
+  }, [areServicesAvailable, firestore, companyId, isAttendancePrivileged]);
 
   const {
     data: dailyReports = [],
@@ -271,7 +282,7 @@ export function AttendancePortalPage() {
   }, [historyData, user, profileEmployeeId]);
 
   const handleAttendanceAction = (type: AttendanceType) => {
-    if (!user || !companyId) return;
+    if (!areServicesAvailable || !user || !companyId || !firestore) return;
 
     const colRef = collection(firestore, "companies", companyId, "attendance");
 

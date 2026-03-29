@@ -15,7 +15,7 @@ import { useRouter } from "next/navigation";
 import { Plus, Minus, History, Loader2, Factory } from "lucide-react";
 import {
   useUser,
-  useFirestore,
+  useFirebase,
   useDoc,
   useCollection,
   useMemoFirebase,
@@ -58,25 +58,32 @@ function movementLabel(t: string) {
 
 export default function SkladPage() {
   const { user } = useUser();
-  const firestore = useFirestore();
+  const { firestore, areServicesAvailable } = useFirebase();
   const { toast } = useToast();
   const router = useRouter();
   const { company, companyId } = useCompany();
   const platformCatalog = useMergedPlatformModuleCatalog();
 
   const userRef = useMemoFirebase(
-    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
-    [firestore, user?.uid]
+    () =>
+      areServicesAvailable && user && firestore
+        ? doc(firestore, "users", user.uid)
+        : null,
+    [areServicesAvailable, firestore, user?.uid]
   );
   const { data: profile } = useDoc<any>(userRef);
   const role = String(profile?.role || "employee");
 
   const employeeRef = useMemoFirebase(
     () =>
-      firestore && companyId && profile?.employeeId && role === "employee"
+      areServicesAvailable &&
+      firestore &&
+      companyId &&
+      profile?.employeeId &&
+      role === "employee"
         ? doc(firestore, "companies", companyId, "employees", String(profile.employeeId))
         : null,
-    [firestore, companyId, profile?.employeeId, role]
+    [areServicesAvailable, firestore, companyId, profile?.employeeId, role]
   );
   const { data: employeeRow } = useDoc(employeeRef);
 
@@ -90,31 +97,31 @@ export default function SkladPage() {
     });
 
   const itemsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
+    if (!areServicesAvailable || !firestore || !companyId) return null;
     return query(
       collection(firestore, "companies", companyId, "inventoryItems"),
       orderBy("name"),
       limit(500)
     );
-  }, [firestore, companyId]);
+  }, [areServicesAvailable, firestore, companyId]);
 
   const movementsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
+    if (!areServicesAvailable || !firestore || !companyId) return null;
     return query(
       collection(firestore, "companies", companyId, "inventoryMovements"),
       orderBy("createdAt", "desc"),
       limit(200)
     );
-  }, [firestore, companyId]);
+  }, [areServicesAvailable, firestore, companyId]);
 
   const productionQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
+    if (!areServicesAvailable || !firestore || !companyId) return null;
     return query(
       collection(firestore, "companies", companyId, "production"),
       orderBy("updatedAt", "desc"),
       limit(100)
     );
-  }, [firestore, companyId]);
+  }, [areServicesAvailable, firestore, companyId]);
 
   const { data: items, isLoading: itemsLoading } = useCollection(itemsQuery);
   const { data: movements, isLoading: movLoading } = useCollection(movementsQuery);
@@ -158,7 +165,7 @@ export default function SkladPage() {
   const vyrobaEnabled =
     company && canAccessCompanyModule(company, "vyroba", platformCatalog);
 
-  if (!user || !firestore || !companyId) {
+  if (!user || !areServicesAvailable || !companyId) {
     return (
       <div className="flex justify-center py-16">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -207,7 +214,7 @@ export default function SkladPage() {
   };
 
   const submitInbound = async () => {
-    if (!user) return;
+    if (!user || !areServicesAvailable || !firestore || !companyId) return;
     const qty = Number(String(inQty).replace(",", "."));
     if (!Number.isFinite(qty) || qty <= 0) {
       toast({ variant: "destructive", title: "Zadejte kladné množství." });
@@ -289,7 +296,7 @@ export default function SkladPage() {
   };
 
   const submitOutbound = async () => {
-    if (!user) return;
+    if (!user || !areServicesAvailable || !firestore || !companyId) return;
     const qty = Number(String(outQty).replace(",", "."));
     if (!Number.isFinite(qty) || qty <= 0) {
       toast({ variant: "destructive", title: "Zadejte kladné množství." });

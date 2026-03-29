@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from 'react';
 import { doc, type Timestamp } from 'firebase/firestore';
-import { useUser, useFirestore, useMemoFirebase, useDoc } from '@/firebase';
+import { useUser, useFirebase, useMemoFirebase, useDoc } from '@/firebase';
 import {
   COMPANIES_COLLECTION,
   ORGANIZATIONS_COLLECTION,
@@ -257,12 +257,15 @@ function mergeCompanyWithOrganizationRecord(
 /** Jednotný výstup: companyId z `users/{uid}.companyId` (nebo `organizationId`); dokument `companies` + merge licence z `společnosti`. */
 export function useCompany() {
   const { user } = useUser();
-  const firestore = useFirestore();
+  const { firestore, areServicesAvailable } = useFirebase();
 
   const userRef = useMemoFirebase(
-    () => (user && firestore ? doc(firestore, 'users', user.uid) : null),
+    () =>
+      areServicesAvailable && user && firestore
+        ? doc(firestore, 'users', user.uid)
+        : null,
     /** `user` mění referenci při token refresh / getIdToken — jen uid je stabilní */
-    [firestore, user?.uid],
+    [areServicesAvailable, firestore, user?.uid],
   );
   const {
     data: userProfile,
@@ -277,18 +280,18 @@ export function useCompany() {
 
   const companyRef = useMemoFirebase(
     () =>
-      firestore && companyId
+      areServicesAvailable && firestore && companyId
         ? doc(firestore, COMPANIES_COLLECTION, companyId)
         : null,
-    [firestore, companyId],
+    [areServicesAvailable, firestore, companyId],
   );
 
   const orgRef = useMemoFirebase(
     () =>
-      firestore && companyId
+      areServicesAvailable && firestore && companyId
         ? doc(firestore, ORGANIZATIONS_COLLECTION, companyId)
         : null,
-    [firestore, companyId],
+    [areServicesAvailable, firestore, companyId],
   );
 
   const {
