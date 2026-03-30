@@ -6,7 +6,6 @@ import {
   CANONICAL_MODULE_KEYS,
   normalizeModuleKey,
   normalizeModules,
-  orMergeModuleRecords,
 } from "@/lib/license-modules";
 import type { OrganizationLicenseRecord } from "@/lib/organization-license";
 import {
@@ -105,17 +104,20 @@ export function isPlatformModuleEnabledFromModuleMap(
  * Vrstva z licence: `license.modules` (legacy + kanonické) + `enabledModules` → normalizace na kanonické klíče.
  */
 function buildLicenseDerivedModuleLayer(company: CompanyPlatformFields): Record<string, boolean> {
-  const nested = getCompanyLicenseModules(company);
-  const rawNested: Record<string, boolean> = {};
-  for (const [k, v] of Object.entries(nested)) {
-    if (typeof v === "boolean") rawNested[k] = v;
+  const raw = company.license?.modules;
+  if (raw && typeof raw === "object" && Object.keys(raw).length > 0) {
+    const rawNested: Record<string, boolean> = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (typeof v === "boolean") rawNested[k] = v;
+    }
+    return normalizeModules(rawNested);
   }
   const fromArr: Record<string, boolean> = {};
   for (const x of company.license?.enabledModules ?? []) {
     const c = normalizeModuleKey(String(x));
     if (c) fromArr[c] = true;
   }
-  return normalizeModules(orMergeModuleRecords(rawNested, fromArr));
+  return normalizeModules(fromArr);
 }
 
 /**
@@ -131,7 +133,13 @@ export function getEffectiveModulesMerged(
     company.modules && typeof company.modules === "object"
       ? (company.modules as Record<string, boolean>)
       : {};
-  return normalizeModules(orMergeModuleRecords(fromLicense, org));
+  const overlaid = { ...fromLicense };
+  for (const [k, v] of Object.entries(org)) {
+    const c = normalizeModuleKey(k);
+    if (!c || typeof v !== "boolean") continue;
+    overlaid[c] = v;
+  }
+  return normalizeModules(overlaid);
 }
 
 /** Je u organizace zapnutý daný platformní modul (po sloučení licence + top-level modules)? */

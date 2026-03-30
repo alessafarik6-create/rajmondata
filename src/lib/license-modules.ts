@@ -150,6 +150,50 @@ export function normalizeEnabledModuleIds(raw: readonly string[]): CanonicalModu
   return out;
 }
 
+/**
+ * Superadmin / Firestore: rozliší explicitní zápis v mapách vs. pole `enabledModules`.
+ * Pořadí: top-level `organization.modules` přepíše `license.modules`; chybějící klíč po explicitních mapách = vypnuto.
+ * Pole se použije jen když v dokumentu není žádný explicitní boolean u žádného kanonického klíče v těchto mapách.
+ */
+export function resolveCanonicalModuleMapForAdmin(row: {
+  license?: {
+    enabledModules?: string[];
+    modules?: Record<string, boolean | undefined>;
+  } | null;
+  enabledModuleIds?: string[] | null;
+  modules?: Record<string, boolean | undefined> | null;
+}): Record<CanonicalModuleKey, boolean> {
+  const out = emptyCanonicalMap();
+  const lic = row.license;
+  const licModules = lic?.modules && typeof lic.modules === "object" ? lic.modules : undefined;
+  const topModules = row.modules && typeof row.modules === "object" ? row.modules : undefined;
+
+  const anyExplicitMap = MODULE_KEYS.some(
+    (k) =>
+      (topModules && Object.prototype.hasOwnProperty.call(topModules, k)) ||
+      (licModules && Object.prototype.hasOwnProperty.call(licModules, k))
+  );
+
+  const arrKeys = new Set<CanonicalModuleKey>(
+    Array.isArray(lic?.enabledModules)
+      ? normalizeEnabledModuleIds(lic.enabledModules.map((x) => String(x)))
+      : Array.isArray(row.enabledModuleIds)
+        ? normalizeEnabledModuleIds(row.enabledModuleIds.map((x) => String(x)))
+        : []
+  );
+
+  for (const k of MODULE_KEYS) {
+    if (topModules && Object.prototype.hasOwnProperty.call(topModules, k)) {
+      out[k] = Boolean(topModules[k]);
+    } else if (licModules && Object.prototype.hasOwnProperty.call(licModules, k)) {
+      out[k] = Boolean(licModules[k]);
+    } else if (!anyExplicitMap) {
+      out[k] = arrKeys.has(k);
+    }
+  }
+  return out;
+}
+
 /** Firestore `modules` / `license.modules` — pouze kanonické klíče, všechny výskyty uvedené. */
 export function buildCanonicalModulesMapFromEnabled(
   enabled: readonly CanonicalModuleKey[]

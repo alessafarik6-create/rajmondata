@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { getCompanies } from "@/lib/superadmin-companies";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const session = await getSessionFromCookie();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -21,7 +21,8 @@ export async function GET() {
   }
 
   try {
-    const companies = await getCompanies(db);
+    const light = request.nextUrl.searchParams.get("light") === "1";
+    const companies = await getCompanies(db, { light });
     return NextResponse.json(companies);
   } catch (e) {
     console.error("[superadmin companies]", e);

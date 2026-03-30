@@ -234,9 +234,13 @@ export async function ensureCompanyLicenseDoc(
 export async function writeCompanyLicenseAndDenorm(
   db: Firestore,
   id: string,
-  license: CompanyLicenseDoc
+  license: CompanyLicenseDoc,
+  options?: { organizationDenormPatch?: Record<string, unknown> }
 ): Promise<void> {
-  const denorm = companyDocPlatformFields(license);
+  const denorm = {
+    ...companyDocPlatformFields(license),
+    ...(options?.organizationDenormPatch ?? {}),
+  };
   const batch = db.batch();
   const licRef = db.collection(COMPANY_LICENSES_COLLECTION).doc(id);
   batch.set(

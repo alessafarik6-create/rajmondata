@@ -8,7 +8,8 @@ import {
   MODULE_KEYS,
   buildCanonicalModulesMapFromEnabled,
   normalizeEnabledModuleIds,
-  normalizeModules,
+  resolveCanonicalModuleMapForAdmin,
+  type CanonicalModuleKey,
   type LicenseConfig,
   type ModuleKey,
 } from "./license-modules";
@@ -20,6 +21,7 @@ import {
 import type { CompanyLicenseDoc } from "./platform-config";
 import {
   buildPlatformModulesSyncFromLegacy,
+  companyDocPlatformFields,
   createPendingCompanyLicense,
   platformCodesToCanonicalModuleKeys,
 } from "./company-license-record";
@@ -48,7 +50,13 @@ export interface CompanyWithLicense {
   createdAt: string | null;
   updatedAt: string | null;
   licenseId: string;
-  license: LicenseConfig & { licenseExpiresAt?: string | null };
+  license: LicenseConfig & {
+    licenseExpiresAt?: string | null;
+    modules?: Record<string, boolean>;
+  };
+  /** Top-level mapa na dokumentu organizace (stejná jako po zápisu superadminem). */
+  modules?: Record<string, boolean>;
+  enabledModuleIds?: string[];
   companyLicense?: CompanyLicenseDoc;
 }
 
@@ -67,21 +75,15 @@ export function normalizeCompanyFromFirestore(
   id: string
 ): CompanyWithLicense {
   const license = (data.license as Record<string, unknown> | undefined) ?? {};
-  const fromLicList = license.enabledModules;
-  const fromTopIds = data.enabledModuleIds;
-  const hasExplicitModuleList = Array.isArray(fromLicList) || Array.isArray(fromTopIds);
-  const rawModules = Array.isArray(fromLicList)
-    ? fromLicList
-    : Array.isArray(fromTopIds)
-      ? fromTopIds
-      : [];
-  let enabledModules = normalizeEnabledModuleIds(rawModules.map((x) => String(x)));
-  if (!hasExplicitModuleList && enabledModules.length === 0) {
-    const licFlat = license.modules as Record<string, boolean | undefined> | undefined;
-    const orgFlat = data.modules as Record<string, boolean | undefined> | undefined;
-    const merged = normalizeModules({ ...orgFlat, ...licFlat });
-    enabledModules = MODULE_KEYS.filter((k) => merged[k]);
-  }
+  const moduleMap = resolveCanonicalModuleMapForAdmin({
+    license: {
+      enabledModules: license.enabledModules as string[] | undefined,
+      modules: license.modules as Record<string, boolean | undefined> | undefined,
+    },
+    enabledModuleIds: data.enabledModuleIds as string[] | undefined,
+    modules: data.modules as Record<string, boolean | undefined> | undefined,
+  });
+  const enabledModules: CanonicalModuleKey[] = MODULE_KEYS.filter((k) => moduleMap[k]);
 
   const expirationDate =
     (license.expirationDate as string | null) ?? (license.licenseExpiresAt as string | null) ?? null;
@@ -145,7 +147,8 @@ function buildLicenseForFirestore(update: LicenseUpdate): Record<string, unknown
   };
 }
 
-export async function getCompanies(db: Firestore) {
+export async function getCompanies(db: Firestore, options?: { light?: boolean }) {
+  const light = options?.light === true;
   const snapshot = await db.collection(ORGANIZATIONS_COLLECTION).get();
   const docs = snapshot.docs;
 
@@ -153,18 +156,20 @@ export async function getCompanies(db: Firestore) {
     docs.map((d) => db.collection(COMPANY_LICENSES_COLLECTION).doc(d.id).get())
   );
 
-  const employeeCounts = await Promise.all(
-    docs.map((d) =>
-      db
-        .collection(COMPANIES_COLLECTION)
-        .doc(d.id)
-        .collection("employees")
-        .count()
-        .get()
-        .then((c) => c.data().count)
-        .catch(() => 0)
-    )
-  );
+  const employeeCounts = light
+    ? docs.map(() => 0)
+    : await Promise.all(
+        docs.map((d) =>
+          db
+            .collection(COMPANIES_COLLECTION)
+            .doc(d.id)
+            .collection("employees")
+            .count()
+            .get()
+            .then((c) => c.data().count)
+            .catch(() => 0)
+        )
+      );
 
   return docs.map((doc, i) => {
     const data = doc.data() as Record<string, unknown>;
@@ -217,7 +222,8 @@ export async function getCompany(db: Firestore, id: string): Promise<CompanyWith
     return null;
   }
 
-  const base = normalizeCompanyFromFirestore(doc.data() as Record<string, unknown>, doc.id);
+  const raw = doc.data() as Record<string, unknown>;
+  const base = normalizeCompanyFromFirestore(raw, doc.id);
   const licSnap = await db.collection(COMPANY_LICENSES_COLLECTION).doc(id).get();
   const companyLicense = licSnap.exists
     ? applyExpiredLicenseStatus(
@@ -225,7 +231,15 @@ export async function getCompany(db: Firestore, id: string): Promise<CompanyWith
       )
     : createPendingCompanyLicense(id);
 
-  return { ...base, companyLicense };
+  const topModules = raw.modules as Record<string, boolean> | undefined;
+  const topIds = raw.enabledModuleIds as string[] | undefined;
+
+  return {
+    ...base,
+    modules: topModules && typeof topModules === "object" ? topModules : undefined,
+    enabledModuleIds: Array.isArray(topIds) ? topIds : undefined,
+    companyLicense,
+  };
 }
 
 /**
@@ -266,7 +280,23 @@ export async function updateCompany(
       modules: syncModules,
     }, nowIso);
     mergedFromLegacy = applyExpiredLicenseStatus(mergedFromLegacy);
-    await writeCompanyLicenseAndDenorm(db, id, mergedFromLegacy);
+    const baseDenorm = companyDocPlatformFields(mergedFromLegacy);
+    const legacyAlignsWithDialog: Record<string, unknown> = {
+      modules: licenseFs.modules,
+      enabledModuleIds: licenseFs.enabledModules,
+      license: {
+        ...(baseDenorm.license as Record<string, unknown>),
+        licenseType: licenseFs.licenseType,
+        status: licenseFs.status,
+        expirationDate: licenseFs.expirationDate,
+        maxUsers: licenseFs.maxUsers,
+        enabledModules: licenseFs.enabledModules,
+        modules: licenseFs.modules,
+      },
+    };
+    await writeCompanyLicenseAndDenorm(db, id, mergedFromLegacy, {
+      organizationDenormPatch: legacyAlignsWithDialog,
+    });
   }
 
   if (payload.companyLicense && typeof payload.companyLicense === "object") {

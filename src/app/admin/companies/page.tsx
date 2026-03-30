@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -41,7 +41,9 @@ import {
   AVAILABLE_MODULES,
   LICENSE_TYPES,
   LICENSE_STATUSES,
-  normalizeEnabledModuleIds,
+  MODULE_KEYS,
+  buildCanonicalModulesMapFromEnabled,
+  resolveCanonicalModuleMapForAdmin,
   type CanonicalModuleKey,
 } from "@/lib/license-modules";
 import type { LicenseConfig, ModuleKey } from "@/lib/license-modules";
@@ -55,29 +57,10 @@ type Company = {
   isActive: boolean;
   createdAt: string | null;
   licenseId: string;
-  license: LicenseConfig;
+  license: LicenseConfig & { modules?: Record<string, boolean> };
+  modules?: Record<string, boolean>;
+  enabledModuleIds?: string[];
 };
-
-function readEnabledModuleKeysFromCompanyRow(
-  company: Company & { enabledModuleIds?: string[]; modules?: Record<string, boolean> }
-): CanonicalModuleKey[] {
-  const fromLic = company.license?.enabledModules;
-  if (Array.isArray(fromLic)) {
-    return normalizeEnabledModuleIds(fromLic.map((x) => String(x)));
-  }
-  const ids = company.enabledModuleIds;
-  if (Array.isArray(ids)) {
-    return normalizeEnabledModuleIds(ids.map((x) => String(x)));
-  }
-  const mods = company.modules;
-  if (mods && typeof mods === "object") {
-    const keys = Object.entries(mods)
-      .filter(([, v]) => v === true)
-      .map(([k]) => k);
-    return normalizeEnabledModuleIds(keys);
-  }
-  return [];
-}
 
 export default function AdminCompaniesPage() {
   const { toast } = useToast();
@@ -88,8 +71,12 @@ export default function AdminCompaniesPage() {
   const [editing, setEditing] = useState<Company | null>(null);
   const [saving, setSaving] = useState(false);
   const [editForm, setEditForm] = useState<LicenseConfig | null>(null);
+  const [editModuleMap, setEditModuleMap] = useState<Record<CanonicalModuleKey, boolean> | null>(
+    null
+  );
 
   const [loadError, setLoadError] = useState<string | null>(null);
+  const lastSavedCompanyIdRef = useRef<string | null>(null);
 
   const [terminalFor, setTerminalFor] = useState<Company | null>(null);
   const [terminalPublicUrl, setTerminalPublicUrl] = useState("");
@@ -118,16 +105,22 @@ export default function AdminCompaniesPage() {
       }
       const list = (Array.isArray(data) ? data : []) as Company[];
       setCompanies(list);
-      if (process.env.NODE_ENV === "development" && list[0]) {
-        console.log(
-          "loaded modules from source",
-          readEnabledModuleKeysFromCompanyRow(
-            list[0] as Company & {
-              enabledModuleIds?: string[];
-              modules?: Record<string, boolean>;
-            }
-          )
-        );
+      if (process.env.NODE_ENV === "development") {
+        const sid = lastSavedCompanyIdRef.current;
+        if (sid) {
+          const row = list.find((c) => c.id === sid) as
+            | (Company & { enabledModuleIds?: string[]; modules?: Record<string, boolean> })
+            | undefined;
+          if (row) {
+            const reloaded = resolveCanonicalModuleMapForAdmin({
+              license: row.license,
+              enabledModuleIds: row.enabledModuleIds,
+              modules: row.modules,
+            });
+            console.log("RELOAD loadedModules", reloaded);
+          }
+          lastSavedCompanyIdRef.current = null;
+        }
       }
     } catch {
       setLoadError("Nepodařilo se načíst organizace.");
@@ -178,10 +171,16 @@ export default function AdminCompaniesPage() {
       enabledModuleIds?: string[];
       modules?: Record<string, boolean>;
     };
-    const enabledKeys = readEnabledModuleKeysFromCompanyRow(row);
+    const loadedModules = resolveCanonicalModuleMapForAdmin({
+      license: row.license,
+      enabledModuleIds: row.enabledModuleIds,
+      modules: row.modules,
+    });
     if (process.env.NODE_ENV === "development") {
-      console.log("loaded modules from source (modal)", enabledKeys);
+      console.log("OPEN loadedModules", { ...loadedModules });
     }
+    const enabledKeys = MODULE_KEYS.filter((k) => loadedModules[k]);
+    setEditModuleMap({ ...loadedModules });
     setEditForm({
       licenseType: company.license.licenseType,
       status: company.license.status,
@@ -192,17 +191,24 @@ export default function AdminCompaniesPage() {
   };
 
   const saveLicense = async () => {
-    if (!editing || !editForm) return;
+    if (!editing || !editForm || !editModuleMap) return;
+    const selectedModules = MODULE_KEYS.filter((k) => editModuleMap[k]);
+    const licensePayload: LicenseConfig = {
+      ...editForm,
+      enabledModules: selectedModules,
+    };
+    const payload = { license: licensePayload };
     if (process.env.NODE_ENV === "development") {
-      console.log("saving modules", editForm.enabledModules);
-      console.log("companyId", editing.id);
+      console.log("SAVE selectedModules", selectedModules);
+      console.log(
+        "SAVE modules map (all keys)",
+        buildCanonicalModulesMapFromEnabled(selectedModules)
+      );
+      console.log("SAVE payload", payload);
+      console.log("SAVE companyId", editing.id);
     }
     setSaving(true);
     try {
-      const payload = { license: editForm };
-      if (process.env.NODE_ENV === "development") {
-        console.log("saving modules payload", payload);
-      }
       const res = await fetch(`/api/superadmin/companies/${editing.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -215,13 +221,36 @@ export default function AdminCompaniesPage() {
         if (process.env.NODE_ENV === "development") console.error("save error", data);
         throw new Error(msg);
       }
-      if (process.env.NODE_ENV === "development") console.log("save success");
+      if (process.env.NODE_ENV === "development") {
+        console.log("SAVE success");
+        const verifyRes = await fetch(`/api/superadmin/companies/${editing.id}`);
+        const doc = await verifyRes.json().catch(() => null);
+        if (verifyRes.ok && doc && typeof doc === "object") {
+          const d = doc as Company & {
+            enabledModuleIds?: string[];
+            modules?: Record<string, boolean>;
+          };
+          const fromServer = resolveCanonicalModuleMapForAdmin({
+            license: d.license,
+            enabledModuleIds: d.enabledModuleIds,
+            modules: d.modules,
+          });
+          console.log("VERIFY Firestore modules map after save", {
+            topModules: d.modules,
+            licenseModules: d.license?.modules,
+            resolved: { ...fromServer },
+          });
+        }
+      }
       toast({ title: "Licence uložena", description: "Změny byly aplikovány." });
+      lastSavedCompanyIdRef.current = editing.id;
       setEditing(null);
       setEditForm(null);
+      setEditModuleMap(null);
       await loadCompanies({ silent: true });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Chyba při ukládání";
+      if (process.env.NODE_ENV === "development") console.error("save error", e);
       toast({ variant: "destructive", title: "Chyba při ukládání", description: msg });
     } finally {
       setSaving(false);
@@ -229,16 +258,34 @@ export default function AdminCompaniesPage() {
   };
 
   const toggleModule = (key: ModuleKey) => {
-    if (!editForm) return;
-    const current = editForm.enabledModules || [];
+    if (!editForm || !editModuleMap) return;
     if (process.env.NODE_ENV === "development") {
-      console.log("before toggle", current);
+      console.log(
+        "TOGGLE before",
+        MODULE_KEYS.reduce(
+          (acc, k) => {
+            acc[k] = editModuleMap[k];
+            return acc;
+          },
+          {} as Record<CanonicalModuleKey, boolean>
+        )
+      );
+      console.log("TOGGLE key", key);
     }
-    const next = current.includes(key) ? current.filter((m) => m !== key) : [...current, key];
+    const nextValue = !editModuleMap[key];
+    const nextModules: Record<CanonicalModuleKey, boolean> = {
+      ...editModuleMap,
+      [key]: nextValue,
+    };
     if (process.env.NODE_ENV === "development") {
-      console.log("after toggle", next);
+      console.log("TOGGLE value", nextValue);
+      console.log("TOGGLE after", { ...nextModules });
     }
-    setEditForm({ ...editForm, enabledModules: next });
+    setEditModuleMap(nextModules);
+    setEditForm({
+      ...editForm,
+      enabledModules: MODULE_KEYS.filter((k) => nextModules[k]),
+    });
   };
 
   useEffect(() => {
@@ -410,7 +457,7 @@ export default function AdminCompaniesPage() {
               Nastavte typ licence, stav a povolené moduly pro tuto organizaci.
             </DialogDescription>
           </DialogHeader>
-          {editForm && (
+          {editForm && editModuleMap && (
             <div className="space-y-4 py-4">
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
@@ -495,7 +542,7 @@ export default function AdminCompaniesPage() {
                     >
                       <Switch
                         className="mt-0.5 shrink-0"
-                        checked={(editForm.enabledModules || []).includes(mod.key)}
+                        checked={Boolean(editModuleMap[mod.key])}
                         onCheckedChange={() => toggleModule(mod.key)}
                       />
                       <span className="flex min-w-0 flex-col gap-0.5">
@@ -511,7 +558,14 @@ export default function AdminCompaniesPage() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setEditing(null)}>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setEditing(null);
+                setEditForm(null);
+                setEditModuleMap(null);
+              }}
+            >
               Zrušit
             </Button>
             <Button onClick={saveLicense} disabled={saving}>
