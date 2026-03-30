@@ -99,7 +99,11 @@ export function normalizeCompanyFromFirestore(
       ? rawStatus
       : "active";
 
-  const licenseConfig: LicenseConfig & { licenseExpiresAt?: string | null } = {
+  const modulesFlat: Record<CanonicalModuleKey, boolean> = { ...moduleMap };
+  const licenseConfig: LicenseConfig & {
+    licenseExpiresAt?: string | null;
+    modules?: Record<string, boolean>;
+  } = {
     licenseType,
     status,
     expirationDate,
@@ -107,6 +111,7 @@ export function normalizeCompanyFromFirestore(
     maxUsers:
       typeof license.maxUsers === "number" ? license.maxUsers : DEFAULT_LICENSE.maxUsers,
     enabledModules,
+    modules: modulesFlat,
   };
 
   const createdAt = data.createdAt as { toDate?: () => Date } | undefined;
@@ -124,6 +129,9 @@ export function normalizeCompanyFromFirestore(
     updatedAt: updatedAt?.toDate?.()?.toISOString() ?? null,
     licenseId: (data.licenseId as string) ?? licenseType,
     license: licenseConfig,
+    /** Sjednocená mapa pro UI — stejná jako zápis `updates.modules` / `license.modules` po uložení z adminu. */
+    modules: modulesFlat,
+    enabledModuleIds: enabledModules,
   };
 }
 
@@ -208,6 +216,8 @@ export async function getCompanies(db: Firestore, options?: { light?: boolean })
       updatedAt: normalized.updatedAt,
       licenseId: normalized.licenseId,
       license: normalized.license,
+      modules: normalized.modules,
+      enabledModuleIds: normalized.enabledModuleIds,
       companyLicense,
       employeeCount: ec,
       estimatedMonthlyCzk,
@@ -231,13 +241,8 @@ export async function getCompany(db: Firestore, id: string): Promise<CompanyWith
       )
     : createPendingCompanyLicense(id);
 
-  const topModules = raw.modules as Record<string, boolean> | undefined;
-  const topIds = raw.enabledModuleIds as string[] | undefined;
-
   return {
     ...base,
-    modules: topModules && typeof topModules === "object" ? topModules : undefined,
-    enabledModuleIds: Array.isArray(topIds) ? topIds : undefined,
     companyLicense,
   };
 }

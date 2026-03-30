@@ -90,7 +90,8 @@ export default function AdminCompaniesPage() {
     }
     setLoadError(null);
     try {
-      const res = await fetch("/api/superadmin/companies");
+      const q = silent ? "?light=1" : "";
+      const res = await fetch(`/api/superadmin/companies${q}`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg =
