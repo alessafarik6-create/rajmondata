@@ -32,29 +32,29 @@ export function classifyInquiryType(raw: string | undefined | null): InquiryType
   return "unknown";
 }
 
-/** Pevné barvy pozadí + vždy černý text (bez žluté / amber). */
+/** Plné vyplnění (solid), bez viditelného obrysu — `border-transparent` + `bg-*-500` + `text-black`. */
 const BADGE_BY_KIND: Record<
   Exclude<InquiryTypeKind, "unknown">,
   string
 > = {
   modulove_domy:
-    "border-blue-500/90 bg-blue-200 text-black shadow-none hover:bg-blue-200 dark:border-blue-400 dark:bg-blue-300 dark:text-black",
+    "border-transparent bg-blue-500 text-black shadow-none hover:bg-blue-500 hover:text-black dark:bg-blue-500 dark:text-black dark:hover:bg-blue-500",
   pergoly:
-    "border-green-600/90 bg-green-200 text-black shadow-none hover:bg-green-200 dark:border-green-500 dark:bg-green-300 dark:text-black",
+    "border-transparent bg-green-500 text-black shadow-none hover:bg-green-500 hover:text-black dark:bg-green-500 dark:text-black dark:hover:bg-green-500",
   obecne:
-    "border-red-500/90 bg-red-200 text-black shadow-none hover:bg-red-200 dark:border-red-500 dark:bg-red-300 dark:text-black",
+    "border-transparent bg-red-500 text-black shadow-none hover:bg-red-500 hover:text-black dark:bg-red-500 dark:text-black dark:hover:bg-red-500",
 };
 
 const FALLBACK_BADGE =
-  "border-slate-400/90 bg-slate-200 text-black shadow-none hover:bg-slate-200 dark:border-slate-500 dark:bg-slate-300 dark:text-black";
+  "border-transparent bg-slate-400 text-black shadow-none hover:bg-slate-400 hover:text-black dark:bg-slate-400 dark:text-black dark:hover:bg-slate-400";
 
 /**
- * Tailwind třídy pro `Badge` (variant outline + tyto barvy přebijí výchozí vzhled).
+ * Tailwind třídy pro `Badge` — plná barva pozadí, černý text, žádný outline (použijte s variant="default").
  */
 export function getInquiryTypeBadgeClass(type: string | undefined | null): string {
   const kind = classifyInquiryType(type);
   if (kind === "unknown") {
-    return cn("border font-medium", FALLBACK_BADGE);
+    return cn("font-medium", FALLBACK_BADGE);
   }
-  return cn("border font-medium", BADGE_BY_KIND[kind]);
+  return cn("font-medium", BADGE_BY_KIND[kind]);
 }

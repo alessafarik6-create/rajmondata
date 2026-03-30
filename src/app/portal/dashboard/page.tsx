@@ -902,7 +902,7 @@ export default function CompanyDashboard() {
                                     </span>
                                     {String(r.typ ?? "").trim() ? (
                                       <Badge
-                                        variant="outline"
+                                        variant="default"
                                         className={cn(
                                           "max-w-[9rem] shrink-0 truncate text-[10px] font-normal leading-none",
                                           getInquiryTypeBadgeClass(r.typ)

@@ -28,7 +28,7 @@ export function InquiryTypeBadge({
   if (!t) return null;
   return (
     <Badge
-      variant="outline"
+      variant="default"
       className={cn(
         "shrink-0 truncate",
         variant === "preview"
