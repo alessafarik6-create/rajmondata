@@ -19,7 +19,11 @@ import {
   Briefcase,
   History,
   Edit2,
-  User
+  User,
+  KeyRound,
+  Shield,
+  Copy,
+  RefreshCw,
 } from 'lucide-react';
 import { Separator } from '@/components/ui/separator';
 import Link from 'next/link';
@@ -35,6 +39,9 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { getJobMediaPreviewUrl, formatMediaDate } from '@/lib/job-media-types';
 import type { MeasurementPhotoStatus } from '@/lib/measurement-photos';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { MIN_EMPLOYEE_PASSWORD_LENGTH } from '@/lib/employee-password-policy';
 
 export default function CustomerDetailPage() {
   const { customerId } = useParams();
@@ -75,6 +82,26 @@ export default function CustomerDetailPage() {
   const [transferPhotoId, setTransferPhotoId] = useState<string | null>(null);
   const [transferJobId, setTransferJobId] = useState('');
   const [transferSaving, setTransferSaving] = useState(false);
+
+  const canManagePortal = ['owner', 'admin'].includes(String(profile?.role || ''));
+  const [portalDialogOpen, setPortalDialogOpen] = useState(false);
+  const [portalEmail, setPortalEmail] = useState('');
+  const [portalPassword, setPortalPassword] = useState('');
+  const [portalPassword2, setPortalPassword2] = useState('');
+  const [portalSubmitting, setPortalSubmitting] = useState(false);
+  const [resetLinkDialogOpen, setResetLinkDialogOpen] = useState(false);
+  const [resetLinkValue, setResetLinkValue] = useState('');
+  const [portalActionLoading, setPortalActionLoading] = useState(false);
+
+  const crm = (customer ?? {}) as Record<string, unknown> & {
+    customerPortalUid?: string;
+    customerPortalEmail?: string;
+    customerPortalEnabled?: boolean;
+  };
+  const portalUid = typeof crm.customerPortalUid === 'string' ? crm.customerPortalUid.trim() : '';
+  const portalEmailStored =
+    typeof crm.customerPortalEmail === 'string' ? crm.customerPortalEmail.trim() : '';
+  const portalEnabled = crm.customerPortalEnabled !== false;
 
   const handleTransferMeasurementPhotoToJob = async () => {
     if (!firestore || !companyId || !transferPhotoId || !transferJobId.trim()) {
@@ -155,6 +182,179 @@ export default function CustomerDetailPage() {
     );
   }
 
+  const openPortalCreateDialog = () => {
+    setPortalEmail(String(customer.email || '').trim());
+    setPortalPassword('');
+    setPortalPassword2('');
+    setPortalDialogOpen(true);
+  };
+
+  const handleCreatePortalAccount = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !canManagePortal) return;
+    if (portalPassword.length < MIN_EMPLOYEE_PASSWORD_LENGTH) {
+      toast({
+        variant: 'destructive',
+        title: 'Slabé heslo',
+        description: `Heslo musí mít alespoň ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků.`,
+      });
+      return;
+    }
+    if (portalPassword !== portalPassword2) {
+      toast({ variant: 'destructive', title: 'Hesla se neshodují' });
+      return;
+    }
+    setPortalSubmitting(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/company/customers/create-portal-auth', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          customerId: customerId as string,
+          email: portalEmail.trim() || undefined,
+          password: portalPassword,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!res.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : 'Vytvoření účtu selhalo.');
+      }
+      toast({
+        title: 'Klientský účet vytvořen',
+        description:
+          data.message ||
+          'Zákazník se přihlásí stejně jako firma; uvidí jen svůj klientský portál.',
+      });
+      setPortalDialogOpen(false);
+      setPortalPassword('');
+      setPortalPassword2('');
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Chyba',
+        description: err instanceof Error ? err.message : 'Nepodařilo se vytvořit účet.',
+      });
+    } finally {
+      setPortalSubmitting(false);
+    }
+  };
+
+  const handleSyncPortalJobs = async () => {
+    if (!user || !canManagePortal) return;
+    setPortalActionLoading(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/company/customers/sync-portal-linked-jobs', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ customerId: customerId as string }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; count?: number };
+      if (!res.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : 'Synchronizace selhala.');
+      }
+      toast({
+        title: 'Zakázky synchronizovány',
+        description: `Do portálu je přiřazeno ${data.count ?? 0} zakázek (podle CRM).`,
+      });
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Chyba',
+        description: err instanceof Error ? err.message : 'Synchronizace selhala.',
+      });
+    } finally {
+      setPortalActionLoading(false);
+    }
+  };
+
+  const handlePortalPasswordResetLink = async () => {
+    if (!user || !canManagePortal) return;
+    setPortalActionLoading(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/company/customers/portal-password-reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ customerId: customerId as string }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        resetLink?: string;
+        message?: string;
+      };
+      if (!res.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : 'Odkaz se nepodařilo vygenerovat.');
+      }
+      if (data.resetLink) {
+        setResetLinkValue(data.resetLink);
+        setResetLinkDialogOpen(true);
+      }
+      if (data.message) {
+        toast({ title: 'Odkaz připraven', description: data.message });
+      }
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Chyba',
+        description: err instanceof Error ? err.message : 'Vygenerování odkazu selhalo.',
+      });
+    } finally {
+      setPortalActionLoading(false);
+    }
+  };
+
+  const handleSetPortalEnabled = async (enabled: boolean) => {
+    if (!user || !canManagePortal) return;
+    setPortalActionLoading(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch('/api/company/customers/set-portal-enabled', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ customerId: customerId as string, enabled }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!res.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : 'Změna stavu selhala.');
+      }
+      toast({
+        title: enabled ? 'Přístup povolen' : 'Přístup deaktivován',
+        description: data.message,
+      });
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Chyba',
+        description: err instanceof Error ? err.message : 'Změna stavu selhala.',
+      });
+    } finally {
+      setPortalActionLoading(false);
+    }
+  };
+
+  const copyResetLink = async () => {
+    try {
+      await navigator.clipboard.writeText(resetLinkValue);
+      toast({ title: 'Zkopírováno do schránky' });
+    } catch {
+      toast({ variant: 'destructive', title: 'Kopírování selhalo' });
+    }
+  };
+
   return (
     <div className="space-y-8 max-w-6xl mx-auto">
       <div className="flex items-center gap-4">
@@ -220,6 +420,107 @@ export default function CustomerDetailPage() {
                 <div className="pt-2">
                   <Badge variant="outline" className="font-mono text-[10px] tracking-tighter">IČO: {customer.ico}</Badge>
                 </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card className="bg-surface border-border shadow-lg">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-primary" />
+                <CardTitle className="text-lg">Klientský portál</CardTitle>
+              </div>
+              <CardDescription>
+                Přihlášení zákazníka (Firebase Auth, role <code className="text-xs">customer</code>). Stejná přihlašovací
+                stránka jako u firmy — po přihlášení přesměrování do portálu zákazníka.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm">
+              {!portalUid ? (
+                <p className="text-muted-foreground">
+                  Účet pro zákazníka zatím není vytvořen. Přístup do portálu neexistuje, dokud ho zde nezaložíte.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-muted-foreground uppercase font-bold">Stav</span>
+                    <Badge variant={portalEnabled ? 'default' : 'secondary'}>
+                      {portalEnabled ? 'Aktivní' : 'Deaktivovaný'}
+                    </Badge>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase font-bold">E-mail přihlášení</p>
+                    <p className="font-mono text-xs break-all select-all">
+                      {portalEmailStored || customer.email || '—'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase font-bold">UID (Firebase)</p>
+                    <p className="font-mono text-[10px] break-all select-all">{portalUid}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase font-bold">Zakázek v portálu (sync)</p>
+                    <p>{jobs?.length ?? 0} (podle CRM u tohoto zákazníka)</p>
+                  </div>
+                </div>
+              )}
+
+              {canManagePortal ? (
+                <div className="flex flex-col gap-2 pt-2">
+                  {!portalUid ? (
+                    <Button type="button" className="w-full gap-2" onClick={openPortalCreateDialog}>
+                      <KeyRound className="w-4 h-4" />
+                      Vytvořit přístup do portálu
+                    </Button>
+                  ) : (
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full gap-2"
+                        disabled={portalActionLoading}
+                        onClick={() => void handleSyncPortalJobs()}
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                        Synchronizovat zakázky do portálu
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full gap-2"
+                        disabled={portalActionLoading || !portalEnabled}
+                        onClick={() => void handlePortalPasswordResetLink()}
+                      >
+                        <KeyRound className="w-4 h-4" />
+                        Odkaz pro reset hesla
+                      </Button>
+                      {portalEnabled ? (
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          className="w-full"
+                          disabled={portalActionLoading}
+                          onClick={() => void handleSetPortalEnabled(false)}
+                        >
+                          Deaktivovat přístup
+                        </Button>
+                      ) : (
+                        <Button
+                          type="button"
+                          className="w-full"
+                          disabled={portalActionLoading}
+                          onClick={() => void handleSetPortalEnabled(true)}
+                        >
+                          Znovu povolit přístup
+                        </Button>
+                      )}
+                    </>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground pt-1">
+                  Správu přístupu může provést vlastník nebo administrátor firmy.
+                </p>
               )}
             </CardContent>
           </Card>
@@ -410,6 +711,94 @@ export default function CustomerDetailPage() {
               onClick={() => void handleTransferMeasurementPhotoToJob()}
             >
               {transferSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Přiřadit'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={portalDialogOpen} onOpenChange={setPortalDialogOpen}>
+        <DialogContent className="bg-white border-slate-200 text-slate-900 sm:max-w-md">
+          <form onSubmit={handleCreatePortalAccount}>
+            <DialogHeader>
+              <DialogTitle>Vytvořit klientský účet</DialogTitle>
+              <DialogDescription>
+                Vytvoří se záznam ve Firebase Authentication a profil <code className="text-xs">users/&#123;uid&#125;</code> s rolí{' '}
+                <code className="text-xs">customer</code>. Zadejte počáteční heslo; zákazníkovi ho předejte bezpečným kanálem (heslo se nikde
+                neukládá ani nezobrazuje).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 py-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="portal-email">E-mail přihlášení</Label>
+                <Input
+                  id="portal-email"
+                  type="email"
+                  autoComplete="off"
+                  value={portalEmail}
+                  onChange={(e) => setPortalEmail(e.target.value)}
+                  placeholder="zákazník@firma.cz"
+                  className="font-mono text-sm"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="portal-pw">Počáteční heslo</Label>
+                <Input
+                  id="portal-pw"
+                  type="password"
+                  autoComplete="new-password"
+                  value={portalPassword}
+                  onChange={(e) => setPortalPassword(e.target.value)}
+                  minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="portal-pw2">Potvrzení hesla</Label>
+                <Input
+                  id="portal-pw2"
+                  type="password"
+                  autoComplete="new-password"
+                  value={portalPassword2}
+                  onChange={(e) => setPortalPassword2(e.target.value)}
+                  minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="outline" onClick={() => setPortalDialogOpen(false)}>
+                Zrušit
+              </Button>
+              <Button type="submit" disabled={portalSubmitting}>
+                {portalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Vytvořit účet'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={resetLinkDialogOpen} onOpenChange={setResetLinkDialogOpen}>
+        <DialogContent className="bg-white border-slate-200 text-slate-900 sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Odkaz pro obnovení hesla</DialogTitle>
+            <DialogDescription>
+              Odkaz předejte zákazníkovi (např. e-mailem). Platnost je omezená. Firebase e-mail automaticky neodesílá — záleží na vašem procesu.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="reset-link-field">Odkaz</Label>
+            <textarea
+              id="reset-link-field"
+              readOnly
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-muted/40 px-3 py-2 text-xs font-mono"
+              value={resetLinkValue}
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setResetLinkDialogOpen(false)}>
+              Zavřít
+            </Button>
+            <Button type="button" className="gap-2" onClick={() => void copyResetLink()}>
+              <Copy className="w-4 h-4" />
+              Zkopírovat
             </Button>
           </DialogFooter>
         </DialogContent>
