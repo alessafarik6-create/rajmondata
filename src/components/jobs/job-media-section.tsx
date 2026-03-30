@@ -49,10 +49,13 @@ import {
   type JobMemberPermissions,
 } from "@/lib/job-employee-access";
 import {
+  canCustomerAnnotateImage,
+  canCustomerAnnotateLegacyPhoto,
   filterFoldersForCustomer,
   isImageCustomerVisible,
   isLegacyPhotoCustomerVisible,
 } from "@/lib/job-customer-access";
+import { CustomerMediaAnnotationViewer } from "@/components/jobs/customer-media-annotation-viewer";
 import { Switch } from "@/components/ui/switch";
 import {
   commitFolderAccountingExpense,
@@ -481,10 +484,41 @@ function UserFolderBlock({
   );
   const { data: actorProfile } = useDoc(actorRef);
   const [busy, setBusy] = useState(false);
-  const [imagePreview, setImagePreview] = useState<{
+  type FolderMediaViewerOpen = {
     url: string;
     title: string;
-  } | null>(null);
+    fileType: "image" | "pdf";
+    mediaDocumentId: string;
+    annotationData?: unknown;
+    readOnly: boolean;
+  };
+  const [mediaViewer, setMediaViewer] = useState<FolderMediaViewerOpen | null>(null);
+
+  const openFolderMediaViewer = useCallback(
+    (img: JobFolderImageDoc, openUrl: string, title: string) => {
+      const kind = inferJobMediaItemType(img);
+      if (kind === "office") {
+        if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      const fileType = kind === "pdf" ? "pdf" : "image";
+      const readOnlyCustomer =
+        mediaScope === "customer" &&
+        !canCustomerAnnotateImage(
+          folder as Record<string, unknown>,
+          img as Record<string, unknown>
+        );
+      setMediaViewer({
+        url: openUrl,
+        title,
+        fileType,
+        mediaDocumentId: img.id,
+        annotationData: img.annotationData,
+        readOnly: readOnlyCustomer,
+      });
+    },
+    [folder, mediaScope]
+  );
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
@@ -1719,6 +1753,17 @@ function UserFolderBlock({
                         >
                           <ExternalLink className="size-[18px]" aria-hidden />
                         </JobMediaIconButton>
+                        {kind === "pdf" ? (
+                          <JobMediaIconButton
+                            label="Celá obrazovka"
+                            disabled={!openUrl}
+                            onClick={() => {
+                              if (openUrl) openFolderMediaViewer(img, openUrl, title);
+                            }}
+                          >
+                            <Eye className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                        ) : null}
                         {openUrl ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -1791,7 +1836,7 @@ function UserFolderBlock({
                         busy={busy}
                         canManage={canManageFolders && !isEmployeeLimited}
                         onPreview={() => {
-                          if (openUrl) setImagePreview({ url: openUrl, title });
+                          if (openUrl) openFolderMediaViewer(img, openUrl, title);
                         }}
                         onDelete={() => void deleteImage(img)}
                       >
@@ -1811,8 +1856,7 @@ function UserFolderBlock({
                         label="Náhled"
                         disabled={!openUrl}
                         onClick={() => {
-                          if (openUrl)
-                            setImagePreview({ url: openUrl, title });
+                          if (openUrl) openFolderMediaViewer(img, openUrl, title);
                         }}
                       >
                         <Eye className="size-[18px]" aria-hidden />
@@ -1940,6 +1984,17 @@ function UserFolderBlock({
                         >
                           <ExternalLink className="size-[18px]" aria-hidden />
                         </JobMediaIconButton>
+                        {kind === "pdf" ? (
+                          <JobMediaIconButton
+                            label="Celá obrazovka"
+                            disabled={!openUrl}
+                            onClick={() => {
+                              if (openUrl) openFolderMediaViewer(img, openUrl, title);
+                            }}
+                          >
+                            <Eye className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                        ) : null}
                         {openUrl ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -2022,27 +2077,29 @@ function UserFolderBlock({
       </Card>
     </Collapsible>
 
-    <Dialog
-      open={!!imagePreview}
-      onOpenChange={(o) => {
-        if (!o) setImagePreview(null);
-      }}
-    >
-      <DialogContent className="max-h-[90vh] max-w-4xl overflow-auto">
-        <DialogHeader>
-          <DialogTitle className="truncate pr-8">
-            {imagePreview?.title || "Náhled"}
-          </DialogTitle>
-        </DialogHeader>
-        {imagePreview?.url ? (
-          <img
-            src={imagePreview.url}
-            alt={imagePreview.title}
-            className="mx-auto max-h-[70vh] w-auto max-w-full object-contain"
-          />
-        ) : null}
-      </DialogContent>
-    </Dialog>
+    {firestore && user && mediaViewer ? (
+      <CustomerMediaAnnotationViewer
+        key={mediaViewer.mediaDocumentId}
+        open={!!mediaViewer}
+        onClose={() => setMediaViewer(null)}
+        companyId={companyId}
+        jobId={jobId}
+        firestore={firestore}
+        userId={user.uid}
+        actorRole={
+          typeof (actorProfile as { role?: string })?.role === "string"
+            ? (actorProfile as { role: string }).role
+            : ""
+        }
+        mediaUrl={mediaViewer.url}
+        title={mediaViewer.title}
+        fileType={mediaViewer.fileType}
+        readOnly={mediaViewer.readOnly}
+        storagePath={{ kind: "folderImages", folderId: folder.id }}
+        mediaDocumentId={mediaViewer.mediaDocumentId}
+        embeddedAnnotationData={mediaViewer.annotationData}
+      />
+    ) : null}
     </>
   );
 }
@@ -2116,10 +2173,38 @@ export function JobMediaSection({
 
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  const [legacyImagePreview, setLegacyImagePreview] = useState<{
+  type LegacyMediaViewerOpen = {
     url: string;
     title: string;
-  } | null>(null);
+    fileType: "image" | "pdf";
+    mediaDocumentId: string;
+    annotationData?: unknown;
+    readOnly: boolean;
+  };
+  const [legacyMediaViewer, setLegacyMediaViewer] = useState<LegacyMediaViewerOpen | null>(null);
+
+  const openLegacyMediaViewer = useCallback(
+    (p: LegacyPhotoDoc, openUrl: string, title: string) => {
+      const kind = inferJobMediaItemType(p);
+      if (kind === "office") {
+        if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      const fileType = kind === "pdf" ? "pdf" : "image";
+      const readOnly =
+        mediaScope === "customer" &&
+        !canCustomerAnnotateLegacyPhoto(p as Record<string, unknown>);
+      setLegacyMediaViewer({
+        url: openUrl,
+        title,
+        fileType,
+        mediaDocumentId: p.id,
+        annotationData: p.annotationData,
+        readOnly,
+      });
+    },
+    [mediaScope]
+  );
 
   const isJobDetailWide = layout === "jobDetailWide";
   const [mediaGalleryOpen, setMediaGalleryOpen] = useState(() => !isJobDetailWide);
@@ -2804,6 +2889,17 @@ export function JobMediaSection({
                             >
                               <ExternalLink className="size-[18px]" aria-hidden />
                             </JobMediaIconButton>
+                            {kind === "pdf" ? (
+                              <JobMediaIconButton
+                                label="Celá obrazovka"
+                                disabled={!openUrl}
+                                onClick={() => {
+                                  if (openUrl) openLegacyMediaViewer(p, openUrl, title);
+                                }}
+                              >
+                                <Eye className="size-[18px]" aria-hidden />
+                              </JobMediaIconButton>
+                            ) : null}
                             {openUrl ? (
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -2874,7 +2970,7 @@ export function JobMediaSection({
                               canManageFolders && !hideJobMediaAdminUi
                             }
                             onPreview={() => {
-                              if (openUrl) setLegacyImagePreview({ url: openUrl, title });
+                              if (openUrl) openLegacyMediaViewer(p, openUrl, title);
                             }}
                             onDelete={() => void deleteLegacyPhoto(p)}
                           >
@@ -2894,8 +2990,7 @@ export function JobMediaSection({
                             label="Náhled"
                             disabled={!openUrl}
                             onClick={() => {
-                              if (openUrl)
-                                setLegacyImagePreview({ url: openUrl, title });
+                              if (openUrl) openLegacyMediaViewer(p, openUrl, title);
                             }}
                           >
                             <Eye className="size-[18px]" aria-hidden />
@@ -3016,6 +3111,17 @@ export function JobMediaSection({
                                     >
                                       <ExternalLink className="size-[18px]" aria-hidden />
                                     </JobMediaIconButton>
+                                    {kind === "pdf" ? (
+                                      <JobMediaIconButton
+                                        label="Celá obrazovka"
+                                        disabled={!openUrl}
+                                        onClick={() => {
+                                          if (openUrl) openLegacyMediaViewer(p, openUrl, title);
+                                        }}
+                                      >
+                                        <Eye className="size-[18px]" aria-hidden />
+                                      </JobMediaIconButton>
+                                    ) : null}
                                     {openUrl ? (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
@@ -3211,27 +3317,29 @@ export function JobMediaSection({
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={!!legacyImagePreview}
-        onOpenChange={(o) => {
-          if (!o) setLegacyImagePreview(null);
-        }}
-      >
-        <DialogContent className="max-h-[90vh] max-w-4xl overflow-auto">
-          <DialogHeader>
-            <DialogTitle className="truncate pr-8">
-              {legacyImagePreview?.title || "Náhled"}
-            </DialogTitle>
-          </DialogHeader>
-          {legacyImagePreview?.url ? (
-            <img
-              src={legacyImagePreview.url}
-              alt={legacyImagePreview.title}
-              className="mx-auto max-h-[70vh] w-auto max-w-full object-contain"
-            />
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      {firestore && user && legacyMediaViewer ? (
+        <CustomerMediaAnnotationViewer
+          key={legacyMediaViewer.mediaDocumentId}
+          open={!!legacyMediaViewer}
+          onClose={() => setLegacyMediaViewer(null)}
+          companyId={companyId}
+          jobId={jobId}
+          firestore={firestore}
+          userId={user.uid}
+          actorRole={
+            typeof (actorProfile as { role?: string })?.role === "string"
+              ? (actorProfile as { role: string }).role
+              : ""
+          }
+          mediaUrl={legacyMediaViewer.url}
+          title={legacyMediaViewer.title}
+          fileType={legacyMediaViewer.fileType}
+          readOnly={legacyMediaViewer.readOnly}
+          storagePath={{ kind: "photos" }}
+          mediaDocumentId={legacyMediaViewer.mediaDocumentId}
+          embeddedAnnotationData={legacyMediaViewer.annotationData}
+        />
+      ) : null}
       </>
     </TooltipProvider>
   );

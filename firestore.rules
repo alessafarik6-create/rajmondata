@@ -214,6 +214,29 @@ service cloud.firestore {
                 jobAssignedForTerminal(companyId, jobId)))));
     }
 
+    /** Klientský portál — uživatel má zakázku v users.linkedJobIds (stejná logika jako ve frontendu). */
+    function customerPortalLinkedJob(companyId, jobId) {
+      return signedIn() && sameCompany(companyId) && userRole() == 'customer' &&
+        'linkedJobIds' in userDoc() && userDoc().linkedJobIds is list &&
+        jobId in userDoc().linkedJobIds;
+    }
+
+    /** Vrstvy anotací zákazníka / firmy u média zakázky — validace zápisu. */
+    function jobDocumentAnnotationPayloadOk() {
+      return request.resource.data.keys().hasAll(
+          ['companyId', 'jobId', 'documentId', 'type', 'data', 'visibleFor', 'updatedBy', 'mediaKind']) &&
+        request.resource.data.companyId is string &&
+        request.resource.data.jobId is string &&
+        request.resource.data.documentId is string &&
+        request.resource.data.documentId.size() > 0 &&
+        request.resource.data.documentId.size() <= 400 &&
+        request.resource.data.type == 'customer_overlay' &&
+        request.resource.data.updatedBy == request.auth.uid &&
+        request.resource.data.mediaKind in ['image', 'pdf'] &&
+        request.resource.data.data is map &&
+        request.resource.data.visibleFor is list;
+    }
+
     /** Pokud je u docházky vyplněno jobId, musí být přiřazeno pro terminál danému zaměstnanci. */
     function attendanceJobValid(companyId) {
       return !('jobId' in request.resource.data) ||
@@ -404,6 +427,39 @@ service cloud.firestore {
             resource.data.companyId == companyId &&
             resource.data.jobId == jobId &&
             (isPrivileged() || resource.data.createdBy == request.auth.uid);
+        }
+
+        /**
+         * Sdílené anotace nad médiem (kresba, čáry, text) — nezávislé na annotationData souboru.
+         * companies/{companyId}/jobs/{jobId}/document_annotations/{docId}
+         */
+        match /document_annotations/{annId} {
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId) ||
+            jobEmployeeLimitedMediaProfile(companyId, jobId) ||
+            (signedIn() && sameCompany(companyId) &&
+              jobDetailReadAccess(companyId, jobId) &&
+              !jobEmployeeMustUseSummaryOnly(companyId, jobId)) ||
+            customerPortalLinkedJob(companyId, jobId);
+          allow create: if signedIn() && sameCompany(companyId) &&
+            jobDocumentAnnotationPayloadOk() &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId && (
+              (isPrivileged() &&
+                jobDetailReadAccess(companyId, jobId) &&
+                !jobEmployeeMustUseSummaryOnly(companyId, jobId)) ||
+              customerPortalLinkedJob(companyId, jobId)
+            );
+          allow update: if signedIn() && sameCompany(companyId) &&
+            resource.data.companyId == companyId &&
+            resource.data.jobId == jobId &&
+            jobDocumentAnnotationPayloadOk() && (
+              (isPrivileged() &&
+                jobDetailReadAccess(companyId, jobId) &&
+                !jobEmployeeMustUseSummaryOnly(companyId, jobId)) ||
+              customerPortalLinkedJob(companyId, jobId)
+            );
+          allow delete: if false;
         }
 
         /**
