@@ -28,9 +28,17 @@ export const DEFAULT_EMPLOYEE_PORTAL_MODULES: EmployeePortalModules = {
   dochazka: true,
 };
 
+const PORTAL_MODULE_KEYS: readonly EmployeePortalModuleKey[] = [
+  "zakazky",
+  "penize",
+  "zpravy",
+  "dochazka",
+];
+
 /**
  * Čte `employeePortalModules` z companies/.../employees/{id}.
- * Při absenci pole vrací výchozí „vše true“ (bez přepisu celého dokumentu).
+ * `undefined` (klíč v dokumentu chybí) → výchozí z DEFAULT_EMPLOYEE_PORTAL_MODULES.
+ * explicitní `false` / `true` v dokumentu → zachováno.
  */
 export function parseEmployeePortalModules(
   employeeDoc: Record<string, unknown> | null | undefined
@@ -40,12 +48,13 @@ export function parseEmployeePortalModules(
     return { ...DEFAULT_EMPLOYEE_PORTAL_MODULES };
   }
   const o = raw as Record<string, unknown>;
-  return {
-    zakazky: o.zakazky !== false,
-    penize: o.penize !== false,
-    zpravy: o.zpravy !== false,
-    dochazka: o.dochazka !== false,
-  };
+  const out: EmployeePortalModules = { ...DEFAULT_EMPLOYEE_PORTAL_MODULES };
+  for (const k of PORTAL_MODULE_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(o, k)) {
+      out[k] = o[k] === true;
+    }
+  }
+  return out;
 }
 
 export type OrgEmployeePortalModuleFlags = EmployeePortalModules;

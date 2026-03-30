@@ -148,11 +148,12 @@ export async function PATCH(request: NextRequest) {
   }
   if (hasPortalMods && body.employeePortalModules) {
     const pm = body.employeePortalModules;
+    /** Explicitní booleany — `false` se nesmí změnit na true přes `!== false`. */
     patch.employeePortalModules = {
-      zakazky: pm.zakazky !== false,
-      penize: pm.penize !== false,
-      zpravy: pm.zpravy !== false,
-      dochazka: pm.dochazka !== false,
+      zakazky: pm.zakazky === true,
+      penize: pm.penize === true,
+      zpravy: pm.zpravy === true,
+      dochazka: pm.dochazka === true,
     };
   }
 

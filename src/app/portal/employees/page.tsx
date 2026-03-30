@@ -164,7 +164,10 @@ export default function EmployeesPage() {
   const [portalModPenize, setPortalModPenize] = useState(true);
   const [portalModZpravy, setPortalModZpravy] = useState(true);
   const [portalModDochazka, setPortalModDochazka] = useState(true);
-  
+  const [reloadDebugEmployeeId, setReloadDebugEmployeeId] = useState<string | null>(
+    null
+  );
+
   const [qrEmployee, setQrEmployee] = useState<any | null>(null);
 
   useEffect(() => {
@@ -184,6 +187,19 @@ export default function EmployeesPage() {
     // toast z useToast() má nestabilní referenci — v deps způsobuje zbytečné opakování efektu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, canView, userRole, router]);
+
+  useEffect(() => {
+    if (!reloadDebugEmployeeId || !employees?.length) return;
+    const row = employees.find(
+      (e: { id?: string }) => e.id === reloadDebugEmployeeId
+    ) as Record<string, unknown> | undefined;
+    if (!row) return;
+    if (process.env.NODE_ENV === "development") {
+      console.log("RELOAD employee data", row);
+      console.log("RELOAD loaded employeePortalModules", parseEmployeePortalModules(row));
+    }
+    setReloadDebugEmployeeId(null);
+  }, [employees, reloadDebugEmployeeId]);
 
   const [invitePassword, setInvitePassword] = useState("");
   const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("");
@@ -768,19 +784,30 @@ export default function EmployeesPage() {
     setOrgSettingsSaving(true);
     try {
       const idToken = await user.getIdToken();
+      const employeePortalModules = {
+        zakazky: portalModZakazky === true,
+        penize: portalModPenize === true,
+        zpravy: portalModZpravy === true,
+        dochazka: portalModDochazka === true,
+      };
+      const payload = {
+        employeeId: orgSettingsEmp.id,
+        role: orgSettingsRole,
+        visibleInAttendanceTerminal: orgSettingsTerminalVisible,
+        canAccessWarehouse: orgSettingsCanWarehouse,
+        canAccessProduction: orgSettingsCanProduction,
+        employeePortalModules,
+      };
+      if (process.env.NODE_ENV === "development") {
+        console.log("SAVE payload", payload);
+      }
       const res = await fetch("/api/company/employees/update-org", {
         method: "PATCH",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({
-          employeeId: orgSettingsEmp.id,
-          role: orgSettingsRole,
-          visibleInAttendanceTerminal: orgSettingsTerminalVisible,
-          canAccessWarehouse: orgSettingsCanWarehouse,
-          canAccessProduction: orgSettingsCanProduction,
-        }),
+        body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -788,11 +815,15 @@ export default function EmployeesPage() {
           typeof data.error === "string" ? data.error : "Uložení se nezdařilo."
         );
       }
+      if (process.env.NODE_ENV === "development") {
+        console.log("SAVE success");
+      }
       toast({
         title: "Uloženo",
         description:
           "Role, terminál, sklad / výroba a moduly zaměstnaneckého portálu byly aktualizovány.",
       });
+      setReloadDebugEmployeeId(orgSettingsEmp.id);
       setOrgSettingsEmp(null);
     } catch (error: unknown) {
       const msg =
@@ -1058,7 +1089,14 @@ export default function EmployeesPage() {
               <Switch
                 id="org-settings-terminal"
                 checked={orgSettingsTerminalVisible}
-                onCheckedChange={setOrgSettingsTerminalVisible}
+                onCheckedChange={(v) => {
+                  if (process.env.NODE_ENV === "development") {
+                    console.log("TOGGLE key", "visibleInAttendanceTerminal");
+                    console.log("TOGGLE before", orgSettingsTerminalVisible);
+                    console.log("TOGGLE after", v);
+                  }
+                  setOrgSettingsTerminalVisible(v);
+                }}
               />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1074,7 +1112,14 @@ export default function EmployeesPage() {
               <Switch
                 id="org-settings-warehouse"
                 checked={orgSettingsCanWarehouse}
-                onCheckedChange={setOrgSettingsCanWarehouse}
+                onCheckedChange={(v) => {
+                  if (process.env.NODE_ENV === "development") {
+                    console.log("TOGGLE key", "canAccessWarehouse");
+                    console.log("TOGGLE before", orgSettingsCanWarehouse);
+                    console.log("TOGGLE after", v);
+                  }
+                  setOrgSettingsCanWarehouse(v);
+                }}
               />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1089,7 +1134,14 @@ export default function EmployeesPage() {
               <Switch
                 id="org-settings-production"
                 checked={orgSettingsCanProduction}
-                onCheckedChange={setOrgSettingsCanProduction}
+                onCheckedChange={(v) => {
+                  if (process.env.NODE_ENV === "development") {
+                    console.log("TOGGLE key", "canAccessProduction");
+                    console.log("TOGGLE before", orgSettingsCanProduction);
+                    console.log("TOGGLE after", v);
+                  }
+                  setOrgSettingsCanProduction(v);
+                }}
               />
             </div>
             <div className="space-y-2 border-t border-gray-200 pt-3">
@@ -1107,7 +1159,14 @@ export default function EmployeesPage() {
                 <Switch
                   id="portal-mod-zakazky"
                   checked={portalModZakazky}
-                  onCheckedChange={setPortalModZakazky}
+                  onCheckedChange={(v) => {
+                    if (process.env.NODE_ENV === "development") {
+                      console.log("TOGGLE key", "employeePortalModules.zakazky");
+                      console.log("TOGGLE before", portalModZakazky);
+                      console.log("TOGGLE after", v);
+                    }
+                    setPortalModZakazky(v);
+                  }}
                 />
               </div>
               <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1117,7 +1176,14 @@ export default function EmployeesPage() {
                 <Switch
                   id="portal-mod-penize"
                   checked={portalModPenize}
-                  onCheckedChange={setPortalModPenize}
+                  onCheckedChange={(v) => {
+                    if (process.env.NODE_ENV === "development") {
+                      console.log("TOGGLE key", "employeePortalModules.penize");
+                      console.log("TOGGLE before", portalModPenize);
+                      console.log("TOGGLE after", v);
+                    }
+                    setPortalModPenize(v);
+                  }}
                 />
               </div>
               <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1127,7 +1193,14 @@ export default function EmployeesPage() {
                 <Switch
                   id="portal-mod-zpravy"
                   checked={portalModZpravy}
-                  onCheckedChange={setPortalModZpravy}
+                  onCheckedChange={(v) => {
+                    if (process.env.NODE_ENV === "development") {
+                      console.log("TOGGLE key", "employeePortalModules.zpravy");
+                      console.log("TOGGLE before", portalModZpravy);
+                      console.log("TOGGLE after", v);
+                    }
+                    setPortalModZpravy(v);
+                  }}
                 />
               </div>
               <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1137,7 +1210,14 @@ export default function EmployeesPage() {
                 <Switch
                   id="portal-mod-dochazka"
                   checked={portalModDochazka}
-                  onCheckedChange={setPortalModDochazka}
+                  onCheckedChange={(v) => {
+                    if (process.env.NODE_ENV === "development") {
+                      console.log("TOGGLE key", "employeePortalModules.dochazka");
+                      console.log("TOGGLE before", portalModDochazka);
+                      console.log("TOGGLE after", v);
+                    }
+                    setPortalModDochazka(v);
+                  }}
                 />
               </div>
             </div>
@@ -1416,9 +1496,12 @@ export default function EmployeesPage() {
                                       (emp as { canAccessProduction?: boolean }).canAccessProduction ===
                                         true
                                     );
-                                    const pm = parseEmployeePortalModules(
-                                      emp as Record<string, unknown>
-                                    );
+                                    const empRow = emp as Record<string, unknown>;
+                                    const pm = parseEmployeePortalModules(empRow);
+                                    if (process.env.NODE_ENV === "development") {
+                                      console.log("OPEN employee data", empRow);
+                                      console.log("OPEN loaded employeePortalModules", { ...pm });
+                                    }
                                     setPortalModZakazky(pm.zakazky);
                                     setPortalModPenize(pm.penize);
                                     setPortalModZpravy(pm.zpravy);
