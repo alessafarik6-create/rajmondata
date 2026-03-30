@@ -32,20 +32,21 @@ export function classifyInquiryType(raw: string | undefined | null): InquiryType
   return "unknown";
 }
 
+/** Pevné barvy pozadí + vždy černý text (bez žluté / amber). */
 const BADGE_BY_KIND: Record<
   Exclude<InquiryTypeKind, "unknown">,
   string
 > = {
   modulove_domy:
-    "border-indigo-300/80 bg-indigo-100 text-indigo-950 shadow-none hover:bg-indigo-100 dark:border-indigo-700/80 dark:bg-indigo-950/50 dark:text-indigo-50",
+    "border-blue-500/90 bg-blue-200 text-black shadow-none hover:bg-blue-200 dark:border-blue-400 dark:bg-blue-300 dark:text-black",
   pergoly:
-    "border-emerald-300/80 bg-emerald-100 text-emerald-950 shadow-none hover:bg-emerald-100 dark:border-emerald-700/80 dark:bg-emerald-950/50 dark:text-emerald-50",
+    "border-green-600/90 bg-green-200 text-black shadow-none hover:bg-green-200 dark:border-green-500 dark:bg-green-300 dark:text-black",
   obecne:
-    "border-amber-300/80 bg-amber-100 text-amber-950 shadow-none hover:bg-amber-100 dark:border-amber-700/80 dark:bg-amber-950/50 dark:text-amber-50",
+    "border-red-500/90 bg-red-200 text-black shadow-none hover:bg-red-200 dark:border-red-500 dark:bg-red-300 dark:text-black",
 };
 
 const FALLBACK_BADGE =
-  "border-slate-300/80 bg-slate-100 text-slate-900 shadow-none hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100";
+  "border-slate-400/90 bg-slate-200 text-black shadow-none hover:bg-slate-200 dark:border-slate-500 dark:bg-slate-300 dark:text-black";
 
 /**
  * Tailwind třídy pro `Badge` (variant outline + tyto barvy přebijí výchozí vzhled).
