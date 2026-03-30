@@ -15,6 +15,13 @@ type Body = {
   canAccessWarehouse?: boolean;
   /** Přístup k modulu Výroba. */
   canAccessProduction?: boolean;
+  /** Moduly zaměstnaneckého portálu — merge přes `set(..., { merge: true })`. */
+  employeePortalModules?: {
+    zakazky?: boolean;
+    penize?: boolean;
+    zpravy?: boolean;
+    dochazka?: boolean;
+  };
 };
 
 /**
@@ -98,12 +105,15 @@ export async function PATCH(request: NextRequest) {
   const hasVisible = typeof body.visibleInAttendanceTerminal === "boolean";
   const hasWh = typeof body.canAccessWarehouse === "boolean";
   const hasPr = typeof body.canAccessProduction === "boolean";
+  const hasPortalMods =
+    body.employeePortalModules != null &&
+    typeof body.employeePortalModules === "object";
 
-  if (!hasOrgRole && !hasVisible && !hasWh && !hasPr) {
+  if (!hasOrgRole && !hasVisible && !hasWh && !hasPr && !hasPortalMods) {
     return NextResponse.json(
       {
         error:
-          "Pošlete role, visibleInAttendanceTerminal a/nebo canAccessWarehouse / canAccessProduction.",
+          "Pošlete role, visibleInAttendanceTerminal, canAccessWarehouse / canAccessProduction a/nebo employeePortalModules.",
       },
       { status: 400 }
     );
@@ -135,6 +145,15 @@ export async function PATCH(request: NextRequest) {
   }
   if (hasPr) {
     patch.canAccessProduction = body.canAccessProduction;
+  }
+  if (hasPortalMods && body.employeePortalModules) {
+    const pm = body.employeePortalModules;
+    patch.employeePortalModules = {
+      zakazky: pm.zakazky !== false,
+      penize: pm.penize !== false,
+      zpravy: pm.zpravy !== false,
+      dochazka: pm.dochazka !== false,
+    };
   }
 
   await empRef.set(patch, { merge: true });

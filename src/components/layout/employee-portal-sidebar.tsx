@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Package,
   Factory,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
@@ -29,13 +30,20 @@ import {
   userCanAccessWarehousePortal,
 } from "@/lib/warehouse-production-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
+import {
+  DEFAULT_EMPLOYEE_PORTAL_MODULES,
+  type EmployeePortalModules,
+} from "@/lib/employee-portal-modules";
 
 export type EmployeePortalSidebarProps = {
   mobileSheetClose?: () => void;
+  /** Sloučení licence organizace a příznaků na employees/{id} (počítá portal layout). */
+  visibleEmployeeModules?: EmployeePortalModules;
 };
 
 export function EmployeePortalSidebar({
   mobileSheetClose,
+  visibleEmployeeModules: visibilityProp,
 }: EmployeePortalSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -71,14 +79,21 @@ export function EmployeePortalSidebar({
     [company]
   );
 
+  const v = useMemo(
+    () => ({ ...DEFAULT_EMPLOYEE_PORTAL_MODULES, ...visibilityProp }),
+    [visibilityProp]
+  );
+
   const links = useMemo(() => {
     const apOk =
       company &&
       canAccessCompanyModule(company, "attendance_payroll", platformCatalog);
     const showAttendance =
+      v.dochazka &&
       apOk &&
       isModuleKeyEnabled(effectiveModules, "dochazka");
     const showWorklogSection =
+      v.dochazka &&
       apOk &&
       (isModuleKeyEnabled(effectiveModules, "dochazka") ||
         isModuleKeyEnabled(effectiveModules, "reporty"));
@@ -106,6 +121,15 @@ export function EmployeePortalSidebar({
 
     const all = [
       { label: t("home"), href: "/portal/employee", icon: LayoutDashboard },
+      ...(v.zakazky
+        ? [
+            {
+              label: "Zakázky",
+              href: "/portal/employee/jobs",
+              icon: Briefcase,
+            },
+          ]
+        : []),
       ...(showAttendance
         ? [{ label: t("attendance"), href: "/portal/labor/dochazka", icon: Clock }]
         : []),
@@ -128,12 +152,18 @@ export function EmployeePortalSidebar({
           : []),
       ...(showSklad ? [{ label: "Sklad", href: "/portal/sklad", icon: Package }] : []),
       ...(showVyroba ? [{ label: "Výroba", href: "/portal/vyroba", icon: Factory }] : []),
-      { label: t("money"), href: "/portal/employee/money", icon: Wallet },
-      {
-        label: t("messages"),
-        href: "/portal/employee/messages",
-        icon: MessageSquare,
-      },
+      ...(v.penize
+        ? [{ label: t("money"), href: "/portal/employee/money", icon: Wallet }]
+        : []),
+      ...(v.zpravy
+        ? [
+            {
+              label: t("messages"),
+              href: "/portal/employee/messages",
+              icon: MessageSquare,
+            },
+          ]
+        : []),
       { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
     ];
     return all;
@@ -145,6 +175,7 @@ export function EmployeePortalSidebar({
     profile?.globalRoles,
     platformCatalog,
     effectiveModules,
+    v,
   ]);
 
   const linkClass = (href: string) =>
@@ -154,9 +185,12 @@ export function EmployeePortalSidebar({
         (href !== "/portal/employee" &&
           href !== "/portal/sklad" &&
           href !== "/portal/vyroba" &&
+          href !== "/portal/employee/jobs" &&
           pathname.startsWith(href)) ||
         (href === "/portal/sklad" && pathname.startsWith("/portal/sklad")) ||
-        (href === "/portal/vyroba" && pathname.startsWith("/portal/vyroba"))
+        (href === "/portal/vyroba" && pathname.startsWith("/portal/vyroba")) ||
+        (href === "/portal/employee/jobs" &&
+          pathname.startsWith("/portal/employee/jobs"))
         ? "bg-sidebar-accent text-sidebar-primary font-medium"
         : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-primary"
     );

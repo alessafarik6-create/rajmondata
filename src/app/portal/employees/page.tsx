@@ -83,6 +83,7 @@ import {
   isDailyWorkLogEnabled,
   isWorkLogEnabled,
 } from "@/lib/employee-report-flags";
+import { parseEmployeePortalModules } from "@/lib/employee-portal-modules";
 
 function releaseModalLocksAfterDismiss() {
   releaseDocumentModalLocks();
@@ -159,6 +160,10 @@ export default function EmployeesPage() {
   const [orgSettingsCanWarehouse, setOrgSettingsCanWarehouse] = useState(false);
   const [orgSettingsCanProduction, setOrgSettingsCanProduction] = useState(false);
   const [orgSettingsSaving, setOrgSettingsSaving] = useState(false);
+  const [portalModZakazky, setPortalModZakazky] = useState(true);
+  const [portalModPenize, setPortalModPenize] = useState(true);
+  const [portalModZpravy, setPortalModZpravy] = useState(true);
+  const [portalModDochazka, setPortalModDochazka] = useState(true);
   
   const [qrEmployee, setQrEmployee] = useState<any | null>(null);
 
@@ -785,7 +790,8 @@ export default function EmployeesPage() {
       }
       toast({
         title: "Uloženo",
-        description: "Role a viditelnost v terminálu docházky byly aktualizovány.",
+        description:
+          "Role, terminál, sklad / výroba a moduly zaměstnaneckého portálu byly aktualizovány.",
       });
       setOrgSettingsEmp(null);
     } catch (error: unknown) {
@@ -1086,6 +1092,55 @@ export default function EmployeesPage() {
                 onCheckedChange={setOrgSettingsCanProduction}
               />
             </div>
+            <div className="space-y-2 border-t border-gray-200 pt-3">
+              <p className="text-xs font-semibold text-gray-800">
+                Moduly zaměstnaneckého portálu
+              </p>
+              <p className="text-[10px] text-gray-600">
+                Viditelnost v menu závisí i na licenci firmy — vypnuto zde skryje položku, i když je
+                modul ve firmě aktivní.
+              </p>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+                <Label htmlFor="portal-mod-zakazky" className={INVITE_LABEL_CLASS}>
+                  Povolit Zakázky
+                </Label>
+                <Switch
+                  id="portal-mod-zakazky"
+                  checked={portalModZakazky}
+                  onCheckedChange={setPortalModZakazky}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+                <Label htmlFor="portal-mod-penize" className={INVITE_LABEL_CLASS}>
+                  Povolit Peníze
+                </Label>
+                <Switch
+                  id="portal-mod-penize"
+                  checked={portalModPenize}
+                  onCheckedChange={setPortalModPenize}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+                <Label htmlFor="portal-mod-zpravy" className={INVITE_LABEL_CLASS}>
+                  Povolit Zprávy
+                </Label>
+                <Switch
+                  id="portal-mod-zpravy"
+                  checked={portalModZpravy}
+                  onCheckedChange={setPortalModZpravy}
+                />
+              </div>
+              <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+                <Label htmlFor="portal-mod-dochazka" className={INVITE_LABEL_CLASS}>
+                  Povolit Docházku (výkazy, práce a mzdy)
+                </Label>
+                <Switch
+                  id="portal-mod-dochazka"
+                  checked={portalModDochazka}
+                  onCheckedChange={setPortalModDochazka}
+                />
+              </div>
+            </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button
@@ -1361,9 +1416,16 @@ export default function EmployeesPage() {
                                       (emp as { canAccessProduction?: boolean }).canAccessProduction ===
                                         true
                                     );
+                                    const pm = parseEmployeePortalModules(
+                                      emp as Record<string, unknown>
+                                    );
+                                    setPortalModZakazky(pm.zakazky);
+                                    setPortalModPenize(pm.penize);
+                                    setPortalModZpravy(pm.zpravy);
+                                    setPortalModDochazka(pm.dochazka);
                                   }}
                                 >
-                                  <Edit2 className="w-4 h-4 mr-2" /> Role, terminál a sklad / výroba
+                                  <Edit2 className="w-4 h-4 mr-2" /> Role, terminál a portál
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>

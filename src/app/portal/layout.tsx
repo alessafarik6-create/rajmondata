@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useUser, useCompany, useFirebase, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
@@ -30,6 +30,12 @@ import {
   useMergedPlatformModuleCatalog,
 } from "@/contexts/platform-module-catalog-context";
 import { isBindableFirestoreInstance } from "@/lib/firestore-instance-guard";
+import {
+  computeVisibleEmployeePortalModules,
+  getOrgEmployeePortalModuleFlags,
+  parseEmployeePortalModules,
+} from "@/lib/employee-portal-modules";
+import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -93,6 +99,25 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     );
   }, [areServicesAvailable, firestore, companyId, profile?.employeeId, profile?.role]);
   const { data: profileEmployeeRow } = useDoc<Record<string, unknown>>(profileEmployeeRef);
+
+  const orgPortalModules = useMemo(
+    () => getOrgEmployeePortalModuleFlags(company, platformCatalog),
+    [company, platformCatalog]
+  );
+
+  const employeePortalModulesParsed = useMemo(
+    () => parseEmployeePortalModules(profileEmployeeRow),
+    [profileEmployeeRow]
+  );
+
+  const visibleEmployeeModules = useMemo(
+    () =>
+      computeVisibleEmployeePortalModules(
+        orgPortalModules,
+        employeePortalModulesParsed
+      ),
+    [orgPortalModules, employeePortalModulesParsed]
+  );
 
   const isPortalEmployeeOnly =
     profile?.role === "employee" &&
@@ -199,6 +224,66 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     router,
     profileEmployeeRow,
     platformCatalog,
+  ]);
+
+  /** Zaměstnanecké moduly (Peníze, Zprávy, Docházka, Zakázky) — skryté položky + blokace přímého URL. */
+  useEffect(() => {
+    if (!profile || isProfileLoading || !company) return;
+    if (!isPortalEmployeeOnly) return;
+    const v = visibleEmployeeModules;
+
+    if (pathname.startsWith("/portal/employee/money") && !v.penize) {
+      router.replace("/portal/employee");
+      return;
+    }
+    if (pathname.startsWith("/portal/employee/messages") && !v.zpravy) {
+      router.replace("/portal/employee");
+      return;
+    }
+    if (pathname.startsWith("/portal/employee/jobs") && !v.zakazky) {
+      router.replace("/portal/employee");
+      return;
+    }
+    const needsDochazkaModule =
+      pathname.startsWith("/portal/employee/daily-reports") ||
+      pathname.startsWith("/portal/employee/worklogs") ||
+      pathname.startsWith("/portal/employee/work-log") ||
+      pathname.startsWith("/portal/employee/attendance") ||
+      pathname.startsWith("/portal/labor");
+    if (needsDochazkaModule && !v.dochazka) {
+      router.replace("/portal/employee");
+    }
+  }, [
+    profile,
+    isProfileLoading,
+    company,
+    isPortalEmployeeOnly,
+    pathname,
+    router,
+    visibleEmployeeModules,
+  ]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (!isPortalEmployeeOnly || !company) return;
+    console.log("orgModules", orgPortalModules);
+    console.log("employeeModules", employeePortalModulesParsed);
+    console.log("visibleEmployeeModules", visibleEmployeeModules);
+    console.log(
+      "assignedJobIds",
+      parseAssignedWorklogJobIds(
+        (profileEmployeeRow ?? undefined) as Parameters<
+          typeof parseAssignedWorklogJobIds
+        >[0]
+      )
+    );
+  }, [
+    isPortalEmployeeOnly,
+    company,
+    orgPortalModules,
+    employeePortalModulesParsed,
+    visibleEmployeeModules,
+    profileEmployeeRow,
   ]);
 
   useEffect(() => {
@@ -488,9 +573,15 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     return spinner("Otevírám zaměstnanecký portál…");
   }
 
-  const SidebarComponent = isPortalEmployeeOnly
-    ? EmployeePortalSidebar
-    : BizForgeSidebar;
+  const renderSidebar = (mobileClose?: () => void) =>
+    isPortalEmployeeOnly ? (
+      <EmployeePortalSidebar
+        visibleEmployeeModules={visibleEmployeeModules}
+        mobileSheetClose={mobileClose}
+      />
+    ) : (
+      <BizForgeSidebar mobileSheetClose={mobileClose} />
+    );
 
   const licenseNotice = (() => {
     if (isPortalEmployeeOnly || !company) return null;
@@ -527,7 +618,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     <div className="flex min-h-screen bg-background text-foreground">
       {user && companyId ? <ActivitySessionBridge /> : null}
       <aside className="hidden print:hidden lg:block shrink-0">
-        <SidebarComponent />
+        {renderSidebar()}
       </aside>
 
       {mobileMenuOpen ? (
@@ -546,12 +637,10 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
             className="w-[min(280px,85vw)] max-w-full p-0 bg-sidebar border-sidebar-border rounded-r-lg [&>button]:text-sidebar-foreground [&>button]:hover:bg-sidebar-accent [&>button]:hover:text-sidebar-primary"
           >
             <div className="flex flex-col h-full overflow-y-auto">
-              <SidebarComponent
-                mobileSheetClose={() => {
-                  setMobileMenuOpen(false);
-                  releaseDocumentModalLocks();
-                }}
-              />
+              {renderSidebar(() => {
+                setMobileMenuOpen(false);
+                releaseDocumentModalLocks();
+              })}
             </div>
           </SheetContent>
         </Sheet>
