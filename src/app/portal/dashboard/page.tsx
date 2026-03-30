@@ -23,7 +23,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   useUser,
@@ -59,7 +58,7 @@ import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
 import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
-import { getInquiryTypeBadgeClass } from "@/lib/inquiry-type-badge";
+import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
 import { cn } from "@/lib/utils";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
@@ -900,17 +899,11 @@ export default function CompanyDashboard() {
                                     <span className="truncate text-sm font-semibold text-foreground">
                                       {r.jmeno?.trim() || "—"}
                                     </span>
-                                    {String(r.typ ?? "").trim() ? (
-                                      <Badge
-                                        variant="default"
-                                        className={cn(
-                                          "max-w-[9rem] shrink-0 truncate text-[10px] font-normal leading-none",
-                                          getInquiryTypeBadgeClass(r.typ)
-                                        )}
-                                      >
-                                        {String(r.typ).trim()}
-                                      </Badge>
-                                    ) : null}
+                                    <InquiryTypeBadge
+                                      type={r.typ}
+                                      variant="preview"
+                                      className="max-w-[9rem] text-[10px] font-normal leading-none"
+                                    />
                                   </span>
                                   <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
                                     {formatLeadListDate(ts)}

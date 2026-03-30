@@ -32,29 +32,38 @@ export function classifyInquiryType(raw: string | undefined | null): InquiryType
   return "unknown";
 }
 
-/** Plné vyplnění (solid), bez viditelného obrysu — `border-transparent` + `bg-*-500` + `text-black`. */
-const BADGE_BY_KIND: Record<
-  Exclude<InquiryTypeKind, "unknown">,
-  string
-> = {
-  modulove_domy:
-    "border-transparent bg-blue-500 text-black shadow-none hover:bg-blue-500 hover:text-black dark:bg-blue-500 dark:text-black dark:hover:bg-blue-500",
-  pergoly:
-    "border-transparent bg-green-500 text-black shadow-none hover:bg-green-500 hover:text-black dark:bg-green-500 dark:text-black dark:hover:bg-green-500",
-  obecne:
-    "border-transparent bg-red-500 text-black shadow-none hover:bg-red-500 hover:text-black dark:bg-red-500 dark:text-black dark:hover:bg-red-500",
-};
-
-const FALLBACK_BADGE =
-  "border-transparent bg-slate-400 text-black shadow-none hover:bg-slate-400 hover:text-black dark:bg-slate-400 dark:text-black dark:hover:bg-slate-400";
+/** Text ve štítku — prázdný zdroj → „Obecné“ (štítek vždy viditelný). */
+export function getInquiryTypeBadgeLabel(type: string | null | undefined): string {
+  const t = String(type ?? "").trim();
+  return t || "Obecné";
+}
 
 /**
- * Tailwind třídy pro `Badge` — plná barva pozadí, černý text, žádný outline (použijte s variant="default").
+ * Celý vzhled štítku (bez shadcn Badge — eliminuje konflikty variant/cva).
+ * `!` u bg a textu zajistí přepnutí i při kolizích s globálními styly.
  */
+const INQUIRY_BADGE_SHELL =
+  "inline-flex max-w-full shrink-0 items-center justify-center rounded-full border border-transparent px-2.5 py-0.5 text-xs font-semibold leading-snug !text-black shadow-none";
+
 export function getInquiryTypeBadgeClass(type: string | undefined | null): string {
   const kind = classifyInquiryType(type);
-  if (kind === "unknown") {
-    return cn("font-medium", FALLBACK_BADGE);
+  switch (kind) {
+    case "modulove_domy":
+      return cn(
+        INQUIRY_BADGE_SHELL,
+        "!bg-blue-500 hover:!bg-blue-500 hover:!text-black"
+      );
+    case "pergoly":
+      return cn(
+        INQUIRY_BADGE_SHELL,
+        "!bg-green-500 hover:!bg-green-500 hover:!text-black"
+      );
+    case "obecne":
+    case "unknown":
+    default:
+      return cn(
+        INQUIRY_BADGE_SHELL,
+        "!bg-red-500 hover:!bg-red-500 hover:!text-black"
+      );
   }
-  return cn("font-medium", BADGE_BY_KIND[kind]);
 }

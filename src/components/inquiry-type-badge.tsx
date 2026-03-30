@@ -1,44 +1,42 @@
 "use client";
 
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
-import { getInquiryTypeBadgeClass } from "@/lib/inquiry-type-badge";
+import {
+  getInquiryTypeBadgeClass,
+  getInquiryTypeBadgeLabel,
+} from "@/lib/inquiry-type-badge";
 
 export type InquiryTypeBadgeProps = {
-  /** Text typu ze zdroje (beze změny). */
   type: string | null | undefined;
   className?: string;
   /**
-   * `preview` — řádek seznamu / náhled (větší, kontrastnější).
+   * `preview` — řádek seznamu / náhled.
    * `detail` — rozbalený blok s popiskem „Typ poptávky“.
    */
   variant?: "preview" | "detail";
 };
 
 /**
- * Barevný štítek typu poptávky — stejné mapování jako `getInquiryTypeBadgeClass`
- * (modulové domy / pergoly / obecné / fallback).
+ * Štítek typu poptávky — `<span>` s pevnými barvami (ne `Badge`, aby nevznikaly kolize s CVA).
  */
 export function InquiryTypeBadge({
   type,
   className,
   variant = "preview",
 }: InquiryTypeBadgeProps) {
-  const t = String(type ?? "").trim();
-  if (!t) return null;
+  const label = getInquiryTypeBadgeLabel(type);
   return (
-    <Badge
-      variant="default"
+    <span
+      role="status"
       className={cn(
-        "shrink-0 truncate",
+        getInquiryTypeBadgeClass(type),
         variant === "preview"
-          ? "max-w-[min(100%,18rem)] px-2.5 py-1.5 text-xs font-semibold leading-snug sm:text-sm"
-          : "w-fit max-w-[min(100%,28rem)] px-2 py-1 text-xs font-normal leading-normal",
-        getInquiryTypeBadgeClass(t),
+          ? "max-w-[min(100%,18rem)] truncate px-2.5 py-1.5 text-xs sm:text-sm"
+          : "w-fit max-w-[min(100%,28rem)] truncate px-2 py-1 text-xs font-normal leading-normal",
         className
       )}
     >
-      {t}
-    </Badge>
+      {label}
+    </span>
   );
 }

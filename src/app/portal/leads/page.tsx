@@ -1120,9 +1120,7 @@ export default function PortalLeadsPage() {
                                 <span className="max-w-full truncate font-medium text-slate-900">
                                   {r.jmeno || "—"}
                                 </span>
-                                {r.typ?.trim() ? (
-                                  <InquiryTypeBadge type={r.typ} variant="preview" />
-                                ) : null}
+                                <InquiryTypeBadge type={r.typ} variant="preview" />
                                 <span className="shrink-0 text-xs tabular-nums text-slate-800">
                                   {dateStr}
                                 </span>
@@ -1134,9 +1132,6 @@ export default function PortalLeadsPage() {
                                 </span>
                               </div>
                               <div className="flex flex-wrap items-center gap-2">
-                                {!r.typ?.trim() ? (
-                                  <span className="text-[10px] text-slate-800 sm:text-xs">—</span>
-                                ) : null}
                                 {currentTag && tagById.get(currentTag) ? (
                                   <LeadTagBadge
                                     label={tagById.get(currentTag)?.name ?? "Štítek"}
@@ -1195,14 +1190,12 @@ export default function PortalLeadsPage() {
                             onClick={(e) => e.stopPropagation()}
                           >
                             <div className="mx-auto max-w-4xl space-y-4">
-                              {r.typ?.trim() ? (
-                                <div className="space-y-1">
-                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
-                                    Typ poptávky
-                                  </p>
-                                  <InquiryTypeBadge type={r.typ} variant="detail" />
-                                </div>
-                              ) : null}
+                              <div className="space-y-1">
+                                <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
+                                  Typ poptávky
+                                </p>
+                                <InquiryTypeBadge type={r.typ} variant="detail" />
+                              </div>
                               {r.adresa?.trim() ? (
                                 <div className="space-y-1">
                                   <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
