@@ -5,8 +5,10 @@
 import type { Firestore } from "firebase-admin/firestore";
 import {
   DEFAULT_LICENSE,
+  MODULE_KEYS,
   buildCanonicalModulesMapFromEnabled,
   normalizeEnabledModuleIds,
+  normalizeModules,
   type LicenseConfig,
   type ModuleKey,
 } from "./license-modules";
@@ -65,11 +67,21 @@ export function normalizeCompanyFromFirestore(
   id: string
 ): CompanyWithLicense {
   const license = (data.license as Record<string, unknown> | undefined) ?? {};
-  const enabledModuleIds = data.enabledModuleIds as string[] | undefined;
-  const rawModules = (license.enabledModules as string[] | undefined) ?? enabledModuleIds ?? [];
-  const enabledModules = Array.isArray(rawModules)
-    ? normalizeEnabledModuleIds(rawModules.map((x) => String(x)))
-    : [];
+  const fromLicList = license.enabledModules;
+  const fromTopIds = data.enabledModuleIds;
+  const hasExplicitModuleList = Array.isArray(fromLicList) || Array.isArray(fromTopIds);
+  const rawModules = Array.isArray(fromLicList)
+    ? fromLicList
+    : Array.isArray(fromTopIds)
+      ? fromTopIds
+      : [];
+  let enabledModules = normalizeEnabledModuleIds(rawModules.map((x) => String(x)));
+  if (!hasExplicitModuleList && enabledModules.length === 0) {
+    const licFlat = license.modules as Record<string, boolean | undefined> | undefined;
+    const orgFlat = data.modules as Record<string, boolean | undefined> | undefined;
+    const merged = normalizeModules({ ...orgFlat, ...licFlat });
+    enabledModules = MODULE_KEYS.filter((k) => merged[k]);
+  }
 
   const expirationDate =
     (license.expirationDate as string | null) ?? (license.licenseExpiresAt as string | null) ?? null;
@@ -156,6 +168,8 @@ export async function getCompanies(db: Firestore) {
 
   return docs.map((doc, i) => {
     const data = doc.data() as Record<string, unknown>;
+    /** Jednotný přehled modulů z license + enabledModuleIds + license.modules (stejný výstup jako po uložení z dialogu). */
+    const normalized = normalizeCompanyFromFirestore(data, doc.id);
     let companyLicense: CompanyLicenseDoc = licenseSnaps[i]?.exists
       ? applyExpiredLicenseStatus(
           normalizeLegacyWarehouseModule(licenseSnaps[i].data() as CompanyLicenseDoc)
@@ -180,7 +194,15 @@ export async function getCompanies(db: Firestore) {
     return {
       id: doc.id,
       ...data,
-      name: (data.name as string) ?? (data.companyName as string) ?? "",
+      name: (data.name as string) ?? (data.companyName as string) ?? normalized.name,
+      email: (data.email as string) ?? normalized.email,
+      ico: (data.ico as string) ?? normalized.ico,
+      ownerUserId: (data.ownerUserId as string) ?? normalized.ownerUserId,
+      isActive: normalized.isActive,
+      createdAt: normalized.createdAt,
+      updatedAt: normalized.updatedAt,
+      licenseId: normalized.licenseId,
+      license: normalized.license,
       companyLicense,
       employeeCount: ec,
       estimatedMonthlyCzk,

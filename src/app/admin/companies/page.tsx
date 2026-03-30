@@ -37,7 +37,13 @@ import {
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { AVAILABLE_MODULES, LICENSE_TYPES, LICENSE_STATUSES } from "@/lib/license-modules";
+import {
+  AVAILABLE_MODULES,
+  LICENSE_TYPES,
+  LICENSE_STATUSES,
+  normalizeEnabledModuleIds,
+  type CanonicalModuleKey,
+} from "@/lib/license-modules";
 import type { LicenseConfig, ModuleKey } from "@/lib/license-modules";
 
 type Company = {
@@ -52,10 +58,32 @@ type Company = {
   license: LicenseConfig;
 };
 
+function readEnabledModuleKeysFromCompanyRow(
+  company: Company & { enabledModuleIds?: string[]; modules?: Record<string, boolean> }
+): CanonicalModuleKey[] {
+  const fromLic = company.license?.enabledModules;
+  if (Array.isArray(fromLic)) {
+    return normalizeEnabledModuleIds(fromLic.map((x) => String(x)));
+  }
+  const ids = company.enabledModuleIds;
+  if (Array.isArray(ids)) {
+    return normalizeEnabledModuleIds(ids.map((x) => String(x)));
+  }
+  const mods = company.modules;
+  if (mods && typeof mods === "object") {
+    const keys = Object.entries(mods)
+      .filter(([, v]) => v === true)
+      .map(([k]) => k);
+    return normalizeEnabledModuleIds(keys);
+  }
+  return [];
+}
+
 export default function AdminCompaniesPage() {
   const { toast } = useToast();
   const [companies, setCompanies] = useState<Company[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listRefreshing, setListRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [editing, setEditing] = useState<Company | null>(null);
   const [saving, setSaving] = useState(false);
@@ -66,26 +94,55 @@ export default function AdminCompaniesPage() {
   const [terminalFor, setTerminalFor] = useState<Company | null>(null);
   const [terminalPublicUrl, setTerminalPublicUrl] = useState("");
 
-  const loadCompanies = async () => {
-    setLoading(true);
+  const loadCompanies = async (opts?: { silent?: boolean }) => {
+    const silent = opts?.silent === true;
+    if (silent) {
+      setListRefreshing(true);
+    } else {
+      setLoading(true);
+    }
     setLoadError(null);
     try {
       const res = await fetch("/api/superadmin/companies");
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const msg = data?.error || (res.status === 503 ? "Firebase Admin není nakonfigurován. Přidejte FIREBASE_CLIENT_EMAIL a FIREBASE_PRIVATE_KEY do .env.local." : "Nepodařilo se načíst organizace.");
+        const msg =
+          data?.error ||
+          (res.status === 503
+            ? "Firebase Admin není nakonfigurován. Přidejte FIREBASE_CLIENT_EMAIL a FIREBASE_PRIVATE_KEY do .env.local."
+            : "Nepodařilo se načíst organizace.");
         setLoadError(msg);
         setCompanies([]);
         if (res.status !== 503) toast({ variant: "destructive", title: "Chyba", description: msg });
         return;
       }
-      setCompanies(Array.isArray(data) ? data : []);
+      const list = (Array.isArray(data) ? data : []) as Company[];
+      setCompanies(list);
+      if (process.env.NODE_ENV === "development" && list[0]) {
+        console.log(
+          "loaded modules from source",
+          readEnabledModuleKeysFromCompanyRow(
+            list[0] as Company & {
+              enabledModuleIds?: string[];
+              modules?: Record<string, boolean>;
+            }
+          )
+        );
+      }
     } catch {
       setLoadError("Nepodařilo se načíst organizace.");
       setCompanies([]);
-      toast({ variant: "destructive", title: "Chyba", description: "Nepodařilo se načíst organizace." });
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Nepodařilo se načíst organizace.",
+      });
     } finally {
-      setLoading(false);
+      if (silent) {
+        setListRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
@@ -105,7 +162,7 @@ export default function AdminCompaniesPage() {
         title: "Status aktualizován",
         description: `Firma byla ${!company.isActive ? "aktivována" : "deaktivována"}.`,
       });
-      loadCompanies();
+      await loadCompanies({ silent: true });
     } catch {
       toast({ variant: "destructive", title: "Chyba při aktualizaci" });
     }
@@ -113,32 +170,59 @@ export default function AdminCompaniesPage() {
 
   const openEdit = (company: Company) => {
     setEditing(company);
-    const exp = company.license.expirationDate ?? (company.license as { licenseExpiresAt?: string | null }).licenseExpiresAt ?? null;
+    const exp =
+      company.license.expirationDate ??
+      (company.license as { licenseExpiresAt?: string | null }).licenseExpiresAt ??
+      null;
+    const row = company as Company & {
+      enabledModuleIds?: string[];
+      modules?: Record<string, boolean>;
+    };
+    const enabledKeys = readEnabledModuleKeysFromCompanyRow(row);
+    if (process.env.NODE_ENV === "development") {
+      console.log("loaded modules from source (modal)", enabledKeys);
+    }
     setEditForm({
       licenseType: company.license.licenseType,
       status: company.license.status,
       expirationDate: exp,
       maxUsers: company.license.maxUsers,
-      enabledModules: [...(company.license.enabledModules || [])],
+      enabledModules: [...enabledKeys],
     });
   };
 
   const saveLicense = async () => {
     if (!editing || !editForm) return;
+    if (process.env.NODE_ENV === "development") {
+      console.log("saving modules", editForm.enabledModules);
+      console.log("companyId", editing.id);
+    }
     setSaving(true);
     try {
+      const payload = { license: editForm };
+      if (process.env.NODE_ENV === "development") {
+        console.log("saving modules payload", payload);
+      }
       const res = await fetch(`/api/superadmin/companies/${editing.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ license: editForm }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg =
+          typeof data?.error === "string" ? data.error : "Uložení se nezdařilo.";
+        if (process.env.NODE_ENV === "development") console.error("save error", data);
+        throw new Error(msg);
+      }
+      if (process.env.NODE_ENV === "development") console.log("save success");
       toast({ title: "Licence uložena", description: "Změny byly aplikovány." });
       setEditing(null);
       setEditForm(null);
-      loadCompanies();
-    } catch {
-      toast({ variant: "destructive", title: "Chyba při ukládání" });
+      await loadCompanies({ silent: true });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Chyba při ukládání";
+      toast({ variant: "destructive", title: "Chyba při ukládání", description: msg });
     } finally {
       setSaving(false);
     }
@@ -147,7 +231,13 @@ export default function AdminCompaniesPage() {
   const toggleModule = (key: ModuleKey) => {
     if (!editForm) return;
     const current = editForm.enabledModules || [];
+    if (process.env.NODE_ENV === "development") {
+      console.log("before toggle", current);
+    }
     const next = current.includes(key) ? current.filter((m) => m !== key) : [...current, key];
+    if (process.env.NODE_ENV === "development") {
+      console.log("after toggle", next);
+    }
     setEditForm({ ...editForm, enabledModules: next });
   };
 
@@ -199,6 +289,11 @@ export default function AdminCompaniesPage() {
 
       <Card className="border-slate-200 overflow-hidden">
         <div className="p-4 border-b border-slate-200 flex flex-col sm:flex-row gap-4 justify-between">
+          {listRefreshing ? (
+            <p className="text-xs text-slate-600 flex items-center gap-2">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> aktualizuji seznam…
+            </p>
+          ) : null}
           <div className="relative w-full sm:max-w-xs">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-800" />
             <Input
