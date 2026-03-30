@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import {
   getInquiryTypeChipClass,
   getInquiryTypeLabel,
+  normalizeInquiryType,
 } from "@/lib/inquiry-type-badge";
 
 export type InquiryTypeBadgeProps = {
@@ -13,13 +15,20 @@ export type InquiryTypeBadgeProps = {
 };
 
 /**
- * Čip typu poptávky — vždy `<span>`, ne komponenta Badge (žádné CVA / přepisy barev).
+ * Čip typu poptávky — `<span>` + hash paleta (ne Badge).
  */
 export function InquiryTypeBadge({
   type,
   className,
   variant = "preview",
 }: InquiryTypeBadgeProps) {
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    console.log("inquiry type", type);
+    console.log("normalized type", normalizeInquiryType(type));
+    console.log("chip class", getInquiryTypeChipClass(type));
+  }, [type]);
+
   return (
     <span
       role="status"
