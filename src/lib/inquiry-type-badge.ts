@@ -1,69 +1,49 @@
-import { cn } from "@/lib/utils";
-
-/** Normalizace pro porovnání (diakritika, mezery, case). */
-function normalizeForMatch(raw: string): string {
-  return raw
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .toLowerCase()
-    .trim()
-    .replace(/\s+/g, " ");
-}
-
-export type InquiryTypeKind = "modulove_domy" | "pergoly" | "obecne" | "unknown";
-
 /**
- * Rozpozná hlavní typ poptávky z textu ze zdroje (různé zápisy bez změny uložených dat).
+ * Štítek typu poptávky — pouze UI. Celé třídy Tailwind jsou natvrdo v řetězcích (žádné `bg-${x}`).
  */
-export function classifyInquiryType(raw: string | undefined | null): InquiryTypeKind {
-  const t = normalizeForMatch(String(raw ?? ""));
-  if (!t) return "unknown";
 
-  if (t.includes("modul") && (t.includes("dom") || t.includes("dum"))) {
-    return "modulove_domy";
-  }
-  if (t.includes("pergol")) {
-    return "pergoly";
-  }
-  if (t.includes("obecn")) {
-    return "obecne";
-  }
+export type InquiryNormalizedKind = "modulove-domy" | "pergoly" | "obecne";
 
-  return "unknown";
-}
-
-/** Text ve štítku — prázdný zdroj → „Obecné“ (štítek vždy viditelný). */
-export function getInquiryTypeBadgeLabel(type: string | null | undefined): string {
-  const t = String(type ?? "").trim();
-  return t || "Obecné";
+export function normalizeInquiryType(type?: string | null): InquiryNormalizedKind {
+  const t = (type ?? "").toLowerCase().trim();
+  if (t.includes("modul")) return "modulove-domy";
+  if (t.includes("pergol")) return "pergoly";
+  return "obecne";
 }
 
 /**
- * Celý vzhled štítku (bez shadcn Badge — eliminuje konflikty variant/cva).
- * `!` u bg a textu zajistí přepnutí i při kolizích s globálními styly.
+ * Kompletní className pro `<span>` štítku — vždy obsahuje `bg-blue-500` | `bg-green-500` | `bg-red-500`.
  */
-const INQUIRY_BADGE_SHELL =
-  "inline-flex max-w-full shrink-0 items-center justify-center rounded-full border border-transparent px-2.5 py-0.5 text-xs font-semibold leading-snug !text-black shadow-none";
-
-export function getInquiryTypeBadgeClass(type: string | undefined | null): string {
-  const kind = classifyInquiryType(type);
-  switch (kind) {
-    case "modulove_domy":
-      return cn(
-        INQUIRY_BADGE_SHELL,
-        "!bg-blue-500 hover:!bg-blue-500 hover:!text-black"
-      );
-    case "pergoly":
-      return cn(
-        INQUIRY_BADGE_SHELL,
-        "!bg-green-500 hover:!bg-green-500 hover:!text-black"
-      );
-    case "obecne":
-    case "unknown":
-    default:
-      return cn(
-        INQUIRY_BADGE_SHELL,
-        "!bg-red-500 hover:!bg-red-500 hover:!text-black"
-      );
+export function getInquiryTypeChipClass(type?: string | null): string {
+  const normalized = normalizeInquiryType(type);
+  if (normalized === "modulove-domy") {
+    return "inline-flex max-w-full min-w-0 shrink items-center truncate rounded-full px-2.5 py-1 text-sm font-medium bg-blue-500 text-black";
   }
+  if (normalized === "pergoly") {
+    return "inline-flex max-w-full min-w-0 shrink items-center truncate rounded-full px-2.5 py-1 text-sm font-medium bg-green-500 text-black";
+  }
+  return "inline-flex max-w-full min-w-0 shrink items-center truncate rounded-full px-2.5 py-1 text-sm font-medium bg-red-500 text-black";
+}
+
+export function getInquiryTypeLabel(type?: string | null): string {
+  const normalized = normalizeInquiryType(type);
+  if (normalized === "modulove-domy") return "Modulové domy";
+  if (normalized === "pergoly") return "Pergoly";
+  return "Obecné";
+}
+
+/**
+ * Zdroj textu pro klasifikaci: hlavně `typ` z importu, jinak overlay (`typ_poptavky` / `typ`).
+ */
+export function resolveInquiryTypeRaw(
+  row: { typ?: string },
+  overlay?: { typ?: string; typ_poptavky?: string } | null
+): string | undefined {
+  const a = String(row?.typ ?? "").trim();
+  if (a) return row.typ;
+  const b = String(overlay?.typ_poptavky ?? "").trim();
+  if (b) return overlay?.typ_poptavky;
+  const c = String(overlay?.typ ?? "").trim();
+  if (c) return overlay?.typ;
+  return undefined;
 }

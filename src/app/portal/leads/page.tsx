@@ -72,6 +72,7 @@ import {
   normalizeLeadTagColor,
 } from "@/lib/lead-tag-colors";
 import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
+import { resolveInquiryTypeRaw } from "@/lib/inquiry-type-badge";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -1082,6 +1083,7 @@ export default function PortalLeadsPage() {
                     const ov = overlayByDocId.get(key);
                     const currentTag = ov?.tagId ?? "";
                     const nextMt = nextMeetingByLeadKey.get(key);
+                    const inquiryTypeSource = resolveInquiryTypeRaw(r, ov);
                     const received = leadReceivedDate(r, ov);
                     const expanded = !!expandedLeadKeys[key];
                     const dateStr = received ? formatReceivedDay(received) : "—";
@@ -1120,7 +1122,7 @@ export default function PortalLeadsPage() {
                                 <span className="max-w-full truncate font-medium text-slate-900">
                                   {r.jmeno || "—"}
                                 </span>
-                                <InquiryTypeBadge type={r.typ} variant="preview" />
+                                <InquiryTypeBadge type={inquiryTypeSource} variant="preview" />
                                 <span className="shrink-0 text-xs tabular-nums text-slate-800">
                                   {dateStr}
                                 </span>
@@ -1194,7 +1196,7 @@ export default function PortalLeadsPage() {
                                 <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
                                   Typ poptávky
                                 </p>
-                                <InquiryTypeBadge type={r.typ} variant="detail" />
+                                <InquiryTypeBadge type={inquiryTypeSource} variant="detail" />
                               </div>
                               {r.adresa?.trim() ? (
                                 <div className="space-y-1">

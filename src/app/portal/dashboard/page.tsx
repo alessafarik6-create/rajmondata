@@ -59,6 +59,7 @@ import type { AttendanceRow } from "@/lib/employee-attendance";
 import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
 import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
 import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
+import { resolveInquiryTypeRaw } from "@/lib/inquiry-type-badge";
 import { cn } from "@/lib/utils";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
@@ -880,6 +881,10 @@ export default function CompanyDashboard() {
                     <ul className="flex flex-col gap-1.5">
                       {latestFiveDashboardLeads.map((r) => {
                         const key = stableImportLeadDocumentId(r);
+                        const overlayRow = importLeadOverlayByKey.get(key) as
+                          | { typ?: string; typ_poptavky?: string }
+                          | undefined;
+                        const inquiryTypeSource = resolveInquiryTypeRaw(r, overlayRow);
                         const ts = leadNewestTimestampMs(r, importLeadOverlayByKey.get(key));
                         const contact =
                           [r.telefon?.trim(), r.email?.trim()].filter(Boolean).join(" · ") || "—";
@@ -900,7 +905,7 @@ export default function CompanyDashboard() {
                                       {r.jmeno?.trim() || "—"}
                                     </span>
                                     <InquiryTypeBadge
-                                      type={r.typ}
+                                      type={inquiryTypeSource}
                                       variant="preview"
                                       className="max-w-[9rem] text-[10px] font-normal leading-none"
                                     />
