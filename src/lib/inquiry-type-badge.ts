@@ -1,49 +1,97 @@
 /**
- * Štítek typu poptávky — pouze UI. Celé třídy Tailwind jsou natvrdo v řetězcích (žádné `bg-${x}`).
+ * Štítek typu poptávky — pouze UI. Třídy Tailwind jsou vždy celé řetězce v kódu (žádné `bg-${x}`).
  */
 
-export type InquiryNormalizedKind = "modulove-domy" | "pergoly" | "obecne";
-
-export function normalizeInquiryType(type?: string | null): InquiryNormalizedKind {
-  const t = (type ?? "").toLowerCase().trim();
-  if (t.includes("modul")) return "modulove-domy";
-  if (t.includes("pergol")) return "pergoly";
-  return "obecne";
+/** Jednoduchá normalizace (pro label / zobrazení). */
+export function normalizeInquiryType(type?: string | null): string {
+  return (type ?? "").trim().toLowerCase();
 }
 
+/** Pro porovnání klíčových slov: diakritika pryč, malá písmena. */
+function inquiryTypeMatchKey(type?: string | null): string {
+  return String(type ?? "")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+const CHIP_BASE =
+  "inline-flex max-w-full min-w-0 shrink items-center truncate rounded-full px-2.5 py-1 text-sm font-medium text-black";
+
 /**
- * Kompletní className pro `<span>` štítku — vždy obsahuje `bg-blue-500` | `bg-green-500` | `bg-red-500`.
+ * Barva podle obsahu textu z importu. Neznámý / prázdný typ → stále viditelný neutrální štítek.
  */
 export function getInquiryTypeChipClass(type?: string | null): string {
-  const normalized = normalizeInquiryType(type);
-  if (normalized === "modulove-domy") {
-    return "inline-flex max-w-full min-w-0 shrink items-center truncate rounded-full px-2.5 py-1 text-sm font-medium bg-blue-500 text-black";
+  const t = inquiryTypeMatchKey(type);
+  if (!t) {
+    return `${CHIP_BASE} bg-slate-300`;
   }
-  if (normalized === "pergoly") {
-    return "inline-flex max-w-full min-w-0 shrink items-center truncate rounded-full px-2.5 py-1 text-sm font-medium bg-green-500 text-black";
+  if (t.includes("modul")) {
+    return `${CHIP_BASE} bg-blue-500`;
   }
-  return "inline-flex max-w-full min-w-0 shrink items-center truncate rounded-full px-2.5 py-1 text-sm font-medium bg-red-500 text-black";
+  if (t.includes("mont")) {
+    return `${CHIP_BASE} bg-indigo-500`;
+  }
+  if (t.includes("zahrad")) {
+    return `${CHIP_BASE} bg-green-500`;
+  }
+  if (t.includes("pergol")) {
+    return `${CHIP_BASE} bg-emerald-500`;
+  }
+  if (t.includes("obecn")) {
+    return `${CHIP_BASE} bg-red-500`;
+  }
+  return `${CHIP_BASE} bg-slate-300`;
 }
 
+/** Původní text z importu; prázdné → „Obecné“. */
 export function getInquiryTypeLabel(type?: string | null): string {
-  const normalized = normalizeInquiryType(type);
-  if (normalized === "modulove-domy") return "Modulové domy";
-  if (normalized === "pergoly") return "Pergoly";
-  return "Obecné";
+  const trimmed = (type ?? "").trim();
+  return trimmed.length > 0 ? trimmed : "Obecné";
 }
+
+export type InquiryTypeOverlayFields = {
+  typ?: string;
+  typ_poptavky?: string;
+  type?: string;
+  inquiryType?: string;
+  category?: string;
+  productType?: string;
+  serviceType?: string;
+  typPoptavky?: string;
+  kategorie?: string;
+};
 
 /**
- * Zdroj textu pro klasifikaci: hlavně `typ` z importu, jinak overlay (`typ_poptavky` / `typ`).
+ * Zdroj řetězce pro štítek: `typ` z řádku importu, jinak běžná pole z overlaye / rozšířených zdrojů.
  */
 export function resolveInquiryTypeRaw(
   row: { typ?: string },
-  overlay?: { typ?: string; typ_poptavky?: string } | null
+  overlay?: InquiryTypeOverlayFields | null
 ): string | undefined {
-  const a = String(row?.typ ?? "").trim();
-  if (a) return row.typ;
-  const b = String(overlay?.typ_poptavky ?? "").trim();
-  if (b) return overlay?.typ_poptavky;
-  const c = String(overlay?.typ ?? "").trim();
-  if (c) return overlay?.typ;
+  const fromRow = String(row?.typ ?? "").trim();
+  if (fromRow) return fromRow;
+
+  if (!overlay || typeof overlay !== "object") return undefined;
+
+  const keys = [
+    "typ_poptavky",
+    "typPoptavky",
+    "typ",
+    "type",
+    "inquiryType",
+    "category",
+    "kategorie",
+    "productType",
+    "serviceType",
+  ] as const;
+  for (const k of keys) {
+    const v = overlay[k];
+    if (typeof v === "string" && v.trim()) {
+      return v.trim();
+    }
+  }
   return undefined;
 }

@@ -59,7 +59,10 @@ import type { AttendanceRow } from "@/lib/employee-attendance";
 import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
 import { stableImportLeadDocumentId } from "@/lib/import-lead-keys";
 import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
-import { resolveInquiryTypeRaw } from "@/lib/inquiry-type-badge";
+import {
+  resolveInquiryTypeRaw,
+  type InquiryTypeOverlayFields,
+} from "@/lib/inquiry-type-badge";
 import { cn } from "@/lib/utils";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
@@ -882,7 +885,7 @@ export default function CompanyDashboard() {
                       {latestFiveDashboardLeads.map((r) => {
                         const key = stableImportLeadDocumentId(r);
                         const overlayRow = importLeadOverlayByKey.get(key) as
-                          | { typ?: string; typ_poptavky?: string }
+                          | InquiryTypeOverlayFields
                           | undefined;
                         const inquiryTypeSource = resolveInquiryTypeRaw(r, overlayRow);
                         const ts = leadNewestTimestampMs(r, importLeadOverlayByKey.get(key));
