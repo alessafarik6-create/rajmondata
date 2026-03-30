@@ -42,7 +42,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Dialog,
@@ -72,7 +71,7 @@ import {
   contrastTextForBg,
   normalizeLeadTagColor,
 } from "@/lib/lead-tag-colors";
-import { getInquiryTypeBadgeClass } from "@/lib/inquiry-type-badge";
+import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -1117,10 +1116,13 @@ export default function PortalLeadsPage() {
                           />
                           <div className="min-w-0 flex-1 space-y-1.5 lg:space-y-0">
                             <div className="flex flex-col gap-1.5 lg:grid lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1.15fr)_minmax(0,auto)] lg:items-center lg:gap-x-4">
-                              <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
+                              <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1.5">
                                 <span className="max-w-full truncate font-medium text-slate-900">
                                   {r.jmeno || "—"}
                                 </span>
+                                {r.typ?.trim() ? (
+                                  <InquiryTypeBadge type={r.typ} variant="preview" />
+                                ) : null}
                                 <span className="shrink-0 text-xs tabular-nums text-slate-800">
                                   {dateStr}
                                 </span>
@@ -1132,16 +1134,9 @@ export default function PortalLeadsPage() {
                                 </span>
                               </div>
                               <div className="flex flex-wrap items-center gap-2">
-                                {r.typ?.trim() ? (
-                                  <Badge
-                                    variant="secondary"
-                                    className="text-[10px] font-normal leading-none sm:text-xs"
-                                  >
-                                    {r.typ}
-                                  </Badge>
-                                ) : (
+                                {!r.typ?.trim() ? (
                                   <span className="text-[10px] text-slate-800 sm:text-xs">—</span>
-                                )}
+                                ) : null}
                                 {currentTag && tagById.get(currentTag) ? (
                                   <LeadTagBadge
                                     label={tagById.get(currentTag)?.name ?? "Štítek"}
@@ -1205,15 +1200,7 @@ export default function PortalLeadsPage() {
                                   <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
                                     Typ poptávky
                                   </p>
-                                  <Badge
-                                    variant="outline"
-                                    className={cn(
-                                      "w-fit text-xs font-normal",
-                                      getInquiryTypeBadgeClass(r.typ)
-                                    )}
-                                  >
-                                    {r.typ}
-                                  </Badge>
+                                  <InquiryTypeBadge type={r.typ} variant="detail" />
                                 </div>
                               ) : null}
                               {r.adresa?.trim() ? (
