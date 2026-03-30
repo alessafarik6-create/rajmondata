@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   collection,
+  doc,
   documentId,
+  getDoc,
   getDocs,
   query,
   where,
@@ -19,7 +21,8 @@ import { chunkArray, parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
  * Zakázky přiřazené zaměstnanci pro výkaz práce:
  * - `assignedWorklogJobIds` / legacy pole na employees/{id}
  * - zakázky kde `jobs.assignedEmployeeIds` obsahuje employeeId nebo uid uživatele
- * Načítá názvy z `companies/{companyId}/jobs` — nezávisle na terminálu docházky.
+ * Načítá názvy z `companies/{companyId}/jobs/{id}` nebo z `.../employeeSummary/summary`
+ * (režim employeeSummary — bez celého dokumentu zakázky s financemi).
  */
 export function useAssignedWorklogJobs(
   firestore: Firestore | null | undefined,
@@ -29,7 +32,9 @@ export function useAssignedWorklogJobs(
   /** UID přihlášeného uživatele (často stejné jako v assignedEmployeeIds na zakázce). */
   userUid?: string | undefined,
   /** ID záznamu zaměstnance v companies/.../employees. */
-  employeeId?: string | undefined
+  employeeId?: string | undefined,
+  /** `employeeSummary` pro role employee (bez čtení celého job dokumentu). */
+  jobLabelSource: "job" | "employeeSummary" = "job"
 ): {
   assignedJobIds: string[];
   jobs: { id: string; name?: string }[];
@@ -96,19 +101,44 @@ export function useAssignedWorklogJobs(
           return;
         }
 
-        const chunks = chunkArray(allIds, 10);
         const acc: { id: string; name?: string }[] = [];
-        for (const chunk of chunks) {
-          const q = query(jobsCol, where(documentId(), "in", chunk));
-          const snap = await getDocs(q);
-          snap.forEach((d) => {
-            const data = d.data() as { name?: string; title?: string };
-            const label =
-              (typeof data.name === "string" && data.name.trim()) ||
-              (typeof data.title === "string" && data.title.trim()) ||
-              undefined;
-            acc.push({ id: d.id, name: label });
-          });
+
+        if (jobLabelSource === "employeeSummary") {
+          for (const jid of allIds) {
+            const sref = doc(
+              firestore,
+              "companies",
+              companyId,
+              "jobs",
+              jid,
+              "employeeSummary",
+              "summary"
+            );
+            const snap = await getDoc(sref);
+            const nm =
+              snap.exists() &&
+              typeof (snap.data() as { name?: string }).name === "string"
+                ? String((snap.data() as { name: string }).name).trim()
+                : "";
+            acc.push({
+              id: jid,
+              name: nm || undefined,
+            });
+          }
+        } else {
+          const chunks = chunkArray(allIds, 10);
+          for (const chunk of chunks) {
+            const q = query(jobsCol, where(documentId(), "in", chunk));
+            const snap = await getDocs(q);
+            snap.forEach((d) => {
+              const data = d.data() as { name?: string; title?: string };
+              const label =
+                (typeof data.name === "string" && data.name.trim()) ||
+                (typeof data.title === "string" && data.title.trim()) ||
+                undefined;
+              acc.push({ id: d.id, name: label });
+            });
+          }
         }
         if (!cancelled) {
           acc.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, "cs"));
@@ -139,7 +169,16 @@ export function useAssignedWorklogJobs(
     return () => {
       cancelled = true;
     };
-  }, [firestore, companyId, depsKey, employeeDocLoading, employeeData, userUid, employeeId]);
+  }, [
+    firestore,
+    companyId,
+    depsKey,
+    employeeDocLoading,
+    employeeData,
+    userUid,
+    employeeId,
+    jobLabelSource,
+  ]);
 
   const assignedJobIds = useMemo(() => {
     if (employeeDocLoading) return [] as string[];

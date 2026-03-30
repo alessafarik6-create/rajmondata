@@ -33,6 +33,8 @@ export type JobPhotoAnnotationTarget = {
 /** Typ vlastní složky u zakázky (v Firestore pole `type`). */
 export type JobFolderType = "photos" | "documents" | "files";
 
+export type JobFolderEmployeeVisibility = "internal_only" | "employee_visible";
+
 export type JobFolderDoc = {
   id: string;
   name?: string;
@@ -42,6 +44,12 @@ export type JobFolderDoc = {
   jobId?: string;
   createdAt?: unknown;
   createdBy?: string;
+  /** Bez explicitního true je složka interní (zaměstnanec nevidí). */
+  employeeVisible?: boolean;
+  /** Synonymum pro budoucí rozšíření (pravidla Firestore akceptují i employee_visible). */
+  employeeVisibility?: JobFolderEmployeeVisibility;
+  /** Povolit nahrávání zaměstnanci s omezeným přístupem. */
+  employeeUploadAllowed?: boolean;
 };
 
 export type JobMediaFileType = "image" | "pdf" | "office";
@@ -76,6 +84,13 @@ export type JobFolderImageDoc = {
   ledgerAmountNet?: number;
   ledgerAmountGross?: number;
   ledgerDate?: string;
+  /** Viditelnost souboru pro zaměstnance (přepíše výchozí dědění ze složky). */
+  employeeVisible?: boolean;
+  /** Audit nahrání zaměstnancem (Firestore pravidla). */
+  uploadSource?: string;
+  uploadedBy?: string;
+  uploadedByEmployeeId?: string;
+  uploadedAt?: unknown;
 };
 
 /** Výběr z galerie / souborů: obrázky i PDF. */

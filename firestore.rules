@@ -143,6 +143,67 @@ service cloud.firestore {
         jobId in get(empRef).data.assignedTerminalJobIds;
     }
 
+    /** Přístup člena zakázky — documents/.../jobs/{jobId}/jobMembers/{employeeId} */
+    function jobMemberPathForEmp(companyId, jobId, memberEmpId) {
+      return /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/jobMembers/$(memberEmpId);
+    }
+
+    function hasJobMemberDocForSelf(companyId, jobId) {
+      return ownEmployeeId() != null &&
+        exists(jobMemberPathForEmp(companyId, jobId, ownEmployeeId()));
+    }
+
+    function jobMemberFullInternal(companyId, jobId) {
+      return hasJobMemberDocForSelf(companyId, jobId) &&
+        get(jobMemberPathForEmp(companyId, jobId, ownEmployeeId())).data.accessMode == 'full_internal';
+    }
+
+    /** Zaměstnanec portálu s přiřazením k zakázce (výkaz / terminál / explicitní jobMembers). */
+    function jobPortalEmployeeEligible(companyId, jobId) {
+      return signedIn() && sameCompany(companyId) &&
+        userRole() == 'employee' &&
+        ownEmployeeId() != null && (
+          hasJobMemberDocForSelf(companyId, jobId) ||
+          jobAssignedForWorklog(companyId, jobId) ||
+          jobAssignedForTerminal(companyId, jobId)
+        );
+    }
+
+    /** Omezený režim: vidí jen employeeSummary + employeeVisible složky / soubory. */
+    function jobEmployeeLimitedMediaProfile(companyId, jobId) {
+      return jobPortalEmployeeEligible(companyId, jobId) &&
+        !jobMemberFullInternal(companyId, jobId) &&
+        !isPrivileged();
+    }
+
+    /** Finance, doklady, plné dokumenty — jen administrace nebo full_internal na zakázce. */
+    function jobFinancialReadAccess(companyId, jobId) {
+      return signedIn() && sameCompany(companyId) &&
+        (isPrivileged() || jobMemberFullInternal(companyId, jobId));
+    }
+
+    function jobEmployeeMustUseSummaryOnly(companyId, jobId) {
+      return jobEmployeeLimitedMediaProfile(companyId, jobId);
+    }
+
+    function folderDocEmployeeVisible(companyId, jobId, folderId) {
+      let fp = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/folders/$(folderId);
+      return exists(fp) && (
+        get(fp).data.employeeVisible == true ||
+        get(fp).data.employeeVisibility == 'employee_visible'
+      );
+    }
+
+    function folderDocEmployeeUploadAllowed(companyId, jobId, folderId) {
+      let fp = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/folders/$(folderId);
+      return exists(fp) && get(fp).data.employeeUploadAllowed == true;
+    }
+
+    function legacyJobPhotosEmployeeAllowed(companyId, jobId) {
+      let sp = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/employeeSummary/summary;
+      return exists(sp) && get(sp).data.legacyPhotosEmployeeVisible == true;
+    }
+
     /** Čtení detailu zakázky včetně fotek / složek (shodně s dokumentem jobs/{jobId}). */
     function jobDetailReadAccess(companyId, jobId) {
       return terminalCompanyMatches(companyId) ||
@@ -301,20 +362,45 @@ service cloud.firestore {
       }
 
       match /jobs/{jobId} {
-        allow read: if jobDetailReadAccess(companyId, jobId);
+        allow read: if terminalCompanyMatches(companyId) ||
+          (signedIn() && sameCompany(companyId) &&
+            jobDetailReadAccess(companyId, jobId) &&
+            !jobEmployeeMustUseSummaryOnly(companyId, jobId));
         allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
 
+        /** Bezpečný náhled zakázky pro zaměstnance (bez rozpočtu). */
+        match /employeeSummary/summary {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() || jobPortalEmployeeEligible(companyId, jobId)
+          );
+          allow write: if signedIn() && sameCompany(companyId) && isPrivileged();
+        }
+
+        /** Přiřazení a režim přístupu k zakázce (klíč = employees/{id}). */
+        match /jobMembers/{memberEmpId} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (ownEmployeeId() != null && memberEmpId == ownEmployeeId())
+          );
+          allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        }
+
         match /photos/{photoId} {
-          allow read: if jobDetailReadAccess(companyId, jobId);
-          allow create: if jobDetailReadAccess(companyId, jobId) &&
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId) ||
+            (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
+              legacyJobPhotosEmployeeAllowed(companyId, jobId) &&
+              (!('employeeVisible' in resource.data) ||
+                resource.data.employeeVisible == true));
+          allow create: if jobFinancialReadAccess(companyId, jobId) &&
             request.resource.data.companyId == companyId &&
             request.resource.data.jobId == jobId &&
             request.resource.data.createdBy == request.auth.uid;
-          allow update: if jobDetailReadAccess(companyId, jobId) &&
+          allow update: if jobFinancialReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
             resource.data.jobId == jobId &&
             (isPrivileged() || resource.data.createdBy == request.auth.uid);
-          allow delete: if jobDetailReadAccess(companyId, jobId) &&
+          allow delete: if jobFinancialReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
             resource.data.jobId == jobId &&
             (isPrivileged() || resource.data.createdBy == request.auth.uid);
@@ -325,7 +411,8 @@ service cloud.firestore {
          * companies/{companyId}/jobs/{jobId}/incomes/{incomeId}
          */
         match /incomes/{incomeId} {
-          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId);
           allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             jobDetailReadAccess(companyId, jobId) &&
             request.resource.data.companyId == companyId &&
@@ -348,7 +435,8 @@ service cloud.firestore {
 
         /** Náklady zakázky (částka, datum, poznámka, příloha). Zapisují vedení / účetnictví. */
         match /expenses/{expenseId} {
-          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId);
           allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             jobDetailReadAccess(companyId, jobId) &&
             request.resource.data.companyId == companyId &&
@@ -464,7 +552,8 @@ service cloud.firestore {
          * Smlouvy o dílo u zakázky — companies/{companyId}/jobs/{jobId}/workContracts/{contractId}
          */
         match /workContracts/{contractId} {
-          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId);
           allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             jobDetailReadAccess(companyId, jobId);
         }
@@ -474,7 +563,8 @@ service cloud.firestore {
          * companies/{companyId}/jobs/{jobId}/billingDocuments/{docId}
          */
         match /billingDocuments/{docId} {
-          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId);
           allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             jobDetailReadAccess(companyId, jobId) &&
             request.resource.data.companyId == companyId &&
@@ -489,7 +579,8 @@ service cloud.firestore {
          * taskScope == 'job' odliší záznam od companies/{companyId}/tasks (task manager).
          */
         match /tasks/{taskId} {
-          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId);
           allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             jobDetailReadAccess(companyId, jobId) &&
             request.resource.data.companyId == companyId &&
@@ -537,7 +628,10 @@ service cloud.firestore {
         }
 
         match /folders/{folderId} {
-          allow read: if jobDetailReadAccess(companyId, jobId);
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId) ||
+            (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
+              folderDocEmployeeVisible(companyId, jobId, folderId));
           allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             request.resource.data.companyId == companyId &&
             request.resource.data.jobId == jobId &&
@@ -554,23 +648,54 @@ service cloud.firestore {
               request.resource.data.type in ['photos', 'documents', 'files']);
 
           match /images/{imageId} {
-            allow read: if jobDetailReadAccess(companyId, jobId);
-            allow create: if jobDetailReadAccess(companyId, jobId) &&
-              request.resource.data.companyId == companyId &&
-              request.resource.data.jobId == jobId &&
-              request.resource.data.folderId == folderId &&
-              request.resource.data.createdBy == request.auth.uid &&
-              request.resource.data.storagePath is string;
-            allow update: if jobDetailReadAccess(companyId, jobId) &&
-              resource.data.companyId == companyId &&
-              resource.data.jobId == jobId &&
-              resource.data.folderId == folderId &&
-              (isPrivileged() || resource.data.createdBy == request.auth.uid);
-            allow delete: if jobDetailReadAccess(companyId, jobId) &&
-              resource.data.companyId == companyId &&
-              resource.data.jobId == jobId &&
-              resource.data.folderId == folderId &&
-              (isPrivileged() || resource.data.createdBy == request.auth.uid);
+            allow read: if terminalCompanyMatches(companyId) ||
+              jobFinancialReadAccess(companyId, jobId) ||
+              (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
+                folderDocEmployeeVisible(companyId, jobId, folderId) &&
+                (!('employeeVisible' in resource.data) ||
+                  resource.data.employeeVisible == true));
+            allow create: if (jobFinancialReadAccess(companyId, jobId) &&
+                request.resource.data.companyId == companyId &&
+                request.resource.data.jobId == jobId &&
+                request.resource.data.folderId == folderId &&
+                request.resource.data.createdBy == request.auth.uid &&
+                request.resource.data.storagePath is string) ||
+              (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
+                folderDocEmployeeVisible(companyId, jobId, folderId) &&
+                folderDocEmployeeUploadAllowed(companyId, jobId, folderId) &&
+                request.resource.data.companyId == companyId &&
+                request.resource.data.jobId == jobId &&
+                request.resource.data.folderId == folderId &&
+                request.resource.data.createdBy == request.auth.uid &&
+                request.resource.data.storagePath is string &&
+                request.resource.data.uploadSource == 'employee-job-upload' &&
+                request.resource.data.uploadedByEmployeeId == ownEmployeeId());
+            allow update: if (jobFinancialReadAccess(companyId, jobId) &&
+                resource.data.companyId == companyId &&
+                resource.data.jobId == jobId &&
+                resource.data.folderId == folderId &&
+                (isPrivileged() || resource.data.createdBy == request.auth.uid)) ||
+              (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
+                folderDocEmployeeVisible(companyId, jobId, folderId) &&
+                resource.data.companyId == companyId &&
+                resource.data.jobId == jobId &&
+                resource.data.folderId == folderId &&
+                resource.data.createdBy == request.auth.uid &&
+                request.resource.data.companyId == companyId &&
+                request.resource.data.jobId == jobId &&
+                request.resource.data.folderId == folderId &&
+                request.resource.data.createdBy == resource.data.createdBy);
+            allow delete: if (jobFinancialReadAccess(companyId, jobId) &&
+                resource.data.companyId == companyId &&
+                resource.data.jobId == jobId &&
+                resource.data.folderId == folderId &&
+                (isPrivileged() || resource.data.createdBy == request.auth.uid)) ||
+              (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
+                folderDocEmployeeVisible(companyId, jobId, folderId) &&
+                resource.data.companyId == companyId &&
+                resource.data.jobId == jobId &&
+                resource.data.folderId == folderId &&
+                resource.data.createdBy == request.auth.uid);
           }
         }
       }
@@ -619,16 +744,20 @@ service cloud.firestore {
         allow read: if signedIn() && sameCompany(companyId) && (
           isPrivileged() ||
           resource.data.createdBy == request.auth.uid ||
-          (resource.data.jobId is string && resource.data.jobId.size() > 0 &&
-            jobDetailReadAccess(companyId, resource.data.jobId)) ||
-          (resource.data.customerId is string && resource.data.customerId.size() > 0)
+          (resource.data.customerId is string && resource.data.customerId.size() > 0 &&
+            (!(resource.data.jobId is string) || resource.data.jobId.size() == 0)) ||
+          (resource.data.jobId is string && resource.data.jobId.size() > 0 && (
+            jobFinancialReadAccess(companyId, resource.data.jobId) ||
+            (jobEmployeeLimitedMediaProfile(companyId, resource.data.jobId) &&
+              resource.data.employeeVisible == true)
+          ))
         );
         allow create: if signedIn() && sameCompany(companyId) &&
           request.resource.data.companyId == companyId &&
           request.resource.data.sourceType == 'measurement-photo' &&
           request.resource.data.createdBy == request.auth.uid && (
             (request.resource.data.jobId is string && request.resource.data.jobId.size() > 0 &&
-              jobDetailReadAccess(companyId, request.resource.data.jobId)) ||
+              jobFinancialReadAccess(companyId, request.resource.data.jobId)) ||
             (!('jobId' in request.resource.data) || request.resource.data.jobId == null)
           );
         allow update: if signedIn() && sameCompany(companyId) &&
@@ -637,15 +766,15 @@ service cloud.firestore {
             isPrivileged() ||
             (resource.data.createdBy == request.auth.uid &&
               (!(resource.data.jobId is string) || resource.data.jobId.size() == 0 ||
-                jobDetailReadAccess(companyId, resource.data.jobId)) &&
+                jobFinancialReadAccess(companyId, resource.data.jobId)) &&
               (!(request.resource.data.jobId is string) || request.resource.data.jobId.size() == 0 ||
-                jobDetailReadAccess(companyId, request.resource.data.jobId)))
+                jobFinancialReadAccess(companyId, request.resource.data.jobId)))
           );
         allow delete: if signedIn() && sameCompany(companyId) && (
           isPrivileged() ||
           (resource.data.createdBy == request.auth.uid && (
             (!(resource.data.jobId is string) || resource.data.jobId.size() == 0) ||
-            jobDetailReadAccess(companyId, resource.data.jobId)
+            jobFinancialReadAccess(companyId, resource.data.jobId)
           ))
         );
       }

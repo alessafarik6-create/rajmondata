@@ -43,6 +43,13 @@ import {
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
 import {
+  filterFoldersForLimitedEmployee,
+  canEmployeeUploadToFolder,
+  isImageEmployeeVisible,
+  type JobMemberPermissions,
+} from "@/lib/job-employee-access";
+import { Switch } from "@/components/ui/switch";
+import {
   commitFolderAccountingExpense,
   commitFolderAccountingIncome,
   deleteFolderExpenseLinkedToImage,
@@ -439,6 +446,9 @@ function UserFolderBlock({
   onAnnotatePhoto,
   onNoteDialogOpen,
   layout = "default",
+  mediaScope = "full",
+  memberPermissions = null,
+  employeeRecordId = null,
 }: {
   folder: JobFolderDoc;
   companyId: string;
@@ -455,6 +465,9 @@ function UserFolderBlock({
     fileNameHint: string;
   }) => void;
   layout?: "default" | "jobDetailWide";
+  mediaScope?: "full" | "employeeLimited";
+  memberPermissions?: JobMemberPermissions | null;
+  employeeRecordId?: string | null;
 }) {
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -471,7 +484,10 @@ function UserFolderBlock({
   const cameraRef = useRef<HTMLInputElement>(null);
 
   const folderType: JobFolderType = folder.type ?? "files";
-  const isAccountingFolder = folderType === "documents";
+  const isEmployeeLimited = mediaScope === "employeeLimited";
+  const isAccountingFolder =
+    folderType === "documents" && !isEmployeeLimited;
+  const [folderPermBusy, setFolderPermBusy] = useState(false);
 
   const [accountingOpen, setAccountingOpen] = useState(false);
   const [accountingQueue, setAccountingQueue] = useState<File[]>([]);
@@ -539,6 +555,7 @@ function UserFolderBlock({
 
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !user?.uid) return;
+    if (isEmployeeLimited) return;
     let cancelled = false;
     const jn = jobDisplayName ?? null;
     void (async () => {
@@ -585,7 +602,70 @@ function UserFolderBlock({
     return () => {
       cancelled = true;
     };
-  }, [images, firestore, companyId, jobId, folder.id, user?.uid, jobDisplayName]);
+  }, [
+    images,
+    firestore,
+    companyId,
+    jobId,
+    folder.id,
+    user?.uid,
+    jobDisplayName,
+    isEmployeeLimited,
+  ]);
+
+  const showFolderUpload =
+    !isAccountingFolder &&
+    (isEmployeeLimited
+      ? canEmployeeUploadToFolder(
+          folder as Record<string, unknown> & { id: string },
+          memberPermissions
+        )
+      : true);
+
+  const persistFolderEmployeeFlags = async (patch: {
+    employeeVisible: boolean;
+    employeeUploadAllowed: boolean;
+  }) => {
+    if (!firestore || folderPermBusy) return;
+    setFolderPermBusy(true);
+    try {
+      await updateDoc(
+        doc(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          jobId,
+          "folders",
+          folder.id
+        ),
+        {
+          employeeVisible: patch.employeeVisible,
+          employeeUploadAllowed: patch.employeeUploadAllowed,
+        }
+      );
+      if (patch.employeeVisible) {
+        toast({
+          title: "Složka je viditelná pro zaměstnance",
+          description: folder.name || folder.id,
+        });
+      } else {
+        toast({
+          title: "Složka je pouze interní",
+          description: "Zaměstnanci ji v portálu neuvidí.",
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Oprávnění složky se nepodařilo uložit.",
+      });
+    } finally {
+      setFolderPermBusy(false);
+    }
+  };
 
   const uploadOne = async (
     file: File,
@@ -620,6 +700,29 @@ function UserFolderBlock({
         description: "Vyplňte typ dokladu a částku.",
       });
       return;
+    }
+    if (isEmployeeLimited) {
+      if (
+        !canEmployeeUploadToFolder(
+          folder as Record<string, unknown> & { id: string },
+          memberPermissions
+        )
+      ) {
+        toast({
+          variant: "destructive",
+          title: "Nahrávání není povoleno",
+          description: "Do této složky nemáte oprávnění nahrávat soubory.",
+        });
+        return;
+      }
+      if (!employeeRecordId?.trim()) {
+        toast({
+          variant: "destructive",
+          title: "Nelze nahrát soubor",
+          description: "Chybí vazba na profil zaměstnance.",
+        });
+        return;
+      }
     }
 
     const safeBaseName =
@@ -742,38 +845,51 @@ function UserFolderBlock({
         name: safeBaseName,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
+        ...(isEmployeeLimited
+          ? {
+              uploadSource: "employee-job-upload" as const,
+              uploadedByEmployeeId: employeeRecordId,
+              uploadedBy: user.uid,
+              uploadedAt: serverTimestamp(),
+              employeeVisible: true,
+            }
+          : {}),
       });
     }
 
-    await setDoc(
-      companyDocumentRefForJobFolderImage(
-        firestore,
-        companyId,
-        folder.id,
-        refDoc.id
-      ),
-      buildNewJobFolderImageMirrorDocument({
-        companyId,
-        jobId,
-        jobDisplayName,
-        folderId: folder.id,
-        imageId: refDoc.id,
-        userId: user.uid,
-        fileName: safeBaseName,
-        fileType,
-        mimeType: file.type?.trim() || null,
-        fileUrl: downloadURL,
-        storagePath: resolvedFullPath,
-        note: null,
-      }),
-      { merge: true }
-    );
+    if (!isEmployeeLimited) {
+      await setDoc(
+        companyDocumentRefForJobFolderImage(
+          firestore,
+          companyId,
+          folder.id,
+          refDoc.id
+        ),
+        buildNewJobFolderImageMirrorDocument({
+          companyId,
+          jobId,
+          jobDisplayName,
+          folderId: folder.id,
+          imageId: refDoc.id,
+          userId: user.uid,
+          fileName: safeBaseName,
+          fileType,
+          mimeType: file.type?.trim() || null,
+          fileUrl: downloadURL,
+          storagePath: resolvedFullPath,
+          note: null,
+        }),
+        { merge: true }
+      );
+    }
 
     logActivitySafe(firestore, companyId, user, actorProfile, {
       actionType: "document.upload",
       actionLabel: isAccountingFolder
         ? "Nahrání dokladu do účetní složky zakázky"
-        : "Nahrání souboru do složky zakázky",
+        : isEmployeeLimited
+          ? "Nahrání souboru zaměstnancem do složky zakázky"
+          : "Nahrání souboru do složky zakázky",
       entityType: "job_folder_image",
       entityId: refDoc.id,
       entityName: safeBaseName,
@@ -787,10 +903,15 @@ function UserFolderBlock({
         fileType,
         mimeType: file.type?.trim() || null,
         ledgerKind: ledger?.kind ?? null,
+        uploadSource: isEmployeeLimited ? "employee-job-upload" : null,
+        uploadedByEmployeeId: isEmployeeLimited ? employeeRecordId : null,
       },
     });
 
-    toast({ title: "Soubor uložen", description: safeBaseName });
+    toast({
+      title: isEmployeeLimited ? "Soubor byl nahrán" : "Soubor uložen",
+      description: safeBaseName,
+    });
   };
 
   const openAccountingForFiles = (files: File[]) => {
@@ -1243,7 +1364,7 @@ function UserFolderBlock({
               </button>
             </CollapsibleTrigger>
             <div className="flex flex-wrap gap-2">
-              {canManageFolders ? (
+              {canManageFolders && !isEmployeeLimited ? (
                 <Button
                   type="button"
                   variant="destructive"
@@ -1258,99 +1379,158 @@ function UserFolderBlock({
               ) : null}
             </div>
           </div>
-          <div className="flex flex-col gap-2 sm:flex-row">
-          <input
-            ref={galleryRef}
-            type="file"
-            accept={JOB_MEDIA_ACCEPT_ATTR}
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              const files = Array.from(e.target.files || []).filter(Boolean);
-              e.target.value = "";
-              if (!files.length) return;
-              if (isAccountingFolder) {
-                const ok = files.filter((f) => isAllowedJobMediaFile(f));
-                if (!ok.length) {
-                  toast({
-                    variant: "destructive",
-                    title: "Nepodporovaný formát",
-                    description: "Pouze JPG, PNG, WEBP, PDF nebo Office.",
-                  });
-                  return;
-                }
-                openAccountingForFiles(ok);
-                return;
-              }
-              setBusy(true);
-              void (async () => {
-                for (const f of files) {
-                  try {
-                    await uploadOne(f);
-                  } catch (err) {
-                    console.error(err);
-                    toast({
-                      variant: "destructive",
-                      title: "Nahrání selhalo",
-                      description: f.name,
-                    });
+          {canManageFolders && !isEmployeeLimited ? (
+            <div className="flex flex-col gap-3 rounded-md border border-border/50 bg-muted/30 p-3">
+              <p className="text-xs font-medium text-muted-foreground">
+                Přístup zaměstnanců k této složce
+              </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id={`emp-vis-${folder.id}`}
+                    checked={folder.employeeVisible === true}
+                    disabled={folderPermBusy}
+                    onCheckedChange={(v) =>
+                      void persistFolderEmployeeFlags({
+                        employeeVisible: v,
+                        employeeUploadAllowed: v
+                          ? folder.employeeUploadAllowed === true
+                          : false,
+                      })
+                    }
+                  />
+                  <Label
+                    htmlFor={`emp-vis-${folder.id}`}
+                    className="cursor-pointer text-sm font-normal"
+                  >
+                    Viditelné zaměstnanci
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id={`emp-up-${folder.id}`}
+                    checked={folder.employeeUploadAllowed === true}
+                    disabled={
+                      folderPermBusy || folder.employeeVisible !== true
+                    }
+                    onCheckedChange={(v) =>
+                      void persistFolderEmployeeFlags({
+                        employeeVisible: folder.employeeVisible === true,
+                        employeeUploadAllowed: v,
+                      })
+                    }
+                  />
+                  <Label
+                    htmlFor={`emp-up-${folder.id}`}
+                    className="cursor-pointer text-sm font-normal"
+                  >
+                    Zaměstnanec může nahrávat
+                  </Label>
+                </div>
+              </div>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Bez zaškrtnutí „Viditelné zaměstnanci“ je složka jen pro interní
+                přístup (výchozí u starších dat).
+              </p>
+            </div>
+          ) : null}
+          {showFolderUpload ? (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                ref={galleryRef}
+                type="file"
+                accept={JOB_MEDIA_ACCEPT_ATTR}
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  const files = Array.from(e.target.files || []).filter(Boolean);
+                  e.target.value = "";
+                  if (!files.length) return;
+                  if (isAccountingFolder) {
+                    const ok = files.filter((f) => isAllowedJobMediaFile(f));
+                    if (!ok.length) {
+                      toast({
+                        variant: "destructive",
+                        title: "Nepodporovaný formát",
+                        description: "Pouze JPG, PNG, WEBP, PDF nebo Office.",
+                      });
+                      return;
+                    }
+                    openAccountingForFiles(ok);
+                    return;
                   }
-                }
-              })().finally(() => setBusy(false));
-            }}
-          />
-          <Button
-            type="button"
-            variant="default"
-            className="min-h-[44px] flex-1 gap-2"
-            disabled={busy}
-            onClick={() => galleryRef.current?.click()}
-          >
-            <Upload className="h-4 w-4" />
-            Nahrát soubor
-          </Button>
-          <input
-            ref={cameraRef}
-            type="file"
-            accept={JOB_IMAGE_ACCEPT_ATTR}
-            capture="environment"
-            className="hidden"
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (!file) return;
-              if (isAccountingFolder) {
-                if (!isAllowedJobMediaFile(file)) {
-                  toast({
-                    variant: "destructive",
-                    title: "Nepodporovaný formát",
-                  });
-                  return;
-                }
-                openAccountingForFiles([file]);
-                return;
-              }
-              setBusy(true);
-              void uploadOne(file).catch((err) => {
-                console.error(err);
-                toast({
-                  variant: "destructive",
-                  title: "Fotka se nepodařila uložit",
-                });
-              }).finally(() => setBusy(false));
-            }}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            className="min-h-[44px] flex-1 gap-2"
-            disabled={busy}
-            onClick={() => cameraRef.current?.click()}
-          >
-            <Camera className="h-4 w-4" />
-            Vyfotit
-          </Button>
-        </div>
+                  setBusy(true);
+                  void (async () => {
+                    for (const f of files) {
+                      try {
+                        await uploadOne(f);
+                      } catch (err) {
+                        console.error(err);
+                        toast({
+                          variant: "destructive",
+                          title: "Nahrání selhalo",
+                          description: f.name,
+                        });
+                      }
+                    }
+                  })().finally(() => setBusy(false));
+                }}
+              />
+              <Button
+                type="button"
+                variant="default"
+                className="min-h-[44px] flex-1 gap-2"
+                disabled={busy}
+                onClick={() => galleryRef.current?.click()}
+              >
+                <Upload className="h-4 w-4" />
+                Nahrát soubor
+              </Button>
+              <input
+                ref={cameraRef}
+                type="file"
+                accept={JOB_IMAGE_ACCEPT_ATTR}
+                capture="environment"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  if (!file) return;
+                  if (isAccountingFolder) {
+                    if (!isAllowedJobMediaFile(file)) {
+                      toast({
+                        variant: "destructive",
+                        title: "Nepodporovaný formát",
+                      });
+                      return;
+                    }
+                    openAccountingForFiles([file]);
+                    return;
+                  }
+                  setBusy(true);
+                  void uploadOne(file)
+                    .catch((err) => {
+                      console.error(err);
+                      toast({
+                        variant: "destructive",
+                        title: "Fotka se nepodařila uložit",
+                      });
+                    })
+                    .finally(() => setBusy(false));
+                }}
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-[44px] flex-1 gap-2"
+                disabled={busy}
+                onClick={() => cameraRef.current?.click()}
+              >
+                <Camera className="h-4 w-4" />
+                Vyfotit
+              </Button>
+            </div>
+          ) : null}
         </CardHeader>
         <CollapsibleContent>
           <CardContent className="space-y-3 pt-0">
@@ -1445,30 +1625,34 @@ function UserFolderBlock({
                             <Download className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
                         )}
-                        <JobMediaIconButton
-                          label="Poznámka"
-                          onClick={() =>
-                            onNoteDialogOpen({
-                              path: {
-                                kind: "folderImages",
-                                folderId: folder.id,
-                              },
-                              imageId: img.id,
-                              currentNote: img.note || "",
-                              fileNameHint: title,
-                            })
-                          }
-                        >
-                          <StickyNote className="size-[18px]" aria-hidden />
-                        </JobMediaIconButton>
-                        <JobMediaIconButton
-                          label="Smazat soubor"
-                          disabled={busy}
-                          className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => void deleteImage(img)}
-                        >
-                          <Trash2 className="size-[18px]" aria-hidden />
-                        </JobMediaIconButton>
+                        {!isEmployeeLimited ? (
+                          <>
+                            <JobMediaIconButton
+                              label="Poznámka"
+                              onClick={() =>
+                                onNoteDialogOpen({
+                                  path: {
+                                    kind: "folderImages",
+                                    folderId: folder.id,
+                                  },
+                                  imageId: img.id,
+                                  currentNote: img.note || "",
+                                  fileNameHint: title,
+                                })
+                              }
+                            >
+                              <StickyNote className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                            <JobMediaIconButton
+                              label="Smazat soubor"
+                              disabled={busy}
+                              className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => void deleteImage(img)}
+                            >
+                              <Trash2 className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                          </>
+                        ) : null}
                       </>
                     }
                   />
@@ -1483,7 +1667,7 @@ function UserFolderBlock({
                     isFolderWide ? (
                       <ImageThumbWithQuickActions
                         busy={busy}
-                        canManage={canManageFolders}
+                        canManage={canManageFolders && !isEmployeeLimited}
                         onPreview={() => {
                           if (openUrl) setImagePreview({ url: openUrl, title });
                         }}
@@ -1511,31 +1695,33 @@ function UserFolderBlock({
                       >
                         <Eye className="size-[18px]" aria-hidden />
                       </JobMediaIconButton>
-                      <JobMediaIconButton
-                        label="Anotovat"
-                        onClick={() =>
-                          onAnnotatePhoto({
-                            id: img.id,
-                            imageUrl: img.imageUrl,
-                            url: img.url,
-                            downloadURL: img.downloadURL,
-                            originalImageUrl: img.originalImageUrl,
-                            annotatedImageUrl: img.annotatedImageUrl,
-                            storagePath: img.storagePath,
-                            path: img.path,
-                            annotatedStoragePath: img.annotatedStoragePath,
-                            fileName: img.fileName,
-                            name: img.name,
-                            annotationData: img.annotationData,
-                            annotationTarget: {
-                              kind: "folderImages",
-                              folderId: folder.id,
-                            },
-                          })
-                        }
-                      >
-                        <Pencil className="size-[18px]" aria-hidden />
-                      </JobMediaIconButton>
+                      {!isEmployeeLimited ? (
+                        <JobMediaIconButton
+                          label="Anotovat"
+                          onClick={() =>
+                            onAnnotatePhoto({
+                              id: img.id,
+                              imageUrl: img.imageUrl,
+                              url: img.url,
+                              downloadURL: img.downloadURL,
+                              originalImageUrl: img.originalImageUrl,
+                              annotatedImageUrl: img.annotatedImageUrl,
+                              storagePath: img.storagePath,
+                              path: img.path,
+                              annotatedStoragePath: img.annotatedStoragePath,
+                              fileName: img.fileName,
+                              name: img.name,
+                              annotationData: img.annotationData,
+                              annotationTarget: {
+                                kind: "folderImages",
+                                folderId: folder.id,
+                              },
+                            })
+                          }
+                        >
+                          <Pencil className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
+                      ) : null}
                       {openUrl ? (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -1564,30 +1750,34 @@ function UserFolderBlock({
                           <Download className="size-[18px]" aria-hidden />
                         </JobMediaIconButton>
                       )}
-                      <JobMediaIconButton
-                        label="Poznámka"
-                        onClick={() =>
-                          onNoteDialogOpen({
-                            path: {
-                              kind: "folderImages",
-                              folderId: folder.id,
-                            },
-                            imageId: img.id,
-                            currentNote: img.note || "",
-                            fileNameHint: title,
-                          })
-                        }
-                      >
-                        <StickyNote className="size-[18px]" aria-hidden />
-                      </JobMediaIconButton>
-                      <JobMediaIconButton
-                        label="Smazat soubor"
-                        disabled={busy}
-                        className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                        onClick={() => void deleteImage(img)}
-                      >
-                        <Trash2 className="size-[18px]" aria-hidden />
-                      </JobMediaIconButton>
+                      {!isEmployeeLimited ? (
+                        <>
+                          <JobMediaIconButton
+                            label="Poznámka"
+                            onClick={() =>
+                              onNoteDialogOpen({
+                                path: {
+                                  kind: "folderImages",
+                                  folderId: folder.id,
+                                },
+                                imageId: img.id,
+                                currentNote: img.note || "",
+                                fileNameHint: title,
+                              })
+                            }
+                          >
+                            <StickyNote className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                          <JobMediaIconButton
+                            label="Smazat soubor"
+                            disabled={busy}
+                            className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            onClick={() => void deleteImage(img)}
+                          >
+                            <Trash2 className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                        </>
+                      ) : null}
                     </>
                   }
                 />
@@ -1652,27 +1842,34 @@ function UserFolderBlock({
                             </TooltipContent>
                           </Tooltip>
                         ) : null}
-                        <JobMediaIconButton
-                          label="Poznámka"
-                          onClick={() =>
-                            onNoteDialogOpen({
-                              path: { kind: "folderImages", folderId: folder.id },
-                              imageId: img.id,
-                              currentNote: img.note || "",
-                              fileNameHint: title,
-                            })
-                          }
-                        >
-                          <StickyNote className="size-[18px]" aria-hidden />
-                        </JobMediaIconButton>
-                        <JobMediaIconButton
-                          label="Smazat"
-                          disabled={busy}
-                          className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          onClick={() => void deleteImage(img)}
-                        >
-                          <Trash2 className="size-[18px]" aria-hidden />
-                        </JobMediaIconButton>
+                        {!isEmployeeLimited ? (
+                          <>
+                            <JobMediaIconButton
+                              label="Poznámka"
+                              onClick={() =>
+                                onNoteDialogOpen({
+                                  path: {
+                                    kind: "folderImages",
+                                    folderId: folder.id,
+                                  },
+                                  imageId: img.id,
+                                  currentNote: img.note || "",
+                                  fileNameHint: title,
+                                })
+                              }
+                            >
+                              <StickyNote className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                            <JobMediaIconButton
+                              label="Smazat"
+                              disabled={busy}
+                              className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => void deleteImage(img)}
+                            >
+                              <Trash2 className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                          </>
+                        ) : null}
                       </>
                     }
                   />
@@ -1745,6 +1942,13 @@ export type JobMediaSectionProps = {
   onAnnotatePhoto: (target: JobPhotoAnnotationTarget) => void;
   /** Plná šířka detailu zakázky — kompaktnější dokumenty, výchozí sbalená sekce */
   layout?: "default" | "jobDetailWide";
+  /** Omezený režim zaměstnance u zakázky */
+  mediaScope?: "full" | "employeeLimited";
+  memberPermissions?: JobMemberPermissions | null;
+  /** companies/.../employees/{id} — audit nahrání */
+  employeeRecordId?: string | null;
+  /** Legacy kolekce photos — jen pokud true a scope limited */
+  showLegacyPhotosForEmployee?: boolean;
 };
 
 export function JobMediaSection({
@@ -1758,7 +1962,12 @@ export function JobMediaSection({
   legacyUploading,
   onAnnotatePhoto,
   layout = "default",
+  mediaScope = "full",
+  memberPermissions = null,
+  employeeRecordId = null,
+  showLegacyPhotosForEmployee = false,
 }: JobMediaSectionProps) {
+  const restrictedEmployeeGallery = mediaScope === "employeeLimited";
   const firestore = useFirestore();
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -1819,6 +2028,14 @@ export function JobMediaSection({
       return na.localeCompare(nb, "cs");
     });
   }, [foldersRaw]);
+
+  const foldersSortedForUi = useMemo(() => {
+    if (mediaScope !== "employeeLimited") return foldersSorted;
+    return filterFoldersForLimitedEmployee(
+      foldersSorted as unknown as (Record<string, unknown> & { id: string })[],
+      memberPermissions
+    ) as unknown as JobFolderDoc[];
+  }, [foldersSorted, mediaScope, memberPermissions]);
 
   const openNoteEditor = useCallback(
     (ctx: {
@@ -2084,6 +2301,8 @@ export function JobMediaSection({
         type: newFolderType,
         companyId,
         jobId,
+        employeeVisible: false,
+        employeeUploadAllowed: false,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
       });
@@ -2130,15 +2349,23 @@ export function JobMediaSection({
     });
   }, [photos]);
 
+  const photosSortedForUi = useMemo(() => {
+    if (mediaScope !== "employeeLimited") return photosSorted;
+    if (!showLegacyPhotosForEmployee) return [];
+    return photosSorted.filter(
+      (p) => (p as { employeeVisible?: boolean }).employeeVisible !== false
+    );
+  }, [mediaScope, photosSorted, showLegacyPhotosForEmployee]);
+
   const visibleLegacyPhotos = useMemo(() => {
     if (
       showAllLegacyPhotos ||
-      photosSorted.length <= JOB_MEDIA_INITIAL_COUNT
+      photosSortedForUi.length <= JOB_MEDIA_INITIAL_COUNT
     ) {
-      return photosSorted;
+      return photosSortedForUi;
     }
-    return photosSorted.slice(0, JOB_MEDIA_INITIAL_COUNT);
-  }, [photosSorted, showAllLegacyPhotos]);
+    return photosSortedForUi.slice(0, JOB_MEDIA_INITIAL_COUNT);
+  }, [photosSortedForUi, showAllLegacyPhotos]);
 
   const legacyDocPhotos = useMemo(
     () =>
@@ -2151,6 +2378,7 @@ export function JobMediaSection({
 
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !user?.uid) return;
+    if (mediaScope === "employeeLimited") return;
     let cancelled = false;
     const jn = jobDisplayName ?? null;
     void (async () => {
@@ -2195,7 +2423,15 @@ export function JobMediaSection({
     return () => {
       cancelled = true;
     };
-  }, [photosSorted, firestore, companyId, jobId, user?.uid, jobDisplayName]);
+  }, [
+    photosSorted,
+    firestore,
+    companyId,
+    jobId,
+    user?.uid,
+    jobDisplayName,
+    mediaScope,
+  ]);
 
   if (!firestore || !user) {
     return (
@@ -2239,7 +2475,7 @@ export function JobMediaSection({
                     Fotodokumentace a složky
                   </span>
                   <span className="ml-auto shrink-0 text-xs text-gray-700 sm:text-sm">
-                    {photosSorted.length} souborů
+                    {photosSortedForUi.length} souborů
                     {foldersSorted.length > 0
                       ? ` · ${foldersSorted.length} složek`
                       : ""}
@@ -2257,90 +2493,94 @@ export function JobMediaSection({
               </Button>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-              <input
-                ref={galleryRef}
-                type="file"
-                accept={JOB_MEDIA_ACCEPT_ATTR}
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || []).filter(
-                    (f) => f && f.size > 0
-                  );
-                  e.target.value = "";
-                  if (!files.length) {
-                    toast({
-                      variant: "destructive",
-                      title: "Žádný soubor",
-                    });
-                    return;
-                  }
-                  void (async () => {
-                    for (const f of files) {
-                      if (!isAllowedJobMediaFile(f)) {
+              {mediaScope !== "employeeLimited" ? (
+                <>
+                  <input
+                    ref={galleryRef}
+                    type="file"
+                    accept={JOB_MEDIA_ACCEPT_ATTR}
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files || []).filter(
+                        (f) => f && f.size > 0
+                      );
+                      e.target.value = "";
+                      if (!files.length) {
                         toast({
                           variant: "destructive",
-                          title: "Přeskočeno",
-                          description: `${f.name} — pouze JPG, PNG, WEBP, PDF nebo Office.`,
+                          title: "Žádný soubor",
                         });
-                        continue;
+                        return;
                       }
-                      try {
-                        await uploadLegacyPhoto(f, {
-                          skipUploadingFlag: true,
+                      void (async () => {
+                        for (const f of files) {
+                          if (!isAllowedJobMediaFile(f)) {
+                            toast({
+                              variant: "destructive",
+                              title: "Přeskočeno",
+                              description: `${f.name} — pouze JPG, PNG, WEBP, PDF nebo Office.`,
+                            });
+                            continue;
+                          }
+                          try {
+                            await uploadLegacyPhoto(f, {
+                              skipUploadingFlag: true,
+                            });
+                          } catch (err) {
+                            console.error(err);
+                          }
+                        }
+                      })();
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    className="min-h-[44px] flex-1 gap-2 sm:min-w-[140px] sm:flex-none"
+                    disabled={legacyUploading}
+                    onClick={() => galleryRef.current?.click()}
+                  >
+                    <Upload className="h-4 w-4" />
+                    Nahrát soubor
+                  </Button>
+                  <input
+                    ref={cameraRef}
+                    type="file"
+                    accept={JOB_IMAGE_ACCEPT_ATTR}
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      e.target.value = "";
+                      if (!file) {
+                        toast({
+                          variant: "destructive",
+                          title: "Nebyla pořízena fotografie",
                         });
-                      } catch (err) {
-                        console.error(err);
+                        return;
                       }
-                    }
-                  })();
-                }}
-              />
-              <Button
-                type="button"
-                className="min-h-[44px] flex-1 gap-2 sm:min-w-[140px] sm:flex-none"
-                disabled={legacyUploading}
-                onClick={() => galleryRef.current?.click()}
-              >
-                <Upload className="h-4 w-4" />
-                Nahrát soubor
-              </Button>
-              <input
-                ref={cameraRef}
-                type="file"
-                accept={JOB_IMAGE_ACCEPT_ATTR}
-                capture="environment"
-                className="hidden"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (!file) {
-                    toast({
-                      variant: "destructive",
-                      title: "Nebyla pořízena fotografie",
-                    });
-                    return;
-                  }
-                  if (!isAllowedJobImageFile(file)) {
-                    toast({
-                      variant: "destructive",
-                      title: "Nepodporovaný formát",
-                    });
-                    return;
-                  }
-                  void uploadLegacyPhoto(file);
-                }}
-              />
-              <Button
-                type="button"
-                variant="outline"
-                className="min-h-[44px] flex-1 gap-2 sm:min-w-[140px] sm:flex-none"
-                disabled={legacyUploading}
-                onClick={() => cameraRef.current?.click()}
-              >
-                <Camera className="h-4 w-4" />
-                Vyfotit
-              </Button>
+                      if (!isAllowedJobImageFile(file)) {
+                        toast({
+                          variant: "destructive",
+                          title: "Nepodporovaný formát",
+                        });
+                        return;
+                      }
+                      void uploadLegacyPhoto(file);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-[44px] flex-1 gap-2 sm:min-w-[140px] sm:flex-none"
+                    disabled={legacyUploading}
+                    onClick={() => cameraRef.current?.click()}
+                  >
+                    <Camera className="h-4 w-4" />
+                    Vyfotit
+                  </Button>
+                </>
+              ) : null}
               {canManageFolders ? (
                 <Button
                   type="button"
@@ -2372,7 +2612,7 @@ export function JobMediaSection({
                   <h3 className="text-sm font-semibold text-gray-900">
                     Základní fotodokumentace
                   </h3>
-                  {photosSorted.length > 0 ? (
+                  {photosSortedForUi.length > 0 ? (
                     <>
                       <div className={JOB_MEDIA_CARD_GRID_CLASS}>
                         {visibleLegacyPhotos.map((p) => {
@@ -2455,26 +2695,30 @@ export function JobMediaSection({
                                 <Download className="size-[18px]" aria-hidden />
                               </JobMediaIconButton>
                             )}
-                            <JobMediaIconButton
-                              label="Poznámka"
-                              onClick={() =>
-                                openNoteEditor({
-                                  path: { kind: "photos" },
-                                  imageId: p.id,
-                                  currentNote: p.note || "",
-                                  fileNameHint: title,
-                                })
-                              }
-                            >
-                              <StickyNote className="size-[18px]" aria-hidden />
-                            </JobMediaIconButton>
-                            <JobMediaIconButton
-                              label="Smazat soubor"
-                              className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                              onClick={() => void deleteLegacyPhoto(p)}
-                            >
-                              <Trash2 className="size-[18px]" aria-hidden />
-                            </JobMediaIconButton>
+                            {!restrictedEmployeeGallery ? (
+                              <>
+                                <JobMediaIconButton
+                                  label="Poznámka"
+                                  onClick={() =>
+                                    openNoteEditor({
+                                      path: { kind: "photos" },
+                                      imageId: p.id,
+                                      currentNote: p.note || "",
+                                      fileNameHint: title,
+                                    })
+                                  }
+                                >
+                                  <StickyNote className="size-[18px]" aria-hidden />
+                                </JobMediaIconButton>
+                                <JobMediaIconButton
+                                  label="Smazat soubor"
+                                  className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                  onClick={() => void deleteLegacyPhoto(p)}
+                                >
+                                  <Trash2 className="size-[18px]" aria-hidden />
+                                </JobMediaIconButton>
+                              </>
+                            ) : null}
                           </>
                         }
                       />
@@ -2489,7 +2733,9 @@ export function JobMediaSection({
                         isJobDetailWide ? (
                           <ImageThumbWithQuickActions
                             busy={legacyUploading}
-                            canManage={canManageFolders}
+                            canManage={
+                              canManageFolders && !restrictedEmployeeGallery
+                            }
                             onPreview={() => {
                               if (openUrl) setLegacyImagePreview({ url: openUrl, title });
                             }}
@@ -2517,28 +2763,30 @@ export function JobMediaSection({
                           >
                             <Eye className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
-                          <JobMediaIconButton
-                            label="Anotovat"
-                            onClick={() =>
-                              onAnnotatePhoto({
-                                id: p.id,
-                                imageUrl: p.imageUrl,
-                                url: p.url,
-                                downloadURL: p.downloadURL,
-                                originalImageUrl: p.originalImageUrl,
-                                annotatedImageUrl: p.annotatedImageUrl,
-                                storagePath: p.storagePath,
-                                path: p.path,
-                                fullPath: p.fullPath,
-                                fileName: p.fileName,
-                                name: p.name,
-                                annotationData: p.annotationData,
-                                annotationTarget: { kind: "photos" },
-                              })
-                            }
-                          >
-                            <Pencil className="size-[18px]" aria-hidden />
-                          </JobMediaIconButton>
+                          {!restrictedEmployeeGallery ? (
+                            <JobMediaIconButton
+                              label="Anotovat"
+                              onClick={() =>
+                                onAnnotatePhoto({
+                                  id: p.id,
+                                  imageUrl: p.imageUrl,
+                                  url: p.url,
+                                  downloadURL: p.downloadURL,
+                                  originalImageUrl: p.originalImageUrl,
+                                  annotatedImageUrl: p.annotatedImageUrl,
+                                  storagePath: p.storagePath,
+                                  path: p.path,
+                                  fullPath: p.fullPath,
+                                  fileName: p.fileName,
+                                  name: p.name,
+                                  annotationData: p.annotationData,
+                                  annotationTarget: { kind: "photos" },
+                                })
+                              }
+                            >
+                              <Pencil className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                          ) : null}
                           {openUrl ? (
                             <Tooltip>
                               <TooltipTrigger asChild>
@@ -2567,26 +2815,30 @@ export function JobMediaSection({
                               <Download className="size-[18px]" aria-hidden />
                             </JobMediaIconButton>
                           )}
-                          <JobMediaIconButton
-                            label="Poznámka"
-                            onClick={() =>
-                              openNoteEditor({
-                                path: { kind: "photos" },
-                                imageId: p.id,
-                                currentNote: p.note || "",
-                                fileNameHint: title,
-                              })
-                            }
-                          >
-                            <StickyNote className="size-[18px]" aria-hidden />
-                          </JobMediaIconButton>
-                          <JobMediaIconButton
-                            label="Smazat soubor"
-                            className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                            onClick={() => void deleteLegacyPhoto(p)}
-                          >
-                            <Trash2 className="size-[18px]" aria-hidden />
-                          </JobMediaIconButton>
+                          {!restrictedEmployeeGallery ? (
+                            <>
+                              <JobMediaIconButton
+                                label="Poznámka"
+                                onClick={() =>
+                                  openNoteEditor({
+                                    path: { kind: "photos" },
+                                    imageId: p.id,
+                                    currentNote: p.note || "",
+                                    fileNameHint: title,
+                                  })
+                                }
+                              >
+                                <StickyNote className="size-[18px]" aria-hidden />
+                              </JobMediaIconButton>
+                              <JobMediaIconButton
+                                label="Smazat soubor"
+                                className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                onClick={() => void deleteLegacyPhoto(p)}
+                              >
+                                <Trash2 className="size-[18px]" aria-hidden />
+                              </JobMediaIconButton>
+                            </>
+                          ) : null}
                         </>
                       }
                     />
@@ -2651,26 +2903,30 @@ export function JobMediaSection({
                                         </TooltipContent>
                                       </Tooltip>
                                     ) : null}
-                                    <JobMediaIconButton
-                                      label="Poznámka"
-                                      onClick={() =>
-                                        openNoteEditor({
-                                          path: { kind: "photos" },
-                                          imageId: p.id,
-                                          currentNote: p.note || "",
-                                          fileNameHint: title,
-                                        })
-                                      }
-                                    >
-                                      <StickyNote className="size-[18px]" aria-hidden />
-                                    </JobMediaIconButton>
-                                    <JobMediaIconButton
-                                      label="Smazat"
-                                      className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                      onClick={() => void deleteLegacyPhoto(p)}
-                                    >
-                                      <Trash2 className="size-[18px]" aria-hidden />
-                                    </JobMediaIconButton>
+                                    {!restrictedEmployeeGallery ? (
+                                      <>
+                                        <JobMediaIconButton
+                                          label="Poznámka"
+                                          onClick={() =>
+                                            openNoteEditor({
+                                              path: { kind: "photos" },
+                                              imageId: p.id,
+                                              currentNote: p.note || "",
+                                              fileNameHint: title,
+                                            })
+                                          }
+                                        >
+                                          <StickyNote className="size-[18px]" aria-hidden />
+                                        </JobMediaIconButton>
+                                        <JobMediaIconButton
+                                          label="Smazat"
+                                          className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                          onClick={() => void deleteLegacyPhoto(p)}
+                                        >
+                                          <Trash2 className="size-[18px]" aria-hidden />
+                                        </JobMediaIconButton>
+                                      </>
+                                    ) : null}
                                   </>
                                 }
                               />
@@ -2678,7 +2934,7 @@ export function JobMediaSection({
                           })}
                         </div>
                       ) : null}
-                      {photosSorted.length > JOB_MEDIA_INITIAL_COUNT ? (
+                      {photosSortedForUi.length > JOB_MEDIA_INITIAL_COUNT ? (
                         <Button
                           type="button"
                           variant="ghost"
@@ -2688,7 +2944,7 @@ export function JobMediaSection({
                         >
                           {showAllLegacyPhotos
                             ? "Zobrazit méně"
-                            : `Zobrazit více (${photosSorted.length - JOB_MEDIA_INITIAL_COUNT} dalších)`}
+                            : `Zobrazit více (${photosSortedForUi.length - JOB_MEDIA_INITIAL_COUNT} dalších)`}
                         </Button>
                       ) : null}
                     </>
@@ -2705,7 +2961,7 @@ export function JobMediaSection({
                       Vlastní složky
                     </h3>
                     <div className="space-y-3">
-                      {foldersSorted.map((folder) => (
+                      {foldersSortedForUi.map((folder) => (
                         <UserFolderBlock
                           key={folder.id}
                           folder={folder}
@@ -2718,6 +2974,9 @@ export function JobMediaSection({
                           onAnnotatePhoto={onAnnotatePhoto}
                           onNoteDialogOpen={openNoteEditor}
                           layout={layout}
+                          mediaScope={mediaScope}
+                          memberPermissions={memberPermissions}
+                          employeeRecordId={employeeRecordId}
                         />
                       ))}
                     </div>
