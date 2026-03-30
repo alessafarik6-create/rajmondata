@@ -83,7 +83,7 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     type: "system",
     label: "Přehled",
     href: "/portal/dashboard",
-    roles: ["owner", "admin", "manager", "accountant", "employee", "customer"],
+    roles: ["owner", "admin", "manager", "accountant", "employee"],
     platformModuleCode: null,
   },
   {
@@ -118,7 +118,7 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     type: "module",
     label: "Zakázky",
     href: "/portal/jobs",
-    roles: ["owner", "admin", "manager", "employee", "customer"],
+    roles: ["owner", "admin", "manager", "employee"],
     licenseKeys: ["zakazky"],
     platformModuleCode: "jobs",
   },

@@ -162,6 +162,14 @@ export default function CompanyDashboard() {
   const isAccountant = role === "accountant";
   const isEmployee = role === "employee";
   const isCustomer = role === "customer";
+
+  useEffect(() => {
+    if (isProfileLoading) return;
+    if (isCustomer) {
+      router.replace("/portal/customer");
+    }
+  }, [isProfileLoading, isCustomer, router]);
+
   /** Přehledové KPI (zakázky, mzdy, finance, zprávy) — vedení a účetní. */
   const showAdminDashboard =
     (isManagement || isAccountant) && !isCustomer;

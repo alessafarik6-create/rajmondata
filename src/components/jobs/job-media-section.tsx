@@ -48,6 +48,11 @@ import {
   isImageEmployeeVisible,
   type JobMemberPermissions,
 } from "@/lib/job-employee-access";
+import {
+  filterFoldersForCustomer,
+  isImageCustomerVisible,
+  isLegacyPhotoCustomerVisible,
+} from "@/lib/job-customer-access";
 import { Switch } from "@/components/ui/switch";
 import {
   commitFolderAccountingExpense,
@@ -465,7 +470,7 @@ function UserFolderBlock({
     fileNameHint: string;
   }) => void;
   layout?: "default" | "jobDetailWide";
-  mediaScope?: "full" | "employeeLimited";
+  mediaScope?: "full" | "employeeLimited" | "customer";
   memberPermissions?: JobMemberPermissions | null;
   employeeRecordId?: string | null;
 }) {
@@ -485,8 +490,9 @@ function UserFolderBlock({
 
   const folderType: JobFolderType = folder.type ?? "files";
   const isEmployeeLimited = mediaScope === "employeeLimited";
+  const isCustomerScope = mediaScope === "customer";
   const isAccountingFolder =
-    folderType === "documents" && !isEmployeeLimited;
+    folderType === "documents" && !isEmployeeLimited && !isCustomerScope;
   const [folderPermBusy, setFolderPermBusy] = useState(false);
 
   const [accountingOpen, setAccountingOpen] = useState(false);
@@ -536,12 +542,19 @@ function UserFolderBlock({
       });
   }, [imagesRaw]);
 
+  const imagesForUi = useMemo(() => {
+    if (!isCustomerScope) return images;
+    return images.filter((img) =>
+      isImageCustomerVisible(folder as Record<string, unknown>, img as Record<string, unknown>)
+    );
+  }, [images, isCustomerScope, folder]);
+
   const [folderOpen, setFolderOpen] = useState(false);
   const [showAllInFolder, setShowAllInFolder] = useState(false);
   const visibleFolderImages = useMemo(() => {
-    if (showAllInFolder || images.length <= JOB_MEDIA_INITIAL_COUNT) return images;
-    return images.slice(0, JOB_MEDIA_INITIAL_COUNT);
-  }, [images, showAllInFolder]);
+    if (showAllInFolder || imagesForUi.length <= JOB_MEDIA_INITIAL_COUNT) return imagesForUi;
+    return imagesForUi.slice(0, JOB_MEDIA_INITIAL_COUNT);
+  }, [imagesForUi, showAllInFolder]);
 
   const isFolderWide = layout === "jobDetailWide";
   const folderDocImages = useMemo(
@@ -556,6 +569,7 @@ function UserFolderBlock({
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !user?.uid) return;
     if (isEmployeeLimited) return;
+    if (isCustomerScope) return;
     let cancelled = false;
     const jn = jobDisplayName ?? null;
     void (async () => {
@@ -611,9 +625,11 @@ function UserFolderBlock({
     user?.uid,
     jobDisplayName,
     isEmployeeLimited,
+    isCustomerScope,
   ]);
 
   const showFolderUpload =
+    !isCustomerScope &&
     !isAccountingFolder &&
     (isEmployeeLimited
       ? canEmployeeUploadToFolder(
@@ -661,6 +677,46 @@ function UserFolderBlock({
         variant: "destructive",
         title: "Chyba",
         description: "Oprávnění složky se nepodařilo uložit.",
+      });
+    } finally {
+      setFolderPermBusy(false);
+    }
+  };
+
+  const persistFolderCustomerFlags = async (patch: {
+    customerVisible: boolean;
+    customerAnnotatable: boolean;
+    internalOnly: boolean;
+  }) => {
+    if (!firestore || folderPermBusy) return;
+    setFolderPermBusy(true);
+    try {
+      await updateDoc(
+        doc(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          jobId,
+          "folders",
+          folder.id
+        ),
+        {
+          customerVisible: patch.customerVisible,
+          customerAnnotatable: patch.customerAnnotatable,
+          internalOnly: patch.internalOnly,
+        }
+      );
+      toast({
+        title: "Nastavení pro zákazníka uloženo",
+        description: folder.name || folder.id,
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Oprávnění pro klientský portál se nepodařilo uložit.",
       });
     } finally {
       setFolderPermBusy(false);
@@ -1359,7 +1415,7 @@ function UserFolderBlock({
                   {folderTypeLabel(folderType)}
                 </span>
                 <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs tabular-nums text-muted-foreground">
-                  {images.length}
+                  {imagesForUi.length}
                 </span>
               </button>
             </CollapsibleTrigger>
@@ -1431,6 +1487,72 @@ function UserFolderBlock({
               <p className="text-[11px] leading-snug text-muted-foreground">
                 Bez zaškrtnutí „Viditelné zaměstnanci“ je složka jen pro interní
                 přístup (výchozí u starších dat).
+              </p>
+            </div>
+          ) : null}
+          {canManageFolders && !isEmployeeLimited && !isCustomerScope ? (
+            <div className="flex flex-col gap-3 rounded-md border border-border/50 bg-muted/20 p-3 mt-2">
+              <p className="text-xs font-medium text-muted-foreground">
+                Klientský portál (zákazník)
+              </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id={`cust-vis-${folder.id}`}
+                    checked={folder.customerVisible === true}
+                    disabled={folderPermBusy || folder.internalOnly === true}
+                    onCheckedChange={(v) =>
+                      void persistFolderCustomerFlags({
+                        customerVisible: v,
+                        customerAnnotatable: v ? folder.customerAnnotatable === true : false,
+                        internalOnly: folder.internalOnly === true,
+                      })
+                    }
+                  />
+                  <Label htmlFor={`cust-vis-${folder.id}`} className="cursor-pointer text-sm font-normal">
+                    Viditelné zákazníkovi
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id={`cust-ann-${folder.id}`}
+                    checked={folder.customerAnnotatable === true}
+                    disabled={
+                      folderPermBusy || folder.customerVisible !== true || folder.internalOnly === true
+                    }
+                    onCheckedChange={(v) =>
+                      void persistFolderCustomerFlags({
+                        customerVisible: folder.customerVisible === true,
+                        customerAnnotatable: v,
+                        internalOnly: folder.internalOnly === true,
+                      })
+                    }
+                  />
+                  <Label htmlFor={`cust-ann-${folder.id}`} className="cursor-pointer text-sm font-normal">
+                    Zákazník může anotovat
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id={`cust-int-${folder.id}`}
+                    checked={folder.internalOnly === true}
+                    disabled={folderPermBusy}
+                    onCheckedChange={(v) =>
+                      void persistFolderCustomerFlags({
+                        customerVisible: v ? false : folder.customerVisible === true,
+                        customerAnnotatable: v ? false : folder.customerAnnotatable === true,
+                        internalOnly: v,
+                      })
+                    }
+                  />
+                  <Label htmlFor={`cust-int-${folder.id}`} className="cursor-pointer text-sm font-normal">
+                    Interní pouze pro firmu
+                  </Label>
+                </div>
+              </div>
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Bez „Viditelné zákazníkovi“ zákazník složku neuvidí. Účetní složky typu Doklady se v klientském
+                portálu nezobrazují.
               </p>
             </div>
           ) : null}
@@ -1534,7 +1656,7 @@ function UserFolderBlock({
         </CardHeader>
         <CollapsibleContent>
           <CardContent className="space-y-3 pt-0">
-        {images.length > 0 ? (
+        {imagesForUi.length > 0 ? (
           <>
           <div
             className={cn(
@@ -1878,7 +2000,7 @@ function UserFolderBlock({
             </div>
           ) : null}
           </div>
-          {images.length > JOB_MEDIA_INITIAL_COUNT ? (
+          {imagesForUi.length > JOB_MEDIA_INITIAL_COUNT ? (
             <Button
               type="button"
               variant="ghost"
@@ -1888,7 +2010,7 @@ function UserFolderBlock({
             >
               {showAllInFolder
                 ? "Zobrazit méně"
-                : `Zobrazit více (${images.length - JOB_MEDIA_INITIAL_COUNT} dalších)`}
+                : `Zobrazit více (${imagesForUi.length - JOB_MEDIA_INITIAL_COUNT} dalších)`}
             </Button>
           ) : null}
           </>
@@ -1942,8 +2064,8 @@ export type JobMediaSectionProps = {
   onAnnotatePhoto: (target: JobPhotoAnnotationTarget) => void;
   /** Plná šířka detailu zakázky — kompaktnější dokumenty, výchozí sbalená sekce */
   layout?: "default" | "jobDetailWide";
-  /** Omezený režim zaměstnance u zakázky */
-  mediaScope?: "full" | "employeeLimited";
+  /** Omezený režim zaměstnance u zakázky; `customer` = jen explicitně zpřístupněné složky a soubory */
+  mediaScope?: "full" | "employeeLimited" | "customer";
   memberPermissions?: JobMemberPermissions | null;
   /** companies/.../employees/{id} — audit nahrání */
   employeeRecordId?: string | null;
@@ -1967,7 +2089,9 @@ export function JobMediaSection({
   employeeRecordId = null,
   showLegacyPhotosForEmployee = false,
 }: JobMediaSectionProps) {
-  const restrictedEmployeeGallery = mediaScope === "employeeLimited";
+  /** Skrýt nahrávání / mazání / interní akce — zaměstnanec i zákazník. */
+  const hideJobMediaAdminUi =
+    mediaScope === "employeeLimited" || mediaScope === "customer";
   const firestore = useFirestore();
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -2030,6 +2154,11 @@ export function JobMediaSection({
   }, [foldersRaw]);
 
   const foldersSortedForUi = useMemo(() => {
+    if (mediaScope === "customer") {
+      return filterFoldersForCustomer(
+        foldersSorted as unknown as (Record<string, unknown> & { id: string; type?: string })[]
+      ) as unknown as JobFolderDoc[];
+    }
     if (mediaScope !== "employeeLimited") return foldersSorted;
     return filterFoldersForLimitedEmployee(
       foldersSorted as unknown as (Record<string, unknown> & { id: string })[],
@@ -2303,6 +2432,9 @@ export function JobMediaSection({
         jobId,
         employeeVisible: false,
         employeeUploadAllowed: false,
+        customerVisible: false,
+        customerAnnotatable: false,
+        internalOnly: false,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
       });
@@ -2350,6 +2482,11 @@ export function JobMediaSection({
   }, [photos]);
 
   const photosSortedForUi = useMemo(() => {
+    if (mediaScope === "customer") {
+      return photosSorted.filter((p) =>
+        isLegacyPhotoCustomerVisible(p as Record<string, unknown>)
+      );
+    }
     if (mediaScope !== "employeeLimited") return photosSorted;
     if (!showLegacyPhotosForEmployee) return [];
     return photosSorted.filter(
@@ -2378,7 +2515,7 @@ export function JobMediaSection({
 
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !user?.uid) return;
-    if (mediaScope === "employeeLimited") return;
+    if (mediaScope === "employeeLimited" || mediaScope === "customer") return;
     let cancelled = false;
     const jn = jobDisplayName ?? null;
     void (async () => {
@@ -2476,8 +2613,8 @@ export function JobMediaSection({
                   </span>
                   <span className="ml-auto shrink-0 text-xs text-gray-700 sm:text-sm">
                     {photosSortedForUi.length} souborů
-                    {foldersSorted.length > 0
-                      ? ` · ${foldersSorted.length} složek`
+                    {foldersSortedForUi.length > 0
+                      ? ` · ${foldersSortedForUi.length} složek`
                       : ""}
                   </span>
                 </button>
@@ -2493,7 +2630,7 @@ export function JobMediaSection({
               </Button>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-              {mediaScope !== "employeeLimited" ? (
+              {mediaScope !== "employeeLimited" && mediaScope !== "customer" ? (
                 <>
                   <input
                     ref={galleryRef}
@@ -2581,7 +2718,7 @@ export function JobMediaSection({
                   </Button>
                 </>
               ) : null}
-              {canManageFolders ? (
+              {canManageFolders && mediaScope !== "customer" ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -2695,7 +2832,7 @@ export function JobMediaSection({
                                 <Download className="size-[18px]" aria-hidden />
                               </JobMediaIconButton>
                             )}
-                            {!restrictedEmployeeGallery ? (
+                            {!hideJobMediaAdminUi ? (
                               <>
                                 <JobMediaIconButton
                                   label="Poznámka"
@@ -2734,7 +2871,7 @@ export function JobMediaSection({
                           <ImageThumbWithQuickActions
                             busy={legacyUploading}
                             canManage={
-                              canManageFolders && !restrictedEmployeeGallery
+                              canManageFolders && !hideJobMediaAdminUi
                             }
                             onPreview={() => {
                               if (openUrl) setLegacyImagePreview({ url: openUrl, title });
@@ -2763,7 +2900,7 @@ export function JobMediaSection({
                           >
                             <Eye className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
-                          {!restrictedEmployeeGallery ? (
+                          {!hideJobMediaAdminUi ? (
                             <JobMediaIconButton
                               label="Anotovat"
                               onClick={() =>
@@ -2815,7 +2952,7 @@ export function JobMediaSection({
                               <Download className="size-[18px]" aria-hidden />
                             </JobMediaIconButton>
                           )}
-                          {!restrictedEmployeeGallery ? (
+                          {!hideJobMediaAdminUi ? (
                             <>
                               <JobMediaIconButton
                                 label="Poznámka"
@@ -2903,7 +3040,7 @@ export function JobMediaSection({
                                         </TooltipContent>
                                       </Tooltip>
                                     ) : null}
-                                    {!restrictedEmployeeGallery ? (
+                                    {!hideJobMediaAdminUi ? (
                                       <>
                                         <JobMediaIconButton
                                           label="Poznámka"
@@ -2950,12 +3087,14 @@ export function JobMediaSection({
                     </>
                   ) : (
                     <p className="text-sm text-muted-foreground">
-                      Zatím žádné soubory ve fotodokumentaci.
+                      {mediaScope === "customer"
+                        ? "Pro tuto zakázku zatím nejsou zpřístupněné žádné dokumenty."
+                        : "Zatím žádné soubory ve fotodokumentaci."}
                     </p>
                   )}
                 </section>
 
-                {foldersSorted.length > 0 ? (
+                {foldersSortedForUi.length > 0 ? (
                   <section className="space-y-3 border-t border-border/50 pt-4">
                     <h3 className="text-sm font-semibold text-gray-900">
                       Vlastní složky

@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import { useUser, useCompany, useFirebase, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
+import { CustomerPortalSidebar } from "@/components/layout/customer-portal-sidebar";
 import { EmployeePortalSidebar } from "@/components/layout/employee-portal-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -124,6 +125,11 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     !(Array.isArray(profile?.globalRoles) &&
       profile.globalRoles.includes("super_admin"));
 
+  const isPortalCustomerOnly = profile?.role === "customer";
+
+  /** Zákazník smí jen `/portal/customer/*` — žádné firemní doklady, finance, interní zakázky. */
+  const isCustomerAllowedBranchPath = pathname.startsWith("/portal/customer");
+
   /** Zaměstnanec může mimo /portal/employee jen tyto větve (docházka, sklad, výroba). */
   const isEmployeeAllowedBranchPath =
     pathname.startsWith("/portal/employee") ||
@@ -177,6 +183,13 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     isEmployeeAllowedBranchPath,
     router,
   ]);
+
+  useEffect(() => {
+    if (!profile || isProfileLoading) return;
+    if (profile.role !== "customer") return;
+    if (pathname.startsWith("/portal/customer")) return;
+    router.replace("/portal/customer");
+  }, [profile, isProfileLoading, pathname, router]);
 
   /** Moduly sklad / výroba — licence + role / přiřazení zaměstnance; blokace přímého URL. */
   useEffect(() => {
@@ -573,18 +586,36 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     return spinner("Otevírám zaměstnanecký portál…");
   }
 
+  if (isPortalCustomerOnly && !isCustomerAllowedBranchPath) {
+    if (shellTimedOut) {
+      return (
+        <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 px-4">
+          <p className="text-sm text-muted-foreground text-center">
+            Tato část portálu není pro zákazníky dostupná.
+          </p>
+          <Button type="button" onClick={() => router.replace("/portal/customer")}>
+            Otevřít klientský portál
+          </Button>
+        </div>
+      );
+    }
+    return spinner("Otevírám klientský portál…");
+  }
+
   const renderSidebar = (mobileClose?: () => void) =>
     isPortalEmployeeOnly ? (
       <EmployeePortalSidebar
         visibleEmployeeModules={visibleEmployeeModules}
         mobileSheetClose={mobileClose}
       />
+    ) : isPortalCustomerOnly ? (
+      <CustomerPortalSidebar mobileSheetClose={mobileClose} />
     ) : (
       <BizForgeSidebar mobileSheetClose={mobileClose} />
     );
 
   const licenseNotice = (() => {
-    if (isPortalEmployeeOnly || !company) return null;
+    if (isPortalEmployeeOnly || isPortalCustomerOnly || !company) return null;
     if (isCompanyLicenseActive(company)) return null;
 
     if (shouldShowLicensePendingNotice(company)) {

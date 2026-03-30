@@ -6655,6 +6655,9 @@ export default function JobDetailPage() {
     if (profile?.role === "employee") {
       router.replace(`/portal/employee/jobs/${jobId}`);
     }
+    if (profile?.role === "customer") {
+      router.replace(`/portal/customer/jobs/${jobId}`);
+    }
   }, [profileLoading, profile?.role, jobId, router]);
 
   if (!user || profileLoading) {
@@ -6667,6 +6670,15 @@ export default function JobDetailPage() {
   }
 
   if (profile?.role === "employee") {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Otevírám zakázku…</p>
+      </div>
+    );
+  }
+
+  if (profile?.role === "customer") {
     return (
       <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />

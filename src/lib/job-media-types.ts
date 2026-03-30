@@ -50,6 +50,12 @@ export type JobFolderDoc = {
   employeeVisibility?: JobFolderEmployeeVisibility;
   /** Povolit nahrávání zaměstnanci s omezeným přístupem. */
   employeeUploadAllowed?: boolean;
+  /** Klientský portál — výslovně povolit zobrazení zákazníkovi (jinak interní). */
+  customerVisible?: boolean;
+  /** Klientský portál — zákazník může anotovat / komentovat. */
+  customerAnnotatable?: boolean;
+  /** Pouze interní (firma), zákazník nevidí. */
+  internalOnly?: boolean;
 };
 
 export type JobMediaFileType = "image" | "pdf" | "office";
@@ -91,6 +97,10 @@ export type JobFolderImageDoc = {
   uploadedBy?: string;
   uploadedByEmployeeId?: string;
   uploadedAt?: unknown;
+  /** Klientský portál — výslovně viditelné zákazníkovi. */
+  customerVisible?: boolean;
+  customerAnnotatable?: boolean;
+  internalOnly?: boolean;
 };
 
 /** Výběr z galerie / souborů: obrázky i PDF. */
