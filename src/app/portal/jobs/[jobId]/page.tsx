@@ -61,6 +61,7 @@ import {
   FileText,
   FileStack,
   MapPin,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -470,7 +471,7 @@ function formatCsDateFromFirestore(value: unknown): string {
   }
 }
 
-export default function JobDetailPage() {
+function JobDetailPageContent() {
   const { jobId } = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -6632,4 +6633,47 @@ export default function JobDetailPage() {
       </Dialog>
     </div>
   );
+}
+
+/**
+ * Běžný zaměstnanec nesmí načítat plný admin detail (rozpočty, doklady, interní kolekce).
+ * Přesměrování na bezpečný přehled `/portal/employee/jobs/[jobId]` před mountem obsahu.
+ */
+export default function JobDetailPage() {
+  const { jobId } = useParams();
+  const router = useRouter();
+  const { user } = useUser();
+  const firestore = useFirestore();
+  const userRef = useMemoFirebase(
+    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
+    [firestore, user]
+  );
+  const { data: profile, isLoading: profileLoading } = useDoc(userRef);
+
+  useEffect(() => {
+    if (profileLoading || !jobId) return;
+    if (profile?.role === "employee") {
+      router.replace(`/portal/employee/jobs/${jobId}`);
+    }
+  }, [profileLoading, profile?.role, jobId, router]);
+
+  if (!user || profileLoading) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Načítání…</p>
+      </div>
+    );
+  }
+
+  if (profile?.role === "employee") {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        <p className="text-sm text-muted-foreground">Otevírám zakázku…</p>
+      </div>
+    );
+  }
+
+  return <JobDetailPageContent />;
 }

@@ -146,23 +146,31 @@ type JobRow = {
 
 function jobAssignsToUser(
   j: JobRow,
-  userUid: string
+  userUid: string,
+  employeeDocId?: string | undefined
 ): boolean {
   const raw = j?.assignedEmployeeIds;
-  if (Array.isArray(raw)) return raw.includes(userUid);
-  if (typeof raw === "string") return raw === userUid;
+  if (Array.isArray(raw)) {
+    if (raw.includes(userUid)) return true;
+    if (employeeDocId && raw.includes(employeeDocId)) return true;
+    return false;
+  }
+  if (typeof raw === "string") {
+    return raw === userUid || (!!employeeDocId && raw === employeeDocId);
+  }
   return false;
 }
 
 function normalizeJobsList(
   allJobs: JobRow[] | null | undefined,
   isAdmin: boolean,
-  userUid: string | undefined
+  userUid: string | undefined,
+  employeeDocId?: string | undefined
 ): JobRow[] {
   const list = Array.isArray(allJobs) ? allJobs : [];
   if (isAdmin) return list;
   const uid = userUid ?? "";
-  return list.filter((j) => jobAssignsToUser(j, uid));
+  return list.filter((j) => jobAssignsToUser(j, uid, employeeDocId));
 }
 
 function JobsPageContent() {
@@ -223,9 +231,12 @@ function JobsPageContent() {
     [templatesData]
   );
 
+  const employeeDocId = profile?.employeeId as string | undefined;
+  const isPortalEmployee = profile?.role === "employee";
+
   const jobs = useMemo(
-    () => normalizeJobsList(allJobs, !!isAdmin, user?.uid),
-    [allJobs, isAdmin, user?.uid]
+    () => normalizeJobsList(allJobs, !!isAdmin, user?.uid, employeeDocId),
+    [allJobs, isAdmin, user?.uid, employeeDocId]
   );
 
   const searchParams = useSearchParams();
@@ -1261,7 +1272,13 @@ function JobsPageContent() {
                     </TableCell>
                     <TableCell className="pr-4 sm:pr-6 text-right">
                       {job?.id ? (
-                        <Link href={`/portal/jobs/${job.id}`}>
+                        <Link
+                          href={
+                            isPortalEmployee
+                              ? `/portal/employee/jobs/${job.id}`
+                              : `/portal/jobs/${job.id}`
+                          }
+                        >
                           <Button
                             variant="ghost"
                             size="sm"

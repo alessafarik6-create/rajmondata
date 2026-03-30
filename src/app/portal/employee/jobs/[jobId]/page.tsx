@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -20,11 +20,29 @@ import type { JobMemberPermissions } from "@/lib/job-employee-access";
 import {
   DEFAULT_LIMITED_MEMBER_PERMISSIONS,
   memberPermissionsForAccessMode,
+  filterFoldersForLimitedEmployee,
 } from "@/lib/job-employee-access";
+import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
+import { isJobIdAssigned } from "@/lib/assigned-jobs";
+
+/** Bezpečná pole z dokumentu zakázky — žádné rozpočty / interní finance v UI. */
+function safeJobOverviewFields(job: Record<string, unknown> | null | undefined) {
+  if (!job) return null;
+  return {
+    name: typeof job.name === "string" ? job.name : "",
+    description: typeof job.description === "string" ? job.description : "",
+    status: typeof job.status === "string" ? job.status : "",
+    startDate: typeof job.startDate === "string" ? job.startDate : "",
+    endDate: typeof job.endDate === "string" ? job.endDate : "",
+    customerAddress: typeof job.customerAddress === "string" ? job.customerAddress : "",
+    measuring: typeof job.measuring === "string" ? job.measuring : "",
+  };
+}
 
 export default function EmployeeJobDetailPage() {
   const params = useParams();
-  const jobId = params?.jobId as string | undefined;
+  const jobIdRaw = params?.jobId;
+  const jobId = Array.isArray(jobIdRaw) ? jobIdRaw[0] : jobIdRaw;
   const { user } = useUser();
   const firestore = useFirestore();
 
@@ -35,6 +53,30 @@ export default function EmployeeJobDetailPage() {
   const { data: profile, isLoading: profileLoading } = useDoc(userRef);
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
+
+  const employeeRef = useMemoFirebase(
+    () =>
+      firestore && companyId && employeeId
+        ? doc(firestore, "companies", companyId, "employees", employeeId)
+        : null,
+    [firestore, companyId, employeeId]
+  );
+  const { data: employeeDoc, isLoading: employeeLoading } = useDoc(employeeRef);
+
+  const { assignedJobIds, jobsLoading } = useAssignedWorklogJobs(
+    firestore,
+    companyId,
+    employeeDoc as Record<string, unknown> | undefined,
+    employeeLoading,
+    user?.uid,
+    employeeId,
+    "employeeSummary"
+  );
+
+  const accessAllowed = useMemo(() => {
+    if (!jobId || typeof jobId !== "string") return false;
+    return isJobIdAssigned(assignedJobIds, jobId);
+  }, [jobId, assignedJobIds]);
 
   const summaryRef = useMemoFirebase(
     () =>
@@ -52,6 +94,15 @@ export default function EmployeeJobDetailPage() {
     [firestore, companyId, jobId]
   );
   const { data: summary, isLoading: summaryLoading } = useDoc(summaryRef);
+
+  const jobRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? doc(firestore, "companies", companyId, "jobs", jobId)
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: jobDoc } = useDoc(jobRef);
 
   const showLegacyPhotos =
     !!summary &&
@@ -104,7 +155,7 @@ export default function EmployeeJobDetailPage() {
     );
   }, [memberDoc]);
 
-  const effectivePermissions =
+  const effectivePermissions: JobMemberPermissions =
     memberDoc?.accessMode === "full_internal"
       ? memberPermissions
       : {
@@ -112,6 +163,76 @@ export default function EmployeeJobDetailPage() {
           ...memberPermissions,
           canViewPhotoFolders: memberPermissions.canViewPhotoFolders !== false,
         };
+
+  /** V detailu zaměstnance nikdy nepropisujeme rozpočty / interní doklady — jen média. */
+  const permissionsForMedia: JobMemberPermissions = {
+    ...effectivePermissions,
+    canViewBudgets: false,
+    canViewDocuments: false,
+  };
+
+  const foldersColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? collection(firestore, "companies", companyId, "jobs", jobId, "folders")
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: foldersRaw } = useCollection(foldersColRef);
+
+  const visibleFolders = useMemo(() => {
+    const list = (foldersRaw || []).filter(
+      (f): f is Record<string, unknown> & { id: string } =>
+        !!f && typeof (f as { id?: string }).id === "string"
+    );
+    return filterFoldersForLimitedEmployee(list, permissionsForMedia);
+  }, [foldersRaw, permissionsForMedia]);
+
+  const overview = useMemo(() => {
+    const fromJob = safeJobOverviewFields(
+      jobDoc as Record<string, unknown> | undefined
+    );
+    if (summary && typeof summary === "object") {
+      const s = summary as Record<string, unknown>;
+      const fromSummary = {
+        name: (typeof s.name === "string" && s.name.trim()) || "",
+        description: typeof s.description === "string" ? s.description : "",
+        status: typeof s.status === "string" ? s.status : "",
+        startDate: typeof s.startDate === "string" ? s.startDate : "",
+        endDate: typeof s.endDate === "string" ? s.endDate : "",
+        customerAddress:
+          typeof s.customerAddress === "string" ? s.customerAddress : "",
+        measuring: typeof s.measuring === "string" ? s.measuring : "",
+        source: "summary" as const,
+      };
+      const summaryHasContent =
+        !!fromSummary.name?.trim() ||
+        !!fromSummary.description?.trim() ||
+        !!fromSummary.customerAddress?.trim() ||
+        !!fromSummary.measuring?.trim() ||
+        !!fromSummary.status?.trim() ||
+        !!fromSummary.startDate ||
+        !!fromSummary.endDate;
+      if (summaryHasContent) return fromSummary;
+      if (fromJob) return { ...fromJob, source: "job" as const };
+      return { ...fromSummary, source: "summary" as const };
+    }
+    if (!fromJob) return null;
+    return { ...fromJob, source: "job" as const };
+  }, [summary, jobDoc]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (!jobId || typeof jobId !== "string") return;
+    console.log("employee job route param", params);
+    console.log("assignedJobIds", assignedJobIds);
+    console.log("jobPermissions", memberDoc?.jobPermissions);
+    console.log(
+      "allowedFolderIds",
+      (memberDoc?.jobPermissions as JobMemberPermissions | undefined)?.allowedFolderIds
+    );
+    console.log("visibleFolders", visibleFolders.map((f) => f.id));
+  }, [params, jobId, assignedJobIds, memberDoc, visibleFolders]);
 
   if (!user) {
     return (
@@ -129,7 +250,7 @@ export default function EmployeeJobDetailPage() {
     );
   }
 
-  if (!companyId || !employeeId || !jobId) {
+  if (!companyId || !employeeId || !jobId || typeof jobId !== "string") {
     return (
       <Alert className="max-w-lg">
         <AlertTitle>Chybí údaje</AlertTitle>
@@ -140,12 +261,60 @@ export default function EmployeeJobDetailPage() {
     );
   }
 
+  if (employeeLoading || jobsLoading) {
+    return (
+      <div className="flex justify-center py-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!accessAllowed) {
+    return (
+      <div className="mx-auto max-w-lg space-y-4 px-3 py-6 sm:px-4">
+        <Button variant="ghost" size="sm" asChild>
+          <Link href="/portal/jobs" className="gap-1">
+            <ChevronLeft className="h-4 w-4" />
+            Zpět na zakázky
+          </Link>
+        </Button>
+        <Alert>
+          <AlertTitle>Přístup zamítnut</AlertTitle>
+          <AlertDescription>
+            Tato zakázka vám není přiřazena, nebo k ní nemáte oprávnění.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  const hasOverview =
+    overview &&
+    (overview.source === "job" ||
+      !!overview.name?.trim() ||
+      !!overview.description?.trim() ||
+      !!overview.customerAddress?.trim() ||
+      !!overview.measuring?.trim() ||
+      !!overview.status?.trim() ||
+      !!overview.startDate ||
+      !!overview.endDate);
+
+  const showDocEmpty =
+    effectivePermissions.canViewPhotoFolders &&
+    visibleFolders.length === 0 &&
+    !showLegacyPhotos;
+
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-3 py-6 sm:px-4">
       <div className="flex flex-wrap items-center gap-3">
         <Button variant="ghost" size="sm" asChild>
-          <Link href="/portal/employee" className="gap-1">
+          <Link href="/portal/jobs" className="gap-1">
             <ChevronLeft className="h-4 w-4" />
+            Zakázky
+          </Link>
+        </Button>
+        <Button variant="ghost" size="sm" asChild>
+          <Link href="/portal/employee" className="gap-1">
             Přehled
           </Link>
         </Button>
@@ -155,85 +324,95 @@ export default function EmployeeJobDetailPage() {
         <div className="flex justify-center py-12">
           <Loader2 className="h-8 w-8 animate-spin text-primary" />
         </div>
-      ) : !summary ? (
+      ) : !hasOverview && !jobDoc ? (
         <Alert>
-          <AlertTitle>Náhled zakázky není k dispozici</AlertTitle>
+          <AlertTitle>Zakázku se nepodařilo načíst</AlertTitle>
           <AlertDescription>
-            Požádejte administrátora o synchronizaci zakázky (otevření detailu v
-            sekci Zakázky), aby se doplnil bezpečný přehled pro zaměstnance.
+            Zkuste obnovit stránku. Pokud problém přetrvá, kontaktujte administrátora.
+          </AlertDescription>
+        </Alert>
+      ) : !hasOverview ? (
+        <Alert>
+          <AlertTitle>Údaje o zakázce nejsou k dispozici</AlertTitle>
+          <AlertDescription>
+            Požádejte administrátora o otevření zakázky v sekci Zakázky — doplní se bezpečný přehled
+            pro zaměstnance.
           </AlertDescription>
         </Alert>
       ) : (
         <>
+          {overview?.source === "job" ? (
+            <p className="text-xs text-muted-foreground">
+              Zobrazeny základní údaje z přiřazené zakázky. Plný přehled pro zaměstnance může doplnit
+              administrátor při úpravě zakázky.
+            </p>
+          ) : null}
           <Card>
             <CardHeader>
               <CardTitle className="text-xl">
-                {(summary as { name?: string }).name || "Zakázka"}
+                {overview?.name?.trim() || "Zakázka"}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm text-slate-800">
-              {(summary as { description?: string }).description ? (
-                <p className="text-slate-700">
-                  {(summary as { description: string }).description}
-                </p>
+              {overview?.description ? (
+                <p className="text-slate-700">{overview.description}</p>
               ) : null}
               <div className="flex flex-wrap gap-4 text-xs sm:text-sm">
                 <span className="inline-flex items-center gap-1.5">
                   <Calendar className="h-3.5 w-3.5" />
-                  Stav:{" "}
-                  <strong>
-                    {(summary as { status?: string }).status || "—"}
-                  </strong>
+                  Stav: <strong>{overview?.status || "—"}</strong>
                 </span>
-                {(summary as { startDate?: string }).startDate ? (
+                {overview?.startDate ? (
                   <span>
-                    Zahájení:{" "}
-                    <strong>
-                      {(summary as { startDate: string }).startDate}
-                    </strong>
+                    Zahájení: <strong>{overview.startDate}</strong>
                   </span>
                 ) : null}
-                {(summary as { endDate?: string }).endDate ? (
+                {overview?.endDate ? (
                   <span>
-                    Dokončení:{" "}
-                    <strong>{(summary as { endDate: string }).endDate}</strong>
+                    Dokončení: <strong>{overview.endDate}</strong>
                   </span>
                 ) : null}
               </div>
-              {(summary as { customerAddress?: string }).customerAddress ? (
+              {overview?.customerAddress ? (
                 <p className="flex items-start gap-2 text-sm">
-                  <MapPin className="h-4 w-4 shrink-0 mt-0.5" />
-                  {(summary as { customerAddress: string }).customerAddress}
+                  <MapPin className="mt-0.5 h-4 w-4 shrink-0" />
+                  {overview.customerAddress}
                 </p>
               ) : null}
-              {(summary as { measuring?: string }).measuring ? (
+              {overview?.measuring ? (
                 <div className="rounded-md border border-slate-200 bg-slate-50/80 p-3 text-sm">
-                  <p className="font-medium text-slate-900 mb-1">Měření</p>
-                  <p className="text-slate-800">
-                    {(summary as { measuring: string }).measuring}
-                  </p>
+                  <p className="mb-1 font-medium text-slate-900">Měření</p>
+                  <p className="text-slate-800">{overview.measuring}</p>
                 </div>
               ) : null}
             </CardContent>
           </Card>
 
           {effectivePermissions.canViewPhotoFolders ? (
-            <JobMediaSection
-              companyId={companyId}
-              jobId={jobId}
-              jobDisplayName={(summary as { name?: string }).name ?? null}
-              user={user}
-              canManageFolders={false}
-              photos={legacyPhotos}
-              uploadLegacyPhoto={async () => {}}
-              legacyUploading={false}
-              onAnnotatePhoto={() => {}}
-              layout="jobDetailWide"
-              mediaScope="employeeLimited"
-              memberPermissions={effectivePermissions}
-              employeeRecordId={employeeId}
-              showLegacyPhotosForEmployee={showLegacyPhotos}
-            />
+            <>
+              <JobMediaSection
+                companyId={companyId}
+                jobId={jobId}
+                jobDisplayName={overview?.name?.trim() ?? null}
+                user={user}
+                canManageFolders={false}
+                photos={legacyPhotos}
+                uploadLegacyPhoto={async () => {}}
+                legacyUploading={false}
+                onAnnotatePhoto={() => {}}
+                layout="jobDetailWide"
+                mediaScope="employeeLimited"
+                memberPermissions={permissionsForMedia}
+                employeeRecordId={employeeId}
+                showLegacyPhotosForEmployee={showLegacyPhotos}
+              />
+              {showDocEmpty ? (
+                <p className="text-sm text-muted-foreground">
+                  Pro tuto zakázku nemáte v aplikaci zpřístupněnou žádnou složku dokumentace — kontaktujte
+                  vedoucího zakázky.
+                </p>
+              ) : null}
+            </>
           ) : (
             <p className="text-sm text-muted-foreground">
               Fotodokumentace k této zakázce pro vás není povolena.
