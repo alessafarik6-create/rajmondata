@@ -72,6 +72,7 @@ import {
   contrastTextForBg,
   normalizeLeadTagColor,
 } from "@/lib/lead-tag-colors";
+import { getInquiryTypeBadgeClass } from "@/lib/inquiry-type-badge";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -1199,6 +1200,22 @@ export default function PortalLeadsPage() {
                             onClick={(e) => e.stopPropagation()}
                           >
                             <div className="mx-auto max-w-4xl space-y-4">
+                              {r.typ?.trim() ? (
+                                <div className="space-y-1">
+                                  <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
+                                    Typ poptávky
+                                  </p>
+                                  <Badge
+                                    variant="outline"
+                                    className={cn(
+                                      "w-fit text-xs font-normal",
+                                      getInquiryTypeBadgeClass(r.typ)
+                                    )}
+                                  >
+                                    {r.typ}
+                                  </Badge>
+                                </div>
+                              ) : null}
                               {r.adresa?.trim() ? (
                                 <div className="space-y-1">
                                   <p className="text-xs font-medium uppercase tracking-wide text-slate-800">
