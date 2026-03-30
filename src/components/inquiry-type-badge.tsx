@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect } from "react";
-import { cn } from "@/lib/utils";
 import {
   getInquiryTypeChipClass,
   getInquiryTypeLabel,
@@ -15,7 +14,8 @@ export type InquiryTypeBadgeProps = {
 };
 
 /**
- * Čip typu poptávky — `<span>` + hash paleta (ne Badge).
+ * Čip typu poptávky — `<span>`. Nepoužívej zde `cn()`/twMerge nad barevnými třídami čipu,
+ * aby se neodstraňovaly `bg-*` / `text-black`.
  */
 export function InquiryTypeBadge({
   type,
@@ -29,17 +29,21 @@ export function InquiryTypeBadge({
     console.log("chip class", getInquiryTypeChipClass(type));
   }, [type]);
 
+  const variantLayout =
+    variant === "preview"
+      ? "max-w-[min(100%,18rem)] text-xs sm:text-sm"
+      : "w-fit max-w-[min(100%,28rem)] text-xs font-normal";
+
+  const merged = [
+    getInquiryTypeChipClass(type),
+    variantLayout,
+    className?.trim() ?? "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
   return (
-    <span
-      role="status"
-      className={cn(
-        getInquiryTypeChipClass(type),
-        variant === "preview"
-          ? "max-w-[min(100%,18rem)] text-xs sm:text-sm"
-          : "w-fit max-w-[min(100%,28rem)] text-xs font-normal",
-        className
-      )}
-    >
+    <span role="status" className={merged}>
       {getInquiryTypeLabel(type)}
     </span>
   );
