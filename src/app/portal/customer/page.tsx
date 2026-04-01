@@ -6,7 +6,7 @@ import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Briefcase, ChevronRight, Loader2 } from "lucide-react";
+import { Briefcase, ChevronRight, Loader2, MessageSquare } from "lucide-react";
 import { canCustomerAccessJob } from "@/lib/job-customer-access";
 
 export default function CustomerPortalHomePage() {
@@ -69,6 +69,22 @@ export default function CustomerPortalHomePage() {
               <Briefcase className="h-4 w-4" />
               Zobrazit zakázky
               <ChevronRight className="h-4 w-4" />
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+      <Card className="border-emerald-300 bg-emerald-50">
+        <CardHeader>
+          <CardTitle className="text-lg text-emerald-900">Máte dotaz? Napište nám</CardTitle>
+          <CardDescription className="text-emerald-800">
+            Můžete nám poslat zprávu přímo z portálu.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Button asChild>
+            <Link href="/portal/customer/chat" className="gap-2">
+              <MessageSquare className="h-4 w-4" />
+              Otevřít chat
             </Link>
           </Button>
         </CardContent>

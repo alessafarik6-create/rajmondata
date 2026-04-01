@@ -70,6 +70,7 @@ const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   jobs: Briefcase,
   leads: Inbox,
   productCatalogs: Package,
+  customerChats: MessageSquare,
   finance: Landmark,
   invoices: Receipt,
   documents: FileText,

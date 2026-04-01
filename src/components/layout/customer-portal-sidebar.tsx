@@ -3,17 +3,18 @@
 import React, { useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Briefcase, User, ShieldCheck, Package } from "lucide-react";
+import { LayoutDashboard, Briefcase, User, ShieldCheck, Package, MessageSquare } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
 import { useUser, useDoc, useFirestore, useMemoFirebase } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { collection, doc, limit, orderBy, query } from "firebase/firestore";
 import { CUSTOMER_PORTAL_MENU_ITEMS } from "@/lib/customer-portal-menu";
 
 const ICONS: Record<string, typeof LayoutDashboard> = {
   "customer-home": LayoutDashboard,
   "customer-jobs": Briefcase,
   "customer-catalogs": Package,
+  "customer-chat": MessageSquare,
   "customer-profile": User,
 };
 
@@ -32,6 +33,18 @@ export function CustomerPortalSidebar({ mobileSheetClose }: CustomerPortalSideba
   );
   const { data: userProfile } = useDoc(userRef);
   const isSuperAdmin = userProfile?.globalRoles?.includes("super_admin");
+  const companyId = userProfile?.companyId as string | undefined;
+  const conversationId = user ? `cust_${user.uid}` : null;
+  const convoRef = useMemoFirebase(
+    () =>
+      firestore && companyId && conversationId
+        ? doc(firestore, "companies", companyId, "customer_conversations", conversationId)
+        : null,
+    [firestore, companyId, conversationId]
+  );
+  const { data: convo } = useDoc(convoRef);
+  const unreadForCustomer =
+    Number((convo as { unreadForCustomerCount?: unknown } | null)?.unreadForCustomerCount ?? 0) || 0;
 
   const visibleItems = useMemo(() => {
     const items = [...CUSTOMER_PORTAL_MENU_ITEMS];
@@ -53,6 +66,9 @@ export function CustomerPortalSidebar({ mobileSheetClose }: CustomerPortalSideba
     }
     if (id === "customer-catalogs") {
       return pathname.startsWith("/portal/customer/catalogs");
+    }
+    if (id === "customer-chat") {
+      return pathname.startsWith("/portal/customer/chat");
     }
     return pathname === href;
   };
@@ -99,11 +115,21 @@ export function CustomerPortalSidebar({ mobileSheetClose }: CustomerPortalSideba
             >
               <Icon className="w-5 h-5 shrink-0" />
               <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+              {item.id === "customer-chat" && unreadForCustomer > 0 ? (
+                <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {unreadForCustomer > 99 ? "99+" : unreadForCustomer}
+                </span>
+              ) : null}
             </button>
           ) : (
             <Link key={item.href} href={item.href} className={linkClass(item.id, item.href)}>
               <Icon className="w-5 h-5 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              {item.id === "customer-chat" && unreadForCustomer > 0 ? (
+                <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                  {unreadForCustomer > 99 ? "99+" : unreadForCustomer}
+                </span>
+              ) : null}
             </Link>
           );
         })}

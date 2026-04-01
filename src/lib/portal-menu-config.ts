@@ -74,6 +74,7 @@ export const MODULE_CHILDREN_MAP: Record<string, CanonicalModuleKey> = {
   customers: "zakazky",
   leads: "zakazky",
   productCatalogs: "zakazky",
+  customerChats: "zakazky",
   activity: "reporty",
 };
 
@@ -137,6 +138,15 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     type: "child",
     label: "Produktové katalogy",
     href: "/portal/catalogs",
+    roles: ["owner", "admin", "manager", "accountant"],
+    parentLicenseKeys: ["zakazky"],
+    platformModuleCode: "jobs",
+  },
+  {
+    id: "customerChats",
+    type: "child",
+    label: "Zákaznické chaty",
+    href: "/portal/customer-chats",
     roles: ["owner", "admin", "manager", "accountant"],
     parentLicenseKeys: ["zakazky"],
     platformModuleCode: "jobs",

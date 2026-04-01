@@ -46,7 +46,18 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
 
   const isAdminArea = pathname?.startsWith('/admin');
   const isEmployeePortal = pathname?.startsWith('/portal/employee');
+  const isCustomerPortal = pathname?.startsWith('/portal/customer');
   const showCompanyChatShortcut = !isAdminArea && !isEmployeePortal;
+  const customerChatRef = useMemoFirebase(
+    () =>
+      firestore && profile?.companyId && user
+        ? doc(firestore, "companies", String(profile.companyId), "customer_conversations", `cust_${user.uid}`)
+        : null,
+    [firestore, profile?.companyId, user?.uid]
+  );
+  const { data: customerChatDoc } = useDoc(customerChatRef);
+  const customerUnread = Number((customerChatDoc as { unreadForCustomerCount?: unknown } | null)?.unreadForCustomerCount ?? 0) || 0;
+  const chatHref = isCustomerPortal ? "/portal/customer/chat" : "/portal/chat";
   useEffect(() => {
     if (!isAdminArea) return;
     fetch('/api/superadmin/session')
@@ -142,11 +153,17 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             size="icon"
             className="relative text-slate-800 hover:bg-slate-200 hover:text-slate-900 h-10 w-10 shrink-0"
           >
-            <Link href="/portal/chat" aria-label="Zprávy od zaměstnanců">
+            <Link href={chatHref} aria-label={isCustomerPortal ? "Chat s administrací" : "Zprávy od zaměstnanců"}>
               <MessageSquare className="w-5 h-5" />
-              {showChatBadge && unreadChatCount > 0 ? (
+              {(isCustomerPortal ? customerUnread > 0 : showChatBadge && unreadChatCount > 0) ? (
                 <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white shadow-sm">
-                  {unreadChatCount > 99 ? "99+" : unreadChatCount}
+                  {isCustomerPortal
+                    ? customerUnread > 99
+                      ? "99+"
+                      : customerUnread
+                    : unreadChatCount > 99
+                      ? "99+"
+                      : unreadChatCount}
                 </span>
               ) : null}
             </Link>

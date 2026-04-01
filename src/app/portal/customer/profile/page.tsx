@@ -2,20 +2,16 @@
 
 import React from "react";
 import Link from "next/link";
-import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase";
-import { addDoc, collection, doc, limit, orderBy, query, serverTimestamp, setDoc } from "firebase/firestore";
+import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
+import { doc } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, Loader2 } from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { useToast } from "@/hooks/use-toast";
-import { createCustomerActivity } from "@/lib/customer-activity";
+import { CustomerChatPanel } from "@/components/customer/customer-chat-panel";
 
 export default function CustomerProfilePage() {
   const { user } = useUser();
   const firestore = useFirestore();
-  const { toast } = useToast();
-  const [text, setText] = React.useState("");
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
@@ -24,79 +20,6 @@ export default function CustomerProfilePage() {
   const companyId = (profile as { companyId?: string })?.companyId;
   const linkedJobIds = ((profile as { linkedJobIds?: string[] })?.linkedJobIds ?? []).filter(Boolean);
   const defaultJobId = linkedJobIds[0] ?? null;
-  const conversationId = user && companyId ? `cust_${user.uid}` : null;
-  const convoRef = useMemoFirebase(
-    () =>
-      firestore && companyId && conversationId
-        ? doc(firestore, "companies", companyId, "customer_conversations", conversationId)
-        : null,
-    [firestore, companyId, conversationId]
-  );
-  const messagesRef = useMemoFirebase(
-    () =>
-      firestore && companyId && conversationId
-        ? query(
-            collection(firestore, "companies", companyId, "customer_conversations", conversationId, "messages"),
-            orderBy("createdAt", "asc"),
-            limit(200)
-          )
-        : null,
-    [firestore, companyId, conversationId]
-  );
-  const { data: messages } = useCollection(messagesRef);
-
-  const sendMessage = async () => {
-    if (!user || !firestore || !companyId || !conversationId || !text.trim()) return;
-    const body = text.trim();
-    const messagePayload = {
-      senderId: user.uid,
-      senderRole: "customer",
-      text: body,
-      createdAt: serverTimestamp(),
-      isRead: false,
-      attachments: [],
-    };
-    if (process.env.NODE_ENV === "development") {
-      console.log("customer chat message", messagePayload);
-    }
-    await setDoc(
-      doc(firestore, "companies", companyId, "customer_conversations", conversationId),
-      {
-        organizationId: companyId,
-        customerUserId: user.uid,
-        customerId: null,
-        jobId: defaultJobId,
-        createdAt: serverTimestamp(),
-        lastMessageAt: serverTimestamp(),
-        lastMessagePreview: body.slice(0, 180),
-        unreadForAdminCount: ((profile as { unreadForAdminCount?: number })?.unreadForAdminCount ?? 0) + 1,
-        unreadForCustomerCount: 0,
-      },
-      { merge: true }
-    );
-    await addDoc(
-      collection(firestore, "companies", companyId, "customer_conversations", conversationId, "messages"),
-      messagePayload
-    );
-    await createCustomerActivity(firestore, {
-      organizationId: companyId,
-      jobId: defaultJobId,
-      customerUserId: user.uid,
-      customerId: null,
-      type: "customer_chat_message",
-      title: "Nová zpráva zákazníka",
-      message: body.slice(0, 180),
-      createdBy: user.uid,
-      createdByRole: "customer",
-      isRead: false,
-      targetType: "chat",
-      targetId: conversationId,
-      targetLink: "/portal/dashboard",
-      priority: "high",
-    });
-    setText("");
-    toast({ title: "Zpráva odeslána" });
-  };
 
   if (!user || isLoading) {
     return (
@@ -139,47 +62,26 @@ export default function CustomerProfilePage() {
           </p>
         </CardContent>
       </Card>
+      <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4">
+        <p className="text-base font-semibold text-emerald-900">Máte dotaz? Napište nám</p>
+        <p className="text-sm text-emerald-800">Můžete nám poslat zprávu přímo z portálu.</p>
+        <Button asChild className="mt-3">
+          <Link href="/portal/customer/chat">Otevřít chat</Link>
+        </Button>
+      </div>
+      {companyId ? (
+        <CustomerChatPanel companyId={companyId} linkedJobId={defaultJobId} compact />
+      ) : (
       <Card>
         <CardHeader>
           <CardTitle>Chat s administrací</CardTitle>
           <CardDescription>Napište zprávu správci firmy.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="max-h-[340px] space-y-2 overflow-auto rounded border p-2">
-            {(messages ?? []).length === 0 ? (
-              <p className="text-sm text-muted-foreground">Zatím žádné zprávy.</p>
-            ) : (
-              (messages ?? []).map((m) => {
-                const mine = (m as { senderRole?: string }).senderRole === "customer";
-                return (
-                  <div
-                    key={m.id}
-                    className={`rounded px-3 py-2 text-sm ${mine ? "ml-auto max-w-[85%] bg-primary/10" : "mr-auto max-w-[85%] bg-muted"}`}
-                  >
-                    <p>{String((m as { text?: string }).text ?? "")}</p>
-                  </div>
-                );
-              })
-            )}
-          </div>
-          <div className="flex gap-2">
-            <Input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Napište zprávu…"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void sendMessage();
-                }
-              }}
-            />
-            <Button type="button" onClick={() => void sendMessage()} disabled={!text.trim()}>
-              Odeslat
-            </Button>
-          </div>
+          <p className="text-sm text-muted-foreground">Chat není dostupný – chybí companyId.</p>
         </CardContent>
       </Card>
+      )}
     </div>
   );
 }
