@@ -12,5 +12,6 @@ export type CustomerPortalMenuItem = {
 export const CUSTOMER_PORTAL_MENU_ITEMS: readonly CustomerPortalMenuItem[] = [
   { id: "customer-home", label: "Přehled", href: "/portal/customer" },
   { id: "customer-jobs", label: "Moje zakázky", href: "/portal/customer/jobs" },
+  { id: "customer-catalogs", label: "Katalog produktů", href: "/portal/customer/catalogs" },
   { id: "customer-profile", label: "Profil", href: "/portal/customer/profile" },
 ];

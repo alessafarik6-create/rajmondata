@@ -320,6 +320,27 @@ service cloud.firestore {
         allow read, write: if warehouseModuleUser(companyId);
       }
 
+      /**
+       * Produktové katalogy pro zákazníky.
+       * companies/{companyId}/product_catalogs/{catalogId}
+       */
+      match /product_catalogs/{catalogId} {
+        allow read: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() ||
+          (
+            userRole() == 'customer' &&
+            ('customerVisible' in resource.data) && resource.data.customerVisible == true &&
+            ('active' in resource.data) && resource.data.active == true &&
+            ('assignedJobIds' in resource.data) &&
+            resource.data.assignedJobIds is list &&
+            ('linkedJobIds' in userDoc()) &&
+            userDoc().linkedJobIds is list &&
+            resource.data.assignedJobIds.hasAny(userDoc().linkedJobIds)
+          )
+        );
+        allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       match /inventoryMovements/{movId} {
         allow read, write: if warehouseModuleUser(companyId);
       }
@@ -467,6 +488,33 @@ service cloud.firestore {
               customerPortalLinkedJob(companyId, jobId)
             );
           allow delete: if false;
+        }
+
+        /**
+         * Výběry produktů zákazníka v katalogu.
+         * companies/{companyId}/jobs/{jobId}/product_catalog_selections/{selectionId}
+         */
+        match /product_catalog_selections/{selectionId} {
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId) ||
+            customerPortalLinkedJob(companyId, jobId);
+          allow create, update: if signedIn() && sameCompany(companyId) && (
+            (isPrivileged() && jobDetailReadAccess(companyId, jobId)) ||
+            (
+              customerPortalLinkedJob(companyId, jobId) &&
+              request.resource.data.jobId == jobId &&
+              request.resource.data.companyId == companyId &&
+              request.resource.data.selectedBy == request.auth.uid &&
+              request.resource.data.customerPortalUid == request.auth.uid
+            )
+          );
+          allow delete: if signedIn() && sameCompany(companyId) && (
+            (isPrivileged() && jobDetailReadAccess(companyId, jobId)) ||
+            (
+              customerPortalLinkedJob(companyId, jobId) &&
+              resource.data.customerPortalUid == request.auth.uid
+            )
+          );
         }
 
         /**

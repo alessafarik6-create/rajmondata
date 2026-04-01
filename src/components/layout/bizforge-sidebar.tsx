@@ -69,6 +69,7 @@ const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   customers: UserCircle,
   jobs: Briefcase,
   leads: Inbox,
+  productCatalogs: Package,
   finance: Landmark,
   invoices: Receipt,
   documents: FileText,

@@ -17,6 +17,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, ChevronLeft, MapPin, Calendar } from "lucide-react";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { canCustomerAccessJob } from "@/lib/job-customer-access";
+import { CustomerProductCatalogsSection } from "@/components/customer/customer-product-catalogs-section";
 
 function safeJobFields(job: Record<string, unknown> | null | undefined) {
   if (!job) return null;
@@ -197,6 +198,13 @@ export default function CustomerJobDetailPage() {
         memberPermissions={null}
         employeeRecordId={null}
         showLegacyPhotosForEmployee={true}
+      />
+
+      <CustomerProductCatalogsSection
+        companyId={companyId}
+        jobId={jobId}
+        customerUid={user.uid}
+        customerId={(jobDoc as { customerId?: string })?.customerId ?? null}
       />
     </div>
   );

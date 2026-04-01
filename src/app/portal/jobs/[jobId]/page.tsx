@@ -25,6 +25,7 @@ import {
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
+import { JobProductCatalogsSection } from "@/components/jobs/job-product-catalogs-section";
 import {
   buildJobMediaMirrorAnnotatedUrlPatch,
   buildNewJobLegacyPhotoMirrorDocument,
@@ -5389,6 +5390,14 @@ function JobDetailPageContent() {
               jobBudget={jobBudgetBreakdown}
               layout="jobDetailWide"
             />
+          </div>
+        </section>
+      ) : null}
+
+      {user && companyId && jobId ? (
+        <section className={JD.sectionBand} aria-labelledby="job-product-catalogs-heading">
+          <div className={JD.sectionBandInner}>
+            <JobProductCatalogsSection companyId={companyId} jobId={jobId as string} />
           </div>
         </section>
       ) : null}

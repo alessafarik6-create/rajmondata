@@ -73,6 +73,7 @@ export const MODULE_MENU_MAP: Record<
 export const MODULE_CHILDREN_MAP: Record<string, CanonicalModuleKey> = {
   customers: "zakazky",
   leads: "zakazky",
+  productCatalogs: "zakazky",
   activity: "reporty",
 };
 
@@ -128,6 +129,15 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     label: "Poptávky",
     href: "/portal/leads",
     roles: ["owner", "admin", "manager", "accountant", "employee"],
+    parentLicenseKeys: ["zakazky"],
+    platformModuleCode: "jobs",
+  },
+  {
+    id: "productCatalogs",
+    type: "child",
+    label: "Produktové katalogy",
+    href: "/portal/catalogs",
+    roles: ["owner", "admin", "manager", "accountant"],
     parentLicenseKeys: ["zakazky"],
     platformModuleCode: "jobs",
   },
