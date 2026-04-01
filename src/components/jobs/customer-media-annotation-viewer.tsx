@@ -52,6 +52,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { createCustomerActivity } from "@/lib/customer-activity";
 
 type Tool =
   | "pan"
@@ -1392,6 +1393,26 @@ export function CustomerMediaAnnotationViewer({
         console.log("annotation payload after sanitize", sanitizedPayload);
       }
       await setDoc(annRef, sanitizedPayload, { merge: true });
+      if (!isAdmin) {
+        await createCustomerActivity(firestore, {
+          organizationId: companyId,
+          jobId,
+          customerUserId: userId,
+          customerId: null,
+          type:
+            fileType === "pdf"
+              ? "customer_pdf_annotation"
+              : "customer_image_annotation",
+          title: "Anotace dokumentu",
+          message: "Zákazník uložil anotaci do dokumentu.",
+          createdBy: userId,
+          createdByRole: "customer",
+          isRead: false,
+          targetType: "annotation",
+          targetId: targetId,
+          targetLink: `/portal/jobs/${jobId}`,
+        });
+      }
       initialItemsRef.current = JSON.parse(JSON.stringify(securedItems)) as CustomerOverlayItem[];
       itemsRef.current = securedItems;
       setItems(securedItems);
@@ -1453,6 +1474,23 @@ export function CustomerMediaAnnotationViewer({
       it.id === selectedId ? { ...it, notes: [...it.notes, note] } : it
     );
     pushHistory(next);
+    if (!isAdmin) {
+      void createCustomerActivity(firestore, {
+        organizationId: companyId,
+        jobId,
+        customerUserId: userId,
+        customerId: null,
+        type: "customer_note_added",
+        title: "Poznámka v anotaci",
+        message: "Zákazník přidal poznámku k anotaci.",
+        createdBy: userId,
+        createdByRole: "customer",
+        isRead: false,
+        targetType: "annotation",
+        targetId: selectedId,
+        targetLink: `/portal/jobs/${jobId}`,
+      });
+    }
     setNoteInput("");
   };
 

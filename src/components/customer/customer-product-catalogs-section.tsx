@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { createCustomerActivity } from "@/lib/customer-activity";
 import {
   catalogIsAssignedToCustomer,
   catalogIsAssignedToJob,
@@ -157,6 +158,21 @@ export function CustomerProductCatalogsSection({
     setSavingKey(`${catalog.id}:${productId}`);
     try {
       await setDoc(ref, payload, { merge: true });
+      await createCustomerActivity(firestore, {
+        organizationId: companyId,
+        jobId,
+        customerId: customerId ?? null,
+        customerUserId: customerUid,
+        type: existing ? "customer_product_selection_updated" : "customer_product_selected",
+        title: "Výběr produktů",
+        message: `Zákazník upravil výběr v katalogu ${catalog.name || "katalog"}.`,
+        createdBy: customerUid,
+        createdByRole: "customer",
+        isRead: false,
+        targetType: "catalog-selection",
+        targetId: catalog.id,
+        targetLink: `/portal/jobs/${jobId}`,
+      });
       toast({ title: "Výběr uložen", description: "Vaše volba byla uložena." });
     } finally {
       setSavingKey(null);
@@ -201,6 +217,21 @@ export function CustomerProductCatalogsSection({
     setSavingKey(`${catalogId}:note`);
     try {
       await setDoc(ref, payload, { merge: true });
+      await createCustomerActivity(firestore, {
+        organizationId: companyId,
+        jobId,
+        customerId: customerId ?? null,
+        customerUserId: customerUid,
+        type: "customer_product_selection_updated",
+        title: "Poznámka k výběru",
+        message: "Zákazník doplnil poznámku k výběru produktů.",
+        createdBy: customerUid,
+        createdByRole: "customer",
+        isRead: false,
+        targetType: "catalog-selection",
+        targetId: catalogId,
+        targetLink: `/portal/jobs/${jobId}`,
+      });
       toast({ title: "Poznámka uložena" });
     } finally {
       setSavingKey(null);

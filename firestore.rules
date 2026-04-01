@@ -345,6 +345,57 @@ service cloud.firestore {
         allow read, write: if warehouseModuleUser(companyId);
       }
 
+      /**
+       * Aktivity zákazníků pro dashboard vedení.
+       * companies/{companyId}/customer_activities/{activityId}
+       */
+      match /customer_activities/{activityId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || userRole() == 'manager' || userRole() == 'accountant');
+        allow create: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() || userRole() == 'customer'
+        );
+        allow update: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() ||
+          (
+            request.resource.data.createdBy == resource.data.createdBy &&
+            request.resource.data.createdByRole == resource.data.createdByRole &&
+            request.resource.data.isRead == resource.data.isRead
+          )
+        );
+        allow delete: if false;
+      }
+
+      /**
+       * Zákaznický chat s administrací.
+       * companies/{companyId}/customer_conversations/{conversationId}
+       */
+      match /customer_conversations/{conversationId} {
+        allow read: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() || resource.data.customerUserId == request.auth.uid
+        );
+        allow create, update: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() || request.resource.data.customerUserId == request.auth.uid
+        );
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+
+        match /messages/{messageId} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() || get(/databases/$(database)/documents/companies/$(companyId)/customer_conversations/$(conversationId)).data.customerUserId == request.auth.uid
+          );
+          allow create: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (
+              request.resource.data.senderId == request.auth.uid &&
+              request.resource.data.senderRole == 'customer' &&
+              get(/databases/$(database)/documents/companies/$(companyId)/customer_conversations/$(conversationId)).data.customerUserId == request.auth.uid
+            )
+          );
+          allow update: if signedIn() && sameCompany(companyId) && isPrivileged();
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        }
+      }
+
       /** Výroba — záznamy a přílohy (sklad může dopisovat materiál při přesunu ze skladu). */
       match /production/{prodId} {
         allow read, write: if productionModuleUser(companyId) || warehouseModuleUser(companyId);
