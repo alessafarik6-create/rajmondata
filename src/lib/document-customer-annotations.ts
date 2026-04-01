@@ -23,6 +23,8 @@ export type CustomerOverlayItem =
       page: number;
       points: [number, number][];
       notes: ThreadNote[];
+      createdBy?: string;
+      role?: "admin" | "customer";
     }
   | {
       id: string;
@@ -34,6 +36,8 @@ export type CustomerOverlayItem =
       x2: number;
       y2: number;
       notes: ThreadNote[];
+      createdBy?: string;
+      role?: "admin" | "customer";
     }
   | {
       id: string;
@@ -46,6 +50,8 @@ export type CustomerOverlayItem =
       h: number;
       text: string;
       notes: ThreadNote[];
+      createdBy?: string;
+      role?: "admin" | "customer";
     }
   | {
       id: string;
@@ -57,6 +63,22 @@ export type CustomerOverlayItem =
       x2: number;
       y2: number;
       notes: ThreadNote[];
+      createdBy?: string;
+      role?: "admin" | "customer";
+    }
+  | {
+      id: string;
+      type: "dimension";
+      color: AnnotationStrokeColor;
+      page: number;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      text: string;
+      notes: ThreadNote[];
+      createdBy?: string;
+      role?: "admin" | "customer";
     };
 
 export type CustomerAnnotationPayload = {
@@ -130,6 +152,12 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
       rawC === "red" || rawC === "blue" || rawC === "yellow" ? rawC : "red";
     const page = typeof o.page === "number" && o.page >= 0 ? Math.floor(o.page) : 0;
     const notes = parseNotes(o.notes);
+    const createdBy =
+      typeof o.createdBy === "string" && o.createdBy.trim() ? String(o.createdBy) : undefined;
+    const role =
+      o.role === "admin" || o.role === "customer"
+        ? (o.role as "admin" | "customer")
+        : undefined;
     const t = o.type;
     if (t === "draw" && Array.isArray(o.points)) {
       const pts: [number, number][] = [];
@@ -139,7 +167,16 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         }
       }
       if (pts.length >= 2) {
-        out.push({ id: id || newItemId(), type: "draw", color, page, points: pts, notes });
+        out.push({
+          id: id || newItemId(),
+          type: "draw",
+          color,
+          page,
+          points: pts,
+          notes,
+          createdBy,
+          role,
+        });
       }
     } else if (t === "line") {
       out.push({
@@ -152,6 +189,8 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         x2: clamp01(Number(o.x2)),
         y2: clamp01(Number(o.y2)),
         notes,
+        createdBy,
+        role,
       });
     } else if (t === "text") {
       const text = String(o.text ?? "").slice(0, 4000);
@@ -166,6 +205,8 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         h: clamp01(Number(o.h)) || 0.04,
         text,
         notes,
+        createdBy,
+        role,
       });
     } else if (t === "highlight") {
       out.push({
@@ -178,6 +219,23 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         x2: clamp01(Number(o.x2)),
         y2: clamp01(Number(o.y2)),
         notes,
+        createdBy,
+        role,
+      });
+    } else if (t === "dimension") {
+      out.push({
+        id: id || newItemId(),
+        type: "dimension",
+        color,
+        page,
+        x1: clamp01(Number(o.x1)),
+        y1: clamp01(Number(o.y1)),
+        x2: clamp01(Number(o.x2)),
+        y2: clamp01(Number(o.y2)),
+        text: String(o.text ?? "").slice(0, 120),
+        notes,
+        createdBy,
+        role,
       });
     }
   }

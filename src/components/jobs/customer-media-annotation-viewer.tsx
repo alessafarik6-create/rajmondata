@@ -40,6 +40,7 @@ import {
   Highlighter,
   Minus,
   Pencil,
+  Ruler,
   Redo2,
   Save,
   Type,
@@ -50,7 +51,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-type Tool = "pan" | "draw" | "line" | "text" | "highlight" | "erase";
+type Tool = "pan" | "draw" | "line" | "dimension" | "text" | "highlight" | "erase";
 
 function colorHex(c: AnnotationStrokeColor): string {
   switch (c) {
@@ -188,6 +189,13 @@ function hitTestItem(
       y2 = it.y2 * ch;
     return distToSeg(x, y, x1, y1, x2, y2) < thr;
   }
+  if (it.type === "dimension") {
+    const x1 = it.x1 * cw,
+      y1 = it.y1 * ch,
+      x2 = it.x2 * cw,
+      y2 = it.y2 * ch;
+    return distToSeg(x, y, x1, y1, x2, y2) < thr;
+  }
   if (it.type === "draw") {
     const pts = it.points;
     for (let i = 1; i < pts.length; i++) {
@@ -221,18 +229,20 @@ function drawOverlayItems(
   cw: number,
   ch: number,
   page: number,
-  selectedId: string | null
+  selectedId: string | null,
+  hoveredId: string | null
 ) {
   for (const it of items) {
     if (it.page !== page) continue;
     const sel = it.id === selectedId;
+    const hov = it.id === hoveredId;
     ctx.strokeStyle = colorHex(it.color);
     ctx.fillStyle = colorHex(it.color);
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     if (it.type === "draw") {
       ctx.globalAlpha = 1;
-      ctx.lineWidth = sel ? 4 : 3;
+      ctx.lineWidth = sel ? 5 : hov ? 4 : 3;
       ctx.beginPath();
       const p0 = it.points[0];
       if (!p0) continue;
@@ -243,11 +253,63 @@ function drawOverlayItems(
       ctx.stroke();
     } else if (it.type === "line") {
       ctx.globalAlpha = 1;
-      ctx.lineWidth = sel ? 4 : 3;
+      ctx.lineWidth = sel ? 5 : hov ? 4 : 3;
       ctx.beginPath();
       ctx.moveTo(it.x1 * cw, it.y1 * ch);
       ctx.lineTo(it.x2 * cw, it.y2 * ch);
       ctx.stroke();
+      if (sel) {
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(it.x1 * cw, it.y1 * ch, 5, 0, Math.PI * 2);
+        ctx.arc(it.x2 * cw, it.y2 * ch, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (it.type === "dimension") {
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = sel ? 4 : hov ? 3 : 2;
+      const x1 = it.x1 * cw,
+        y1 = it.y1 * ch,
+        x2 = it.x2 * cw,
+        y2 = it.y2 * ch;
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      const ang = Math.atan2(y2 - y1, x2 - x1);
+      const len = 12;
+      const drawArrow = (x: number, y: number, a: number) => {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x - len * Math.cos(a - Math.PI / 7), y - len * Math.sin(a - Math.PI / 7));
+        ctx.lineTo(x - len * Math.cos(a + Math.PI / 7), y - len * Math.sin(a + Math.PI / 7));
+        ctx.closePath();
+        ctx.fill();
+      };
+      drawArrow(x1, y1, ang + Math.PI);
+      drawArrow(x2, y2, ang);
+      const midX = (x1 + x2) / 2;
+      const midY = (y1 + y2) / 2;
+      const txt = (it.text || "").trim();
+      if (txt) {
+        ctx.font = "700 13px ui-sans-serif, system-ui, sans-serif";
+        const tw = ctx.measureText(txt).width;
+        const bw = tw + 12;
+        const bh = 22;
+        ctx.fillStyle = "rgba(0,0,0,0.7)";
+        ctx.fillRect(midX - bw / 2, midY - bh / 2 - 10, bw, bh);
+        ctx.strokeStyle = "rgba(255,255,255,0.45)";
+        ctx.strokeRect(midX - bw / 2, midY - bh / 2 - 10, bw, bh);
+        ctx.fillStyle = "#fff";
+        ctx.fillText(txt, midX - tw / 2, midY + 4 - 10);
+      }
+      if (sel) {
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(x1, y1, 5, 0, Math.PI * 2);
+        ctx.arc(x2, y2, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
     } else if (it.type === "highlight") {
       ctx.globalAlpha = 0.35;
       const x1 = Math.min(it.x1, it.x2) * cw,
@@ -267,7 +329,7 @@ function drawOverlayItems(
       ctx.globalAlpha = 1;
       ctx.fillStyle = "rgba(255,255,255,0.92)";
       ctx.fillRect(tx, ty, tw, th);
-      ctx.strokeStyle = sel ? colorHex(it.color) : "rgba(0,0,0,0.35)";
+      ctx.strokeStyle = sel ? colorHex(it.color) : hov ? "rgba(0,0,0,0.6)" : "rgba(0,0,0,0.35)";
       ctx.lineWidth = sel ? 2 : 1;
       ctx.strokeRect(tx, ty, tw, th);
       ctx.fillStyle = "#111827";
@@ -354,6 +416,7 @@ export function CustomerMediaAnnotationViewer({
   const undoPtrRef = useRef(0);
   const [, histBump] = useReducer((n: number) => n + 1, 0);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [saving, setSaving] = useState(false);
@@ -361,6 +424,12 @@ export function CustomerMediaAnnotationViewer({
   const [pdfNumPages, setPdfNumPages] = useState(0);
   const [contentSize, setContentSize] = useState({ w: 800, h: 600 });
   const [lineDraft, setLineDraft] = useState<{ x: number; y: number } | null>(null);
+  const [dragState, setDragState] = useState<{
+    id: string;
+    mode: "move" | "start" | "end";
+    startX: number;
+    startY: number;
+  } | null>(null);
   const [textDraft, setTextDraft] = useState("");
   const [textPos, setTextPos] = useState<{ nx: number; ny: number } | null>(null);
   const [noteInput, setNoteInput] = useState("");
@@ -553,31 +622,45 @@ export function CustomerMediaAnnotationViewer({
         });
       }
     }
-    drawOverlayItems(octx, items, cw, ch, pageIdx, selectedId);
-  }, [contentSize, embeddedItems, items, selectedId, fileType, pdfPage]);
+    drawOverlayItems(octx, items, cw, ch, pageIdx, selectedId, hoveredId);
+  }, [contentSize, embeddedItems, items, selectedId, hoveredId, fileType, pdfPage]);
 
   useEffect(() => {
     if (!open) return;
     redrawMidAndOverlay();
   }, [open, redrawMidAndOverlay]);
 
-  const clientToContent = useCallback(
-    (clientX: number, clientY: number) => {
-      const vp = viewportRef.current;
-      if (!vp) return { x: 0, y: 0 };
-      const r = vp.getBoundingClientRect();
-      const vx = clientX - r.left;
-      const vy = clientY - r.top;
-      const x = (vx - pan.x) / zoom;
-      const y = (vy - pan.y) / zoom;
-      return { x, y };
+  const getCanvasCoords = useCallback((clientX: number, clientY: number) => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / Math.max(1, rect.width);
+    const scaleY = canvas.height / Math.max(1, rect.height);
+    const coords = {
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
+    };
+    console.log("coords", coords);
+    return coords;
+  }, []);
+
+  const isAdmin = useMemo(() => {
+    const r = actorRole.toLowerCase();
+    return r === "owner" || r === "admin" || r === "manager" || r === "accountant";
+  }, [actorRole]);
+
+  const canEditItem = useCallback(
+    (it: CustomerOverlayItem): boolean => {
+      if (readOnly) return false;
+      if (isAdmin) return true;
+      return Boolean(it.createdBy && it.createdBy === userId);
     },
-    [pan, zoom]
+    [isAdmin, readOnly, userId]
   );
 
   const onPointerDown = (e: React.PointerEvent) => {
-    if (!open || readOnly) return;
-    const { x, y } = clientToContent(e.clientX, e.clientY);
+    if (!open) return;
+    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
     const cw = contentSize.w;
     const ch = contentSize.h;
     const pageIdx = fileType === "pdf" ? pdfPage - 1 : 0;
@@ -589,12 +672,13 @@ export function CustomerMediaAnnotationViewer({
     }
 
     if (tool === "erase") {
+      if (readOnly) return;
       const cur = itemsRef.current;
       const idx = [...cur]
         .map((it, i) => ({ it, i }))
         .reverse()
         .find(({ it }) => hitTestItem(x, y, it, cw, ch, pageIdx));
-      if (idx) {
+      if (idx && canEditItem(idx.it)) {
         const next = cur.filter((_, j) => j !== idx.i);
         pushHistory(next);
         setSelectedId(null);
@@ -602,7 +686,8 @@ export function CustomerMediaAnnotationViewer({
       return;
     }
 
-    if (tool === "line" || tool === "highlight") {
+    if (tool === "line" || tool === "highlight" || tool === "dimension") {
+      if (readOnly) return;
       const nx = x / cw,
         ny = y / ch;
       if (!lineDraft) {
@@ -613,6 +698,8 @@ export function CustomerMediaAnnotationViewer({
           color: strokeColor,
           page: pageIdx,
           notes: [] as ThreadNote[],
+          createdBy: userId,
+          role: (isAdmin ? "admin" : "customer") as "admin" | "customer",
         };
         if (tool === "line") {
           pushHistory([
@@ -626,6 +713,22 @@ export function CustomerMediaAnnotationViewer({
               y2: ny,
             },
           ]);
+        } else if (tool === "dimension") {
+          const raw = window.prompt("Text kóty", "2500 mm");
+          pushHistory([
+            ...itemsRef.current,
+            {
+              ...base,
+              type: "dimension",
+              x1: lineDraft.x,
+              y1: lineDraft.y,
+              x2: nx,
+              y2: ny,
+              text: (raw || "").trim() || "kóta",
+              createdBy: userId,
+              role: isAdmin ? "admin" : "customer",
+            },
+          ]);
         } else {
           pushHistory([
             ...itemsRef.current,
@@ -636,6 +739,8 @@ export function CustomerMediaAnnotationViewer({
               y1: lineDraft.y,
               x2: nx,
               y2: ny,
+              createdBy: userId,
+              role: isAdmin ? "admin" : "customer",
             },
           ]);
         }
@@ -645,12 +750,43 @@ export function CustomerMediaAnnotationViewer({
     }
 
     if (tool === "text") {
+      if (readOnly) return;
       setTextPos({ nx: x / cw, ny: y / ch });
       setTextDraft("");
       return;
     }
 
+    // Selection / drag in pan mode
+    if (tool === "pan") {
+      const cur = itemsRef.current;
+      const hit = [...cur]
+        .map((it, i) => ({ it, i }))
+        .reverse()
+        .find(({ it }) => hitTestItem(x, y, it, cw, ch, pageIdx));
+      setSelectedId(hit ? hit.it.id : null);
+      if (!hit || !canEditItem(hit.it)) return;
+      if (hit.it.type === "line" || hit.it.type === "dimension") {
+        const sx = hit.it.x1 * cw;
+        const sy = hit.it.y1 * ch;
+        const ex = hit.it.x2 * cw;
+        const ey = hit.it.y2 * ch;
+        const ds = Math.hypot(x - sx, y - sy);
+        const de = Math.hypot(x - ex, y - ey);
+        setDragState({
+          id: hit.it.id,
+          mode: ds < 14 ? "start" : de < 14 ? "end" : "move",
+          startX: x,
+          startY: y,
+        });
+      } else {
+        setDragState({ id: hit.it.id, mode: "move", startX: x, startY: y });
+      }
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      return;
+    }
+
     if (tool === "draw") {
+      if (readOnly) return;
       drawBuf.current = {
         page: pageIdx,
         pts: [[Math.max(0, Math.min(1, x / cw)), Math.max(0, Math.min(1, y / ch))]],
@@ -668,8 +804,50 @@ export function CustomerMediaAnnotationViewer({
       });
       return;
     }
-    if (!drawBuf.current || readOnly) return;
-    const { x, y } = clientToContent(e.clientX, e.clientY);
+    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
+    if (dragState) {
+      const dx = (x - dragState.startX) / Math.max(1, contentSize.w);
+      const dy = (y - dragState.startY) / Math.max(1, contentSize.h);
+      const next = itemsRef.current.map((it) => {
+        if (it.id !== dragState.id) return it;
+        if (it.type === "line" || it.type === "highlight" || it.type === "dimension") {
+          if (dragState.mode === "start") {
+            return { ...it, x1: it.x1 + dx, y1: it.y1 + dy };
+          }
+          if (dragState.mode === "end") {
+            return { ...it, x2: it.x2 + dx, y2: it.y2 + dy };
+          }
+          return {
+            ...it,
+            x1: it.x1 + dx,
+            y1: it.y1 + dy,
+            x2: it.x2 + dx,
+            y2: it.y2 + dy,
+          };
+        }
+        if (it.type === "text") return { ...it, x: it.x + dx, y: it.y + dy };
+        if (it.type === "draw") {
+          return {
+            ...it,
+            points: it.points.map((p) => [p[0] + dx, p[1] + dy] as [number, number]),
+          };
+        }
+        return it;
+      });
+      setItems(next);
+      itemsRef.current = next;
+      setDragState({ ...dragState, startX: x, startY: y });
+      return;
+    }
+    if (!drawBuf.current || readOnly) {
+      const pageIdx = fileType === "pdf" ? pdfPage - 1 : 0;
+      const hit = [...itemsRef.current]
+        .map((it, i) => ({ it, i }))
+        .reverse()
+        .find(({ it }) => hitTestItem(x, y, it, contentSize.w, contentSize.h, pageIdx));
+      setHoveredId(hit ? hit.it.id : null);
+      return;
+    }
     const cw = contentSize.w,
       ch = contentSize.h;
     drawBuf.current.pts.push([
@@ -706,6 +884,16 @@ export function CustomerMediaAnnotationViewer({
       }
       return;
     }
+    if (dragState) {
+      pushHistory(itemsRef.current);
+      setDragState(null);
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* */
+      }
+      return;
+    }
     if (drawBuf.current && !readOnly) {
       const draft = drawBuf.current;
       drawBuf.current = null;
@@ -724,6 +912,8 @@ export function CustomerMediaAnnotationViewer({
             page: draft.page,
             points: draft.pts,
             notes: [],
+            createdBy: userId,
+            role: isAdmin ? "admin" : "customer",
           },
         ]);
       }
@@ -741,13 +931,14 @@ export function CustomerMediaAnnotationViewer({
     ) {
       return;
     }
-    const { x, y } = clientToContent(e.clientX, e.clientY);
+    const { x, y } = getCanvasCoords(e.clientX, e.clientY);
     const pageIdx = fileType === "pdf" ? pdfPage - 1 : 0;
     const hit = [...items]
       .map((it, i) => ({ it, i }))
       .reverse()
       .find(({ it }) => hitTestItem(x, y, it, contentSize.w, contentSize.h, pageIdx));
     setSelectedId(hit ? hit.it.id : null);
+    console.log("selected", hit?.it ?? null);
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -809,6 +1000,8 @@ export function CustomerMediaAnnotationViewer({
         h: 0.06,
         text: textDraft.trim(),
         notes: [],
+        createdBy: userId,
+        role: isAdmin ? "admin" : "customer",
       },
     ]);
     setTextPos(null);
@@ -817,6 +1010,8 @@ export function CustomerMediaAnnotationViewer({
 
   const addThreadNote = () => {
     if (!selectedId || !noteInput.trim()) return;
+    const target = itemsRef.current.find((x) => x.id === selectedId);
+    if (!target || !canEditItem(target)) return;
     const note: ThreadNote = {
       id: newItemId(),
       text: noteInput.trim(),
@@ -856,6 +1051,7 @@ export function CustomerMediaAnnotationViewer({
         <div className="flex flex-wrap items-center gap-1">
           {toolbarBtn("draw", <Pencil className="h-4 w-4" />, "Kreslit")}
           {toolbarBtn("line", <Minus className="h-4 w-4 rotate-[-45deg]" />, "Čára")}
+          {toolbarBtn("dimension", <Ruler className="h-4 w-4" />, "Kóta")}
           {toolbarBtn("text", <Type className="h-4 w-4" />, "Text")}
           {toolbarBtn("highlight", <Highlighter className="h-4 w-4" />, "Zvýraznit")}
           {toolbarBtn("erase", <Eraser className="h-4 w-4" />, "Smazat")}
@@ -1026,6 +1222,8 @@ export function CustomerMediaAnnotationViewer({
                   cursor:
                     tool === "draw"
                       ? "crosshair"
+                      : tool === "dimension"
+                        ? "crosshair"
                       : tool === "erase"
                         ? "cell"
                         : tool === "pan"
@@ -1059,6 +1257,26 @@ export function CustomerMediaAnnotationViewer({
             {selected ? (
               <div className="mt-4 space-y-2">
                 <p className="text-xs text-white/60">Vybraný prvek ({selected.type})</p>
+                {selected.type === "dimension" && canEditItem(selected) ? (
+                  <div className="space-y-1">
+                    <Input
+                      value={selected.text}
+                      onChange={(e) => {
+                        const v = e.target.value.slice(0, 120);
+                        const next = itemsRef.current.map((it) =>
+                          it.id === selected.id && it.type === "dimension"
+                            ? { ...it, text: v }
+                            : it
+                        );
+                        setItems(next);
+                        itemsRef.current = next;
+                      }}
+                      onBlur={() => pushHistory(itemsRef.current)}
+                      className="border-white/20 bg-white/10 text-white"
+                      placeholder="Text kóty"
+                    />
+                  </div>
+                ) : null}
                 <ul className="space-y-1 text-xs">
                   {selected.notes.map((n) => (
                     <li key={n.id} className="rounded border border-white/10 bg-white/5 p-2">
