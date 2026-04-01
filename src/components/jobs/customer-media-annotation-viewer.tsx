@@ -480,6 +480,23 @@ export function CustomerMediaAnnotationViewer({
   mediaDocumentId,
   embeddedAnnotationData,
 }: CustomerMediaAnnotationViewerProps) {
+  function sanitizeFirestorePayload<T>(value: T): T {
+    if (Array.isArray(value)) {
+      return value
+        .map((v) => sanitizeFirestorePayload(v))
+        .filter((v) => v !== undefined) as T;
+    }
+    if (value && typeof value === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        if (v === undefined) continue;
+        out[k] = sanitizeFirestorePayload(v);
+      }
+      return out as T;
+    }
+    return value;
+  }
+
   const { toast } = useToast();
   const docId = useMemo(
     () => documentAnnotationDocId(storagePath, mediaDocumentId),
@@ -1211,21 +1228,37 @@ export function CustomerMediaAnnotationViewer({
         console.log("annotations before save", items);
       }
       const payload = serializePayload(items);
+      const targetType = storagePath.kind === "photos" ? "image" : fileType;
+      const targetId = String(mediaDocumentId || "").trim() || docId;
       const row: DocumentAnnotationFirestoreDoc = {
         companyId,
         jobId,
-        documentId: mediaDocumentId,
+        documentId: targetId,
         targetKind: storagePath.kind === "photos" ? "photos" : "folderImages",
-        folderId: storagePath.kind === "folderImages" ? storagePath.folderId : undefined,
-        imageId: storagePath.kind === "folderImages" ? mediaDocumentId : undefined,
-        photoId: storagePath.kind === "photos" ? mediaDocumentId : undefined,
+        ...(storagePath.kind === "folderImages" && storagePath.folderId
+          ? { folderId: storagePath.folderId, imageId: targetId }
+          : {}),
+        ...(storagePath.kind === "photos" ? { photoId: targetId } : {}),
         mediaKind: fileType,
         type: "customer_overlay",
         data: payload,
         visibleFor: ["customer", "admin"],
         updatedBy: userId,
       };
-      await setDoc(annRef, { ...row, updatedAt: serverTimestamp() }, { merge: true });
+      const sanitizedPayload = sanitizeFirestorePayload({
+        ...row,
+        updatedAt: serverTimestamp(),
+      });
+      if (process.env.NODE_ENV === "development") {
+        console.log("annotation save target", {
+          photoId: storagePath.kind === "photos" ? targetId : null,
+          documentId: targetId,
+          fileId: mediaDocumentId,
+          targetType,
+        });
+        console.log("annotation payload", sanitizedPayload);
+      }
+      await setDoc(annRef, sanitizedPayload, { merge: true });
       toast({ title: "Uloženo", description: "Anotace byly uloženy." });
     } catch (err) {
       console.error(err);
