@@ -498,14 +498,28 @@ service cloud.firestore {
           allow read: if terminalCompanyMatches(companyId) ||
             jobFinancialReadAccess(companyId, jobId) ||
             customerPortalLinkedJob(companyId, jobId);
-          allow create, update: if signedIn() && sameCompany(companyId) && (
+          allow create: if signedIn() && sameCompany(companyId) && (
             (isPrivileged() && jobDetailReadAccess(companyId, jobId)) ||
             (
               customerPortalLinkedJob(companyId, jobId) &&
               request.resource.data.jobId == jobId &&
               request.resource.data.companyId == companyId &&
               request.resource.data.selectedBy == request.auth.uid &&
-              request.resource.data.customerPortalUid == request.auth.uid
+              request.resource.data.customerPortalUid == request.auth.uid &&
+              request.resource.data.status in ['draft', 'submitted']
+            )
+          );
+          allow update: if signedIn() && sameCompany(companyId) && (
+            (isPrivileged() && jobDetailReadAccess(companyId, jobId)) ||
+            (
+              customerPortalLinkedJob(companyId, jobId) &&
+              resource.data.customerPortalUid == request.auth.uid &&
+              resource.data.status != 'confirmed' &&
+              request.resource.data.jobId == jobId &&
+              request.resource.data.companyId == companyId &&
+              request.resource.data.selectedBy == request.auth.uid &&
+              request.resource.data.customerPortalUid == request.auth.uid &&
+              request.resource.data.status in ['draft', 'submitted']
             )
           );
           allow delete: if signedIn() && sameCompany(companyId) && (

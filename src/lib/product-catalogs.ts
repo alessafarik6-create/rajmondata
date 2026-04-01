@@ -1,5 +1,13 @@
 export type ProductCatalogSelectionMode = "single" | "multi";
 export type ProductCatalogSelectionStatus = "draft" | "submitted" | "confirmed";
+export type ProductSelectionSnapshot = {
+  productId: string;
+  productNameSnapshot: string;
+  productImageSnapshot?: string;
+  catalogNameSnapshot?: string;
+  categorySnapshot?: string;
+  priceSnapshot?: number | null;
+};
 
 export type ProductCatalogProduct = {
   id: string;
@@ -46,10 +54,13 @@ export type JobProductSelectionDoc = {
   customerId?: string | null;
   catalogId: string;
   selectedProductIds: string[];
+  selectedProducts?: ProductSelectionSnapshot[];
   selectedAt?: unknown;
   selectedBy: string;
   note?: string | null;
   status: ProductCatalogSelectionStatus;
+  confirmedAt?: unknown;
+  confirmedBy?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
 };

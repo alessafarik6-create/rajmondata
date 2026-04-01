@@ -12,6 +12,7 @@ import {
   catalogIsAssignedToJob,
   type JobProductSelectionDoc,
   type ProductCatalogDoc,
+  type ProductSelectionSnapshot,
 } from "@/lib/product-catalogs";
 
 type Props = {
@@ -71,6 +72,32 @@ export function CustomerProductCatalogsSection({
     return map;
   }, [selectionsRaw, customerUid]);
 
+  const buildSnapshots = (
+    catalog: { id: string } & Partial<ProductCatalogDoc>,
+    selectedIds: string[],
+    existing?: (JobProductSelectionDoc & { id: string }) | undefined
+  ): ProductSelectionSnapshot[] => {
+    const products = [...(catalog.products ?? [])];
+    const byId = new Map(products.map((p) => [p.id, p]));
+    const existingById = new Map(
+      (existing?.selectedProducts ?? []).map((s) => [s.productId, s] as const)
+    );
+    return selectedIds.map((id) => {
+      const p = byId.get(id);
+      const prev = existingById.get(id);
+      return {
+        productId: id,
+        productNameSnapshot: p?.name || prev?.productNameSnapshot || id,
+        productImageSnapshot: p?.imageUrl || prev?.productImageSnapshot,
+        catalogNameSnapshot:
+          catalog.name || prev?.catalogNameSnapshot || "Katalog",
+        categorySnapshot: p?.category || prev?.categorySnapshot,
+        priceSnapshot:
+          typeof p?.price === "number" ? p.price : prev?.priceSnapshot ?? null,
+      };
+    });
+  };
+
   const toggleProduct = async (
     catalog: { id: string } & Partial<ProductCatalogDoc>,
     productId: string
@@ -78,6 +105,18 @@ export function CustomerProductCatalogsSection({
     if (!firestore) return;
     const mode = catalog.selectionMode === "single" ? "single" : "multi";
     const existing = selectionMap.get(catalog.id);
+    const isSelectionLocked = existing?.status === "confirmed";
+    if (process.env.NODE_ENV === "development") {
+      console.log("selection status", existing?.status);
+      console.log("confirmed selection lock", isSelectionLocked);
+    }
+    if (isSelectionLocked) {
+      toast({
+        variant: "destructive",
+        title: "Výběr je uzamčen a nelze ho změnit",
+      });
+      return;
+    }
     const prev = new Set(existing?.selectedProductIds ?? []);
     if (mode === "single") {
       if (prev.has(productId)) prev.clear();
@@ -107,6 +146,7 @@ export function CustomerProductCatalogsSection({
       customerId: customerId ?? null,
       catalogId: catalog.id,
       selectedProductIds,
+      selectedProducts: buildSnapshots(catalog, selectedProductIds, existing),
       selectedBy: customerUid,
       selectedAt: serverTimestamp(),
       status: "submitted",
@@ -136,6 +176,14 @@ export function CustomerProductCatalogsSection({
       docId
     );
     const existing = selectionMap.get(catalogId);
+    const isSelectionLocked = existing?.status === "confirmed";
+    if (isSelectionLocked) {
+      toast({
+        variant: "destructive",
+        title: "Výběr je uzamčen a nelze ho změnit",
+      });
+      return;
+    }
     const payload: Partial<JobProductSelectionDoc> = {
       companyId,
       jobId,
@@ -176,6 +224,7 @@ export function CustomerProductCatalogsSection({
     <div className="space-y-4">
       {catalogs.map((catalog) => {
         const selected = new Set(selectionMap.get(catalog.id)?.selectedProductIds ?? []);
+        const isSelectionLocked = selectionMap.get(catalog.id)?.status === "confirmed";
         const noteDefault = selectionMap.get(catalog.id)?.note ?? "";
         return (
           <Card key={catalog.id}>
@@ -184,6 +233,11 @@ export function CustomerProductCatalogsSection({
               <p className="text-xs text-muted-foreground">
                 Režim výběru: {catalog.selectionMode === "single" ? "Jedna položka" : "Více položek"}
               </p>
+              {isSelectionLocked ? (
+                <p className="text-xs font-medium text-emerald-700">
+                  Výběr byl potvrzen administrátorem (uzamčeno).
+                </p>
+              ) : null}
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -207,7 +261,7 @@ export function CustomerProductCatalogsSection({
                           type="button"
                           className="mt-2 w-full"
                           variant={isSelected ? "secondary" : "default"}
-                          disabled={savingKey === `${catalog.id}:${p.id}`}
+                          disabled={savingKey === `${catalog.id}:${p.id}` || isSelectionLocked}
                           onClick={() => void toggleProduct(catalog, p.id)}
                         >
                           {isSelected ? "Vybráno" : "Vybrat"}
@@ -219,6 +273,7 @@ export function CustomerProductCatalogsSection({
               <Input
                 defaultValue={noteDefault || ""}
                 placeholder="Poznámka k výběru…"
+                disabled={isSelectionLocked}
                 onBlur={(e) => {
                   void saveNote(catalog.id, e.target.value);
                 }}
