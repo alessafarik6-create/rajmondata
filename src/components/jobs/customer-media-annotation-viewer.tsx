@@ -1369,10 +1369,10 @@ export function CustomerMediaAnnotationViewer({
     <Button
       type="button"
       size="sm"
-      variant="outline"
+      variant="default"
       className={cn(
-        "h-9 gap-1 border-white/30 text-white hover:border-white/60 hover:bg-white/15",
-        tool === t && "border-blue-400 bg-blue-600 text-white hover:bg-blue-500",
+        "h-9 gap-1 border-0 bg-orange-500 text-white transition-colors duration-150 hover:bg-gray-500 hover:text-white",
+        tool === t && "bg-orange-600 text-white hover:bg-orange-600",
         readOnly && t !== "pan" && "pointer-events-none opacity-50"
       )}
       disabled={readOnly && t !== "pan"}
@@ -1420,7 +1420,7 @@ export function CustomerMediaAnnotationViewer({
           type="button"
           size="sm"
           variant="default"
-          className="h-9 bg-blue-600 text-white hover:bg-blue-500 disabled:bg-blue-700/60 disabled:text-white"
+          className="h-9 border-0 bg-orange-500 text-white transition-colors duration-150 hover:bg-gray-500 hover:text-white disabled:bg-orange-700/70 disabled:text-white"
           disabled={readOnly || saving}
           onClick={() => void save()}
         >
