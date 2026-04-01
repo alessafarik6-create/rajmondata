@@ -133,7 +133,7 @@ const MAX_BYTES = 20 * 1024 * 1024;
 
 /** Mřížka náhledů — plná šířka, žádné úzké sloupce */
 const JOB_MEDIA_CARD_GRID_CLASS =
-  "grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4";
+  "grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3";
 
 /** Kolik položek zobrazit před „Zobrazit více“ */
 const JOB_MEDIA_INITIAL_COUNT = 6;
@@ -160,7 +160,7 @@ function todayIsoDate(): string {
 }
 
 const jobMediaIconBtnClassName =
-  "h-10 w-10 min-h-10 min-w-10 shrink-0 gap-0 rounded-md border-border/70 bg-background/95 p-0 shadow-sm hover:bg-accent md:h-9 md:w-9 md:min-h-9 md:min-w-9 [&_svg]:!size-[18px]";
+  "min-h-[38px] shrink-0 gap-1 rounded-md border-border/70 bg-background px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-accent [&_svg]:!size-[16px]";
 
 function JobMediaIconButton({
   label,
@@ -174,11 +174,12 @@ function JobMediaIconButton({
         <Button
           type="button"
           variant="outline"
-          size="icon"
+          size="sm"
           className={cn(jobMediaIconBtnClassName, className)}
           {...props}
         >
           {children}
+          <span className="hidden md:inline">{label}</span>
         </Button>
       </TooltipTrigger>
       <TooltipContent side="bottom" className="max-w-[220px] text-xs">
@@ -221,7 +222,7 @@ function MediaThumb({
 
   if (!src || broken) {
     return (
-      <div className="flex aspect-[4/3] min-h-[200px] w-full items-center justify-center bg-muted px-2 text-center text-xs text-gray-700">
+      <div className="flex aspect-[4/3] min-h-[240px] w-full items-center justify-center bg-muted px-2 text-center text-sm text-gray-700">
         {!src ? "Chybí náhled" : "Nelze načíst obrázek"}
       </div>
     );
@@ -237,7 +238,7 @@ function MediaThumb({
   );
 }
 
-/** Náhled + rychlé akce: desktop přes celý náhled při hoveru, mobil ikony v rohu */
+/** Náhled + rychlé akce: trvale viditelná lišta akcí */
 function ImageThumbWithQuickActions({
   children,
   busy,
@@ -252,21 +253,19 @@ function ImageThumbWithQuickActions({
   onDelete: () => void;
 }) {
   return (
-    <div className="group/thumb relative aspect-[4/3] min-h-[200px] w-full overflow-hidden bg-muted">
+    <div className="group/thumb relative aspect-[4/3] min-h-[240px] w-full overflow-hidden bg-muted">
       {children}
       <div
         className={cn(
-          "absolute inset-0 z-[1] hidden items-center justify-center gap-2 bg-black/55",
-          "opacity-0 transition-opacity",
-          "sm:flex sm:opacity-0 sm:group-hover/thumb:opacity-100",
-          "max-sm:!hidden"
+          "absolute inset-x-0 bottom-0 z-[1] flex items-center justify-center gap-2",
+          "bg-black/65 px-2 py-2"
         )}
       >
         <Button
           type="button"
-          size="icon"
+          size="sm"
           variant="secondary"
-          className="h-10 w-10 shrink-0 shadow-md"
+          className="h-9 gap-1 bg-white text-black shadow-md hover:bg-white/90"
           onClick={(e) => {
             e.stopPropagation();
             onPreview();
@@ -274,13 +273,14 @@ function ImageThumbWithQuickActions({
           aria-label="Zvětšit náhled"
         >
           <Eye className="h-4 w-4" aria-hidden />
+          <span>Zobrazit</span>
         </Button>
         {canManage ? (
           <Button
             type="button"
-            size="icon"
+            size="sm"
             variant="destructive"
-            className="h-10 w-10 shrink-0 shadow-md"
+            className="h-9 gap-1 shadow-md"
             disabled={busy}
             onClick={(e) => {
               e.stopPropagation();
@@ -289,37 +289,7 @@ function ImageThumbWithQuickActions({
             aria-label="Smazat soubor"
           >
             <Trash2 className="h-4 w-4" aria-hidden />
-          </Button>
-        ) : null}
-      </div>
-      <div className="absolute right-1 top-1 z-10 flex gap-1 sm:hidden">
-        <Button
-          type="button"
-          size="icon"
-          variant="secondary"
-          className="h-8 w-8 bg-background/95 shadow-md"
-          onClick={(e) => {
-            e.stopPropagation();
-            onPreview();
-          }}
-          aria-label="Zvětšit"
-        >
-          <Eye className="h-3.5 w-3.5" aria-hidden />
-        </Button>
-        {canManage ? (
-          <Button
-            type="button"
-            size="icon"
-            variant="destructive"
-            className="h-8 w-8 shadow-md"
-            disabled={busy}
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            aria-label="Smazat"
-          >
-            <Trash2 className="h-3.5 w-3.5" aria-hidden />
+            <span>Smazat</span>
           </Button>
         ) : null}
       </div>
@@ -340,8 +310,8 @@ function MediaCompactDocRow({
   actions: React.ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border/70 bg-card px-3 py-2.5 shadow-sm sm:gap-4">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-muted">
+      <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border/70 bg-card px-4 py-3 shadow-sm sm:gap-4">
+      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-muted">
         {icon}
       </div>
       <div className="min-w-0 flex-1">
@@ -358,12 +328,12 @@ function MediaCompactDocRow({
 function JobMediaPdfPreview() {
   return (
     <div
-      className="flex aspect-[4/3] min-h-[200px] w-full flex-col items-center justify-center gap-1.5 bg-red-500/[0.07]"
+      className="flex aspect-[4/3] min-h-[240px] w-full flex-col items-center justify-center gap-2 bg-red-500/[0.07]"
       aria-hidden
     >
-      <span className="text-2xl leading-none">📄</span>
-      <FileText className="h-9 w-9 text-red-600 dark:text-red-400" strokeWidth={1.5} />
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <span className="text-3xl leading-none">📄</span>
+      <FileText className="h-11 w-11 text-red-600 dark:text-red-400" strokeWidth={1.5} />
+      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         PDF
       </span>
     </div>
@@ -373,12 +343,12 @@ function JobMediaPdfPreview() {
 function JobMediaOfficePreview() {
   return (
     <div
-      className="flex aspect-[4/3] min-h-[200px] w-full flex-col items-center justify-center gap-1.5 bg-blue-500/[0.07]"
+      className="flex aspect-[4/3] min-h-[240px] w-full flex-col items-center justify-center gap-2 bg-blue-500/[0.07]"
       aria-hidden
     >
-      <span className="text-2xl leading-none">📎</span>
-      <FileText className="h-9 w-9 text-blue-700 dark:text-blue-400" strokeWidth={1.5} />
-      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+      <span className="text-3xl leading-none">📎</span>
+      <FileText className="h-11 w-11 text-blue-700 dark:text-blue-400" strokeWidth={1.5} />
+      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         Office
       </span>
     </div>
@@ -422,20 +392,20 @@ function JobMediaFileCard({
           </span>
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col gap-1 p-2 pt-1.5">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 p-3 pt-2.5">
         <p
-          className="truncate text-xs font-medium leading-tight text-foreground sm:text-sm"
+          className="truncate text-sm font-semibold leading-tight text-foreground sm:text-[15px]"
           title={title}
         >
           {title}
         </p>
-        <p className="text-[11px] text-gray-700 sm:text-xs">{dateLine}</p>
+        <p className="text-xs text-gray-700 sm:text-sm">{dateLine}</p>
         {note?.trim() ? (
           <p className="line-clamp-2 text-[11px] leading-snug text-foreground/88">
             {note.trim()}
           </p>
         ) : null}
-        <div className="mt-auto flex flex-nowrap items-center justify-center gap-1 overflow-x-auto border-t border-border/45 py-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <div className="mt-auto flex flex-wrap items-center justify-start gap-2 border-t border-border/45 pt-2">
           {actions}
         </div>
       </div>
