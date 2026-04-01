@@ -630,6 +630,11 @@ export function CustomerMediaAnnotationViewer({
     redrawMidAndOverlay();
   }, [open, redrawMidAndOverlay]);
 
+  useEffect(() => {
+    if (!open) return;
+    console.log("annotations", items);
+  }, [items, open]);
+
   const getCanvasCoords = useCallback((clientX: number, clientY: number) => {
     const canvas = overlayCanvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
@@ -653,7 +658,9 @@ export function CustomerMediaAnnotationViewer({
     (it: CustomerOverlayItem): boolean => {
       if (readOnly) return false;
       if (isAdmin) return true;
-      return Boolean(it.createdBy && it.createdBy === userId);
+      // Backward compatibility: older annotations may not have createdBy.
+      if (!it.createdBy) return true;
+      return it.createdBy === userId;
     },
     [isAdmin, readOnly, userId]
   );
@@ -665,7 +672,8 @@ export function CustomerMediaAnnotationViewer({
     const ch = contentSize.h;
     const pageIdx = fileType === "pdf" ? pdfPage - 1 : 0;
 
-    if (e.button === 1 || (e.button === 0 && tool === "pan")) {
+    // Middle button always pans the scene.
+    if (e.button === 1) {
       panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
       (e.target as HTMLElement).setPointerCapture(e.pointerId);
       return;
@@ -756,7 +764,7 @@ export function CustomerMediaAnnotationViewer({
       return;
     }
 
-    // Selection / drag in pan mode
+    // Selection / drag in pan mode (left click). If nothing is hit, pan background.
     if (tool === "pan") {
       const cur = itemsRef.current;
       const hit = [...cur]
@@ -764,7 +772,12 @@ export function CustomerMediaAnnotationViewer({
         .reverse()
         .find(({ it }) => hitTestItem(x, y, it, cw, ch, pageIdx));
       setSelectedId(hit ? hit.it.id : null);
-      if (!hit || !canEditItem(hit.it)) return;
+      if (!hit) {
+        panDrag.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y };
+        (e.target as HTMLElement).setPointerCapture(e.pointerId);
+        return;
+      }
+      if (!canEditItem(hit.it)) return;
       if (hit.it.type === "line" || hit.it.type === "dimension") {
         const sx = hit.it.x1 * cw;
         const sy = hit.it.y1 * ch;
@@ -836,6 +849,7 @@ export function CustomerMediaAnnotationViewer({
       });
       setItems(next);
       itemsRef.current = next;
+      console.log("annotations", next);
       setDragState({ ...dragState, startX: x, startY: y });
       return;
     }
@@ -886,6 +900,7 @@ export function CustomerMediaAnnotationViewer({
     }
     if (dragState) {
       pushHistory(itemsRef.current);
+      console.log("annotations", itemsRef.current);
       setDragState(null);
       try {
         (e.target as HTMLElement).releasePointerCapture(e.pointerId);
@@ -939,6 +954,7 @@ export function CustomerMediaAnnotationViewer({
       .find(({ it }) => hitTestItem(x, y, it, contentSize.w, contentSize.h, pageIdx));
     setSelectedId(hit ? hit.it.id : null);
     console.log("selected", hit?.it ?? null);
+    console.log("selected", hit?.it?.id ?? null);
   };
 
   const onWheel = (e: React.WheelEvent) => {
@@ -1026,6 +1042,22 @@ export function CustomerMediaAnnotationViewer({
   };
 
   const selected = items.find((x) => x.id === selectedId) ?? null;
+  const selectedEditable = selected ? canEditItem(selected) : false;
+
+  const getCanvasCursor = (): string => {
+    if (tool === "draw" || tool === "line" || tool === "dimension" || tool === "highlight") {
+      return "crosshair";
+    }
+    if (tool === "erase") return "cell";
+    if (tool === "text") return "text";
+    if (dragState) return "grabbing";
+    if (tool === "pan") {
+      if (selectedEditable) return "move";
+      if (hoveredId) return "pointer";
+      return "grab";
+    }
+    return "default";
+  };
 
   if (!open) return null;
 
@@ -1219,16 +1251,7 @@ export function CustomerMediaAnnotationViewer({
                 style={{
                   width: contentSize.w,
                   height: contentSize.h,
-                  cursor:
-                    tool === "draw"
-                      ? "crosshair"
-                      : tool === "dimension"
-                        ? "crosshair"
-                      : tool === "erase"
-                        ? "cell"
-                        : tool === "pan"
-                          ? "grab"
-                          : "pointer",
+                  cursor: getCanvasCursor(),
                 }}
                 onPointerDown={onPointerDown}
                 onPointerMove={onPointerMove}
