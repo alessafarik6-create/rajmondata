@@ -25,6 +25,11 @@ export type CustomerOverlayItem =
       notes: ThreadNote[];
       createdBy?: string;
       role?: "admin" | "customer";
+      createdAt?: number;
+      style?: {
+        lineWidth?: number;
+        fillColor?: string | null;
+      };
     }
   | {
       id: string;
@@ -38,6 +43,11 @@ export type CustomerOverlayItem =
       notes: ThreadNote[];
       createdBy?: string;
       role?: "admin" | "customer";
+      createdAt?: number;
+      style?: {
+        lineWidth?: number;
+        fillColor?: string | null;
+      };
     }
   | {
       id: string;
@@ -52,6 +62,11 @@ export type CustomerOverlayItem =
       notes: ThreadNote[];
       createdBy?: string;
       role?: "admin" | "customer";
+      createdAt?: number;
+      style?: {
+        lineWidth?: number;
+        fillColor?: string | null;
+      };
     }
   | {
       id: string;
@@ -65,6 +80,11 @@ export type CustomerOverlayItem =
       notes: ThreadNote[];
       createdBy?: string;
       role?: "admin" | "customer";
+      createdAt?: number;
+      style?: {
+        lineWidth?: number;
+        fillColor?: string | null;
+      };
     }
   | {
       id: string;
@@ -79,6 +99,29 @@ export type CustomerOverlayItem =
       notes: ThreadNote[];
       createdBy?: string;
       role?: "admin" | "customer";
+      createdAt?: number;
+      style?: {
+        lineWidth?: number;
+        fillColor?: string | null;
+      };
+    }
+  | {
+      id: string;
+      type: "rectangle" | "square" | "circle";
+      color: AnnotationStrokeColor;
+      page: number;
+      x1: number;
+      y1: number;
+      x2: number;
+      y2: number;
+      notes: ThreadNote[];
+      createdBy?: string;
+      role?: "admin" | "customer";
+      createdAt?: number;
+      style?: {
+        lineWidth?: number;
+        fillColor?: string | null;
+      };
     };
 
 export type CustomerAnnotationPayload = {
@@ -158,6 +201,23 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
       o.role === "admin" || o.role === "customer"
         ? (o.role as "admin" | "customer")
         : undefined;
+    const createdAt =
+      typeof o.createdAt === "number" && Number.isFinite(o.createdAt)
+        ? o.createdAt
+        : undefined;
+    const style =
+      o.style && typeof o.style === "object"
+        ? {
+            lineWidth:
+              typeof (o.style as { lineWidth?: unknown }).lineWidth === "number"
+                ? Number((o.style as { lineWidth: number }).lineWidth)
+                : undefined,
+            fillColor:
+              typeof (o.style as { fillColor?: unknown }).fillColor === "string"
+                ? String((o.style as { fillColor: string }).fillColor)
+                : null,
+          }
+        : undefined;
     const t = o.type;
     if (t === "draw" && Array.isArray(o.points)) {
       const pts: [number, number][] = [];
@@ -176,6 +236,8 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
           notes,
           createdBy,
           role,
+          createdAt,
+          style,
         });
       }
     } else if (t === "line") {
@@ -191,6 +253,8 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         notes,
         createdBy,
         role,
+        createdAt,
+        style,
       });
     } else if (t === "text") {
       const text = String(o.text ?? "").slice(0, 4000);
@@ -207,6 +271,8 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         notes,
         createdBy,
         role,
+        createdAt,
+        style,
       });
     } else if (t === "highlight") {
       out.push({
@@ -221,6 +287,8 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         notes,
         createdBy,
         role,
+        createdAt,
+        style,
       });
     } else if (t === "dimension") {
       out.push({
@@ -236,6 +304,24 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         notes,
         createdBy,
         role,
+        createdAt,
+        style,
+      });
+    } else if (t === "rectangle" || t === "square" || t === "circle") {
+      out.push({
+        id: id || newItemId(),
+        type: t as "rectangle" | "square" | "circle",
+        color,
+        page,
+        x1: clamp01(Number(o.x1)),
+        y1: clamp01(Number(o.y1)),
+        x2: clamp01(Number(o.x2)),
+        y2: clamp01(Number(o.y2)),
+        notes,
+        createdBy,
+        role,
+        createdAt,
+        style,
       });
     }
   }

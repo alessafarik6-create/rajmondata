@@ -43,6 +43,8 @@ import {
   Ruler,
   Redo2,
   Save,
+  Square,
+  Circle,
   Type,
   Undo2,
   X,
@@ -51,7 +53,18 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-type Tool = "pan" | "draw" | "line" | "dimension" | "text" | "highlight" | "erase";
+type Tool =
+  | "pan"
+  | "draw"
+  | "line"
+  | "dimension"
+  | "text"
+  | "highlight"
+  | "rectangle"
+  | "square"
+  | "circle"
+  | "erase";
+type ShapeTool = "rectangle" | "square" | "circle";
 
 function colorHex(c: AnnotationStrokeColor): string {
   switch (c) {
@@ -196,6 +209,30 @@ function hitTestItem(
       y2 = it.y2 * ch;
     return distToSeg(x, y, x1, y1, x2, y2) < thr;
   }
+  if (it.type === "rectangle" || it.type === "square" || it.type === "circle") {
+    let x1 = it.x1 * cw,
+      y1 = it.y1 * ch,
+      x2 = it.x2 * cw,
+      y2 = it.y2 * ch;
+    if (it.type === "square" || it.type === "circle") {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const side = Math.min(Math.abs(dx), Math.abs(dy));
+      x2 = x1 + Math.sign(dx || 1) * side;
+      y2 = y1 + Math.sign(dy || 1) * side;
+    }
+    const rx = Math.min(x1, x2);
+    const ry = Math.min(y1, y2);
+    const rw = Math.abs(x2 - x1);
+    const rh = Math.abs(y2 - y1);
+    if (it.type === "circle") {
+      const cx = rx + rw / 2;
+      const cy = ry + rh / 2;
+      const r = Math.max(1, Math.min(rw, rh) / 2);
+      return Math.hypot(x - cx, y - cy) <= r + thr;
+    }
+    return x >= rx - thr && x <= rx + rw + thr && y >= ry - thr && y <= ry + rh + thr;
+  }
   if (it.type === "draw") {
     const pts = it.points;
     for (let i = 1; i < pts.length; i++) {
@@ -311,16 +348,28 @@ function drawOverlayItems(
         ctx.fill();
       }
     } else if (it.type === "highlight") {
-      ctx.globalAlpha = 0.35;
-      const x1 = Math.min(it.x1, it.x2) * cw,
-        y1 = Math.min(it.y1, it.y2) * ch,
-        x2 = Math.max(it.x1, it.x2) * cw,
-        y2 = Math.max(it.y1, it.y2) * ch;
-      ctx.fillStyle = colorHex(it.color);
-      ctx.fillRect(x1, y1, x2 - x1, y2 - y1);
+      // Soft highlighter stroke (not an opaque block).
+      const x1 = it.x1 * cw,
+        y1 = it.y1 * ch,
+        x2 = it.x2 * cw,
+        y2 = it.y2 * ch;
+      ctx.globalAlpha = 0.28;
+      ctx.lineWidth = Math.max(12, (it.style?.lineWidth ?? 18) * (sel ? 1.15 : 1));
+      ctx.strokeStyle = colorHex(it.color);
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
       ctx.globalAlpha = 1;
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+      if (sel) {
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+      }
     } else if (it.type === "text") {
       const tx = it.x * cw,
         ty = it.y * ch,
@@ -342,6 +391,54 @@ function drawOverlayItems(
         if (ly > ty + th - pad) break;
         ctx.fillText(ln.slice(0, 80), tx + pad, ly);
         ly += fs * 1.15;
+      }
+    } else if (
+      it.type === "rectangle" ||
+      it.type === "square" ||
+      it.type === "circle"
+    ) {
+      const rawX1 = it.x1 * cw;
+      const rawY1 = it.y1 * ch;
+      const rawX2 = it.x2 * cw;
+      const rawY2 = it.y2 * ch;
+      let x1 = rawX1;
+      let y1 = rawY1;
+      let x2 = rawX2;
+      let y2 = rawY2;
+      if (it.type === "square" || it.type === "circle") {
+        const dx = rawX2 - rawX1;
+        const dy = rawY2 - rawY1;
+        const side = Math.min(Math.abs(dx), Math.abs(dy));
+        x2 = rawX1 + Math.sign(dx || 1) * side;
+        y2 = rawY1 + Math.sign(dy || 1) * side;
+      }
+      const rx = Math.min(x1, x2);
+      const ry = Math.min(y1, y2);
+      const rw = Math.abs(x2 - x1);
+      const rh = Math.abs(y2 - y1);
+      const lw = Math.max(1.5, it.style?.lineWidth ?? (sel ? 3 : 2));
+      if (it.style?.fillColor) {
+        ctx.fillStyle = it.style.fillColor;
+        ctx.fillRect(rx, ry, rw, rh);
+      }
+      ctx.strokeStyle = colorHex(it.color);
+      ctx.lineWidth = lw;
+      if (it.type === "circle") {
+        const cx = rx + rw / 2;
+        const cy = ry + rh / 2;
+        const r = Math.max(1, Math.min(rw, rh) / 2);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(rx, ry, rw, rh);
+      }
+      if (sel) {
+        ctx.fillStyle = "#ffffff";
+        ctx.beginPath();
+        ctx.arc(rx, ry, 4.5, 0, Math.PI * 2);
+        ctx.arc(rx + rw, ry + rh, 4.5, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
   }
@@ -424,6 +521,7 @@ export function CustomerMediaAnnotationViewer({
   const [pdfNumPages, setPdfNumPages] = useState(0);
   const [contentSize, setContentSize] = useState({ w: 800, h: 600 });
   const [lineDraft, setLineDraft] = useState<{ x: number; y: number } | null>(null);
+  const [shapeDraftEnd, setShapeDraftEnd] = useState<{ x: number; y: number } | null>(null);
   const [dragState, setDragState] = useState<{
     id: string;
     mode: "move" | "start" | "end";
@@ -493,6 +591,9 @@ export function CustomerMediaAnnotationViewer({
     loadedKey.current = key;
     const p = parseDocumentAnnotationDoc(raw);
     const initial = p?.items ?? [];
+    if (process.env.NODE_ENV === "development") {
+      console.log("loaded annotations", initial);
+    }
     const snap = JSON.parse(JSON.stringify(initial)) as CustomerOverlayItem[];
     undoStackRef.current = [snap];
     undoPtrRef.current = 0;
@@ -632,8 +733,16 @@ export function CustomerMediaAnnotationViewer({
 
   useEffect(() => {
     if (!open) return;
-    console.log("annotations", items);
+    if (process.env.NODE_ENV === "development") {
+      console.log("annotations", items);
+    }
   }, [items, open]);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "development") {
+      console.log("active tool", tool);
+    }
+  }, [tool]);
 
   const getCanvasCoords = useCallback((clientX: number, clientY: number) => {
     const canvas = overlayCanvasRef.current;
@@ -694,7 +803,7 @@ export function CustomerMediaAnnotationViewer({
       return;
     }
 
-    if (tool === "line" || tool === "highlight" || tool === "dimension") {
+    if (tool === "line" || tool === "dimension") {
       if (readOnly) return;
       const nx = x / cw,
         ny = y / ch;
@@ -708,6 +817,8 @@ export function CustomerMediaAnnotationViewer({
           notes: [] as ThreadNote[],
           createdBy: userId,
           role: (isAdmin ? "admin" : "customer") as "admin" | "customer",
+          createdAt: Date.now(),
+          style: { lineWidth: 2, fillColor: null },
         };
         if (tool === "line") {
           pushHistory([
@@ -735,6 +846,8 @@ export function CustomerMediaAnnotationViewer({
               text: (raw || "").trim() || "kóta",
               createdBy: userId,
               role: isAdmin ? "admin" : "customer",
+              createdAt: Date.now(),
+              style: { lineWidth: 2, fillColor: null },
             },
           ]);
         } else {
@@ -749,11 +862,28 @@ export function CustomerMediaAnnotationViewer({
               y2: ny,
               createdBy: userId,
               role: isAdmin ? "admin" : "customer",
+              createdAt: Date.now(),
+              style: { lineWidth: 18, fillColor: null },
             },
           ]);
         }
         setLineDraft(null);
       }
+      return;
+    }
+
+    if (
+      tool === "highlight" ||
+      tool === "rectangle" ||
+      tool === "square" ||
+      tool === "circle"
+    ) {
+      if (readOnly) return;
+      const nx = x / cw;
+      const ny = y / ch;
+      setLineDraft({ x: nx, y: ny });
+      setShapeDraftEnd({ x: nx, y: ny });
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
       return;
     }
 
@@ -778,7 +908,14 @@ export function CustomerMediaAnnotationViewer({
         return;
       }
       if (!canEditItem(hit.it)) return;
-      if (hit.it.type === "line" || hit.it.type === "dimension") {
+      if (
+        hit.it.type === "line" ||
+        hit.it.type === "dimension" ||
+        hit.it.type === "highlight" ||
+        hit.it.type === "rectangle" ||
+        hit.it.type === "square" ||
+        hit.it.type === "circle"
+      ) {
         const sx = hit.it.x1 * cw;
         const sy = hit.it.y1 * ch;
         const ex = hit.it.x2 * cw;
@@ -823,7 +960,14 @@ export function CustomerMediaAnnotationViewer({
       const dy = (y - dragState.startY) / Math.max(1, contentSize.h);
       const next = itemsRef.current.map((it) => {
         if (it.id !== dragState.id) return it;
-        if (it.type === "line" || it.type === "highlight" || it.type === "dimension") {
+        if (
+          it.type === "line" ||
+          it.type === "highlight" ||
+          it.type === "dimension" ||
+          it.type === "rectangle" ||
+          it.type === "square" ||
+          it.type === "circle"
+        ) {
           if (dragState.mode === "start") {
             return { ...it, x1: it.x1 + dx, y1: it.y1 + dy };
           }
@@ -851,6 +995,57 @@ export function CustomerMediaAnnotationViewer({
       itemsRef.current = next;
       console.log("annotations", next);
       setDragState({ ...dragState, startX: x, startY: y });
+      return;
+    }
+    if (
+      lineDraft &&
+      shapeDraftEnd &&
+      (tool === "highlight" ||
+        tool === "rectangle" ||
+        tool === "square" ||
+        tool === "circle")
+    ) {
+      setShapeDraftEnd({ x: x / Math.max(1, contentSize.w), y: y / Math.max(1, contentSize.h) });
+      const octx = overlayCanvasRef.current?.getContext("2d");
+      if (octx) {
+        redrawMidAndOverlay();
+        const x1 = lineDraft.x * contentSize.w;
+        const y1 = lineDraft.y * contentSize.h;
+        const x2 = (x / Math.max(1, contentSize.w)) * contentSize.w;
+        const y2 = (y / Math.max(1, contentSize.h)) * contentSize.h;
+        octx.strokeStyle = colorHex(strokeColor);
+        octx.lineWidth = 2;
+        if (tool === "highlight") {
+          octx.globalAlpha = 0.28;
+          octx.lineWidth = 18;
+          octx.lineCap = "round";
+          octx.beginPath();
+          octx.moveTo(x1, y1);
+          octx.lineTo(x2, y2);
+          octx.stroke();
+          octx.globalAlpha = 1;
+        } else if (tool === "circle") {
+          const rx = Math.min(x1, x2);
+          const ry = Math.min(y1, y2);
+          const rw = Math.abs(x2 - x1);
+          const rh = Math.abs(y2 - y1);
+          const cx = rx + rw / 2;
+          const cy = ry + rh / 2;
+          const r = Math.max(1, Math.min(rw, rh) / 2);
+          octx.beginPath();
+          octx.arc(cx, cy, r, 0, Math.PI * 2);
+          octx.stroke();
+        } else {
+          let ex = x2;
+          let ey = y2;
+          if (tool === "square") {
+            const side = Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1));
+            ex = x1 + Math.sign(x2 - x1 || 1) * side;
+            ey = y1 + Math.sign(y2 - y1 || 1) * side;
+          }
+          octx.strokeRect(Math.min(x1, ex), Math.min(y1, ey), Math.abs(ex - x1), Math.abs(ey - y1));
+        }
+      }
       return;
     }
     if (!drawBuf.current || readOnly) {
@@ -909,6 +1104,48 @@ export function CustomerMediaAnnotationViewer({
       }
       return;
     }
+    if (
+      lineDraft &&
+      shapeDraftEnd &&
+      !readOnly &&
+      (tool === "highlight" ||
+        tool === "rectangle" ||
+        tool === "square" ||
+        tool === "circle")
+    ) {
+      const base = {
+        id: newItemId(),
+        color: strokeColor,
+        page: fileType === "pdf" ? pdfPage - 1 : 0,
+        notes: [] as ThreadNote[],
+        createdBy: userId,
+        role: (isAdmin ? "admin" : "customer") as "admin" | "customer",
+        createdAt: Date.now(),
+        style: {
+          lineWidth: tool === "highlight" ? 18 : 2,
+          fillColor: null,
+        },
+      };
+      pushHistory([
+        ...itemsRef.current,
+        {
+          ...base,
+          type: tool as "highlight" | ShapeTool,
+          x1: lineDraft.x,
+          y1: lineDraft.y,
+          x2: shapeDraftEnd.x,
+          y2: shapeDraftEnd.y,
+        },
+      ]);
+      setLineDraft(null);
+      setShapeDraftEnd(null);
+      try {
+        (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+      } catch {
+        /* */
+      }
+      return;
+    }
     if (drawBuf.current && !readOnly) {
       const draft = drawBuf.current;
       drawBuf.current = null;
@@ -929,6 +1166,8 @@ export function CustomerMediaAnnotationViewer({
             notes: [],
             createdBy: userId,
             role: isAdmin ? "admin" : "customer",
+            createdAt: Date.now(),
+            style: { lineWidth: 3, fillColor: null },
           },
         ]);
       }
@@ -968,6 +1207,9 @@ export function CustomerMediaAnnotationViewer({
     if (!annRef || readOnly) return;
     setSaving(true);
     try {
+      if (process.env.NODE_ENV === "development") {
+        console.log("annotations before save", items);
+      }
       const payload = serializePayload(items);
       const row: DocumentAnnotationFirestoreDoc = {
         companyId,
@@ -1018,6 +1260,8 @@ export function CustomerMediaAnnotationViewer({
         notes: [],
         createdBy: userId,
         role: isAdmin ? "admin" : "customer",
+        createdAt: Date.now(),
+        style: { lineWidth: 1, fillColor: null },
       },
     ]);
     setTextPos(null);
@@ -1045,7 +1289,15 @@ export function CustomerMediaAnnotationViewer({
   const selectedEditable = selected ? canEditItem(selected) : false;
 
   const getCanvasCursor = (): string => {
-    if (tool === "draw" || tool === "line" || tool === "dimension" || tool === "highlight") {
+    if (
+      tool === "draw" ||
+      tool === "line" ||
+      tool === "dimension" ||
+      tool === "highlight" ||
+      tool === "rectangle" ||
+      tool === "square" ||
+      tool === "circle"
+    ) {
       return "crosshair";
     }
     if (tool === "erase") return "cell";
@@ -1084,10 +1336,13 @@ export function CustomerMediaAnnotationViewer({
           {toolbarBtn("draw", <Pencil className="h-4 w-4" />, "Kreslit")}
           {toolbarBtn("line", <Minus className="h-4 w-4 rotate-[-45deg]" />, "Čára")}
           {toolbarBtn("dimension", <Ruler className="h-4 w-4" />, "Kóta")}
+          {toolbarBtn("square", <Square className="h-4 w-4" />, "Čtverec")}
+          {toolbarBtn("rectangle", <Square className="h-4 w-4" />, "Obdélník")}
+          {toolbarBtn("circle", <Circle className="h-4 w-4" />, "Kruh")}
           {toolbarBtn("text", <Type className="h-4 w-4" />, "Text")}
           {toolbarBtn("highlight", <Highlighter className="h-4 w-4" />, "Zvýraznit")}
           {toolbarBtn("erase", <Eraser className="h-4 w-4" />, "Smazat")}
-          {toolbarBtn("pan", <span className="text-xs">✋</span>, "Posun")}
+          {toolbarBtn("pan", <span className="text-xs">✥</span>, "Select")}
         </div>
         <div className="flex items-center gap-1 border-l border-white/15 pl-2">
           {(["red", "blue", "yellow"] as const).map((c) => (
