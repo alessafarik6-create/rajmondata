@@ -190,6 +190,22 @@ function pointXY(point: [number, number] | { x: number; y: number }): [number, n
   return [point.x, point.y];
 }
 
+function isPrivilegedRole(role: string): boolean {
+  const r = role.toLowerCase();
+  return r === "owner" || r === "superadmin" || r === "admin" || r === "manager" || r === "accountant";
+}
+
+function canEditByPolicy(
+  item: CustomerOverlayItem | null | undefined,
+  userId: string,
+  role: string,
+  readOnly: boolean
+): boolean {
+  if (!item || readOnly) return false;
+  if (isPrivilegedRole(role)) return true;
+  return !!item.createdBy && item.createdBy === userId;
+}
+
 function hitTestItem(
   x: number,
   y: number,
@@ -274,6 +290,7 @@ function drawOverlayItems(
   ch: number,
   page: number,
   selectedId: string | null,
+  editableSelectedId: string | null,
   hoveredId: string | null
 ) {
   for (const it of items) {
@@ -304,7 +321,7 @@ function drawOverlayItems(
       ctx.moveTo(it.x1 * cw, it.y1 * ch);
       ctx.lineTo(it.x2 * cw, it.y2 * ch);
       ctx.stroke();
-      if (sel) {
+      if (sel && it.id === editableSelectedId) {
         ctx.fillStyle = "#ffffff";
         ctx.beginPath();
         ctx.arc(it.x1 * cw, it.y1 * ch, 5, 0, Math.PI * 2);
@@ -349,7 +366,7 @@ function drawOverlayItems(
         ctx.fillStyle = "#fff";
         ctx.fillText(txt, midX - tw / 2, midY + 4 - 10);
       }
-      if (sel) {
+      if (sel && it.id === editableSelectedId) {
         ctx.fillStyle = "#ffffff";
         ctx.beginPath();
         ctx.arc(x1, y1, 5, 0, Math.PI * 2);
@@ -371,7 +388,7 @@ function drawOverlayItems(
       ctx.lineTo(x2, y2);
       ctx.stroke();
       ctx.globalAlpha = 1;
-      if (sel) {
+      if (sel && it.id === editableSelectedId) {
         ctx.strokeStyle = "rgba(255,255,255,0.55)";
         ctx.lineWidth = 1.5;
         ctx.beginPath();
@@ -563,6 +580,7 @@ export function CustomerMediaAnnotationViewer({
   const [textDraft, setTextDraft] = useState("");
   const [textPos, setTextPos] = useState<{ nx: number; ny: number } | null>(null);
   const [noteInput, setNoteInput] = useState("");
+  const initialItemsRef = useRef<CustomerOverlayItem[]>([]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const baseCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -627,6 +645,7 @@ export function CustomerMediaAnnotationViewer({
       console.log("loaded annotations", initial);
     }
     const snap = JSON.parse(JSON.stringify(initial)) as CustomerOverlayItem[];
+    initialItemsRef.current = snap;
     undoStackRef.current = [snap];
     undoPtrRef.current = 0;
     setItems(initial);
@@ -755,8 +774,21 @@ export function CustomerMediaAnnotationViewer({
         });
       }
     }
-    drawOverlayItems(octx, items, cw, ch, pageIdx, selectedId, hoveredId);
-  }, [contentSize, embeddedItems, items, selectedId, hoveredId, fileType, pdfPage]);
+    const selectedItem = items.find((it) => it.id === selectedId) ?? null;
+    const editableSelectedId = canEditByPolicy(selectedItem, userId, actorRole, readOnly)
+      ? selectedId
+      : null;
+    drawOverlayItems(
+      octx,
+      items,
+      cw,
+      ch,
+      pageIdx,
+      selectedId,
+      editableSelectedId,
+      hoveredId
+    );
+  }, [contentSize, embeddedItems, items, selectedId, userId, actorRole, readOnly, hoveredId, fileType, pdfPage]);
 
   useEffect(() => {
     if (!open) return;
@@ -792,18 +824,32 @@ export function CustomerMediaAnnotationViewer({
 
   const isAdmin = useMemo(() => {
     const r = actorRole.toLowerCase();
-    return r === "owner" || r === "admin" || r === "manager" || r === "accountant";
+    return (
+      r === "owner" ||
+      r === "superadmin" ||
+      r === "admin" ||
+      r === "manager" ||
+      r === "accountant"
+    );
   }, [actorRole]);
 
-  const canEditItem = useCallback(
-    (it: CustomerOverlayItem): boolean => {
-      if (readOnly) return false;
-      if (isAdmin) return true;
-      // Backward compatibility: older annotations may not have createdBy.
-      if (!it.createdBy) return true;
-      return it.createdBy === userId;
+  const currentUser = useMemo(
+    () => ({ uid: userId, role: actorRole.toLowerCase() }),
+    [actorRole, userId]
+  );
+
+  const canEditAnnotation = useCallback(
+    (it: CustomerOverlayItem | null | undefined): boolean => {
+      return canEditByPolicy(it, userId, actorRole, readOnly);
     },
-    [isAdmin, readOnly, userId]
+    [actorRole, readOnly, userId]
+  );
+
+  const canDeleteAnnotation = useCallback(
+    (it: CustomerOverlayItem | null | undefined): boolean => {
+      return canEditByPolicy(it, userId, actorRole, readOnly);
+    },
+    [actorRole, readOnly, userId]
   );
 
   const onPointerDown = (e: React.PointerEvent) => {
@@ -827,7 +873,7 @@ export function CustomerMediaAnnotationViewer({
         .map((it, i) => ({ it, i }))
         .reverse()
         .find(({ it }) => hitTestItem(x, y, it, cw, ch, pageIdx));
-      if (idx && canEditItem(idx.it)) {
+      if (idx && canDeleteAnnotation(idx.it)) {
         const next = cur.filter((_, j) => j !== idx.i);
         pushHistory(next);
         setSelectedId(null);
@@ -848,8 +894,10 @@ export function CustomerMediaAnnotationViewer({
           page: pageIdx,
           notes: [] as ThreadNote[],
           createdBy: userId,
+          createdByRole: (isAdmin ? "admin" : "customer") as "admin" | "customer",
           role: (isAdmin ? "admin" : "customer") as "admin" | "customer",
           createdAt: Date.now(),
+          updatedAt: Date.now(),
           style: { lineWidth: 2, fillColor: null },
         };
         if (tool === "line") {
@@ -877,8 +925,10 @@ export function CustomerMediaAnnotationViewer({
               y2: ny,
               text: (raw || "").trim() || "kóta",
               createdBy: userId,
+              createdByRole: (isAdmin ? "admin" : "customer") as "admin" | "customer",
               role: isAdmin ? "admin" : "customer",
               createdAt: Date.now(),
+              updatedAt: Date.now(),
               style: { lineWidth: 2, fillColor: null },
             },
           ]);
@@ -893,8 +943,10 @@ export function CustomerMediaAnnotationViewer({
               x2: nx,
               y2: ny,
               createdBy: userId,
+              createdByRole: (isAdmin ? "admin" : "customer") as "admin" | "customer",
               role: isAdmin ? "admin" : "customer",
               createdAt: Date.now(),
+              updatedAt: Date.now(),
               style: { lineWidth: 18, fillColor: null },
             },
           ]);
@@ -939,7 +991,7 @@ export function CustomerMediaAnnotationViewer({
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
         return;
       }
-      if (!canEditItem(hit.it)) return;
+      if (!canEditAnnotation(hit.it)) return;
       if (
         hit.it.type === "line" ||
         hit.it.type === "dimension" ||
@@ -1154,8 +1206,10 @@ export function CustomerMediaAnnotationViewer({
         page: fileType === "pdf" ? pdfPage - 1 : 0,
         notes: [] as ThreadNote[],
         createdBy: userId,
+        createdByRole: (isAdmin ? "admin" : "customer") as "admin" | "customer",
         role: (isAdmin ? "admin" : "customer") as "admin" | "customer",
         createdAt: Date.now(),
+        updatedAt: Date.now(),
         style: {
           lineWidth: tool === "highlight" ? 18 : 2,
           fillColor: null,
@@ -1200,8 +1254,10 @@ export function CustomerMediaAnnotationViewer({
             points: draft.pts,
             notes: [],
             createdBy: userId,
+            createdByRole: (isAdmin ? "admin" : "customer") as "admin" | "customer",
             role: isAdmin ? "admin" : "customer",
             createdAt: Date.now(),
+            updatedAt: Date.now(),
             style: { lineWidth: 3, fillColor: null },
           },
         ]);
@@ -1249,7 +1305,45 @@ export function CustomerMediaAnnotationViewer({
           items.filter((a) => a.type === "draw" || (a as { type?: string }).type === "freeDraw")
         );
       }
-      const payload = serializePayload(items);
+      const normalizeItemForSave = (it: CustomerOverlayItem, old?: CustomerOverlayItem) => {
+        const now = Date.now();
+        const createdByRole =
+          (old as { createdByRole?: "admin" | "customer" } | undefined)?.createdByRole ||
+          (it as { createdByRole?: "admin" | "customer" }).createdByRole ||
+          old?.role ||
+          it.role ||
+          (isAdmin ? "admin" : "customer");
+        return {
+          ...it,
+          createdBy: old?.createdBy || it.createdBy || userId,
+          createdByRole,
+          role: old?.role || it.role || createdByRole,
+          createdAt: old?.createdAt || it.createdAt || now,
+          updatedAt: now,
+        } as CustomerOverlayItem;
+      };
+      const currentById = new Map(items.map((it) => [it.id, it]));
+      const originalById = new Map(initialItemsRef.current.map((it) => [it.id, it]));
+      const securedItems: CustomerOverlayItem[] = [];
+      for (const [id, original] of originalById) {
+        const current = currentById.get(id);
+        if (!current) {
+          if (isAdmin || canDeleteAnnotation(original)) continue;
+          securedItems.push(original);
+          continue;
+        }
+        if (isAdmin || canEditAnnotation(original)) {
+          securedItems.push(normalizeItemForSave(current, original));
+        } else {
+          securedItems.push(original);
+        }
+      }
+      for (const current of items) {
+        if (originalById.has(current.id)) continue;
+        if (!isAdmin && current.createdBy && current.createdBy !== userId) continue;
+        securedItems.push(normalizeItemForSave(current));
+      }
+      const payload = serializePayload(securedItems);
       const normalizedFileId = String(mediaDocumentId ?? "").trim();
       const targetId = normalizedFileId || docId;
       const targetType: "image" | "pdf" = fileType;
@@ -1283,6 +1377,10 @@ export function CustomerMediaAnnotationViewer({
       };
       const sanitizedPayload = sanitizeFirestorePayload(payloadBeforeSanitize);
       if (process.env.NODE_ENV === "development") {
+        const selectedLocal = itemsRef.current.find((x) => x.id === selectedId) ?? null;
+        console.log("currentUser", currentUser);
+        console.log("selectedAnnotation", selectedLocal);
+        console.log("canEditAnnotation", canEditAnnotation(selectedLocal));
         console.log("annotation save target", {
           photoId,
           documentId,
@@ -1294,6 +1392,9 @@ export function CustomerMediaAnnotationViewer({
         console.log("annotation payload after sanitize", sanitizedPayload);
       }
       await setDoc(annRef, sanitizedPayload, { merge: true });
+      initialItemsRef.current = JSON.parse(JSON.stringify(securedItems)) as CustomerOverlayItem[];
+      itemsRef.current = securedItems;
+      setItems(securedItems);
       toast({ title: "Uloženo", description: "Anotace byly uloženy." });
     } catch (err) {
       console.error(err);
@@ -1327,8 +1428,10 @@ export function CustomerMediaAnnotationViewer({
         text: textDraft.trim(),
         notes: [],
         createdBy: userId,
+        createdByRole: (isAdmin ? "admin" : "customer") as "admin" | "customer",
         role: isAdmin ? "admin" : "customer",
         createdAt: Date.now(),
+        updatedAt: Date.now(),
         style: { lineWidth: 1, fillColor: null },
       },
     ]);
@@ -1339,7 +1442,7 @@ export function CustomerMediaAnnotationViewer({
   const addThreadNote = () => {
     if (!selectedId || !noteInput.trim()) return;
     const target = itemsRef.current.find((x) => x.id === selectedId);
-    if (!target || !canEditItem(target)) return;
+    if (!target || !canEditAnnotation(target)) return;
     const note: ThreadNote = {
       id: newItemId(),
       text: noteInput.trim(),
@@ -1354,7 +1457,7 @@ export function CustomerMediaAnnotationViewer({
   };
 
   const selected = items.find((x) => x.id === selectedId) ?? null;
-  const selectedEditable = selected ? canEditItem(selected) : false;
+  const selectedEditable = selected ? canEditAnnotation(selected) : false;
 
   const getCanvasCursor = (): string => {
     if (
@@ -1607,7 +1710,10 @@ export function CustomerMediaAnnotationViewer({
             {selected ? (
               <div className="mt-4 space-y-2">
                 <p className="text-xs text-white/60">Vybraný prvek ({selected.type})</p>
-                {selected.type === "dimension" && canEditItem(selected) ? (
+                {!selectedEditable ? (
+                  <p className="text-xs text-orange-300">Tuto anotaci nelze upravit.</p>
+                ) : null}
+                {selected.type === "dimension" && canEditAnnotation(selected) ? (
                   <div className="space-y-1">
                     <Input
                       value={selected.text}

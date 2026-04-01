@@ -25,8 +25,10 @@ export type CustomerOverlayItem =
       points: OverlayPoint[];
       notes: ThreadNote[];
       createdBy?: string;
+      createdByRole?: "admin" | "customer";
       role?: "admin" | "customer";
       createdAt?: number;
+      updatedAt?: number;
       style?: {
         lineWidth?: number;
         fillColor?: string | null;
@@ -43,8 +45,10 @@ export type CustomerOverlayItem =
       y2: number;
       notes: ThreadNote[];
       createdBy?: string;
+      createdByRole?: "admin" | "customer";
       role?: "admin" | "customer";
       createdAt?: number;
+      updatedAt?: number;
       style?: {
         lineWidth?: number;
         fillColor?: string | null;
@@ -62,8 +66,10 @@ export type CustomerOverlayItem =
       text: string;
       notes: ThreadNote[];
       createdBy?: string;
+      createdByRole?: "admin" | "customer";
       role?: "admin" | "customer";
       createdAt?: number;
+      updatedAt?: number;
       style?: {
         lineWidth?: number;
         fillColor?: string | null;
@@ -80,8 +86,10 @@ export type CustomerOverlayItem =
       y2: number;
       notes: ThreadNote[];
       createdBy?: string;
+      createdByRole?: "admin" | "customer";
       role?: "admin" | "customer";
       createdAt?: number;
+      updatedAt?: number;
       style?: {
         lineWidth?: number;
         fillColor?: string | null;
@@ -99,8 +107,10 @@ export type CustomerOverlayItem =
       text: string;
       notes: ThreadNote[];
       createdBy?: string;
+      createdByRole?: "admin" | "customer";
       role?: "admin" | "customer";
       createdAt?: number;
+      updatedAt?: number;
       style?: {
         lineWidth?: number;
         fillColor?: string | null;
@@ -117,8 +127,10 @@ export type CustomerOverlayItem =
       y2: number;
       notes: ThreadNote[];
       createdBy?: string;
+      createdByRole?: "admin" | "customer";
       role?: "admin" | "customer";
       createdAt?: number;
+      updatedAt?: number;
       style?: {
         lineWidth?: number;
         fillColor?: string | null;
@@ -201,13 +213,21 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
     const notes = parseNotes(o.notes);
     const createdBy =
       typeof o.createdBy === "string" && o.createdBy.trim() ? String(o.createdBy) : undefined;
+    const createdByRole =
+      o.createdByRole === "admin" || o.createdByRole === "customer"
+        ? (o.createdByRole as "admin" | "customer")
+        : undefined;
     const role =
       o.role === "admin" || o.role === "customer"
         ? (o.role as "admin" | "customer")
-        : undefined;
+        : createdByRole;
     const createdAt =
       typeof o.createdAt === "number" && Number.isFinite(o.createdAt)
         ? o.createdAt
+        : undefined;
+    const updatedAt =
+      typeof o.updatedAt === "number" && Number.isFinite(o.updatedAt)
+        ? o.updatedAt
         : undefined;
     const style =
       o.style && typeof o.style === "object"
@@ -238,8 +258,10 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
           points: pts,
           notes,
           createdBy,
+          createdByRole,
           role,
           createdAt,
+          updatedAt,
           style,
         });
       }
@@ -255,8 +277,10 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         y2: clamp01(Number(o.y2)),
         notes,
         createdBy,
+        createdByRole,
         role,
         createdAt,
+        updatedAt,
         style,
       });
     } else if (t === "text") {
@@ -273,8 +297,10 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         text,
         notes,
         createdBy,
+        createdByRole,
         role,
         createdAt,
+        updatedAt,
         style,
       });
     } else if (t === "highlight") {
@@ -289,8 +315,10 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         y2: clamp01(Number(o.y2)),
         notes,
         createdBy,
+        createdByRole,
         role,
         createdAt,
+        updatedAt,
         style,
       });
     } else if (t === "dimension") {
@@ -306,8 +334,10 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         text: String(o.text ?? "").slice(0, 120),
         notes,
         createdBy,
+        createdByRole,
         role,
         createdAt,
+        updatedAt,
         style,
       });
     } else if (t === "rectangle" || t === "square" || t === "circle") {
@@ -322,8 +352,10 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
         y2: clamp01(Number(o.y2)),
         notes,
         createdBy,
+        createdByRole,
         role,
         createdAt,
+        updatedAt,
         style,
       });
     }
@@ -385,7 +417,10 @@ function normalizeDrawAnnotationForStorage(
         ? item.style.lineWidth
         : 3,
     createdBy: item.createdBy ?? null,
+    createdByRole:
+      (item as { createdByRole?: "admin" | "customer" }).createdByRole ?? item.role ?? null,
     createdAt: item.createdAt ?? null,
+    updatedAt: item.updatedAt ?? Date.now(),
     role: item.role ?? null,
     notes: item.notes ?? [],
     style: item.style ?? { lineWidth: 3, fillColor: null },
