@@ -3,8 +3,8 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { doc } from "firebase/firestore";
-import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
+import { collection, doc, query, where } from "firebase/firestore";
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase";
 import { Button } from "@/components/ui/button";
 import { Loader2, ChevronLeft, Printer, Download, Pencil } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -40,6 +40,19 @@ export default function InvoiceDocumentPage() {
     error: invoiceError,
     isIndexPending,
   } = useDoc(invoiceRef);
+
+  const deliveryNotesQuery = useMemoFirebase(
+    () =>
+      firestore && companyId && invoiceId
+        ? query(
+            collection(firestore, "companies", companyId, "documents"),
+            where("documentType", "==", "delivery_note"),
+            where("invoiceId", "==", invoiceId)
+          )
+        : null,
+    [firestore, companyId, invoiceId]
+  );
+  const { data: deliveryNotes } = useCollection(deliveryNotesQuery);
 
   const html = useMemo(() => {
     const h =
@@ -237,6 +250,42 @@ export default function InvoiceDocumentPage() {
       <p className="text-sm text-neutral-700">
         V prohlížeči zvolte „Uložit jako PDF“ v dialogu tisku (Ctrl+P). Náhled je ve formátu A4.
       </p>
+      <div className="rounded-lg border border-neutral-200 bg-white p-3">
+        <h2 className="text-sm font-semibold text-neutral-900">Přiřazené dodací listy</h2>
+        {Array.isArray(deliveryNotes) && deliveryNotes.length > 0 ? (
+          <ul className="mt-2 space-y-1 text-sm">
+            {deliveryNotes.map((d) => {
+              const row = d as {
+                id: string;
+                number?: string;
+                documentNumber?: string;
+                fileUrl?: string | null;
+                date?: string | null;
+              };
+              const label = String(row.number ?? row.documentNumber ?? row.id);
+              return (
+                <li key={row.id} className="flex items-center justify-between gap-2 rounded border border-neutral-200 px-2 py-1">
+                  <span>{label} {row.date ? `· ${row.date}` : ""}</span>
+                  {row.fileUrl ? (
+                    <a
+                      href={row.fileUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-700 underline"
+                    >
+                      Otevřít dokument
+                    </a>
+                  ) : (
+                    <span className="text-neutral-500">Bez přílohy</span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="mt-2 text-sm text-neutral-600">Není přiřazeno k faktuře.</p>
+        )}
+      </div>
       {previewError ? (
         <Alert variant="destructive">
           <AlertTitle>Náhled se nepodařilo zobrazit</AlertTitle>

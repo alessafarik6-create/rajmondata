@@ -99,6 +99,13 @@ service cloud.firestore {
         ('source' in data && data.source == 'job-expense');
     }
 
+    /** Dodací list bez částky (nový typ v sekci Doklady). */
+    function companyDocumentIsDeliveryNote(data) {
+      return ('documentType' in data && data.documentType == 'delivery_note') ||
+        ('type' in data && data.type == 'delivery_note') ||
+        ('documentKind' in data && data.documentKind == 'delivery_note');
+    }
+
     /**
      * První vytvoření firmy při registraci (batch ještě neobsahuje users/{uid}, takže sameCompany nejde použít).
      * Dokument musí mít vlastníka = aktuální uživatel.
@@ -1126,9 +1133,11 @@ service cloud.firestore {
         allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
         allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
           (companyDocumentIsSyncedMirror(request.resource.data) ||
+            companyDocumentIsDeliveryNote(request.resource.data) ||
             companyDocumentHasFinancialAmount(request.resource.data));
         allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
           (companyDocumentIsSyncedMirror(request.resource.data) ||
+            companyDocumentIsDeliveryNote(request.resource.data) ||
             companyDocumentHasFinancialAmount(request.resource.data));
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }

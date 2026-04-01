@@ -11,6 +11,7 @@ import {
   runTransaction,
   serverTimestamp,
   updateDoc,
+  where,
 } from "firebase/firestore";
 import { useRouter } from "next/navigation";
 import {
@@ -170,9 +171,21 @@ export default function SkladPage() {
     );
   }, [areServicesAvailable, firestore, companyId]);
 
+  const deliveryNotesQuery = useMemoFirebase(() => {
+    if (!areServicesAvailable || !firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "documents"),
+      where("documentType", "==", "delivery_note"),
+      where("assignmentType", "==", "warehouse"),
+      orderBy("createdAt", "desc"),
+      limit(50)
+    );
+  }, [areServicesAvailable, firestore, companyId]);
+
   const { data: items, isLoading: itemsLoading } = useCollection(itemsQuery);
   const { data: movements, isLoading: movLoading } = useCollection(movementsQuery);
   const { data: productions } = useCollection(productionQuery);
+  const { data: deliveryNotes } = useCollection(deliveryNotesQuery);
 
   const [inOpen, setInOpen] = useState(false);
   const [outOpen, setOutOpen] = useState(false);
@@ -753,6 +766,60 @@ export default function SkladPage() {
               </Table>
             </div>
           )}
+        </CardContent>
+      </Card>
+
+      <Card className={CARD}>
+        <CardHeader className="border-b border-slate-100">
+          <CardTitle className="text-lg text-slate-900">Dodací listy přiřazené ke skladu</CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4">
+          {Array.isArray(deliveryNotes) && deliveryNotes.length > 0 ? (
+            <div className="space-y-2">
+              {deliveryNotes.map((row) => {
+                const d = row as {
+                  id: string;
+                  number?: string;
+                  documentNumber?: string;
+                  supplier?: string;
+                  date?: string;
+                  fileUrl?: string | null;
+                };
+                const label = String(d.number ?? d.documentNumber ?? d.id);
+                return (
+                  <div
+                    key={d.id}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded border border-slate-200 px-3 py-2"
+                  >
+                    <div className="text-sm text-slate-800">
+                      <strong>{label}</strong>
+                      {d.supplier ? ` · ${d.supplier}` : ""}
+                      {d.date ? ` · ${d.date}` : ""}
+                    </div>
+                    {d.fileUrl ? (
+                      <a
+                        href={d.fileUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-blue-700 underline"
+                      >
+                        Otevřít
+                      </a>
+                    ) : (
+                      <span className="text-sm text-slate-500">Bez přílohy</span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-600">
+              Zatím nejsou žádné dodací listy přiřazené ke skladu.
+            </p>
+          )}
+          <p className="mt-3 text-xs text-slate-500">
+            Tato sekce je připravená pro budoucí naskladnění položek z dodacích listů.
+          </p>
         </CardContent>
       </Card>
 

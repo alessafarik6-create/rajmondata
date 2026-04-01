@@ -37,11 +37,15 @@ import {
   doc,
   collection,
   addDoc,
+  arrayRemove,
+  arrayUnion,
   setDoc,
   serverTimestamp,
   deleteField,
   getDoc,
+  query,
   updateDoc,
+  where,
   type DocumentData,
   type UpdateData,
 } from "firebase/firestore";
@@ -135,6 +139,7 @@ type CompanyDocumentRow = {
   documentKind?: string;
   source?: string;
   sourceType?: string;
+  documentType?: "invoice" | "document" | "delivery_note";
   sourceId?: string;
   sourceLabel?: string;
   jobLinkedKind?: string;
@@ -181,7 +186,14 @@ type CompanyDocumentRow = {
   createdAt?: unknown;
   uploadedBy?: string;
   uploadedByName?: string;
-  assignmentType?: "job_cost" | "overhead" | "pending_assignment";
+  assignmentType?: AssignmentType;
+  invoiceId?: string | null;
+  invoiceNumber?: string | null;
+  assignedTo?: {
+    jobId?: string | null;
+    companyId?: string | null;
+    warehouseId?: string | null;
+  } | null;
   /** ID záznamu v jobs/.../expenses pro primární doklad (ne zrcadlo jobExpense_*). */
   linkedExpenseId?: string | null;
   /** ID záznamu v jobs/.../incomes odpovídá ID dokladu (vydaný příjem k zakázce). */
@@ -197,7 +209,12 @@ type CompanyDocumentRow = {
   isDeleted?: boolean;
 };
 
-type AssignmentType = "job_cost" | "overhead" | "pending_assignment";
+type AssignmentType =
+  | "job_cost"
+  | "company"
+  | "warehouse"
+  | "overhead"
+  | "pending_assignment";
 
 function inferSDPH(row: CompanyDocumentRow): boolean {
   if (typeof row.sDPH === "boolean") return row.sDPH;
@@ -338,6 +355,7 @@ function parseVatPercentInput(raw: string): number {
 }
 
 function isReceivedDoc(d: CompanyDocumentRow) {
+  if (d.documentType === "delivery_note") return true;
   return (
     d.type === "received" ||
     d.documentKind === "prijate" ||
@@ -362,6 +380,14 @@ function inferDocRowFileKind(
 ): JobMediaFileType | "none" {
   if (!row.fileUrl?.trim()) return "none";
   return inferJobMediaItemType(row);
+}
+
+function isDeliveryNote(row: CompanyDocumentRow): boolean {
+  return (
+    row.documentType === "delivery_note" ||
+    row.type === "delivery_note" ||
+    row.documentKind === "delivery_note"
+  );
 }
 
 /** Stejný limit jako u nahrávání médií na kartě zakázky. */
@@ -424,12 +450,17 @@ function DocumentsPageContent() {
   }, [jobsRaw]);
 
   const [isAddDocOpen, setIsAddDocOpen] = useState(false);
+  const [newDocKind, setNewDocKind] = useState<"document" | "delivery_note">(
+    "document"
+  );
   const [newDocType, setNewDocType] = useState<"received" | "issued">("received");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newDocFile, setNewDocFile] = useState<File | null>(null);
   const [assignmentType, setAssignmentType] =
     useState<AssignmentType>("pending_assignment");
   const [selectedJobId, setSelectedJobId] = useState<string>("");
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>("");
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<string>("");
   const [formData, setFormData] = useState({
     number: "",
     entityName: "",
@@ -457,6 +488,11 @@ function DocumentsPageContent() {
 
   const [editOpen, setEditOpen] = useState(false);
   const [editRow, setEditRow] = useState<CompanyDocumentRow | null>(null);
+  const [editInvoiceId, setEditInvoiceId] = useState<string>("");
+  const [editAssignmentType, setEditAssignmentType] =
+    useState<AssignmentType>("pending_assignment");
+  const [editWarehouseId, setEditWarehouseId] = useState<string>("");
+  const [editSupplier, setEditSupplier] = useState<string>("");
   const [editForm, setEditForm] = useState({
     nazev: "",
     castka: "",
@@ -504,7 +540,9 @@ function DocumentsPageContent() {
   const financialDocumentsActive = useMemo(
     () =>
       ((documents ?? []) as CompanyDocumentRow[]).filter(
-        (d) => isFinancialCompanyDocument(d) && isActiveFirestoreDoc(d)
+        (d) =>
+          (isFinancialCompanyDocument(d) || isDeliveryNote(d)) &&
+          isActiveFirestoreDoc(d)
       ),
     [documents]
   );
@@ -512,7 +550,9 @@ function DocumentsPageContent() {
   const financialDocumentsDeleted = useMemo(
     () =>
       ((documents ?? []) as CompanyDocumentRow[]).filter(
-        (d) => isFinancialCompanyDocument(d) && d.isDeleted === true
+        (d) =>
+          (isFinancialCompanyDocument(d) || isDeliveryNote(d)) &&
+          d.isDeleted === true
       ),
     [documents]
   );
@@ -538,6 +578,18 @@ function DocumentsPageContent() {
 
   const invoicesForCurrentView =
     documentsMainTab === "trash" ? invoicesDeletedList : invoicesActiveList;
+  const invoiceSelectOptions = useMemo(() => {
+    const raw = Array.isArray(invoicesActiveList) ? invoicesActiveList : [];
+    return raw.map((inv) => {
+      const id = String((inv as { id?: string }).id ?? "");
+      const label = String(
+        (inv as { invoiceNumber?: string; documentNumber?: string }).invoiceNumber ??
+          (inv as { documentNumber?: string }).documentNumber ??
+          id
+      ).trim();
+      return { id, label: label || id };
+    });
+  }, [invoicesActiveList]);
 
   const pendingDocs = useMemo(
     () =>
@@ -647,6 +699,28 @@ function DocumentsPageContent() {
     };
   };
 
+  const syncDeliveryNoteInvoiceLink = async (params: {
+    documentId: string;
+    prevInvoiceId?: string | null;
+    nextInvoiceId?: string | null;
+  }) => {
+    if (!firestore || !companyId) return;
+    const prev = String(params.prevInvoiceId ?? "").trim();
+    const next = String(params.nextInvoiceId ?? "").trim();
+    if (prev && prev !== next) {
+      await updateDoc(doc(firestore, "companies", companyId, "invoices", prev), {
+        deliveryNoteIds: arrayRemove(params.documentId),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    if (next) {
+      await updateDoc(doc(firestore, "companies", companyId, "invoices", next), {
+        deliveryNoteIds: arrayUnion(params.documentId),
+        updatedAt: serverTimestamp(),
+      });
+    }
+  };
+
   const handleAddDocument = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!companyId || !firestore || !user) return;
@@ -665,6 +739,90 @@ function DocumentsPageContent() {
         amountStr !== "" &&
         Number.isFinite(amountParsed) &&
         amountNetRaw > 0;
+
+      if (newDocKind === "delivery_note") {
+        if (!formData.number.trim()) {
+          toast({ variant: "destructive", title: "Vyplňte číslo dokladu" });
+          return;
+        }
+        if (!formData.entityName.trim()) {
+          toast({ variant: "destructive", title: "Vyplňte dodavatele" });
+          return;
+        }
+        const uploadMeta = newDocFile ? await uploadDocumentFile(newDocFile) : null;
+        const selectedJob = jobs.find((j) => j.id === selectedJobId);
+        const assignmentFinal: AssignmentType =
+          assignmentType === "job_cost" ||
+          assignmentType === "warehouse" ||
+          assignmentType === "company" ||
+          assignmentType === "pending_assignment"
+            ? assignmentType
+            : "pending_assignment";
+        const invoiceId = selectedInvoiceId.trim() || null;
+        const newDocRef = await addDoc(
+          collection(firestore, "companies", companyId, "documents"),
+          {
+            documentType: "delivery_note",
+            type: "delivery_note",
+            documentKind: "delivery_note",
+            number: formData.number.trim(),
+            documentNumber: formData.number.trim(),
+            entityName: formData.entityName.trim(),
+            supplier: formData.entityName.trim(),
+            date: formData.date?.trim() || null,
+            note: formData.description.trim() || null,
+            description: formData.description.trim() || null,
+            assignmentType: assignmentFinal,
+            jobId: assignmentFinal === "job_cost" ? selectedJobId || null : null,
+            zakazkaId: assignmentFinal === "job_cost" ? selectedJobId || null : null,
+            jobName: assignmentFinal === "job_cost" ? selectedJob?.name ?? null : null,
+            assignedTo: {
+              jobId: assignmentFinal === "job_cost" ? selectedJobId || null : null,
+              companyId: assignmentFinal === "company" ? companyId : null,
+              warehouseId:
+                assignmentFinal === "warehouse" ? selectedWarehouseId || "main" : null,
+            },
+            invoiceId,
+            fileUrl: uploadMeta?.fileUrl ?? null,
+            fileName: uploadMeta?.fileName ?? null,
+            fileType: uploadMeta?.fileType ?? null,
+            mimeType: uploadMeta?.mimeType ?? null,
+            storagePath: uploadMeta?.storagePath ?? null,
+            organizationId: companyId,
+            createdBy: user.uid,
+            uploadedBy: user.uid,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+            isDeleted: false,
+          }
+        );
+        if (invoiceId) {
+          await syncDeliveryNoteInvoiceLink({
+            documentId: newDocRef.id,
+            nextInvoiceId: invoiceId,
+          });
+        }
+        toast({ title: "Dodací list uložen" });
+        setIsAddDocOpen(false);
+        setNewDocKind("document");
+        setFormData({
+          number: "",
+          entityName: "",
+          amount: "",
+          currency: "CZK",
+          vat: "21",
+          date: new Date().toISOString().split("T")[0],
+          description: "",
+          requiresPayment: false,
+          dueDate: "",
+        });
+        setNewDocFile(null);
+        setAssignmentType("pending_assignment");
+        setSelectedJobId("");
+        setSelectedInvoiceId("");
+        setSelectedWarehouseId("");
+        return;
+      }
 
       if (!hasFinancialAmount) {
         if (!newDocFile) {
@@ -778,6 +936,8 @@ function DocumentsPageContent() {
         setNewDocFile(null);
         setAssignmentType("pending_assignment");
         setSelectedJobId("");
+        setSelectedInvoiceId("");
+        setSelectedWarehouseId("");
         return;
       }
 
@@ -1016,6 +1176,8 @@ function DocumentsPageContent() {
       setNewDocFile(null);
       setAssignmentType("pending_assignment");
       setSelectedJobId("");
+      setSelectedInvoiceId("");
+      setSelectedWarehouseId("");
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "Nepodařilo se uložit doklad.";
@@ -1067,6 +1229,7 @@ function DocumentsPageContent() {
         return;
       }
       const beforeRow = snap.data() as CompanyDocumentRow;
+      const isDl = isDeliveryNote(beforeRow);
       const before: CompanyDocumentExpenseReconcileBefore = {
         ...beforeRow,
         id: assigningDocId,
@@ -1076,8 +1239,19 @@ function DocumentsPageContent() {
         jobId: jid,
         zakazkaId: jid,
         jobName: assignTypeNext === "job_cost" ? selected?.name ?? null : null,
+        assignedTo: {
+          jobId: assignTypeNext === "job_cost" ? jid : null,
+          companyId: assignTypeNext === "company" ? companyId : null,
+          warehouseId: assignTypeNext === "warehouse" ? "main" : null,
+        },
         updatedAt: serverTimestamp(),
       });
+      if (isDl) {
+        setAssignDialogOpen(false);
+        setAssigningDocId(null);
+        toast({ title: "Zařazení uloženo" });
+        return;
+      }
       const after: CompanyDocumentExpenseReconcileBefore = {
         ...before,
         assignmentType: assignTypeNext,
@@ -1118,6 +1292,40 @@ function DocumentsPageContent() {
   };
 
   const openEditDocument = (row: CompanyDocumentRow) => {
+    if (isDeliveryNote(row)) {
+      setEditInvoiceId(String(row.invoiceId ?? "").trim());
+      setEditAssignmentType(
+        row.assignmentType === "job_cost" ||
+          row.assignmentType === "company" ||
+          row.assignmentType === "warehouse" ||
+          row.assignmentType === "pending_assignment"
+          ? row.assignmentType
+          : "pending_assignment"
+      );
+      setEditWarehouseId(String(row.assignedTo?.warehouseId ?? "").trim());
+      setEditSupplier(String((row as { supplier?: string }).supplier ?? row.entityName ?? ""));
+      setEditRow(row);
+      setEditForm({
+        nazev: row.number?.trim() || docDisplayTitle(row),
+        castka: "",
+        currency: "CZK",
+        sDPH: false,
+        dphSazba: "0",
+        date: row.date ?? "",
+        poznamka: String(row.note ?? row.description ?? ""),
+        zakazkaId: row.zakazkaId ?? row.jobId ?? "",
+        noJobMode:
+          row.assignmentType === "warehouse"
+            ? "overhead"
+            : row.assignmentType === "company"
+              ? "overhead"
+              : "pending",
+        requiresPayment: false,
+        dueDate: "",
+      });
+      setEditOpen(true);
+      return;
+    }
     const sDPH = inferSDPH(row);
     const am = docDisplayAmounts(row);
     const baseAmount = sDPH ? am.amountNet : am.amountGross;
@@ -1125,6 +1333,17 @@ function DocumentsPageContent() {
       row.dphSazba ?? row.vatRate ?? row.vat ?? 21
     );
     setEditRow(row);
+    setEditInvoiceId(String(row.invoiceId ?? "").trim());
+    setEditAssignmentType(
+      row.assignmentType === "job_cost" ||
+        row.assignmentType === "company" ||
+        row.assignmentType === "warehouse" ||
+        row.assignmentType === "pending_assignment"
+        ? row.assignmentType
+        : "pending_assignment"
+    );
+    setEditWarehouseId(String(row.assignedTo?.warehouseId ?? "").trim());
+    setEditSupplier(String((row as { supplier?: string }).supplier ?? row.entityName ?? ""));
     setEditForm({
       nazev: docDisplayTitle(row),
       castka: baseAmount > 0 ? String(baseAmount) : "",
@@ -1150,6 +1369,60 @@ function DocumentsPageContent() {
         title: "Chybí název",
         description: "Vyplňte název dokladu.",
       });
+      return;
+    }
+    if (isDeliveryNote(editRow)) {
+      setIsEditSaving(true);
+      try {
+        const selectedJob = jobs.find((j) => j.id === editForm.zakazkaId.trim());
+        const assign =
+          editAssignmentType === "job_cost" ||
+          editAssignmentType === "warehouse" ||
+          editAssignmentType === "company" ||
+          editAssignmentType === "pending_assignment"
+            ? editAssignmentType
+            : "pending_assignment";
+        const payload: Record<string, unknown> = {
+          number: editForm.nazev.trim(),
+          documentNumber: editForm.nazev.trim(),
+          supplier: editSupplier.trim() || null,
+          entityName: editSupplier.trim() || null,
+          date: editForm.date?.trim() || null,
+          note: editForm.poznamka.trim() || null,
+          description: editForm.poznamka.trim() || null,
+          assignmentType: assign,
+          jobId: assign === "job_cost" ? editForm.zakazkaId.trim() || null : null,
+          zakazkaId: assign === "job_cost" ? editForm.zakazkaId.trim() || null : null,
+          jobName: assign === "job_cost" ? selectedJob?.name ?? null : null,
+          assignedTo: {
+            jobId: assign === "job_cost" ? editForm.zakazkaId.trim() || null : null,
+            companyId: assign === "company" ? companyId : null,
+            warehouseId: assign === "warehouse" ? editWarehouseId.trim() || "main" : null,
+          },
+          invoiceId: editInvoiceId.trim() || null,
+          updatedAt: serverTimestamp(),
+        };
+        await updateDoc(
+          doc(firestore, "companies", companyId, "documents", editRow.id),
+          payload as unknown as UpdateData<DocumentData>
+        );
+        await syncDeliveryNoteInvoiceLink({
+          documentId: editRow.id,
+          prevInvoiceId: editRow.invoiceId ?? null,
+          nextInvoiceId: editInvoiceId.trim() || null,
+        });
+        toast({ title: "Dodací list uložen" });
+        setEditOpen(false);
+        setEditRow(null);
+      } catch {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: "Nepodařilo se uložit změny dodacího listu.",
+        });
+      } finally {
+        setIsEditSaving(false);
+      }
       return;
     }
     const castkaNum = Number(String(editForm.castka).replace(",", "."));
@@ -1483,6 +1756,8 @@ function DocumentsPageContent() {
     );
   }
 
+  const isEditingDeliveryNote = editRow ? isDeliveryNote(editRow) : false;
+
   return (
     <TooltipProvider delayDuration={250}>
     <div className="mx-auto w-full max-w-6xl px-3 sm:px-4 space-y-3 sm:space-y-4">
@@ -1515,11 +1790,30 @@ function DocumentsPageContent() {
                   Nový obchodní doklad
                 </DialogTitle>
                 <DialogDescription className="text-sm text-gray-800">
-                  Zadejte údaje z faktury nebo účtenky pro evidenci.
+                  Zadejte údaje z faktury, dokladu nebo dodacího listu.
                 </DialogDescription>
               </DialogHeader>
               <form onSubmit={handleAddDocument} className="space-y-3 px-4 py-3 sm:px-5">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {newDocKind === "document" ? (
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Druh záznamu</Label>
+                    <Select
+                      value={newDocKind}
+                      onValueChange={(v) =>
+                        setNewDocKind(v === "delivery_note" ? "delivery_note" : "document")
+                      }
+                    >
+                      <SelectTrigger className="bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="document">Doklad</SelectItem>
+                        <SelectItem value="delivery_note">Dodací list</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  ) : null}
                   <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="attachment">Soubor / fotka / PDF</Label>
                     <Input
@@ -1555,6 +1849,24 @@ function DocumentsPageContent() {
                       </Button>
                     </div>
                   </div>
+                  {newDocKind === "delivery_note" ? (
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label>Přiřadit k faktuře (volitelné)</Label>
+                      <Select value={selectedInvoiceId || "__none__"} onValueChange={(v) => setSelectedInvoiceId(v === "__none__" ? "" : v)}>
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder="Není přiřazeno k faktuře" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">Není přiřazeno k faktuře</SelectItem>
+                          {invoiceSelectOptions.map((inv) => (
+                            <SelectItem key={inv.id} value={inv.id}>
+                              {inv.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ) : null}
                   <div className="space-y-2">
                     <Label htmlFor="number">Číslo dokladu</Label>
                     <Input
@@ -1579,6 +1891,7 @@ function DocumentsPageContent() {
                       className="bg-background"
                     />
                   </div>
+                  {newDocKind !== "delivery_note" ? (
                   <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="entityName">
                       {newDocType === "received" ? "Dodavatel" : "Odběratel"}
@@ -1592,6 +1905,7 @@ function DocumentsPageContent() {
                       className="bg-background"
                     />
                   </div>
+                  ) : null}
                   <div className="space-y-2 sm:col-span-2">
                     <div className="grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_140px]">
                       <div className="space-y-2">
@@ -1635,6 +1949,7 @@ function DocumentsPageContent() {
                       jako fotodokumentace u zakázky — v tomto seznamu dokladů se neobjeví.
                     </p>
                   </div>
+                  {newDocKind !== "delivery_note" ? (
                   <div className="space-y-2">
                     <Label htmlFor="vat">DPH</Label>
                     <Select
@@ -1655,6 +1970,7 @@ function DocumentsPageContent() {
                       </SelectContent>
                     </Select>
                   </div>
+                  ) : null}
                   <div className="space-y-2 sm:col-span-2">
                     <Label htmlFor="description">Popis / Poznámka</Label>
                     <Input
@@ -1669,6 +1985,7 @@ function DocumentsPageContent() {
                       className="bg-background"
                     />
                   </div>
+                  {newDocKind !== "delivery_note" ? (
                   <div className="space-y-3 sm:col-span-2 rounded-lg border border-border p-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <div>
@@ -1700,6 +2017,7 @@ function DocumentsPageContent() {
                       />
                     </div>
                   </div>
+                  ) : null}
                   <div className="space-y-2 sm:col-span-2">
                     <Label>Zařazení dokladu</Label>
                     <Select
@@ -1711,8 +2029,9 @@ function DocumentsPageContent() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="job_cost">Zakázka → náklad</SelectItem>
-                        <SelectItem value="overhead">Režie</SelectItem>
-                        <SelectItem value="pending_assignment">Musí se zařadit později</SelectItem>
+                        <SelectItem value="company">Firma (doklady firmy)</SelectItem>
+                        <SelectItem value="warehouse">Sklad</SelectItem>
+                        <SelectItem value="pending_assignment">Nezařazený (později)</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -1731,6 +2050,17 @@ function DocumentsPageContent() {
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                  ) : null}
+                  {assignmentType === "warehouse" ? (
+                    <div className="space-y-2 sm:col-span-2">
+                      <Label>Sklad</Label>
+                      <Input
+                        value={selectedWarehouseId}
+                        onChange={(e) => setSelectedWarehouseId(e.target.value)}
+                        placeholder="ID skladu (výchozí: main)"
+                        className="bg-background"
+                      />
                     </div>
                   ) : null}
                 </div>
@@ -1984,8 +2314,9 @@ function DocumentsPageContent() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="job_cost">Zakázka → náklad</SelectItem>
-                  <SelectItem value="overhead">Režie</SelectItem>
-                  <SelectItem value="pending_assignment">Musí se zařadit později</SelectItem>
+                  <SelectItem value="company">Firma (doklady firmy)</SelectItem>
+                  <SelectItem value="warehouse">Sklad</SelectItem>
+                  <SelectItem value="pending_assignment">Nezařazený (později)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -2021,7 +2352,9 @@ function DocumentsPageContent() {
           <DialogHeader>
             <DialogTitle>Upravit doklad</DialogTitle>
             <DialogDescription>
-              Upravte název, částku, DPH, datum a přiřazení k zakázce.
+              {isEditingDeliveryNote
+                ? "Upravte dodací list, přiřazení a vazbu na fakturu."
+                : "Upravte název, částku, DPH, datum a přiřazení k zakázce."}
             </DialogDescription>
           </DialogHeader>
           <form onSubmit={saveEditDocument} className="space-y-4 py-2">
@@ -2037,6 +2370,7 @@ function DocumentsPageContent() {
                 required
               />
             </div>
+            {!isEditingDeliveryNote ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_140px]">
               <div className="space-y-2">
                 <Label htmlFor="edit-castka">
@@ -2076,12 +2410,14 @@ function DocumentsPageContent() {
                 </Select>
               </div>
             </div>
-            {editRow?.currency === "EUR" && editRow.exchangeRate ? (
+            ) : null}
+            {!isEditingDeliveryNote && editRow?.currency === "EUR" && editRow.exchangeRate ? (
               <p className="text-xs text-muted-foreground">
                 Uložený kurz: 1 EUR = {Number(editRow.exchangeRate).toLocaleString("cs-CZ")}{" "}
                 Kč (při úpravě se nemění).
               </p>
             ) : null}
+            {!isEditingDeliveryNote ? (
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-border p-3">
               <div className="space-y-0.5">
                 <Label htmlFor="edit-sdph" className="text-sm font-medium">
@@ -2102,7 +2438,8 @@ function DocumentsPageContent() {
                 <span className="text-sm font-medium">s DPH</span>
               </div>
             </div>
-            {editForm.sDPH ? (
+            ) : null}
+            {!isEditingDeliveryNote && editForm.sDPH ? (
               <div className="space-y-2">
                 <Label htmlFor="edit-dph">Sazba DPH (%)</Label>
                 <div className="flex flex-wrap gap-1.5">
@@ -2165,6 +2502,66 @@ function DocumentsPageContent() {
                 className="bg-background resize-y min-h-[80px]"
               />
             </div>
+            {isEditingDeliveryNote ? (
+              <>
+                <div className="space-y-2">
+                  <Label>Dodavatel</Label>
+                  <Input
+                    value={editSupplier}
+                    onChange={(e) => setEditSupplier(e.target.value)}
+                    className="bg-background"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Přiřazení k faktuře</Label>
+                  <Select
+                    value={editInvoiceId || "__none__"}
+                    onValueChange={(v) => setEditInvoiceId(v === "__none__" ? "" : v)}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="Není přiřazeno k faktuře" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">Není přiřazeno k faktuře</SelectItem>
+                      {invoiceSelectOptions.map((inv) => (
+                        <SelectItem key={inv.id} value={inv.id}>
+                          {inv.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Zařazení dokladu</Label>
+                  <Select
+                    value={editAssignmentType}
+                    onValueChange={(v) => setEditAssignmentType(v as AssignmentType)}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="pending_assignment">Nezařazený (později)</SelectItem>
+                      <SelectItem value="job_cost">Zakázka</SelectItem>
+                      <SelectItem value="company">Firma</SelectItem>
+                      <SelectItem value="warehouse">Sklad</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {editAssignmentType === "warehouse" ? (
+                  <div className="space-y-2">
+                    <Label>ID skladu</Label>
+                    <Input
+                      value={editWarehouseId}
+                      onChange={(e) => setEditWarehouseId(e.target.value)}
+                      placeholder="main"
+                      className="bg-background"
+                    />
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+            {!isEditingDeliveryNote ? (
             <div className="space-y-3 rounded-lg border border-border p-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -2220,8 +2617,12 @@ function DocumentsPageContent() {
                 </Button>
               ) : null}
             </div>
+            ) : null}
             <div className="space-y-2">
               <Label>Zakázka</Label>
+              {isEditingDeliveryNote && editAssignmentType !== "job_cost" ? (
+                <p className="text-xs text-muted-foreground">Doklad není zařazen k zakázce.</p>
+              ) : null}
               <Select
                 value={editForm.zakazkaId || "__none__"}
                 onValueChange={(v) =>
@@ -2230,6 +2631,7 @@ function DocumentsPageContent() {
                     zakazkaId: v === "__none__" ? "" : v,
                   })
                 }
+                disabled={isEditingDeliveryNote && editAssignmentType !== "job_cost"}
               >
                 <SelectTrigger className="bg-background">
                   <SelectValue placeholder="Nepřiřazeno" />
@@ -2243,7 +2645,7 @@ function DocumentsPageContent() {
                   ))}
                 </SelectContent>
               </Select>
-              {!editForm.zakazkaId.trim() ? (
+              {!isEditingDeliveryNote && !editForm.zakazkaId.trim() ? (
                 <div className="space-y-2 rounded-md border border-border p-3">
                   <Label className="text-xs text-muted-foreground">
                     Bez zakázky
@@ -2277,6 +2679,10 @@ function DocumentsPageContent() {
                 onClick={() => {
                   setEditOpen(false);
                   setEditRow(null);
+                  setEditInvoiceId("");
+                  setEditAssignmentType("pending_assignment");
+                  setEditWarehouseId("");
+                  setEditSupplier("");
                 }}
               >
                 Zrušit
@@ -2397,6 +2803,7 @@ function DocumentTableReceived({
   showDeleteButton?: boolean;
 }) {
   const [jobFilter, setJobFilter] = useState<string>("__all__");
+  const [docTypeFilter, setDocTypeFilter] = useState<string>("__all__");
   const [typeFilter, setTypeFilter] = useState<string>("__all__");
   const [paymentFilter, setPaymentFilter] = useState<string>("__all__");
   const [dateFrom, setDateFrom] = useState("");
@@ -2421,6 +2828,13 @@ function DocumentTableReceived({
       list = list.filter(
         (d) => (d.jobId ?? d.zakazkaId)?.trim() === jobFilter
       );
+    }
+    if (docTypeFilter !== "__all__") {
+      list = list.filter((d) => {
+        if (docTypeFilter === "delivery_note") return isDeliveryNote(d);
+        if (docTypeFilter === "document") return !isDeliveryNote(d);
+        return true;
+      });
     }
     if (typeFilter !== "__all__") {
       list = list.filter((d) => {
@@ -2483,7 +2897,17 @@ function DocumentTableReceived({
       return docCreatedAtMs(b.createdAt) - docCreatedAtMs(a.createdAt);
     });
     return list;
-  }, [data, jobFilter, typeFilter, paymentFilter, dateFrom, dateTo, search, todayIso]);
+  }, [
+    data,
+    jobFilter,
+    docTypeFilter,
+    typeFilter,
+    paymentFilter,
+    dateFrom,
+    dateTo,
+    search,
+    todayIso,
+  ]);
 
   const fileKindLabel = (k: JobMediaFileType | "none") => {
     if (k === "pdf") return "PDF";
@@ -2513,7 +2937,7 @@ function DocumentTableReceived({
             onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 lg:gap-x-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5 lg:gap-x-3">
           <div className="space-y-1 min-w-0">
             <Label className="text-[11px] font-medium text-gray-800">Zakázka</Label>
             <Select value={jobFilter} onValueChange={setJobFilter}>
@@ -2527,6 +2951,19 @@ function DocumentTableReceived({
                     <span className="truncate">{name}</span>
                   </SelectItem>
                 ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1 min-w-0">
+            <Label className="text-[11px] font-medium text-gray-800">Kategorie</Label>
+            <Select value={docTypeFilter} onValueChange={setDocTypeFilter}>
+              <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Všechny</SelectItem>
+                <SelectItem value="document">Doklady</SelectItem>
+                <SelectItem value="delivery_note">Dodací listy</SelectItem>
               </SelectContent>
             </Select>
           </div>
@@ -2563,7 +3000,7 @@ function DocumentTableReceived({
               onChange={(e) => setDateTo(e.target.value)}
             />
           </div>
-          <div className="space-y-1 min-w-0 sm:col-span-2 lg:col-span-4">
+          <div className="space-y-1 min-w-0 sm:col-span-2 lg:col-span-5">
             <Label className="text-[11px] font-medium text-gray-800">Platba / splatnost</Label>
             <Select value={paymentFilter} onValueChange={setPaymentFilter}>
               <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
@@ -2628,8 +3065,10 @@ function DocumentTableReceived({
               const assignmentBadge =
                 row.assignmentType === "job_cost"
                   ? "Zakázka"
-                  : row.assignmentType === "overhead"
-                    ? "Režie"
+                  : row.assignmentType === "warehouse"
+                    ? "Sklad"
+                    : row.assignmentType === "company" || row.assignmentType === "overhead"
+                      ? "Firma"
                     : "Nezařazeno";
 
               const iconBtn =
@@ -2717,6 +3156,18 @@ function DocumentTableReceived({
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
                     ) : null}
+                    {canEditRow && isDeliveryNote(row) ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className={iconBtn}
+                        title="Přiřadit k faktuře"
+                        onClick={() => onEdit(row)}
+                      >
+                        <ReceiptText className="h-3.5 w-3.5" />
+                      </Button>
+                    ) : null}
                     {!readOnlyTrash ? (
                       <Button
                         type="button"
@@ -2769,7 +3220,7 @@ function DocumentTableReceived({
                         variant="secondary"
                         className="h-5 border-gray-300 px-1.5 text-[10px] font-normal text-gray-900"
                       >
-                        Přijaté
+                        {isDeliveryNote(row) ? "Dodací list" : "Přijaté"}
                       </Badge>
                       {readOnlyTrash ? (
                         <Badge className="h-5 bg-red-700 px-1.5 text-[10px] text-white hover:bg-red-700">
@@ -2796,6 +3247,11 @@ function DocumentTableReceived({
                       >
                         {assignmentBadge}
                       </Badge>
+                      {isDeliveryNote(row) ? (
+                        <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                          {row.invoiceId ? "Faktura přiřazena" : "Není přiřazeno k faktuře"}
+                        </Badge>
+                      ) : null}
                     </div>
                   </div>
 
@@ -2821,7 +3277,11 @@ function DocumentTableReceived({
                     ) : (
                       <span className="text-gray-800 line-clamp-2 break-words">
                         {row.assignmentType === "pending_assignment"
-                          ? "Zařadit později"
+                          ? "Doklad není zařazen"
+                          : row.assignmentType === "warehouse"
+                            ? "Sklad"
+                            : row.assignmentType === "company"
+                              ? "Firma"
                           : row.entityName ?? "—"}
                       </span>
                     )}
@@ -2988,6 +3448,7 @@ function DocumentTableIssued({
   showDeleteButton?: boolean;
 }) {
   const { toast } = useToast();
+  const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
   const issuedRow = cn(
     "grid w-full items-start border-b border-gray-200 [&>*]:min-w-0 break-words",
     "grid-cols-1 gap-3 px-3 py-3 text-[13px] leading-relaxed sm:text-xs sm:px-2 sm:py-2 sm:gap-2",
@@ -3004,6 +3465,11 @@ function DocumentTableIssued({
         };
     const out: E[] = [];
     for (const row of data) {
+      if (categoryFilter === "invoices") {
+        continue;
+      }
+      if (categoryFilter === "delivery_notes" && !isDeliveryNote(row)) continue;
+      if (categoryFilter === "documents" && isDeliveryNote(row)) continue;
       out.push({
         kind: "doc",
         row,
@@ -3011,6 +3477,7 @@ function DocumentTableIssued({
       });
     }
     for (const inv of invoices) {
+      if (categoryFilter !== "__all__" && categoryFilter !== "invoices") continue;
       out.push({
         kind: "inv",
         inv,
@@ -3019,7 +3486,7 @@ function DocumentTableIssued({
     }
     out.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
     return out;
-  }, [data, invoices]);
+  }, [data, invoices, categoryFilter]);
 
   const jobNameForId = (jid: string) =>
     jobs.find((j) => j.id === jid)?.name ?? null;
@@ -3060,6 +3527,17 @@ function DocumentTableIssued({
           />
         </div>
         <div className="flex flex-wrap gap-1.5">
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="h-8 w-[180px] border-gray-300 bg-white text-xs text-gray-900">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__all__">Všechny</SelectItem>
+              <SelectItem value="invoices">Faktury</SelectItem>
+              <SelectItem value="documents">Doklady</SelectItem>
+              <SelectItem value="delivery_notes">Dodací listy</SelectItem>
+            </SelectContent>
+          </Select>
           {!readOnlyTrash ? (
             <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs" asChild>
               <Link href="/portal/invoices/new">
@@ -3171,7 +3649,7 @@ function DocumentTableIssued({
                         Doklad
                       </span>
                       <Badge variant="outline" className="mb-0.5 h-5 px-1 text-[9px]">
-                        Vydaný doklad
+                        {isDeliveryNote(docRow) ? "Dodací list" : "Vydaný doklad"}
                       </Badge>
                       {readOnlyTrash ? (
                         <Badge className="mb-0.5 ml-1 h-5 bg-red-700 px-1 text-[9px] text-white hover:bg-red-700">
@@ -3207,7 +3685,12 @@ function DocumentTableIssued({
                         </Link>
                       ) : (
                         <span className="text-gray-800">
-                          {docRow.assignmentType === "overhead" ? "Režie" : "—"}
+                          {docRow.assignmentType === "warehouse"
+                            ? "Sklad"
+                            : docRow.assignmentType === "company" ||
+                                docRow.assignmentType === "overhead"
+                              ? "Firma"
+                              : "Doklad není zařazen"}
                         </span>
                       )}
                     </div>
