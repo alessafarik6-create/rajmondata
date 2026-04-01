@@ -138,9 +138,9 @@ const JOB_MEDIA_CARD_GRID_CLASS =
 /** Kolik položek zobrazit před „Zobrazit více“ */
 const JOB_MEDIA_INITIAL_COUNT = 6;
 
-/** Max. výška scrollovatelné oblasti se seznamy */
+/** Seznamy médií se mají rozbalit naplno (bez vnitřního scrollu). */
 const JOB_MEDIA_LIST_SCROLL_CLASS =
-  "max-h-[min(50vh,480px)] overflow-y-auto overscroll-contain";
+  "h-auto overflow-visible";
 
 function folderTypeLabel(t: JobFolderType | undefined): string {
   switch (t ?? "files") {
@@ -1666,8 +1666,8 @@ function UserFolderBlock({
             className={cn(
               JOB_MEDIA_LIST_SCROLL_CLASS,
               isFolderWide
-                ? "max-h-[min(50vh,480px)] rounded-md border border-border/40 bg-muted/5 p-2 sm:p-3"
-                : "max-h-[min(38vh,340px)] rounded-md border border-border/40 bg-muted/5 p-2"
+                ? "rounded-md border border-border/40 bg-muted/5 p-2 sm:p-3"
+                : "rounded-md border border-border/40 bg-muted/5 p-2"
             )}
           >
           <div className={JOB_MEDIA_CARD_GRID_CLASS}>
@@ -2794,10 +2794,7 @@ export function JobMediaSection({
               <div
                 className={cn(
                   JOB_MEDIA_LIST_SCROLL_CLASS,
-                  "space-y-5 rounded-md border border-border/40 bg-muted/5 p-3 sm:p-4",
-                  isJobDetailWide
-                    ? "max-h-[min(50vh,480px)]"
-                    : "max-h-[min(55vh,520px)]"
+                  "space-y-5 rounded-md border border-border/40 bg-muted/5 p-3 sm:p-4"
                 )}
               >
                 <section className="space-y-3">
