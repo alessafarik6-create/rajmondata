@@ -457,12 +457,17 @@ export function CustomerMediaAnnotationViewer({
       try {
         const pdfjs = await import("pdfjs-dist");
         const ver = pdfjs.version || "4.10.38";
-        pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`;
-        const res = await fetch(mediaUrl);
-        const buf = await res.arrayBuffer();
-        if (cancelled) return;
-        const task = pdfjs.getDocument({ data: new Uint8Array(buf), useSystemFonts: true });
+        const major = Number(String(ver).split(".")[0] || "4");
+        pdfjs.GlobalWorkerOptions.workerSrc =
+          major === 3
+            ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
+            : `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`;
+        console.log("PDF URL:", mediaUrl);
+        console.log("PDF worker:", pdfjs.GlobalWorkerOptions.workerSrc);
+        const task = pdfjs.getDocument(mediaUrl);
         const pdf = await task.promise;
+        if (cancelled) return;
+        console.log("PDF loaded:", pdf);
         pdfRef.current = pdf;
         setPdfNumPages(pdf.numPages);
         setPdfPage(1);
@@ -477,6 +482,12 @@ export function CustomerMediaAnnotationViewer({
     })();
     return () => {
       cancelled = true;
+      try {
+        (pdfRef.current as { destroy?: () => void } | null)?.destroy?.();
+      } catch {
+        /* */
+      }
+      pdfRef.current = null;
     };
   }, [open, fileType, mediaUrl, toast]);
 
@@ -494,6 +505,7 @@ export function CustomerMediaAnnotationViewer({
     let cancelled = false;
     (async () => {
       const page = await pdf.getPage(pdfPage);
+      console.log("page:", page);
       if (cancelled) return;
       const scale = 1.4;
       const vp = page.getViewport({ scale });

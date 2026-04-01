@@ -133,7 +133,7 @@ const MAX_BYTES = 20 * 1024 * 1024;
 
 /** Mřížka náhledů — plná šířka, žádné úzké sloupce */
 const JOB_MEDIA_CARD_GRID_CLASS =
-  "grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-5";
+  "grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4";
 
 /** Kolik položek zobrazit před „Zobrazit více“ */
 const JOB_MEDIA_INITIAL_COUNT = 6;
@@ -221,7 +221,7 @@ function MediaThumb({
 
   if (!src || broken) {
     return (
-      <div className="flex aspect-square w-full items-center justify-center bg-muted px-2 text-center text-xs text-gray-700">
+      <div className="flex aspect-[4/3] min-h-[200px] w-full items-center justify-center bg-muted px-2 text-center text-xs text-gray-700">
         {!src ? "Chybí náhled" : "Nelze načíst obrázek"}
       </div>
     );
@@ -252,7 +252,7 @@ function ImageThumbWithQuickActions({
   onDelete: () => void;
 }) {
   return (
-    <div className="group/thumb relative aspect-square w-full overflow-hidden bg-muted">
+    <div className="group/thumb relative aspect-[4/3] min-h-[200px] w-full overflow-hidden bg-muted">
       {children}
       <div
         className={cn(
@@ -358,7 +358,7 @@ function MediaCompactDocRow({
 function JobMediaPdfPreview() {
   return (
     <div
-      className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 bg-red-500/[0.07]"
+      className="flex aspect-[4/3] min-h-[200px] w-full flex-col items-center justify-center gap-1.5 bg-red-500/[0.07]"
       aria-hidden
     >
       <span className="text-2xl leading-none">📄</span>
@@ -373,7 +373,7 @@ function JobMediaPdfPreview() {
 function JobMediaOfficePreview() {
   return (
     <div
-      className="flex aspect-square w-full flex-col items-center justify-center gap-1.5 bg-blue-500/[0.07]"
+      className="flex aspect-[4/3] min-h-[200px] w-full flex-col items-center justify-center gap-1.5 bg-blue-500/[0.07]"
       aria-hidden
     >
       <span className="text-2xl leading-none">📎</span>
@@ -1713,7 +1713,7 @@ function UserFolderBlock({
                     : formatMediaDate(img.createdAt);
               const hasNote = !!img.note?.trim();
 
-              if (isFolderWide && (kind === "pdf" || kind === "office")) {
+                  if (!isCustomerScope && isFolderWide && (kind === "pdf" || kind === "office")) {
                 return null;
               }
 
@@ -1950,7 +1950,7 @@ function UserFolderBlock({
               );
             })}
           </div>
-          {isFolderWide && folderDocImages.length > 0 ? (
+          {!isCustomerScope && isFolderWide && folderDocImages.length > 0 ? (
             <div className="mt-3 space-y-2 border-t border-border/50 pt-3">
               {folderDocImages.map((img) => {
                 const kind = inferJobMediaItemType(img);
@@ -2849,7 +2849,7 @@ export function JobMediaSection({
                         : formatMediaDate(p.createdAt);
                   const hasNote = !!p.note?.trim();
 
-                  if (isJobDetailWide && (kind === "pdf" || kind === "office")) {
+                  if (mediaScope !== "customer" && isJobDetailWide && (kind === "pdf" || kind === "office")) {
                     return null;
                   }
 
@@ -3077,7 +3077,7 @@ export function JobMediaSection({
                   );
                 })}
               </div>
-                      {isJobDetailWide && legacyDocPhotos.length > 0 ? (
+                      {mediaScope !== "customer" && isJobDetailWide && legacyDocPhotos.length > 0 ? (
                         <div className="space-y-2 border-t border-border/50 pt-3">
                           {legacyDocPhotos.map((p) => {
                             const kind = inferJobMediaItemType(p);
