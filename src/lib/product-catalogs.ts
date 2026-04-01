@@ -9,9 +9,12 @@ export type ProductCatalogProduct = {
   gallery?: string[];
   price?: number | null;
   note?: string;
+  internalNote?: string;
   category?: string;
   order?: number;
   active?: boolean;
+  archived?: boolean;
+  archivedAt?: unknown;
   variants?: string[];
 };
 
@@ -20,8 +23,12 @@ export type ProductCatalogDoc = {
   name: string;
   description?: string;
   category?: string;
+  coverImageUrl?: string;
   active: boolean;
   customerVisible: boolean;
+  order?: number;
+  archived?: boolean;
+  deletedAt?: unknown;
   selectionMode: ProductCatalogSelectionMode;
   assignedJobIds: string[];
   assignedCustomerIds: string[];
