@@ -185,6 +185,11 @@ function distToSeg(
   return Math.hypot(px - qx, py - qy);
 }
 
+function pointXY(point: [number, number] | { x: number; y: number }): [number, number] {
+  if (Array.isArray(point)) return [point[0], point[1]];
+  return [point.x, point.y];
+}
+
 function hitTestItem(
   x: number,
   y: number,
@@ -238,7 +243,9 @@ function hitTestItem(
     for (let i = 1; i < pts.length; i++) {
       const a = pts[i - 1],
         b = pts[i];
-      if (distToSeg(x, y, a[0] * cw, a[1] * ch, b[0] * cw, b[1] * ch) < thr)
+      const [ax, ay] = pointXY(a);
+      const [bx, by] = pointXY(b);
+      if (distToSeg(x, y, ax * cw, ay * ch, bx * cw, by * ch) < thr)
         return true;
     }
     return false;
@@ -283,9 +290,11 @@ function drawOverlayItems(
       ctx.beginPath();
       const p0 = it.points[0];
       if (!p0) continue;
-      ctx.moveTo(p0[0] * cw, p0[1] * ch);
+      const [p0x, p0y] = pointXY(p0);
+      ctx.moveTo(p0x * cw, p0y * ch);
       for (let i = 1; i < it.points.length; i++) {
-        ctx.lineTo(it.points[i][0] * cw, it.points[i][1] * ch);
+        const [px, py] = pointXY(it.points[i]);
+        ctx.lineTo(px * cw, py * ch);
       }
       ctx.stroke();
     } else if (it.type === "line") {
@@ -1009,7 +1018,10 @@ export function CustomerMediaAnnotationViewer({
         if (it.type === "draw") {
           return {
             ...it,
-            points: it.points.map((p) => [p[0] + dx, p[1] + dy] as [number, number]),
+            points: it.points.map((p) => {
+              const [px, py] = pointXY(p);
+              return [px + dx, py + dy] as [number, number];
+            }),
           };
         }
         return it;
@@ -1232,6 +1244,10 @@ export function CustomerMediaAnnotationViewer({
     try {
       if (process.env.NODE_ENV === "development") {
         console.log("annotations before save", items);
+        console.log(
+          "draw annotations before normalize",
+          items.filter((a) => a.type === "draw" || (a as { type?: string }).type === "freeDraw")
+        );
       }
       const payload = serializePayload(items);
       const normalizedFileId = String(mediaDocumentId ?? "").trim();

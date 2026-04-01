@@ -7,6 +7,7 @@
 export const DOCUMENT_CUSTOMER_ANNOTATION_VERSION = 1;
 
 export type AnnotationStrokeColor = "red" | "blue" | "yellow";
+export type OverlayPoint = [number, number] | { x: number; y: number };
 
 export type ThreadNote = {
   id: string;
@@ -21,7 +22,7 @@ export type CustomerOverlayItem =
       type: "draw";
       color: AnnotationStrokeColor;
       page: number;
-      points: [number, number][];
+      points: OverlayPoint[];
       notes: ThreadNote[];
       createdBy?: string;
       role?: "admin" | "customer";
@@ -222,12 +223,11 @@ function sanitizeItems(raw: unknown[]): CustomerOverlayItem[] {
           }
         : undefined;
     const t = o.type;
-    if (t === "draw" && Array.isArray(o.points)) {
+    if ((t === "draw" || t === "freeDraw") && Array.isArray(o.points)) {
       const pts: [number, number][] = [];
       for (const p of o.points) {
-        if (Array.isArray(p) && p.length >= 2) {
-          pts.push([clamp01(Number(p[0])), clamp01(Number(p[1]))]);
-        }
+        const normalized = normalizePointTuple(p);
+        if (normalized) pts.push(normalized);
       }
       if (pts.length >= 2) {
         out.push({
@@ -353,6 +353,51 @@ export function newItemId(): string {
   return `a-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function normalizePointTuple(point: unknown): [number, number] | null {
+  if (Array.isArray(point) && point.length >= 2) {
+    if (Array.isArray(point[0]) || Array.isArray(point[1])) return null;
+    return [clamp01(Number(point[0])), clamp01(Number(point[1]))];
+  }
+  if (point && typeof point === "object") {
+    const p = point as { x?: unknown; y?: unknown };
+    if (typeof p.x === "number" && typeof p.y === "number") {
+      return [clamp01(p.x), clamp01(p.y)];
+    }
+  }
+  return null;
+}
+
+function normalizeDrawAnnotationForStorage(
+  item: Extract<CustomerOverlayItem, { type: "draw" }>
+): Record<string, unknown> {
+  const points = item.points
+    .map((point: OverlayPoint) => normalizePointTuple(point))
+    .filter((point): point is [number, number] => Array.isArray(point))
+    .map(([x, y]) => ({ x, y }));
+  return {
+    id: item.id,
+    type: "draw",
+    color: item.color,
+    page: item.page,
+    points,
+    strokeWidth:
+      typeof item.style?.lineWidth === "number" && Number.isFinite(item.style.lineWidth)
+        ? item.style.lineWidth
+        : 3,
+    createdBy: item.createdBy ?? null,
+    createdAt: item.createdAt ?? null,
+    role: item.role ?? null,
+    notes: item.notes ?? [],
+    style: item.style ?? { lineWidth: 3, fillColor: null },
+  };
+}
+
 export function serializePayload(items: CustomerOverlayItem[]): CustomerAnnotationPayload {
-  return { version: DOCUMENT_CUSTOMER_ANNOTATION_VERSION, items };
+  const normalizedItems = items.map((item) =>
+    item.type === "draw" ? normalizeDrawAnnotationForStorage(item) : item
+  );
+  return {
+    version: DOCUMENT_CUSTOMER_ANNOTATION_VERSION,
+    items: normalizedItems as unknown as CustomerOverlayItem[],
+  };
 }
