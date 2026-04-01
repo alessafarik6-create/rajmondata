@@ -480,13 +480,19 @@ export function CustomerMediaAnnotationViewer({
   mediaDocumentId,
   embeddedAnnotationData,
 }: CustomerMediaAnnotationViewerProps) {
+  const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+    if (!value || typeof value !== "object") return false;
+    const proto = Object.getPrototypeOf(value);
+    return proto === Object.prototype || proto === null;
+  };
+
   function sanitizeFirestorePayload<T>(value: T): T {
     if (Array.isArray(value)) {
       return value
         .map((v) => sanitizeFirestorePayload(v))
         .filter((v) => v !== undefined) as T;
     }
-    if (value && typeof value === "object") {
+    if (isPlainObject(value)) {
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
         if (v === undefined) continue;
@@ -1228,35 +1234,48 @@ export function CustomerMediaAnnotationViewer({
         console.log("annotations before save", items);
       }
       const payload = serializePayload(items);
-      const targetType = storagePath.kind === "photos" ? "image" : fileType;
-      const targetId = String(mediaDocumentId || "").trim() || docId;
+      const normalizedFileId = String(mediaDocumentId ?? "").trim();
+      const targetId = normalizedFileId || docId;
+      const targetType: "image" | "pdf" = fileType;
+      const photoId =
+        storagePath.kind === "photos" && targetType === "image" && normalizedFileId
+          ? normalizedFileId
+          : undefined;
+      const documentId =
+        storagePath.kind === "folderImages" && normalizedFileId ? normalizedFileId : targetId;
       const row: DocumentAnnotationFirestoreDoc = {
         companyId,
         jobId,
-        documentId: targetId,
+        documentId,
+        targetId,
+        targetType,
+        fileId: normalizedFileId || undefined,
         targetKind: storagePath.kind === "photos" ? "photos" : "folderImages",
         ...(storagePath.kind === "folderImages" && storagePath.folderId
-          ? { folderId: storagePath.folderId, imageId: targetId }
+          ? { folderId: storagePath.folderId, imageId: documentId }
           : {}),
-        ...(storagePath.kind === "photos" ? { photoId: targetId } : {}),
+        ...(photoId ? { photoId } : {}),
         mediaKind: fileType,
         type: "customer_overlay",
         data: payload,
         visibleFor: ["customer", "admin"],
         updatedBy: userId,
       };
-      const sanitizedPayload = sanitizeFirestorePayload({
+      const payloadBeforeSanitize = {
         ...row,
         updatedAt: serverTimestamp(),
-      });
+      };
+      const sanitizedPayload = sanitizeFirestorePayload(payloadBeforeSanitize);
       if (process.env.NODE_ENV === "development") {
         console.log("annotation save target", {
-          photoId: storagePath.kind === "photos" ? targetId : null,
-          documentId: targetId,
-          fileId: mediaDocumentId,
+          photoId,
+          documentId,
+          targetId,
+          fileId: normalizedFileId || null,
           targetType,
         });
-        console.log("annotation payload", sanitizedPayload);
+        console.log("annotation payload before sanitize", payloadBeforeSanitize);
+        console.log("annotation payload after sanitize", sanitizedPayload);
       }
       await setDoc(annRef, sanitizedPayload, { merge: true });
       toast({ title: "Uloženo", description: "Anotace byly uloženy." });
@@ -1350,8 +1369,12 @@ export function CustomerMediaAnnotationViewer({
     <Button
       type="button"
       size="sm"
-      variant={tool === t ? "default" : "outline"}
-      className={cn("h-9 gap-1 px-2", readOnly && t !== "pan" && "pointer-events-none opacity-50")}
+      variant="outline"
+      className={cn(
+        "h-9 gap-1 border-white/30 text-white hover:border-white/60 hover:bg-white/15",
+        tool === t && "border-blue-400 bg-blue-600 text-white hover:bg-blue-500",
+        readOnly && t !== "pan" && "pointer-events-none opacity-50"
+      )}
       disabled={readOnly && t !== "pan"}
       onClick={() => setTool(t)}
       title={label}
@@ -1396,8 +1419,8 @@ export function CustomerMediaAnnotationViewer({
         <Button
           type="button"
           size="sm"
-          variant="outline"
-          className="h-9 border-white/30 text-white hover:bg-white/10"
+          variant="default"
+          className="h-9 bg-blue-600 text-white hover:bg-blue-500 disabled:bg-blue-700/60 disabled:text-white"
           disabled={readOnly || saving}
           onClick={() => void save()}
         >

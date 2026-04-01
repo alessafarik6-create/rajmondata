@@ -133,6 +133,9 @@ export type DocumentAnnotationFirestoreDoc = {
   companyId: string;
   jobId: string;
   documentId: string;
+  targetId?: string;
+  targetType?: "image" | "pdf";
+  fileId?: string;
   targetKind: "folderImages" | "photos";
   folderId?: string;
   imageId?: string;
