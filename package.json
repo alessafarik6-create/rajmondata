@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
     "seed-superadmin": "node scripts/seed-superadmin.js"
   },
   "dependencies": {
@@ -69,6 +70,7 @@
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
     "postcss": "^8",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.4.1",
     "typescript": "^5"
   }
