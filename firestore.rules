@@ -972,6 +972,34 @@ service cloud.firestore {
         allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
+      /**
+       * Výplaty za měsíc (evidence vyplaceno / stav): payroll_period_payments/{id}
+       * ID např. {employeeId}__{YYYY-MM}
+       */
+      match /payroll_period_payments/{ppId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.employeeId is string &&
+          request.resource.data.payrollPeriod is string &&
+          request.resource.data.payrollPeriod.matches('^\\d{4}-\\d{2}$') &&
+          request.resource.data.calculatedAmount is number &&
+          request.resource.data.paidAmount is number &&
+          request.resource.data.paymentDate is string &&
+          request.resource.data.paymentStatus in ['unpaid', 'partial', 'paid'];
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId &&
+          resource.data.employeeId == request.resource.data.employeeId &&
+          resource.data.payrollPeriod == request.resource.data.payrollPeriod &&
+          request.resource.data.calculatedAmount is number &&
+          request.resource.data.paidAmount is number &&
+          request.resource.data.paymentDate is string &&
+          request.resource.data.paymentStatus in ['unpaid', 'partial', 'paid'];
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       /** Dluhy zaměstnanců: admin správa, zaměstnanec pouze čtení svého. */
       match /employee_debts/{debtId} {
         allow read: if signedIn() && sameCompany(companyId) &&

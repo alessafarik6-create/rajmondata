@@ -77,9 +77,16 @@ import { segmentCalendarDateIsoKey } from "@/lib/work-segment-client";
 import {
   buildEmployeeDailyDetailRows,
   computePeriodRange,
+  firestoreEmployeeIdMatches,
   totalsFromDailyDetailRows,
   type EmployeeLite,
 } from "@/lib/attendance-overview-compute";
+import { buildPayrollOverviewRows } from "@/lib/payroll-overview-compute";
+import {
+  dateStrInInclusiveRange,
+  payrollPeriodBounds,
+} from "@/lib/payroll-period";
+import { PayrollPeriodPanel } from "@/components/portal/PayrollPeriodPanel";
 import {
   buildWorklogPdfFileName,
   downloadWorklogPdfFromElement,
@@ -284,6 +291,14 @@ function PayrollAdminPageInner() {
 
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
 
+  const nowInit = new Date();
+  const [payrollYear, setPayrollYear] = useState(nowInit.getFullYear());
+  const [payrollMonth, setPayrollMonth] = useState(nowInit.getMonth() + 1);
+  const periodBounds = useMemo(
+    () => payrollPeriodBounds(payrollYear, payrollMonth),
+    [payrollYear, payrollMonth]
+  );
+
   useEffect(() => {
     if (employees.length === 0) return;
     if (employeeFromUrl === "all") {
@@ -304,20 +319,15 @@ function PayrollAdminPageInner() {
 
   const blocksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
-    if (selectedEmployeeId === "all") {
-      return query(
-        collection(firestore, "companies", companyId, "work_time_blocks"),
-        orderBy("date", "desc"),
-        limit(500)
-      );
-    }
-    if (!selectedEmployeeId) return null;
+    const { startStr, endStr } = periodBounds;
     return query(
       collection(firestore, "companies", companyId, "work_time_blocks"),
-      where("employeeId", "==", selectedEmployeeId),
-      limit(500)
+      where("date", ">=", startStr),
+      where("date", "<=", endStr),
+      orderBy("date", "desc"),
+      limit(6000)
     );
-  }, [firestore, companyId, selectedEmployeeId]);
+  }, [firestore, companyId, periodBounds.startStr, periodBounds.endStr]);
 
   const { data: blocksRaw, isLoading: blocksLoading } =
     useCollection(blocksQuery);
@@ -336,21 +346,30 @@ function PayrollAdminPageInner() {
     useCollection(advancesQuery);
 
   const dailyReportsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !selectedEmployeeId) return null;
-    if (selectedEmployeeId === "all") {
-      return query(
-        collection(firestore, "companies", companyId, "daily_work_reports"),
-        limit(500)
-      );
-    }
+    if (!firestore || !companyId) return null;
+    const { startStr, endStr } = periodBounds;
     return query(
       collection(firestore, "companies", companyId, "daily_work_reports"),
-      where("employeeId", "==", selectedEmployeeId),
-      limit(500)
+      where("date", ">=", startStr),
+      where("date", "<=", endStr),
+      orderBy("date", "desc"),
+      limit(6000)
     );
-  }, [firestore, companyId, selectedEmployeeId]);
+  }, [firestore, companyId, periodBounds.startStr, periodBounds.endStr]);
 
   const { data: dailyReportsRaw = [] } = useCollection(dailyReportsQuery);
+
+  const payrollPaymentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "payroll_period_payments"),
+      where("payrollPeriod", "==", periodBounds.payrollPeriod),
+      limit(500)
+    );
+  }, [firestore, companyId, periodBounds.payrollPeriod]);
+
+  const { data: payrollPaymentsRaw = [] } =
+    useCollection(payrollPaymentsQuery);
 
   const attendancePayrollQuery = useMemoFirebase(() => {
     if (
@@ -387,12 +406,109 @@ function PayrollAdminPageInner() {
   const { data: workSegmentsPayrollRaw = [] } =
     useCollection(workSegmentsPayrollQuery);
 
-  const blocks = useMemo(() => {
+  const allBlocksInPeriod = useMemo(() => {
     const raw = Array.isArray(blocksRaw) ? blocksRaw : [];
-    return raw.map((b: any) => ({ ...b, id: String(b?.id ?? "") }));
+    return raw.map((b: any) => ({
+      ...b,
+      id: String(b?.id ?? ""),
+    })) as WorkTimeBlockMoney[];
   }, [blocksRaw]);
 
+  const blocks = useMemo(() => {
+    if (selectedEmployeeId === "all") return allBlocksInPeriod;
+    if (!selectedEmployeeId) return [];
+    const emp = employees.find((e) => e.id === selectedEmployeeId);
+    if (!emp) return [];
+    const lite: EmployeeLite = {
+      id: String(emp.id),
+      displayName:
+        [emp.firstName, emp.lastName].filter(Boolean).join(" ").trim() ||
+        String(emp.email || emp.id),
+      hourlyRate: Number(emp.hourlyRate) || 0,
+      authUserId:
+        typeof (emp as { authUserId?: string }).authUserId === "string" &&
+        String((emp as { authUserId?: string }).authUserId).trim()
+          ? String((emp as { authUserId?: string }).authUserId).trim()
+          : undefined,
+    };
+    return allBlocksInPeriod.filter((b) =>
+      firestoreEmployeeIdMatches(b.employeeId, lite)
+    );
+  }, [allBlocksInPeriod, selectedEmployeeId, employees]);
+
   const blocksMoney = blocks as WorkTimeBlockMoney[];
+
+  const dailyReportsForSelected = useMemo(() => {
+    const raw = Array.isArray(dailyReportsRaw) ? dailyReportsRaw : [];
+    if (selectedEmployeeId === "all") return raw;
+    if (!selectedEmployeeId) return [];
+    const emp = employees.find((e) => e.id === selectedEmployeeId);
+    if (!emp) return [];
+    const lite: EmployeeLite = {
+      id: String(emp.id),
+      displayName:
+        [emp.firstName, emp.lastName].filter(Boolean).join(" ").trim() ||
+        String(emp.email || emp.id),
+      hourlyRate: Number(emp.hourlyRate) || 0,
+      authUserId:
+        typeof (emp as { authUserId?: string }).authUserId === "string" &&
+        String((emp as { authUserId?: string }).authUserId).trim()
+          ? String((emp as { authUserId?: string }).authUserId).trim()
+          : undefined,
+    };
+    return raw.filter((r: Record<string, unknown>) =>
+      firestoreEmployeeIdMatches(r?.employeeId, lite)
+    );
+  }, [dailyReportsRaw, selectedEmployeeId, employees]);
+
+  const attendancePayrollFiltered = useMemo(() => {
+    const raw = Array.isArray(attendancePayrollRaw)
+      ? attendancePayrollRaw
+      : [];
+    return raw.filter((r) => {
+      const ds = attendanceRowCalendarDateKey(r as AttendanceRow);
+      return dateStrInInclusiveRange(
+        ds,
+        periodBounds.startStr,
+        periodBounds.endStr
+      );
+    });
+  }, [attendancePayrollRaw, periodBounds.startStr, periodBounds.endStr]);
+
+  const workSegmentsPayrollFiltered = useMemo(() => {
+    const raw = Array.isArray(workSegmentsPayrollRaw)
+      ? workSegmentsPayrollRaw
+      : [];
+    return raw.filter((s) => {
+      const dk = segmentCalendarDateIsoKey(s as WorkSegmentClient);
+      return dateStrInInclusiveRange(
+        dk,
+        periodBounds.startStr,
+        periodBounds.endStr
+      );
+    });
+  }, [workSegmentsPayrollRaw, periodBounds.startStr, periodBounds.endStr]);
+
+  const payrollOverviewRows = useMemo(
+    () =>
+      buildPayrollOverviewRows(
+        employees as Record<string, unknown>[],
+        allBlocksInPeriod,
+        (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []) as Record<
+          string,
+          unknown
+        >[],
+        periodBounds.startStr,
+        periodBounds.endStr
+      ),
+    [
+      employees,
+      allBlocksInPeriod,
+      dailyReportsRaw,
+      periodBounds.startStr,
+      periodBounds.endStr,
+    ]
+  );
 
   const advances = useMemo((): AdvanceDoc[] => {
     const raw = Array.isArray(advancesRaw) ? advancesRaw : [];
@@ -413,9 +529,10 @@ function PayrollAdminPageInner() {
   const selectedEmp = employees.find((e) => e.id === selectedEmployeeId);
   const hourlyRate = Number(selectedEmp?.hourlyRate) || 0;
   const earnedFromDailyReports = useMemo(() => {
-    const raw = Array.isArray(dailyReportsRaw) ? dailyReportsRaw : [];
-    return sumMoneyForApprovedDailyReports(raw as DailyWorkReportMoney[]);
-  }, [dailyReportsRaw]);
+    return sumMoneyForApprovedDailyReports(
+      dailyReportsForSelected as DailyWorkReportMoney[]
+    );
+  }, [dailyReportsForSelected]);
   const earnedFromBlocks = useMemo(() => {
     let s = 0;
     for (const b of blocksMoney) s += moneyForBlock(b, hourlyRate);
@@ -441,60 +558,26 @@ function PayrollAdminPageInner() {
       hourlyRate: rate,
       authUserId,
     };
-    const bumpDates: string[] = [];
-    for (const b of blocksMoney) {
-      const d = String(b.date ?? "").slice(0, 10);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(d)) bumpDates.push(d);
-    }
-    const attArr = (Array.isArray(attendancePayrollRaw)
-      ? attendancePayrollRaw
-      : []) as AttendanceRow[];
-    for (const r of attArr) {
-      const ds = attendanceRowCalendarDateKey(r);
-      if (/^\d{4}-\d{2}-\d{2}$/.test(ds)) bumpDates.push(ds);
-    }
-    const sorted = [...new Set(bumpDates)].sort();
-    if (sorted.length === 0) return 0;
-    const startIso = sorted[0]!;
-    const endIso = sorted[sorted.length - 1]!;
-    const from = new Date(
-      Number(startIso.slice(0, 4)),
-      Number(startIso.slice(5, 7)) - 1,
-      Number(startIso.slice(8, 10))
+    const anchor = new Date(`${periodBounds.startStr}T12:00:00`);
+    const range = computePeriodRange("month", anchor);
+    const attF = attendancePayrollFiltered as AttendanceRow[];
+    const dr = dailyReportsForSelected;
+    const segF = workSegmentsPayrollFiltered as WorkSegmentClient[];
+    const blocksF = blocksMoney.filter((b) =>
+      firestoreEmployeeIdMatches(b.employeeId, lite)
     );
-    const to = new Date(
-      Number(endIso.slice(0, 4)),
-      Number(endIso.slice(5, 7)) - 1,
-      Number(endIso.slice(8, 10)),
-      23,
-      59,
-      59,
-      999
-    );
-    const range = computePeriodRange("custom", from, { from, to });
-    const attF = attArr.filter((r) => {
-      const ds = attendanceRowCalendarDateKey(r);
-      return ds >= startIso && ds <= endIso;
-    });
-    const dr = (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []).filter(
-      (row: Record<string, unknown>) => {
-        const d = String(row?.date ?? "").slice(0, 10);
-        return /^\d{4}-\d{2}-\d{2}$/.test(d) && d >= startIso && d <= endIso;
-      }
-    );
-    const segs = (Array.isArray(workSegmentsPayrollRaw)
-      ? workSegmentsPayrollRaw
-      : []) as WorkSegmentClient[];
-    const segF = segs.filter((s) => {
-      const dk = segmentCalendarDateIsoKey(s);
-      return dk >= startIso && dk <= endIso;
-    });
+    const hasAny =
+      blocksF.length > 0 ||
+      attF.length > 0 ||
+      dr.length > 0 ||
+      segF.length > 0;
+    if (!hasAny) return null;
     const rows = buildEmployeeDailyDetailRows({
       range,
       employee: lite,
       attendanceRaw: attF,
       dailyReports: dr,
-      workBlocks: blocksMoney,
+      workBlocks: blocksF,
       segments: segF,
     });
     return totalsFromDailyDetailRows(rows).approvedKc;
@@ -502,15 +585,22 @@ function PayrollAdminPageInner() {
     selectedEmployeeId,
     selectedEmp,
     blocksMoney,
-    attendancePayrollRaw,
-    dailyReportsRaw,
-    workSegmentsPayrollRaw,
+    attendancePayrollFiltered,
+    dailyReportsForSelected,
+    workSegmentsPayrollFiltered,
+    periodBounds.startStr,
   ]);
 
-  const earnedAll =
-    selectedEmployeeId !== "all" && earnedAllFromAttendance != null
-      ? earnedAllFromAttendance
-      : earnedAllLegacy;
+  const earnedAll = useMemo(() => {
+    if (selectedEmployeeId === "all" || !selectedEmp) return earnedAllLegacy;
+    if (earnedAllFromAttendance != null) return earnedAllFromAttendance;
+    return earnedAllLegacy;
+  }, [
+    selectedEmployeeId,
+    selectedEmp,
+    earnedAllFromAttendance,
+    earnedAllLegacy,
+  ]);
   const paidTotal = sumPaidAdvances(advances);
   const remaining = Math.max(
     0,
@@ -544,21 +634,46 @@ function PayrollAdminPageInner() {
     );
   }, [advances]);
 
+  const sortedDailyReportsPreview = useMemo(() => {
+    const raw = dailyReportsForSelected;
+    if (!Array.isArray(raw) || raw.length === 0) return [];
+    return [...raw].sort((a, b) =>
+      String((b as Record<string, unknown>)?.date ?? "").localeCompare(
+        String((a as Record<string, unknown>)?.date ?? "")
+      )
+    );
+  }, [dailyReportsForSelected]);
+
+  const dailyReportsHoursTotal = useMemo(() => {
+    let s = 0;
+    for (const r of sortedDailyReportsPreview) {
+      const row = r as Record<string, unknown>;
+      if (String(row?.status ?? "") !== "approved") continue;
+      const h = Number(
+        row?.hoursConfirmed ?? row?.hoursFromAttendance ?? row?.hoursSum ?? 0
+      );
+      if (Number.isFinite(h) && h > 0) s += h;
+    }
+    return Math.round(s * 100) / 100;
+  }, [sortedDailyReportsPreview]);
+
   const reportEmployeeTitle =
     selectedEmployeeId === "all"
       ? "Všichni zaměstnanci"
       : employeeLabelById[selectedEmployeeId] || selectedEmployeeId || "—";
 
   const reportPeriodLabel = useMemo(() => {
-    if (sortedBlocks.length === 0) return "Žádné záznamy v přehledu";
+    if (sortedBlocks.length === 0) {
+      return `${periodBounds.label} — žádné bloky výkazu za toto období`;
+    }
     const dates = sortedBlocks
       .map((b) => String(b.date ?? ""))
       .filter(Boolean);
     const sorted = [...dates].sort();
     const min = sorted[0];
     const max = sorted[sorted.length - 1];
-    return min === max ? `Datum: ${min}` : `Období: ${min} – ${max}`;
-  }, [sortedBlocks]);
+    return min === max ? `Datum: ${min}` : `Rozsah dat: ${min} – ${max}`;
+  }, [sortedBlocks, periodBounds.label]);
 
   const totalLoggedHoursSum = useMemo(() => {
     const s = sortedBlocks.reduce((acc, b) => acc + getLoggedHours(b), 0);
@@ -1281,34 +1396,75 @@ function PayrollAdminPageInner() {
         <CardHeader className="pb-2">
           <CardTitle className="text-lg text-black">Zaměstnanec</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-end">
-          <div className="flex-1 space-y-2">
-            <Label className="text-black">Vyberte zaměstnance</Label>
-            <select
-              className={cn(
-                "h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black",
-                "focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40"
-              )}
-              value={selectedEmployeeId}
-              onChange={(e) => setSelectedEmployeeId(e.target.value)}
-              disabled={employeesLoading || employees.length === 0}
-            >
-              {employees.length === 0 ? (
-                <option value="">— žádní zaměstnanci —</option>
-              ) : (
-                <>
-                  <option value="all">Všichni zaměstnanci (výkazy)</option>
-                  {employees.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {[e.firstName, e.lastName].filter(Boolean).join(" ") ||
-                        e.email ||
-                        e.id}
-                    </option>
-                  ))}
-                </>
-              )}
-            </select>
+        <CardContent className="flex flex-col gap-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-2 sm:col-span-2">
+              <Label className="text-black">Vyberte zaměstnance</Label>
+              <select
+                className={cn(
+                  "h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black",
+                  "focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-primary/40"
+                )}
+                value={selectedEmployeeId}
+                onChange={(e) => setSelectedEmployeeId(e.target.value)}
+                disabled={employeesLoading || employees.length === 0}
+              >
+                {employees.length === 0 ? (
+                  <option value="">— žádní zaměstnanci —</option>
+                ) : (
+                  <>
+                    <option value="all">Všichni zaměstnanci (výkazy)</option>
+                    {employees.map((e) => (
+                      <option key={e.id} value={e.id}>
+                        {[e.firstName, e.lastName].filter(Boolean).join(" ") ||
+                          e.email ||
+                          e.id}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-black">Rok</Label>
+              <select
+                className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black"
+                value={payrollYear}
+                onChange={(e) => setPayrollYear(Number(e.target.value))}
+              >
+                {Array.from(
+                  { length: 14 },
+                  (_, i) => new Date().getFullYear() - 6 + i
+                ).map((y) => (
+                  <option key={y} value={y}>
+                    {y}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-2">
+              <Label className="text-black">Měsíc</Label>
+              <select
+                className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black"
+                value={payrollMonth}
+                onChange={(e) => setPayrollMonth(Number(e.target.value))}
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                  <option key={m} value={m}>
+                    {String(m).padStart(2, "0")}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
+          <p className="text-xs text-slate-600">
+            Výkazy a mzdy za období:{" "}
+            <span className="font-semibold text-slate-800">
+              {periodBounds.label}
+            </span>
+            .
+          </p>
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
           {selectedEmp && selectedEmployeeId !== "all" && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-black">
               <p>
@@ -1340,8 +1496,22 @@ function PayrollAdminPageInner() {
               </p>
             </div>
           )}
+          </div>
         </CardContent>
       </Card>
+
+      {companyId ? (
+        <PayrollPeriodPanel
+          firestore={firestore}
+          companyId={companyId}
+          userId={user?.uid}
+          payrollPeriod={periodBounds.payrollPeriod}
+          periodLabel={periodBounds.label}
+          overviewRows={payrollOverviewRows}
+          paymentRaw={payrollPaymentsRaw ?? []}
+          toast={toast}
+        />
+      ) : null}
 
       {!selectedEmployeeId ? (
         <p className="text-black">Vyberte zaměstnance.</p>
@@ -1778,6 +1948,108 @@ function PayrollAdminPageInner() {
                           </TableBody>
                         </Table>
                     </div>
+                    </>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="border-slate-200 bg-white print:border-0 print:shadow-none">
+                <CardHeader className="print:hidden">
+                  <CardTitle className="text-lg text-black">
+                    Denní výkazy (za {periodBounds.label})
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {sortedDailyReportsPreview.length === 0 ? (
+                    <p className="text-sm text-slate-700">
+                      Za zvolené období nejsou evidované denní výkazy, nebo nejsou
+                      přiřazeny k tomuto zaměstnanci.
+                    </p>
+                  ) : (
+                    <>
+                      <p className="mb-3 text-sm text-black">
+                        Součet schválených hodin z denních výkazů:{" "}
+                        <span className="font-semibold tabular-nums">
+                          {dailyReportsHoursTotal} h
+                        </span>
+                        {" · "}
+                        schválená částka:{" "}
+                        <span className="font-semibold">
+                          {formatKc(earnedFromDailyReports)}
+                        </span>
+                      </p>
+                      <div className="overflow-x-auto rounded-md border border-slate-200">
+                        <Table>
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="text-black">Datum</TableHead>
+                              <TableHead className="text-black">Hodiny</TableHead>
+                              <TableHead className="text-black">Zakázka / práce</TableHead>
+                              <TableHead className="text-black">Poznámka</TableHead>
+                              <TableHead className="text-black">Stav</TableHead>
+                              <TableHead className="text-black">Částka</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
+                            {sortedDailyReportsPreview.map((raw) => {
+                              const r = raw as Record<string, unknown>;
+                              const id = String(r?.id ?? "");
+                              const hours = Number(
+                                r?.hoursConfirmed ??
+                                  r?.hoursFromAttendance ??
+                                  r?.hoursSum ??
+                                  0
+                              );
+                              const st = String(r?.status ?? "");
+                              const job =
+                                String(r?.primaryJobName ?? "").trim() ||
+                                String(r?.primaryJobId ?? "").trim() ||
+                                "—";
+                              const note = String(r?.note ?? "").trim() || "—";
+                              const amt = Number(r?.payableAmountCzk);
+                              return (
+                                <TableRow
+                                  key={
+                                    id ||
+                                    `${String(r?.date ?? "")}-${String(r?.status ?? "")}`
+                                  }
+                                >
+                                  <TableCell className="whitespace-nowrap font-medium text-black">
+                                    {String(r?.date ?? "").slice(0, 10) || "—"}
+                                  </TableCell>
+                                  <TableCell className="tabular-nums text-black">
+                                    {Number.isFinite(hours) && hours > 0
+                                      ? hours
+                                      : "—"}
+                                  </TableCell>
+                                  <TableCell className="max-w-[200px] text-sm text-black">
+                                    {job}
+                                  </TableCell>
+                                  <TableCell className="max-w-[240px] whitespace-pre-wrap text-sm text-black">
+                                    {note}
+                                  </TableCell>
+                                  <TableCell className="text-black">
+                                    {st === "approved"
+                                      ? "Schváleno"
+                                      : st === "pending"
+                                        ? "Čeká"
+                                        : st === "rejected"
+                                          ? "Zamítnuto"
+                                          : st || "—"}
+                                  </TableCell>
+                                  <TableCell className="tabular-nums text-black">
+                                    {st === "approved" &&
+                                    Number.isFinite(amt) &&
+                                    amt > 0
+                                      ? formatKc(amt)
+                                      : "—"}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </div>
                     </>
                   )}
                 </CardContent>

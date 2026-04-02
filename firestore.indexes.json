@@ -157,6 +157,11 @@
       "collectionGroup": "attachments",
       "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "createdAt", "order": "DESCENDING" }]
+    },
+    {
+      "collectionGroup": "payroll_period_payments",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "payrollPeriod", "order": "ASCENDING" }]
     }
   ],
   "fieldOverrides": []
