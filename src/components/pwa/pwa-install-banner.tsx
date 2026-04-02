@@ -16,6 +16,9 @@ import {
  * Pruh s instalací PWA: Chromium — tlačítko + `beforeinstallprompt`;
  * iOS Safari — nápověda „Sdílet → Přidat na plochu“.
  * Skrytí: standalone / iOS standalone, po `appinstalled`, volitelně LS (ne iOS).
+ *
+ * **Role:** žádná — nečte uživatele, firmu ani oprávnění. Viditelnost jen podle
+ * prohlížeče / instalace (viz výše). Jediná instance se mountuje v `FirebaseClientProvider`.
  */
 export function PwaInstallBanner() {
   const [hydrated, setHydrated] = useState(false);
@@ -99,7 +102,7 @@ export function PwaInstallBanner() {
   if (ios) {
     return (
       <div
-        className="print:hidden border-b border-orange-200/80 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-3 sm:px-6"
+        className="sticky top-0 z-[100] print:hidden border-b border-orange-200/80 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-3 sm:px-6"
         role="region"
         aria-label="Instalace aplikace na plochu"
       >
@@ -121,7 +124,7 @@ export function PwaInstallBanner() {
 
   return (
     <div
-      className="print:hidden border-b border-orange-200/80 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2.5 sm:px-6"
+      className="sticky top-0 z-[100] print:hidden border-b border-orange-200/80 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2.5 sm:px-6"
       role="region"
       aria-label="Instalace aplikace"
     >

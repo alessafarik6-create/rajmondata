@@ -26,7 +26,6 @@ import {
   userCanAccessWarehousePortal,
 } from "@/lib/warehouse-production-access";
 import { ActivitySessionBridge } from "@/components/portal/activity-session-bridge";
-import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 import {
   PlatformModuleCatalogProvider,
   useMergedPlatformModuleCatalog,
@@ -683,7 +682,6 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         data-portal-content
       >
         <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
-        <PwaInstallBanner />
         <main className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 print:p-2 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8 min-w-0">
           {licenseNotice}
           {children}

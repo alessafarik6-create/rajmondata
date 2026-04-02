@@ -7,7 +7,6 @@ import { TopHeader } from "@/components/layout/top-header";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 import { isGlobalAdminAppPath } from "@/lib/global-admin-shell";
-import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 
 type AdminSession = {
   username: string;
@@ -200,7 +199,6 @@ export default function AdminLayout({
         data-admin-content
       >
         <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
-        <PwaInstallBanner />
         <main className="flex-1 overflow-auto px-4 py-4 md:px-6 md:py-6 lg:px-8">
           {children}
         </main>

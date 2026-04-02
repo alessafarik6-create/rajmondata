@@ -7,8 +7,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Logo } from "@/components/ui/logo";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 import { Loader2 } from "lucide-react";
-import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
-
 type LandingPayload = {
   settings?: {
     defaultEmployeePriceCzk?: number;
@@ -72,7 +70,6 @@ export function PublicLanding() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-50">
-      <PwaInstallBanner />
       <header className="border-b border-white/10">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-8">
           <Logo context="page" />
