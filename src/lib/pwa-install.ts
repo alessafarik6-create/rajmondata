@@ -1,4 +1,7 @@
-/** Klíč localStorage po úspěšné události appinstalled (Android / desktop Chromium). */
+/**
+ * Klíč localStorage — pouze po skutečné instalaci (`appinstalled`) nebo při detekci standalone.
+ * Nepoužívat pro „už jsme ukázali instalační banner“ (to by skrylo tlačítko po jednom dismiss).
+ */
 export const PWA_INSTALLED_LOCAL_KEY = "rajmondata-pwa-appinstalled-v1";
 
 export type BeforeInstallPromptEventLike = Event & {

@@ -1,108 +1,39 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React from "react";
 import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import {
-  type BeforeInstallPromptEventLike,
-  getIsLikelyIOS,
-  getIsStandaloneDisplayMode,
-  readPwaInstalledLocalFlag,
-  registerPwaServiceWorker,
-  writePwaInstalledLocalFlag,
-} from "@/lib/pwa-install";
+import { usePwaInstall } from "@/components/pwa/pwa-install-context";
 
 /**
- * Pruh s instalací PWA: Chromium — tlačítko + `beforeinstallprompt`;
- * iOS Safari — nápověda „Sdílet → Přidat na plochu“.
- * Skrytí: standalone / iOS standalone, po `appinstalled`, volitelně LS (ne iOS).
+ * Pruh instalace PWA — napojený na {@link usePwaInstall} (globální provider).
  *
- * **Role:** žádná — nečte uživatele, firmu ani oprávnění. Viditelnost jen podle
- * prohlížeče / instalace (viz výše). Jediná instance se mountuje v `FirebaseClientProvider`.
+ * - iOS: návod „Sdílet → Přidat na plochu“ dokud ne standalone.
+ * - Chromium: tlačítko při `beforeinstallprompt`; po zavření promptu nebo bez události
+ *   zůstane banner s textovým návodem (neskrývá se po jednom dismiss).
+ * - Skrytí: pouze standalone / dokončená instalace (viz kontext), ne podle „už jednou zobrazeno“.
  */
 export function PwaInstallBanner() {
-  const [hydrated, setHydrated] = useState(false);
-  const [standalone, setStandalone] = useState(false);
-  const [deferred, setDeferred] =
-    useState<BeforeInstallPromptEventLike | null>(null);
-  const [installedLocal, setInstalledLocal] = useState(false);
-
-  useEffect(() => {
-    setHydrated(true);
-    setStandalone(getIsStandaloneDisplayMode());
-    setInstalledLocal(readPwaInstalledLocalFlag());
-    registerPwaServiceWorker();
-  }, []);
-
-  useEffect(() => {
-    if (!hydrated) return;
-    if (standalone) {
-      writePwaInstalledLocalFlag();
-      return;
-    }
-
-    const onBeforeInstallPrompt = (e: Event) => {
-      e.preventDefault();
-      setDeferred(e as BeforeInstallPromptEventLike);
-    };
-
-    const onAppInstalled = () => {
-      setDeferred(null);
-      writePwaInstalledLocalFlag();
-      setInstalledLocal(true);
-    };
-
-    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt);
-    window.addEventListener("appinstalled", onAppInstalled);
-
-    const mq = window.matchMedia("(display-mode: standalone)");
-    const onDisplayMode = () => {
-      if (getIsStandaloneDisplayMode()) {
-        setStandalone(true);
-        writePwaInstalledLocalFlag();
-      }
-    };
-    if (typeof mq.addEventListener === "function") {
-      mq.addEventListener("change", onDisplayMode);
-    } else {
-      mq.addListener(onDisplayMode);
-    }
-
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt);
-      window.removeEventListener("appinstalled", onAppInstalled);
-      if (typeof mq.removeEventListener === "function") {
-        mq.removeEventListener("change", onDisplayMode);
-      } else {
-        mq.removeListener(onDisplayMode);
-      }
-    };
-  }, [hydrated, standalone]);
-
-  const onInstallClick = useCallback(async () => {
-    if (!deferred) return;
-    try {
-      await deferred.prompt();
-      const { outcome } = await deferred.userChoice;
-      if (outcome === "dismissed") {
-        /* tlačítko může zůstat — požadavek UX */
-      }
-      setDeferred(null);
-    } catch {
-      setDeferred(null);
-    }
-  }, [deferred]);
+  const {
+    hydrated,
+    isStandalone,
+    isIOS,
+    deferredPrompt,
+    chromiumInstallDone,
+    triggerInstall,
+  } = usePwaInstall();
 
   if (!hydrated) return null;
 
-  if (standalone) return null;
+  if (isStandalone) return null;
 
-  const ios = getIsLikelyIOS();
+  const shellClass =
+    "sticky top-0 z-[100] print:hidden border-b border-orange-200/80 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2.5 sm:px-6";
 
-  if (ios) {
+  if (isIOS) {
     return (
       <div
-        className="sticky top-0 z-[100] print:hidden border-b border-orange-200/80 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-3 sm:px-6"
+        className={`${shellClass} py-3 sm:py-3`}
         role="region"
         aria-label="Instalace aplikace na plochu"
       >
@@ -110,38 +41,45 @@ export function PwaInstallBanner() {
           <span className="font-semibold text-orange-800">iPhone / iPad:</span>{" "}
           pro instalaci otevřete nabídku{" "}
           <span className="whitespace-nowrap font-semibold">Sdílet</span> a zvolte{" "}
-          <span className="whitespace-nowrap font-semibold">
-            Přidat na plochu
-          </span>
-          .
+          <span className="whitespace-nowrap font-semibold">Přidat na plochu</span>.
         </p>
       </div>
     );
   }
 
-  if (installedLocal && !deferred) return null;
-  if (!deferred) return null;
+  if (chromiumInstallDone) return null;
+
+  const hasPrompt = deferredPrompt != null;
 
   return (
-    <div
-      className="sticky top-0 z-[100] print:hidden border-b border-orange-200/80 bg-gradient-to-r from-orange-50 to-amber-50 px-3 py-2.5 sm:px-6"
-      role="region"
-      aria-label="Instalace aplikace"
-    >
+    <div className={shellClass} role="region" aria-label="Instalace aplikace">
       <div className="mx-auto flex max-w-6xl flex-col items-stretch justify-between gap-3 sm:flex-row sm:items-center">
-        <p className="text-sm text-slate-800 sm:max-w-xl sm:text-[15px]">
-          Nainstalujte si aplikaci na plochu telefonu nebo počítače pro rychlejší
-          přístup a pohodlnější práci.
-        </p>
-        <Button
-          type="button"
-          size="lg"
-          className="h-12 min-h-[48px] shrink-0 gap-2 bg-orange-500 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-orange-600 sm:h-11 sm:min-h-0"
-          onClick={() => void onInstallClick()}
-        >
-          <Download className="h-5 w-5 shrink-0" aria-hidden />
-          Instaluj aplikaci
-        </Button>
+        <div className="space-y-1 text-sm text-slate-800 sm:max-w-xl sm:text-[15px]">
+          <p>
+            Nainstalujte si aplikaci na plochu telefonu nebo počítače pro rychlejší přístup a
+            pohodlnější práci.
+          </p>
+          {!hasPrompt ? (
+            <p className="text-slate-700">
+              V prohlížeči otevřete menu{" "}
+              <span className="whitespace-nowrap font-semibold">(⋮ nebo ⋯)</span> a zvolte{" "}
+              <span className="font-semibold">Instalovat aplikaci</span> /{" "}
+              <span className="font-semibold">Nainstalovat aplikaci</span>, případně ikonu
+              instalace v adresním řádku.
+            </p>
+          ) : null}
+        </div>
+        {hasPrompt ? (
+          <Button
+            type="button"
+            size="lg"
+            className="h-12 min-h-[48px] shrink-0 gap-2 bg-orange-500 px-5 text-base font-semibold text-white shadow-sm transition-colors hover:bg-orange-600 sm:h-11 sm:min-h-0"
+            onClick={() => void triggerInstall()}
+          >
+            <Download className="h-5 w-5 shrink-0" aria-hidden />
+            Instaluj aplikaci
+          </Button>
+        ) : null}
       </div>
     </div>
   );

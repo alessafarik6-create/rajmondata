@@ -5,6 +5,7 @@ import { FirebaseProvider } from "@/firebase/provider";
 import { initializeFirebase } from "./init";
 import { firebaseClientEnvReady } from "@/firebase/config";
 import { getFirebaseClientEnvUserMessage } from "@/lib/firebase-client-env";
+import { PwaInstallProvider } from "@/components/pwa/pwa-install-context";
 import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 
 interface FirebaseClientProviderProps {
@@ -57,9 +58,11 @@ export function FirebaseClientProvider({
       firestore={firebaseServices?.firestore ?? null}
       firebaseConfigError={firebaseConfigError}
     >
-      {/* PWA: jedna instance pro celou app — všechny role a dashboardy; neduplikovat na stránkách. */}
-      <PwaInstallBanner />
-      {children}
+      {/* PWA: sdílený stav v PwaInstallProvider + jeden banner; všechny role; neduplikovat na stránkách. */}
+      <PwaInstallProvider>
+        <PwaInstallBanner />
+        {children}
+      </PwaInstallProvider>
     </FirebaseProvider>
   );
 }
