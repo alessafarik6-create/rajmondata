@@ -107,19 +107,19 @@ export function CustomerProductDetailView({
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-card shadow-sm dark:border-slate-700">
-        <div className="aspect-[4/3] max-h-80 w-full bg-muted sm:aspect-video sm:max-h-[22rem]">
+      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-zinc-950">
+        <div className="aspect-[4/3] max-h-80 w-full bg-zinc-100 sm:aspect-video sm:max-h-[22rem] dark:bg-zinc-900">
           {mainImage ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={mainImage} alt={product.name} className="h-full w-full object-contain" />
           ) : (
-            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+            <div className="flex h-full items-center justify-center text-sm text-neutral-700 dark:text-zinc-300">
               Bez obrázku
             </div>
           )}
         </div>
         {gallery.length > 1 ? (
-          <div className="flex gap-2 overflow-x-auto border-t border-slate-100 p-2 dark:border-slate-800">
+          <div className="flex gap-2 overflow-x-auto border-t border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
             {gallery.map((url) => (
               <button
                 key={url}
@@ -135,40 +135,44 @@ export function CustomerProductDetailView({
             ))}
           </div>
         ) : null}
-        <div className="space-y-4 p-4 sm:p-6">
+        <div className="space-y-4 bg-white p-4 text-neutral-950 sm:p-6 dark:bg-zinc-950 dark:text-zinc-50">
           <div>
-            <h1 className="text-xl font-bold tracking-tight sm:text-2xl">{product.name || "Produkt"}</h1>
+            <h1 className="text-xl font-bold tracking-tight text-neutral-950 sm:text-2xl dark:text-zinc-50">
+              {product.name || "Produkt"}
+            </h1>
             {product.category ? (
-              <p className="mt-1 text-sm text-muted-foreground">{product.category}</p>
+              <p className="mt-1 text-sm text-neutral-800 dark:text-zinc-300">{product.category}</p>
             ) : null}
             {typeof product.price === "number" ? (
-              <p className="mt-2 text-lg font-semibold text-primary">
+              <p className="mt-2 text-lg font-semibold text-neutral-950 dark:text-zinc-50">
                 {product.price.toLocaleString("cs-CZ")} Kč
               </p>
             ) : null}
           </div>
 
           {(product.shortDescription ?? "").trim() ? (
-            <p className="text-sm font-medium leading-relaxed text-slate-800 dark:text-slate-100">
+            <p className="text-sm font-medium leading-relaxed text-neutral-950 dark:text-zinc-50">
               {(product.shortDescription ?? "").trim()}
             </p>
           ) : null}
 
-          {longDescription ? <ExpandableDescription text={longDescription} /> : null}
+          {longDescription ? (
+            <ExpandableDescription text={longDescription} tone="highContrast" />
+          ) : null}
 
           {listNote ? (
-            <div className="rounded-lg border border-slate-100 bg-muted/40 p-3 text-sm leading-relaxed dark:border-slate-800">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <div className="rounded-lg border border-zinc-200 bg-zinc-100 p-3 text-sm leading-relaxed dark:border-zinc-800 dark:bg-zinc-900">
+              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-800 dark:text-zinc-300">
                 Poznámka
               </p>
-              <p className="mt-1 whitespace-pre-wrap text-slate-700 dark:text-slate-200">{listNote}</p>
+              <p className="mt-1 whitespace-pre-wrap text-neutral-950 dark:text-zinc-50">{listNote}</p>
             </div>
           ) : null}
 
           {jobId && selection ? (
             <div className="pt-2">
               {selection.locked ? (
-                <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+                <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
                   Výběr byl potvrzen administrátorem — změna není možná.
                 </p>
               ) : (
@@ -185,7 +189,7 @@ export function CustomerProductDetailView({
               )}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm text-neutral-800 dark:text-zinc-300">
               Pro výběr produktu otevřete katalog v rámci konkrétní zakázky.
             </p>
           )}

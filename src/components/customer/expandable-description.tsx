@@ -9,6 +9,11 @@ type Props = {
   /** Tailwind line-clamp třída v zabaleném stavu */
   collapsedClassName?: string;
   className?: string;
+  /**
+   * `highContrast` — černá / téměř černá na světlém pozadí (detail produktu).
+   * `default` — čitelné na kartách katalogu.
+   */
+  tone?: "default" | "highContrast";
 };
 
 function paragraphize(raw: string): string[] {
@@ -20,10 +25,16 @@ function paragraphize(raw: string): string[] {
 /**
  * Delší popis: zkrácení + „Zobrazit více“. Krátký text bez tlačítka.
  */
+const bodyTone = {
+  default: "text-neutral-900 dark:text-zinc-100",
+  highContrast: "text-neutral-950 dark:text-zinc-50",
+} as const;
+
 export function ExpandableDescription({
   text,
   collapsedClassName = "line-clamp-4",
   className,
+  tone = "default",
 }: Props) {
   const [open, setOpen] = useState(false);
   const paragraphs = useMemo(() => paragraphize(text), [text]);
@@ -37,7 +48,8 @@ export function ExpandableDescription({
     return (
       <div
         className={cn(
-          "space-y-3 text-sm leading-relaxed text-slate-700 dark:text-slate-200 sm:text-[15px] sm:leading-7",
+          "space-y-3 text-sm leading-relaxed sm:text-[15px] sm:leading-7",
+          bodyTone[tone],
           className
         )}
       >
@@ -58,7 +70,8 @@ export function ExpandableDescription({
     <div className={cn("space-y-2", className)}>
       <div
         className={cn(
-          "space-y-3 text-sm leading-relaxed text-slate-700 dark:text-slate-200 sm:text-[15px] sm:leading-7",
+          "space-y-3 text-sm leading-relaxed sm:text-[15px] sm:leading-7",
+          bodyTone[tone],
           !open && collapsedClassName
         )}
       >
@@ -75,7 +88,7 @@ export function ExpandableDescription({
       <Button
         type="button"
         variant="link"
-        className="h-auto p-0 text-sm font-semibold text-primary"
+        className="h-auto p-0 text-sm font-semibold text-orange-700 underline-offset-4 hover:underline dark:text-orange-400"
         onClick={() => setOpen((v) => !v)}
       >
         {open ? "Zobrazit méně" : "Zobrazit více"}
