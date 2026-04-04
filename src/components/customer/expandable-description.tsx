@@ -10,10 +10,11 @@ type Props = {
   collapsedClassName?: string;
   className?: string;
   /**
-   * `highContrast` — černá / téměř černá na světlém pozadí (detail produktu).
-   * `default` — čitelné na kartách katalogu.
+   * `onWhite` — výhradně černý text na bílém (detail produktu, ignoruje dark theme).
+   * `highContrast` — stejné jako dříve (tmavý text + dark: varianty).
+   * `default` — katalog / obecné karty.
    */
-  tone?: "default" | "highContrast";
+  tone?: "default" | "highContrast" | "onWhite";
 };
 
 function paragraphize(raw: string): string[] {
@@ -28,6 +29,7 @@ function paragraphize(raw: string): string[] {
 const bodyTone = {
   default: "text-neutral-900 dark:text-zinc-100",
   highContrast: "text-neutral-950 dark:text-zinc-50",
+  onWhite: "text-black",
 } as const;
 
 export function ExpandableDescription({
@@ -88,7 +90,12 @@ export function ExpandableDescription({
       <Button
         type="button"
         variant="link"
-        className="h-auto p-0 text-sm font-semibold text-orange-700 underline-offset-4 hover:underline dark:text-orange-400"
+        className={cn(
+          "h-auto p-0 text-sm font-semibold underline-offset-4 hover:underline",
+          tone === "onWhite"
+            ? "text-orange-700 hover:text-orange-800"
+            : "text-orange-700 dark:text-orange-400"
+        )}
         onClick={() => setOpen((v) => !v)}
       >
         {open ? "Zobrazit méně" : "Zobrazit více"}

@@ -17,6 +17,10 @@ import type {
   ProductCatalogProduct,
 } from "@/lib/product-catalogs";
 
+/**
+ * Detail produktu pro zákazníka — vždy světlý vzhled (bílé pozadí, černý text),
+ * bez dark mode, aby se barvy nepřebíjely z globálního `dark` theme na <html>.
+ */
 type Props = {
   catalog: { id: string } & Partial<ProductCatalogDoc>;
   product: ProductCatalogProduct;
@@ -24,7 +28,6 @@ type Props = {
   companyId: string;
   customerUid: string;
   customerId: string | null;
-  /** Výběr v zakázce — bez props se zobrazí jen návod k otevření přes zakázku */
   selection?: {
     existing: (JobProductSelectionDoc & { id: string }) | undefined;
     locked: boolean;
@@ -97,36 +100,41 @@ export function CustomerProductDetailView({
   const longDescription = (product.description ?? "").trim();
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5 px-3 py-5 sm:px-4">
+    <section className="mx-auto max-w-3xl space-y-5 bg-white px-3 py-5 text-black sm:px-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Button variant="ghost" size="sm" asChild className="gap-1">
+        <Button
+          variant="ghost"
+          size="sm"
+          asChild
+          className="gap-1 text-black hover:bg-neutral-100 hover:text-black"
+        >
           <Link href={backHref}>
-            <ChevronLeft className="h-4 w-4" />
+            <ChevronLeft className="h-4 w-4 text-black" />
             {backLabel}
           </Link>
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm dark:border-slate-700 dark:bg-zinc-950">
-        <div className="aspect-[4/3] max-h-80 w-full bg-zinc-100 sm:aspect-video sm:max-h-[22rem] dark:bg-zinc-900">
+      <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+        <div className="aspect-[4/3] max-h-80 w-full bg-white sm:aspect-video sm:max-h-[22rem]">
           {mainImage ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={mainImage} alt={product.name} className="h-full w-full object-contain" />
           ) : (
-            <div className="flex h-full items-center justify-center text-sm text-neutral-700 dark:text-zinc-300">
+            <div className="flex h-full items-center justify-center bg-neutral-50 text-sm text-neutral-600">
               Bez obrázku
             </div>
           )}
         </div>
         {gallery.length > 1 ? (
-          <div className="flex gap-2 overflow-x-auto border-t border-zinc-200 bg-white p-2 dark:border-zinc-800 dark:bg-zinc-950">
+          <div className="flex gap-2 overflow-x-auto border-t border-neutral-200 bg-white p-2">
             {gallery.map((url) => (
               <button
                 key={url}
                 type="button"
                 onClick={() => setMainImage(url)}
-                className={`h-14 w-14 shrink-0 overflow-hidden rounded-md ring-2 ring-offset-2 ring-offset-background transition-shadow ${
-                  mainImage === url ? "ring-primary" : "ring-transparent hover:ring-muted-foreground/30"
+                className={`h-14 w-14 shrink-0 overflow-hidden rounded-md ring-2 ring-offset-2 ring-offset-white transition-shadow ${
+                  mainImage === url ? "ring-orange-500" : "ring-transparent hover:ring-neutral-300"
                 }`}
               >
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -135,53 +143,53 @@ export function CustomerProductDetailView({
             ))}
           </div>
         ) : null}
-        <div className="space-y-4 bg-white p-4 text-neutral-950 sm:p-6 dark:bg-zinc-950 dark:text-zinc-50">
+        <div className="space-y-4 bg-white p-4 text-black sm:p-6">
           <div>
-            <h1 className="text-xl font-bold tracking-tight text-neutral-950 sm:text-2xl dark:text-zinc-50">
+            <h1 className="text-xl font-bold tracking-tight text-black sm:text-2xl">
               {product.name || "Produkt"}
             </h1>
             {product.category ? (
-              <p className="mt-1 text-sm text-neutral-800 dark:text-zinc-300">{product.category}</p>
+              <p className="mt-1 text-sm text-neutral-800">{product.category}</p>
             ) : null}
             {typeof product.price === "number" ? (
-              <p className="mt-2 text-lg font-semibold text-neutral-950 dark:text-zinc-50">
+              <p className="mt-2 text-lg font-semibold text-black">
                 {product.price.toLocaleString("cs-CZ")} Kč
               </p>
             ) : null}
           </div>
 
           {(product.shortDescription ?? "").trim() ? (
-            <p className="text-sm font-medium leading-relaxed text-neutral-950 dark:text-zinc-50">
+            <p className="text-sm font-medium leading-relaxed text-black">
               {(product.shortDescription ?? "").trim()}
             </p>
           ) : null}
 
           {longDescription ? (
-            <ExpandableDescription text={longDescription} tone="highContrast" />
+            <ExpandableDescription text={longDescription} tone="onWhite" />
           ) : null}
 
           {listNote ? (
-            <div className="rounded-lg border border-zinc-200 bg-zinc-100 p-3 text-sm leading-relaxed dark:border-zinc-800 dark:bg-zinc-900">
-              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-800 dark:text-zinc-300">
+            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-sm leading-relaxed text-black">
+              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-800">
                 Poznámka
               </p>
-              <p className="mt-1 whitespace-pre-wrap text-neutral-950 dark:text-zinc-50">{listNote}</p>
+              <p className="mt-1 whitespace-pre-wrap text-black">{listNote}</p>
             </div>
           ) : null}
 
           {jobId && selection ? (
             <div className="pt-2">
               {selection.locked ? (
-                <p className="text-sm font-medium text-emerald-800 dark:text-emerald-300">
+                <p className="text-sm font-medium text-emerald-800">
                   Výběr byl potvrzen administrátorem — změna není možná.
                 </p>
               ) : (
                 <Button
                   type="button"
                   size="lg"
-                  className="w-full sm:w-auto min-h-12"
+                  className="min-h-12 w-full sm:w-auto"
                   disabled={saving}
-                  variant={isSelected ? "secondary" : "default"}
+                  variant={isSelected ? "outlineLight" : "default"}
                   onClick={() => void handleToggle()}
                 >
                   {saving ? "Ukládám…" : isSelected ? "Odebrat z výběru" : "Vybrat"}
@@ -189,7 +197,7 @@ export function CustomerProductDetailView({
               )}
             </div>
           ) : (
-            <p className="text-sm text-neutral-800 dark:text-zinc-300">
+            <p className="text-sm text-neutral-800">
               Pro výběr produktu otevřete katalog v rámci konkrétní zakázky.
             </p>
           )}
@@ -197,9 +205,9 @@ export function CustomerProductDetailView({
       </div>
 
       {(prevP || nextP) && (
-        <div className="flex flex-wrap justify-between gap-2 border-t border-slate-100 pt-4 dark:border-slate-800">
+        <div className="flex flex-wrap justify-between gap-2 border-t border-neutral-200 bg-white pt-4">
           {prevP ? (
-            <Button variant="outline" size="sm" asChild className="gap-1">
+            <Button variant="outlineLight" size="sm" asChild className="gap-1">
               <Link href={`${basePath}/${prevP.id}`}>
                 <ChevronLeft className="h-4 w-4" />
                 Předchozí
@@ -209,7 +217,7 @@ export function CustomerProductDetailView({
             <span />
           )}
           {nextP ? (
-            <Button variant="outline" size="sm" asChild className="gap-1">
+            <Button variant="outlineLight" size="sm" asChild className="gap-1">
               <Link href={`${basePath}/${nextP.id}`}>
                 Další
                 <ChevronRight className="h-4 w-4" />
@@ -218,6 +226,6 @@ export function CustomerProductDetailView({
           ) : null}
         </div>
       )}
-    </div>
+    </section>
   );
 }
