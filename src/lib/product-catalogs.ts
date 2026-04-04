@@ -12,6 +12,8 @@ export type ProductSelectionSnapshot = {
 export type ProductCatalogProduct = {
   id: string;
   name: string;
+  /** Krátký text pro seznamy u zákazníka; bez něj se použije zkrácený popis. */
+  shortDescription?: string;
   description?: string;
   imageUrl?: string;
   gallery?: string[];

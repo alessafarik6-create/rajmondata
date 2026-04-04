@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import Link from "next/link";
 import { collection, doc, query, serverTimestamp, setDoc } from "firebase/firestore";
 import { useCollection, useFirestore, useMemoFirebase } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,12 +10,20 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { createCustomerActivity } from "@/lib/customer-activity";
 import {
+  buildProductSelectionSnapshots,
+  computeToggledSelection,
+  persistCustomerCatalogSelection,
+} from "@/lib/customer-catalog-selection";
+import {
   catalogIsAssignedToCustomer,
   catalogIsAssignedToJob,
   type JobProductSelectionDoc,
   type ProductCatalogDoc,
-  type ProductSelectionSnapshot,
 } from "@/lib/product-catalogs";
+import {
+  CustomerCatalogCompactRow,
+  CustomerProductCompactRow,
+} from "@/components/customer/customer-catalog-ui";
 
 type Props = {
   companyId: string;
@@ -54,9 +63,6 @@ export function CustomerProductCatalogsSection({
         c.customerVisible === true &&
         (catalogIsAssignedToJob(c, jobId) || catalogIsAssignedToCustomer(c, customerId ?? undefined))
     );
-    if (process.env.NODE_ENV === "development") {
-      console.log("assigned catalogs", assigned);
-    }
     return assigned;
   }, [catalogsRaw, customerId, jobId]);
 
@@ -67,50 +73,16 @@ export function CustomerProductCatalogsSection({
       if (!s.catalogId) continue;
       map.set(s.catalogId, s as JobProductSelectionDoc & { id: string });
     }
-    if (process.env.NODE_ENV === "development") {
-      console.log("customer selections", Array.from(map.values()));
-    }
     return map;
   }, [selectionsRaw, customerUid]);
-
-  const buildSnapshots = (
-    catalog: { id: string } & Partial<ProductCatalogDoc>,
-    selectedIds: string[],
-    existing?: (JobProductSelectionDoc & { id: string }) | undefined
-  ): ProductSelectionSnapshot[] => {
-    const products = [...(catalog.products ?? [])];
-    const byId = new Map(products.map((p) => [p.id, p]));
-    const existingById = new Map(
-      (existing?.selectedProducts ?? []).map((s) => [s.productId, s] as const)
-    );
-    return selectedIds.map((id) => {
-      const p = byId.get(id);
-      const prev = existingById.get(id);
-      return {
-        productId: id,
-        productNameSnapshot: p?.name || prev?.productNameSnapshot || id,
-        productImageSnapshot: p?.imageUrl || prev?.productImageSnapshot,
-        catalogNameSnapshot:
-          catalog.name || prev?.catalogNameSnapshot || "Katalog",
-        categorySnapshot: p?.category || prev?.categorySnapshot,
-        priceSnapshot:
-          typeof p?.price === "number" ? p.price : prev?.priceSnapshot ?? null,
-      };
-    });
-  };
 
   const toggleProduct = async (
     catalog: { id: string } & Partial<ProductCatalogDoc>,
     productId: string
   ) => {
     if (!firestore) return;
-    const mode = catalog.selectionMode === "single" ? "single" : "multi";
     const existing = selectionMap.get(catalog.id);
     const isSelectionLocked = existing?.status === "confirmed";
-    if (process.env.NODE_ENV === "development") {
-      console.log("selection status", existing?.status);
-      console.log("confirmed selection lock", isSelectionLocked);
-    }
     if (isSelectionLocked) {
       toast({
         variant: "destructive",
@@ -118,18 +90,29 @@ export function CustomerProductCatalogsSection({
       });
       return;
     }
-    const prev = new Set(existing?.selectedProductIds ?? []);
-    if (mode === "single") {
-      if (prev.has(productId)) prev.clear();
-      else {
-        prev.clear();
-        prev.add(productId);
-      }
-    } else {
-      if (prev.has(productId)) prev.delete(productId);
-      else prev.add(productId);
+    const nextIds = computeToggledSelection(catalog, productId, existing?.selectedProductIds ?? []);
+    setSavingKey(`${catalog.id}:${productId}`);
+    try {
+      await persistCustomerCatalogSelection({
+        firestore,
+        companyId,
+        jobId,
+        customerUid,
+        customerId: customerId ?? null,
+        catalog,
+        selectedProductIds: nextIds,
+        existing,
+      });
+      toast({ title: "Výběr uložen", description: "Vaše volba byla uložena." });
+    } catch {
+      toast({ variant: "destructive", title: "Uložení se nezdařilo" });
+    } finally {
+      setSavingKey(null);
     }
-    const selectedProductIds = Array.from(prev);
+  };
+
+  const saveNote = async (catalog: { id: string } & Partial<ProductCatalogDoc>, note: string) => {
+    if (!firestore) return;
     const docId = `${catalog.id}__${customerUid}`;
     const ref = doc(
       firestore,
@@ -140,58 +123,7 @@ export function CustomerProductCatalogsSection({
       "product_catalog_selections",
       docId
     );
-    const payload: JobProductSelectionDoc = {
-      companyId,
-      jobId,
-      customerPortalUid: customerUid,
-      customerId: customerId ?? null,
-      catalogId: catalog.id,
-      selectedProductIds,
-      selectedProducts: buildSnapshots(catalog, selectedProductIds, existing),
-      selectedBy: customerUid,
-      selectedAt: serverTimestamp(),
-      status: "submitted",
-      note: existing?.note ?? null,
-      createdAt: existing?.createdAt ?? serverTimestamp(),
-      updatedAt: serverTimestamp(),
-    };
-    setSavingKey(`${catalog.id}:${productId}`);
-    try {
-      await setDoc(ref, payload, { merge: true });
-      await createCustomerActivity(firestore, {
-        organizationId: companyId,
-        jobId,
-        customerId: customerId ?? null,
-        customerUserId: customerUid,
-        type: existing ? "customer_product_selection_updated" : "customer_product_selected",
-        title: "Výběr produktů",
-        message: `Zákazník upravil výběr v katalogu ${catalog.name || "katalog"}.`,
-        createdBy: customerUid,
-        createdByRole: "customer",
-        isRead: false,
-        targetType: "catalog-selection",
-        targetId: catalog.id,
-        targetLink: `/portal/jobs/${jobId}`,
-      });
-      toast({ title: "Výběr uložen", description: "Vaše volba byla uložena." });
-    } finally {
-      setSavingKey(null);
-    }
-  };
-
-  const saveNote = async (catalogId: string, note: string) => {
-    if (!firestore) return;
-    const docId = `${catalogId}__${customerUid}`;
-    const ref = doc(
-      firestore,
-      "companies",
-      companyId,
-      "jobs",
-      jobId,
-      "product_catalog_selections",
-      docId
-    );
-    const existing = selectionMap.get(catalogId);
+    const existing = selectionMap.get(catalog.id);
     const isSelectionLocked = existing?.status === "confirmed";
     if (isSelectionLocked) {
       toast({
@@ -205,8 +137,13 @@ export function CustomerProductCatalogsSection({
       jobId,
       customerPortalUid: customerUid,
       customerId: customerId ?? null,
-      catalogId,
+      catalogId: catalog.id,
       selectedProductIds: existing?.selectedProductIds ?? [],
+      selectedProducts: buildProductSelectionSnapshots(
+        catalog,
+        existing?.selectedProductIds ?? [],
+        existing
+      ),
       selectedBy: customerUid,
       selectedAt: serverTimestamp(),
       status: existing?.status ?? "draft",
@@ -214,7 +151,7 @@ export function CustomerProductCatalogsSection({
       createdAt: existing?.createdAt ?? serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
-    setSavingKey(`${catalogId}:note`);
+    setSavingKey(`${catalog.id}:note`);
     try {
       await setDoc(ref, payload, { merge: true });
       await createCustomerActivity(firestore, {
@@ -229,7 +166,7 @@ export function CustomerProductCatalogsSection({
         createdByRole: "customer",
         isRead: false,
         targetType: "catalog-selection",
-        targetId: catalogId,
+        targetId: catalog.id,
         targetLink: `/portal/jobs/${jobId}`,
       });
       toast({ title: "Poznámka uložena" });
@@ -257,56 +194,78 @@ export function CustomerProductCatalogsSection({
         const selected = new Set(selectionMap.get(catalog.id)?.selectedProductIds ?? []);
         const isSelectionLocked = selectionMap.get(catalog.id)?.status === "confirmed";
         const noteDefault = selectionMap.get(catalog.id)?.note ?? "";
+        const catalogHref = `/portal/customer/jobs/${jobId}/catalogs/${catalog.id}`;
+        const visibleProducts = [...(catalog.products ?? [])]
+          .filter((p) => p && p.active !== false && p.archived !== true)
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+
         return (
           <Card key={catalog.id}>
-            <CardHeader>
-              <CardTitle className="text-lg">{catalog.name || "Katalog"}</CardTitle>
-              <p className="text-xs text-muted-foreground">
-                Režim výběru: {catalog.selectionMode === "single" ? "Jedna položka" : "Více položek"}
-              </p>
+            <CardHeader className="space-y-3 pb-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <CardTitle className="text-lg leading-snug">
+                    <Link
+                      href={catalogHref}
+                      className="text-primary underline-offset-4 hover:underline"
+                    >
+                      {catalog.name || "Katalog"}
+                    </Link>
+                  </CardTitle>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Režim výběru: {catalog.selectionMode === "single" ? "Jedna položka" : "Více položek"}
+                  </p>
+                </div>
+                <Button size="sm" variant="outline" asChild className="shrink-0">
+                  <Link href={catalogHref}>Detail katalogu</Link>
+                </Button>
+              </div>
               {isSelectionLocked ? (
-                <p className="text-xs font-medium text-emerald-700">
+                <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
                   Výběr byl potvrzen administrátorem (uzamčeno).
                 </p>
               ) : null}
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {(catalog.products ?? [])
-                  .filter((p) => p && p.active !== false)
-                  .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
-                  .map((p) => {
-                    const isSelected = selected.has(p.id);
-                    return (
-                      <div key={p.id} className="rounded-lg border p-3">
-                        {p.imageUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.imageUrl} alt={p.name} className="mb-2 h-40 w-full rounded-md object-cover" />
-                        ) : null}
-                        <p className="font-medium">{p.name}</p>
-                        {p.description ? <p className="text-sm text-muted-foreground">{p.description}</p> : null}
-                        {typeof p.price === "number" ? (
-                          <p className="mt-1 text-sm font-semibold">{p.price.toLocaleString("cs-CZ")} Kč</p>
-                        ) : null}
-                        <Button
-                          type="button"
-                          className="mt-2 w-full"
-                          variant={isSelected ? "secondary" : "default"}
-                          disabled={savingKey === `${catalog.id}:${p.id}` || isSelectionLocked}
-                          onClick={() => void toggleProduct(catalog, p.id)}
-                        >
-                          {isSelected ? "Vybráno" : "Vybrat"}
-                        </Button>
-                      </div>
-                    );
-                  })}
-              </div>
+            <CardContent className="space-y-3 pt-0">
+              <CustomerCatalogCompactRow href={catalogHref} catalog={catalog} className="sm:hidden" />
+              <ul className="space-y-2">
+                {visibleProducts.map((p) => {
+                  const isSelected = selected.has(p.id);
+                  const productHref = `${catalogHref}/products/${p.id}`;
+                  return (
+                    <li key={p.id}>
+                      <CustomerProductCompactRow
+                        href={productHref}
+                        product={p}
+                        trailing={
+                          <Button
+                            type="button"
+                            size="sm"
+                            className="min-h-10 w-[5.5rem] px-2 text-xs sm:text-sm"
+                            variant={isSelected ? "secondary" : "default"}
+                            disabled={savingKey === `${catalog.id}:${p.id}` || isSelectionLocked}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              void toggleProduct(catalog, p.id);
+                            }}
+                          >
+                            {isSelected ? "Vybráno" : "Vybrat"}
+                          </Button>
+                        }
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+              {!visibleProducts.length ? (
+                <p className="text-sm text-muted-foreground">V katalogu nejsou žádné aktivní produkty.</p>
+              ) : null}
               <Input
                 defaultValue={noteDefault || ""}
                 placeholder="Poznámka k výběru…"
                 disabled={isSelectionLocked}
                 onBlur={(e) => {
-                  void saveNote(catalog.id, e.target.value);
+                  void saveNote(catalog, e.target.value);
                 }}
               />
             </CardContent>
@@ -316,4 +275,3 @@ export function CustomerProductCatalogsSection({
     </div>
   );
 }
-
