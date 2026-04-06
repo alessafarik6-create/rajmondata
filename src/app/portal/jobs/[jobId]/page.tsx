@@ -53,6 +53,7 @@ import {
   setDoc,
   deleteField,
   addDoc,
+  Timestamp,
 } from "firebase/firestore";
 import {
   User,
@@ -824,9 +825,12 @@ function JobDetailPageContent() {
   }, []);
 
   const [isUploading, setIsUploading] = useState(false);
+  const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
   const [measurementCaptureBusy, setMeasurementCaptureBusy] = useState(false);
   const measurementGalleryInputRef = useRef<HTMLInputElement>(null);
   const measurementCameraInputRef = useRef<HTMLInputElement>(null);
+  /** Záloha souboru z foťáku (iOS někdy ztratí odkaz ve state před otevřením editoru). */
+  const measurementCaptureFileRef = useRef<File | null>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [photoToEdit, setPhotoToEdit] = useState<JobPhotoAnnotationTarget | null>(
     null
@@ -2846,17 +2850,34 @@ function JobDetailPageContent() {
 
         // Prefer Storage SDK blob -> objectUrl to avoid CORS/tainted canvas.
         let resolvedUrl = await resolveAnnotationImageUrl(annotationSource);
+
         if (photoToEdit) {
-          /** Základní fotka — ne PNG s anotací (anotace jsou v annotationData). */
-          const storagePath =
-            photoToEdit.storagePath ||
-            photoToEdit.path ||
-            getPhotoStorageFullPath(photoToEdit);
-          if (storagePath) {
-            const blob = await getBlob(ref(getFirebaseStorage(), storagePath));
-            const objectUrl = URL.createObjectURL(blob);
-            setImageObjectUrl(objectUrl);
-            resolvedUrl = objectUrl;
+          const pe = photoToEdit;
+          const isPendingLocalDraft =
+            Boolean(pe.id?.startsWith("pending-")) &&
+            (Boolean(pe.pendingObjectUrl) ||
+              Boolean(pe.pendingLocalFile) ||
+              Boolean(measurementCaptureFileRef.current));
+
+          /** Lokální draft z foťáku — nenačívat Storage (žádná cesta); blob/data/http zůstane z resolve. */
+          if (!isPendingLocalDraft) {
+            const rawPath =
+              pe.storagePath ||
+              pe.path ||
+              getPhotoStorageFullPath(pe);
+            const storagePath = typeof rawPath === "string" ? rawPath.trim() : "";
+            if (
+              storagePath &&
+              !storagePath.startsWith("blob:") &&
+              !storagePath.startsWith("data:") &&
+              !storagePath.startsWith("http://") &&
+              !storagePath.startsWith("https://")
+            ) {
+              const blob = await getBlob(ref(getFirebaseStorage(), storagePath));
+              const objectUrl = URL.createObjectURL(blob);
+              setImageObjectUrl(objectUrl);
+              resolvedUrl = objectUrl;
+            }
           }
         }
         if (cancelled) return;
@@ -2865,7 +2886,13 @@ function JobDetailPageContent() {
 
         try {
           image = await loadHtmlImage(resolvedUrl, false);
-        } catch {
+        } catch (firstErr) {
+          if (
+            resolvedUrl.startsWith("blob:") ||
+            resolvedUrl.startsWith("data:")
+          ) {
+            throw firstErr;
+          }
           image = await loadHtmlImage(resolvedUrl, true);
         }
 
@@ -3628,6 +3655,7 @@ function JobDetailPageContent() {
 
     const objectUrl = URL.createObjectURL(file);
     const tempId = `pending-${crypto.randomUUID?.() ?? createId()}`;
+    measurementCaptureFileRef.current = file;
 
     const target: JobPhotoAnnotationTarget = {
       id: tempId,
@@ -3640,18 +3668,16 @@ function JobDetailPageContent() {
     };
 
     setMeasurementCaptureBusy(true);
-    queueMicrotask(() => {
-      setPhotoToEdit(target);
-      setEditorOpen(true);
-      setMeasurementCaptureBusy(false);
-      toast({
-        title: "Upravte fotku",
-        description: "Přidejte kóty a poznámky, poté uložte anotaci — teprve pak se fotka uloží k zakázce.",
-      });
-      requestAnimationFrame(() => {
-        if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
-        if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
-      });
+    setPhotoToEdit(target);
+    setEditorOpen(true);
+    setMeasurementCaptureBusy(false);
+    toast({
+      title: "Upravte fotku",
+      description: "Přidejte kóty a poznámky, poté uložte anotaci — teprve pak se fotka uloží k zakázce.",
+    });
+    requestAnimationFrame(() => {
+      if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
+      if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
     });
   };
 
@@ -3762,6 +3788,21 @@ function JobDetailPageContent() {
       return;
     }
 
+    const pendingFileForSave =
+      photoToEdit.pendingLocalFile ?? measurementCaptureFileRef.current ?? null;
+    if (
+      photoToEdit.id.startsWith("pending-") &&
+      isMeasurementSave &&
+      !pendingFileForSave
+    ) {
+      toast({
+        variant: "destructive",
+        title: "Chybí soubor fotky",
+        description: "Vyberte nebo znovu vyfoťte snímek a otevřete editor.",
+      });
+      return;
+    }
+
     const exportCanvas = document.createElement("canvas");
     exportCanvas.width = imageForCanvas.naturalWidth || imageForCanvas.width;
     exportCanvas.height = imageForCanvas.naturalHeight || imageForCanvas.height;
@@ -3775,6 +3816,8 @@ function JobDetailPageContent() {
       });
       return;
     }
+
+    setIsSavingAnnotation(true);
 
     ctx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
     ctx.drawImage(imageForCanvas, 0, 0);
@@ -3941,18 +3984,17 @@ function JobDetailPageContent() {
           }
         );
       } else if (target.kind === "measurementPhotos") {
-        const pendingFile = photoToEdit.pendingLocalFile;
         const isPendingDraft =
-          Boolean(pendingFile) && photoToEdit.id.startsWith("pending-");
+          Boolean(pendingFileForSave) && photoToEdit.id.startsWith("pending-");
 
-        if (isPendingDraft && pendingFile && jobId && user?.uid) {
+        if (isPendingDraft && pendingFileForSave && jobId && user?.uid) {
           const photoRef = doc(
             collection(firestore, "companies", companyId, "measurement_photos")
           );
           const photoDocId = photoRef.id;
 
           const upOrig = await uploadMeasurementPhotoFileViaFirebaseSdk(
-            pendingFile,
+            pendingFileForSave,
             companyId,
             photoDocId
           );
@@ -3965,6 +4007,7 @@ function JobDetailPageContent() {
           annotatedPath = upAnn.storagePath;
           annotatedUrl = upAnn.downloadURL;
 
+          const nowTs = Timestamp.now();
           await setDoc(photoRef, {
             companyId,
             sourceType: MEASUREMENT_PHOTO_SOURCE_TYPE,
@@ -3980,10 +4023,12 @@ function JobDetailPageContent() {
             classificationStatus: "unassigned",
             title: null,
             note: null,
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
+            createdAt: nowTs,
+            updatedAt: nowTs,
             createdBy: user.uid,
           });
+
+          measurementCaptureFileRef.current = null;
 
           if (photoToEdit.pendingObjectUrl) {
             try {
@@ -3993,6 +4038,11 @@ function JobDetailPageContent() {
             }
           }
         } else {
+          if (photoToEdit.id.startsWith("pending-")) {
+            throw new Error(
+              "Uložení nového snímku se nezdařilo — zkuste fotku vybrat znovu."
+            );
+          }
           const up = await uploadMeasurementPhotoBlobViaFirebaseSdk(
             blob,
             companyId,
@@ -4074,14 +4124,20 @@ function JobDetailPageContent() {
 
       setEditorOpen(false);
       setPhotoToEdit(null);
+      measurementCaptureFileRef.current = null;
       resetAnnotationState();
     } catch (err: any) {
       console.error("[JobDetailPage] saving annotated photo failed", err);
       toast({
         variant: "destructive",
         title: jobPhotoUploadErrorTitle(err),
-        description: describeStorageUploadFailure(err),
+        description:
+          err instanceof Error && err.message
+            ? err.message
+            : describeStorageUploadFailure(err),
       });
+    } finally {
+      setIsSavingAnnotation(false);
     }
   };
 
@@ -6776,6 +6832,7 @@ function JobDetailPageContent() {
         onOpenChange={(open) => {
           setEditorOpen(open);
           if (!open) {
+            measurementCaptureFileRef.current = null;
             setPhotoToEdit((prev) => {
               if (prev?.pendingObjectUrl) {
                 try {
@@ -6963,9 +7020,9 @@ function JobDetailPageContent() {
                 <Button
                   className="min-h-[36px]"
                   onClick={handleSaveAnnotated}
-                  disabled={!baseImageLoaded}
+                  disabled={!baseImageLoaded || isSavingAnnotation}
                 >
-                  Uložit anotaci
+                  {isSavingAnnotation ? "Ukládám…" : "Uložit anotaci"}
                 </Button>
               </div>
             </div>
