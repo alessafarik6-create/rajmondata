@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { DocumentData, DocumentReference } from "firebase/firestore";
-import { serverTimestamp, updateDoc } from "firebase/firestore";
+import { serverTimestamp, Timestamp, updateDoc } from "firebase/firestore";
 import { deleteObject, ref } from "firebase/storage";
 import { getFirebaseStorage } from "@/firebase/storage";
 import { uploadCustomerProgressImageFileViaFirebaseSdk } from "@/lib/job-photo-upload";
@@ -55,10 +55,11 @@ function serializeForFirestore(images: CustomerProgressImage[]): DocumentData[] 
       description: img.description?.trim() ?? "",
       visibleToCustomer: img.visibleToCustomer !== false,
     };
+    /** Nelze použít serverTimestamp() uvnitř prvku pole — jen konkrétní Timestamp / číslo. */
     if (img.createdAt !== undefined && img.createdAt !== null) {
       row.createdAt = img.createdAt;
     } else {
-      row.createdAt = serverTimestamp();
+      row.createdAt = Timestamp.now();
     }
     return row;
   });
