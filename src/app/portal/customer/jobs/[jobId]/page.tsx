@@ -18,6 +18,7 @@ import { Loader2, ChevronLeft, MapPin, Calendar } from "lucide-react";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { canCustomerAccessJob } from "@/lib/job-customer-access";
 import { CustomerProductCatalogsSection } from "@/components/customer/customer-product-catalogs-section";
+import { CustomerJobProgressCard } from "@/components/customer/customer-job-progress-card";
 
 function safeJobFields(job: Record<string, unknown> | null | undefined) {
   if (!job) return null;
@@ -151,6 +152,12 @@ export default function CustomerJobDetailPage() {
           <Link href="/portal/customer">Přehled</Link>
         </Button>
       </div>
+
+      <CustomerJobProgressCard
+        jobId={jobId}
+        jobName={overview?.name?.trim() || "Zakázka"}
+        jobData={jobDoc as Record<string, unknown>}
+      />
 
       <Card>
         <CardHeader>

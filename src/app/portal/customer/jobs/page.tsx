@@ -13,8 +13,17 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import { canCustomerAccessJob } from "@/lib/job-customer-access";
+import { Progress } from "@/components/ui/progress";
+import { normalizeCompletionPercent } from "@/lib/job-customer-progress";
 
-type JobRow = { id: string; name?: string; status?: string; endDate?: string; customerAddress?: string };
+type JobRow = {
+  id: string;
+  name?: string;
+  status?: string;
+  endDate?: string;
+  customerAddress?: string;
+  completionPercent?: number;
+};
 
 export default function CustomerJobsListPage() {
   const { user } = useUser();
@@ -54,13 +63,14 @@ export default function CustomerJobsListPage() {
           const snap = await getDoc(ref);
           if (!snap.exists() || cancelled) continue;
           const data = snap.data() as Record<string, unknown>;
-          const row = {
+          const row: JobRow = {
             id: snap.id,
             name: typeof data.name === "string" ? data.name : "",
             status: typeof data.status === "string" ? data.status : "",
             endDate: typeof data.endDate === "string" ? data.endDate : "",
             customerAddress:
               typeof data.customerAddress === "string" ? data.customerAddress : "",
+            completionPercent: normalizeCompletionPercent(data.completionPercent),
           };
           if (
             canCustomerAccessJob(user.uid, profile as Parameters<typeof canCustomerAccessJob>[1], {
@@ -141,7 +151,14 @@ export default function CustomerJobsListPage() {
                   {j.endDate ? ` · Termín: ${j.endDate}` : ""}
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-3">
+                <div>
+                  <div className="mb-1 flex justify-between text-xs text-muted-foreground">
+                    <span>Dokončení</span>
+                    <span className="tabular-nums">{j.completionPercent ?? 0} %</span>
+                  </div>
+                  <Progress value={j.completionPercent ?? 0} className="h-2" />
+                </div>
                 <Button asChild size="sm">
                   <Link href={`/portal/customer/jobs/${j.id}`}>Otevřít detail</Link>
                 </Button>

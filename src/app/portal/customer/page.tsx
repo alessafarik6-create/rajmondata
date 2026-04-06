@@ -7,7 +7,7 @@ import { doc } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Briefcase, ChevronRight, Loader2, MessageSquare } from "lucide-react";
-import { canCustomerAccessJob } from "@/lib/job-customer-access";
+import { CustomerLinkedJobsProgress } from "@/components/customer/customer-linked-jobs-progress";
 
 export default function CustomerPortalHomePage() {
   const { user } = useUser();
@@ -22,6 +22,7 @@ export default function CustomerPortalHomePage() {
     const raw = (profile as { linkedJobIds?: unknown } | null)?.linkedJobIds;
     return Array.isArray(raw) ? raw.filter((x): x is string => typeof x === "string") : [];
   }, [profile]);
+  const companyId = (profile as { companyId?: string } | null)?.companyId;
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
@@ -55,6 +56,16 @@ export default function CustomerPortalHomePage() {
           Vítejte v klientském portálu. Zde najdete své zakázky a dokumenty, které vám firma zpřístupní.
         </p>
       </div>
+
+      {user && profile && companyId ? (
+        <CustomerLinkedJobsProgress
+          firestore={firestore}
+          companyId={companyId}
+          customerUid={user.uid}
+          profile={profile}
+          linkedJobIds={linkedJobIds}
+        />
+      ) : null}
 
       <Card>
         <CardHeader>

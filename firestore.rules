@@ -485,6 +485,7 @@ service cloud.firestore {
 
       match /jobs/{jobId} {
         allow read: if terminalCompanyMatches(companyId) ||
+          customerPortalLinkedJob(companyId, jobId) ||
           (signedIn() && sameCompany(companyId) &&
             jobDetailReadAccess(companyId, jobId) &&
             !jobEmployeeMustUseSummaryOnly(companyId, jobId));

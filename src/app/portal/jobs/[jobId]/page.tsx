@@ -25,6 +25,7 @@ import {
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
+import { JobCustomerProgressAdminSection } from "@/components/jobs/job-customer-progress-admin-section";
 import { JobProductCatalogsSection } from "@/components/jobs/job-product-catalogs-section";
 import {
   buildJobMediaMirrorAnnotatedUrlPatch,
@@ -4593,6 +4594,16 @@ function JobDetailPageContent() {
               </p>
             </CardContent>
           </Card>
+
+          {companyId && jobId ? (
+            <JobCustomerProgressAdminSection
+              companyId={companyId}
+              jobId={jobId as string}
+              jobRef={jobRef}
+              job={job as Record<string, unknown>}
+              canEdit={canManageFolders}
+            />
+          ) : null}
 
           <Card className={cn(JD.card)}>
             <CardHeader>

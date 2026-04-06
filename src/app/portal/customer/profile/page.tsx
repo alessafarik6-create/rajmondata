@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, Loader2 } from "lucide-react";
 import { CustomerChatPanel } from "@/components/customer/customer-chat-panel";
+import { CustomerLinkedJobsProgress } from "@/components/customer/customer-linked-jobs-progress";
 
 export default function CustomerProfilePage() {
   const { user } = useUser();
@@ -36,7 +37,7 @@ export default function CustomerProfilePage() {
     "—";
 
   return (
-    <div className="mx-auto max-w-lg space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <Button variant="ghost" size="sm" asChild>
         <Link href="/portal/customer" className="gap-1">
           <ChevronLeft className="h-4 w-4" />
@@ -62,6 +63,17 @@ export default function CustomerProfilePage() {
           </p>
         </CardContent>
       </Card>
+
+      {user && profile && companyId ? (
+        <CustomerLinkedJobsProgress
+          firestore={firestore}
+          companyId={companyId}
+          customerUid={user.uid}
+          profile={profile}
+          linkedJobIds={linkedJobIds}
+        />
+      ) : null}
+
       <div className="rounded-xl border border-emerald-300 bg-emerald-50 p-4">
         <p className="text-base font-semibold text-emerald-900">Máte dotaz? Napište nám</p>
         <p className="text-sm text-emerald-800">Můžete nám poslat zprávu přímo z portálu.</p>
