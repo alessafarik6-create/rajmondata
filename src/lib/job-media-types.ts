@@ -28,6 +28,10 @@ export type JobPhotoAnnotationTarget = {
   annotationTarget: JobMediaFirestorePath;
   /** Pro kind === measurementPhotos — stejné jako id dokumentu v measurement_photos */
   measurementPhotoId?: string;
+  /** Nové foto z foťáku — upload až po uložení v editoru (id začíná na `pending-`). */
+  pendingLocalFile?: File;
+  /** Object URL pro uvolnění při zrušení editoru */
+  pendingObjectUrl?: string;
 };
 
 /** Typ vlastní složky u zakázky (v Firestore pole `type`). */

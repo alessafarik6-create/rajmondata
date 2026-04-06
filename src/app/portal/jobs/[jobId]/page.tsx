@@ -1033,6 +1033,11 @@ function JobDetailPageContent() {
       throw new Error("Missing image URL.");
     }
 
+    /** Lokální náhled z foťáku / souboru — nelze předávat do Storage ref. */
+    if (value.startsWith("blob:") || value.startsWith("data:")) {
+      return value;
+    }
+
     if (value.startsWith("http://") || value.startsWith("https://")) {
       return value;
     }
@@ -2924,6 +2929,8 @@ function JobDetailPageContent() {
     photoToEdit,
     photoToEdit?.storagePath,
     photoToEdit?.annotationData,
+    photoToEdit?.pendingObjectUrl,
+    photoToEdit?.pendingLocalFile,
   ]);
 
   const redrawCanvas = useCallback(() => {
@@ -3596,8 +3603,12 @@ function JobDetailPageContent() {
     }
   };
 
-  const handleMeasurementPhotoQuickImport = async (file: File | null | undefined) => {
-    if (!file || !companyId || !jobId || !firestore || !user?.uid) return;
+  /**
+   * Foto zaměření: bez okamžitého uploadu — až po „Uložit anotaci“ v editoru.
+   * Object URL + soubor v paměti; `resolveAnnotationImageUrl` musí podporovat `blob:`.
+   */
+  const handleMeasurementPhotoQuickImport = (file: File | null | undefined) => {
+    if (!file || !companyId || !jobId || !user?.uid) return;
     if (!isAllowedJobImageFile(file)) {
       toast({
         variant: "destructive",
@@ -3614,64 +3625,34 @@ function JobDetailPageContent() {
       });
       return;
     }
+
+    const objectUrl = URL.createObjectURL(file);
+    const tempId = `pending-${crypto.randomUUID?.() ?? createId()}`;
+
+    const target: JobPhotoAnnotationTarget = {
+      id: tempId,
+      imageUrl: objectUrl,
+      originalImageUrl: objectUrl,
+      annotationTarget: { kind: "measurementPhotos" },
+      measurementPhotoId: tempId,
+      pendingLocalFile: file,
+      pendingObjectUrl: objectUrl,
+    };
+
     setMeasurementCaptureBusy(true);
-    try {
-      const colRef = collection(firestore, "companies", companyId, "measurement_photos");
-      const photoRef = doc(colRef);
-      const photoDocId = photoRef.id;
-      const up = await uploadMeasurementPhotoFileViaFirebaseSdk(
-        file,
-        companyId,
-        photoDocId
-      );
-      await setDoc(photoRef, {
-        companyId,
-        sourceType: MEASUREMENT_PHOTO_SOURCE_TYPE,
-        originalImageUrl: up.downloadURL,
-        storagePath: up.storagePath,
-        annotatedImageUrl: null,
-        annotatedStoragePath: null,
-        jobId: jobId as string,
-        status: "linked",
-        kind: "measurement",
-        unassigned: true,
-        classificationStatus: "unassigned",
-        title: null,
-        note: null,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp(),
-        createdBy: user.uid,
-      });
-      const row = {
-        id: photoDocId,
-        companyId,
-        sourceType: MEASUREMENT_PHOTO_SOURCE_TYPE,
-        originalImageUrl: up.downloadURL,
-        storagePath: up.storagePath,
-        annotatedImageUrl: null as string | null,
-        annotatedStoragePath: null as string | null,
-        jobId: jobId as string,
-        annotationData: undefined,
-      } as Record<string, unknown> & { id: string };
-      setPhotoToEdit(measurementDocToAnnotationTarget(row));
+    queueMicrotask(() => {
+      setPhotoToEdit(target);
       setEditorOpen(true);
-      toast({
-        title: "Foto načteno",
-        description: "Upravte kóty a poznámky, poté uložte anotaci.",
-      });
-    } catch (e) {
-      console.error("[JobDetailPage] measurement quick import", e);
-      toast({
-        variant: "destructive",
-        title: "Nahrání se nezdařilo",
-        description:
-          e instanceof Error ? e.message : "Zkuste to znovu nebo zkontrolujte oprávnění.",
-      });
-    } finally {
       setMeasurementCaptureBusy(false);
-      if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
-      if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
-    }
+      toast({
+        title: "Upravte fotku",
+        description: "Přidejte kóty a poznámky, poté uložte anotaci — teprve pak se fotka uloží k zakázce.",
+      });
+      requestAnimationFrame(() => {
+        if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
+        if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
+      });
+    });
   };
 
   const handleMarkMeasurementPhotoAssigned = async (
@@ -3960,30 +3941,83 @@ function JobDetailPageContent() {
           }
         );
       } else if (target.kind === "measurementPhotos") {
-        const up = await uploadMeasurementPhotoBlobViaFirebaseSdk(
-          blob,
-          companyId,
-          photoToEdit.id,
-          `${photoToEdit.id}-annotated.png`
-        );
-        annotatedPath = up.storagePath;
-        annotatedUrl = up.downloadURL;
-        await updateDoc(
-          doc(
-            firestore,
-            "companies",
+        const pendingFile = photoToEdit.pendingLocalFile;
+        const isPendingDraft =
+          Boolean(pendingFile) && photoToEdit.id.startsWith("pending-");
+
+        if (isPendingDraft && pendingFile && jobId && user?.uid) {
+          const photoRef = doc(
+            collection(firestore, "companies", companyId, "measurement_photos")
+          );
+          const photoDocId = photoRef.id;
+
+          const upOrig = await uploadMeasurementPhotoFileViaFirebaseSdk(
+            pendingFile,
             companyId,
-            "measurement_photos",
-            photoToEdit.id
-          ),
-          {
-            originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
-            annotatedImageUrl: annotatedUrl,
-            annotatedStoragePath: annotatedPath,
+            photoDocId
+          );
+          const upAnn = await uploadMeasurementPhotoBlobViaFirebaseSdk(
+            blob,
+            companyId,
+            photoDocId,
+            `${photoDocId}-annotated.png`
+          );
+          annotatedPath = upAnn.storagePath;
+          annotatedUrl = upAnn.downloadURL;
+
+          await setDoc(photoRef, {
+            companyId,
+            sourceType: MEASUREMENT_PHOTO_SOURCE_TYPE,
+            originalImageUrl: upOrig.downloadURL,
+            storagePath: upOrig.storagePath,
+            annotatedImageUrl: upAnn.downloadURL,
+            annotatedStoragePath: upAnn.storagePath,
             annotationData,
+            jobId: jobId as string,
+            status: "linked",
+            kind: "measurement",
+            unassigned: true,
+            classificationStatus: "unassigned",
+            title: null,
+            note: null,
+            createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
+            createdBy: user.uid,
+          });
+
+          if (photoToEdit.pendingObjectUrl) {
+            try {
+              URL.revokeObjectURL(photoToEdit.pendingObjectUrl);
+            } catch {
+              /* ignore */
+            }
           }
-        );
+        } else {
+          const up = await uploadMeasurementPhotoBlobViaFirebaseSdk(
+            blob,
+            companyId,
+            photoToEdit.id,
+            `${photoToEdit.id}-annotated.png`
+          );
+          annotatedPath = up.storagePath;
+          annotatedUrl = up.downloadURL;
+          await updateDoc(
+            doc(
+              firestore,
+              "companies",
+              companyId,
+              "measurement_photos",
+              photoToEdit.id
+            ),
+            {
+              originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+              annotatedImageUrl: annotatedUrl,
+              annotatedStoragePath: annotatedPath,
+              annotationData,
+              updatedAt: serverTimestamp(),
+            }
+          );
+        }
       } else {
         throw new Error("Neznámý cíl anotace.");
       }
@@ -4023,10 +4057,15 @@ function JobDetailPageContent() {
 
       toast(
         target.kind === "measurementPhotos"
-          ? {
-              title: "Anotace byly aktualizovány",
-              description: "Kóty a poznámky u foto zaměření byly uloženy.",
-            }
+          ? photoToEdit?.id?.startsWith("pending-")
+            ? {
+                title: "Foto zaměření uloženo",
+                description: "Snímek včetně kót a poznámek je uložen k zakázce.",
+              }
+            : {
+                title: "Anotace byly aktualizovány",
+                description: "Kóty a poznámky u foto zaměření byly uloženy.",
+              }
           : {
               title: "Fotografie upravena",
               description: "Kóty a poznámky byly uloženy.",
@@ -6737,7 +6776,16 @@ function JobDetailPageContent() {
         onOpenChange={(open) => {
           setEditorOpen(open);
           if (!open) {
-            setPhotoToEdit(null);
+            setPhotoToEdit((prev) => {
+              if (prev?.pendingObjectUrl) {
+                try {
+                  URL.revokeObjectURL(prev.pendingObjectUrl);
+                } catch {
+                  /* ignore */
+                }
+              }
+              return null;
+            });
             resetAnnotationState();
           }
         }}
