@@ -128,15 +128,18 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
   const isPortalCustomerOnly = profile?.role === "customer";
 
-  /** Zákazník smí jen `/portal/customer/*` — žádné firemní doklady, finance, interní zakázky. */
-  const isCustomerAllowedBranchPath = pathname.startsWith("/portal/customer");
+  /** Zákazník smí jen `/portal/customer/*` a sdílená oznámení — žádné firemní doklady, finance, interní zakázky. */
+  const isCustomerAllowedBranchPath =
+    pathname.startsWith("/portal/customer") ||
+    pathname.startsWith("/portal/notifications");
 
   /** Zaměstnanec může mimo /portal/employee jen tyto větve (docházka, sklad, výroba). */
   const isEmployeeAllowedBranchPath =
     pathname.startsWith("/portal/employee") ||
     pathname.startsWith("/portal/labor") ||
     pathname.startsWith("/portal/sklad") ||
-    pathname.startsWith("/portal/vyroba");
+    pathname.startsWith("/portal/vyroba") ||
+    pathname.startsWith("/portal/notifications");
 
   /** Načítání profilu z Firestore — bez automatického doplňování dokumentu (žádný nový auth účet). */
   const waitingForProfileResolution = isProfileLoading;

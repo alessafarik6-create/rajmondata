@@ -6,6 +6,7 @@ import { initializeFirebase } from "./init";
 import { firebaseClientEnvReady } from "@/firebase/config";
 import { getFirebaseClientEnvUserMessage } from "@/lib/firebase-client-env";
 import { PwaInstallProvider } from "@/components/pwa/pwa-install-context";
+import { PortalNotificationsProvider } from "@/components/portal/portal-notifications-context";
 
 interface FirebaseClientProviderProps {
   children: ReactNode;
@@ -58,7 +59,9 @@ export function FirebaseClientProvider({
       firebaseConfigError={firebaseConfigError}
     >
       {/* PWA: stav instalace; banner je v layoutu po přihlášení (portál / admin). */}
-      <PwaInstallProvider>{children}</PwaInstallProvider>
+      <PwaInstallProvider>
+        <PortalNotificationsProvider>{children}</PortalNotificationsProvider>
+      </PwaInstallProvider>
     </FirebaseProvider>
   );
 }

@@ -13,6 +13,7 @@ import {
   Package,
   Factory,
   Briefcase,
+  Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
@@ -164,6 +165,7 @@ export function EmployeePortalSidebar({
             },
           ]
         : []),
+      { label: "Oznámení", href: "/portal/notifications", icon: Bell },
       { label: t("profile"), href: "/portal/employee/profile", icon: UserCircle },
     ];
     return all;

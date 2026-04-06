@@ -14,7 +14,7 @@ import {
   DropdownMenuSeparator, 
   DropdownMenuTrigger 
 } from '@/components/ui/dropdown-menu';
-import { Search, LogOut, User, Menu, MessageSquare } from 'lucide-react';
+import { Search, LogOut, User, Menu, MessageSquare, Bell } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Logo } from '@/components/ui/logo';
@@ -22,6 +22,7 @@ import Link from 'next/link';
 import { signOut } from 'firebase/auth';
 import { doc } from 'firebase/firestore';
 import { useUnreadEmployeeChatCount } from '@/hooks/use-unread-employee-chat';
+import { usePortalNotificationsSafe } from '@/components/portal/portal-notifications-context';
 
 interface TopHeaderProps {
   onOpenMobileMenu?: () => void;
@@ -43,6 +44,7 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   const { companyName } = useCompany();
   const { count: unreadChatCount, showBadge: showChatBadge } =
     useUnreadEmployeeChatCount();
+  const { unreadCount: portalNotifyCount } = usePortalNotificationsSafe();
 
   const isAdminArea = pathname?.startsWith('/admin');
   const isEmployeePortal = pathname?.startsWith('/portal/employee');
@@ -146,6 +148,23 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
       </div>
 
       <div className="flex items-center gap-1 sm:gap-4 shrink-0">
+        {!isAdminArea ? (
+          <Button
+            asChild
+            variant="ghost"
+            size="icon"
+            className="relative text-slate-800 hover:bg-slate-200 hover:text-slate-900 h-10 w-10 shrink-0"
+          >
+            <Link href="/portal/notifications" aria-label="Oznámení portálu">
+              <Bell className="w-5 h-5" />
+              {portalNotifyCount > 0 ? (
+                <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-amber-600 px-1 text-[10px] font-bold leading-none text-white shadow-sm">
+                  {portalNotifyCount > 99 ? "99+" : portalNotifyCount}
+                </span>
+              ) : null}
+            </Link>
+          </Button>
+        ) : null}
         {showCompanyChatShortcut ? (
           <Button
             asChild

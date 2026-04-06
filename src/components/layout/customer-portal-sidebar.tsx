@@ -3,7 +3,7 @@
 import React, { useMemo } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LayoutDashboard, Briefcase, User, ShieldCheck, Package, MessageSquare } from "lucide-react";
+import { LayoutDashboard, Briefcase, User, ShieldCheck, Package, MessageSquare, Bell } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
 import { useUser, useDoc, useFirestore, useMemoFirebase } from "@/firebase";
@@ -14,6 +14,7 @@ const ICONS: Record<string, typeof LayoutDashboard> = {
   "customer-home": LayoutDashboard,
   "customer-jobs": Briefcase,
   "customer-catalogs": Package,
+  "customer-notifications": Bell,
   "customer-chat": MessageSquare,
   "customer-profile": User,
 };
@@ -69,6 +70,9 @@ export function CustomerPortalSidebar({ mobileSheetClose }: CustomerPortalSideba
     }
     if (id === "customer-chat") {
       return pathname.startsWith("/portal/customer/chat");
+    }
+    if (id === "customer-notifications") {
+      return pathname.startsWith("/portal/notifications");
     }
     return pathname === href;
   };

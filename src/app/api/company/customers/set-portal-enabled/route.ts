@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore, getAdminAuth } from "@/lib/firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
+import { emitPortalNotification } from "@/lib/portal-notifications-server";
 
 type Body = {
   customerId?: string;
@@ -96,6 +97,22 @@ export async function POST(request: NextRequest) {
     customerPortalUpdatedAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   });
+
+  try {
+    await emitPortalNotification({
+      targetUserId: portalUid,
+      companyId,
+      category: "profile",
+      title: enabled ? "Přístup do portálu" : "Portál deaktivován",
+      body: enabled
+        ? "Administrátor znovu povolil přihlášení do klientského portálu."
+        : "Přístup do klientského portálu byl deaktivován. Kontaktujte firmu, pokud jde o omyl.",
+      linkUrl: "/portal/customer",
+      source: "api/company/customers/set-portal-enabled",
+    });
+  } catch (e) {
+    console.warn("[set-portal-enabled] emitPortalNotification", e);
+  }
 
   return NextResponse.json({
     ok: true,
