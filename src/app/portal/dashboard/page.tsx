@@ -55,6 +55,7 @@ import { DashboardJobTasksWidget } from "@/components/jobs/dashboard-job-tasks-w
 import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
 import { DashboardDocumentsToPayWidget } from "@/components/portal/dashboard-documents-to-pay-widget";
 import { DashboardActivitySection } from "@/components/portal/dashboard-activity-section";
+import { DashboardUnassignedMeasurementPhotos } from "@/components/portal/dashboard-unassigned-measurement-photos";
 import { isCustomerActivityUnresolved } from "@/lib/customer-activity";
 import { isEmployeeActivityUnresolved } from "@/lib/employee-activity";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
@@ -424,6 +425,14 @@ export default function CompanyDashboard() {
   const typedJobs: JobData[] = Array.isArray(allJobsRaw)
     ? (allJobsRaw as JobData[])
     : [];
+
+  const jobNamesById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const j of typedJobs) {
+      if (j.id) m[j.id] = j.name?.trim() || j.id;
+    }
+    return m;
+  }, [typedJobs]);
 
   const profileOrCompanyLoading =
     isProfileLoading || (Boolean(companyId) && companyContextLoading);
@@ -881,6 +890,15 @@ export default function CompanyDashboard() {
             badgeCount={employeeActivitiesUnresolved.length}
             highlightBorder
           />
+
+          {companyId ? (
+            <DashboardUnassignedMeasurementPhotos
+              firestore={firestore}
+              companyId={companyId}
+              jobNamesById={jobNamesById}
+              userId={user?.uid ?? null}
+            />
+          ) : null}
 
           {pendingDocuments.length > 0 ? (
             <Card className="border-amber-300 bg-amber-50/80">

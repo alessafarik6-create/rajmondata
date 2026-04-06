@@ -16,9 +16,11 @@ import {
   uploadJobPhotoBlobViaFirebaseSdk,
   uploadJobFolderImageBlobViaFirebaseSdk,
   uploadMeasurementPhotoBlobViaFirebaseSdk,
+  uploadMeasurementPhotoFileViaFirebaseSdk,
 } from "@/lib/job-photo-upload";
 import {
   isAllowedJobMediaFile,
+  isAllowedJobImageFile,
   getJobMediaFileTypeFromFile,
   getJobMediaPreviewUrl,
   formatMediaDate,
@@ -64,6 +66,9 @@ import {
   FileStack,
   MapPin,
   Loader2,
+  Camera,
+  ImagePlus,
+  FolderInput,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -172,6 +177,10 @@ import {
   drawNoteAnnotationOnCanvas,
   noteResizeHandleSize,
 } from "@/lib/job-photo-annotation-canvas";
+import {
+  MEASUREMENT_PHOTO_SOURCE_TYPE,
+  isMeasurementPhotoUnassignedForJob,
+} from "@/lib/measurement-photos";
 
 type AnnotationTool = "dimension" | "note" | "select";
 
@@ -815,6 +824,9 @@ function JobDetailPageContent() {
   }, []);
 
   const [isUploading, setIsUploading] = useState(false);
+  const [measurementCaptureBusy, setMeasurementCaptureBusy] = useState(false);
+  const measurementGalleryInputRef = useRef<HTMLInputElement>(null);
+  const measurementCameraInputRef = useRef<HTMLInputElement>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [photoToEdit, setPhotoToEdit] = useState<JobPhotoAnnotationTarget | null>(
     null
@@ -3427,7 +3439,7 @@ function JobDetailPageContent() {
   const handlePhotoUpload = async (
     file: File,
     uploadOpts?: { skipUploadingFlag?: boolean }
-  ) => {
+  ): Promise<boolean> => {
     const manageUploadingFlag = !uploadOpts?.skipUploadingFlag;
 
     if (!file || file.size === 0) {
@@ -3436,7 +3448,7 @@ function JobDetailPageContent() {
         title: "Soubor nebyl vybrán",
         description: "Nebyl vybrán žádný soubor nebo je soubor prázdný.",
       });
-      return;
+      return false;
     }
 
     if (!isAllowedJobMediaFile(file)) {
@@ -3445,7 +3457,7 @@ function JobDetailPageContent() {
         title: "Nepodporovaný soubor",
         description: "Použijte JPG, PNG, WEBP nebo PDF.",
       });
-      return;
+      return false;
     }
 
     if (file.size > MAX_JOB_PHOTO_BYTES) {
@@ -3454,7 +3466,7 @@ function JobDetailPageContent() {
         title: "Soubor je příliš velký",
         description: `Maximální velikost je ${Math.round(MAX_JOB_PHOTO_BYTES / (1024 * 1024))} MB.`,
       });
-      return;
+      return false;
     }
 
     if (!companyId || !jobId || !photosColRef || !user || !firestore) {
@@ -3463,7 +3475,7 @@ function JobDetailPageContent() {
         title: "Nelze nahrát fotografii",
         description: "Chybí identifikace zakázky nebo uživatele.",
       });
-      return;
+      return false;
     }
 
     if (manageUploadingFlag) {
@@ -3519,7 +3531,7 @@ function JobDetailPageContent() {
               ? metaErr.message
               : "Záznam fotky se nepodařilo uložit do databáze (zkontrolujte oprávnění Firestore).",
         });
-        return;
+        return false;
       }
 
       try {
@@ -3568,6 +3580,7 @@ function JobDetailPageContent() {
         title: "Soubor nahrán",
         description: safeBaseName,
       });
+      return true;
     } catch (err: unknown) {
       console.error("[JobPhotoUpload] upload error", err);
       toast({
@@ -3575,10 +3588,175 @@ function JobDetailPageContent() {
         title: jobPhotoUploadErrorTitle(err),
         description: describeStorageUploadFailure(err),
       });
+      return false;
     } finally {
       if (manageUploadingFlag) {
         setIsUploading(false);
       }
+    }
+  };
+
+  const handleMeasurementPhotoQuickImport = async (file: File | null | undefined) => {
+    if (!file || !companyId || !jobId || !firestore || !user?.uid) return;
+    if (!isAllowedJobImageFile(file)) {
+      toast({
+        variant: "destructive",
+        title: "Nepodporovaný soubor",
+        description: "Vyberte obrázek (JPG, PNG, WebP …).",
+      });
+      return;
+    }
+    if (file.size > MAX_JOB_PHOTO_BYTES) {
+      toast({
+        variant: "destructive",
+        title: "Soubor je příliš velký",
+        description: `Maximální velikost je ${Math.round(MAX_JOB_PHOTO_BYTES / (1024 * 1024))} MB.`,
+      });
+      return;
+    }
+    setMeasurementCaptureBusy(true);
+    try {
+      const colRef = collection(firestore, "companies", companyId, "measurement_photos");
+      const photoRef = doc(colRef);
+      const photoDocId = photoRef.id;
+      const up = await uploadMeasurementPhotoFileViaFirebaseSdk(
+        file,
+        companyId,
+        photoDocId
+      );
+      await setDoc(photoRef, {
+        companyId,
+        sourceType: MEASUREMENT_PHOTO_SOURCE_TYPE,
+        originalImageUrl: up.downloadURL,
+        storagePath: up.storagePath,
+        annotatedImageUrl: null,
+        annotatedStoragePath: null,
+        jobId: jobId as string,
+        status: "linked",
+        kind: "measurement",
+        unassigned: true,
+        classificationStatus: "unassigned",
+        title: null,
+        note: null,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: user.uid,
+      });
+      const row = {
+        id: photoDocId,
+        companyId,
+        sourceType: MEASUREMENT_PHOTO_SOURCE_TYPE,
+        originalImageUrl: up.downloadURL,
+        storagePath: up.storagePath,
+        annotatedImageUrl: null as string | null,
+        annotatedStoragePath: null as string | null,
+        jobId: jobId as string,
+        annotationData: undefined,
+      } as Record<string, unknown> & { id: string };
+      setPhotoToEdit(measurementDocToAnnotationTarget(row));
+      setEditorOpen(true);
+      toast({
+        title: "Foto načteno",
+        description: "Upravte kóty a poznámky, poté uložte anotaci.",
+      });
+    } catch (e) {
+      console.error("[JobDetailPage] measurement quick import", e);
+      toast({
+        variant: "destructive",
+        title: "Nahrání se nezdařilo",
+        description:
+          e instanceof Error ? e.message : "Zkuste to znovu nebo zkontrolujte oprávnění.",
+      });
+    } finally {
+      setMeasurementCaptureBusy(false);
+      if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
+      if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
+    }
+  };
+
+  const handleMarkMeasurementPhotoAssigned = async (
+    row: Record<string, unknown> & { id: string }
+  ) => {
+    if (!companyId || !firestore || !user?.uid) return;
+    try {
+      await updateDoc(
+        doc(firestore, "companies", companyId, "measurement_photos", row.id),
+        {
+          unassigned: false,
+          classificationStatus: "assigned",
+          assignedAt: serverTimestamp(),
+          assignedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        }
+      );
+      toast({
+        title: "Zařazeno",
+        description: "Foto už se nebude zobrazovat mezi nezařazenými.",
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Uložení se nezdařilo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    }
+  };
+
+  const handleTransferMeasurementToJobPhotos = async (
+    row: Record<string, unknown> & { id: string }
+  ) => {
+    if (!companyId || !jobId || !user?.uid || !firestore) return;
+    const pathRaw =
+      (typeof row.annotatedStoragePath === "string" && row.annotatedStoragePath.trim()
+        ? row.annotatedStoragePath
+        : null) ||
+      (typeof row.storagePath === "string" ? row.storagePath : "");
+    if (!pathRaw) {
+      toast({
+        variant: "destructive",
+        title: "Chybí soubor",
+        description: "U této fotky není známá cesta ve Storage.",
+      });
+      return;
+    }
+    try {
+      const blob = await getBlob(ref(getFirebaseStorage(), pathRaw));
+      const file = new File([blob], `zamereni-${row.id}.png`, {
+        type: blob.type && blob.type.startsWith("image/") ? blob.type : "image/png",
+      });
+      if (!isAllowedJobImageFile(file)) {
+        toast({
+          variant: "destructive",
+          title: "Nepodporovaný formát",
+          description: "Použijte obrázek.",
+        });
+        return;
+      }
+      const ok = await handlePhotoUpload(file, { skipUploadingFlag: true });
+      if (!ok) return;
+      await updateDoc(
+        doc(firestore, "companies", companyId, "measurement_photos", row.id),
+        {
+          unassigned: false,
+          classificationStatus: "assigned",
+          status: "transferred",
+          assignedAt: serverTimestamp(),
+          assignedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        }
+      );
+      toast({
+        title: "Přesunuto do fotodokumentace",
+        description: "Kopie fotky je v běžné fotodokumentaci zakázky.",
+      });
+    } catch (e) {
+      console.error("[JobDetailPage] transfer measurement to job photos", e);
+      toast({
+        variant: "destructive",
+        title: "Přesun se nezdařil",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
     }
   };
 
@@ -5194,17 +5372,73 @@ function JobDetailPageContent() {
           aria-labelledby="job-measurement-photos-heading"
         >
           <div className={JD.sectionBandInner}>
-            <h2
-              id="job-measurement-photos-heading"
-              className="text-lg font-semibold tracking-tight text-slate-900"
-            >
-              Foto zaměření
-            </h2>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+              <h2
+                id="job-measurement-photos-heading"
+                className="text-lg font-semibold tracking-tight text-slate-900"
+              >
+                Foto zaměření
+              </h2>
+              {canManageFolders ? (
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    ref={measurementGalleryInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) =>
+                      void handleMeasurementPhotoQuickImport(e.target.files?.[0])
+                    }
+                  />
+                  <input
+                    ref={measurementCameraInputRef}
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="hidden"
+                    onChange={(e) =>
+                      void handleMeasurementPhotoQuickImport(e.target.files?.[0])
+                    }
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="gap-1.5"
+                    disabled={measurementCaptureBusy}
+                    onClick={() => measurementGalleryInputRef.current?.click()}
+                  >
+                    {measurementCaptureBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ImagePlus className="h-4 w-4" />
+                    )}
+                    Nahrát / vybrat fotku
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="gap-1.5"
+                    disabled={measurementCaptureBusy}
+                    onClick={() => measurementCameraInputRef.current?.click()}
+                  >
+                    <Camera className="h-4 w-4" />
+                    Vyfotit
+                  </Button>
+                </div>
+              ) : null}
+            </div>
             {measurementPhotosLoading ? (
               <p className="mt-2 text-sm text-muted-foreground">Načítání…</p>
             ) : !measurementPhotosRaw?.length ? (
               <p className="mt-2 text-sm text-muted-foreground">
                 Zatím žádné foto zaměření u této zakázky.
+                {canManageFolders ? (
+                  <span>
+                    {" "}
+                    Použijte tlačítka výše — otevře se editor kót a poznámek jako u fotodokumentace.
+                  </span>
+                ) : null}
               </p>
             ) : (
               <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
@@ -5229,11 +5463,20 @@ function JobDetailPageContent() {
                       : "Foto zaměření";
                   const canDel =
                     canManageFolders || row.createdBy === user?.uid;
+                  const isUnassigned = isMeasurementPhotoUnassignedForJob(row);
                   return (
                     <div
                       key={row.id}
                       className="group relative rounded-lg border border-slate-200 bg-slate-50 overflow-hidden"
                     >
+                      {isUnassigned ? (
+                        <Badge
+                          variant="secondary"
+                          className="absolute left-1 top-1 z-10 text-[10px] font-medium"
+                        >
+                          Nezařazená
+                        </Badge>
+                      ) : null}
                       <button
                         type="button"
                         className="block w-full aspect-square bg-black/5"
@@ -5277,6 +5520,34 @@ function JobDetailPageContent() {
                             <Edit2 className="w-3 h-3 mr-1" />
                             Anotovat
                           </Button>
+                          {isUnassigned && canManageFolders ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 text-xs"
+                              onClick={() =>
+                                void handleMarkMeasurementPhotoAssigned(row)
+                              }
+                            >
+                              Zařadit
+                            </Button>
+                          ) : null}
+                          {isUnassigned && canManageFolders ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-8 gap-0.5 px-1.5 text-[10px]"
+                              title="Kopírovat do běžné fotodokumentace zakázky"
+                              onClick={() =>
+                                void handleTransferMeasurementToJobPhotos(row)
+                              }
+                            >
+                              <FolderInput className="h-3 w-3" />
+                              Do fotek
+                            </Button>
+                          ) : null}
                           {canDel ? (
                             <Button
                               type="button"
@@ -5369,7 +5640,9 @@ function JobDetailPageContent() {
               user={user}
               canManageFolders={canManageFolders}
               photos={photos?.filter(isUsablePhotoRow) as PhotoDoc[] | undefined}
-              uploadLegacyPhoto={handlePhotoUpload}
+              uploadLegacyPhoto={async (file, opts) => {
+                await handlePhotoUpload(file, opts);
+              }}
               legacyUploading={isUploading}
               layout="jobDetailWide"
               onAnnotatePhoto={(target) => {

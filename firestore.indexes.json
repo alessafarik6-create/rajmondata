@@ -162,6 +162,14 @@
       "collectionGroup": "payroll_period_payments",
       "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "payrollPeriod", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "measurement_photos",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "unassigned", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

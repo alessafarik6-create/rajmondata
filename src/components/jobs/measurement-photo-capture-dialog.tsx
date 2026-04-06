@@ -182,6 +182,11 @@ export function MeasurementPhotoCaptureDialog({
       if (resolvedJobId) payload.jobId = resolvedJobId;
       if (resolvedCustomerId) payload.customerId = resolvedCustomerId;
       if (mId) payload.measurementId = mId;
+      if (resolvedJobId) {
+        payload.unassigned = true;
+        payload.classificationStatus = "unassigned";
+        payload.kind = "measurement";
+      }
 
       await setDoc(photoRef, payload);
 

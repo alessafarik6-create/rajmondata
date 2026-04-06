@@ -33,10 +33,33 @@ export type MeasurementPhotoDoc = {
   title?: string | null;
   note?: string | null;
   status?: MeasurementPhotoStatus;
+  /** Typ záznamu (např. měření u zakázky). */
+  kind?: string | null;
+  /**
+   * true = patří k zakázce, ale čeká na zařazení (přehled na dashboardu).
+   * Stará data bez pole = považuj za již zařazená.
+   */
+  unassigned?: boolean | null;
+  classificationStatus?: "unassigned" | "assigned" | string | null;
+  assignedAt?: unknown;
+  assignedBy?: string | null;
   createdAt?: unknown;
   createdBy: string;
   updatedAt?: unknown;
 };
+
+/** Zobrazit v sekci „nezařazené“ jen explicitně označené záznamy s vazbou na zakázku. */
+export function isMeasurementPhotoUnassignedForJob(data: Record<string, unknown>): boolean {
+  const jobId = data.jobId;
+  if (typeof jobId !== "string" || !jobId.trim()) return false;
+  if (data.classificationStatus === "assigned" || data.unassigned === false) {
+    return false;
+  }
+  if (data.classificationStatus === "unassigned" || data.unassigned === true) {
+    return true;
+  }
+  return false;
+}
 
 /** Po převodu zaměření na zakázku doplní jobId u fotek navázaných na measurementId. */
 export async function linkMeasurementPhotosToConvertedJob(
