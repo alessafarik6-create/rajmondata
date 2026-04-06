@@ -4,6 +4,54 @@
  */
 export const PWA_INSTALLED_LOCAL_KEY = "rajmondata-pwa-appinstalled-v1";
 
+/**
+ * SessionStorage — „Zatím nechci instalovat“ jen do odhlášení / nového přihlášení.
+ * Při `signOut` (Firebase) nebo ukončení admin session se maže (`clearPwaBannerSessionDismiss`).
+ */
+export const PWA_BANNER_SESSION_DISMISS_KEY = "rajmondata-pwa-banner-dismiss-v1";
+
+export function readPwaBannerSessionDismiss(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.sessionStorage.getItem(PWA_BANNER_SESSION_DISMISS_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function writePwaBannerSessionDismiss(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(PWA_BANNER_SESSION_DISMISS_KEY, "1");
+  } catch {
+    /* empty */
+  }
+}
+
+export function clearPwaBannerSessionDismiss(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(PWA_BANNER_SESSION_DISMISS_KEY);
+  } catch {
+    /* empty */
+  }
+  try {
+    window.dispatchEvent(new CustomEvent("rajmondata-pwa-banner-refresh"));
+  } catch {
+    /* empty */
+  }
+}
+
+/** Po zápisu dismiss z `beforeinstallprompt` — banner si přečte sessionStorage. */
+export function notifyPwaBannerSessionDismissWritten(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.dispatchEvent(new CustomEvent("rajmondata-pwa-banner-refresh"));
+  } catch {
+    /* empty */
+  }
+}
+
 export type BeforeInstallPromptEventLike = Event & {
   preventDefault: () => void;
   prompt: () => Promise<void>;

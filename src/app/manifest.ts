@@ -7,6 +7,7 @@ import {
 export default function manifest(): MetadataRoute.Manifest {
   return {
     id: "/",
+    lang: "cs",
     name: PLATFORM_NAME,
     short_name: PLATFORM_NAME,
     description: PLATFORM_DESCRIPTION,

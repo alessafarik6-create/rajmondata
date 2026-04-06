@@ -6,7 +6,6 @@ import { initializeFirebase } from "./init";
 import { firebaseClientEnvReady } from "@/firebase/config";
 import { getFirebaseClientEnvUserMessage } from "@/lib/firebase-client-env";
 import { PwaInstallProvider } from "@/components/pwa/pwa-install-context";
-import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 
 interface FirebaseClientProviderProps {
   children: ReactNode;
@@ -58,11 +57,8 @@ export function FirebaseClientProvider({
       firestore={firebaseServices?.firestore ?? null}
       firebaseConfigError={firebaseConfigError}
     >
-      {/* PWA: sdílený stav v PwaInstallProvider + jeden banner; všechny role; neduplikovat na stránkách. */}
-      <PwaInstallProvider>
-        <PwaInstallBanner />
-        {children}
-      </PwaInstallProvider>
+      {/* PWA: stav instalace; banner je v layoutu po přihlášení (portál / admin). */}
+      <PwaInstallProvider>{children}</PwaInstallProvider>
     </FirebaseProvider>
   );
 }

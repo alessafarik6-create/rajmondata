@@ -9,12 +9,17 @@ import React, {
   useState,
   type ReactNode,
 } from "react";
+import { onAuthStateChanged, type Auth } from "firebase/auth";
+import { useFirebase } from "@/firebase/provider";
 import {
   type BeforeInstallPromptEventLike,
+  clearPwaBannerSessionDismiss,
   getIsLikelyIOS,
   getIsStandaloneDisplayMode,
+  notifyPwaBannerSessionDismissWritten,
   readPwaInstalledLocalFlag,
   registerPwaServiceWorker,
+  writePwaBannerSessionDismiss,
   writePwaInstalledLocalFlag,
 } from "@/lib/pwa-install";
 
@@ -123,8 +128,12 @@ export function PwaInstallProvider({ children }: { children: ReactNode }) {
     if (!ev) return;
     try {
       await ev.prompt();
-      await ev.userChoice;
-      /* Jednorázová událost — po prompt() již nelze znovu použít; zobrazení přepne na fallback. */
+      const choice = await ev.userChoice;
+      if (choice.outcome === "dismissed") {
+        writePwaBannerSessionDismiss();
+        notifyPwaBannerSessionDismissWritten();
+      }
+      /* Po accepted řeší skrytí `appinstalled` / localStorage + chromiumInstallDone. */
     } catch {
       /* ignore */
     } finally {

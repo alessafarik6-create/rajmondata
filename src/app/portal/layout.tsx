@@ -37,6 +37,7 @@ import {
   parseEmployeePortalModules,
 } from "@/lib/employee-portal-modules";
 import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
+import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -681,6 +682,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         className="flex-1 flex flex-col min-w-0 min-h-screen bg-slate-100 text-slate-900 dark:bg-background dark:text-foreground"
         data-portal-content
       >
+        <PwaInstallBanner />
         <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
         <main className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 print:p-2 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8 min-w-0">
           {licenseNotice}

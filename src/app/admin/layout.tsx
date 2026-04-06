@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
 import { TopHeader } from "@/components/layout/top-header";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
 import { isGlobalAdminAppPath } from "@/lib/global-admin-shell";
+import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
+import { clearPwaBannerSessionDismiss } from "@/lib/pwa-install";
 
 type AdminSession = {
   username: string;
@@ -22,6 +24,7 @@ export default function AdminLayout({
   const [session, setSession] = useState<AdminSession | null>(null);
   const [loading, setLoading] = useState(true);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const prevSessionRef = useRef<AdminSession | null>(null);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -140,6 +143,15 @@ export default function AdminLayout({
     );
   }, [pathname, session]);
 
+  /** Po odhlášení superadmina znovu zobrazit instalační lištu při dalším přihlášení (stejně jako Firebase signOut). */
+  useEffect(() => {
+    if (loading) return;
+    if (prevSessionRef.current && !session) {
+      clearPwaBannerSessionDismiss();
+    }
+    prevSessionRef.current = session;
+  }, [session, loading]);
+
   if (pathname === "/admin/login") {
     return <>{children}</>;
   }
@@ -198,6 +210,7 @@ export default function AdminLayout({
         className="flex min-w-0 flex-1 flex-col min-h-screen"
         data-admin-content
       >
+        <PwaInstallBanner />
         <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
         <main className="flex-1 overflow-auto px-4 py-4 md:px-6 md:py-6 lg:px-8">
           {children}
