@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Briefcase, ChevronRight, Loader2, MessageSquare } from "lucide-react";
 import { CustomerLinkedJobsProgress } from "@/components/customer/customer-linked-jobs-progress";
+import { CustomerPortalTasksHome } from "@/components/customer/customer-portal-tasks-home";
 
 export default function CustomerPortalHomePage() {
   const { user } = useUser();
@@ -58,13 +59,21 @@ export default function CustomerPortalHomePage() {
       </div>
 
       {user && profile && companyId ? (
-        <CustomerLinkedJobsProgress
-          firestore={firestore}
-          companyId={companyId}
-          customerUid={user.uid}
-          profile={profile}
-          linkedJobIds={linkedJobIds}
-        />
+        <>
+          <CustomerPortalTasksHome
+            firestore={firestore}
+            companyId={companyId}
+            customerUid={user.uid}
+            linkedJobIds={linkedJobIds}
+          />
+          <CustomerLinkedJobsProgress
+            firestore={firestore}
+            companyId={companyId}
+            customerUid={user.uid}
+            profile={profile}
+            linkedJobIds={linkedJobIds}
+          />
+        </>
       ) : null}
 
       <Card>

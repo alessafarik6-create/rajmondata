@@ -28,6 +28,7 @@ import {
 } from "@/lib/job-media-types";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { JobCustomerProgressAdminSection } from "@/components/jobs/job-customer-progress-admin-section";
+import { JobCustomerTasksAdminSection } from "@/components/jobs/job-customer-tasks-admin-section";
 import { JobProductCatalogsSection } from "@/components/jobs/job-product-catalogs-section";
 import {
   buildJobMediaMirrorAnnotatedUrlPatch,
@@ -4873,6 +4874,15 @@ function JobDetailPageContent() {
               companyId={companyId}
               jobId={jobId as string}
               jobRef={jobRef}
+              job={job as Record<string, unknown>}
+              canEdit={canManageFolders}
+            />
+          ) : null}
+
+          {companyId && jobId ? (
+            <JobCustomerTasksAdminSection
+              companyId={companyId}
+              jobId={jobId as string}
               job={job as Record<string, unknown>}
               canEdit={canManageFolders}
             />

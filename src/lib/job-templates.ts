@@ -3,6 +3,8 @@
  * Templates define dynamic sections and fields for jobs (e.g. Pergola dimensions, Family house rooms).
  */
 
+import type { JobQuestionnaireTemplate } from "@/lib/job-customer-questionnaire";
+
 export const JOB_TEMPLATE_FIELD_TYPES = [
   'short_text',
   'long_text',
@@ -46,6 +48,8 @@ export interface JobTemplate {
   productType: string;
   description?: string;
   sections: JobTemplateSection[];
+  /** Dotazník pro zákazníka u zakázek vytvořených z této šablony. */
+  questionnaire?: JobQuestionnaireTemplate | null;
   createdAt?: unknown;
   updatedAt?: unknown;
 }

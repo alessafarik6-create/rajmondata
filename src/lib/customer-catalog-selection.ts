@@ -1,10 +1,16 @@
-import { doc, type Firestore, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection, doc, getDocs, type Firestore, serverTimestamp, setDoc } from "firebase/firestore";
 import { createCustomerActivity } from "@/lib/customer-activity";
 import type {
   JobProductSelectionDoc,
   ProductCatalogDoc,
   ProductSelectionSnapshot,
 } from "@/lib/product-catalogs";
+import {
+  completeAutoCustomerTasksByKind,
+  completeCustomerTasksByTypes,
+  getAssignedProductCatalogsForJob,
+  isProductSelectionSatisfiedForUid,
+} from "@/lib/customer-job-tasks";
 
 export function buildProductSelectionSnapshots(
   catalog: { id: string } & Partial<ProductCatalogDoc>,
@@ -80,6 +86,34 @@ export async function persistCustomerCatalogSelection(
     updatedAt: serverTimestamp(),
   };
   await setDoc(ref, payload, { merge: true });
+
+  try {
+    const catalogsSnap = await getDocs(
+      collection(firestore, "companies", companyId, "product_catalogs")
+    );
+    const catalogs = catalogsSnap.docs.map((d) => ({
+      id: d.id,
+      ...d.data(),
+    })) as Array<{ id: string } & Partial<ProductCatalogDoc>>;
+    const assigned = getAssignedProductCatalogsForJob(catalogs, jobId, customerId);
+    const selSnap = await getDocs(
+      collection(firestore, "companies", companyId, "jobs", jobId, "product_catalog_selections")
+    );
+    const selections = selSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as Array<
+      Partial<JobProductSelectionDoc> & { id?: string }
+    >;
+    if (isProductSelectionSatisfiedForUid(assigned, selections, customerUid)) {
+      await completeAutoCustomerTasksByKind(firestore, companyId, jobId, customerUid, [
+        "select_products",
+      ]);
+      await completeCustomerTasksByTypes(firestore, companyId, jobId, customerUid, [
+        "select_products",
+      ]);
+    }
+  } catch {
+    /* neblokovat uložení výběru */
+  }
+
   await createCustomerActivity(firestore, {
     organizationId: companyId,
     jobId,

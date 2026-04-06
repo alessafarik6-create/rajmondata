@@ -19,6 +19,8 @@ import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { canCustomerAccessJob } from "@/lib/job-customer-access";
 import { CustomerProductCatalogsSection } from "@/components/customer/customer-product-catalogs-section";
 import { CustomerJobProgressCard } from "@/components/customer/customer-job-progress-card";
+import { CustomerJobTasksSection } from "@/components/customer/customer-job-tasks-section";
+import { CustomerJobQuestionnaireSection } from "@/components/customer/customer-job-questionnaire-section";
 
 function safeJobFields(job: Record<string, unknown> | null | undefined) {
   if (!job) return null;
@@ -205,6 +207,21 @@ export default function CustomerJobDetailPage() {
         memberPermissions={null}
         employeeRecordId={null}
         showLegacyPhotosForEmployee={true}
+      />
+
+      <CustomerJobTasksSection
+        companyId={companyId}
+        jobId={jobId}
+        customerUid={user.uid}
+        jobName={overview?.name?.trim() || undefined}
+      />
+
+      <CustomerJobQuestionnaireSection
+        companyId={companyId}
+        jobId={jobId}
+        customerUid={user.uid}
+        customerId={(jobDoc as { customerId?: string })?.customerId ?? null}
+        jobData={jobDoc as Record<string, unknown>}
       />
 
       <CustomerProductCatalogsSection

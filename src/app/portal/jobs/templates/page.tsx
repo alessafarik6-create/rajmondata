@@ -20,6 +20,12 @@ import { ChevronLeft, Plus, Loader2, FileStack } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { JobTemplate, JobTemplateSection, JobTemplateField } from "@/lib/job-templates";
 import { JobTemplateFieldEditor } from "@/components/jobs/job-template-field-editor";
+import {
+  defaultEmptyQuestionnaireTemplate,
+  normalizeJobQuestionnaireTemplate,
+  type JobQuestionnaireTemplate,
+} from "@/lib/job-customer-questionnaire";
+import { JobTemplateQuestionnaireEditor } from "@/components/jobs/job-template-questionnaire-editor";
 
 function generateId() {
   return Math.random().toString(36).slice(2, 12);
@@ -59,11 +65,16 @@ export default function JobTemplatesPage() {
   const [activeTemplateId, setActiveTemplateId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-  const [form, setForm] = useState<Pick<JobTemplate, "name" | "productType" | "description" | "sections">>({
+  type FormState = Pick<JobTemplate, "name" | "productType" | "description" | "sections"> & {
+    questionnaire: NonNullable<JobTemplate["questionnaire"]>;
+  };
+
+  const [form, setForm] = useState<FormState>({
     name: "",
     productType: "",
     description: "",
     sections: [defaultSection()],
+    questionnaire: defaultEmptyQuestionnaireTemplate(),
   });
 
   const resetFormToEmpty = () => {
@@ -72,20 +83,20 @@ export default function JobTemplatesPage() {
       productType: "",
       description: "",
       sections: [defaultSection()],
+      questionnaire: defaultEmptyQuestionnaireTemplate(),
     });
   };
 
   const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
-  const templateToForm = (
-    tpl: JobTemplate & { id?: string } | null | undefined
-  ): Pick<JobTemplate, "name" | "productType" | "description" | "sections"> => {
+  const templateToForm = (tpl: JobTemplate & { id?: string } | null | undefined): FormState => {
     if (!tpl) {
       return {
         name: "",
         productType: "",
         description: "",
         sections: [defaultSection()],
+        questionnaire: defaultEmptyQuestionnaireTemplate(),
       };
     }
 
@@ -94,6 +105,16 @@ export default function JobTemplatesPage() {
       productType: tpl.productType || "",
       description: tpl.description || "",
       sections: deepClone(tpl.sections || []),
+      questionnaire:
+        normalizeJobQuestionnaireTemplate(tpl.questionnaire) ?? defaultEmptyQuestionnaireTemplate(),
+    };
+  };
+
+  const regenerateQuestionnaireIds = (q: JobQuestionnaireTemplate): JobQuestionnaireTemplate => {
+    const base = deepClone(q);
+    return {
+      ...base,
+      questions: (base.questions || []).map((qu, i) => ({ ...qu, id: generateId(), order: i })),
     };
   };
 
@@ -165,6 +186,10 @@ export default function JobTemplatesPage() {
       const payload = {
         ...form,
         sections: form.sections.map((s, i) => ({ ...s, order: i })),
+        questionnaire: {
+          ...form.questionnaire,
+          questions: (form.questionnaire.questions || []).map((qu, i) => ({ ...qu, order: i })),
+        },
       };
 
       if (dialogMode === "edit" && activeTemplateId) {
@@ -276,7 +301,7 @@ export default function JobTemplatesPage() {
               <Plus className="w-4 h-4" /> Nová šablona
             </Button>
           </DialogTrigger>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto bg-white border-slate-200 text-slate-900" data-portal-dialog>
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto bg-white border-slate-200 text-slate-900" data-portal-dialog>
             <DialogHeader>
               <DialogTitle>
                 {dialogMode === "edit" ? "Upravit šablonu zakázky" : "Nová šablona zakázky"}
@@ -365,6 +390,11 @@ export default function JobTemplatesPage() {
                   </Card>
                 ))}
               </div>
+              <JobTemplateQuestionnaireEditor
+                value={form.questionnaire}
+                onChange={(questionnaire) => setForm((p) => ({ ...p, questionnaire }))}
+                generateId={generateId}
+              />
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setDialogOpen(false)}>
@@ -403,6 +433,12 @@ export default function JobTemplatesPage() {
                 <p className="text-sm text-slate-800">
                   {t.sections?.length || 0} sekcí,{" "}
                   {t.sections?.reduce((acc: number, s: JobTemplateSection) => acc + (s.fields?.length || 0), 0) || 0} polí
+                  <br />
+                  Dotazník:{" "}
+                  {normalizeJobQuestionnaireTemplate(
+                    (t as JobTemplate).questionnaire
+                  )?.questions?.length ?? 0}{" "}
+                  otázek
                 </p>
                 <Link href={`/portal/jobs?templateId=${t.id}`}>
                   <Button variant="outline" size="sm" className="mt-2 w-full">
@@ -443,11 +479,16 @@ export default function JobTemplatesPage() {
                           deepClone((t.sections || []) as JobTemplateSection[])
                         );
 
+                        const qBase =
+                          normalizeJobQuestionnaireTemplate((t as JobTemplate).questionnaire) ??
+                          defaultEmptyQuestionnaireTemplate();
+
                         await addDoc(templatesRef, {
                           name: newName,
                           productType: t.productType || "",
                           description: t.description || "",
                           sections: sectionsCopy,
+                          questionnaire: regenerateQuestionnaireIds(qBase),
                           createdAt: serverTimestamp(),
                           updatedAt: serverTimestamp(),
                         });

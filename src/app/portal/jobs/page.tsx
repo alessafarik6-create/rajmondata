@@ -66,6 +66,11 @@ import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { JobTemplate, JobTemplateValues } from "@/lib/job-templates";
+import {
+  cloneQuestionnaireTemplateForJob,
+  normalizeJobQuestionnaireTemplate,
+} from "@/lib/job-customer-questionnaire";
+import { syncAutoCustomerTasksForJob } from "@/lib/customer-job-tasks";
 import { JobTemplateFormFields } from "@/components/jobs/job-template-form-fields";
 import { WorkContractTemplatesManagerDialog } from "@/components/contracts/work-contract-templates-manager-dialog";
 import { userCanManageMeasurements } from "@/lib/measurements";
@@ -522,8 +527,29 @@ function JobsPageContent() {
       if (selectedTemplateId) {
         payload.templateId = selectedTemplateId;
         payload.templateValues = templateValues;
+        const nq = normalizeJobQuestionnaireTemplate(
+          (selectedTemplate as JobTemplate | undefined)?.questionnaire
+        );
+        if (nq && nq.active !== false && (nq.questions?.length ?? 0) > 0) {
+          payload.customerQuestionnaireSnapshot = cloneQuestionnaireTemplateForJob(
+            nq,
+            selectedTemplateId
+          );
+        }
       }
       const createdJobRef = await addDoc(jobsColRef, payload);
+
+      try {
+        await syncAutoCustomerTasksForJob(
+          firestore,
+          companyId,
+          createdJobRef.id,
+          { ...payload, id: createdJobRef.id } as Record<string, unknown>,
+          user.uid
+        );
+      } catch (e) {
+        console.error("[JobsPage] syncAutoCustomerTasksForJob", e);
+      }
 
       logActivitySafe(firestore, companyId, user, profile, {
         actionType: "job.create",

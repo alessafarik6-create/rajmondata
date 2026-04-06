@@ -177,7 +177,7 @@ export function CustomerProductCatalogsSection({
 
   if (!catalogs.length) {
     return (
-      <Card>
+      <Card id="customer-product-catalogs" className="scroll-mt-4">
         <CardHeader>
           <CardTitle>Katalog produktů</CardTitle>
         </CardHeader>
@@ -189,7 +189,7 @@ export function CustomerProductCatalogsSection({
   }
 
   return (
-    <div className="space-y-4">
+    <div id="customer-product-catalogs" className="space-y-4 scroll-mt-4">
       {catalogs.map((catalog) => {
         const selected = new Set(selectionMap.get(catalog.id)?.selectedProductIds ?? []);
         const isSelectionLocked = selectionMap.get(catalog.id)?.status === "confirmed";
