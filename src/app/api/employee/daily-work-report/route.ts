@@ -537,6 +537,39 @@ export async function POST(request: NextRequest) {
 
     console.log("[employee/daily-work-report] submitted", { rid });
 
+    try {
+      const actCol = db.collection("companies").doc(companyId).collection("employee_activities");
+      const msgParts = [
+        `${employeeName} odeslal(a) denní výkaz za ${date} ke schválení.`,
+        jobName ? `Zakázka: ${jobName}.` : null,
+      ].filter(Boolean);
+      await actCol.add(
+        stripUndefinedDeep({
+          organizationId: companyId,
+          employeeUserId: callerUid,
+          employeeName: employeeName || null,
+          type: "worklog_submitted",
+          category: "worklog_submitted",
+          title: "Výkaz práce ke schválení",
+          message: msgParts.join(" "),
+          jobId: jobId || null,
+          jobName: jobName || null,
+          dailyWorkReportId: rid,
+          targetLink: "/portal/labor/dochazka?tab=approvals",
+          createdAt: FieldValue.serverTimestamp(),
+          resolved: false,
+          resolvedAt: null,
+          resolvedBy: null,
+        })
+      );
+    } catch (activityErr) {
+      console.error("[employee/daily-work-report] employee_activities add failed", {
+        message: activityErr instanceof Error ? activityErr.message : String(activityErr),
+        rid,
+        companyId,
+      });
+    }
+
     return NextResponse.json({ ok: true, id: rid });
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e));

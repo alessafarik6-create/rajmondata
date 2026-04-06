@@ -28,6 +28,20 @@ export type CustomerActivityPayload = {
   priority?: "low" | "normal" | "high";
 };
 
+/** Rozšíření záznamu o vyřízení (stará data bez polí = nevyřízeno). */
+export type CustomerActivityResolvedFields = {
+  resolved?: boolean;
+  resolvedAt?: unknown;
+  resolvedBy?: string | null;
+};
+
+/** Stará data bez `resolved` považuj za nevyřízená. */
+export function isCustomerActivityUnresolved(
+  data: CustomerActivityResolvedFields | Record<string, unknown>
+): boolean {
+  return data.resolved !== true;
+}
+
 export async function createCustomerActivity(
   firestore: Firestore,
   payload: CustomerActivityPayload
@@ -38,6 +52,9 @@ export async function createCustomerActivity(
     readAt: null,
     readBy: null,
     priority: payload.priority ?? "normal",
+    resolved: false,
+    resolvedAt: null,
+    resolvedBy: null,
   };
   if (process.env.NODE_ENV === "development") {
     console.log("customer activity created", data);

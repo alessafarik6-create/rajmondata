@@ -54,6 +54,9 @@ import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-ca
 import { DashboardJobTasksWidget } from "@/components/jobs/dashboard-job-tasks-widget";
 import { DashboardTerminalActiveWidget } from "@/components/portal/dashboard-terminal-active-widget";
 import { DashboardDocumentsToPayWidget } from "@/components/portal/dashboard-documents-to-pay-widget";
+import { DashboardActivitySection } from "@/components/portal/dashboard-activity-section";
+import { isCustomerActivityUnresolved } from "@/lib/customer-activity";
+import { isEmployeeActivityUnresolved } from "@/lib/employee-activity";
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import { sumOrientacniCenyFromLeadRows } from "@/lib/lead-estimated-price";
@@ -212,7 +215,16 @@ export default function CompanyDashboard() {
     return query(
       collection(firestore, "companies", companyId, "customer_activities"),
       orderBy("createdAt", "desc"),
-      limit(40)
+      limit(300)
+    );
+  }, [firestore, companyId, showAdminDashboard]);
+
+  const employeeActivitiesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_activities"),
+      orderBy("createdAt", "desc"),
+      limit(300)
     );
   }, [firestore, companyId, showAdminDashboard]);
 
@@ -311,6 +323,7 @@ export default function CompanyDashboard() {
   } = useCollection(attendanceTodayForDashboardQuery);
   const { data: pendingDocumentsRaw } = useCollection(pendingDocumentsQuery);
   const { data: customerActivitiesRaw } = useCollection(customerActivitiesQuery);
+  const { data: employeeActivitiesRaw } = useCollection(employeeActivitiesQuery);
 
   const openWorkSegmentsTodayQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !showAdminDashboard) return null;
@@ -349,52 +362,64 @@ export default function CompanyDashboard() {
     };
     return [...financial].sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
   }, [pendingDocumentsRaw]);
-  const customerActivities = useMemo(
-    () =>
-      (customerActivitiesRaw ?? []) as Array<{
-        id: string;
-        title?: string;
-        message?: string;
-        createdAt?: unknown;
-        isRead?: boolean;
-        targetLink?: string;
-        type?: string;
-      }>,
-    [customerActivitiesRaw]
-  );
-  useEffect(() => {
-    if (!showAdminDashboard) return;
-    if (process.env.NODE_ENV === "development") {
-      console.log("admin dashboard activities", customerActivities);
-    }
-  }, [showAdminDashboard, customerActivities]);
-  const unreadCustomerActivityCount = useMemo(
-    () => customerActivities.filter((a) => a.isRead !== true).length,
-    [customerActivities]
-  );
-  const markCustomerActivityRead = async (activityId: string) => {
-    if (!firestore || !companyId || !user?.uid) return;
-    await updateDoc(
-      doc(firestore, "companies", companyId, "customer_activities", activityId),
-      {
-        isRead: true,
-        readAt: serverTimestamp(),
-        readBy: user.uid,
+  type ActivityRow = {
+    id: string;
+    title?: string;
+    message?: string;
+    createdAt?: unknown;
+    targetLink?: string;
+    resolved?: boolean;
+  };
+
+  const customerActivitiesUnresolved = useMemo(() => {
+    const rows = (customerActivitiesRaw ?? []) as ActivityRow[];
+    return rows.filter((a) => isCustomerActivityUnresolved(a));
+  }, [customerActivitiesRaw]);
+
+  const employeeActivitiesUnresolved = useMemo(() => {
+    const rows = (employeeActivitiesRaw ?? []) as ActivityRow[];
+    return rows.filter((a) => isEmployeeActivityUnresolved(a));
+  }, [employeeActivitiesRaw]);
+
+  const markCustomerActivityResolved = useCallback(
+    async (activityId: string) => {
+      if (!firestore || !companyId || !user?.uid) return;
+      setResolvingCustomerActivityId(activityId);
+      try {
+        await updateDoc(
+          doc(firestore, "companies", companyId, "customer_activities", activityId),
+          {
+            resolved: true,
+            resolvedAt: serverTimestamp(),
+            resolvedBy: user.uid,
+          }
+        );
+      } finally {
+        setResolvingCustomerActivityId(null);
       }
-    );
-  };
-  const formatActivityTime = (raw: unknown): string => {
-    if (!raw) return "";
-    if (typeof raw === "object" && raw && "seconds" in (raw as { seconds?: unknown })) {
-      const sec = Number((raw as { seconds?: unknown }).seconds ?? 0);
-      if (Number.isFinite(sec) && sec > 0) return new Date(sec * 1000).toLocaleString("cs-CZ");
-    }
-    if (typeof raw === "string" || typeof raw === "number") {
-      const d = new Date(raw);
-      if (!Number.isNaN(d.getTime())) return d.toLocaleString("cs-CZ");
-    }
-    return "";
-  };
+    },
+    [firestore, companyId, user?.uid]
+  );
+
+  const markEmployeeActivityResolved = useCallback(
+    async (activityId: string) => {
+      if (!firestore || !companyId || !user?.uid) return;
+      setResolvingEmployeeActivityId(activityId);
+      try {
+        await updateDoc(
+          doc(firestore, "companies", companyId, "employee_activities", activityId),
+          {
+            resolved: true,
+            resolvedAt: serverTimestamp(),
+            resolvedBy: user.uid,
+          }
+        );
+      } finally {
+        setResolvingEmployeeActivityId(null);
+      }
+    },
+    [firestore, companyId, user?.uid]
+  );
 
   const typedJobs: JobData[] = Array.isArray(allJobsRaw)
     ? (allJobsRaw as JobData[])
@@ -510,6 +535,14 @@ export default function CompanyDashboard() {
   const [importLeadsRows, setImportLeadsRows] = useState<LeadImportRow[]>([]);
   const [importLeadsLoading, setImportLeadsLoading] = useState(false);
   const [importLeadsError, setImportLeadsError] = useState<string | null>(null);
+  const [customerActivitiesExpanded, setCustomerActivitiesExpanded] = useState(false);
+  const [employeeActivitiesExpanded, setEmployeeActivitiesExpanded] = useState(false);
+  const [resolvingCustomerActivityId, setResolvingCustomerActivityId] = useState<string | null>(
+    null
+  );
+  const [resolvingEmployeeActivityId, setResolvingEmployeeActivityId] = useState<string | null>(
+    null
+  );
 
   const loadImportLeadsForDashboard = useCallback(async () => {
     if (!companyId || !user) return;
@@ -825,57 +858,29 @@ export default function CompanyDashboard() {
               </Alert>
             </Link>
           ) : null}
-          {customerActivities.length > 0 ? (
-            <Card className={unreadCustomerActivityCount > 0 ? "border-red-300" : undefined}>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2 text-base">
-                  Aktivita zákazníků
-                  {unreadCustomerActivityCount > 0 ? (
-                    <span className="rounded-full bg-red-600 px-2 py-0.5 text-xs text-white">
-                      {unreadCustomerActivityCount}
-                    </span>
-                  ) : null}
-                </CardTitle>
-                <CardDescription>Nové akce a zprávy od zákazníků.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2">
-                {customerActivities.slice(0, 8).map((a) => (
-                  <div
-                    key={a.id}
-                    className={`rounded border p-2 text-sm ${a.isRead ? "bg-card" : "bg-red-50"}`}
-                  >
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="font-medium">{a.title || "Aktivita zákazníka"}</p>
-                        <p className="text-xs text-muted-foreground">{a.message || ""}</p>
-                        <p className="text-[11px] text-muted-foreground">
-                          {formatActivityTime(a.createdAt)}
-                        </p>
-                      </div>
-                      <div className="flex shrink-0 gap-1">
-                        {a.targetLink ? (
-                          <Link href={a.targetLink}>
-                            <Button size="sm" variant="outline">
-                              Otevřít
-                            </Button>
-                          </Link>
-                        ) : null}
-                        {!a.isRead ? (
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            onClick={() => void markCustomerActivityRead(a.id)}
-                          >
-                            Přečteno
-                          </Button>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          ) : null}
+          <DashboardActivitySection
+            title="Aktivita zákazníků"
+            description="Nové akce a zprávy od zákazníků (jen nevyřízené)."
+            items={customerActivitiesUnresolved}
+            expanded={customerActivitiesExpanded}
+            onToggleExpand={() => setCustomerActivitiesExpanded((v) => !v)}
+            onMarkResolved={(id) => void markCustomerActivityResolved(id)}
+            resolvingId={resolvingCustomerActivityId}
+            badgeCount={customerActivitiesUnresolved.length}
+            highlightBorder
+          />
+
+          <DashboardActivitySection
+            title="Aktivita zaměstnanců"
+            description="Např. odeslané výkazy práce ke schválení (jen nevyřízené)."
+            items={employeeActivitiesUnresolved}
+            expanded={employeeActivitiesExpanded}
+            onToggleExpand={() => setEmployeeActivitiesExpanded((v) => !v)}
+            onMarkResolved={(id) => void markEmployeeActivityResolved(id)}
+            resolvingId={resolvingEmployeeActivityId}
+            badgeCount={employeeActivitiesUnresolved.length}
+            highlightBorder
+          />
 
           {pendingDocuments.length > 0 ? (
             <Card className="border-amber-300 bg-amber-50/80">

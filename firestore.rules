@@ -30,6 +30,13 @@ service cloud.firestore {
       return userRole() in ['owner', 'admin', 'manager', 'accountant'];
     }
 
+    /** Zákazník nesmí přepnout customer_activities na vyřízené; vedení může. */
+    function customerActivityResolvedUnchanged() {
+      let was = 'resolved' in resource.data && resource.data.resolved == true;
+      let now = 'resolved' in request.resource.data && request.resource.data.resolved == true;
+      return was == now;
+    }
+
     /** Zaměstnanec může mazat jen vlastní blok ve stavu „čeká“ (nebo legacy bez reviewStatus). */
     function workBlockEmployeeCanSelfDelete() {
       return resource.data.authUserId == request.auth.uid &&
@@ -360,9 +367,22 @@ service cloud.firestore {
           (
             request.resource.data.createdBy == resource.data.createdBy &&
             request.resource.data.createdByRole == resource.data.createdByRole &&
-            request.resource.data.isRead == resource.data.isRead
+            request.resource.data.isRead == resource.data.isRead &&
+            customerActivityResolvedUnchanged()
           )
         );
+        allow delete: if false;
+      }
+
+      /**
+       * Aktivity zaměstnanců pro dashboard (zápis přes Admin SDK).
+       * companies/{companyId}/employee_activities/{activityId}
+       */
+      match /employee_activities/{activityId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || userRole() == 'manager' || userRole() == 'accountant');
+        allow create: if false;
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged();
         allow delete: if false;
       }
 
