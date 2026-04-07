@@ -41,6 +41,7 @@ import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { cn } from "@/lib/utils";
 import { MIN_TERMINAL_PIN_LENGTH, normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
+import { mapFirebaseAuthPasswordChangeError } from "@/lib/firebase-auth-password-errors";
 
 const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
 
@@ -52,25 +53,6 @@ function employeeHasTerminalPinForProfile(
   if (emp.terminalPinActive === false) return false;
   const legacy = emp.attendancePin;
   return legacy != null && String(legacy).length > 0;
-}
-
-function mapPasswordChangeError(err: unknown): string {
-  const code = (err as { code?: string })?.code;
-  switch (code) {
-    case "auth/wrong-password":
-    case "auth/invalid-credential":
-      return "Současné heslo není správné.";
-    case "auth/weak-password":
-      return "Nové heslo je příliš slabé. Zvolte delší nebo složitější heslo.";
-    case "auth/too-many-requests":
-      return "Příliš mnoho pokusů. Zkuste to později.";
-    case "auth/user-not-found":
-      return "Účet neexistuje nebo byl odstraněn.";
-    case "auth/requires-recent-login":
-      return "Z bezpečnostních důvodů se znovu přihlaste a opakujte změnu hesla.";
-    default:
-      return "Změna hesla se nezdařila. Zkuste to znovu.";
-  }
 }
 
 export default function EmployeeProfilePage() {
@@ -384,7 +366,7 @@ export default function EmployeeProfilePage() {
       });
     } catch (err: unknown) {
       console.error(err);
-      const msg = mapPasswordChangeError(err);
+      const msg = mapFirebaseAuthPasswordChangeError(err);
       toast({ variant: "destructive", title: "Chyba", description: msg });
     } finally {
       setPwdLoading(false);
