@@ -120,6 +120,7 @@ import {
 import { resolveEurCzkRate } from "@/lib/exchange-rate-eur-czk";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
+import { PORTAL_MANUAL_INVOICE_TYPE } from "@/lib/portal-manual-invoice";
 import { printInvoiceHtmlDocument } from "@/lib/print-html";
 import {
   Select,
@@ -261,6 +262,7 @@ function invoiceDocTypeLabel(inv: Record<string, unknown>): string {
   if (t === JOB_INVOICE_TYPES.ADVANCE) return "Zálohová faktura";
   if (t === JOB_INVOICE_TYPES.TAX_RECEIPT) return "Daňový doklad (platba)";
   if (t === JOB_INVOICE_TYPES.FINAL_INVOICE) return "Vyúčtovací faktura";
+  if (t === PORTAL_MANUAL_INVOICE_TYPE) return "Faktura (portál)";
   return "Faktura";
 }
 

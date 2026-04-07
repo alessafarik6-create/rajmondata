@@ -34,23 +34,10 @@ import {
   buildMergedPlatformCatalogMap,
   companyLicenseFromCatalogForNewOrg,
 } from '@/lib/platform-module-catalog';
-
-type LookupCompanyAddress = {
-  street: string;
-  city: string;
-  postalCode: string;
-  country: string;
-  registeredAddressFull: string;
-};
-
-type LookupCompanyResult = {
-  ico: string;
-  companyName: string;
-  dic?: string | null;
-  legalForm?: string | null;
-  address: LookupCompanyAddress;
-  establishedAt?: string | null;
-};
+import {
+  lookupCzechCompanyByIco,
+  type CompanyLookupResult,
+} from '@/lib/company-lookup-api';
 
 /** Jednotná normalizace e-mailu pro Firebase (registrace i přihlášení). */
 function normalizeEmail(email: string): string {
@@ -68,7 +55,7 @@ export default function RegisterPage() {
   const [hasMounted, setHasMounted] = useState(false);
   const [icoLookupLoading, setIcoLookupLoading] = useState(false);
   const [icoLookupError, setIcoLookupError] = useState<string | null>(null);
-  const [icoLookupResults, setIcoLookupResults] = useState<LookupCompanyResult[]>([]);
+  const [icoLookupResults, setIcoLookupResults] = useState<CompanyLookupResult[]>([]);
 
   const [formData, setFormData] = useState({
     companyName: '',
@@ -95,21 +82,7 @@ export default function RegisterPage() {
     setHasMounted(true);
   }, []);
 
-  const validateIcoChecksum = (icoRaw: string): boolean => {
-    const ico = icoRaw.replace(/\s+/g, "");
-    if (!/^\d{8}$/.test(ico)) return false;
-    const digits = ico.split("").map((c) => Number(c));
-    const weights = [8, 7, 6, 5, 4, 3, 2];
-    const sum = weights.reduce((acc, w, idx) => acc + digits[idx] * w, 0);
-    const remainder = sum % 11;
-    let check: number;
-    if (remainder === 0) check = 1;
-    else if (remainder === 1) check = 0;
-    else check = 11 - remainder;
-    return check === digits[7];
-  };
-
-  const applyLookupResultToForm = (res: LookupCompanyResult) => {
+  const applyLookupResultToForm = (res: CompanyLookupResult) => {
     setIcoLookupError(null);
     setIcoLookupResults([res]);
     setFormData((prev) => ({
@@ -134,72 +107,24 @@ export default function RegisterPage() {
   };
 
   const lookupIcoFromRegistry = async () => {
-    const ico = formData.ico.replace(/\s+/g, "");
     setIcoLookupError(null);
-
-    if (!/^\d{8}$/.test(ico)) {
-      const msg = "IČO musí obsahovat přesně 8 číslic.";
-      setIcoLookupError(msg);
-      toast({ variant: "destructive", title: "Neplatné IČO", description: msg });
-      return;
-    }
-
-    if (!validateIcoChecksum(ico)) {
-      const msg = "Neplatné IČO (kontrolní číslo nesedí).";
-      setIcoLookupError(msg);
-      toast({ variant: "destructive", title: "Neplatné IČO", description: msg });
-      return;
-    }
-
     setIcoLookupLoading(true);
     try {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), 13000);
-
-      const res = await fetch("/api/company-lookup", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ico }),
-        signal: controller.signal,
-      });
-      clearTimeout(t);
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        const msg = data?.error || "Nepodařilo se načíst údaje z ARES.";
-        setIcoLookupError(msg);
-        toast({ variant: "destructive", title: "Chyba při načítání", description: msg });
-        return;
-      }
-
-      const results = (data?.results || []) as LookupCompanyResult[];
-
-      if (!results.length) {
-        const msg = "Firma nebyla nalezena.";
-        setIcoLookupResults([]);
-        setIcoLookupError(msg);
-        toast({ variant: "destructive", title: "Nenalezeno", description: msg });
-        return;
-      }
-
+      const results = await lookupCzechCompanyByIco(formData.ico, { timeoutMs: 13_000 });
       if (results.length === 1) {
         applyLookupResultToForm(results[0]);
         return;
       }
-
       setIcoLookupResults(results);
       toast({
         title: "Nalezeno více výsledků",
         description: "Vyberte prosím správnou firmu ze seznamu.",
       });
-    } catch (e: any) {
+    } catch (e: unknown) {
       console.error("[register] lookupIco failed", e);
-      const msg =
-        e?.name === "AbortError"
-          ? "Timeout při načítání údajů z ARES."
-          : e?.message || "Nepodařilo se načíst údaje z ARES.";
+      const msg = e instanceof Error ? e.message : "Nepodařilo se načíst údaje z ARES.";
       setIcoLookupError(msg);
+      setIcoLookupResults([]);
       toast({ variant: "destructive", title: "Chyba při načítání", description: msg });
     } finally {
       setIcoLookupLoading(false);

@@ -37,6 +37,8 @@ import {
 } from "@/lib/job-billing-invoices";
 import { normalizeVatRate } from "@/lib/vat-calculations";
 import { useToast } from "@/hooks/use-toast";
+import { PORTAL_MANUAL_INVOICE_TYPE } from "@/lib/portal-manual-invoice";
+import { PortalManualInvoiceForm } from "@/components/invoices/portal-manual-invoice-form";
 
 const VAT_OPTIONS = [0, 12, 21] as const;
 
@@ -398,6 +400,30 @@ export default function EditAdvanceInvoicePage() {
   }
 
   const invType = String((invoice as { type?: string }).type ?? "");
+
+  if (invType === PORTAL_MANUAL_INVOICE_TYPE && user && firestore && companyId && invoiceId) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-6 px-2 pb-10 sm:px-0">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button variant="ghost" size="icon" asChild>
+            <Link href={`/portal/invoices/${invoiceId}`} aria-label="Zpět">
+              <ChevronLeft className="h-6 w-6" />
+            </Link>
+          </Button>
+          <h1 className="text-xl font-bold text-neutral-950 sm:text-2xl">Upravit fakturu</h1>
+        </div>
+        <PortalManualInvoiceForm
+          firestore={firestore}
+          companyId={companyId}
+          userId={user.uid}
+          mode="edit"
+          invoiceId={invoiceId}
+          initialInvoice={invoice as Record<string, unknown>}
+        />
+      </div>
+    );
+  }
+
   const isFinal = invType === JOB_INVOICE_TYPES.FINAL_INVOICE;
   const isTax = invType === JOB_INVOICE_TYPES.TAX_RECEIPT;
   if (
@@ -409,7 +435,7 @@ export default function EditAdvanceInvoicePage() {
       <Alert className="max-w-xl">
         <AlertTitle>Úprava není k dispozici</AlertTitle>
         <AlertDescription>
-          Úplná úprava je u zálohové faktury, vyúčtovací faktury a daňového dokladu.{" "}
+          Úplná úprava je u zálohové faktury, vyúčtovací faktury, daňového dokladu a ruční faktury z portálu.{" "}
           <Link href={`/portal/invoices/${invoiceId}`} className="underline">
             Zpět na doklad
           </Link>
