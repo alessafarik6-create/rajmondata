@@ -5,12 +5,14 @@
 
 import {
   collection,
+  deleteField,
   getDocs,
   limit,
   query,
   serverTimestamp,
   updateDoc,
   where,
+  writeBatch,
   type Firestore,
 } from "firebase/firestore";
 
@@ -69,6 +71,61 @@ export function isMeasurementPhotoUnassignedForJob(data: Record<string, unknown>
     return true;
   }
   return false;
+}
+
+const trimStr = (v: unknown): string =>
+  typeof v === "string" ? v.trim() : "";
+
+/**
+ * Platná vazba: zakázka (jobId) nebo zaměření (measurementId + assignedType measurement).
+ * Bez toho nesmí být `unassigned: false`.
+ */
+export function measurementPhotoHasValidAssignment(data: Record<string, unknown>): boolean {
+  if (trimStr(data.jobId)) return true;
+  const at = trimStr(data.assignedType);
+  if (at === "measurement" && trimStr(data.measurementId)) return true;
+  return false;
+}
+
+/** `unassigned: false`, ale chybí jobId i platná vazba na zaměření — záznam je v nekonzistentním stavu. */
+export function measurementPhotoIsOrphanAssigned(data: Record<string, unknown>): boolean {
+  if (data.unassigned !== false) return false;
+  return !measurementPhotoHasValidAssignment(data);
+}
+
+/**
+ * Opraví až `limitCount` dokumentů s `unassigned: false` bez platné vazby (vrátí je mezi nezařazené).
+ * Vhodné spustit jednou po načtení přehledu (admin).
+ */
+export async function repairOrphanAssignedMeasurementPhotos(
+  firestore: Firestore,
+  companyId: string,
+  limitCount = 400
+): Promise<number> {
+  const col = collection(firestore, "companies", companyId, "measurement_photos");
+  const snap = await getDocs(query(col, where("unassigned", "==", false), limit(limitCount)));
+  const refs = snap.docs
+    .filter((d) => measurementPhotoIsOrphanAssigned(d.data() as Record<string, unknown>))
+    .map((d) => d.ref);
+  let fixed = 0;
+  const chunk = 450;
+  for (let i = 0; i < refs.length; i += chunk) {
+    const batch = writeBatch(firestore);
+    const slice = refs.slice(i, i + chunk);
+    for (const ref of slice) {
+      batch.update(ref, {
+        unassigned: true,
+        classificationStatus: "unassigned",
+        assignedType: deleteField(),
+        assignedAt: deleteField(),
+        assignedBy: deleteField(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+    await batch.commit();
+    fixed += slice.length;
+  }
+  return fixed;
 }
 
 /** Po převodu zaměření na zakázku doplní jobId u fotek navázaných na measurementId. */

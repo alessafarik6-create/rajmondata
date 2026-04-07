@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import type { DocumentData, Firestore, UpdateData } from "firebase/firestore";
 import {
@@ -10,13 +10,10 @@ import {
   limit,
   query,
   updateDoc,
-  deleteDoc,
   serverTimestamp,
   where,
 } from "firebase/firestore";
-import { deleteObject, ref } from "firebase/storage";
 import { useCollection, useMemoFirebase } from "@/firebase";
-import { getFirebaseStorage } from "@/firebase/storage";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,7 +29,6 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -45,7 +41,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { Camera, ChevronDown, ChevronUp, Loader2, MoreHorizontal } from "lucide-react";
 import { getJobMediaPreviewUrl, formatMediaDate } from "@/lib/job-media-types";
-import { isMeasurementPhotoUnassignedForJob } from "@/lib/measurement-photos";
+import {
+  isMeasurementPhotoUnassignedForJob,
+  measurementPhotoHasValidAssignment,
+  repairOrphanAssignedMeasurementPhotos,
+} from "@/lib/measurement-photos";
 import { MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID } from "@/lib/measurement-photo-pending-route";
 import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
@@ -157,28 +157,29 @@ export function DashboardUnassignedMeasurementPhotos({
   const visible = expanded ? rows : rows.slice(0, COLLAPSED_COUNT);
   const hasMore = rows.length > COLLAPSED_COUNT;
 
-  const markAssignedOnly = async (row: Row) => {
-    if (!firestore || !companyId || !userId) return;
-    setBusyId(row.id);
-    try {
-      await updateDoc(doc(firestore, "companies", companyId, "measurement_photos", row.id), {
-        unassigned: false,
-        classificationStatus: "assigned",
-        assignedAt: serverTimestamp(),
-        assignedBy: userId,
-        updatedAt: serverTimestamp(),
+  useEffect(() => {
+    if (!firestore || !companyId) return;
+    let cancelled = false;
+    void repairOrphanAssignedMeasurementPhotos(firestore, companyId)
+      .then((n) => {
+        if (cancelled || n === 0) return;
+        toast({
+          title: "Opraveny záznamy foto zaměření",
+          description: `${n} fotek bez vazby na zakázku nebo zaměření bylo vráceno mezi nezařazené.`,
+        });
+      })
+      .catch((e) => {
+        console.error("[DashboardUnassignedMeasurementPhotos] orphan repair", e);
+        toast({
+          variant: "destructive",
+          title: "Oprava dat se nezdařila",
+          description: e instanceof Error ? e.message : "Zkuste obnovit stránku.",
+        });
       });
-      toast({ title: "Zařazeno", description: "Foto bylo označeno jako zařazené." });
-    } catch (e) {
-      toast({
-        variant: "destructive",
-        title: "Chyba",
-        description: e instanceof Error ? e.message : "Uložení se nezdařilo.",
-      });
-    } finally {
-      setBusyId(null);
-    }
-  };
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, companyId, toast]);
 
   const openAssign = (row: Row, kind: "job" | "measurement" = "job") => {
     setAssignRow(row);
@@ -219,6 +220,21 @@ export function DashboardUnassignedMeasurementPhotos({
         if (jobMeta?.name?.trim()) {
           payload.jobName = jobMeta.name.trim();
         }
+        if (
+          !measurementPhotoHasValidAssignment({
+            ...assignRow,
+            ...payload,
+            jobId: jid,
+          } as Record<string, unknown>)
+        ) {
+          toast({
+            variant: "destructive",
+            title: "Nelze uložit",
+            description: "Chybí platná vazba na zakázku.",
+          });
+          setBusyId(null);
+          return;
+        }
         await updateDoc(
           doc(firestore, "companies", companyId, "measurement_photos", assignRow.id),
           payload as UpdateData<DocumentData>
@@ -251,19 +267,37 @@ export function DashboardUnassignedMeasurementPhotos({
     }
     setBusyId(assignRow.id);
     try {
+      const measPatch = {
+        measurementId: mid,
+        jobId: deleteField(),
+        jobName: deleteField(),
+        unassigned: false,
+        classificationStatus: "assigned",
+        assignedType: "measurement",
+        assignedAt: serverTimestamp(),
+        assignedBy: userId,
+        updatedAt: serverTimestamp(),
+      } satisfies UpdateData<DocumentData>;
+      if (
+        !measurementPhotoHasValidAssignment({
+          ...assignRow,
+          jobId: null,
+          measurementId: mid,
+          assignedType: "measurement",
+          unassigned: false,
+        } as Record<string, unknown>)
+      ) {
+        toast({
+          variant: "destructive",
+          title: "Nelze uložit",
+          description: "Chybí platná vazba na zaměření.",
+        });
+        setBusyId(null);
+        return;
+      }
       await updateDoc(
         doc(firestore, "companies", companyId, "measurement_photos", assignRow.id),
-        {
-          measurementId: mid,
-          jobId: deleteField(),
-          jobName: deleteField(),
-          unassigned: false,
-          classificationStatus: "assigned",
-          assignedType: "measurement",
-          assignedAt: serverTimestamp(),
-          assignedBy: userId,
-          updatedAt: serverTimestamp(),
-        } satisfies UpdateData<DocumentData>
+        measPatch
       );
       toast({
         title: "Přiřazeno k zaměření",
@@ -274,53 +308,6 @@ export function DashboardUnassignedMeasurementPhotos({
       toast({
         variant: "destructive",
         title: "Přiřazení se nezdařilo",
-        description: e instanceof Error ? e.message : "Zkuste to znovu.",
-      });
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const deletePhoto = async (row: Row) => {
-    if (!firestore || !companyId || !userId) return;
-    const canDel =
-      canManagePhotos || (typeof row.createdBy === "string" && row.createdBy === userId);
-    if (!canDel) {
-      toast({
-        variant: "destructive",
-        title: "Nelze smazat",
-        description: "Chybí oprávnění ke smazání tohoto záznamu.",
-      });
-      return;
-    }
-    if (!window.confirm("Smazat foto zaměření včetně souborů ve úložišti?")) return;
-    setBusyId(row.id);
-    try {
-      const sp = typeof row.storagePath === "string" ? row.storagePath : "";
-      const asp =
-        typeof row.annotatedStoragePath === "string" ? row.annotatedStoragePath : "";
-      const storage = getFirebaseStorage();
-      if (sp) {
-        try {
-          await deleteObject(ref(storage, sp));
-        } catch {
-          /* ignore */
-        }
-      }
-      if (asp) {
-        try {
-          await deleteObject(ref(storage, asp));
-        } catch {
-          /* ignore */
-        }
-      }
-      await deleteDoc(doc(firestore, "companies", companyId, "measurement_photos", row.id));
-      toast({ title: "Foto bylo odstraněno" });
-    } catch (e) {
-      console.error(e);
-      toast({
-        variant: "destructive",
-        title: "Smazání se nezdařilo",
         description: e instanceof Error ? e.message : "Zkuste to znovu.",
       });
     } finally {
@@ -437,30 +424,19 @@ export function DashboardUnassignedMeasurementPhotos({
                             Otevřít
                           </DropdownMenuItem>
                           <DropdownMenuItem asChild>
-                            <Link href={editHref}>Upravit (anotace)</Link>
+                            <Link href={editHref}>Upravit</Link>
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onSelect={() => openAssign(row, "job")}
                             disabled={!canManagePhotos}
                           >
-                            Přiřadit k zakázce…
+                            Přiřadit k zakázce
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onSelect={() => openAssign(row, "measurement")}
                             disabled={!canManageMeasurements}
                           >
-                            Přiřadit k zaměření…
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem onSelect={() => void markAssignedOnly(row)}>
-                            Jen označit zařazené
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
-                            onSelect={() => void deletePhoto(row)}
-                          >
-                            Smazat
+                            Přiřadit k zaměření
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -525,7 +501,7 @@ export function DashboardUnassignedMeasurementPhotos({
             {lightboxRow ? (
               <Button type="button" asChild>
                 <Link href={editorHrefForMeasurementRow(lightboxRow)} onClick={() => setLightboxRow(null)}>
-                  Upravit anotace
+                  Upravit
                 </Link>
               </Button>
             ) : null}

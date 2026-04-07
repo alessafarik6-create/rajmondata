@@ -4030,24 +4030,36 @@ function JobDetailPageContent() {
     handleMeasurementPhotoQuickImport,
   ]);
 
-  const handleMarkMeasurementPhotoAssigned = async (
+  /** Zařazení pouze s platnou vazbou na aktuální zakázku (jobId + assignedType). */
+  const handleAssignMeasurementPhotoToCurrentJob = async (
     row: Record<string, unknown> & { id: string }
   ) => {
-    if (!companyId || !firestore || !user?.uid) return;
+    if (!companyId || !firestore || !user?.uid || !jobFirestoreId) return;
+    const rowJob = typeof row.jobId === "string" ? row.jobId.trim() : "";
+    if (rowJob && rowJob !== jobFirestoreId) {
+      toast({
+        variant: "destructive",
+        title: "Nelze přiřadit",
+        description: "Tato fotka patří k jiné zakázce.",
+      });
+      return;
+    }
     try {
       await updateDoc(
         doc(firestore, "companies", companyId, "measurement_photos", row.id),
         {
+          jobId: jobFirestoreId,
           unassigned: false,
           classificationStatus: "assigned",
+          assignedType: "job",
           assignedAt: serverTimestamp(),
           assignedBy: user.uid,
           updatedAt: serverTimestamp(),
         }
       );
       toast({
-        title: "Zařazeno",
-        description: "Foto už se nebude zobrazovat mezi nezařazenými.",
+        title: "Přiřazeno k zakázce",
+        description: "Foto je zařazené u této zakázky.",
       });
     } catch (e) {
       console.error(e);
@@ -4094,8 +4106,10 @@ function JobDetailPageContent() {
       await updateDoc(
         doc(firestore, "companies", companyId, "measurement_photos", row.id),
         {
+          jobId: String(jobId),
           unassigned: false,
           classificationStatus: "assigned",
+          assignedType: "job",
           status: "transferred",
           assignedAt: serverTimestamp(),
           assignedBy: user.uid,
@@ -6315,10 +6329,10 @@ function JobDetailPageContent() {
                               variant="outline"
                               className="h-8 text-xs"
                               onClick={() =>
-                                void handleMarkMeasurementPhotoAssigned(row)
+                                void handleAssignMeasurementPhotoToCurrentJob(row)
                               }
                             >
-                              Zařadit
+                              Přiřadit k zakázce
                             </Button>
                           ) : null}
                           {isUnassigned && canManageFolders ? (
