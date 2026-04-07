@@ -233,7 +233,9 @@ type WorkContractDoc = {
   jobId?: string;
   /** Legacy + nový obecný typ dokumentu ke zakázce */
   contractType?: string;
+  /** Hlavní název v tisku / PDF; alias vázaný pole `title` (kompatibilita). */
   documentTitle?: string | null;
+  title?: string | null;
   documentRole?: "contract" | "addendum" | string | null;
   documentSubtype?: string | null;
   parentContractId?: string | null;
@@ -265,7 +267,7 @@ type WorkContractDoc = {
 type ContractOpenPreset = "sod_work" | "new_contract" | "new_addendum";
 
 function workContractDisplayTitle(c: WorkContractDoc): string {
-  const t = String(c.documentTitle ?? "").trim();
+  const t = String(c.documentTitle ?? c.title ?? "").trim();
   if (t) return t;
   const tn = String(c.templateName ?? "").trim();
   if (tn) return tn;
@@ -2714,6 +2716,7 @@ function JobDetailPageContent() {
       isTemplate: false,
       contractType: "contract_document",
       documentTitle: contractForm.documentTitle?.trim() || null,
+      title: contractForm.documentTitle?.trim() || null,
       documentRole: contractForm.documentRole,
       documentSubtype: contractForm.documentSubtype?.trim() || "custom",
       parentContractId:

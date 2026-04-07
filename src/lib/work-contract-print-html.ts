@@ -374,7 +374,7 @@ export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
   </head>
   <body>
     <article class="sheet">
-      <h1 class="doc-title">Smlouva o dílo</h1>
+      <h1 class="doc-title">${pageTitle}</h1>
 
       <dl class="meta">
         <div class="meta-item">
