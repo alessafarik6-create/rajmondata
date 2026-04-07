@@ -45,6 +45,10 @@ import {
   type CompanyDocumentLike,
 } from "@/lib/company-documents-financial";
 import {
+  documentJobLinkId,
+  type CompanyDocumentAssignmentLike,
+} from "@/lib/company-document-assignment";
+import {
   formatKc,
   sumMoneyForApprovedDailyReports,
   type DailyWorkReportMoney,
@@ -350,7 +354,8 @@ export default function CompanyDashboard() {
   const pendingDocuments = useMemo(() => {
     const rows = (pendingDocumentsRaw ?? []) as PendingDocumentRow[];
     const financial = rows.filter((r) =>
-      isFinancialCompanyDocument(r as CompanyDocumentLike)
+      isFinancialCompanyDocument(r as CompanyDocumentLike) &&
+      !documentJobLinkId(r as CompanyDocumentAssignmentLike)
     );
     const toMs = (t: unknown) => {
       if (t && typeof (t as { toMillis?: () => number }).toMillis === "function") {

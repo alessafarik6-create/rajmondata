@@ -79,6 +79,12 @@ import {
 import { uploadJobPhotoFileViaFirebaseSdk } from "@/lib/job-photo-upload";
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import {
+  documentJobLinkId,
+  documentShowsAsPendingAssignment,
+  effectiveCompanyDocumentAssignmentTypeForForm,
+  resolveDocumentAssignmentBadge,
+} from "@/lib/company-document-assignment";
+import {
   compareDocumentsForPaymentQueue,
   documentGrossForPayment,
   getDocumentPaymentUrgency,
@@ -594,7 +600,7 @@ function DocumentsPageContent() {
   const pendingDocs = useMemo(
     () =>
       financialDocumentsActive
-        .filter((d) => d.assignmentType === "pending_assignment")
+        .filter((d) => documentShowsAsPendingAssignment(d))
         .sort(
           (a, b) => docCreatedAtMs(b.createdAt) - docCreatedAtMs(a.createdAt)
         ),
@@ -1193,8 +1199,8 @@ function DocumentsPageContent() {
 
   const openAssignDialog = (row: CompanyDocumentRow) => {
     setAssigningDocId(row.id);
-    setAssignTypeNext(row.assignmentType ?? "pending_assignment");
-    setAssignJobIdNext((row.jobId ?? row.zakazkaId ?? "").trim());
+    setAssignTypeNext(effectiveCompanyDocumentAssignmentTypeForForm(row));
+    setAssignJobIdNext(documentJobLinkId(row));
     setAssignDialogOpen(true);
   };
 
@@ -1294,14 +1300,18 @@ function DocumentsPageContent() {
   const openEditDocument = (row: CompanyDocumentRow) => {
     if (isDeliveryNote(row)) {
       setEditInvoiceId(String(row.invoiceId ?? "").trim());
-      setEditAssignmentType(
-        row.assignmentType === "job_cost" ||
-          row.assignmentType === "company" ||
-          row.assignmentType === "warehouse" ||
-          row.assignmentType === "pending_assignment"
-          ? row.assignmentType
-          : "pending_assignment"
-      );
+      {
+        let at = effectiveCompanyDocumentAssignmentTypeForForm(row);
+        if (at === "overhead") at = "company";
+        setEditAssignmentType(
+          at === "job_cost" ||
+            at === "company" ||
+            at === "warehouse" ||
+            at === "pending_assignment"
+            ? at
+            : "pending_assignment"
+        );
+      }
       setEditWarehouseId(String(row.assignedTo?.warehouseId ?? "").trim());
       setEditSupplier(String((row as { supplier?: string }).supplier ?? row.entityName ?? ""));
       setEditRow(row);
@@ -1334,14 +1344,7 @@ function DocumentsPageContent() {
     );
     setEditRow(row);
     setEditInvoiceId(String(row.invoiceId ?? "").trim());
-    setEditAssignmentType(
-      row.assignmentType === "job_cost" ||
-        row.assignmentType === "company" ||
-        row.assignmentType === "warehouse" ||
-        row.assignmentType === "pending_assignment"
-        ? row.assignmentType
-        : "pending_assignment"
-    );
+    setEditAssignmentType(effectiveCompanyDocumentAssignmentTypeForForm(row));
     setEditWarehouseId(String(row.assignedTo?.warehouseId ?? "").trim());
     setEditSupplier(String((row as { supplier?: string }).supplier ?? row.entityName ?? ""));
     setEditForm({
@@ -3042,8 +3045,8 @@ function DocumentTableReceived({
               <span>Poznámka</span>
             </div>
             {rows.map((row) => {
-              const jobLinkId =
-                (row.jobId ?? row.zakazkaId)?.trim() || "";
+              const jobLinkId = documentJobLinkId(row);
+              const showPendingHighlight = documentShowsAsPendingAssignment(row);
               const fromJobExpense =
                 row.source === JOB_EXPENSE_DOCUMENT_SOURCE ||
                 row.sourceType === "expense";
@@ -3062,14 +3065,7 @@ function DocumentTableReceived({
               const pr = row as CompanyDocumentPaymentRow;
               const payU = getDocumentPaymentUrgency(pr, todayIso);
 
-              const assignmentBadge =
-                row.assignmentType === "job_cost"
-                  ? "Zakázka"
-                  : row.assignmentType === "warehouse"
-                    ? "Sklad"
-                    : row.assignmentType === "company" || row.assignmentType === "overhead"
-                      ? "Firma"
-                    : "Nezařazeno";
+              const assignmentBadge = resolveDocumentAssignmentBadge(row);
 
               const iconBtn =
                 "h-10 w-10 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950 sm:h-7 sm:w-7 touch-manipulation";
@@ -3082,7 +3078,7 @@ function DocumentTableReceived({
                     "border-b border-gray-200 text-gray-900 hover:bg-gray-50/80 max-lg:rounded-lg max-lg:border max-lg:border-gray-200 max-lg:bg-white",
                     fromJobExpense && "bg-amber-50/90",
                     fromJobMedia && "bg-sky-50/90",
-                    row.assignmentType === "pending_assignment" &&
+                    showPendingHighlight &&
                       "bg-amber-50/90 ring-1 ring-inset ring-amber-200"
                   )}
                 >
@@ -3240,7 +3236,7 @@ function DocumentTableReceived({
                       <Badge
                         className={cn(
                           "h-5 px-1.5 text-[10px] font-normal text-white",
-                          row.assignmentType === "pending_assignment"
+                          showPendingHighlight
                             ? "bg-amber-600 hover:bg-amber-600"
                             : "bg-slate-700 hover:bg-slate-700"
                         )}
@@ -3276,13 +3272,14 @@ function DocumentTableReceived({
                       </Link>
                     ) : (
                       <span className="text-gray-800 line-clamp-2 break-words">
-                        {row.assignmentType === "pending_assignment"
+                        {showPendingHighlight
                           ? "Doklad není zařazen"
                           : row.assignmentType === "warehouse"
                             ? "Sklad"
-                            : row.assignmentType === "company"
+                            : row.assignmentType === "company" ||
+                                row.assignmentType === "overhead"
                               ? "Firma"
-                          : row.entityName ?? "—"}
+                              : row.entityName ?? "—"}
                       </span>
                     )}
                   </div>
@@ -3579,8 +3576,7 @@ function DocumentTableIssued({
                 const docRow = entry.row;
                 const issuedAm = docDisplayAmounts(docRow);
                 const title = docDisplayTitle(docRow);
-                const issuedJobId =
-                  (docRow.jobId ?? docRow.zakazkaId)?.trim() || "";
+                const issuedJobId = documentJobLinkId(docRow);
                 return (
                   <div
                     key={`doc-${docRow.id}`}

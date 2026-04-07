@@ -50,10 +50,16 @@ export type MeasurementPhotoDoc = {
   updatedAt?: unknown;
 };
 
-/** Zobrazit v sekci „nezařazené“ jen explicitně označené záznamy s vazbou na zakázku. */
+/**
+ * Na detailu zakázky: štítek „nezařazená“ jen když fotka nemá vazbu na zakázku,
+ * nebo je explicitně označená jako nezařazená bez jobId.
+ * Pokud existuje jobId, považujeme záznam za zařazený (fallback pro stará pole unassigned / classificationStatus).
+ */
 export function isMeasurementPhotoUnassignedForJob(data: Record<string, unknown>): boolean {
   const jobId = data.jobId;
-  if (typeof jobId !== "string" || !jobId.trim()) return false;
+  if (typeof jobId === "string" && jobId.trim()) {
+    return false;
+  }
   if (data.classificationStatus === "assigned" || data.unassigned === false) {
     return false;
   }
