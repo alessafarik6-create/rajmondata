@@ -72,6 +72,8 @@ export type WorkContractLike = {
   depositPercentage?: string | number | null;
   zalohovaCastka?: string | number | null;
   zalohovaProcenta?: string | number | null;
+  /** Dodatek vs. hlavní smlouva — pro výběr „primární“ smlouvy k zálohám. */
+  documentRole?: string | null;
 };
 
 /** Volitelný výchozí / vybraný účet přímo na zakázce (jobs/{id}). */
@@ -166,6 +168,24 @@ export function hasAdvanceTerms(
 ): boolean {
   const kc = depositGrossKcFromContract(contract, budgetGross);
   return kc > 0;
+}
+
+/**
+ * Preferuje smlouvu (ne dodatek) s vyplněnou zálohou; jinak první vhodný záznam.
+ */
+export function selectPrimaryWorkContractForBilling(
+  contracts: WorkContractLike[],
+  budgetGross: number | null
+): WorkContractLike | null {
+  if (!contracts.length) return null;
+  const isAddendum = (c: WorkContractLike) =>
+    String(c.documentRole ?? "").trim() === "addendum";
+  const nonAdd = contracts.filter((c) => !isAddendum(c));
+  const pool = nonAdd.length ? nonAdd : contracts;
+  for (const c of pool) {
+    if (hasAdvanceTerms(c, budgetGross)) return c;
+  }
+  return pool[0] ?? null;
 }
 
 function splitGrossToNetVat(
@@ -1410,8 +1430,9 @@ export async function createFinalSettlementInvoice(params: {
   }
 
   const primaryContract =
-    params.workContractsForJob.find((c) =>
-      hasAdvanceTerms(c, params.budget.budgetGross)
+    selectPrimaryWorkContractForBilling(
+      params.workContractsForJob,
+      params.budget.budgetGross
     ) ?? params.workContractsForJob[0] ?? null;
 
   const settlement = computeSettlementAmounts({

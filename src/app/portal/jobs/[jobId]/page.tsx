@@ -133,7 +133,10 @@ import {
   VAT_RATE_OPTIONS,
   type JobBudgetType,
 } from "@/lib/vat-calculations";
-import { allocateNextSodContractNumber } from "@/lib/work-contract-counter";
+import {
+  allocateNextSeriesContractNumber,
+  allocateNextSodContractNumber,
+} from "@/lib/work-contract-counter";
 import {
   buildWorkContractPrintHtml,
   withLineBreaks,
@@ -199,6 +202,16 @@ type DragMode =
   | "note-resize-br";
 
 type WorkContractForm = {
+  /** Zobrazovaný název dokumentu (PDF, seznam) — nezávislý na čísle */
+  documentTitle: string;
+  /** smlouva vs. dodatek */
+  documentRole: "contract" | "addendum";
+  /** work_contract, reservation_contract, contract_addendum, custom, … */
+  documentSubtype: string;
+  /** Pro dodatek — id nadřazené smlouvy ve stejné zakázce */
+  parentContractId: string;
+  /** Řada čísel: SOD sdílí stávající čítač, ostatní používají vlastní řadu */
+  numberSeriesPrefix: string;
   templateName: string;
   contractHeader: string;
   mainContractContent: string;
@@ -218,7 +231,14 @@ type WorkContractForm = {
 type WorkContractDoc = {
   id: string;
   jobId?: string;
+  /** Legacy + nový obecný typ dokumentu ke zakázce */
   contractType?: string;
+  documentTitle?: string | null;
+  documentRole?: "contract" | "addendum" | string | null;
+  documentSubtype?: string | null;
+  parentContractId?: string | null;
+  numberSeriesPrefix?: string | null;
+  isTemplate?: boolean;
   templateDocId?: string | null;
   templateName?: string | null;
   contractHeader?: string;
@@ -240,6 +260,89 @@ type WorkContractDoc = {
   pdfSavedAt?: any;
   createdAt?: any;
   updatedAt?: any;
+};
+
+type ContractOpenPreset = "sod_work" | "new_contract" | "new_addendum";
+
+function workContractDisplayTitle(c: WorkContractDoc): string {
+  const t = String(c.documentTitle ?? "").trim();
+  if (t) return t;
+  const tn = String(c.templateName ?? "").trim();
+  if (tn) return tn;
+  const first = String(c.contractHeader ?? "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .find((s) => s.length > 0);
+  if (first) return first;
+  return "Dokument";
+}
+
+function workContractDisplayTypeLabel(c: WorkContractDoc): string {
+  const role = String(c.documentRole ?? "").trim();
+  if (role === "addendum") return "Dodatek";
+  return "Smlouva";
+}
+
+function workContractDocToForm(
+  data: WorkContractDoc,
+  companyBankAccountNumber: string
+): WorkContractForm {
+  const docRole =
+    data.documentRole === "addendum" ? "addendum" : "contract";
+  const ct = String(data.contractType ?? "").trim();
+  const legacySubtype =
+    ct === "smlouva_o_dilo" || !ct ? "work_contract" : "custom";
+
+  return {
+    documentTitle: String(data.documentTitle ?? "").trim(),
+    documentRole: docRole,
+    documentSubtype:
+      String(data.documentSubtype ?? "").trim() || legacySubtype,
+    parentContractId: String(data.parentContractId ?? "").trim(),
+    numberSeriesPrefix:
+      String(data.numberSeriesPrefix ?? "").trim().toUpperCase() || "SOD",
+    templateName: (data.templateName as string) || "",
+    contractHeader: (data.contractHeader as string) || "",
+    mainContractContent: (data.mainContractContent as string) || "",
+    client: (data.client as string) || "",
+    contractor: (data.contractor as string) || "",
+    additionalInfo: (data.additionalInfo as string) || "",
+    depositPercentage:
+      data.zalohovaProcenta != null && String(data.zalohovaProcenta) !== ""
+        ? String(data.zalohovaProcenta)
+        : data.depositPercentage != null
+          ? String(data.depositPercentage)
+          : "",
+    depositAmount:
+      data.zalohovaCastka != null && String(data.zalohovaCastka) !== ""
+        ? String(data.zalohovaCastka)
+        : data.depositAmount != null
+          ? String(data.depositAmount)
+          : "",
+    bankAccountNumber:
+      (data.bankAccountNumber as string) || companyBankAccountNumber || "",
+    bankAccountId: (data.bankAccountId as string | null) ?? null,
+    contractNumber: (data.contractNumber as string) || "",
+    contractDateLabel:
+      formatCsDateFromFirestore(data.contractIssuedAt) ||
+      formatCsDateFromFirestore(data.createdAt) ||
+      "",
+  };
+}
+
+const EMPTY_CONTRACT_FORM_FIELDS: Pick<
+  WorkContractForm,
+  | "documentTitle"
+  | "documentRole"
+  | "documentSubtype"
+  | "parentContractId"
+  | "numberSeriesPrefix"
+> = {
+  documentTitle: "",
+  documentRole: "contract",
+  documentSubtype: "work_contract",
+  parentContractId: "",
+  numberSeriesPrefix: "SOD",
 };
 
 type JobCustomerInputMode = "list" | "manual";
@@ -801,9 +904,14 @@ function JobDetailPageContent() {
 
   const workContractsForJob = useMemo(() => {
     const list = (workContracts || []) as WorkContractDoc[];
-    const filtered = list.filter(
-      (c) => !c.contractType || c.contractType === "smlouva_o_dilo"
-    );
+    const filtered = list.filter((c) => {
+      if (c.isTemplate === true) return false;
+      const ct = String(c.contractType ?? "").trim();
+      if (!ct || ct === "smlouva_o_dilo" || ct === "contract_document") {
+        return true;
+      }
+      return false;
+    });
 
     const getTime = (t: any) => {
       if (!t) return 0;
@@ -891,6 +999,11 @@ function JobDetailPageContent() {
   const [hasLoadedWorkContract, setHasLoadedWorkContract] = useState(false);
   const [isSavingContract, setIsSavingContract] = useState(false);
   const [contractForm, setContractForm] = useState<WorkContractForm>({
+    documentTitle: "",
+    documentRole: "contract",
+    documentSubtype: "work_contract",
+    parentContractId: "",
+    numberSeriesPrefix: "SOD",
     templateName: "",
     contractHeader: "",
     mainContractContent: "",
@@ -904,6 +1017,16 @@ function JobDetailPageContent() {
     contractNumber: "",
     contractDateLabel: "",
   });
+
+  const parentContractChoices = useMemo(
+    () =>
+      workContractsForJob.filter(
+        (c) =>
+          c.id !== activeWorkContractId &&
+          String(c.documentRole ?? "").trim() !== "addendum"
+      ),
+    [workContractsForJob, activeWorkContractId]
+  );
 
   const selectedBankAccount = useMemo(() => {
     if (!contractForm.bankAccountId) return null;
@@ -1530,7 +1653,10 @@ function JobDetailPageContent() {
       );
 
       return buildWorkContractPrintHtml({
-        pageTitle: form.templateName?.trim() || "Smlouva o dílo",
+        pageTitle:
+          form.documentTitle?.trim() ||
+          form.templateName?.trim() ||
+          "Smlouva o dílo",
         contractNumber: form.contractNumber?.trim() || "",
         variableSymbol: form.contractNumber?.trim() || "",
         documentDate:
@@ -1591,26 +1717,34 @@ function JobDetailPageContent() {
     jobBudgetKc,
   ]);
 
-  const buildPrefilledContractHeader = useCallback((): string => {
-    const jobName = job?.name || "Zakázka";
-    const clientName = customer ? deriveCustomerDisplayName(customer) : "";
-    const supplierName =
-      companyNameFromDoc ||
-      companyDoc?.companyName ||
-      (companyDoc as any)?.name ||
-      "";
-    const dateStr = new Intl.DateTimeFormat("cs-CZ").format(new Date());
+  const buildPrefilledContractHeader = useCallback(
+    (titleLine?: string): string => {
+      const jobName = job?.name || "Zakázka";
+      const clientName = customer ? deriveCustomerDisplayName(customer) : "";
+      const supplierName =
+        companyNameFromDoc ||
+        companyDoc?.companyName ||
+        (companyDoc as any)?.name ||
+        "";
+      const dateStr = new Intl.DateTimeFormat("cs-CZ").format(new Date());
 
-    return [
-      "Smlouva o dílo",
-      `Zakázka: ${jobName}`,
-      clientName ? `Objednatel: ${clientName}` : "",
-      supplierName ? `Dodavatel: ${supplierName}` : "",
-      `Datum: ${dateStr}`,
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }, [job?.name, customer, companyDoc, companyNameFromDoc]);
+      const line1 =
+        titleLine === undefined
+          ? "Smlouva o dílo"
+          : titleLine.trim() || "Dokument ke zakázce";
+
+      return [
+        line1,
+        `Zakázka: ${jobName}`,
+        clientName ? `Objednatel: ${clientName}` : "",
+        supplierName ? `Dodavatel: ${supplierName}` : "",
+        `Datum: ${dateStr}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+    },
+    [job?.name, customer, companyDoc, companyNameFromDoc]
+  );
 
   const buildTemplateValuesText = useCallback((): string => {
     return formatJobTemplateDataPlainText(
@@ -1731,72 +1865,95 @@ function JobDetailPageContent() {
     prefillContractFormFromJobAndCustomer,
   ]);
 
-  const openContractDialog = useCallback(async () => {
-    if (!firestore || !companyId || !jobId) {
-      toast({
-        variant: "destructive",
-        title: "Chyba",
-        description: "Chybí data pro načtení smlouvy.",
+  const openContractDialog = useCallback(
+    async (preset: ContractOpenPreset = "sod_work") => {
+      if (!firestore || !companyId || !jobId) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: "Chybí data pro načtení smlouvy.",
+        });
+        return;
+      }
+
+      // Create a new contract version id for each click.
+      const newContractId = `${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+
+      setContractDialogMode("edit");
+      setContractDialogOpen(true);
+      setHasLoadedWorkContract(true);
+      setIsContractDirty(false);
+
+      setActiveWorkContractId(newContractId);
+      setSelectedWorkContractTemplateId("__new__");
+
+      const autoClientText = customer
+        ? deriveClientText(customer)
+        : buildClientTextFromJobSnapshot(job as any);
+      const defaultBankAccount =
+        bankAccounts && bankAccounts.length > 0 ? bankAccounts[0] : null;
+      const autoContractorText = deriveContractorText(
+        companyDoc,
+        companyNameFromDoc,
+        defaultBankAccount
+      );
+
+      const presetTitle =
+        preset === "sod_work"
+          ? "Smlouva o dílo"
+          : preset === "new_addendum"
+            ? "Dodatek ke smlouvě"
+            : "";
+      const headerTitleArg =
+        preset === "new_contract" ? "" : presetTitle || undefined;
+
+      setContractForm({
+        documentTitle: presetTitle,
+        documentRole: preset === "new_addendum" ? "addendum" : "contract",
+        documentSubtype:
+          preset === "new_addendum"
+            ? "contract_addendum"
+            : preset === "sod_work"
+              ? "work_contract"
+              : "custom",
+        parentContractId: "",
+        numberSeriesPrefix: preset === "new_addendum" ? "DOD" : "SOD",
+        templateName: "",
+        contractHeader: buildPrefilledContractHeader(headerTitleArg),
+        mainContractContent: buildJobSpecificationContractBody(),
+        client: autoClientText,
+        contractor: autoContractorText,
+        additionalInfo: "",
+        depositPercentage: "",
+        depositAmount: "",
+        bankAccountNumber: defaultBankAccount
+          ? formatCompanyBankAccountNumber(defaultBankAccount)
+          : companyBankAccountNumber,
+        bankAccountId: defaultBankAccount?.id || null,
+        contractNumber: "",
+        contractDateLabel: "",
       });
-      return;
-    }
-
-    // Create a new contract version id for each click.
-    const newContractId = `${Date.now()}-${Math.random()
-      .toString(36)
-      .slice(2, 8)}`;
-
-    setContractDialogMode("edit");
-    setContractDialogOpen(true);
-    setHasLoadedWorkContract(true);
-    setIsContractDirty(false);
-
-    setActiveWorkContractId(newContractId);
-    setSelectedWorkContractTemplateId("__new__");
-
-    const autoClientText = customer
-      ? deriveClientText(customer)
-      : buildClientTextFromJobSnapshot(job as any);
-    const defaultBankAccount = bankAccounts && bankAccounts.length > 0 ? bankAccounts[0] : null;
-    const autoContractorText = deriveContractorText(
+    },
+    [
+      firestore,
+      companyId,
+      jobId,
+      toast,
+      customer,
+      job,
       companyDoc,
       companyNameFromDoc,
-      defaultBankAccount
-    );
-
-    setContractForm({
-      templateName: "",
-      contractHeader: buildPrefilledContractHeader(),
-      mainContractContent: buildJobSpecificationContractBody(),
-      client: autoClientText,
-      contractor: autoContractorText,
-      additionalInfo: "",
-      depositPercentage: "",
-      depositAmount: "",
-      bankAccountNumber: defaultBankAccount
-        ? formatCompanyBankAccountNumber(defaultBankAccount)
-        : companyBankAccountNumber,
-      bankAccountId: defaultBankAccount?.id || null,
-      contractNumber: "",
-      contractDateLabel: "",
-    });
-  }, [
-    firestore,
-    companyId,
-    jobId,
-    toast,
-    customer,
-    job,
-    companyDoc,
-    companyNameFromDoc,
-    deriveClientText,
-    deriveContractorText,
-    buildPrefilledContractHeader,
-    buildJobSpecificationContractBody,
-    bankAccounts,
-    companyBankAccountNumber,
-    formatCompanyBankAccountNumber,
-  ]);
+      deriveClientText,
+      deriveContractorText,
+      buildPrefilledContractHeader,
+      buildJobSpecificationContractBody,
+      bankAccounts,
+      companyBankAccountNumber,
+      formatCompanyBankAccountNumber,
+    ]
+  );
 
   useEffect(() => {
     openedSodFromQueryRef.current = false;
@@ -1913,33 +2070,7 @@ function JobDetailPageContent() {
         setHasLoadedWorkContract(true);
         setIsContractDirty(false);
 
-        setContractForm({
-          templateName: (data.templateName as any) || "",
-          contractHeader: (data.contractHeader as any) || "",
-          mainContractContent: (data.mainContractContent as any) || "",
-          client: (data.client as any) || "",
-          contractor: (data.contractor as any) || "",
-          additionalInfo: (data.additionalInfo as any) || "",
-          depositPercentage:
-            data.zalohovaProcenta != null && String(data.zalohovaProcenta) !== ""
-              ? String(data.zalohovaProcenta)
-              : data.depositPercentage != null
-                ? String(data.depositPercentage)
-                : "",
-          depositAmount:
-            data.zalohovaCastka != null && String(data.zalohovaCastka) !== ""
-              ? String(data.zalohovaCastka)
-              : data.depositAmount != null
-                ? String(data.depositAmount)
-                : "",
-          bankAccountNumber: (data.bankAccountNumber as any) || companyBankAccountNumber || "",
-          bankAccountId: (data.bankAccountId as any) || null,
-          contractNumber: (data.contractNumber as any) || "",
-          contractDateLabel:
-            formatCsDateFromFirestore(data.contractIssuedAt) ||
-            formatCsDateFromFirestore(data.createdAt) ||
-            "",
-        });
+        setContractForm(workContractDocToForm(data, companyBankAccountNumber));
       } catch (err: any) {
         console.error("[WorkContract] openWorkContract failed", err);
         toast({
@@ -1986,18 +2117,26 @@ function JobDetailPageContent() {
 
         const data = snap.data() as WorkContractDoc;
 
+        const series =
+          String(data.numberSeriesPrefix ?? "").trim().toUpperCase() || "SOD";
+
         let contractNumber = String(data.contractNumber || "").trim();
         let allocatedNow = false;
         if (!contractNumber) {
-          contractNumber = await allocateNextSodContractNumber(
-            firestore,
-            companyId
-          );
+          contractNumber =
+            series === "SOD"
+              ? await allocateNextSodContractNumber(firestore, companyId)
+              : await allocateNextSeriesContractNumber(
+                  firestore,
+                  companyId,
+                  series
+                );
           allocatedNow = true;
           await setDoc(
             contractRef,
             {
               contractNumber,
+              numberSeriesPrefix: series,
               contractIssuedAt: serverTimestamp(),
               updatedAt: serverTimestamp(),
             },
@@ -2012,27 +2151,7 @@ function JobDetailPageContent() {
             new Intl.DateTimeFormat("cs-CZ").format(new Date());
 
         const form: WorkContractForm = {
-          templateName: (data.templateName as any) || "",
-          contractHeader: (data.contractHeader as any) || "",
-          mainContractContent: (data.mainContractContent as any) || "",
-          client: (data.client as any) || "",
-          contractor: (data.contractor as any) || "",
-          additionalInfo: (data.additionalInfo as any) || "",
-          depositPercentage:
-            data.zalohovaProcenta != null && String(data.zalohovaProcenta) !== ""
-              ? String(data.zalohovaProcenta)
-              : data.depositPercentage != null
-                ? String(data.depositPercentage)
-                : "",
-          depositAmount:
-            data.zalohovaCastka != null && String(data.zalohovaCastka) !== ""
-              ? String(data.zalohovaCastka)
-              : data.depositAmount != null
-                ? String(data.depositAmount)
-                : "",
-          bankAccountNumber:
-            (data.bankAccountNumber as any) || companyBankAccountNumber || "",
-          bankAccountId: (data.bankAccountId as any) || null,
+          ...workContractDocToForm(data, companyBankAccountNumber),
           contractNumber,
           contractDateLabel,
         };
@@ -2098,7 +2217,7 @@ function JobDetailPageContent() {
       if (!firestore || !companyId || !jobId) return;
 
       const ok = window.confirm(
-        "Opravdu chcete smazat smlouvu o dílo pro tuto zakázku?"
+        "Opravdu chcete smazat tento dokument (smlouvu / dodatek) u této zakázky?"
       );
       if (!ok) return;
 
@@ -2115,7 +2234,7 @@ function JobDetailPageContent() {
 
         await deleteDoc(contractRef);
         toast({
-          title: "Smlouva smazána",
+          title: "Dokument smazán",
           description: "Záznam byl odstraněn.",
         });
 
@@ -2141,6 +2260,7 @@ function JobDetailPageContent() {
         setSelectedWorkContractTemplateId("__new__");
         setIsContractDirty(false);
         setContractForm({
+          ...EMPTY_CONTRACT_FORM_FIELDS,
           templateName: "",
           contractHeader: "",
           mainContractContent: "",
@@ -2235,8 +2355,12 @@ function JobDetailPageContent() {
         });
 
         setContractForm({
+          ...EMPTY_CONTRACT_FORM_FIELDS,
+          documentTitle: tmpl.name || "",
           templateName: tmpl.name || "",
-          contractHeader: buildPrefilledContractHeader(),
+          contractHeader: buildPrefilledContractHeader(
+            tmpl.name ? String(tmpl.name) : undefined
+          ),
           mainContractContent: mainBody,
           client: customer
             ? deriveClientText(customer)
@@ -2283,6 +2407,8 @@ function JobDetailPageContent() {
       );
 
       setContractForm({
+        ...EMPTY_CONTRACT_FORM_FIELDS,
+        documentTitle: tmpl.templateName || "",
         templateName: tmpl.templateName || "",
         contractHeader: tmpl.contractHeader || "",
         mainContractContent: tmpl.mainContractContent || "",
@@ -2483,6 +2609,7 @@ function JobDetailPageContent() {
       setSelectedWorkContractTemplateId("__new__");
       setIsContractDirty(false);
       setContractForm({
+        ...EMPTY_CONTRACT_FORM_FIELDS,
         templateName: "",
         contractHeader: "",
         mainContractContent: "",
@@ -2536,13 +2663,29 @@ function JobDetailPageContent() {
       ? (existingSnap.data() as WorkContractDoc)
       : null;
 
-    let contractNumber = String(existing?.contractNumber || "").trim();
+    const fromForm = String(contractForm.contractNumber || "").trim();
+    let contractNumber =
+      fromForm || String(existing?.contractNumber || "").trim();
+
+    const seriesRaw =
+      String(
+        contractForm.numberSeriesPrefix ||
+          existing?.numberSeriesPrefix ||
+          "SOD"
+      )
+        .trim()
+        .toUpperCase() || "SOD";
+
     const allocatedNew = !contractNumber;
     if (allocatedNew) {
-      contractNumber = await allocateNextSodContractNumber(
-        firestore,
-        companyId
-      );
+      contractNumber =
+        seriesRaw === "SOD"
+          ? await allocateNextSodContractNumber(firestore, companyId)
+          : await allocateNextSeriesContractNumber(
+              firestore,
+              companyId,
+              seriesRaw
+            );
     }
 
     let contractDateLabel: string;
@@ -2569,7 +2712,16 @@ function JobDetailPageContent() {
       id: activeWorkContractId,
       jobId: jobId as string,
       isTemplate: false,
-      contractType: "smlouva_o_dilo",
+      contractType: "contract_document",
+      documentTitle: contractForm.documentTitle?.trim() || null,
+      documentRole: contractForm.documentRole,
+      documentSubtype: contractForm.documentSubtype?.trim() || "custom",
+      parentContractId:
+        contractForm.documentRole === "addendum" &&
+        contractForm.parentContractId?.trim()
+          ? contractForm.parentContractId.trim()
+          : null,
+      numberSeriesPrefix: seriesRaw,
       templateDocId:
         selectedWorkContractTemplateId !== "__new__"
           ? selectedWorkContractTemplateId
@@ -2668,9 +2820,9 @@ function JobDetailPageContent() {
         contractDateLabel,
       }));
       toast({
-        title: "Smlouva uložena",
+        title: "Dokument uložen",
         description: contractNumber
-          ? `Číslo smlouvy: ${contractNumber}`
+          ? `Číslo dokumentu: ${contractNumber}`
           : "Změny byly uloženy do zakázky.",
       });
       setHasLoadedWorkContract(true);
@@ -4942,7 +5094,7 @@ function JobDetailPageContent() {
           <Button
             variant="outline"
             className={JD.actionButton}
-            onClick={openContractDialog}
+            onClick={() => void openContractDialog("sod_work")}
           >
             <FileText className="w-4 h-4" /> Vytvořit smlouvu o dílo
           </Button>
@@ -5057,17 +5209,51 @@ function JobDetailPageContent() {
           </Card>
 
           <Card className={cn(JD.card)}>
-            <CardHeader>
+            <CardHeader className="space-y-3">
               <CardTitle className={JD.cardTitle}>
-                <FileText aria-hidden /> Smlouvy o dílo
+                <FileText aria-hidden /> Smlouvy a dodatky
               </CardTitle>
+              <p className={cn(JD.bodyMuted, "text-sm font-normal")}>
+                Dokumenty ke zakázce používají stejnou šablonu a data jako smlouva o dílo;
+                název a řadu čísel lze nastavit zvlášť u každého záznamu.
+              </p>
+              <div className="flex flex-col sm:flex-row flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-full sm:w-auto"
+                  onClick={() => void openContractDialog("new_contract")}
+                >
+                  Nová smlouva
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-full sm:w-auto"
+                  onClick={() => void openContractDialog("new_addendum")}
+                >
+                  Nový dodatek
+                </Button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="h-9 w-full sm:w-auto"
+                  onClick={() => void openContractDialog("sod_work")}
+                >
+                  Smlouva o dílo (standard)
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
               {isWorkContractsLoading ? (
                 <p className={JD.bodyMuted}>Načítání…</p>
               ) : workContractsForJob.length === 0 ? (
                 <p className={JD.bodyMuted}>
-                  Zatím žádné smlouvy.
+                  Zatím žádné smlouvy ani dodatky. Použijte tlačítka výše nebo záhlaví
+                  stránky.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -5079,9 +5265,20 @@ function JobDetailPageContent() {
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
                           <p className="font-semibold truncate">
-                            {c.templateName ||
-                              c.contractHeader?.split("\n")?.[0] ||
-                              "Smlouva o dílo"}
+                            {workContractDisplayTitle(c)}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {workContractDisplayTypeLabel(c)}
+                            {c.parentContractId
+                              ? (() => {
+                                  const parent = workContractsForJob.find(
+                                    (x) => x.id === c.parentContractId
+                                  );
+                                  return parent
+                                    ? ` · Nadřazená: ${workContractDisplayTitle(parent)}`
+                                    : " · Nadřazená smlouva (nenalezena)";
+                                })()
+                              : ""}
                           </p>
                           {(c as WorkContractDoc).contractNumber ? (
                             <p className="text-xs font-mono text-foreground/90">
@@ -6450,7 +6647,11 @@ function JobDetailPageContent() {
         <DialogContent className="max-w-[95vw] w-[95vw] md:w-[760px] max-h-[90vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>
-              {isContractReadOnly ? "Zobrazení smlouvy o dílo" : "Vytvořit smlouvu o dílo"}
+              {isContractReadOnly
+                ? "Zobrazení dokumentu ke zakázce"
+                : contractForm.documentRole === "addendum"
+                  ? "Dodatek ke smlouvě"
+                  : "Dokument ke zakázce"}
             </DialogTitle>
           </DialogHeader>
 
@@ -6509,16 +6710,158 @@ function JobDetailPageContent() {
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>Číslo smlouvy</Label>
+                <Label>Typ dokumentu</Label>
+                <Select
+                  value={contractForm.documentRole}
+                  disabled={isContractReadOnly}
+                  onValueChange={(v) => {
+                    setIsContractDirty(true);
+                    const role = v === "addendum" ? "addendum" : "contract";
+                    setContractForm((prev) => ({
+                      ...prev,
+                      documentRole: role,
+                      documentSubtype:
+                        role === "addendum"
+                          ? "contract_addendum"
+                          : prev.documentSubtype === "contract_addendum"
+                            ? "work_contract"
+                            : prev.documentSubtype,
+                      numberSeriesPrefix:
+                        role === "addendum"
+                          ? "DOD"
+                          : prev.numberSeriesPrefix === "DOD"
+                            ? "SOD"
+                            : prev.numberSeriesPrefix,
+                      parentContractId:
+                        role === "addendum" ? prev.parentContractId : "",
+                    }));
+                  }}
+                >
+                  <SelectTrigger
+                    className={cn(
+                      LIGHT_SELECT_TRIGGER_CLASS,
+                      "min-h-[44px] md:min-h-10 bg-background"
+                    )}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
+                    <SelectItem value="contract">Smlouva</SelectItem>
+                    <SelectItem value="addendum">Dodatek</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Řada čísel (předpona)</Label>
+                <Select
+                  value={contractForm.numberSeriesPrefix || "SOD"}
+                  disabled={
+                    isContractReadOnly || !!String(contractForm.contractNumber).trim()
+                  }
+                  onValueChange={(v) => {
+                    setIsContractDirty(true);
+                    setContractForm((prev) => ({
+                      ...prev,
+                      numberSeriesPrefix: v,
+                    }));
+                  }}
+                >
+                  <SelectTrigger
+                    className={cn(
+                      LIGHT_SELECT_TRIGGER_CLASS,
+                      "min-h-[44px] md:min-h-10 bg-background"
+                    )}
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
+                    <SelectItem value="SOD">SOD — smlouva o dílo</SelectItem>
+                    <SelectItem value="RS">RS — rezervace / jiná smlouva</SelectItem>
+                    <SelectItem value="DOD">DOD — dodatek</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!!String(contractForm.contractNumber).trim() ? (
+                  <p className="text-xs text-muted-foreground">
+                    Řadu nelze změnit po přidělení čísla. Upravte číslo ručně nebo
+                    vytvořte nový dokument.
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Název dokumentu</Label>
+              <Input
+                value={contractForm.documentTitle}
+                onChange={(e) => {
+                  setIsContractDirty(true);
+                  setContractForm((prev) => ({
+                    ...prev,
+                    documentTitle: e.target.value,
+                  }));
+                }}
+                placeholder="Např. Rezervační smlouva, Dodatek č. 1…"
+                disabled={isContractReadOnly}
+              />
+            </div>
+
+            {contractForm.documentRole === "addendum" ? (
+              <div className="space-y-2">
+                <Label>Nadřazená smlouva (volitelné)</Label>
+                <Select
+                  value={contractForm.parentContractId || "__none__"}
+                  disabled={isContractReadOnly}
+                  onValueChange={(v) => {
+                    setIsContractDirty(true);
+                    setContractForm((prev) => ({
+                      ...prev,
+                      parentContractId: v === "__none__" ? "" : v,
+                    }));
+                  }}
+                >
+                  <SelectTrigger
+                    className={cn(
+                      LIGHT_SELECT_TRIGGER_CLASS,
+                      "min-h-[44px] md:min-h-10 bg-background"
+                    )}
+                  >
+                    <SelectValue placeholder="Vyberte smlouvu" />
+                  </SelectTrigger>
+                  <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
+                    <SelectItem value="__none__">Bez konkrétní vazby</SelectItem>
+                    {parentContractChoices.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {workContractDisplayTitle(p)} ·{" "}
+                        {p.contractNumber || "bez čísla"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Číslo dokumentu</Label>
                 <Input
                   value={contractForm.contractNumber}
-                  readOnly
+                  readOnly={isContractReadOnly}
+                  onChange={(e) => {
+                    setIsContractDirty(true);
+                    setContractForm((prev) => ({
+                      ...prev,
+                      contractNumber: e.target.value,
+                    }));
+                  }}
                   placeholder="Přidělí se při uložení"
-                  className="font-mono bg-muted/40 text-foreground"
+                  className={cn(
+                    "font-mono text-foreground",
+                    isContractReadOnly ? "bg-muted/40" : "bg-background"
+                  )}
                 />
               </div>
               <div className="space-y-2">
-                <Label>Datum smlouvy (tisk / VS)</Label>
+                <Label>Datum dokumentu (tisk / VS)</Label>
                 <Input
                   value={contractForm.contractDateLabel}
                   readOnly
@@ -6526,6 +6869,22 @@ function JobDetailPageContent() {
                   className="bg-muted/40 text-foreground"
                 />
               </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Podtyp (volitelné)</Label>
+              <Input
+                value={contractForm.documentSubtype}
+                onChange={(e) => {
+                  setIsContractDirty(true);
+                  setContractForm((prev) => ({
+                    ...prev,
+                    documentSubtype: e.target.value,
+                  }));
+                }}
+                placeholder="work_contract, reservation_contract, contract_addendum…"
+                disabled={isContractReadOnly}
+              />
             </div>
 
             <div className="space-y-2">
@@ -6880,7 +7239,7 @@ function JobDetailPageContent() {
               }
                 className="min-h-[44px]"
               >
-                {isSavingContract ? "Ukládání..." : "Uložit smlouvu"}
+                {isSavingContract ? "Ukládání..." : "Uložit dokument"}
               </Button>
               <Button
                 type="button"

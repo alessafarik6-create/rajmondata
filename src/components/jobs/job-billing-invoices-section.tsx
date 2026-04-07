@@ -41,7 +41,7 @@ import {
   createTaxReceiptForAdvancePayment,
   deleteJobInvoice,
   depositGrossKcFromContract,
-  hasAdvanceTerms,
+  selectPrimaryWorkContractForBilling,
   JOB_INVOICE_TYPES,
   type JobBankLike,
   type ManualAdvanceLineInput,
@@ -232,12 +232,11 @@ export function JobBillingInvoicesSection({
 
   const budgetGross = jobBudgetBreakdown?.budgetGross ?? null;
 
-  const primaryContract = useMemo(() => {
-    for (const c of workContractsForJob) {
-      if (hasAdvanceTerms(c, budgetGross)) return c;
-    }
-    return null;
-  }, [workContractsForJob, budgetGross]);
+  const primaryContract = useMemo(
+    () =>
+      selectPrimaryWorkContractForBilling(workContractsForJob, budgetGross),
+    [workContractsForJob, budgetGross]
+  );
 
   const jobInvoicesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !jobId) return null;
@@ -286,7 +285,7 @@ export function JobBillingInvoicesSection({
   const settlementPreview = useMemo(() => {
     if (jobBudgetBreakdown == null) return null;
     const primary =
-      workContractsForJob.find((c) => hasAdvanceTerms(c, budgetGross)) ??
+      selectPrimaryWorkContractForBilling(workContractsForJob, budgetGross) ??
       workContractsForJob[0] ??
       null;
     const rows = jobInvoices.map((inv) => {
@@ -552,7 +551,7 @@ export function JobBillingInvoicesSection({
         };
       });
       const primary =
-        workContractsForJob.find((c) => hasAdvanceTerms(c, budgetGross)) ??
+        selectPrimaryWorkContractForBilling(workContractsForJob, budgetGross) ??
         workContractsForJob[0] ??
         null;
       const { pdfHtml } = await createFinalSettlementInvoice({
