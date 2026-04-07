@@ -53,6 +53,11 @@ function readCustomerVisibleFlag(raw: unknown): boolean {
   return false;
 }
 
+/** Firestore nepovoluje hodnoty `undefined` uvnitř update/add dat. */
+function omitUndefinedKeys(obj: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined));
+}
+
 export default function ProductCatalogsPage() {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -179,10 +184,17 @@ export default function ProductCatalogsPage() {
         serializeProductForFirestore(p as ProductCatalogProduct)
       );
     }
+    const saveData = omitUndefinedKeys(payload);
+    if (process.env.NODE_ENV === "development") {
+      if (Object.values(saveData).includes(undefined)) {
+        console.warn("[ProductCatalogs] SAVE DATA: neočekávané undefined po sanitizaci", saveData);
+      }
+      console.log("[ProductCatalogs] SAVE DATA", saveData);
+    }
     await updateDoc(
       doc(firestore, "companies", companyId, "product_catalogs", catalogId),
       // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Firestore update payload z mapovaných produktů
-      payload as any
+      saveData as any
     );
     if (successToastTitle !== false) {
       toast({ title: successToastTitle ?? "Katalog byl uložen" });
@@ -197,25 +209,32 @@ export default function ProductCatalogsPage() {
       if (newCoverImage) {
         [coverImageUrl] = await uploadImages([newCoverImage], `companies/${companyId}/catalog-covers`);
       }
-      await addDoc(collection(firestore, "companies", companyId, "product_catalogs"), {
+      const newCatalogPayload = omitUndefinedKeys({
         companyId,
         name: newName.trim(),
         description: newDescription.trim(),
         category: newCategory.trim(),
-        coverImageUrl: coverImageUrl || undefined,
+        ...(coverImageUrl.trim() ? { coverImageUrl } : {}),
         active: true,
         customerVisible: false,
         archived: false,
         order: catalogs.length,
         selectionMode,
-        assignedJobIds: [],
-        assignedCustomerIds: [],
-        products: [],
+        assignedJobIds: [] as string[],
+        assignedCustomerIds: [] as string[],
+        products: [] as ProductCatalogProduct[],
         createdBy: user.uid,
         createdAt: serverTimestamp(),
         updatedBy: user.uid,
         updatedAt: serverTimestamp(),
-      } satisfies ProductCatalogDoc);
+      });
+      if (process.env.NODE_ENV === "development") {
+        console.log("[ProductCatalogs] SAVE DATA (create catalog)", newCatalogPayload);
+      }
+      await addDoc(
+        collection(firestore, "companies", companyId, "product_catalogs"),
+        newCatalogPayload as Parameters<typeof addDoc>[1]
+      );
       setNewName("");
       setNewDescription("");
       setNewCategory("");
@@ -846,7 +865,7 @@ export default function ProductCatalogsPage() {
               <div>
                 <Label>Název</Label>
                 <Input
-                  value={catalogForm.name}
+                  value={catalogForm.name || ""}
                   onChange={(e) =>
                     setCatalogForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))
                   }
@@ -856,7 +875,7 @@ export default function ProductCatalogsPage() {
                 <Label>Popis</Label>
                 <Textarea
                   rows={4}
-                  value={catalogForm.description}
+                  value={catalogForm.description || ""}
                   onChange={(e) =>
                     setCatalogForm((prev) => (prev ? { ...prev, description: e.target.value } : prev))
                   }
@@ -875,7 +894,7 @@ export default function ProductCatalogsPage() {
               <div>
                 <Label>Pořadí (číslo)</Label>
                 <Input
-                  value={catalogForm.order}
+                  value={catalogForm.order || ""}
                   onChange={(e) =>
                     setCatalogForm((prev) => (prev ? { ...prev, order: e.target.value } : prev))
                   }
