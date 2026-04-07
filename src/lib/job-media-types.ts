@@ -32,6 +32,10 @@ export type JobPhotoAnnotationTarget = {
   pendingLocalFile?: File;
   /** Object URL pro uvolnění při zrušení editoru */
   pendingObjectUrl?: string;
+  /** Metadata z dialogu před přechodem do editoru (IndexedDB). */
+  pendingMeasurementTitle?: string | null;
+  pendingMeasurementNote?: string | null;
+  pendingMeasurementRecordId?: string | null;
 };
 
 /** Typ vlastní složky u zakázky (v Firestore pole `type`). */

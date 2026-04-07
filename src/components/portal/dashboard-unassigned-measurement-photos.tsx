@@ -110,8 +110,8 @@ export function DashboardUnassignedMeasurementPhotos({
           Nezařazené fotky k zakázkám
         </CardTitle>
         <CardDescription>
-          Foto zaměření přidaná k zakázce, která ještě čekají na zařazení. Otevřete zakázku pro úpravy
-          nebo je zde označte jako zařazené.
+          Foto zaměření označená jako nezařazená — včetně snímků bez vybrané zakázky (režim „zařadím
+          později“). U fotek u zakázky otevřete detail pro úpravy nebo je zde označte jako zařazené.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">

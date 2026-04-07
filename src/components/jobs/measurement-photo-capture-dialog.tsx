@@ -31,6 +31,7 @@ import {
   MEASUREMENT_PHOTO_SOURCE_TYPE,
   type MeasurementPhotoStatus,
 } from "@/lib/measurement-photos";
+import { MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID } from "@/lib/measurement-photo-pending-route";
 import {
   isAllowedJobImageFile,
   JOB_IMAGE_ACCEPT_ATTR,
@@ -157,6 +158,41 @@ export function MeasurementPhotoCaptureDialog({
         setSubmitting(false);
       }
       return;
+    } else if (assignment === "standalone") {
+      setSubmitting(true);
+      try {
+        await storePendingJobMeasurementFile(
+          MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID,
+          file,
+          {
+            title: title.trim() || undefined,
+            note: note.trim() || undefined,
+            measurementId: measurementId.trim() || null,
+          }
+        );
+        toast({
+          title: "Přechod na editor",
+          description:
+            "Otevře se editor anotací — po uložení bude fotka mezi nezařazenými na hlavní stránce.",
+        });
+        handleOpenChange(false);
+        router.push(
+          `/portal/jobs/${MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID}?measurementPending=1`
+        );
+      } catch (e) {
+        console.error("[MeasurementPhotoCaptureDialog] pending standalone", e);
+        toast({
+          variant: "destructive",
+          title: "Nepodařilo se připravit fotku",
+          description:
+            e instanceof Error
+              ? e.message
+              : "Zkuste to znovu (prohlížeč může blokovat úložiště).",
+        });
+      } finally {
+        setSubmitting(false);
+      }
+      return;
     } else if (assignment === "customer") {
       const c = customerId.trim();
       if (!c) {
@@ -229,9 +265,9 @@ export function MeasurementPhotoCaptureDialog({
         <DialogHeader>
           <DialogTitle>Foto zaměření</DialogTitle>
           <DialogDescription>
-            U zakázky se z foťáku nejprve otevře editor anotací — kóty a poznámky se
-            odešlou až po „Uložit anotaci“. Bez zakázky se fotka uloží rovnou jako
-            záznam k doplnění.
+            U zakázky i v režimu „zařadím později“ se z foťáku nejprve otevře editor anotací
+            — kóty a poznámky se odešlou až po „Uložit anotaci“. U zákazníka bez editoru se
+            fotka uloží rovnou.
           </DialogDescription>
         </DialogHeader>
 
@@ -249,6 +285,12 @@ export function MeasurementPhotoCaptureDialog({
               <option value="customer">Přiřadit k zákazníkovi</option>
               <option value="job">Přiřadit k zakázce</option>
             </select>
+            {assignment === "standalone" ? (
+              <p className="text-xs text-muted-foreground">
+                Otevře se stejný editor anotací jako u zakázky. Po uložení bude fotka mezi nezařazenými
+                na hlavní stránce.
+              </p>
+            ) : null}
           </div>
 
           {assignment === "job" ? (

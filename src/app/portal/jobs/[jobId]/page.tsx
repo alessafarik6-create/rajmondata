@@ -186,6 +186,7 @@ import {
   MEASUREMENT_PHOTO_SOURCE_TYPE,
   isMeasurementPhotoUnassignedForJob,
 } from "@/lib/measurement-photos";
+import { MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID } from "@/lib/measurement-photo-pending-route";
 import {
   clearPendingJobMeasurementFile,
   peekPendingJobMeasurementFile,
@@ -627,6 +628,16 @@ function JobDetailPageContent() {
   const { data: profile } = useDoc(userRef);
 
   const companyId = profile?.companyId;
+  const jobIdParam =
+    typeof jobId === "string"
+      ? jobId.trim()
+      : Array.isArray(jobId)
+        ? String(jobId[0] ?? "").trim()
+        : String(jobId ?? "").trim();
+  const isStandaloneMeasurementEditorRoute =
+    jobIdParam === MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID;
+  const jobFirestoreId =
+    jobIdParam && !isStandaloneMeasurementEditorRoute ? jobIdParam : null;
   const { company: companyDoc, companyName: companyNameFromDoc } = useCompany();
 
   const companyBankAccountNumber = useMemo(() => {
@@ -656,10 +667,10 @@ function JobDetailPageContent() {
 
   const jobRef = useMemoFirebase(
     () =>
-      firestore && companyId && jobId
-        ? doc(firestore, "companies", companyId, "jobs", jobId as string)
+      firestore && companyId && jobFirestoreId
+        ? doc(firestore, "companies", companyId, "jobs", jobFirestoreId)
         : null,
-    [firestore, companyId, jobId]
+    [firestore, companyId, jobFirestoreId]
   );
   const { data: job, isLoading } = useDoc(jobRef);
 
@@ -713,29 +724,29 @@ function JobDetailPageContent() {
 
   const photosColRef = useMemoFirebase(
     () =>
-      firestore && companyId && jobId
+      firestore && companyId && jobFirestoreId
         ? collection(
             firestore,
             "companies",
             companyId,
             "jobs",
-            jobId as string,
+            jobFirestoreId,
             "photos"
           )
         : null,
-    [firestore, companyId, jobId]
+    [firestore, companyId, jobFirestoreId]
   );
   const { data: photos } = useCollection(photosColRef);
 
   const measurementPhotosQueryRef = useMemoFirebase(
     () =>
-      firestore && companyId && jobId
+      firestore && companyId && jobFirestoreId
         ? query(
             collection(firestore, "companies", companyId, "measurement_photos"),
-            where("jobId", "==", jobId as string)
+            where("jobId", "==", jobFirestoreId)
           )
         : null,
-    [firestore, companyId, jobId]
+    [firestore, companyId, jobFirestoreId]
   );
   const {
     data: measurementPhotosRaw,
@@ -750,36 +761,36 @@ function JobDetailPageContent() {
 
   const expensesQueryRef = useMemoFirebase(
     () =>
-      firestore && companyId && jobId
+      firestore && companyId && jobFirestoreId
         ? query(
             collection(
               firestore,
               "companies",
               companyId,
               "jobs",
-              jobId as string,
+              jobFirestoreId,
               "expenses"
             ),
             orderBy("createdAt", "desc")
           )
         : null,
-    [firestore, companyId, jobId]
+    [firestore, companyId, jobFirestoreId]
   );
   const { data: jobExpenses } = useCollection<JobExpenseRow>(expensesQueryRef);
 
   const jobIncomesColRef = useMemoFirebase(
     () =>
-      firestore && companyId && jobId
+      firestore && companyId && jobFirestoreId
         ? collection(
             firestore,
             "companies",
             companyId,
             "jobs",
-            jobId as string,
+            jobFirestoreId,
             "incomes"
           )
         : null,
-    [firestore, companyId, jobId]
+    [firestore, companyId, jobFirestoreId]
   );
   const { data: jobIncomesRaw } = useCollection(jobIncomesColRef);
 
@@ -896,17 +907,17 @@ function JobDetailPageContent() {
 
   const workContractsColRef = useMemoFirebase(
     () =>
-      firestore && companyId && jobId
+      firestore && companyId && jobFirestoreId
         ? collection(
             firestore,
             "companies",
             companyId,
             "jobs",
-            jobId as string,
+            jobFirestoreId,
             "workContracts"
           )
         : null,
-    [firestore, companyId, jobId]
+    [firestore, companyId, jobFirestoreId]
   );
   const { data: workContracts, isLoading: isWorkContractsLoading } =
     useCollection<WorkContractDoc>(workContractsColRef);
@@ -3857,8 +3868,15 @@ function JobDetailPageContent() {
    * Object URL + soubor v paměti; `resolveAnnotationImageUrl` musí podporovat `blob:`.
    */
   const handleMeasurementPhotoQuickImport = useCallback(
-    (file: File | null | undefined) => {
-      if (!file || !companyId || !jobId || !user?.uid) return;
+    (
+      file: File | null | undefined,
+      meta?: {
+        title?: string;
+        note?: string;
+        measurementId?: string | null;
+      }
+    ) => {
+      if (!file || !companyId || !user?.uid) return;
       if (!isAllowedJobImageFile(file)) {
         toast({
           variant: "destructive",
@@ -3892,6 +3910,9 @@ function JobDetailPageContent() {
         measurementPhotoId: tempId,
         pendingLocalFile: file,
         pendingObjectUrl: objectUrl,
+        pendingMeasurementTitle: meta?.title?.trim() || null,
+        pendingMeasurementNote: meta?.note?.trim() || null,
+        pendingMeasurementRecordId: meta?.measurementId?.trim() || null,
       };
 
       console.log("[MeasurementPhoto] quickImport: file selected, opening annotation editor", {
@@ -3907,7 +3928,7 @@ function JobDetailPageContent() {
         if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
       });
     },
-    [companyId, jobId, user?.uid, toast]
+    [companyId, user?.uid, toast]
   );
 
   useEffect(() => {
@@ -3915,17 +3936,17 @@ function JobDetailPageContent() {
       measurementPendingNavHandledKeyRef.current = null;
       return;
     }
-    if (!jobId || !companyId) return;
+    if (!jobIdParam || !companyId) return;
     if (!user?.uid) {
       toast({
         variant: "destructive",
         title: "Foto zaměření",
         description: "Nejste přihlášeni — nelze otevřít editor.",
       });
-      router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+      router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
       return;
     }
-    const navKey = `pending:${jobId as string}`;
+    const navKey = `pending:${jobIdParam}`;
     if (measurementPendingNavHandledKeyRef.current === navKey) {
       return;
     }
@@ -3933,8 +3954,8 @@ function JobDetailPageContent() {
 
     void (async () => {
       try {
-        const file = await peekPendingJobMeasurementFile(jobId as string);
-        if (!file) {
+        const peeked = await peekPendingJobMeasurementFile(jobIdParam);
+        if (!peeked?.file) {
           measurementPendingNavHandledKeyRef.current = null;
           console.warn("[MeasurementPhoto] measurementPending: no file in IndexedDB");
           toast({
@@ -3943,18 +3964,22 @@ function JobDetailPageContent() {
             description:
               "Soubor se nepodařilo načíst. Zkuste fotku znovu v sekci Zakázky → Foto zaměření.",
           });
-          router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+          router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
           return;
         }
         console.log("[MeasurementPhoto] measurementPending: opening editor", {
-          jobId,
-          name: file.name,
-          size: file.size,
+          jobId: jobIdParam,
+          name: peeked.file.name,
+          size: peeked.file.size,
         });
-        handleMeasurementPhotoQuickImport(file);
+        handleMeasurementPhotoQuickImport(peeked.file, {
+          title: peeked.title,
+          note: peeked.note,
+          measurementId: peeked.measurementId,
+        });
         await clearPendingJobMeasurementFile();
         console.log("[MeasurementPhoto] measurementPending: cleared IndexedDB pending slot");
-        router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+        router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
       } catch (e) {
         measurementPendingNavHandledKeyRef.current = null;
         console.error("[JobDetailPage] measurementPending", e);
@@ -3963,7 +3988,7 @@ function JobDetailPageContent() {
           title: "Foto zaměření",
           description: e instanceof Error ? e.message : "Nepodařilo se otevřít editor.",
         });
-        router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+        router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
         try {
           await clearPendingJobMeasurementFile();
         } catch {
@@ -3973,7 +3998,7 @@ function JobDetailPageContent() {
     })();
   }, [
     searchParams,
-    jobId,
+    jobIdParam,
     companyId,
     user?.uid,
     router,
@@ -4079,7 +4104,12 @@ function JobDetailPageContent() {
 
     const isMeasurementSave =
       photoToEdit?.annotationTarget?.kind === "measurementPhotos";
-    if (!companyId || !photoToEdit || !firestore || (!isMeasurementSave && !jobId)) {
+    if (
+      !companyId ||
+      !photoToEdit ||
+      !firestore ||
+      (!isMeasurementSave && !jobFirestoreId)
+    ) {
       toast({
         variant: "destructive",
         title: "Chyba při exportu",
@@ -4287,7 +4317,7 @@ function JobDetailPageContent() {
         const isPendingDraft =
           Boolean(pendingFileForSave) && photoToEdit.id.startsWith("pending-");
 
-        if (isPendingDraft && pendingFileForSave && jobId && user?.uid) {
+        if (isPendingDraft && pendingFileForSave && user?.uid) {
           const photoRef = doc(
             collection(firestore, "companies", companyId, "measurement_photos")
           );
@@ -4308,30 +4338,42 @@ function JobDetailPageContent() {
           annotatedUrl = upAnn.downloadURL;
 
           const nowTs = Timestamp.now();
-          await setDoc(photoRef, {
+          const linkedToJob = Boolean(jobFirestoreId);
+          const firestorePayload: Record<string, unknown> = {
             companyId,
             sourceType: MEASUREMENT_PHOTO_SOURCE_TYPE,
-            source: "job_measurement_photo",
             originalImageUrl: upOrig.downloadURL,
             storagePath: upOrig.storagePath,
             annotatedImageUrl: upAnn.downloadURL,
             annotatedStoragePath: upAnn.storagePath,
             annotationData,
-            jobId: jobId as string,
-            status: "linked",
+            status: linkedToJob ? "linked" : "draft",
             kind: "measurement",
             unassigned: true,
             classificationStatus: "unassigned",
-            title: null,
-            note: null,
             createdAt: nowTs,
             updatedAt: nowTs,
             createdBy: user.uid,
-          });
+          };
+          if (linkedToJob && jobFirestoreId) {
+            firestorePayload.jobId = jobFirestoreId;
+            firestorePayload.source = "job_measurement_photo";
+          } else {
+            firestorePayload.source = "measurement_pending_assignment";
+          }
+          const pTitle = photoToEdit.pendingMeasurementTitle?.trim();
+          if (pTitle) firestorePayload.title = pTitle;
+          const pNote = photoToEdit.pendingMeasurementNote?.trim();
+          if (pNote) firestorePayload.note = pNote;
+          const pMid = photoToEdit.pendingMeasurementRecordId?.trim();
+          if (pMid) firestorePayload.measurementId = pMid;
+
+          await setDoc(photoRef, firestorePayload);
 
           console.log("[MeasurementPhoto] save: Firestore doc written", {
             photoDocId,
-            jobId,
+            jobId: jobFirestoreId ?? null,
+            standalone: !linkedToJob,
           });
 
           measurementCaptureFileRef.current = null;
@@ -4414,10 +4456,16 @@ function JobDetailPageContent() {
       toast(
         target.kind === "measurementPhotos"
           ? photoToEdit?.id?.startsWith("pending-")
-            ? {
-                title: "Foto zaměření uloženo",
-                description: "Snímek včetně kót a poznámek je uložen k zakázce.",
-              }
+            ? isStandaloneMeasurementEditorRoute
+              ? {
+                  title: "Foto zaměření uloženo",
+                  description:
+                    "Snímek včetně kót a poznámek je mezi nezařazenými fotkami na hlavní stránce.",
+                }
+              : {
+                  title: "Foto zaměření uloženo",
+                  description: "Snímek včetně kót a poznámek je uložen k zakázce.",
+                }
             : {
                 title: "Anotace byly aktualizovány",
                 description: "Kóty a poznámky u foto zaměření byly uloženy.",
@@ -4427,6 +4475,14 @@ function JobDetailPageContent() {
               description: "Kóty a poznámky byly uloženy.",
             }
       );
+
+      if (
+        target.kind === "measurementPhotos" &&
+        photoToEdit?.id?.startsWith("pending-") &&
+        isStandaloneMeasurementEditorRoute
+      ) {
+        router.replace("/portal/jobs");
+      }
 
       setEditorOpen(false);
       setPhotoToEdit(null);
@@ -5053,7 +5109,212 @@ function JobDetailPageContent() {
     ) as (Record<string, unknown> & { id: string }) | undefined;
   }, [measurementLightboxDocId, measurementPhotosRaw]);
 
-  if (isLoading) {
+  const measurementAnnotationEditorDialog = (
+      <Dialog
+        open={editorOpen}
+        onOpenChange={(open) => {
+          setEditorOpen(open);
+          if (!open) {
+            measurementCaptureFileRef.current = null;
+            setPhotoToEdit((prev) => {
+              if (prev?.pendingObjectUrl) {
+                try {
+                  URL.revokeObjectURL(prev.pendingObjectUrl);
+                } catch {
+                  /* ignore */
+                }
+              }
+              return null;
+            });
+            resetAnnotationState();
+          }
+        }}
+      >
+        <DialogContent className="!flex !max-h-[min(92dvh,92vh)] !h-[min(92dvh,92vh)] !w-[min(95vw,1920px)] !max-w-[min(95vw,1920px)] !flex-col !gap-0 !overflow-hidden overscroll-contain p-2 sm:p-3 md:p-4 sm:!max-w-[min(95vw,1920px)] sm:!w-[min(95vw,1920px)] md:!max-w-[min(95vw,1920px)] md:!w-[min(95vw,1920px)]">
+          <DialogHeader className="shrink-0 space-y-1 pb-2 pr-8 text-left">
+            <DialogTitle className="text-base sm:text-lg">
+              Anotace fotografie
+            </DialogTitle>
+          </DialogHeader>
+
+          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3">
+            <div className="shrink-0 space-y-1.5 sm:space-y-2">
+              <p className="text-xs leading-snug text-muted-foreground sm:text-sm sm:leading-normal">
+                Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: táhněte
+                průhledný obdélník a doplňte text (bez šipky). Výběr: klikněte na
+                kótu nebo poznámku — přesun, úprava textu, konce čáry nebo cíle
+                šipky, změna velikosti poznámky tahem za roh. Dotyk i myš.
+              </p>
+
+              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                <Button
+                  type="button"
+                  variant={activeTool === "dimension" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("dimension")}
+                >
+                  Kóty
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeTool === "note" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("note")}
+                >
+                  Poznámka
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeTool === "select" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("select")}
+                >
+                  Výběr
+                </Button>
+
+                <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
+
+                {(
+                  [
+                    { id: "red", label: "Červená" },
+                    { id: "yellow", label: "Žlutá" },
+                    { id: "white", label: "Bílá" },
+                    { id: "black", label: "Černá" },
+                    { id: "blue", label: "Modrá" },
+                  ] as const
+                ).map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    aria-label={c.label}
+                    title={c.label}
+                    onClick={() => updateSelectedColor(c.id)}
+                    className={`h-9 w-9 rounded-md border ${
+                      activeColor === c.id
+                        ? "ring-2 ring-primary ring-offset-2"
+                        : ""
+                    }`}
+                    style={{
+                      backgroundColor: colorToHex(c.id),
+                      borderColor:
+                        c.id === "white" ? "rgba(0,0,0,0.35)" : "transparent",
+                    }}
+                  />
+                ))}
+
+                <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={editSelectedText}
+                  disabled={!selectedAnnotationId}
+                >
+                  Upravit text
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={deleteSelectedAnnotation}
+                  disabled={!selectedAnnotationId}
+                >
+                  Smazat
+                </Button>
+              </div>
+            </div>
+
+            <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden rounded-md border bg-black/80 p-0.5 sm:p-1">
+              <canvas
+                ref={setCanvasNode}
+                onPointerDown={handleCanvasPointerDown}
+                onPointerMove={handleCanvasPointerMove}
+                onPointerUp={handleCanvasPointerUp}
+                onPointerCancel={() => {
+                  setDragMode("none");
+                  setDragLastPoint(null);
+                  setNoteRectDraft(null);
+                  setDraftAnnotationId(null);
+                }}
+                className={`h-auto w-auto max-h-full max-w-full object-contain touch-none ${
+                  baseImageLoaded ? "opacity-100" : "opacity-0"
+                }`}
+                style={{ cursor: canvasCursor }}
+              />
+
+              {!baseImageLoaded && !imageError && (
+                <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-black/40 pointer-events-none">
+                  Načítání fotografie...
+                </div>
+              )}
+
+              {imageError && (
+                <div className="absolute inset-0 flex items-center justify-center p-4 text-sm text-red-500 text-center bg-black/70">
+                  <div className="space-y-2">
+                    <p>{imageError}</p>
+                    <p className="break-all text-xs text-muted-foreground">
+                      URL: {annotationSource || "neznámé"}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5">
+              <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={undoLast}
+                  disabled={!annotations.length}
+                >
+                  Zpět
+                </Button>
+
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={clearAllAnnotations}
+                  disabled={!annotations.length}
+                >
+                  Vymazat vše
+                </Button>
+              </div>
+
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  className="min-h-[36px]"
+                  onClick={() => setEditorOpen(false)}
+                >
+                  Zrušit
+                </Button>
+
+                <Button
+                  className="min-h-[36px]"
+                  onClick={handleSaveAnnotated}
+                  disabled={!baseImageLoaded || isSavingAnnotation}
+                >
+                  {isSavingAnnotation ? "Ukládám…" : "Uložit anotaci"}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+  );
+
+  if (isLoading && !isStandaloneMeasurementEditorRoute) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -5061,13 +5322,40 @@ function JobDetailPageContent() {
     );
   }
 
-  if (!job) {
+  if (!job && !isStandaloneMeasurementEditorRoute) {
     return (
       <div className="text-center py-20">
         <h2 className="text-2xl font-bold">Zakázka nenalezena</h2>
         <Button variant="link" onClick={() => router.push("/portal/jobs")}>
           Zpět na seznam
         </Button>
+      </div>
+    );
+  }
+
+  if (isStandaloneMeasurementEditorRoute) {
+    return (
+      <div className={JD.page}>
+        <div className={JD.contentMax}>
+          <div className="flex flex-col gap-4 py-8">
+            <Button
+              variant="ghost"
+              className="h-10 w-10 shrink-0 w-fit"
+              onClick={() => router.push("/portal/jobs")}
+            >
+              <ChevronLeft className="w-6 h-6" />
+              <span className="sr-only">Zpět</span>
+            </Button>
+            <div className="max-w-xl space-y-2">
+              <h1 className={JD.headerTitle}>Foto zaměření — zařadím později</h1>
+              <p className="text-sm text-slate-600">
+                Vyfoťte nebo nahrajte snímek, upravte kóty v editoru a uložte. Fotka se zobrazí mezi
+                nezařazenými na hlavní stránce (widget s fotoaparátem), kde ji později přiřadíte k zakázce.
+              </p>
+            </div>
+          </div>
+        </div>
+        {measurementAnnotationEditorDialog}
       </div>
     );
   }
@@ -5150,10 +5438,10 @@ function JobDetailPageContent() {
         </div>
       </div>
 
-      {user && companyId && jobId ? (
+      {user && companyId && jobFirestoreId ? (
         <JobTasksSection
           companyId={companyId}
-          jobId={jobId as string}
+          jobId={jobFirestoreId!}
           user={user}
           canEdit={canManageFolders}
         />
@@ -5174,20 +5462,20 @@ function JobDetailPageContent() {
             </CardContent>
           </Card>
 
-          {companyId && jobId ? (
+          {companyId && jobFirestoreId ? (
             <JobCustomerProgressAdminSection
               companyId={companyId}
-              jobId={jobId as string}
+              jobId={jobFirestoreId!}
               jobRef={jobRef}
               job={job as Record<string, unknown>}
               canEdit={canManageFolders}
             />
           ) : null}
 
-          {companyId && jobId ? (
+          {companyId && jobFirestoreId ? (
             <JobCustomerTasksAdminSection
               companyId={companyId}
-              jobId={jobId as string}
+              jobId={jobFirestoreId!}
               job={job as Record<string, unknown>}
               canEdit={canManageFolders}
             />
@@ -5752,7 +6040,7 @@ function JobDetailPageContent() {
             </CardContent>
           </Card>
 
-          {companyId && jobId ? (
+          {companyId && jobFirestoreId ? (
             <JobBillingInvoicesSection
               companyId={companyId}
               jobId={String(jobId)}
@@ -5821,7 +6109,7 @@ function JobDetailPageContent() {
       </div>
       </div>
 
-      {user && companyId && jobId ? (
+      {user && companyId && jobFirestoreId ? (
         <section
           className={JD.sectionBand}
           aria-labelledby="job-measurement-photos-heading"
@@ -6103,7 +6391,7 @@ function JobDetailPageContent() {
         </DialogContent>
       </Dialog>
 
-      {user && companyId && jobId ? (
+      {user && companyId && jobFirestoreId ? (
         <section
           className={JD.sectionBand}
           aria-labelledby="job-media-heading"
@@ -6111,7 +6399,7 @@ function JobDetailPageContent() {
           <div className={JD.sectionBandInner}>
             <JobMediaSection
               companyId={companyId}
-              jobId={jobId as string}
+              jobId={jobFirestoreId!}
               jobDisplayName={job?.name ?? null}
               user={user}
               canManageFolders={canManageFolders}
@@ -6130,7 +6418,7 @@ function JobDetailPageContent() {
         </section>
       ) : null}
 
-      {user && companyId && jobId ? (
+      {user && companyId && jobFirestoreId ? (
         <section
           className={JD.sectionBand}
           aria-labelledby="job-expenses-heading"
@@ -6138,7 +6426,7 @@ function JobDetailPageContent() {
           <div className={JD.sectionBandInner}>
             <JobExpensesSection
               companyId={companyId}
-              jobId={jobId as string}
+              jobId={jobFirestoreId!}
               jobDisplayName={
                 job?.name != null && String(job.name).trim() !== ""
                   ? String(job.name).trim()
@@ -6154,10 +6442,10 @@ function JobDetailPageContent() {
         </section>
       ) : null}
 
-      {user && companyId && jobId ? (
+      {user && companyId && jobFirestoreId ? (
         <section className={JD.sectionBand} aria-labelledby="job-product-catalogs-heading">
           <div className={JD.sectionBandInner}>
-            <JobProductCatalogsSection companyId={companyId} jobId={jobId as string} />
+            <JobProductCatalogsSection companyId={companyId} jobId={jobFirestoreId!} />
           </div>
         </section>
       ) : null}
@@ -7370,208 +7658,7 @@ function JobDetailPageContent() {
         userId={user?.uid}
       />
 
-      <Dialog
-        open={editorOpen}
-        onOpenChange={(open) => {
-          setEditorOpen(open);
-          if (!open) {
-            measurementCaptureFileRef.current = null;
-            setPhotoToEdit((prev) => {
-              if (prev?.pendingObjectUrl) {
-                try {
-                  URL.revokeObjectURL(prev.pendingObjectUrl);
-                } catch {
-                  /* ignore */
-                }
-              }
-              return null;
-            });
-            resetAnnotationState();
-          }
-        }}
-      >
-        <DialogContent className="!flex !max-h-[min(92dvh,92vh)] !h-[min(92dvh,92vh)] !w-[min(95vw,1920px)] !max-w-[min(95vw,1920px)] !flex-col !gap-0 !overflow-hidden overscroll-contain p-2 sm:p-3 md:p-4 sm:!max-w-[min(95vw,1920px)] sm:!w-[min(95vw,1920px)] md:!max-w-[min(95vw,1920px)] md:!w-[min(95vw,1920px)]">
-          <DialogHeader className="shrink-0 space-y-1 pb-2 pr-8 text-left">
-            <DialogTitle className="text-base sm:text-lg">
-              Anotace fotografie
-            </DialogTitle>
-          </DialogHeader>
-
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3">
-            <div className="shrink-0 space-y-1.5 sm:space-y-2">
-              <p className="text-xs leading-snug text-muted-foreground sm:text-sm sm:leading-normal">
-                Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: táhněte
-                průhledný obdélník a doplňte text (bez šipky). Výběr: klikněte na
-                kótu nebo poznámku — přesun, úprava textu, konce čáry nebo cíle
-                šipky, změna velikosti poznámky tahem za roh. Dotyk i myš.
-              </p>
-
-              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                <Button
-                  type="button"
-                  variant={activeTool === "dimension" ? "default" : "outline"}
-                  size="sm"
-                  className="min-h-[36px]"
-                  onClick={() => setActiveTool("dimension")}
-                >
-                  Kóty
-                </Button>
-                <Button
-                  type="button"
-                  variant={activeTool === "note" ? "default" : "outline"}
-                  size="sm"
-                  className="min-h-[36px]"
-                  onClick={() => setActiveTool("note")}
-                >
-                  Poznámka
-                </Button>
-                <Button
-                  type="button"
-                  variant={activeTool === "select" ? "default" : "outline"}
-                  size="sm"
-                  className="min-h-[36px]"
-                  onClick={() => setActiveTool("select")}
-                >
-                  Výběr
-                </Button>
-
-                <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
-
-                {(
-                  [
-                    { id: "red", label: "Červená" },
-                    { id: "yellow", label: "Žlutá" },
-                    { id: "white", label: "Bílá" },
-                    { id: "black", label: "Černá" },
-                    { id: "blue", label: "Modrá" },
-                  ] as const
-                ).map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    aria-label={c.label}
-                    title={c.label}
-                    onClick={() => updateSelectedColor(c.id)}
-                    className={`h-9 w-9 rounded-md border ${
-                      activeColor === c.id
-                        ? "ring-2 ring-primary ring-offset-2"
-                        : ""
-                    }`}
-                    style={{
-                      backgroundColor: colorToHex(c.id),
-                      borderColor:
-                        c.id === "white" ? "rgba(0,0,0,0.35)" : "transparent",
-                    }}
-                  />
-                ))}
-
-                <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="min-h-[36px]"
-                  onClick={editSelectedText}
-                  disabled={!selectedAnnotationId}
-                >
-                  Upravit text
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  className="min-h-[36px]"
-                  onClick={deleteSelectedAnnotation}
-                  disabled={!selectedAnnotationId}
-                >
-                  Smazat
-                </Button>
-              </div>
-            </div>
-
-            <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden rounded-md border bg-black/80 p-0.5 sm:p-1">
-              <canvas
-                ref={setCanvasNode}
-                onPointerDown={handleCanvasPointerDown}
-                onPointerMove={handleCanvasPointerMove}
-                onPointerUp={handleCanvasPointerUp}
-                onPointerCancel={() => {
-                  setDragMode("none");
-                  setDragLastPoint(null);
-                  setNoteRectDraft(null);
-                  setDraftAnnotationId(null);
-                }}
-                className={`h-auto w-auto max-h-full max-w-full object-contain touch-none ${
-                  baseImageLoaded ? "opacity-100" : "opacity-0"
-                }`}
-                style={{ cursor: canvasCursor }}
-              />
-
-              {!baseImageLoaded && !imageError && (
-                <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-black/40 pointer-events-none">
-                  Načítání fotografie...
-                </div>
-              )}
-
-              {imageError && (
-                <div className="absolute inset-0 flex items-center justify-center p-4 text-sm text-red-500 text-center bg-black/70">
-                  <div className="space-y-2">
-                    <p>{imageError}</p>
-                    <p className="break-all text-xs text-muted-foreground">
-                      URL: {annotationSource || "neznámé"}
-                    </p>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5">
-              <div className="flex flex-wrap gap-1.5 sm:gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="min-h-[36px]"
-                  onClick={undoLast}
-                  disabled={!annotations.length}
-                >
-                  Zpět
-                </Button>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="min-h-[36px]"
-                  onClick={clearAllAnnotations}
-                  disabled={!annotations.length}
-                >
-                  Vymazat vše
-                </Button>
-              </div>
-
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  className="min-h-[36px]"
-                  onClick={() => setEditorOpen(false)}
-                >
-                  Zrušit
-                </Button>
-
-                <Button
-                  className="min-h-[36px]"
-                  onClick={handleSaveAnnotated}
-                  disabled={!baseImageLoaded || isSavingAnnotation}
-                >
-                  {isSavingAnnotation ? "Ukládám…" : "Uložit anotaci"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
+      {measurementAnnotationEditorDialog}
     </div>
   );
 }
@@ -7585,6 +7672,12 @@ export default function JobDetailPage() {
   const router = useRouter();
   const { user } = useUser();
   const firestore = useFirestore();
+  const jobIdForRedirect =
+    typeof jobId === "string"
+      ? jobId
+      : Array.isArray(jobId)
+        ? String(jobId[0] ?? "")
+        : String(jobId ?? "");
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
     [firestore, user]
@@ -7593,13 +7686,16 @@ export default function JobDetailPage() {
 
   useEffect(() => {
     if (profileLoading || !jobId) return;
+    if (jobIdForRedirect === MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID) {
+      return;
+    }
     if (profile?.role === "employee") {
       router.replace(`/portal/employee/jobs/${jobId}`);
     }
     if (profile?.role === "customer") {
       router.replace(`/portal/customer/jobs/${jobId}`);
     }
-  }, [profileLoading, profile?.role, jobId, router]);
+  }, [profileLoading, profile?.role, jobId, jobIdForRedirect, router]);
 
   if (!user || profileLoading) {
     return (

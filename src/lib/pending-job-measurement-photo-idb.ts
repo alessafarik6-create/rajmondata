@@ -8,11 +8,22 @@ const STORE = "pending";
 const KEY = "current";
 
 type PendingRecord = {
+  /** ID zakázky nebo umělý klíč pro režim „zařadím později“. */
   jobId: string;
   blob: Blob;
   name: string;
   type: string;
   updatedAt: number;
+  title?: string;
+  note?: string;
+  measurementId?: string | null;
+};
+
+export type PendingMeasurementPhotoPeek = {
+  file: File;
+  title?: string;
+  note?: string;
+  measurementId?: string | null;
 };
 
 function openDb(): Promise<IDBDatabase> {
@@ -30,7 +41,12 @@ function openDb(): Promise<IDBDatabase> {
 
 export async function storePendingJobMeasurementFile(
   jobId: string,
-  file: File
+  file: File,
+  extras?: {
+    title?: string;
+    note?: string;
+    measurementId?: string | null;
+  }
 ): Promise<void> {
   const db = await openDb();
   try {
@@ -40,6 +56,11 @@ export async function storePendingJobMeasurementFile(
       name: file.name || "zamereni.jpg",
       type: file.type && file.type.startsWith("image/") ? file.type : "image/jpeg",
       updatedAt: Date.now(),
+      ...(extras?.title?.trim() ? { title: extras.title.trim() } : {}),
+      ...(extras?.note?.trim() ? { note: extras.note.trim() } : {}),
+      ...(extras?.measurementId != null && String(extras.measurementId).trim()
+        ? { measurementId: String(extras.measurementId).trim() }
+        : {}),
     };
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction(STORE, "readwrite");
@@ -58,7 +79,7 @@ export async function storePendingJobMeasurementFile(
  */
 export async function peekPendingJobMeasurementFile(
   expectedJobId: string
-): Promise<File | null> {
+): Promise<PendingMeasurementPhotoPeek | null> {
   const want = expectedJobId.trim();
   const db = await openDb();
   try {
@@ -70,7 +91,14 @@ export async function peekPendingJobMeasurementFile(
       getReq.onsuccess = () => resolve(getReq.result as PendingRecord | undefined);
     });
     if (!rec || rec.jobId !== want || !rec.blob) return null;
-    return new File([rec.blob], rec.name || "zamereni.jpg", { type: rec.type });
+    const file = new File([rec.blob], rec.name || "zamereni.jpg", { type: rec.type });
+    const out: PendingMeasurementPhotoPeek = { file };
+    if (rec.title?.trim()) out.title = rec.title.trim();
+    if (rec.note?.trim()) out.note = rec.note.trim();
+    if (rec.measurementId != null && String(rec.measurementId).trim()) {
+      out.measurementId = String(rec.measurementId).trim();
+    }
+    return out;
   } finally {
     db.close();
   }
