@@ -19,6 +19,7 @@ import {
   normalizeJobQuestionnaireTemplate,
   type JobQuestionnaireTemplate,
 } from "@/lib/job-customer-questionnaire";
+import { isCatalogCustomerVisibleForPortal } from "@/lib/customer-catalog-visibility";
 
 export const AUTO_CUSTOMER_TASK_SELECT_PRODUCTS = "auto_select_products";
 export const AUTO_CUSTOMER_TASK_FILL_QUESTIONNAIRE = "auto_fill_questionnaire";
@@ -94,7 +95,7 @@ export function getAssignedProductCatalogsForJob(
   return catalogs.filter(
     (c) =>
       c.active !== false &&
-      c.customerVisible === true &&
+      isCatalogCustomerVisibleForPortal(c) &&
       (catalogIsAssignedToJob(c, jobId) || catalogIsAssignedToCustomer(c, customerCrmId ?? undefined))
   );
 }

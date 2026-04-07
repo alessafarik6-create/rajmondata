@@ -24,6 +24,7 @@ import {
   CustomerCatalogCompactRow,
   CustomerProductCompactRow,
 } from "@/components/customer/customer-catalog-ui";
+import { isCatalogCustomerVisibleForPortal } from "@/lib/customer-catalog-visibility";
 
 type Props = {
   companyId: string;
@@ -60,7 +61,7 @@ export function CustomerProductCatalogsSection({
     const assigned = rows.filter(
       (c) =>
         c.active !== false &&
-        c.customerVisible === true &&
+        isCatalogCustomerVisibleForPortal(c) &&
         (catalogIsAssignedToJob(c, jobId) || catalogIsAssignedToCustomer(c, customerId ?? undefined))
     );
     return assigned;

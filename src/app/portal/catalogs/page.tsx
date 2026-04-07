@@ -40,6 +40,15 @@ import type { JobProductSelectionDoc, ProductCatalogDoc, ProductCatalogProduct }
 
 type CatalogRow = { id: string } & Partial<ProductCatalogDoc>;
 
+/** Jednotné čtení viditelnosti pro zákazníka (boolean v DB + kompatibilita se staršími zápisy). */
+function readCustomerVisibleFlag(raw: unknown): boolean {
+  if (raw === true) return true;
+  if (raw === false) return false;
+  if (raw === "true" || raw === 1) return true;
+  if (raw === "false" || raw === 0) return false;
+  return false;
+}
+
 export default function ProductCatalogsPage() {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -62,6 +71,8 @@ export default function ProductCatalogsPage() {
   const [newProductImages, setNewProductImages] = useState<File[]>([]);
 
   const [catalogDialogOpen, setCatalogDialogOpen] = useState(false);
+  /** Katalog, jehož úprava je v dialogu — nesmí se měnit při přepnutí výběru v postranním seznamu. */
+  const [editingCatalogId, setEditingCatalogId] = useState<string | null>(null);
   const [catalogForm, setCatalogForm] = useState<{
     name: string;
     description: string;
@@ -344,15 +355,16 @@ export default function ProductCatalogsPage() {
 
   const openCatalogDialog = (cat?: CatalogRow) => {
     const c = cat ?? activeCatalog;
-    if (!c) return;
+    if (!c?.id) return;
     if (cat) setActiveCatalogId(cat.id);
+    setEditingCatalogId(c.id);
     setCatalogForm({
       name: c.name ?? "",
       description: c.description ?? "",
       category: c.category ?? "",
       order: String(c.order ?? 0),
       active: c.active !== false,
-      customerVisible: c.customerVisible === true,
+      customerVisible: readCustomerVisibleFlag(c.customerVisible),
       selectionMode: c.selectionMode === "single" ? "single" : "multi",
     });
     setCatalogCoverFile(null);
@@ -360,27 +372,36 @@ export default function ProductCatalogsPage() {
   };
 
   const saveCatalogDialog = async () => {
-    if (!activeCatalog || !catalogForm || !companyId || !user?.uid) return;
+    const catalogRow = editingCatalogId ? catalogs.find((x) => x.id === editingCatalogId) : undefined;
+    if (!editingCatalogId || !catalogRow || !catalogForm || !companyId || !user?.uid) return;
     setSaving(true);
     try {
-      let coverImageUrl = activeCatalog.coverImageUrl;
+      let coverImageUrl = catalogRow.coverImageUrl;
       if (catalogCoverFile) {
         const [url] = await uploadImages([catalogCoverFile], `companies/${companyId}/catalog-covers`);
         coverImageUrl = url;
       }
       const orderNum = Number.parseInt(catalogForm.order, 10);
-      await updateCatalog(activeCatalog.id, {
+      await updateCatalog(editingCatalogId, {
         name: catalogForm.name.trim(),
         description: catalogForm.description.trim() || undefined,
         category: catalogForm.category.trim() || undefined,
-        order: Number.isFinite(orderNum) ? orderNum : activeCatalog.order ?? 0,
-        active: catalogForm.active,
-        customerVisible: catalogForm.customerVisible,
+        order: Number.isFinite(orderNum) ? orderNum : catalogRow.order ?? 0,
+        active: catalogForm.active === true,
+        customerVisible: catalogForm.customerVisible === true,
         selectionMode: catalogForm.selectionMode,
         coverImageUrl: coverImageUrl || undefined,
       });
       setCatalogDialogOpen(false);
       setCatalogCoverFile(null);
+      setEditingCatalogId(null);
+    } catch (e) {
+      console.error("[ProductCatalogsPage] saveCatalogDialog", e);
+      toast({
+        variant: "destructive",
+        title: "Katalog se nepodařilo uložit",
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setSaving(false);
     }
@@ -607,7 +628,9 @@ export default function ProductCatalogsPage() {
                     <span>{activeCatalog.active !== false ? "Aktivní" : "Neaktivní"}</span>
                     <span>·</span>
                     <span>
-                      {activeCatalog.customerVisible ? "Viditelné pro zákazníka" : "Skryté pro zákazníka"}
+                      {readCustomerVisibleFlag(activeCatalog.customerVisible)
+                        ? "Viditelné pro zákazníka"
+                        : "Skryté pro zákazníka"}
                     </span>
                     <span>·</span>
                     <span>{activeCatalog.selectionMode === "multi" ? "Multi výběr" : "Jedna položka"}</span>
@@ -729,7 +752,16 @@ export default function ProductCatalogsPage() {
         ) : null}
       </div>
 
-      <Dialog open={catalogDialogOpen} onOpenChange={setCatalogDialogOpen}>
+      <Dialog
+        open={catalogDialogOpen}
+        onOpenChange={(open) => {
+          setCatalogDialogOpen(open);
+          if (!open) {
+            setEditingCatalogId(null);
+            setCatalogCoverFile(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Upravit katalog</DialogTitle>
@@ -740,7 +772,9 @@ export default function ProductCatalogsPage() {
                 <Label>Název</Label>
                 <Input
                   value={catalogForm.name}
-                  onChange={(e) => setCatalogForm({ ...catalogForm, name: e.target.value })}
+                  onChange={(e) =>
+                    setCatalogForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))
+                  }
                 />
               </div>
               <div>
@@ -748,7 +782,9 @@ export default function ProductCatalogsPage() {
                 <Textarea
                   rows={4}
                   value={catalogForm.description}
-                  onChange={(e) => setCatalogForm({ ...catalogForm, description: e.target.value })}
+                  onChange={(e) =>
+                    setCatalogForm((prev) => (prev ? { ...prev, description: e.target.value } : prev))
+                  }
                   className="min-h-[100px] leading-relaxed"
                 />
               </div>
@@ -756,14 +792,18 @@ export default function ProductCatalogsPage() {
                 <Label>Kategorie</Label>
                 <Input
                   value={catalogForm.category}
-                  onChange={(e) => setCatalogForm({ ...catalogForm, category: e.target.value })}
+                  onChange={(e) =>
+                    setCatalogForm((prev) => (prev ? { ...prev, category: e.target.value } : prev))
+                  }
                 />
               </div>
               <div>
                 <Label>Pořadí (číslo)</Label>
                 <Input
                   value={catalogForm.order}
-                  onChange={(e) => setCatalogForm({ ...catalogForm, order: e.target.value })}
+                  onChange={(e) =>
+                    setCatalogForm((prev) => (prev ? { ...prev, order: e.target.value } : prev))
+                  }
                   inputMode="numeric"
                 />
               </div>
@@ -778,14 +818,18 @@ export default function ProductCatalogsPage() {
               <label className="flex items-center gap-2 text-sm">
                 <Switch
                   checked={catalogForm.active}
-                  onCheckedChange={(v) => setCatalogForm({ ...catalogForm, active: v })}
+                  onCheckedChange={(v) =>
+                    setCatalogForm((prev) => (prev ? { ...prev, active: v } : prev))
+                  }
                 />
                 Aktivní
               </label>
               <label className="flex items-center gap-2 text-sm">
                 <Switch
                   checked={catalogForm.customerVisible}
-                  onCheckedChange={(v) => setCatalogForm({ ...catalogForm, customerVisible: v })}
+                  onCheckedChange={(v) =>
+                    setCatalogForm((prev) => (prev ? { ...prev, customerVisible: v === true } : prev))
+                  }
                 />
                 Viditelné pro zákazníka
               </label>
@@ -793,7 +837,9 @@ export default function ProductCatalogsPage() {
                 <Switch
                   checked={catalogForm.selectionMode === "multi"}
                   onCheckedChange={(v) =>
-                    setCatalogForm({ ...catalogForm, selectionMode: v ? "multi" : "single" })
+                    setCatalogForm((prev) =>
+                      prev ? { ...prev, selectionMode: v ? "multi" : "single" } : prev
+                    )
                   }
                 />
                 Více položek (multi)
