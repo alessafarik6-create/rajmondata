@@ -8,6 +8,8 @@ export type CompanyDocumentAssignmentLike = {
   zakazkaId?: string | null;
   assignedTo?: { jobId?: string | null } | null;
   assignmentType?: string | null;
+  unassigned?: boolean | null;
+  classificationStatus?: string | null;
 };
 
 export function documentJobLinkId(row: CompanyDocumentAssignmentLike): string {
@@ -58,4 +60,26 @@ export function effectiveCompanyDocumentAssignmentTypeForForm(
   if (at === "job_cost") return "job_cost";
   if (link) return "job_cost";
   return "pending_assignment";
+}
+
+/**
+ * Filt „Zařazené“ v seznamu dokladů: vazba na zakázku, explicitně přiřazený stav,
+ * nebo zařazení mimo zakázku (sklad / firma / režijní).
+ */
+export function companyDocumentMatchesAssignedJobFilter(
+  row: CompanyDocumentAssignmentLike
+): boolean {
+  if (documentJobLinkId(row)) return true;
+  if (row.unassigned === false) return true;
+  if (row.classificationStatus === "assigned") return true;
+  const at = row.assignmentType;
+  if (at === "warehouse" || at === "company" || at === "overhead") return true;
+  return false;
+}
+
+/** Komplement k {@link companyDocumentMatchesAssignedJobFilter} (včetně starých záznamů bez `unassigned`). */
+export function companyDocumentMatchesUnassignedJobFilter(
+  row: CompanyDocumentAssignmentLike
+): boolean {
+  return !companyDocumentMatchesAssignedJobFilter(row);
 }

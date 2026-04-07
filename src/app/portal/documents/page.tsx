@@ -79,6 +79,8 @@ import {
 import { uploadJobPhotoFileViaFirebaseSdk } from "@/lib/job-photo-upload";
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import {
+  companyDocumentMatchesAssignedJobFilter,
+  companyDocumentMatchesUnassignedJobFilter,
   documentJobLinkId,
   documentShowsAsPendingAssignment,
   effectiveCompanyDocumentAssignmentTypeForForm,
@@ -213,6 +215,9 @@ type CompanyDocumentRow = {
   paidBy?: string | null;
   /** Měkké smazání — doklad zůstává ve Firestore. */
   isDeleted?: boolean;
+  /** Volitelné — klasifikace / fronta nezařazených (když existuje v datech). */
+  unassigned?: boolean | null;
+  classificationStatus?: string | null;
 };
 
 type AssignmentType =
@@ -2806,6 +2811,9 @@ function DocumentTableReceived({
   showDeleteButton?: boolean;
 }) {
   const [jobFilter, setJobFilter] = useState<string>("__all__");
+  const [jobAssignmentFilter, setJobAssignmentFilter] = useState<
+    "all" | "assigned" | "unassigned"
+  >("all");
   const [docTypeFilter, setDocTypeFilter] = useState<string>("__all__");
   const [typeFilter, setTypeFilter] = useState<string>("__all__");
   const [paymentFilter, setPaymentFilter] = useState<string>("__all__");
@@ -2815,7 +2823,7 @@ function DocumentTableReceived({
   const jobOptions = useMemo(() => {
     const m = new Map<string, string>();
     for (const d of data) {
-      const jid = (d.jobId ?? d.zakazkaId)?.trim();
+      const jid = documentJobLinkId(d);
       if (jid) {
         m.set(jid, d.jobName?.trim() || d.entityName?.trim() || jid);
       }
@@ -2827,10 +2835,13 @@ function DocumentTableReceived({
 
   const rows = useMemo(() => {
     let list = [...data];
+    if (jobAssignmentFilter === "assigned") {
+      list = list.filter((d) => companyDocumentMatchesAssignedJobFilter(d));
+    } else if (jobAssignmentFilter === "unassigned") {
+      list = list.filter((d) => companyDocumentMatchesUnassignedJobFilter(d));
+    }
     if (jobFilter !== "__all__") {
-      list = list.filter(
-        (d) => (d.jobId ?? d.zakazkaId)?.trim() === jobFilter
-      );
+      list = list.filter((d) => documentJobLinkId(d) === jobFilter);
     }
     if (docTypeFilter !== "__all__") {
       list = list.filter((d) => {
@@ -2903,6 +2914,7 @@ function DocumentTableReceived({
   }, [
     data,
     jobFilter,
+    jobAssignmentFilter,
     docTypeFilter,
     typeFilter,
     paymentFilter,
@@ -2940,7 +2952,33 @@ function DocumentTableReceived({
             onChange={(e) => onSearchChange(e.target.value)}
           />
         </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-5 lg:gap-x-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-6 lg:gap-x-3">
+          <div className="space-y-1 min-w-0">
+            <Label className="text-[11px] font-medium text-gray-800">
+              Zařazení dokladu
+            </Label>
+            <Select
+              value={jobAssignmentFilter}
+              onValueChange={(v) =>
+                setJobAssignmentFilter(v as "all" | "assigned" | "unassigned")
+              }
+            >
+              <SelectTrigger
+                className={cn(
+                  "h-9 w-full border-gray-300 bg-white text-gray-900",
+                  jobAssignmentFilter !== "all" &&
+                    "border-primary/60 ring-1 ring-primary/25"
+                )}
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Všechny doklady</SelectItem>
+                <SelectItem value="assigned">Zařazené</SelectItem>
+                <SelectItem value="unassigned">Nezařazené doklady</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           <div className="space-y-1 min-w-0">
             <Label className="text-[11px] font-medium text-gray-800">Zakázka</Label>
             <Select value={jobFilter} onValueChange={setJobFilter}>
@@ -3003,7 +3041,7 @@ function DocumentTableReceived({
               onChange={(e) => setDateTo(e.target.value)}
             />
           </div>
-          <div className="space-y-1 min-w-0 sm:col-span-2 lg:col-span-5">
+          <div className="space-y-1 min-w-0 sm:col-span-2 lg:col-span-6">
             <Label className="text-[11px] font-medium text-gray-800">Platba / splatnost</Label>
             <Select value={paymentFilter} onValueChange={setPaymentFilter}>
               <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
@@ -3397,6 +3435,14 @@ function DocumentTableReceived({
         ) : data.length === 0 ? (
           <div className="text-center py-20 text-muted-foreground">
             Zatím nemáte žádné přijaté doklady.
+          </div>
+        ) : jobAssignmentFilter === "unassigned" ? (
+          <div className="text-center py-20 text-muted-foreground">
+            Žádné nezařazené doklady.
+          </div>
+        ) : jobAssignmentFilter === "assigned" ? (
+          <div className="text-center py-20 text-muted-foreground">
+            Žádné doklady neodpovídají filtru „Zařazené“ nebo hledání.
           </div>
         ) : (
           <div className="text-center py-20 text-muted-foreground">
