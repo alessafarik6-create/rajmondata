@@ -183,6 +183,7 @@ import {
   MEASUREMENT_PHOTO_SOURCE_TYPE,
   isMeasurementPhotoUnassignedForJob,
 } from "@/lib/measurement-photos";
+import { takeAndClearPendingJobMeasurementFile } from "@/lib/pending-job-measurement-photo-idb";
 
 type AnnotationTool = "dimension" | "note" | "select";
 
@@ -349,6 +350,19 @@ function measurementDocToAnnotationTarget(
   };
 }
 
+/** Záloha při selhání blob: URL (Safari / CSP) — stejný obrázek pro canvas. */
+function readFileAsDataUrlForAnnotation(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") resolve(reader.result);
+      else reject(new Error("Soubor nelze načíst jako obrázek."));
+    };
+    reader.onerror = () => reject(new Error("Čtení souboru selhalo."));
+    reader.readAsDataURL(file);
+  });
+}
+
 function isUsablePhotoRow(p: unknown): p is PhotoDoc & { id: string } {
   if (!p || typeof p !== "object") return false;
   const id = (p as { id?: unknown }).id;
@@ -490,6 +504,8 @@ function JobDetailPageContent() {
   const searchParams = useSearchParams();
   const openedSodFromQueryRef = useRef(false);
   const openedMpFromQueryRef = useRef<string | null>(null);
+  /** Zamezí paralelnímu dvojímu načtení z IndexedDB (React Strict Mode). */
+  const measurementPendingImportLockRef = useRef(false);
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -1797,6 +1813,7 @@ function JobDetailPageContent() {
 
   useEffect(() => {
     openedMpFromQueryRef.current = null;
+    measurementPendingImportLockRef.current = false;
   }, [jobId]);
 
   useEffect(() => {
@@ -1806,38 +1823,59 @@ function JobDetailPageContent() {
       return;
     }
     if (!companyId || !jobId || !firestore) return;
-    if (measurementPhotosLoading) return;
-    const list = measurementPhotosRaw ?? [];
-    const row = list.find((x: { id?: string }) => x.id === mp) as
-      | (Record<string, unknown> & { id: string })
-      | undefined;
-    if (!row) {
-      if (openedMpFromQueryRef.current !== mp) {
+    if (openedMpFromQueryRef.current === mp) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snap = await getDoc(
+          doc(firestore, "companies", companyId, "measurement_photos", mp)
+        );
+        if (cancelled) return;
+        if (!snap.exists()) {
+          openedMpFromQueryRef.current = mp;
+          toast({
+            variant: "destructive",
+            title: "Foto zaměření",
+            description: "Záznam nebyl nalezen nebo k této zakázce nepatří.",
+          });
+          router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+          return;
+        }
+        const data = snap.data() as Record<string, unknown>;
+        const rowJobId = typeof data.jobId === "string" ? data.jobId.trim() : "";
+        if (rowJobId && rowJobId !== jobId) {
+          openedMpFromQueryRef.current = mp;
+          toast({
+            variant: "destructive",
+            title: "Foto zaměření",
+            description: "Tento snímek patří k jiné zakázce.",
+          });
+          router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+          return;
+        }
         openedMpFromQueryRef.current = mp;
+        setPhotoToEdit(
+          measurementDocToAnnotationTarget({ id: snap.id, ...data })
+        );
+        setEditorOpen(true);
+        router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[JobDetailPage] open measurement from ?mp=", e);
         toast({
           variant: "destructive",
           title: "Foto zaměření",
-          description: "Záznam nebyl nalezen nebo k této zakázce nepatří.",
+          description: e instanceof Error ? e.message : "Nepodařilo se načíst záznam.",
         });
+        router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
       }
-      router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
-      return;
-    }
-    if (openedMpFromQueryRef.current === mp) return;
-    openedMpFromQueryRef.current = mp;
-    setPhotoToEdit(measurementDocToAnnotationTarget(row));
-    setEditorOpen(true);
-    router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
-  }, [
-    searchParams,
-    measurementPhotosLoading,
-    measurementPhotosRaw,
-    companyId,
-    jobId,
-    firestore,
-    router,
-    toast,
-  ]);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, companyId, jobId, firestore, router, toast]);
 
   const openWorkContract = useCallback(
     async (contractId: string, mode: "view" | "edit") => {
@@ -2888,13 +2926,31 @@ function JobDetailPageContent() {
         try {
           image = await loadHtmlImage(resolvedUrl, false);
         } catch (firstErr) {
-          if (
+          const pendingFile =
+            photoToEdit?.pendingLocalFile ?? measurementCaptureFileRef.current ?? null;
+          const tryPendingDataUrl =
+            Boolean(photoToEdit?.id?.startsWith("pending-")) && Boolean(pendingFile);
+          if (tryPendingDataUrl && pendingFile) {
+            try {
+              const dataUrl = await readFileAsDataUrlForAnnotation(pendingFile);
+              image = await loadHtmlImage(dataUrl, false);
+            } catch {
+              if (
+                resolvedUrl.startsWith("blob:") ||
+                resolvedUrl.startsWith("data:")
+              ) {
+                throw firstErr;
+              }
+              image = await loadHtmlImage(resolvedUrl, true);
+            }
+          } else if (
             resolvedUrl.startsWith("blob:") ||
             resolvedUrl.startsWith("data:")
           ) {
             throw firstErr;
+          } else {
+            image = await loadHtmlImage(resolvedUrl, true);
           }
-          image = await loadHtmlImage(resolvedUrl, true);
         }
 
         if (cancelled) return;
@@ -3635,52 +3691,105 @@ function JobDetailPageContent() {
    * Foto zaměření: bez okamžitého uploadu — až po „Uložit anotaci“ v editoru.
    * Object URL + soubor v paměti; `resolveAnnotationImageUrl` musí podporovat `blob:`.
    */
-  const handleMeasurementPhotoQuickImport = (file: File | null | undefined) => {
-    if (!file || !companyId || !jobId || !user?.uid) return;
-    if (!isAllowedJobImageFile(file)) {
+  const handleMeasurementPhotoQuickImport = useCallback(
+    (file: File | null | undefined) => {
+      if (!file || !companyId || !jobId || !user?.uid) return;
+      if (!isAllowedJobImageFile(file)) {
+        toast({
+          variant: "destructive",
+          title: "Nepodporovaný soubor",
+          description: "Vyberte obrázek (JPG, PNG, WebP …).",
+        });
+        return;
+      }
+      if (file.size > MAX_JOB_PHOTO_BYTES) {
+        toast({
+          variant: "destructive",
+          title: "Soubor je příliš velký",
+          description: `Maximální velikost je ${Math.round(MAX_JOB_PHOTO_BYTES / (1024 * 1024))} MB.`,
+        });
+        return;
+      }
+
+      const objectUrl = URL.createObjectURL(file);
+      const tempId = `pending-${
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+      }`;
+      measurementCaptureFileRef.current = file;
+
+      const target: JobPhotoAnnotationTarget = {
+        id: tempId,
+        imageUrl: objectUrl,
+        originalImageUrl: objectUrl,
+        annotationTarget: { kind: "measurementPhotos" },
+        measurementPhotoId: tempId,
+        pendingLocalFile: file,
+        pendingObjectUrl: objectUrl,
+      };
+
+      setMeasurementCaptureBusy(true);
+      setPhotoToEdit(target);
+      setEditorOpen(true);
+      setMeasurementCaptureBusy(false);
       toast({
-        variant: "destructive",
-        title: "Nepodporovaný soubor",
-        description: "Vyberte obrázek (JPG, PNG, WebP …).",
+        title: "Upravte fotku",
+        description:
+          "Přidejte kóty a poznámky, poté uložte anotaci — teprve pak se fotka uloží k zakázce.",
       });
+      requestAnimationFrame(() => {
+        if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
+        if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
+      });
+    },
+    [companyId, jobId, user?.uid, toast]
+  );
+
+  useEffect(() => {
+    if (searchParams.get("measurementPending") !== "1") {
+      measurementPendingImportLockRef.current = false;
       return;
     }
-    if (file.size > MAX_JOB_PHOTO_BYTES) {
-      toast({
-        variant: "destructive",
-        title: "Soubor je příliš velký",
-        description: `Maximální velikost je ${Math.round(MAX_JOB_PHOTO_BYTES / (1024 * 1024))} MB.`,
-      });
-      return;
-    }
+    if (!jobId || !companyId) return;
+    if (measurementPendingImportLockRef.current) return;
+    measurementPendingImportLockRef.current = true;
 
-    const objectUrl = URL.createObjectURL(file);
-    const tempId = `pending-${crypto.randomUUID?.() ?? createId()}`;
-    measurementCaptureFileRef.current = file;
-
-    const target: JobPhotoAnnotationTarget = {
-      id: tempId,
-      imageUrl: objectUrl,
-      originalImageUrl: objectUrl,
-      annotationTarget: { kind: "measurementPhotos" },
-      measurementPhotoId: tempId,
-      pendingLocalFile: file,
-      pendingObjectUrl: objectUrl,
-    };
-
-    setMeasurementCaptureBusy(true);
-    setPhotoToEdit(target);
-    setEditorOpen(true);
-    setMeasurementCaptureBusy(false);
-    toast({
-      title: "Upravte fotku",
-      description: "Přidejte kóty a poznámky, poté uložte anotaci — teprve pak se fotka uloží k zakázce.",
-    });
-    requestAnimationFrame(() => {
-      if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
-      if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
-    });
-  };
+    void (async () => {
+      try {
+        const file = await takeAndClearPendingJobMeasurementFile(jobId as string);
+        if (!file) {
+          toast({
+            variant: "destructive",
+            title: "Foto zaměření",
+            description:
+              "Soubor se nepodařilo načíst. Zkuste fotku znovu v sekci Zakázky → Foto zaměření.",
+          });
+          router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+          return;
+        }
+        handleMeasurementPhotoQuickImport(file);
+        router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+      } catch (e) {
+        console.error("[JobDetailPage] measurementPending", e);
+        toast({
+          variant: "destructive",
+          title: "Foto zaměření",
+          description: e instanceof Error ? e.message : "Nepodařilo se otevřít editor.",
+        });
+        router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+      } finally {
+        measurementPendingImportLockRef.current = false;
+      }
+    })();
+  }, [
+    searchParams,
+    jobId,
+    companyId,
+    router,
+    toast,
+    handleMeasurementPhotoQuickImport,
+  ]);
 
   const handleMarkMeasurementPhotoAssigned = async (
     row: Record<string, unknown> & { id: string }
@@ -4012,6 +4121,7 @@ function JobDetailPageContent() {
           await setDoc(photoRef, {
             companyId,
             sourceType: MEASUREMENT_PHOTO_SOURCE_TYPE,
+            source: "job_measurement_photo",
             originalImageUrl: upOrig.downloadURL,
             storagePath: upOrig.storagePath,
             annotatedImageUrl: upAnn.downloadURL,

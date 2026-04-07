@@ -26,6 +26,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import { uploadMeasurementPhotoFileViaFirebaseSdk } from "@/lib/job-photo-upload";
+import { storePendingJobMeasurementFile } from "@/lib/pending-job-measurement-photo-idb";
 import {
   MEASUREMENT_PHOTO_SOURCE_TYPE,
   type MeasurementPhotoStatus,
@@ -120,7 +121,6 @@ export function MeasurementPhotoCaptureDialog({
       return;
     }
 
-    let resolvedJobId: string | null = null;
     let resolvedCustomerId: string | null = null;
     let status: MeasurementPhotoStatus = "draft";
 
@@ -134,8 +134,29 @@ export function MeasurementPhotoCaptureDialog({
         });
         return;
       }
-      resolvedJobId = j;
-      status = "linked";
+      setSubmitting(true);
+      try {
+        await storePendingJobMeasurementFile(j, file);
+        toast({
+          title: "Přechod na editor",
+          description: "Otevře se detail zakázky s anotacemi — dokončete úpravy a uložte.",
+        });
+        handleOpenChange(false);
+        router.push(`/portal/jobs/${j}?measurementPending=1`);
+      } catch (e) {
+        console.error("[MeasurementPhotoCaptureDialog] pending file", e);
+        toast({
+          variant: "destructive",
+          title: "Nepodařilo se připravit fotku",
+          description:
+            e instanceof Error
+              ? e.message
+              : "Zkuste to znovu (prohlížeč může blokovat úložiště).",
+        });
+      } finally {
+        setSubmitting(false);
+      }
+      return;
     } else if (assignment === "customer") {
       const c = customerId.trim();
       if (!c) {
@@ -179,30 +200,17 @@ export function MeasurementPhotoCaptureDialog({
         createdBy: userId,
       };
 
-      if (resolvedJobId) payload.jobId = resolvedJobId;
       if (resolvedCustomerId) payload.customerId = resolvedCustomerId;
       if (mId) payload.measurementId = mId;
-      if (resolvedJobId) {
-        payload.unassigned = true;
-        payload.classificationStatus = "unassigned";
-        payload.kind = "measurement";
-      }
 
       await setDoc(photoRef, payload);
 
       toast({
         title: "Foto zaměření bylo uloženo",
-        description:
-          resolvedJobId != null
-            ? "Otevřete editor anotací v detailu zakázky."
-            : "Fotku najdete u zákazníka nebo v seznamu po přiřazení k zakázce.",
+        description: "Fotku najdete u zákazníka nebo v seznamu po přiřazení k zakázce.",
       });
 
       handleOpenChange(false);
-
-      if (resolvedJobId) {
-        router.push(`/portal/jobs/${resolvedJobId}?mp=${photoDocId}`);
-      }
     } catch (e) {
       console.error("[MeasurementPhotoCaptureDialog]", e);
       toast({
@@ -221,8 +229,9 @@ export function MeasurementPhotoCaptureDialog({
         <DialogHeader>
           <DialogTitle>Foto zaměření</DialogTitle>
           <DialogDescription>
-            Vyfoťte nebo nahrajte snímek. Po uložení můžete v detailu zakázky doplnit
-            kóty a poznámky stejným editorem jako u fotodokumentace.
+            U zakázky se z foťáku nejprve otevře editor anotací — kóty a poznámky se
+            odešlou až po „Uložit anotaci“. Bez zakázky se fotka uloží rovnou jako
+            záznam k doplnění.
           </DialogDescription>
         </DialogHeader>
 

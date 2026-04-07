@@ -35,6 +35,8 @@ export type MeasurementPhotoDoc = {
   status?: MeasurementPhotoStatus;
   /** Typ záznamu (např. měření u zakázky). */
   kind?: string | null;
+  /** Volitelný zdroj zápisu (např. job_measurement_photo po anotaci na zakázce). */
+  source?: string | null;
   /**
    * true = patří k zakázce, ale čeká na zařazení (přehled na dashboardu).
    * Stará data bez pole = považuj za již zařazená.
