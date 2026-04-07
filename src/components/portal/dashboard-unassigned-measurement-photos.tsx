@@ -7,7 +7,6 @@ import {
   collection,
   doc,
   limit,
-  orderBy,
   query,
   updateDoc,
   serverTimestamp,
@@ -46,11 +45,11 @@ export function DashboardUnassignedMeasurementPhotos({
 
   const qRef = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
+    /** Bez orderBy — nevyžaduje složený index; řazení řešíme na klientovi. */
     return query(
       collection(firestore, "companies", companyId, "measurement_photos"),
       where("unassigned", "==", true),
-      orderBy("createdAt", "desc"),
-      limit(PAGE_LIMIT)
+      limit(PAGE_LIMIT * 3)
     );
   }, [firestore, companyId]);
 
@@ -58,7 +57,21 @@ export function DashboardUnassignedMeasurementPhotos({
 
   const rows = useMemo(() => {
     const list = (rawRows ?? []) as Row[];
-    return list.filter((r) => isMeasurementPhotoUnassignedForJob(r));
+    const filtered = list.filter((r) => isMeasurementPhotoUnassignedForJob(r));
+    const t = (v: unknown): number => {
+      if (v == null) return 0;
+      if (typeof v === "number" && !Number.isNaN(v)) return v;
+      if (typeof (v as { toMillis?: () => number }).toMillis === "function") {
+        return (v as { toMillis: () => number }).toMillis();
+      }
+      if (typeof (v as { toDate?: () => Date }).toDate === "function") {
+        return (v as { toDate: () => Date }).toDate().getTime();
+      }
+      return 0;
+    };
+    return [...filtered].sort(
+      (a, b) => t(b.createdAt) - t(a.createdAt)
+    );
   }, [rawRows]);
 
   const visible = expanded ? rows : rows.slice(0, COLLAPSED_COUNT);

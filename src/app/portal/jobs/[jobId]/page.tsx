@@ -186,7 +186,10 @@ import {
   MEASUREMENT_PHOTO_SOURCE_TYPE,
   isMeasurementPhotoUnassignedForJob,
 } from "@/lib/measurement-photos";
-import { takeAndClearPendingJobMeasurementFile } from "@/lib/pending-job-measurement-photo-idb";
+import {
+  clearPendingJobMeasurementFile,
+  peekPendingJobMeasurementFile,
+} from "@/lib/pending-job-measurement-photo-idb";
 
 type AnnotationTool = "dimension" | "note" | "select";
 
@@ -609,8 +612,10 @@ function JobDetailPageContent() {
   const searchParams = useSearchParams();
   const openedSodFromQueryRef = useRef(false);
   const openedMpFromQueryRef = useRef<string | null>(null);
-  /** Zamezí paralelnímu dvojímu načtení z IndexedDB (React Strict Mode). */
-  const measurementPendingImportLockRef = useRef(false);
+  /**
+   * Jedna zpracovaná navigace ?measurementPending=1 na jobId (Strict Mode jinak spouští efekt dvakrát).
+   */
+  const measurementPendingNavHandledKeyRef = useRef<string | null>(null);
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -735,6 +740,8 @@ function JobDetailPageContent() {
   const {
     data: measurementPhotosRaw,
     isLoading: measurementPhotosLoading,
+    error: measurementPhotosError,
+    isIndexPending: measurementPhotosIndexPending,
   } = useCollection(measurementPhotosQueryRef);
 
   const [measurementLightboxDocId, setMeasurementLightboxDocId] = useState<
@@ -1972,7 +1979,7 @@ function JobDetailPageContent() {
 
   useEffect(() => {
     openedMpFromQueryRef.current = null;
-    measurementPendingImportLockRef.current = false;
+    measurementPendingNavHandledKeyRef.current = null;
   }, [jobId]);
 
   useEffect(() => {
@@ -3129,6 +3136,9 @@ function JobDetailPageContent() {
         setImageForCanvas(image);
         setBaseImageLoaded(true);
         setImageError(null);
+        if (photoToEdit?.annotationTarget?.kind === "measurementPhotos") {
+          console.log("[MeasurementPhoto] editor: canvas base image ready");
+        }
 
         const raw = photoToEdit
           ? readAnnotationPayloadFromPhotoDoc(photoToEdit as Record<string, unknown>)
@@ -3884,15 +3894,14 @@ function JobDetailPageContent() {
         pendingObjectUrl: objectUrl,
       };
 
+      console.log("[MeasurementPhoto] quickImport: file selected, opening annotation editor", {
+        tempId,
+        name: file.name,
+      });
       setMeasurementCaptureBusy(true);
       setPhotoToEdit(target);
       setEditorOpen(true);
       setMeasurementCaptureBusy(false);
-      toast({
-        title: "Upravte fotku",
-        description:
-          "Přidejte kóty a poznámky, poté uložte anotaci — teprve pak se fotka uloží k zakázce.",
-      });
       requestAnimationFrame(() => {
         if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
         if (measurementCameraInputRef.current) measurementCameraInputRef.current.value = "";
@@ -3903,17 +3912,31 @@ function JobDetailPageContent() {
 
   useEffect(() => {
     if (searchParams.get("measurementPending") !== "1") {
-      measurementPendingImportLockRef.current = false;
+      measurementPendingNavHandledKeyRef.current = null;
       return;
     }
     if (!jobId || !companyId) return;
-    if (measurementPendingImportLockRef.current) return;
-    measurementPendingImportLockRef.current = true;
+    if (!user?.uid) {
+      toast({
+        variant: "destructive",
+        title: "Foto zaměření",
+        description: "Nejste přihlášeni — nelze otevřít editor.",
+      });
+      router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+      return;
+    }
+    const navKey = `pending:${jobId as string}`;
+    if (measurementPendingNavHandledKeyRef.current === navKey) {
+      return;
+    }
+    measurementPendingNavHandledKeyRef.current = navKey;
 
     void (async () => {
       try {
-        const file = await takeAndClearPendingJobMeasurementFile(jobId as string);
+        const file = await peekPendingJobMeasurementFile(jobId as string);
         if (!file) {
+          measurementPendingNavHandledKeyRef.current = null;
+          console.warn("[MeasurementPhoto] measurementPending: no file in IndexedDB");
           toast({
             variant: "destructive",
             title: "Foto zaměření",
@@ -3923,9 +3946,17 @@ function JobDetailPageContent() {
           router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
           return;
         }
+        console.log("[MeasurementPhoto] measurementPending: opening editor", {
+          jobId,
+          name: file.name,
+          size: file.size,
+        });
         handleMeasurementPhotoQuickImport(file);
+        await clearPendingJobMeasurementFile();
+        console.log("[MeasurementPhoto] measurementPending: cleared IndexedDB pending slot");
         router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
       } catch (e) {
+        measurementPendingNavHandledKeyRef.current = null;
         console.error("[JobDetailPage] measurementPending", e);
         toast({
           variant: "destructive",
@@ -3933,14 +3964,18 @@ function JobDetailPageContent() {
           description: e instanceof Error ? e.message : "Nepodařilo se otevřít editor.",
         });
         router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
-      } finally {
-        measurementPendingImportLockRef.current = false;
+        try {
+          await clearPendingJobMeasurementFile();
+        } catch {
+          /* ignore */
+        }
       }
     })();
   }, [
     searchParams,
     jobId,
     companyId,
+    user?.uid,
     router,
     toast,
     handleMeasurementPhotoQuickImport,
@@ -4292,6 +4327,11 @@ function JobDetailPageContent() {
             createdAt: nowTs,
             updatedAt: nowTs,
             createdBy: user.uid,
+          });
+
+          console.log("[MeasurementPhoto] save: Firestore doc written", {
+            photoDocId,
+            jobId,
           });
 
           measurementCaptureFileRef.current = null;
@@ -5801,9 +5841,11 @@ function JobDetailPageContent() {
                     type="file"
                     accept="image/*"
                     className="hidden"
-                    onChange={(e) =>
-                      void handleMeasurementPhotoQuickImport(e.target.files?.[0])
-                    }
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      void handleMeasurementPhotoQuickImport(f);
+                    }}
                   />
                   <input
                     ref={measurementCameraInputRef}
@@ -5811,9 +5853,11 @@ function JobDetailPageContent() {
                     accept="image/*"
                     capture="environment"
                     className="hidden"
-                    onChange={(e) =>
-                      void handleMeasurementPhotoQuickImport(e.target.files?.[0])
-                    }
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      void handleMeasurementPhotoQuickImport(f);
+                    }}
                   />
                   <Button
                     type="button"
@@ -5843,6 +5887,23 @@ function JobDetailPageContent() {
                 </div>
               ) : null}
             </div>
+            {measurementPhotosIndexPending || measurementPhotosError ? (
+              <Alert
+                className="mt-2 border-amber-200 bg-amber-50/90 text-amber-950"
+                variant="default"
+              >
+                <AlertTitle className="text-sm">
+                  Foto zaměření — načítání dat
+                </AlertTitle>
+                <AlertDescription className="text-xs sm:text-sm">
+                  {measurementPhotosIndexPending
+                    ? "Firestore index se vytváří, nebo dotaz ještě není dostupný. Zkuste stránku obnovit za chvíli. Pokud problém přetrvá, kontaktujte správce (chybějící index pro measurement_photos)."
+                    : measurementPhotosError instanceof Error
+                      ? measurementPhotosError.message
+                      : "Nepodařilo se načíst seznam fotek zaměření."}
+                </AlertDescription>
+              </Alert>
+            ) : null}
             {measurementPhotosLoading ? (
               <p className="mt-2 text-sm text-muted-foreground">Načítání…</p>
             ) : !measurementPhotosRaw?.length ? (

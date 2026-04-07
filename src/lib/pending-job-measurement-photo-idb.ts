@@ -52,7 +52,46 @@ export async function storePendingJobMeasurementFile(
   }
 }
 
-/** Načte a smaže záznam; vrátí File jen pokud jobId sedí. */
+/**
+ * Přečte čekající soubor bez mazání (vhodné před otevřením editoru; smažte po úspěchu přes
+ * {@link clearPendingJobMeasurementFile}).
+ */
+export async function peekPendingJobMeasurementFile(
+  expectedJobId: string
+): Promise<File | null> {
+  const want = expectedJobId.trim();
+  const db = await openDb();
+  try {
+    const rec = await new Promise<PendingRecord | undefined>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readonly");
+      tx.onerror = () => reject(tx.error ?? new Error("IndexedDB read failed"));
+      const getReq = tx.objectStore(STORE).get(KEY);
+      getReq.onerror = () => reject(getReq.error);
+      getReq.onsuccess = () => resolve(getReq.result as PendingRecord | undefined);
+    });
+    if (!rec || rec.jobId !== want || !rec.blob) return null;
+    return new File([rec.blob], rec.name || "zamereni.jpg", { type: rec.type });
+  } finally {
+    db.close();
+  }
+}
+
+/** Smaže čekající záznam (po úspěšném předání souboru editoru). */
+export async function clearPendingJobMeasurementFile(): Promise<void> {
+  const db = await openDb();
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.onerror = () => reject(tx.error ?? new Error("IndexedDB delete failed"));
+      tx.oncomplete = () => resolve();
+      tx.objectStore(STORE).delete(KEY);
+    });
+  } finally {
+    db.close();
+  }
+}
+
+/** Načte a smaže záznam v jedné transakci; vrátí File jen pokud jobId sedí. */
 export async function takeAndClearPendingJobMeasurementFile(
   expectedJobId: string
 ): Promise<File | null> {
