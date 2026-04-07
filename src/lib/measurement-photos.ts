@@ -43,6 +43,8 @@ export type MeasurementPhotoDoc = {
    */
   unassigned?: boolean | null;
   classificationStatus?: "unassigned" | "assigned" | string | null;
+  /** Např. `job` | `measurement` po přiřazení z přehledu. */
+  assignedType?: string | null;
   assignedAt?: unknown;
   assignedBy?: string | null;
   createdAt?: unknown;

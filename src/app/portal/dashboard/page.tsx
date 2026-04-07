@@ -439,6 +439,14 @@ export default function CompanyDashboard() {
     return m;
   }, [typedJobs]);
 
+  const jobsForAssign = useMemo(
+    () =>
+      typedJobs
+        .filter((j) => j.id)
+        .map((j) => ({ id: j.id, name: j.name?.trim() || j.id })),
+    [typedJobs]
+  );
+
   const profileOrCompanyLoading =
     isProfileLoading || (Boolean(companyId) && companyContextLoading);
 
@@ -901,7 +909,9 @@ export default function CompanyDashboard() {
               firestore={firestore}
               companyId={companyId}
               jobNamesById={jobNamesById}
+              jobsForAssign={jobsForAssign}
               userId={user?.uid ?? null}
+              profile={profile as { role?: string; globalRoles?: unknown } | null}
             />
           ) : null}
 

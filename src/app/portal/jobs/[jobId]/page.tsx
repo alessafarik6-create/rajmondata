@@ -1999,7 +1999,7 @@ function JobDetailPageContent() {
       openedMpFromQueryRef.current = null;
       return;
     }
-    if (!companyId || !jobId || !firestore) return;
+    if (!companyId || !jobIdParam || !firestore) return;
     if (openedMpFromQueryRef.current === mp) return;
 
     let cancelled = false;
@@ -2014,29 +2014,44 @@ function JobDetailPageContent() {
           toast({
             variant: "destructive",
             title: "Foto zaměření",
-            description: "Záznam nebyl nalezen nebo k této zakázce nepatří.",
+            description: "Záznam nebyl nalezen.",
           });
-          router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+          router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
           return;
         }
         const data = snap.data() as Record<string, unknown>;
-        const rowJobId = typeof data.jobId === "string" ? data.jobId.trim() : "";
-        if (rowJobId && rowJobId !== jobId) {
+        const docCompanyId =
+          typeof data.companyId === "string" ? data.companyId.trim() : "";
+        if (docCompanyId && docCompanyId !== companyId) {
           openedMpFromQueryRef.current = mp;
           toast({
             variant: "destructive",
             title: "Foto zaměření",
-            description: "Tento snímek patří k jiné zakázce.",
+            description: "Snímek nepatří k této organizaci.",
           });
-          router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+          router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
           return;
+        }
+        const rowJobId = typeof data.jobId === "string" ? data.jobId.trim() : "";
+        if (!isStandaloneMeasurementEditorRoute && jobFirestoreId) {
+          if (rowJobId && rowJobId !== jobFirestoreId) {
+            openedMpFromQueryRef.current = mp;
+            toast({
+              variant: "destructive",
+              title: "Foto zaměření",
+              description:
+                "Tento snímek patří k jiné zakázce. Otevřete ji z přehledu nebo z hlavní stránky.",
+            });
+            router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
+            return;
+          }
         }
         openedMpFromQueryRef.current = mp;
         setPhotoToEdit(
           measurementDocToAnnotationTarget({ id: snap.id, ...data })
         );
         setEditorOpen(true);
-        router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+        router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
       } catch (e) {
         if (cancelled) return;
         console.error("[JobDetailPage] open measurement from ?mp=", e);
@@ -2045,14 +2060,23 @@ function JobDetailPageContent() {
           title: "Foto zaměření",
           description: e instanceof Error ? e.message : "Nepodařilo se načíst záznam.",
         });
-        router.replace(`/portal/jobs/${jobId as string}`, { scroll: false });
+        router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [searchParams, companyId, jobId, firestore, router, toast]);
+  }, [
+    searchParams,
+    companyId,
+    jobIdParam,
+    jobFirestoreId,
+    isStandaloneMeasurementEditorRoute,
+    firestore,
+    router,
+    toast,
+  ]);
 
   const openWorkContract = useCallback(
     async (contractId: string, mode: "view" | "edit") => {
@@ -4481,7 +4505,7 @@ function JobDetailPageContent() {
         photoToEdit?.id?.startsWith("pending-") &&
         isStandaloneMeasurementEditorRoute
       ) {
-        router.replace("/portal/jobs");
+        router.replace("/portal/dashboard");
       }
 
       setEditorOpen(false);
@@ -5341,7 +5365,7 @@ function JobDetailPageContent() {
             <Button
               variant="ghost"
               className="h-10 w-10 shrink-0 w-fit"
-              onClick={() => router.push("/portal/jobs")}
+              onClick={() => router.push("/portal/dashboard")}
             >
               <ChevronLeft className="w-6 h-6" />
               <span className="sr-only">Zpět</span>
