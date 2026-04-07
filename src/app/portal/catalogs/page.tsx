@@ -37,6 +37,10 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import type { JobProductSelectionDoc, ProductCatalogDoc, ProductCatalogProduct } from "@/lib/product-catalogs";
+import {
+  buildProductGalleryUrls,
+  serializeProductForFirestore,
+} from "@/lib/product-catalogs";
 
 type CatalogRow = { id: string } & Partial<ProductCatalogDoc>;
 
@@ -159,14 +163,30 @@ export default function ProductCatalogsPage() {
     return urls;
   };
 
-  const updateCatalog = async (catalogId: string, patch: Partial<ProductCatalogDoc>) => {
+  const updateCatalog = async (
+    catalogId: string,
+    patch: Partial<ProductCatalogDoc>,
+    successToastTitle?: string | false
+  ) => {
     if (!firestore || !companyId || !user?.uid) return;
-    await updateDoc(doc(firestore, "companies", companyId, "product_catalogs", catalogId), {
+    const payload: Record<string, unknown> = {
       ...patch,
       updatedBy: user.uid,
       updatedAt: serverTimestamp(),
-    });
-    toast({ title: "Katalog byl uložen" });
+    };
+    if (Array.isArray(patch.products)) {
+      payload.products = patch.products.map((p) =>
+        serializeProductForFirestore(p as ProductCatalogProduct)
+      );
+    }
+    await updateDoc(
+      doc(firestore, "companies", companyId, "product_catalogs", catalogId),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Firestore update payload z mapovaných produktů
+      payload as any
+    );
+    if (successToastTitle !== false) {
+      toast({ title: successToastTitle ?? "Katalog byl uložen" });
+    }
   };
 
   const createCatalog = async () => {
@@ -237,14 +257,18 @@ export default function ProductCatalogsPage() {
     );
     const selectionsSnap = await getDocs(cg);
     const hasSelections = !selectionsSnap.empty;
-    await updateCatalog(catalog.id, {
-      archived: true,
-      active: false,
-      customerVisible: false,
-      deletedAt: serverTimestamp(),
-      assignedCustomerIds: [],
-      assignedJobIds: [],
-    });
+    await updateCatalog(
+      catalog.id,
+      {
+        archived: true,
+        active: false,
+        customerVisible: false,
+        deletedAt: serverTimestamp(),
+        assignedCustomerIds: [],
+        assignedJobIds: [],
+      },
+      false
+    );
     toast({
       title: hasSelections ? "Katalog byl bezpečně archivován" : "Katalog byl archivován",
       description: hasSelections
@@ -307,8 +331,7 @@ export default function ProductCatalogsPage() {
     const cat = catalogs.find((c) => c.id === catalogId);
     if (!cat) return;
     const next = [...(cat.products ?? [])].map((p) => (p.id === productId ? { ...p, ...patch } : p));
-    await updateCatalog(catalogId, { products: next });
-    toast({ title: "Produkt byl uložen" });
+    await updateCatalog(catalogId, { products: next }, "Produkt byl uložen");
   };
 
   const reorderProduct = async (catalogId: string, productId: string, dir: -1 | 1) => {
@@ -323,7 +346,7 @@ export default function ProductCatalogsPage() {
     arr[idx] = arr[to];
     arr[to] = tmp;
     const normalized = arr.map((p, i) => ({ ...p, order: i }));
-    await updateCatalog(catalogId, { products: normalized });
+    await updateCatalog(catalogId, { products: normalized }, "Pořadí produktů uloženo");
   };
 
   const deleteProductSafely = async (catalogId: string, product: ProductCatalogProduct) => {
@@ -409,6 +432,7 @@ export default function ProductCatalogsPage() {
 
   const openProductDialog = (sourceCatalogId: string, p: ProductCatalogProduct) => {
     setProductFormSourceCatalogId(sourceCatalogId);
+    const galleryUrls = buildProductGalleryUrls(p);
     setProductForm({
       id: p.id,
       targetCatalogId: sourceCatalogId,
@@ -421,8 +445,8 @@ export default function ProductCatalogsPage() {
       internalNote: p.internalNote ?? "",
       order: String(p.order ?? 0),
       active: p.active !== false,
-      imageUrl: p.imageUrl,
-      gallery: [...(p.gallery ?? [])],
+      imageUrl: galleryUrls[0] ?? p.imageUrl,
+      gallery: galleryUrls,
     });
     setProductFormNewFiles([]);
     setProductDialogOpen(true);
@@ -433,9 +457,20 @@ export default function ProductCatalogsPage() {
     setSaving(true);
     try {
       const srcCat = catalogs.find((c) => c.id === productFormSourceCatalogId);
-      if (!srcCat) return;
-      const current = srcCat.products?.find((p) => p.id === productForm.id);
-      if (!current) return;
+      if (!srcCat) {
+        toast({ variant: "destructive", title: "Zdrojový katalog nebyl nalezen." });
+        return;
+      }
+      const productList = Array.isArray(srcCat.products) ? srcCat.products : [];
+      const current = productList.find((x) => x.id === productForm.id);
+      if (!current) {
+        toast({
+          variant: "destructive",
+          title: "Produkt v katalogu nebyl nalezen",
+          description: "Obnovte stránku a zkuste znovu.",
+        });
+        return;
+      }
 
       let newUrls: string[] = [];
       if (productFormNewFiles.length) {
@@ -445,21 +480,30 @@ export default function ProductCatalogsPage() {
         );
       }
 
-      const mergedGallery = [...productForm.gallery, ...newUrls];
-      let nextImageUrl = productForm.imageUrl || mergedGallery[0] || undefined;
-      if (nextImageUrl && !mergedGallery.includes(nextImageUrl)) {
-        nextImageUrl = mergedGallery[0];
+      const mergedGallery = [...new Set([...productForm.gallery, ...newUrls].filter(Boolean))];
+      const preferredMain =
+        typeof productForm.imageUrl === "string" && productForm.imageUrl.trim()
+          ? productForm.imageUrl.trim()
+          : mergedGallery[0];
+      let nextImageUrl =
+        preferredMain && mergedGallery.includes(preferredMain) ? preferredMain : mergedGallery[0];
+
+      const priceTrim = productForm.price.trim();
+      let priceVal: number | null = null;
+      if (priceTrim !== "") {
+        const n = Number(priceTrim);
+        priceVal = Number.isFinite(n) ? n : null;
       }
 
       const updated: ProductCatalogProduct = {
         ...current,
         name: productForm.name.trim(),
-        shortDescription: productForm.shortDescription.trim() || undefined,
-        description: productForm.description.trim() || undefined,
-        category: productForm.category.trim() || undefined,
-        price: productForm.price.trim() ? Number(productForm.price) : null,
-        note: productForm.note.trim() || undefined,
-        internalNote: productForm.internalNote.trim() || undefined,
+        shortDescription: productForm.shortDescription.trim() ? productForm.shortDescription.trim() : undefined,
+        description: productForm.description.trim() ? productForm.description.trim() : undefined,
+        category: productForm.category.trim() ? productForm.category.trim() : undefined,
+        price: priceVal,
+        note: productForm.note.trim() ? productForm.note.trim() : undefined,
+        internalNote: productForm.internalNote.trim() ? productForm.internalNote.trim() : undefined,
         order: Number.parseInt(productForm.order, 10) || 0,
         active: productForm.active,
         gallery: mergedGallery,
@@ -468,13 +512,16 @@ export default function ProductCatalogsPage() {
 
       const tgtId = productForm.targetCatalogId;
       if (productFormSourceCatalogId === tgtId) {
-        const next = (srcCat.products ?? []).map((x) => (x.id === updated.id ? updated : x));
-        await updateCatalog(tgtId, { products: next });
+        const next = productList.map((x) => (x.id === updated.id ? updated : x));
+        await updateCatalog(tgtId, { products: next }, "Produkt byl uložen");
       } else {
         const tgtCat = catalogs.find((c) => c.id === tgtId);
-        if (!tgtCat) return;
-        const fromProducts = (srcCat.products ?? []).filter((x) => x.id !== updated.id);
-        const toProducts = [...(tgtCat.products ?? [])];
+        if (!tgtCat) {
+          toast({ variant: "destructive", title: "Cílový katalog nebyl nalezen." });
+          return;
+        }
+        const fromProducts = productList.filter((x) => x.id !== updated.id);
+        const toProducts = [...(Array.isArray(tgtCat.products) ? tgtCat.products : [])];
         const visible = toProducts.filter((x) => x.archived !== true);
         const moved: ProductCatalogProduct = {
           ...updated,
@@ -482,20 +529,22 @@ export default function ProductCatalogsPage() {
         };
         toProducts.push(moved);
         await updateDoc(doc(firestore, "companies", companyId, "product_catalogs", productFormSourceCatalogId), {
-          products: fromProducts,
+          products: fromProducts.map((p) => serializeProductForFirestore(p)),
           updatedBy: user.uid,
           updatedAt: serverTimestamp(),
-        });
+        } as any);
         await updateDoc(doc(firestore, "companies", companyId, "product_catalogs", tgtId), {
-          products: toProducts,
+          products: toProducts.map((p) => serializeProductForFirestore(p)),
           updatedBy: user.uid,
           updatedAt: serverTimestamp(),
-        });
+        } as any);
         toast({ title: "Produkt byl přesunut a uložen" });
+        const prevSourceCatalogId = productFormSourceCatalogId;
         setProductDialogOpen(false);
         setProductForm(null);
         setProductFormNewFiles([]);
-        if (activeCatalogId === productFormSourceCatalogId) {
+        setProductFormSourceCatalogId(null);
+        if (activeCatalogId === prevSourceCatalogId) {
           setActiveCatalogId(tgtId);
         }
         return;
@@ -504,6 +553,14 @@ export default function ProductCatalogsPage() {
       setProductDialogOpen(false);
       setProductForm(null);
       setProductFormNewFiles([]);
+      setProductFormSourceCatalogId(null);
+    } catch (e) {
+      console.error("[ProductCatalogsPage] saveProductDialog", e);
+      toast({
+        variant: "destructive",
+        title: "Produkt se nepodařilo uložit",
+        description: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setSaving(false);
     }
@@ -519,10 +576,16 @@ export default function ProductCatalogsPage() {
     try {
       const storage = getFirebaseStorage();
       await deleteObject(ref(storage, url));
-    } catch {
-      /* external URL */
+      toast({ title: "Fotka odstraněna (uložte produkt)" });
+    } catch (e) {
+      console.warn("[ProductCatalogsPage] removeProductPhotoFromForm deleteObject", e);
+      toast({
+        variant: "destructive",
+        title: "Soubor ve Storage se nepodařilo smazat",
+        description:
+          "Obrázek byl odebrán z formuláře. U externích URL se Storage nemazal; po uložení může soubor zůstat v úložišti.",
+      });
     }
-    toast({ title: "Fotka odstraněna (uložte produkt)" });
   };
 
   return (
@@ -669,7 +732,16 @@ export default function ProductCatalogsPage() {
                   <Input value={newProductName} onChange={(e) => setNewProductName(e.target.value)} placeholder="Název" />
                   <Input value={newProductCategory} onChange={(e) => setNewProductCategory(e.target.value)} placeholder="Kategorie" />
                   <Input value={newProductPrice} onChange={(e) => setNewProductPrice(e.target.value)} placeholder="Cena" />
-                  <Input type="file" accept="image/*" multiple onChange={(e) => setNewProductImages(Array.from(e.target.files ?? []))} />
+                  <Input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={(e) => {
+                      const files = Array.from(e.target.files ?? []);
+                      if (files.length) setNewProductImages((prev) => [...prev, ...files]);
+                      e.target.value = "";
+                    }}
+                  />
                   <Input
                     className="md:col-span-2"
                     value={newProductShortDescription}
@@ -688,15 +760,17 @@ export default function ProductCatalogsPage() {
               <div className="space-y-2">
                 <p className="text-sm font-medium">Produkty v katalogu</p>
                 <div className="grid gap-2">
-                  {products.map((p) => (
+                  {products.map((p) => {
+                    const listThumb = p.imageUrl || p.gallery?.[0];
+                    return (
                     <div
                       key={p.id}
                       className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center"
                     >
                       <div className="relative h-20 w-full shrink-0 overflow-hidden rounded-md bg-muted sm:h-20 sm:w-20">
-                        {p.imageUrl ? (
+                        {listThumb ? (
                           // eslint-disable-next-line @next/next/no-img-element
-                          <img src={p.imageUrl} alt="" className="h-full w-full object-cover" />
+                          <img src={listThumb} alt="" className="h-full w-full object-cover" />
                         ) : (
                           <div className="flex h-full items-center justify-center text-[10px] text-muted-foreground">
                             —
@@ -744,7 +818,8 @@ export default function ProductCatalogsPage() {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </CardContent>
@@ -857,7 +932,17 @@ export default function ProductCatalogsPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={productDialogOpen} onOpenChange={setProductDialogOpen}>
+      <Dialog
+        open={productDialogOpen}
+        onOpenChange={(open) => {
+          setProductDialogOpen(open);
+          if (!open) {
+            setProductForm(null);
+            setProductFormNewFiles([]);
+            setProductFormSourceCatalogId(null);
+          }
+        }}
+      >
         <DialogContent className="max-w-xl">
           <DialogHeader>
             <DialogTitle>Upravit produkt</DialogTitle>
@@ -960,7 +1045,13 @@ export default function ProductCatalogsPage() {
                   type="file"
                   accept="image/*"
                   multiple
-                  onChange={(e) => setProductFormNewFiles(Array.from(e.target.files ?? []))}
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []);
+                    if (files.length) {
+                      setProductFormNewFiles((prev) => [...prev, ...files]);
+                    }
+                    e.target.value = "";
+                  }}
                 />
               </div>
               {productForm.gallery.length ? (
