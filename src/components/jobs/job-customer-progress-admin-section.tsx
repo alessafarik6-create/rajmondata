@@ -85,6 +85,7 @@ export function JobCustomerProgressAdminSection({
   const imagesRef = useRef<CustomerProgressImage[]>([]);
   const [completion, setCompletion] = useState(0);
   const [images, setImages] = useState<CustomerProgressImage[]>([]);
+  const [imagesExpanded, setImagesExpanded] = useState(false);
   imagesRef.current = images;
   const [uploading, setUploading] = useState(false);
   const [savingPercent, setSavingPercent] = useState(false);
@@ -260,6 +261,26 @@ export function JobCustomerProgressAdminSection({
         </div>
 
         <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-medium text-foreground">
+                Fotky pro zákaznický slider{" "}
+                <span className="text-muted-foreground">({images.length})</span>
+              </span>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="gap-2"
+              onClick={() => setImagesExpanded((v) => !v)}
+              aria-expanded={imagesExpanded}
+            >
+              {imagesExpanded ? "Sbalit" : "Zobrazit více"}
+              {imagesExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </Button>
+          </div>
+
           <div className="flex flex-wrap items-center gap-2">
             <input
               ref={fileInputRef}
@@ -291,116 +312,143 @@ export function JobCustomerProgressAdminSection({
           {images.length === 0 ? (
             <p className="text-sm text-muted-foreground">Zatím žádné obrázky pro zákaznický slider.</p>
           ) : (
-            <ul className="space-y-3">
-              {images.map((img, idx) => (
-                <li
-                  key={img.id}
-                  className="rounded-lg border bg-card p-3 space-y-2"
-                >
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="outline"
-                      className="h-8 w-8"
-                      aria-label="Posunout nahoru"
-                      disabled={idx === 0 || savingImages}
-                      onClick={() => void move(idx, -1)}
-                    >
-                      <ChevronUp className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="outline"
-                      className="h-8 w-8"
-                      aria-label="Posunout dolů"
-                      disabled={idx >= images.length - 1 || savingImages}
-                      onClick={() => void move(idx, 1)}
-                    >
-                      <ChevronDown className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      size="icon"
-                      variant="destructive"
-                      className="h-8 w-8"
-                      aria-label="Smazat"
-                      disabled={savingImages}
-                      onClick={() => void removeAt(idx)}
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+            <div className="space-y-3">
+              {!imagesExpanded ? (
+                <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {images.slice(0, 4).map((img) => (
+                      <div key={img.id} className="relative overflow-hidden rounded-md border bg-white">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={img.url}
+                          alt=""
+                          className="h-auto w-full aspect-[4/3] object-cover"
+                          loading="lazy"
+                        />
+                      </div>
+                    ))}
                   </div>
-                  <div className="flex gap-3 flex-col sm:flex-row">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={img.url}
-                      alt=""
-                      className="h-24 w-auto max-w-[140px] rounded border object-contain bg-muted"
-                    />
-                    <div className="min-w-0 flex-1 space-y-2">
-                      <div>
-                        <Label className="text-xs">Název</Label>
-                        <Input
-                          value={img.title ?? ""}
-                          placeholder="Volitelný název"
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setImages((prev) =>
-                              prev.map((p, i) => (i === idx ? { ...p, title: v } : p))
-                            );
-                          }}
-                          onBlur={(e) => {
-                            const v = e.target.value.trim();
-                            const next = imagesRef.current.map((p, i) =>
-                              i === idx ? { ...p, title: v } : p
-                            );
-                            void persistImages(next);
-                          }}
+                  {images.length > 4 ? (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Zobrazeno 4 z {images.length}. Klikněte na „Zobrazit více“ pro celý seznam.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {images.map((img, idx) => (
+                    <div key={img.id} className="rounded-lg border bg-card overflow-hidden">
+                      <div className="border-b bg-muted/20">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={img.url}
+                          alt=""
+                          className="h-auto w-full aspect-[4/3] object-cover"
+                          loading="lazy"
                         />
                       </div>
-                      <div>
-                        <Label className="text-xs">Popis</Label>
-                        <Input
-                          value={img.description ?? ""}
-                          placeholder="Krátký popis"
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setImages((prev) =>
-                              prev.map((p, i) => (i === idx ? { ...p, description: v } : p))
-                            );
-                          }}
-                          onBlur={(e) => {
-                            const v = e.target.value.trim();
-                            const next = imagesRef.current.map((p, i) =>
-                              i === idx ? { ...p, description: v } : p
-                            );
-                            void persistImages(next);
-                          }}
-                        />
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Switch
-                          checked={img.visibleToCustomer !== false}
-                          onCheckedChange={(checked) => {
-                            const next = imagesRef.current.map((p, i) =>
-                              i === idx ? { ...p, visibleToCustomer: checked } : p
-                            );
-                            void persistImages(next);
-                          }}
-                          disabled={savingImages}
-                          id={`vis-${img.id}`}
-                        />
-                        <Label htmlFor={`vis-${img.id}`} className="text-sm font-normal">
-                          Viditelné zákazníkovi
-                        </Label>
+                      <div className="p-3 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              className="h-8 w-8"
+                              aria-label="Posunout nahoru"
+                              disabled={idx === 0 || savingImages}
+                              onClick={() => void move(idx, -1)}
+                            >
+                              <ChevronUp className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="outline"
+                              className="h-8 w-8"
+                              aria-label="Posunout dolů"
+                              disabled={idx >= images.length - 1 || savingImages}
+                              onClick={() => void move(idx, 1)}
+                            >
+                              <ChevronDown className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="destructive"
+                              className="h-8 w-8"
+                              aria-label="Smazat"
+                              disabled={savingImages}
+                              onClick={() => void removeAt(idx)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <span className="text-xs text-muted-foreground tabular-nums">#{idx + 1}</span>
+                        </div>
+
+                        <div className="space-y-2">
+                          <div>
+                            <Label className="text-xs">Název</Label>
+                            <Input
+                              value={img.title ?? ""}
+                              placeholder="Volitelný název"
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setImages((prev) => prev.map((p, i) => (i === idx ? { ...p, title: v } : p)));
+                              }}
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                const next = imagesRef.current.map((p, i) => (i === idx ? { ...p, title: v } : p));
+                                void persistImages(next);
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Popis</Label>
+                            <Input
+                              value={img.description ?? ""}
+                              placeholder="Krátký popis"
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setImages((prev) =>
+                                  prev.map((p, i) => (i === idx ? { ...p, description: v } : p))
+                                );
+                              }}
+                              onBlur={(e) => {
+                                const v = e.target.value.trim();
+                                const next = imagesRef.current.map((p, i) =>
+                                  i === idx ? { ...p, description: v } : p
+                                );
+                                void persistImages(next);
+                              }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <Switch
+                                checked={img.visibleToCustomer !== false}
+                                onCheckedChange={(checked) => {
+                                  const next = imagesRef.current.map((p, i) =>
+                                    i === idx ? { ...p, visibleToCustomer: checked } : p
+                                  );
+                                  void persistImages(next);
+                                }}
+                                disabled={savingImages}
+                                id={`vis-${img.id}`}
+                              />
+                              <Label htmlFor={`vis-${img.id}`} className="text-sm font-normal">
+                                Viditelné
+                              </Label>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
         </div>
 
