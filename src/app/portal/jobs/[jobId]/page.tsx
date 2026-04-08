@@ -39,6 +39,7 @@ import {
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
 import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoices-section";
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
+import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
 import {
   doc,
@@ -5465,7 +5466,7 @@ function JobDetailPageContent() {
             className={JD.actionButton}
             onClick={() => void openContractDialog("sod_work")}
           >
-            <FileText className="w-4 h-4" /> Vytvořit smlouvu o dílo
+            <FileText className="w-4 h-4" /> Vytvořit smlouvu
           </Button>
 
           {isAdmin && (
@@ -6107,6 +6108,23 @@ function JobDetailPageContent() {
                   ? String((job as { status: string }).status)
                   : ""
               }
+            />
+          ) : null}
+
+          {companyId && jobFirestoreId && user ? (
+            <JobMaterialOrdersSection
+              companyId={companyId}
+              companyDisplayName={
+                companyNameFromDoc ||
+                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
+                "Organizace"
+              }
+              jobId={jobFirestoreId}
+              job={job as Record<string, unknown>}
+              customerName={jobCustomerAddressBlock.displayName}
+              customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
+              userId={user.uid}
+              canManage={canManageFolders}
             />
           ) : null}
 

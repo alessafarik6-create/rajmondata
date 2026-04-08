@@ -6,7 +6,7 @@
 import type { Firestore } from "firebase/firestore";
 import { doc, runTransaction, serverTimestamp } from "firebase/firestore";
 
-export type InvoiceSeriesKey = "ZF" | "DD" | "FV" | "FA";
+export type InvoiceSeriesKey = "ZF" | "DD" | "FV" | "FA" | "OBJ";
 
 const COUNTERS_DOC = "documentCounters";
 
