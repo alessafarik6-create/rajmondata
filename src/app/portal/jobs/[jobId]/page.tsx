@@ -209,12 +209,17 @@ type DragMode =
 type WorkContractForm = {
   /** Zobrazovaný název dokumentu (PDF, seznam) — nezávislý na čísle */
   documentTitle: string;
-  /** smlouva vs. dodatek */
-  documentRole: "contract" | "addendum";
+  /** smlouva vs. dodatek vs. příloha ke smlouvě */
+  documentRole: "contract" | "addendum" | "attachment";
   /** work_contract, reservation_contract, contract_addendum, custom, … */
   documentSubtype: string;
-  /** Pro dodatek — id nadřazené smlouvy ve stejné zakázce */
+  /** Pro dodatek / přílohu — id nadřazené smlouvy ve stejné zakázce */
   parentContractId: string;
+  /** Zrcadlení nadřazené smlouvy (příloha) — číslo a název */
+  parentContractNumber: string;
+  parentContractTitle: string;
+  /** Pořadí přílohy u dané smlouvy (1, 2, …) */
+  attachmentOrdinal: number;
   /** Řada čísel: SOD sdílí stávající čítač, ostatní používají vlastní řadu */
   numberSeriesPrefix: string;
   templateName: string;
@@ -241,9 +246,13 @@ type WorkContractDoc = {
   /** Hlavní název v tisku / PDF; alias vázaný pole `title` (kompatibilita). */
   documentTitle?: string | null;
   title?: string | null;
-  documentRole?: "contract" | "addendum" | string | null;
+  documentRole?: "contract" | "addendum" | "attachment" | string | null;
   documentSubtype?: string | null;
   parentContractId?: string | null;
+  /** Zrcadlené údaje nadřazené smlouvy u přílohy */
+  parentContractNumber?: string | null;
+  parentContractTitle?: string | null;
+  attachmentOrdinal?: number | null;
   numberSeriesPrefix?: string | null;
   isTemplate?: boolean;
   templateDocId?: string | null;
@@ -269,7 +278,7 @@ type WorkContractDoc = {
   updatedAt?: any;
 };
 
-type ContractOpenPreset = "sod_work" | "new_contract" | "new_addendum";
+type ContractOpenPreset = "sod_work" | "new_contract" | "new_addendum" | "new_attachment";
 
 function workContractDisplayTitle(c: WorkContractDoc): string {
   const t = String(c.documentTitle ?? c.title ?? "").trim();
@@ -287,6 +296,26 @@ function workContractDisplayTitle(c: WorkContractDoc): string {
 function workContractDisplayTypeLabel(c: WorkContractDoc): string {
   const role = String(c.documentRole ?? "").trim();
   if (role === "addendum") return "Dodatek";
+  if (role === "attachment") return "Příloha ke smlouvě";
+  return "Smlouva";
+}
+
+function parentContractKindLabelFromDoc(c: WorkContractDoc): string {
+  const role = String(c.documentRole ?? "").trim();
+  if (role === "addendum") return "Dodatek";
+  const st = String(c.documentSubtype ?? "").trim();
+  const prefix = String(c.numberSeriesPrefix ?? "").trim().toUpperCase();
+  if (prefix === "RS" || st === "reservation_contract") {
+    return "Rezervační smlouva";
+  }
+  if (
+    st === "work_contract" ||
+    st === "" ||
+    st === "custom" ||
+    st === "smlouva_o_dilo"
+  ) {
+    return "Smlouva o dílo";
+  }
   return "Smlouva";
 }
 
@@ -294,8 +323,13 @@ function workContractDocToForm(
   data: WorkContractDoc,
   companyBankAccountNumber: string
 ): WorkContractForm {
-  const docRole =
-    data.documentRole === "addendum" ? "addendum" : "contract";
+  const rawRole = String(data.documentRole ?? "").trim();
+  const docRole: WorkContractForm["documentRole"] =
+    rawRole === "addendum"
+      ? "addendum"
+      : rawRole === "attachment"
+        ? "attachment"
+        : "contract";
   const ct = String(data.contractType ?? "").trim();
   const legacySubtype =
     ct === "smlouva_o_dilo" || !ct ? "work_contract" : "custom";
@@ -306,6 +340,13 @@ function workContractDocToForm(
     documentSubtype:
       String(data.documentSubtype ?? "").trim() || legacySubtype,
     parentContractId: String(data.parentContractId ?? "").trim(),
+    parentContractNumber: String(data.parentContractNumber ?? "").trim(),
+    parentContractTitle: String(data.parentContractTitle ?? "").trim(),
+    attachmentOrdinal:
+      typeof data.attachmentOrdinal === "number" &&
+      Number.isFinite(data.attachmentOrdinal)
+        ? data.attachmentOrdinal
+        : 0,
     numberSeriesPrefix:
       String(data.numberSeriesPrefix ?? "").trim().toUpperCase() || "SOD",
     templateName: (data.templateName as string) || "",
@@ -343,12 +384,18 @@ const EMPTY_CONTRACT_FORM_FIELDS: Pick<
   | "documentRole"
   | "documentSubtype"
   | "parentContractId"
+  | "parentContractNumber"
+  | "parentContractTitle"
+  | "attachmentOrdinal"
   | "numberSeriesPrefix"
 > = {
   documentTitle: "",
   documentRole: "contract",
   documentSubtype: "work_contract",
   parentContractId: "",
+  parentContractNumber: "",
+  parentContractTitle: "",
+  attachmentOrdinal: 0,
   numberSeriesPrefix: "SOD",
 };
 
@@ -1024,6 +1071,9 @@ function JobDetailPageContent() {
     documentRole: "contract",
     documentSubtype: "work_contract",
     parentContractId: "",
+    parentContractNumber: "",
+    parentContractTitle: "",
+    attachmentOrdinal: 0,
     numberSeriesPrefix: "SOD",
     templateName: "",
     contractHeader: "",
@@ -1044,10 +1094,48 @@ function JobDetailPageContent() {
       workContractsForJob.filter(
         (c) =>
           c.id !== activeWorkContractId &&
-          String(c.documentRole ?? "").trim() !== "addendum"
+          String(c.documentRole ?? "").trim() !== "addendum" &&
+          String(c.documentRole ?? "").trim() !== "attachment"
       ),
     [workContractsForJob, activeWorkContractId]
   );
+
+  const workContractsBaseForJob = useMemo(() => {
+    const list = (workContractsForJob || []) as WorkContractDoc[];
+    return list.filter(
+      (c) => String(c.documentRole ?? "").trim() !== "attachment"
+    );
+  }, [workContractsForJob]);
+
+  const attachmentsByParentContractId = useMemo(() => {
+    const map = new Map<string, WorkContractDoc[]>();
+    for (const c of workContractsForJob) {
+      if (String(c.documentRole ?? "").trim() !== "attachment") continue;
+      const pid = String(c.parentContractId ?? "").trim();
+      if (!pid) continue;
+      const arr = map.get(pid) ?? [];
+      arr.push(c);
+      map.set(pid, arr);
+    }
+    const getTime = (t: any) => {
+      if (!t) return 0;
+      if (typeof t === "number") return t;
+      if (typeof t.toMillis === "function") return t.toMillis();
+      if (typeof t.toDate === "function") return t.toDate().getTime();
+      return 0;
+    };
+    for (const [, arr] of map) {
+      arr.sort((a, b) => {
+        const oa =
+          typeof a.attachmentOrdinal === "number" ? a.attachmentOrdinal : 0;
+        const ob =
+          typeof b.attachmentOrdinal === "number" ? b.attachmentOrdinal : 0;
+        if (oa !== ob) return oa - ob;
+        return getTime(a.createdAt) - getTime(b.createdAt);
+      });
+    }
+    return map;
+  }, [workContractsForJob]);
 
   const selectedBankAccount = useMemo(() => {
     if (!contractForm.bankAccountId) return null;
@@ -1487,6 +1575,21 @@ function JobDetailPageContent() {
         formOverride?.contractNumber?.trim() ||
         contractForm.contractNumber?.trim() ||
         "";
+      const parentContractNoTok =
+        formOverride?.parentContractNumber?.trim() ||
+        contractForm.parentContractNumber?.trim() ||
+        "";
+      const parentContractTitleTok =
+        formOverride?.parentContractTitle?.trim() ||
+        contractForm.parentContractTitle?.trim() ||
+        "";
+      const attachmentOrdTok =
+        formOverride?.attachmentOrdinal != null &&
+        formOverride.attachmentOrdinal > 0
+          ? String(formOverride.attachmentOrdinal)
+          : contractForm.attachmentOrdinal > 0
+            ? String(contractForm.attachmentOrdinal)
+            : "";
       const contractDateForTokens =
         formOverride?.contractDateLabel?.trim() ||
         contractForm.contractDateLabel?.trim() ||
@@ -1501,6 +1604,11 @@ function JobDetailPageContent() {
         "smlouva.cislo": contractNo,
         "smlouva.vs": contractNo,
         "smlouva.datum": contractDateForTokens,
+        "rodic_smlouva.cislo": parentContractNoTok,
+        "rodic_smlouva.nazev": parentContractTitleTok,
+        "priloha.poradi": attachmentOrdTok,
+        "smlouva.nadrazena_cislo": parentContractNoTok,
+        "smlouva.nadrazena_nazev": parentContractTitleTok,
         nazev_firmy: supplierName,
         ico: supplierIco ? String(supplierIco) : "",
         dic: supplierDicRaw ? String(supplierDicRaw) : "—",
@@ -1586,6 +1694,9 @@ function JobDetailPageContent() {
       contractForm.bankAccountNumber,
       contractForm.contractNumber,
       contractForm.contractDateLabel,
+      contractForm.parentContractNumber,
+      contractForm.parentContractTitle,
+      contractForm.attachmentOrdinal,
       selectedBankAccount,
       bankAccounts,
       template,
@@ -1617,6 +1728,71 @@ function JobDetailPageContent() {
 
   const buildContractHtmlForForm = useCallback(
     (form: WorkContractForm) => {
+      if (form.documentRole === "attachment") {
+        const headerRaw = applyTemplateVariables(
+          form.contractHeader || "",
+          form
+        );
+        const bodyRaw = applyTemplateVariables(
+          form.mainContractContent || "",
+          form
+        );
+        const additionalRaw = applyTemplateVariables(
+          form.additionalInfo || "",
+          form
+        );
+        const clientRaw = applyTemplateVariables(form.client || "", form);
+        const contractorRaw = applyTemplateVariables(form.contractor || "", form);
+        const parentDoc = workContractsForJob.find(
+          (c) => c.id === form.parentContractId
+        );
+        const parentKind = parentDoc
+          ? parentContractKindLabelFromDoc(parentDoc as WorkContractDoc)
+          : "";
+
+        const jobTitleAtt = job?.name || "";
+        const jobDescAtt = job?.description || "";
+        const priceFormattedAtt =
+          jobBudgetKc != null && Number.isFinite(jobBudgetKc)
+            ? `${Math.round(jobBudgetKc).toLocaleString("cs-CZ")} Kč`
+            : "";
+        const deadlineFormattedAtt = (job?.endDate || "").trim();
+
+        const templateDataSectionInnerHtmlAtt =
+          buildJobTemplateDataSectionInnerHtml(
+            template as JobTemplate | undefined,
+            (job?.templateValues as JobTemplateValues | undefined) ?? undefined
+          );
+
+        return buildWorkContractPrintHtml({
+          printVariant: "attachment",
+          pageTitle:
+            form.documentTitle?.trim() ||
+            (form.attachmentOrdinal > 0
+              ? `Příloha č. ${form.attachmentOrdinal}`
+              : "Příloha ke smlouvě"),
+          contractNumber: form.contractNumber?.trim() || "",
+          variableSymbol: form.contractNumber?.trim() || "",
+          documentDate:
+            form.contractDateLabel?.trim() ||
+            new Intl.DateTimeFormat("cs-CZ").format(new Date()),
+          contractHeaderHtml: withLineBreaks(headerRaw),
+          mainBodyHtml: withLineBreaks(bodyRaw),
+          additionalInfoHtml: withLineBreaks(additionalRaw),
+          zhotovitelHtml: withLineBreaks(contractorRaw),
+          objednatelHtml: withLineBreaks(clientRaw),
+          jobTitle: jobTitleAtt,
+          jobDescription: jobDescAtt,
+          priceFormatted: priceFormattedAtt,
+          deadlineFormatted: deadlineFormattedAtt,
+          paymentTermsHtml: "",
+          templateDataSectionInnerHtml: templateDataSectionInnerHtmlAtt,
+          parentContractNumber: form.parentContractNumber?.trim() || "",
+          parentContractTitle: form.parentContractTitle?.trim() || "",
+          parentContractKindLabel: parentKind,
+        });
+      }
+
       const headerRaw = applyTemplateVariables(
         form.contractHeader || "",
         form
@@ -1705,6 +1881,7 @@ function JobDetailPageContent() {
       template,
       jobBudgetKc,
       companyProfileBankAccountDisplay,
+      workContractsForJob,
     ]
   );
 
@@ -1887,7 +2064,10 @@ function JobDetailPageContent() {
   ]);
 
   const openContractDialog = useCallback(
-    async (preset: ContractOpenPreset = "sod_work") => {
+    async (
+      preset: ContractOpenPreset = "sod_work",
+      opts?: { parentContractId?: string }
+    ) => {
       if (!firestore || !companyId || !jobId) {
         toast({
           variant: "destructive",
@@ -1921,6 +2101,78 @@ function JobDetailPageContent() {
         defaultBankAccount
       );
 
+      if (preset === "new_attachment") {
+        const pid = String(opts?.parentContractId ?? "").trim();
+        if (!pid) {
+          toast({
+            variant: "destructive",
+            title: "Chybí smlouva",
+            description:
+              "Vyberte smlouvu, ke které má příloha patřit (nadřazený dokument).",
+          });
+          setContractDialogOpen(false);
+          return;
+        }
+        const parent = workContractsForJob.find((c) => c.id === pid);
+        if (
+          !parent ||
+          String(parent.documentRole ?? "").trim() === "attachment" ||
+          String(parent.documentRole ?? "").trim() === "addendum"
+        ) {
+          toast({
+            variant: "destructive",
+            title: "Neplatná smlouva",
+            description:
+              "Přílohu lze vytvořit jen k základní smlouvě (ne k dodatku).",
+          });
+          setContractDialogOpen(false);
+          return;
+        }
+        const parentNo = String(parent.contractNumber ?? "").trim();
+        const parentTitle = workContractDisplayTitle(parent);
+        const siblingAttachments = workContractsForJob.filter(
+          (c) =>
+            String(c.documentRole ?? "").trim() === "attachment" &&
+            String(c.parentContractId ?? "").trim() === pid
+        );
+        const maxOrd = siblingAttachments.reduce(
+          (m, c) =>
+            Math.max(
+              m,
+              typeof c.attachmentOrdinal === "number" ? c.attachmentOrdinal : 0
+            ),
+          0
+        );
+        const nextOrdinal = maxOrd + 1;
+        const defaultTitle = `Příloha č. ${nextOrdinal} – Obsah plnění`;
+
+        setContractForm({
+          documentTitle: defaultTitle,
+          documentRole: "attachment",
+          documentSubtype: "contract_attachment",
+          parentContractId: pid,
+          parentContractNumber: parentNo,
+          parentContractTitle: parentTitle,
+          attachmentOrdinal: nextOrdinal,
+          numberSeriesPrefix: "PRIL",
+          templateName: "",
+          contractHeader: `Příloha č. ${nextOrdinal} ke smlouvě č. ${parentNo || "—"} (${parentTitle})`,
+          mainContractContent: "",
+          client: autoClientText,
+          contractor: autoContractorText,
+          additionalInfo: "",
+          depositPercentage: "",
+          depositAmount: "",
+          bankAccountNumber: defaultBankAccount
+            ? formatCompanyBankAccountNumber(defaultBankAccount)
+            : companyBankAccountNumber,
+          bankAccountId: defaultBankAccount?.id || null,
+          contractNumber: "",
+          contractDateLabel: "",
+        });
+        return;
+      }
+
       const presetTitle =
         preset === "sod_work"
           ? "Smlouva o dílo"
@@ -1929,6 +2181,11 @@ function JobDetailPageContent() {
             : "";
       const headerTitleArg =
         preset === "new_contract" ? "" : presetTitle || undefined;
+
+      const addendumParentId =
+        preset === "new_addendum" && opts?.parentContractId
+          ? String(opts.parentContractId).trim()
+          : "";
 
       setContractForm({
         documentTitle: presetTitle,
@@ -1939,7 +2196,10 @@ function JobDetailPageContent() {
             : preset === "sod_work"
               ? "work_contract"
               : "custom",
-        parentContractId: "",
+        parentContractId: addendumParentId,
+        parentContractNumber: "",
+        parentContractTitle: "",
+        attachmentOrdinal: 0,
         numberSeriesPrefix: preset === "new_addendum" ? "DOD" : "SOD",
         templateName: "",
         contractHeader: buildPrefilledContractHeader(headerTitleArg),
@@ -1973,6 +2233,7 @@ function JobDetailPageContent() {
       bankAccounts,
       companyBankAccountNumber,
       formatCompanyBankAccountNumber,
+      workContractsForJob,
     ]
   );
 
@@ -2201,12 +2462,13 @@ function JobDetailPageContent() {
           contractDateLabel,
         };
 
+        const isListedAttachment = form.documentRole === "attachment";
         const depErrListed = validateWorkContractDeposit({
           depositAmountStr: form.depositAmount,
           depositPercentStr: form.depositPercentage,
           budgetKc: jobBudgetKc,
         });
-        if (depErrListed) {
+        if (depErrListed && !isListedAttachment) {
           toast({
             variant: "destructive",
             title: "Nelze vytvořit PDF",
@@ -2318,6 +2580,9 @@ function JobDetailPageContent() {
           bankAccountId: null,
           contractNumber: "",
           contractDateLabel: "",
+          parentContractNumber: "",
+          parentContractTitle: "",
+          attachmentOrdinal: 0,
         });
         return;
       }
@@ -2667,6 +2932,9 @@ function JobDetailPageContent() {
         bankAccountId: null,
         contractNumber: "",
         contractDateLabel: "",
+        parentContractNumber: "",
+        parentContractTitle: "",
+        attachmentOrdinal: 0,
       });
     } catch (err: any) {
       console.error("[WorkContract] deleteTemplate failed", err);
@@ -2707,6 +2975,166 @@ function JobDetailPageContent() {
     const existing = existingSnap.exists()
       ? (existingSnap.data() as WorkContractDoc)
       : null;
+
+    const isAttachment = contractForm.documentRole === "attachment";
+
+    if (isAttachment) {
+      const pid = String(contractForm.parentContractId ?? "").trim();
+      if (!pid) {
+        throw new Error("Chybí výběr nadřazené smlouvy pro přílohu.");
+      }
+      const parentRef = doc(
+        firestore,
+        "companies",
+        companyId,
+        "jobs",
+        jobId as string,
+        "workContracts",
+        pid
+      );
+      const parentSnap = await getDoc(parentRef);
+      if (!parentSnap.exists()) {
+        throw new Error("Nadřazená smlouva neexistuje nebo byla smazána.");
+      }
+      const parentData = parentSnap.data() as WorkContractDoc;
+      if (String(parentData.documentRole ?? "").trim() === "attachment") {
+        throw new Error("Příloha nemůže být nadřazena k jiné příloze.");
+      }
+      if (String(parentData.documentRole ?? "").trim() === "addendum") {
+        throw new Error(
+          "Příloha musí být navázána na základní smlouvu (ne na dodatek)."
+        );
+      }
+      const parentCombined: WorkContractDoc = {
+        ...parentData,
+        id: pid,
+      };
+      const parentContractNumberResolved = String(
+        parentCombined.contractNumber ?? ""
+      ).trim();
+      const parentContractTitleResolved =
+        workContractDisplayTitle(parentCombined);
+
+      let seriesRaw =
+        String(
+          contractForm.numberSeriesPrefix ||
+            existing?.numberSeriesPrefix ||
+            "PRIL"
+        )
+          .trim()
+          .toUpperCase() || "PRIL";
+      if (seriesRaw === "SOD") seriesRaw = "PRIL";
+
+      const fromFormAtt = String(contractForm.contractNumber || "").trim();
+      let contractNumberAtt =
+        fromFormAtt || String(existing?.contractNumber || "").trim();
+
+      const allocatedNewAtt = !contractNumberAtt;
+      if (allocatedNewAtt) {
+        contractNumberAtt = await allocateNextSeriesContractNumber(
+          firestore,
+          companyId,
+          seriesRaw
+        );
+      }
+
+      let contractDateLabelAtt: string;
+      if (allocatedNewAtt) {
+        contractDateLabelAtt = new Intl.DateTimeFormat("cs-CZ").format(
+          new Date()
+        );
+      } else {
+        contractDateLabelAtt =
+          formatCsDateFromFirestore(existing?.contractIssuedAt) ||
+          formatCsDateFromFirestore(existing?.createdAt) ||
+          new Intl.DateTimeFormat("cs-CZ").format(new Date());
+      }
+
+      let attachmentOrdinalResolved: number;
+      if (
+        existing &&
+        String(existing.documentRole ?? "").trim() === "attachment" &&
+        typeof existing.attachmentOrdinal === "number"
+      ) {
+        attachmentOrdinalResolved = existing.attachmentOrdinal;
+      } else {
+        const siblingAttachments = workContractsForJob.filter(
+          (c) =>
+            c.id !== activeWorkContractId &&
+            String(c.documentRole ?? "").trim() === "attachment" &&
+            String(c.parentContractId ?? "").trim() === pid
+        );
+        const maxOrd = siblingAttachments.reduce(
+          (m, c) =>
+            Math.max(
+              m,
+              typeof c.attachmentOrdinal === "number" ? c.attachmentOrdinal : 0
+            ),
+          0
+        );
+        const fromFormOrd = contractForm.attachmentOrdinal;
+        attachmentOrdinalResolved =
+          fromFormOrd > 0 ? fromFormOrd : maxOrd + 1;
+      }
+
+      const payloadAtt: Record<string, unknown> = {
+        id: activeWorkContractId,
+        jobId: jobId as string,
+        isTemplate: false,
+        contractType: "contract_document",
+        documentTitle: contractForm.documentTitle?.trim() || null,
+        title: contractForm.documentTitle?.trim() || null,
+        documentRole: "attachment",
+        documentSubtype:
+          contractForm.documentSubtype?.trim() || "contract_attachment",
+        parentContractId: pid,
+        parentContractNumber: parentContractNumberResolved || null,
+        parentContractTitle: parentContractTitleResolved || null,
+        attachmentOrdinal: attachmentOrdinalResolved,
+        numberSeriesPrefix: seriesRaw,
+        templateDocId:
+          selectedWorkContractTemplateId !== "__new__"
+            ? selectedWorkContractTemplateId
+            : null,
+        templateName: contractForm.templateName || null,
+        contractHeader: contractForm.contractHeader,
+        mainContractContent: contractForm.mainContractContent,
+        client: contractForm.client,
+        contractor: contractForm.contractor,
+        additionalInfo: contractForm.additionalInfo || null,
+        depositPercentage: null,
+        depositAmount: null,
+        zalohovaCastka: null,
+        zalohovaProcenta: null,
+        bankAccountNumber: contractForm.bankAccountNumber || null,
+        bankAccountId: contractForm.bankAccountId ?? null,
+        contractNumber: contractNumberAtt,
+        updatedAt: serverTimestamp(),
+      };
+
+      if (allocatedNewAtt) {
+        payloadAtt.contractIssuedAt = serverTimestamp();
+      }
+
+      if (existingSnap.exists()) {
+        await updateDoc(contractRef, payloadAtt as Record<string, any>);
+      } else {
+        await setDoc(contractRef, {
+          ...payloadAtt,
+          createdBy: user.uid,
+          createdAt: serverTimestamp(),
+        } as Record<string, any>);
+      }
+
+      return {
+        contractRef,
+        contractNumber: contractNumberAtt,
+        contractDateLabel: contractDateLabelAtt,
+        parentContractNumber: parentContractNumberResolved,
+        parentContractTitle: parentContractTitleResolved,
+        attachmentOrdinal: attachmentOrdinalResolved,
+      };
+    }
 
     const fromForm = String(contractForm.contractNumber || "").trim();
     let contractNumber =
@@ -2767,6 +3195,9 @@ function JobDetailPageContent() {
         contractForm.parentContractId?.trim()
           ? contractForm.parentContractId.trim()
           : null,
+      parentContractNumber: null,
+      parentContractTitle: null,
+      attachmentOrdinal: null,
       numberSeriesPrefix: seriesRaw,
       templateDocId:
         selectedWorkContractTemplateId !== "__new__"
@@ -2803,7 +3234,14 @@ function JobDetailPageContent() {
       });
     }
 
-    return { contractRef, contractNumber, contractDateLabel };
+    return {
+      contractRef,
+      contractNumber,
+      contractDateLabel,
+      parentContractNumber: undefined as string | undefined,
+      parentContractTitle: undefined as string | undefined,
+      attachmentOrdinal: undefined as number | undefined,
+    };
   }, [
     firestore,
     companyId,
@@ -2813,6 +3251,7 @@ function JobDetailPageContent() {
     selectedWorkContractTemplateId,
     contractForm,
     jobBudgetKc,
+    workContractsForJob,
   ]);
 
   const saveContract = useCallback(async () => {
@@ -2826,12 +3265,23 @@ function JobDetailPageContent() {
     }
 
     const missing: string[] = [];
-    if (!contractForm.contractHeader.trim())
+    const isAtt = contractForm.documentRole === "attachment";
+    if (!isAtt && !contractForm.contractHeader.trim()) {
       missing.push("Hlavička smlouvy");
-    if (!contractForm.mainContractContent.trim())
-      missing.push("Text smlouvy");
+    }
+    if (!contractForm.mainContractContent.trim()) {
+      missing.push(isAtt ? "Obsah plnění zakázky" : "Text smlouvy");
+    }
     if (!contractForm.client.trim()) missing.push("Objednatel");
     if (!contractForm.contractor.trim()) missing.push("Dodavatel");
+    if (isAtt) {
+      if (!String(contractForm.parentContractId ?? "").trim()) {
+        missing.push("Nadřazená smlouva");
+      }
+      if (!String(contractForm.documentTitle ?? "").trim()) {
+        missing.push("Název přílohy");
+      }
+    }
 
     if (missing.length) {
       toast({
@@ -2847,7 +3297,7 @@ function JobDetailPageContent() {
       depositPercentStr: contractForm.depositPercentage,
       budgetKc: jobBudgetKc,
     });
-    if (depErrSave) {
+    if (depErrSave && !isAtt) {
       toast({
         variant: "destructive",
         title: "Nelze uložit smlouvu",
@@ -2858,12 +3308,26 @@ function JobDetailPageContent() {
 
     setIsSavingContract(true);
     try {
-      const { contractNumber, contractDateLabel } =
-        await upsertWorkContractBase();
+      const {
+        contractNumber,
+        contractDateLabel,
+        parentContractNumber,
+        parentContractTitle,
+        attachmentOrdinal,
+      } = await upsertWorkContractBase();
       setContractForm((prev) => ({
         ...prev,
         contractNumber,
         contractDateLabel,
+        ...(parentContractNumber != null
+          ? { parentContractNumber: String(parentContractNumber) }
+          : {}),
+        ...(parentContractTitle != null
+          ? { parentContractTitle: String(parentContractTitle) }
+          : {}),
+        ...(attachmentOrdinal != null && attachmentOrdinal > 0
+          ? { attachmentOrdinal }
+          : {}),
       }));
       toast({
         title: "Dokument uložen",
@@ -2903,12 +3367,23 @@ function JobDetailPageContent() {
     }
 
     const missing: string[] = [];
-    if (!contractForm.contractHeader.trim())
+    const isAttPdf = contractForm.documentRole === "attachment";
+    if (!isAttPdf && !contractForm.contractHeader.trim()) {
       missing.push("Hlavička smlouvy");
-    if (!contractForm.mainContractContent.trim())
-      missing.push("Text smlouvy");
+    }
+    if (!contractForm.mainContractContent.trim()) {
+      missing.push(isAttPdf ? "Obsah plnění zakázky" : "Text smlouvy");
+    }
     if (!contractForm.client.trim()) missing.push("Objednatel");
     if (!contractForm.contractor.trim()) missing.push("Dodavatel");
+    if (isAttPdf) {
+      if (!String(contractForm.parentContractId ?? "").trim()) {
+        missing.push("Nadřazená smlouva");
+      }
+      if (!String(contractForm.documentTitle ?? "").trim()) {
+        missing.push("Název přílohy");
+      }
+    }
 
     if (missing.length) {
       toast({
@@ -2934,7 +3409,7 @@ function JobDetailPageContent() {
       depositPercentStr: contractForm.depositPercentage,
       budgetKc: jobBudgetKc,
     });
-    if (depErrPdf) {
+    if (depErrPdf && !isAttPdf) {
       toast({
         variant: "destructive",
         title: "Nelze vytvořit PDF",
@@ -2946,13 +3421,22 @@ function JobDetailPageContent() {
     setIsGeneratingPdf(true);
     try {
       // 1) Save contract (create/update) + assign SOD number if new
-      const { contractRef, contractNumber, contractDateLabel } =
-        await upsertWorkContractBase();
+      const upsertPdf = await upsertWorkContractBase();
 
       const mergedForm: WorkContractForm = {
         ...contractForm,
-        contractNumber,
-        contractDateLabel,
+        contractNumber: upsertPdf.contractNumber,
+        contractDateLabel: upsertPdf.contractDateLabel,
+        ...(upsertPdf.parentContractNumber != null
+          ? { parentContractNumber: String(upsertPdf.parentContractNumber) }
+          : {}),
+        ...(upsertPdf.parentContractTitle != null
+          ? { parentContractTitle: String(upsertPdf.parentContractTitle) }
+          : {}),
+        ...(upsertPdf.attachmentOrdinal != null &&
+        upsertPdf.attachmentOrdinal > 0
+          ? { attachmentOrdinal: upsertPdf.attachmentOrdinal }
+          : {}),
       };
       setContractForm(mergedForm);
 
@@ -2961,7 +3445,7 @@ function JobDetailPageContent() {
 
       // Persist generated HTML for the job record as well.
       await setDoc(
-        contractRef,
+        upsertPdf.contractRef,
         {
           pdfHtml: html,
           pdfSavedAt: serverTimestamp(),
@@ -3004,12 +3488,23 @@ function JobDetailPageContent() {
 
   const previewWorkContractDocument = useCallback(() => {
     const missing: string[] = [];
-    if (!contractForm.contractHeader.trim())
+    const isAttPrev = contractForm.documentRole === "attachment";
+    if (!isAttPrev && !contractForm.contractHeader.trim()) {
       missing.push("Hlavička smlouvy");
-    if (!contractForm.mainContractContent.trim())
-      missing.push("Text smlouvy");
+    }
+    if (!contractForm.mainContractContent.trim()) {
+      missing.push(isAttPrev ? "Obsah plnění zakázky" : "Text smlouvy");
+    }
     if (!contractForm.client.trim()) missing.push("Objednatel");
     if (!contractForm.contractor.trim()) missing.push("Dodavatel");
+    if (isAttPrev) {
+      if (!String(contractForm.parentContractId ?? "").trim()) {
+        missing.push("Nadřazená smlouva");
+      }
+      if (!String(contractForm.documentTitle ?? "").trim()) {
+        missing.push("Název přílohy");
+      }
+    }
 
     if (missing.length) {
       toast({
@@ -3035,7 +3530,7 @@ function JobDetailPageContent() {
       depositPercentStr: contractForm.depositPercentage,
       budgetKc: jobBudgetKc,
     });
-    if (depErrPrev) {
+    if (depErrPrev && !isAttPrev) {
       toast({
         variant: "destructive",
         title: "Nelze zobrazit náhled",
@@ -5608,6 +6103,32 @@ function JobDetailPageContent() {
                 </Button>
                 <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-9 w-full sm:w-auto"
+                  onClick={() => {
+                    const first = workContractsBaseForJob.find((c) => {
+                      const r = String(c.documentRole ?? "").trim();
+                      return r !== "attachment" && r !== "addendum";
+                    });
+                    if (!first) {
+                      toast({
+                        variant: "destructive",
+                        title: "Nejprve smlouva",
+                        description:
+                          "Přílohu lze vytvořit až po uložení smlouvy u zakázky.",
+                      });
+                      return;
+                    }
+                    void openContractDialog("new_attachment", {
+                      parentContractId: first.id,
+                    });
+                  }}
+                >
+                  Nová příloha
+                </Button>
+                <Button
+                  type="button"
                   variant="secondary"
                   size="sm"
                   className="h-9 w-full sm:w-auto"
@@ -5627,80 +6148,212 @@ function JobDetailPageContent() {
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {workContractsForJob.map((c) => (
-                    <div
-                      key={c.id}
-                      className={cn(JD.innerBox, "space-y-3")}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="font-semibold truncate">
-                            {workContractDisplayTitle(c)}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {workContractDisplayTypeLabel(c)}
-                            {c.parentContractId
-                              ? (() => {
-                                  const parent = workContractsForJob.find(
-                                    (x) => x.id === c.parentContractId
-                                  );
-                                  return parent
-                                    ? ` · Nadřazená: ${workContractDisplayTitle(parent)}`
-                                    : " · Nadřazená smlouva (nenalezena)";
-                                })()
-                              : ""}
-                          </p>
-                          {(c as WorkContractDoc).contractNumber ? (
-                            <p className="text-xs font-mono text-foreground/90">
-                              Číslo: {(c as WorkContractDoc).contractNumber}
+                  {workContractsBaseForJob.map((c) => {
+                    const atts =
+                      attachmentsByParentContractId.get(c.id) ?? [];
+                    const roleNorm = String(c.documentRole ?? "").trim();
+                    const canAttach =
+                      roleNorm !== "attachment" && roleNorm !== "addendum";
+                    return (
+                      <div
+                        key={c.id}
+                        className={cn(JD.innerBox, "space-y-3")}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-semibold truncate">
+                              {workContractDisplayTitle(c)}
                             </p>
-                          ) : null}
-                          <p className="text-xs text-gray-800">
-                            Uloženo: {formatContractDate(c.updatedAt || c.createdAt)}
-                          </p>
+                            <p className="text-xs text-muted-foreground">
+                              {workContractDisplayTypeLabel(c)}
+                              {c.parentContractId
+                                ? (() => {
+                                    const parent = workContractsForJob.find(
+                                      (x) => x.id === c.parentContractId
+                                    );
+                                    return parent
+                                      ? ` · Nadřazená: ${workContractDisplayTitle(parent)}`
+                                      : " · Nadřazená smlouva (nenalezena)";
+                                  })()
+                                : ""}
+                            </p>
+                            {(c as WorkContractDoc).contractNumber ? (
+                              <p className="text-xs font-mono text-foreground/90">
+                                Číslo: {(c as WorkContractDoc).contractNumber}
+                              </p>
+                            ) : null}
+                            <p className="text-xs text-gray-800">
+                              Uloženo:{" "}
+                              {formatContractDate(c.updatedAt || c.createdAt)}
+                            </p>
+                          </div>
                         </div>
-                      </div>
 
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-9 text-xs"
-                          type="button"
-                          onClick={() => openWorkContract(c.id, "view")}
-                        >
-                          Otevřít
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-9 text-xs"
-                          type="button"
-                          onClick={() => openWorkContract(c.id, "edit")}
-                        >
-                          Upravit
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-9 text-xs"
-                          type="button"
-                          onClick={() => generatePDFFromContractId(c.id)}
-                        >
-                          Generovat PDF
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          className="h-9 text-xs"
-                          type="button"
-                          onClick={() => deleteWorkContract(c.id)}
-                        >
-                          Smazat
-                        </Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-9 text-xs"
+                            type="button"
+                            onClick={() => openWorkContract(c.id, "view")}
+                          >
+                            Otevřít
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-9 text-xs"
+                            type="button"
+                            onClick={() => openWorkContract(c.id, "edit")}
+                          >
+                            Upravit
+                          </Button>
+                          {canAttach ? (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-9 text-xs"
+                              type="button"
+                              onClick={() =>
+                                void openContractDialog("new_addendum", {
+                                  parentContractId: c.id,
+                                })
+                              }
+                            >
+                              Vytvořit dodatek
+                            </Button>
+                          ) : null}
+                          {canAttach ? (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="h-9 text-xs"
+                              type="button"
+                              onClick={() =>
+                                void openContractDialog("new_attachment", {
+                                  parentContractId: c.id,
+                                })
+                              }
+                            >
+                              Vytvořit přílohu
+                            </Button>
+                          ) : null}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-9 text-xs"
+                            type="button"
+                            onClick={() => generatePDFFromContractId(c.id)}
+                          >
+                            Generovat PDF
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            className="h-9 text-xs"
+                            type="button"
+                            onClick={() => deleteWorkContract(c.id)}
+                          >
+                            Smazat
+                          </Button>
+                        </div>
+
+                        {atts.length > 0 ? (
+                          <div className="border-t border-border pt-3 space-y-2">
+                            <p className="text-xs font-semibold text-foreground">
+                              Přílohy ke smlouvě
+                            </p>
+                            <ul className="space-y-2">
+                              {atts.map((a) => (
+                                <li
+                                  key={a.id}
+                                  className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-2"
+                                >
+                                  <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                                    <div className="min-w-0">
+                                      <p className="text-sm font-medium truncate">
+                                        {workContractDisplayTitle(a)}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground">
+                                        {typeof a.attachmentOrdinal ===
+                                        "number"
+                                          ? `Příloha č. ${a.attachmentOrdinal} · `
+                                          : ""}
+                                        Ke smlouvě č.{" "}
+                                        {String(
+                                          a.parentContractNumber ?? ""
+                                        ).trim() ||
+                                          (c as WorkContractDoc).contractNumber ||
+                                          "—"}
+                                      </p>
+                                      <p className="text-xs text-gray-800">
+                                        {a.contractNumber ? (
+                                          <span className="font-mono">
+                                            Číslo přílohy: {a.contractNumber}
+                                          </span>
+                                        ) : null}
+                                        {a.contractNumber ? " · " : null}
+                                        Uloženo:{" "}
+                                        {formatContractDate(
+                                          a.updatedAt || a.createdAt
+                                        )}
+                                      </p>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 shrink-0">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-8 text-xs"
+                                        type="button"
+                                        onClick={() =>
+                                          openWorkContract(a.id, "view")
+                                        }
+                                      >
+                                        Otevřít
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-8 text-xs"
+                                        type="button"
+                                        onClick={() =>
+                                          openWorkContract(a.id, "edit")
+                                        }
+                                      >
+                                        Upravit
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-8 text-xs"
+                                        type="button"
+                                        onClick={() =>
+                                          generatePDFFromContractId(a.id)
+                                        }
+                                      >
+                                        PDF
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="destructive"
+                                        className="h-8 text-xs"
+                                        type="button"
+                                        onClick={() =>
+                                          deleteWorkContract(a.id)
+                                        }
+                                      >
+                                        Smazat
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -7057,17 +7710,25 @@ function JobDetailPageContent() {
             <DialogTitle>
               {isContractReadOnly
                 ? "Zobrazení dokumentu ke zakázce"
-                : contractForm.documentRole === "addendum"
-                  ? "Dodatek ke smlouvě"
-                  : "Dokument ke zakázce"}
+                : contractForm.documentRole === "attachment"
+                  ? "Příloha ke smlouvě"
+                  : contractForm.documentRole === "addendum"
+                    ? "Dodatek ke smlouvě"
+                    : "Dokument ke zakázce"}
             </DialogTitle>
           </DialogHeader>
 
           <div className="flex-1 overflow-y-auto space-y-6 pr-1">
+            {contractForm.documentRole === "attachment" ? (
+              <p className="text-sm text-muted-foreground rounded-md border border-border bg-muted/30 px-3 py-2">
+                Příloha je vždy vázaná na zvolenou smlouvu. Číslo a název nadřazené smlouvy se
+                při uložení znovu načtou ze záznamu smlouvy.
+              </p>
+            ) : null}
             <div className="space-y-2">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <Label className="text-slate-900 shrink-0">Vybrat šablonu</Label>
-                {!isContractReadOnly && (
+                {!isContractReadOnly && contractForm.documentRole !== "attachment" && (
                   <Button
                     type="button"
                     size="sm"
@@ -7081,7 +7742,7 @@ function JobDetailPageContent() {
               <select
                 id="work-contract-template-select"
                 value={selectedWorkContractTemplateId}
-                disabled={isContractReadOnly}
+                disabled={isContractReadOnly || contractForm.documentRole === "attachment"}
                 aria-busy={
                   isWorkContractTemplatesLoading || isContractTemplatesLoading
                 }
@@ -7124,24 +7785,43 @@ function JobDetailPageContent() {
                   disabled={isContractReadOnly}
                   onValueChange={(v) => {
                     setIsContractDirty(true);
-                    const role = v === "addendum" ? "addendum" : "contract";
+                    const role =
+                      v === "addendum"
+                        ? "addendum"
+                        : v === "attachment"
+                          ? "attachment"
+                          : "contract";
                     setContractForm((prev) => ({
                       ...prev,
                       documentRole: role,
                       documentSubtype:
                         role === "addendum"
                           ? "contract_addendum"
-                          : prev.documentSubtype === "contract_addendum"
-                            ? "work_contract"
-                            : prev.documentSubtype,
+                          : role === "attachment"
+                            ? "contract_attachment"
+                            : prev.documentSubtype === "contract_addendum" ||
+                                prev.documentSubtype === "contract_attachment"
+                              ? "work_contract"
+                              : prev.documentSubtype,
                       numberSeriesPrefix:
                         role === "addendum"
                           ? "DOD"
-                          : prev.numberSeriesPrefix === "DOD"
-                            ? "SOD"
-                            : prev.numberSeriesPrefix,
+                          : role === "attachment"
+                            ? "PRIL"
+                            : prev.numberSeriesPrefix === "DOD" ||
+                                prev.numberSeriesPrefix === "PRIL"
+                              ? "SOD"
+                              : prev.numberSeriesPrefix,
                       parentContractId:
-                        role === "addendum" ? prev.parentContractId : "",
+                        role === "addendum" || role === "attachment"
+                          ? prev.parentContractId
+                          : "",
+                      parentContractNumber:
+                        role === "attachment" ? prev.parentContractNumber : "",
+                      parentContractTitle:
+                        role === "attachment" ? prev.parentContractTitle : "",
+                      attachmentOrdinal:
+                        role === "attachment" ? prev.attachmentOrdinal : 0,
                     }));
                   }}
                 >
@@ -7156,6 +7836,7 @@ function JobDetailPageContent() {
                   <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
                     <SelectItem value="contract">Smlouva</SelectItem>
                     <SelectItem value="addendum">Dodatek</SelectItem>
+                    <SelectItem value="attachment">Příloha ke smlouvě</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -7186,6 +7867,7 @@ function JobDetailPageContent() {
                     <SelectItem value="SOD">SOD — smlouva o dílo</SelectItem>
                     <SelectItem value="RS">RS — rezervace / jiná smlouva</SelectItem>
                     <SelectItem value="DOD">DOD — dodatek</SelectItem>
+                    <SelectItem value="PRIL">PRIL — příloha ke smlouvě</SelectItem>
                   </SelectContent>
                 </Select>
                 {!!String(contractForm.contractNumber).trim() ? (
@@ -7245,6 +7927,96 @@ function JobDetailPageContent() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            ) : null}
+
+            {contractForm.documentRole === "attachment" ? (
+              <div className="space-y-3 rounded-md border border-border bg-muted/20 p-3">
+                <div className="space-y-2">
+                  <Label>Nadřazená smlouva (povinné)</Label>
+                  <Select
+                    value={contractForm.parentContractId || "__none__"}
+                    disabled={isContractReadOnly}
+                    onValueChange={(v) => {
+                      setIsContractDirty(true);
+                      const id = v === "__none__" ? "" : v;
+                      const p = parentContractChoices.find((x) => x.id === id);
+                      setContractForm((prev) => ({
+                        ...prev,
+                        parentContractId: id,
+                        parentContractNumber: p
+                          ? String(p.contractNumber ?? "").trim()
+                          : "",
+                        parentContractTitle: p ? workContractDisplayTitle(p) : "",
+                      }));
+                    }}
+                  >
+                    <SelectTrigger
+                      className={cn(
+                        LIGHT_SELECT_TRIGGER_CLASS,
+                        "min-h-[44px] md:min-h-10 bg-background"
+                      )}
+                    >
+                      <SelectValue placeholder="Vyberte smlouvu" />
+                    </SelectTrigger>
+                    <SelectContent className={cn(LIGHT_SELECT_CONTENT_CLASS)}>
+                      <SelectItem value="__none__" disabled>
+                        — vyberte smlouvu —
+                      </SelectItem>
+                      {parentContractChoices.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {parentContractKindLabelFromDoc(p)} ·{" "}
+                          {workContractDisplayTitle(p)} ·{" "}
+                          {p.contractNumber || "bez čísla"}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2 sm:grid-cols-2 text-sm">
+                  <div>
+                    <span className="text-muted-foreground block text-xs uppercase tracking-wide">
+                      Číslo smlouvy (nadřazené)
+                    </span>
+                    <span className="font-mono font-medium">
+                      {contractForm.parentContractNumber || "—"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground block text-xs uppercase tracking-wide">
+                      Název smlouvy (nadřazené)
+                    </span>
+                    <span className="font-medium break-words">
+                      {contractForm.parentContractTitle || "—"}
+                    </span>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Pořadí přílohy u smlouvy</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={
+                      contractForm.attachmentOrdinal > 0
+                        ? String(contractForm.attachmentOrdinal)
+                        : ""
+                    }
+                    readOnly={isContractReadOnly}
+                    onChange={(e) => {
+                      setIsContractDirty(true);
+                      const n = parseInt(e.target.value, 10);
+                      setContractForm((prev) => ({
+                        ...prev,
+                        attachmentOrdinal:
+                          Number.isFinite(n) && n > 0 ? n : prev.attachmentOrdinal,
+                      }));
+                    }}
+                    className="bg-background max-w-[200px]"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Při prvním uložení se doplní pořadí podle existujících příloh u smlouvy.
+                  </p>
+                </div>
               </div>
             ) : null}
 
@@ -7329,7 +8101,11 @@ function JobDetailPageContent() {
             </div>
 
             <div className="space-y-2">
-              <Label>Text smlouvy</Label>
+              <Label>
+                {contractForm.documentRole === "attachment"
+                  ? "Obsah plnění zakázky"
+                  : "Text smlouvy"}
+              </Label>
               <Textarea
                 value={contractForm.mainContractContent}
                 onChange={(e) => {
@@ -7339,7 +8115,11 @@ function JobDetailPageContent() {
                     mainContractContent: e.target.value,
                   }));
                 }}
-                placeholder="Vložte text smlouvy..."
+                placeholder={
+                  contractForm.documentRole === "attachment"
+                    ? "Popište obsah plnění zakázky (lze použít proměnné jako u smlouvy)…"
+                    : "Vložte text smlouvy..."
+                }
                 className="min-h-[260px] resize-y"
                 disabled={isContractReadOnly}
               />
@@ -7379,6 +8159,8 @@ function JobDetailPageContent() {
               />
             </div>
 
+            {contractForm.documentRole !== "attachment" ? (
+              <>
             <div className="space-y-2">
               <Label>Výše zálohy v procentech (%)</Label>
               <Input
@@ -7577,9 +8359,15 @@ function JobDetailPageContent() {
                 />
               </div>
             </div>
+              </>
+            ) : null}
 
             <div className="space-y-2">
-              <Label>Doplňující informace</Label>
+              <Label>
+                {contractForm.documentRole === "attachment"
+                  ? "Poznámka (volitelné)"
+                  : "Doplňující informace"}
+              </Label>
               <Textarea
                 value={contractForm.additionalInfo}
                 onChange={(e) => {
@@ -7589,7 +8377,11 @@ function JobDetailPageContent() {
                     additionalInfo: e.target.value,
                   }));
                 }}
-                placeholder="Volitelné doplňující informace (můžete použít i proměnné)"
+                placeholder={
+                  contractForm.documentRole === "attachment"
+                    ? "Interní nebo doplňující poznámka k příloze…"
+                    : "Volitelné doplňující informace (můžete použít i proměnné)"
+                }
                 className="min-h-[120px] resize-y"
                 disabled={isContractReadOnly}
               />

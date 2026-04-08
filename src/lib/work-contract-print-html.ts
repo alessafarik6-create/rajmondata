@@ -42,6 +42,8 @@ export function firstSignatoryLine(block: string): string {
 }
 
 export type WorkContractPrintModel = {
+  /** „default“ = klasická smlouva; „attachment“ = příloha k existující smlouvě */
+  printVariant?: "default" | "attachment";
   /** Browser tab / PDF title */
   pageTitle: string;
   contractNumber: string;
@@ -67,78 +69,14 @@ export type WorkContractPrintModel = {
    * Pokud prázdné, sekce se do dokumentu nevloží.
    */
   templateDataSectionInnerHtml?: string;
+  /** Nadřazená smlouva — jen u {@link printVariant} „attachment“ */
+  parentContractNumber?: string;
+  parentContractTitle?: string;
+  /** Např. „Rezervační smlouva“, „Smlouva o dílo“ */
+  parentContractKindLabel?: string;
 };
 
-const CLOSING_BOILERPLATE = `Smlouva je vyhotovena ve dvou stejnopisech, z nichž každá smluvní strana obdrží po jednom.
-Nedílnou součástí této smlouvy mohou být přílohy, pokud jsou výslovně uvedeny a podepsány smluvními stranami.`;
-
-export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
-  const num = m.contractNumber.trim() || "— (číslo bude přiděleno při uložení)";
-  const vs = m.variableSymbol.trim() || num;
-  const dateLine = m.documentDate.trim() || "—";
-
-  const hasHeader =
-    m.contractHeaderHtml &&
-    m.contractHeaderHtml.replace(/<br\/>/g, " ").replace(/&nbsp;/g, " ").trim()
-      .length > 0;
-
-  const jobTitle = (m.jobTitle || "").trim();
-  const jobDesc = (m.jobDescription || "").trim();
-  const price = (m.priceFormatted || "").trim();
-  const deadline = (m.deadlineFormatted || "").trim();
-
-  const predmetInner =
-    jobTitle || jobDesc
-      ? `<p class="p">${jobTitle ? `<strong>${jobTitle}</strong>` : ""}</p>${
-          jobDesc
-            ? `<div class="body-text">${withLineBreaks(jobDesc)}</div>`
-            : ""
-        }`
-      : `<p class="muted">Přesně specifikováno v textu smlouvy níže.</p>`;
-
-  const cenaInner = price
-    ? `<p class="highlight-box"><span class="hl-label">Celková cena díla</span><span class="hl-value">${escapeHtml(
-        price
-      )}</span></p>`
-    : `<p class="muted">Cena díla je uvedena v textu smlouvy níže, případně v návazné cenové nabídce.</p>`;
-
-  const terminInner = deadline
-    ? `<p class="highlight-box"><span class="hl-label">Termín dokončení / plnění</span><span class="hl-value">${escapeHtml(
-        deadline
-      )}</span></p>`
-    : `<p class="muted">Termín plnění je uveden v textu smlouvy níže, případně ve výkazu díla.</p>`;
-
-  const payInner =
-    m.paymentTermsHtml && m.paymentTermsHtml.replace(/<br\/>/g, "").trim()
-      ? `<div class="body-text payment-details">${m.paymentTermsHtml}</div>`
-      : `<p class="muted">Platební podmínky jsou rozvedeny v textu smlouvy níže.</p>`;
-
-  const addInner =
-    m.additionalInfoHtml &&
-    m.additionalInfoHtml.replace(/<br\/>/g, "").trim()
-      ? `<div class="body-text">${m.additionalInfoHtml}</div>`
-      : "";
-
-  const zhot = firstSignatoryLine(m.zhotovitelHtml);
-  const objed = firstSignatoryLine(m.objednatelHtml);
-
-  const pageTitle = escapeHtml(m.pageTitle || "Smlouva o dílo");
-
-  const templateDataBlock = m.templateDataSectionInnerHtml?.trim()
-    ? `<section class="section template-data-section">
-        <h2>Data šablony</h2>
-        <p class="template-data-lead">Specifikace zaměření a dalších polí dle vyplněné šablony zakázky.</p>
-        ${m.templateDataSectionInnerHtml}
-      </section>`
-    : "";
-
-  return `<!doctype html>
-<html lang="cs">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>${pageTitle}</title>
-    <style>
+const WORK_CONTRACT_PRINT_CSS = `
       :root {
         --ink: #0a0a0a;
         --muted: #404040;
@@ -184,6 +122,13 @@ export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
         margin: 0 0 0.5rem;
         text-transform: uppercase;
       }
+      .doc-sub {
+        text-align: center;
+        font-size: 10.5pt;
+        color: var(--muted);
+        margin: 0 0 1rem;
+        line-height: 1.45;
+      }
       .meta {
         display: grid;
         grid-template-columns: 1fr 1fr 1fr;
@@ -191,6 +136,9 @@ export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
         margin: 1.25rem 0 1.75rem;
         padding: 14px 16px;
         border: 1px solid var(--border);
+      }
+      .meta.meta-attach {
+        grid-template-columns: 1fr 1fr;
       }
       @media (max-width: 640px) {
         .meta { grid-template-columns: 1fr; }
@@ -370,7 +318,257 @@ export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
       @media print {
         .tmpl-table .td-label { background: #fff; }
       }
+`;
+
+function buildWorkContractAttachmentPrintHtml(m: WorkContractPrintModel): string {
+  const pageTitle = escapeHtml(m.pageTitle || "Příloha ke smlouvě");
+  const attNum =
+    m.contractNumber.trim() || "— (číslo bude přiděleno při uložení)";
+  const parentNum = (m.parentContractNumber || "").trim() || "—";
+  const parentTitle = (m.parentContractTitle || "").trim() || "—";
+  const parentKind = (m.parentContractKindLabel || "").trim();
+  const dateLine = m.documentDate.trim() || "—";
+
+  const hasHeader =
+    m.contractHeaderHtml &&
+    m.contractHeaderHtml.replace(/<br\/>/g, " ").replace(/&nbsp;/g, " ").trim()
+      .length > 0;
+
+  const jobTitle = (m.jobTitle || "").trim();
+  const jobDesc = (m.jobDescription || "").trim();
+  const price = (m.priceFormatted || "").trim();
+  const deadline = (m.deadlineFormatted || "").trim();
+
+  const zakazkaInner =
+    jobTitle || jobDesc
+      ? `<p class="p">${jobTitle ? `<strong>${escapeHtml(jobTitle)}</strong>` : ""}</p>${
+          jobDesc
+            ? `<div class="body-text">${withLineBreaks(jobDesc)}</div>`
+            : ""
+        }`
+      : `<p class="muted">—</p>`;
+
+  const cenaInner = price
+    ? `<p class="highlight-box"><span class="hl-label">Rozpočet / cena (pokud uvedeno)</span><span class="hl-value">${escapeHtml(
+        price
+      )}</span></p>`
+    : `<p class="muted">Údaj není u zakázky vyplněn.</p>`;
+
+  const terminInner = deadline
+    ? `<p class="highlight-box"><span class="hl-label">Termín</span><span class="hl-value">${escapeHtml(
+        deadline
+      )}</span></p>`
+    : `<p class="muted">Termín není u zakázky vyplněn.</p>`;
+
+  const fulfillmentInner =
+    m.mainBodyHtml && m.mainBodyHtml.replace(/<br\/>/g, "").trim()
+      ? `<div class="body-text">${m.mainBodyHtml}</div>`
+      : `<p class="muted">—</p>`;
+
+  const noteInner =
+    m.additionalInfoHtml &&
+    m.additionalInfoHtml.replace(/<br\/>/g, "").trim()
+      ? `<div class="body-text">${m.additionalInfoHtml}</div>`
+      : "";
+
+  const zhot = firstSignatoryLine(m.zhotovitelHtml);
+  const objed = firstSignatoryLine(m.objednatelHtml);
+
+  const subline = parentNum && parentNum !== "—"
+    ? `Příloha ke smlouvě č. ${escapeHtml(parentNum)}`
+    : "Příloha ke smlouvě";
+
+  const templateDataBlock = m.templateDataSectionInnerHtml?.trim()
+    ? `<section class="section template-data-section">
+        <h2>Data šablony zakázky</h2>
+        <p class="template-data-lead">Údaje z vyplněné šablony u zakázky.</p>
+        ${m.templateDataSectionInnerHtml}
+      </section>`
+    : "";
+
+  const parentKindBlock = parentKind
+    ? `<div class="meta-item">
+          <dt>Typ nadřazené smlouvy</dt>
+          <dd>${escapeHtml(parentKind)}</dd>
+        </div>`
+    : "";
+
+  return `<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${pageTitle}</title>
+    <style>${WORK_CONTRACT_PRINT_CSS}
     </style>
+  </head>
+  <body>
+    <article class="sheet">
+      <h1 class="doc-title">${pageTitle}</h1>
+      <p class="doc-sub">${subline}${parentTitle && parentTitle !== "—" ? ` — ${escapeHtml(parentTitle)}` : ""}</p>
+
+      <dl class="meta meta-attach">
+        <div class="meta-item">
+          <dt>Číslo přílohy</dt>
+          <dd class="mono">${escapeHtml(attNum)}</dd>
+        </div>
+        <div class="meta-item">
+          <dt>Datum</dt>
+          <dd>${escapeHtml(dateLine)}</dd>
+        </div>
+        <div class="meta-item">
+          <dt>Číslo smlouvy (nadřazené)</dt>
+          <dd class="mono">${escapeHtml(parentNum)}</dd>
+        </div>
+        <div class="meta-item">
+          <dt>Název smlouvy (nadřazené)</dt>
+          <dd>${escapeHtml(parentTitle)}</dd>
+        </div>
+        ${parentKindBlock}
+      </dl>
+
+      ${
+        hasHeader
+          ? `<div class="intro section">${m.contractHeaderHtml}</div>`
+          : ""
+      }
+
+      <section class="section">
+        <h2>Smluvní strany</h2>
+        <div class="party-grid">
+          <div class="party-card">
+            <h3>Zhotovitel</h3>
+            <div class="party-body">${m.zhotovitelHtml}</div>
+          </div>
+          <div class="party-card">
+            <h3>Objednatel</h3>
+            <div class="party-body">${m.objednatelHtml}</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Údaje zakázky</h2>
+        ${zakazkaInner}
+        <div class="section" style="margin-top:1rem;padding-top:0">
+          <h2 style="font-size:10.5pt;border:none;padding:0;margin:0 0 0.5rem">Cena a termín (souhrn)</h2>
+          ${cenaInner}
+          <div style="height:0.75rem"></div>
+          ${terminInner}
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Obsah plnění zakázky</h2>
+        ${fulfillmentInner}
+      </section>
+
+      ${templateDataBlock}
+
+      ${
+        noteInner
+          ? `<section class="section">
+        <h2>Poznámka</h2>
+        ${noteInner}
+      </section>`
+          : ""
+      }
+
+      <section class="section">
+        <h2>Podpisy</h2>
+        <p class="muted" style="font-size:10pt;margin:0 0 1rem">Strany stvrzují obsah této přílohy ve vztahu k uvedené smlouvě.</p>
+        <div class="signatures">
+          <div class="sign-block">
+            <h3>Zhotovitel</h3>
+            <div class="sign-line"></div>
+            <div class="sign-name">${escapeHtml(zhot)}</div>
+          </div>
+          <div class="sign-block">
+            <h3>Objednatel</h3>
+            <div class="sign-line"></div>
+            <div class="sign-name">${escapeHtml(objed)}</div>
+          </div>
+        </div>
+      </section>
+    </article>
+  </body>
+</html>`;
+}
+
+const CLOSING_BOILERPLATE = `Smlouva je vyhotovena ve dvou stejnopisech, z nichž každá smluvní strana obdrží po jednom.
+Nedílnou součástí této smlouvy mohou být přílohy, pokud jsou výslovně uvedeny a podepsány smluvními stranami.`;
+
+export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
+  if (m.printVariant === "attachment") {
+    return buildWorkContractAttachmentPrintHtml(m);
+  }
+
+  const num = m.contractNumber.trim() || "— (číslo bude přiděleno při uložení)";
+  const vs = m.variableSymbol.trim() || num;
+  const dateLine = m.documentDate.trim() || "—";
+
+  const hasHeader =
+    m.contractHeaderHtml &&
+    m.contractHeaderHtml.replace(/<br\/>/g, " ").replace(/&nbsp;/g, " ").trim()
+      .length > 0;
+
+  const jobTitle = (m.jobTitle || "").trim();
+  const jobDesc = (m.jobDescription || "").trim();
+  const price = (m.priceFormatted || "").trim();
+  const deadline = (m.deadlineFormatted || "").trim();
+
+  const predmetInner =
+    jobTitle || jobDesc
+      ? `<p class="p">${jobTitle ? `<strong>${jobTitle}</strong>` : ""}</p>${
+          jobDesc
+            ? `<div class="body-text">${withLineBreaks(jobDesc)}</div>`
+            : ""
+        }`
+      : `<p class="muted">Přesně specifikováno v textu smlouvy níže.</p>`;
+
+  const cenaInner = price
+    ? `<p class="highlight-box"><span class="hl-label">Celková cena díla</span><span class="hl-value">${escapeHtml(
+        price
+      )}</span></p>`
+    : `<p class="muted">Cena díla je uvedena v textu smlouvy níže, případně v návazné cenové nabídce.</p>`;
+
+  const terminInner = deadline
+    ? `<p class="highlight-box"><span class="hl-label">Termín dokončení / plnění</span><span class="hl-value">${escapeHtml(
+        deadline
+      )}</span></p>`
+    : `<p class="muted">Termín plnění je uveden v textu smlouvy níže, případně ve výkazu díla.</p>`;
+
+  const payInner =
+    m.paymentTermsHtml && m.paymentTermsHtml.replace(/<br\/>/g, "").trim()
+      ? `<div class="body-text payment-details">${m.paymentTermsHtml}</div>`
+      : `<p class="muted">Platební podmínky jsou rozvedeny v textu smlouvy níže.</p>`;
+
+  const addInner =
+    m.additionalInfoHtml &&
+    m.additionalInfoHtml.replace(/<br\/>/g, "").trim()
+      ? `<div class="body-text">${m.additionalInfoHtml}</div>`
+      : "";
+
+  const zhot = firstSignatoryLine(m.zhotovitelHtml);
+  const objed = firstSignatoryLine(m.objednatelHtml);
+
+  const pageTitle = escapeHtml(m.pageTitle || "Smlouva o dílo");
+
+  const templateDataBlock = m.templateDataSectionInnerHtml?.trim()
+    ? `<section class="section template-data-section">
+        <h2>Data šablony</h2>
+        <p class="template-data-lead">Specifikace zaměření a dalších polí dle vyplněné šablony zakázky.</p>
+        ${m.templateDataSectionInnerHtml}
+      </section>`
+    : "";
+
+  return `<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${pageTitle}</title>
+    <style>${WORK_CONTRACT_PRINT_CSS}</style>
   </head>
   <body>
     <article class="sheet">
