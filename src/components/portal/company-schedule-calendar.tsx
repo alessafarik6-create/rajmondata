@@ -17,13 +17,19 @@ import {
   startOfDay,
 } from "date-fns";
 import { cs } from "date-fns/locale";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { CheckCircle2, ChevronLeft, ChevronRight, Plus, XCircle } from "lucide-react";
 import {
   collection,
   query,
   where,
   orderBy,
   Timestamp,
+  updateDoc,
+  doc,
+  serverTimestamp,
+  addDoc,
+  type DocumentData,
+  type UpdateData,
 } from "firebase/firestore";
 import { useFirestore, useMemoFirebase, useCollection } from "@/firebase";
 import Link from "next/link";
@@ -32,8 +38,29 @@ import { cn } from "@/lib/utils";
 import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
 import type { MeasurementDoc, MeasurementStatus } from "@/lib/measurements";
 import { MEASUREMENT_STATUS_LABELS } from "@/lib/measurements";
+import { useToast } from "@/hooks/use-toast";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
+
+type MeetingStatus = "planned" | "done" | "cancelled";
 
 type CalendarEvent = {
   id: string;
@@ -46,11 +73,14 @@ type CalendarEvent = {
   detail?: string;
   phone?: string;
   address?: string;
+  status: MeetingStatus | "measurement";
   statusLabel: string;
   /** Tailwind barva štítku */
   badgeClass: string;
   /** Barva levého proužku / akcentu karty */
   accentClass: string;
+  /** Firestore id pro update (např. lead_meetings/{id}) */
+  sourceId?: string;
 };
 
 function isValidCalendarEvent(e: unknown): e is CalendarEvent {
@@ -105,6 +135,37 @@ function measurementVisuals(status: MeasurementStatus | undefined): {
   }
 }
 
+function meetingVisuals(status: MeetingStatus | undefined): {
+  statusLabel: string;
+  badgeClass: string;
+  accentClass: string;
+  titleClass: string;
+} {
+  switch (status) {
+    case "done":
+      return {
+        statusLabel: "Vyřízeno",
+        badgeClass: "border-emerald-200 bg-emerald-100 text-emerald-950",
+        accentClass: "border-l-emerald-500",
+        titleClass: "opacity-80",
+      };
+    case "cancelled":
+      return {
+        statusLabel: "Zrušeno",
+        badgeClass: "border-rose-200 bg-rose-50 text-rose-900",
+        accentClass: "border-l-rose-400",
+        titleClass: "line-through text-slate-500",
+      };
+    default:
+      return {
+        statusLabel: "Plánováno",
+        badgeClass: "border-orange-200 bg-orange-100 text-orange-950",
+        accentClass: "border-l-orange-500",
+        titleClass: "",
+      };
+  }
+}
+
 function scheduleMobileEventCountLabel(n: number): string {
   if (n === 0) return "žádná událost";
   if (n === 1) return "1 událost";
@@ -130,7 +191,9 @@ function ScheduleMobileEventCard({ ev }: { ev: CalendarEvent }) {
             Název
           </p>
           <p className="text-[1.05rem] font-semibold leading-snug text-slate-900 sm:text-lg">
-            {ev.headline}
+            <span className={cn(ev.kind === "meeting" ? (ev as any).titleClass : "")}>
+              {ev.headline}
+            </span>
           </p>
         </div>
 
@@ -199,10 +262,23 @@ export function CompanyScheduleCalendar({
   companyId: string;
 }) {
   const firestore = useFirestore();
+  const { toast } = useToast();
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [mobileSelectedDay, setMobileSelectedDay] = useState(() =>
     startOfDay(new Date())
   );
+
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [meetingTitle, setMeetingTitle] = useState("");
+  const [meetingCustomerName, setMeetingCustomerName] = useState("");
+  const [meetingPlace, setMeetingPlace] = useState("");
+  const [meetingPhone, setMeetingPhone] = useState("");
+  const [meetingNote, setMeetingNote] = useState("");
+  const [meetingDate, setMeetingDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
+  const [meetingTime, setMeetingTime] = useState(() => format(new Date(), "HH:mm"));
+  const [meetingStatus, setMeetingStatus] = useState<MeetingStatus>("planned");
 
   const monthStart = startOfMonth(visibleMonth);
   const monthEnd = endOfMonth(visibleMonth);
@@ -246,18 +322,29 @@ export function CompanyScheduleCalendar({
       const note = String(raw.note ?? "").trim();
       const phone = String(raw.phone ?? "").trim();
       const place = String(raw.place ?? "").trim();
+      const stRaw = String(raw.status ?? "").trim();
+      const st: MeetingStatus =
+        stRaw === "done" || stRaw === "cancelled" || stRaw === "planned"
+          ? (stRaw as MeetingStatus)
+          : "planned";
+      const v = meetingVisuals(st);
+      const headline = String(raw.title ?? "").trim() || note || "Schůzka";
       out.push({
         id: `m-${id}`,
         at,
         title: customerName,
-        headline: note || "Schůzka",
+        headline,
         kind: "meeting",
         detail: "Schůzka",
         phone: phone || undefined,
         address: place || undefined,
-        statusLabel: "Schůzka",
-        badgeClass: "border-orange-200 bg-orange-100 text-orange-950",
-        accentClass: "border-l-orange-500",
+        status: st,
+        statusLabel: v.statusLabel,
+        badgeClass: v.badgeClass,
+        accentClass: v.accentClass,
+        sourceId: id,
+        // @ts-expect-error: internal styling field for meeting only
+        titleClass: v.titleClass,
       });
     }
 
@@ -265,7 +352,6 @@ export function CompanyScheduleCalendar({
     for (const raw of mlist as (MeasurementDoc & { id?: string })[]) {
       if (!raw?.id || isMeasurementDeleted(raw)) continue;
       const st = raw.status as MeasurementStatus | undefined;
-      if (st === "cancelled") continue;
       const at = parseMeasurementTime(raw.scheduledAt);
       if (!at) continue;
       const label = MEASUREMENT_STATUS_LABELS[st ?? "planned"] ?? "Zaměření";
@@ -282,6 +368,7 @@ export function CompanyScheduleCalendar({
         detail: `Zaměření · ${label}`,
         phone: phone || undefined,
         address: address || undefined,
+        status: "measurement",
         statusLabel: label,
         badgeClass: visuals.badgeClass,
         accentClass: visuals.accentClass,
@@ -331,6 +418,120 @@ export function CompanyScheduleCalendar({
 
   const loading = meetingsLoading || measurementsLoading;
 
+  const openCreateForDay = (day: Date) => {
+    setEditingEvent(null);
+    setMeetingStatus("planned");
+    setMeetingTitle("");
+    setMeetingCustomerName("");
+    setMeetingPlace("");
+    setMeetingPhone("");
+    setMeetingNote("");
+    setMeetingDate(format(day, "yyyy-MM-dd"));
+    setMeetingTime("09:00");
+    setFormOpen(true);
+  };
+
+  const openEditMeeting = (ev: CalendarEvent) => {
+    if (ev.kind !== "meeting") return;
+    setEditingEvent(ev);
+    setMeetingStatus((ev.status as MeetingStatus) ?? "planned");
+    setMeetingTitle(ev.headline || "");
+    setMeetingCustomerName(ev.title || "");
+    setMeetingPlace(ev.address || "");
+    setMeetingPhone(ev.phone || "");
+    setMeetingNote("");
+    setMeetingDate(format(ev.at, "yyyy-MM-dd"));
+    setMeetingTime(format(ev.at, "HH:mm"));
+    setFormOpen(true);
+  };
+
+  const saveMeeting = async () => {
+    if (!firestore || !companyId) return;
+    const dateStr = meetingDate.trim();
+    const timeStr = meetingTime.trim();
+    if (!dateStr) {
+      toast({ variant: "destructive", title: "Vyberte datum" });
+      return;
+    }
+    if (!/^\d{2}:\d{2}$/.test(timeStr)) {
+      toast({ variant: "destructive", title: "Neplatný čas", description: "Zadejte čas ve formátu HH:mm." });
+      return;
+    }
+    const d = new Date(`${dateStr}T${timeStr}:00`);
+    if (Number.isNaN(d.getTime())) {
+      toast({ variant: "destructive", title: "Neplatný datum a čas" });
+      return;
+    }
+    const status: MeetingStatus = meetingStatus;
+    const title = meetingTitle.trim() || "Schůzka";
+    const customerName = meetingCustomerName.trim() || "—";
+    setSaving(true);
+    try {
+      const payload = {
+        companyId,
+        customerName,
+        place: meetingPlace.trim(),
+        note: meetingNote.trim(),
+        phone: meetingPhone.trim(),
+        scheduledAt: Timestamp.fromDate(d),
+        calendarEventType: "lead_meeting",
+        title,
+        status,
+        updatedAt: serverTimestamp(),
+        ...(status === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
+        ...(status === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
+      } as Record<string, unknown>;
+
+      if (editingEvent?.kind === "meeting" && editingEvent.sourceId) {
+        await updateDoc(
+          doc(firestore, "companies", companyId, "lead_meetings", editingEvent.sourceId),
+          payload as UpdateData<DocumentData>
+        );
+        toast({ title: "Uloženo", description: "Schůzka byla upravena." });
+      } else {
+        await addDoc(collection(firestore, "companies", companyId, "lead_meetings"), {
+          ...payload,
+          createdAt: serverTimestamp(),
+          createdBy: "dashboard",
+        });
+        toast({ title: "Uloženo", description: "Schůzka byla vytvořena." });
+      }
+      setFormOpen(false);
+      setEditingEvent(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Uložení se nezdařilo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const setMeetingQuickStatus = async (ev: CalendarEvent, st: MeetingStatus) => {
+    if (!firestore || !companyId) return;
+    if (ev.kind !== "meeting" || !ev.sourceId) return;
+    try {
+      await updateDoc(doc(firestore, "companies", companyId, "lead_meetings", ev.sourceId), {
+        status: st,
+        updatedAt: serverTimestamp(),
+        ...(st === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
+        ...(st === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
+      });
+      toast({
+        title: st === "done" ? "Označeno jako vyřízeno" : "Označeno jako zrušeno",
+      });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Změna stavu se nezdařila",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    }
+  };
+
   return (
     <div className="rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
@@ -343,6 +544,14 @@ export function CompanyScheduleCalendar({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            className="hidden h-9 gap-2 md:inline-flex"
+            onClick={() => openCreateForDay(new Date())}
+          >
+            <Plus className="h-4 w-4" />
+            Přidat
+          </Button>
           <Button
             type="button"
             variant="outline"
@@ -428,6 +637,11 @@ export function CompanyScheduleCalendar({
 
             {/* Mobil: výběr dne + karty událostí */}
             <div className="md:hidden">
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <Button type="button" className="w-full min-h-[44px] gap-2" onClick={() => openCreateForDay(mobileSelectedDay)}>
+                  <Plus className="h-4 w-4" /> Přidat schůzku / akci
+                </Button>
+              </div>
               <div className="grid grid-cols-7 gap-2">
                 {WEEKDAYS.map((wd) => (
                   <div
@@ -489,7 +703,39 @@ export function CompanyScheduleCalendar({
                   <ul className="space-y-4">
                     {mobileDayEvents.map((ev) => (
                       <li key={ev.id}>
-                        <ScheduleMobileEventCard ev={ev} />
+                        <div className="space-y-2">
+                          <ScheduleMobileEventCard ev={ev} />
+                          {ev.kind === "meeting" ? (
+                            <div className="flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="min-h-[44px] gap-2"
+                                onClick={() => openEditMeeting(ev)}
+                              >
+                                Upravit
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                className="min-h-[44px] gap-2"
+                                onClick={() => void setMeetingQuickStatus(ev, "done")}
+                              >
+                                <CheckCircle2 className="h-4 w-4" />
+                                Vyřízeno
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="destructive"
+                                className="min-h-[44px] gap-2"
+                                onClick={() => void setMeetingQuickStatus(ev, "cancelled")}
+                              >
+                                <XCircle className="h-4 w-4" />
+                                Zrušit
+                              </Button>
+                            </div>
+                          ) : null}
+                        </div>
                       </li>
                     ))}
                   </ul>
@@ -532,20 +778,30 @@ export function CompanyScheduleCalendar({
                       {dayEvents.slice(0, 4).map((ev) => (
                         <li
                           key={ev.id}
-                          className={`truncate rounded border px-1 py-0.5 text-[10px] leading-tight sm:text-[11px] ${
+                          className={cn(
+                            "truncate rounded border px-1 py-0.5 text-[10px] leading-tight sm:text-[11px] text-slate-900",
                             ev.kind === "meeting"
-                              ? "border-orange-200 bg-orange-100 text-slate-900"
-                              : "border-emerald-200 bg-emerald-100 text-slate-900"
-                          }`}
+                              ? ev.status === "done"
+                                ? "border-emerald-200 bg-emerald-100"
+                                : ev.status === "cancelled"
+                                  ? "border-slate-200 bg-slate-100 text-slate-600 line-through"
+                                  : "border-orange-200 bg-orange-100"
+                              : ev.badgeClass.includes("slate")
+                                ? "border-slate-200 bg-slate-100 text-slate-700"
+                                : "border-emerald-200 bg-emerald-100"
+                          )}
                           title={`${format(ev.at, "HH:mm")} — ${ev.title} — ${ev.detail ?? ""}`}
                         >
-                          <span className="font-semibold tabular-nums">
-                            {format(ev.at, "HH:mm")}
-                          </span>{" "}
+                          <span className="font-semibold tabular-nums">{format(ev.at, "HH:mm")}</span>{" "}
                           <span className="font-medium">{ev.title}</span>
                           {ev.detail ? (
                             <span className="block truncate text-[9px] opacity-90 sm:text-[10px]">
                               {ev.detail}
+                            </span>
+                          ) : null}
+                          {ev.kind === "meeting" ? (
+                            <span className="ml-1 text-[9px] opacity-80">
+                              · {ev.statusLabel}
                             </span>
                           ) : null}
                         </li>
@@ -563,6 +819,71 @@ export function CompanyScheduleCalendar({
           </>
         )}
       </div>
+
+      <Sheet open={formOpen} onOpenChange={(o) => !o && (setFormOpen(false), setEditingEvent(null))}>
+        <SheetContent side="bottom" className="max-h-[92vh] overflow-auto sm:side-right sm:max-w-lg">
+          <SheetHeader>
+            <SheetTitle>{editingEvent ? "Upravit schůzku / akci" : "Nová schůzka / akce"}</SheetTitle>
+            <SheetDescription>
+              Na mobilu je formulář v plné šířce, aby šlo pohodlně plánovat datum i čas.
+            </SheetDescription>
+          </SheetHeader>
+
+          <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="sm:col-span-2 space-y-1">
+              <Label>Název</Label>
+              <Input value={meetingTitle} onChange={(e) => setMeetingTitle(e.target.value)} />
+            </div>
+            <div className="sm:col-span-2 space-y-1">
+              <Label>Zákazník / subjekt</Label>
+              <Input value={meetingCustomerName} onChange={(e) => setMeetingCustomerName(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Datum</Label>
+              <Input type="date" value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} />
+            </div>
+            <div className="space-y-1">
+              <Label>Čas</Label>
+              <Input type="time" value={meetingTime} onChange={(e) => setMeetingTime(e.target.value)} />
+            </div>
+            <div className="sm:col-span-2 space-y-1">
+              <Label>Místo / adresa</Label>
+              <Input value={meetingPlace} onChange={(e) => setMeetingPlace(e.target.value)} />
+            </div>
+            <div className="sm:col-span-2 space-y-1">
+              <Label>Telefon</Label>
+              <Input value={meetingPhone} onChange={(e) => setMeetingPhone(e.target.value)} />
+            </div>
+            <div className="sm:col-span-2 space-y-1">
+              <Label>Popis / poznámka</Label>
+              <Textarea rows={3} value={meetingNote} onChange={(e) => setMeetingNote(e.target.value)} />
+            </div>
+            <div className="sm:col-span-2 space-y-1">
+              <Label>Stav</Label>
+              <Select value={meetingStatus} onValueChange={(v) => setMeetingStatus(v as MeetingStatus)}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="planned">Plánováno</SelectItem>
+                  <SelectItem value="done">Vyřízeno</SelectItem>
+                  <SelectItem value="cancelled">Zrušeno</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <SheetFooter className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => (setFormOpen(false), setEditingEvent(null))}>
+              Zrušit
+            </Button>
+            <Button type="button" className="min-h-[44px]" disabled={saving} onClick={() => void saveMeeting()}>
+              {saving ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent" /> : null}
+              Uložit
+            </Button>
+          </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

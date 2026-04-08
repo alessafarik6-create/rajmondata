@@ -580,6 +580,7 @@ export default function PortalLeadsPage() {
         note: meetingNote.trim(),
         scheduledAt: Timestamp.fromDate(d),
         calendarEventType: "lead_meeting",
+        status: "planned",
         createdBy: user.uid,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
