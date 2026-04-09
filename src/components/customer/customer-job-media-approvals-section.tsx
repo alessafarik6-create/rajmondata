@@ -18,9 +18,10 @@ import {
 import type { JobFolderDoc, JobFolderImageDoc } from "@/lib/job-media-types";
 import {
   formatMediaDate,
-  getJobMediaPreviewUrl,
+  getJobMediaCustomerDisplayUrl,
   inferJobMediaItemType,
 } from "@/lib/job-media-types";
+import { CustomerApprovalFullscreenLightbox } from "@/components/customer/customer-approval-fullscreen-lightbox";
 import {
   approvalStatusLabelCs,
   isJobMediaAwaitingCustomerApproval,
@@ -36,12 +37,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { FileText, Maximize2 } from "lucide-react";
@@ -62,7 +57,7 @@ export type PendingMediaItem = {
 
 function MediaThumbMini({ row, className }: { row: Record<string, unknown>; className?: string }) {
   const kind = inferJobMediaItemType(row as JobFolderImageDoc);
-  const url = getJobMediaPreviewUrl(row as JobFolderImageDoc);
+  const url = getJobMediaCustomerDisplayUrl(row as JobFolderImageDoc);
   if (kind === "pdf") {
     return (
       <div
@@ -153,7 +148,7 @@ function FolderPendingCollector({
       const kind = inferJobMediaItemType(img);
       if (kind === "office") continue;
       const title = img.fileName || img.name || img.id;
-      const openUrl = getJobMediaPreviewUrl(img) || "";
+      const openUrl = getJobMediaCustomerDisplayUrl(img) || "";
       out.push({
         key: `fi_${folder.id}_${img.id}`,
         target: { kind: "folderImages", folderId: folder.id, imageId: img.id },
@@ -218,7 +213,7 @@ export function CustomerJobMediaApprovalsSection({
       const kind = inferJobMediaItemType(p as JobFolderImageDoc);
       if (kind === "office") continue;
       const title = (p.fileName as string) || (p.name as string) || p.id;
-      const openUrl = getJobMediaPreviewUrl(p as JobFolderImageDoc) || "";
+      const openUrl = getJobMediaCustomerDisplayUrl(p as JobFolderImageDoc) || "";
       out.push({
         key: `ph_${p.id}`,
         target: { kind: "photos", photoId: p.id },
@@ -502,45 +497,25 @@ export function CustomerJobMediaApprovalsSection({
         </CardContent>
       </Card>
 
-      <Dialog
-        open={!!lightbox}
-        onOpenChange={(e) => {
-          if (!e) {
+      {lightbox ? (
+        <CustomerApprovalFullscreenLightbox
+          open={!!lightbox}
+          onClose={() => {
             setLightbox(null);
             setLightboxCommentOpen(false);
             setLightboxCommentDraft("");
-          }
-        }}
-      >
-        <DialogContent className="max-h-[95vh] max-w-[95vw] overflow-y-auto p-2 sm:p-4">
-          <DialogHeader>
-            <DialogTitle>{lightbox?.title ?? ""}</DialogTitle>
-          </DialogHeader>
-          {lightbox?.openUrl ? (
-            <div className="flex max-h-[min(78vh,720px)] justify-center overflow-auto">
-              {inferJobMediaItemType(lightbox.raw as JobFolderImageDoc) === "pdf" ? (
-                <iframe
-                  title={lightbox.title}
-                  src={lightbox.openUrl}
-                  className="h-[min(72vh,680px)] w-full max-w-5xl rounded border bg-white"
-                />
-              ) : (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={lightbox.openUrl}
-                  alt=""
-                  className="max-h-[min(78vh,720px)] w-auto max-w-full object-contain"
-                />
-              )}
-            </div>
-          ) : (
-            <p className="text-sm text-muted-foreground">Náhled není k dispozici.</p>
-          )}
-          {lightbox ? (
-            <div className="mt-4 space-y-3 border-t pt-3">
+          }}
+          title={lightbox.title}
+          url={lightbox.openUrl}
+          isPdf={inferJobMediaItemType(lightbox.raw as JobFolderImageDoc) === "pdf"}
+          footer={
+            <div className="space-y-3 text-foreground">
+              {!lightbox.openUrl ? (
+                <p className="text-sm text-white/70">Náhled není k dispozici.</p>
+              ) : null}
               {lightbox.approval.approvalNoteFromAdmin ? (
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">Poznámka od firmy: </span>
+                <p className="text-sm text-white/85">
+                  <span className="font-medium text-white">Poznámka od firmy: </span>
                   {lightbox.approval.approvalNoteFromAdmin}
                 </p>
               ) : null}
@@ -551,13 +526,13 @@ export function CustomerJobMediaApprovalsSection({
                     onChange={(e) => setLightboxCommentDraft(e.target.value)}
                     placeholder="Popište požadavek na opravu…"
                     rows={3}
-                    className="min-h-[44px]"
+                    className="min-h-[44px] border-white/20 bg-white/10 text-white placeholder:text-white/45"
                   />
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Button
                       type="button"
                       variant="outline"
-                      className="min-h-[44px]"
+                      className="min-h-[44px] border-white/30 bg-transparent text-white hover:bg-white/10"
                       disabled={busyKey === lightbox.key}
                       onClick={() => {
                         setLightboxCommentOpen(false);
@@ -592,7 +567,7 @@ export function CustomerJobMediaApprovalsSection({
                   <Button
                     type="button"
                     variant="outline"
-                    className="min-h-[44px]"
+                    className="min-h-[44px] border-white/30 bg-transparent text-white hover:bg-white/10"
                     disabled={busyKey === lightbox.key}
                     onClick={() => {
                       setLightboxCommentOpen(true);
@@ -604,9 +579,9 @@ export function CustomerJobMediaApprovalsSection({
                 </div>
               )}
             </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+          }
+        />
+      ) : null}
     </>
   );
 }

@@ -192,3 +192,15 @@ export function readAnnotationPayloadFromPhotoDoc(
   }
   return null;
 }
+
+/** Rozměry obrázku v době serializace (0–1 souřadnice se načítají vůči nim). */
+export function readAnnotationPayloadReferenceSize(
+  raw: unknown
+): { width: number; height: number } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Partial<JobPhotoAnnotationPayload>;
+  const w = typeof p.imageWidth === "number" && p.imageWidth > 0 ? Math.round(p.imageWidth) : 0;
+  const h = typeof p.imageHeight === "number" && p.imageHeight > 0 ? Math.round(p.imageHeight) : 0;
+  if (w < 1 || h < 1) return null;
+  return { width: w, height: h };
+}

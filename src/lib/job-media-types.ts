@@ -147,6 +147,19 @@ export function getJobMediaPreviewUrl(row: {
   return "";
 }
 
+/**
+ * Zobrazení pro zákazníka (schválení, náhled): vždy upřednostni export z editoru
+ * (`annotatedImageUrl`), teprve pak původní URL. Kóty a popisky jsou v PNG „zapečené“.
+ */
+export function getJobMediaCustomerDisplayUrl(row: {
+  annotatedImageUrl?: string;
+  imageUrl?: string;
+  url?: string;
+  downloadURL?: string;
+}): string {
+  return getJobMediaPreviewUrl(row);
+}
+
 /** Formát data pro náhled v mřížce. */
 export function formatMediaDate(t: unknown): string {
   try {

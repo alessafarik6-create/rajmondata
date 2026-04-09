@@ -27,6 +27,7 @@ import {
 } from "@/lib/document-customer-annotations";
 import {
   deserializeJobPhotoAnnotations,
+  readAnnotationPayloadReferenceSize,
   type JobPhotoAnnotation,
 } from "@/lib/job-photo-annotations";
 import { drawNoteAnnotationOnCanvas } from "@/lib/job-photo-annotation-canvas";
@@ -572,7 +573,10 @@ export function CustomerMediaAnnotationViewer({
   const [saving, setSaving] = useState(false);
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfNumPages, setPdfNumPages] = useState(0);
-  const [contentSize, setContentSize] = useState({ w: 800, h: 600 });
+  /** Rozlišení bitmapy (natural / canvas) — shodné s uloženými 0–1 souřadnicemi. */
+  const [contentSize, setContentSize] = useState({ w: 0, h: 0 });
+  /** Vykreslená velikost v CSS px (kvůli max-vh / max-vw) — musí sedět s <img>. */
+  const [layoutCss, setLayoutCss] = useState({ w: 0, h: 0 });
   const [lineDraft, setLineDraft] = useState<{ x: number; y: number } | null>(null);
   const [shapeDraftEnd, setShapeDraftEnd] = useState<{ x: number; y: number } | null>(null);
   const [dragState, setDragState] = useState<{
@@ -587,6 +591,7 @@ export function CustomerMediaAnnotationViewer({
   const initialItemsRef = useRef<CustomerOverlayItem[]>([]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const baseImageRef = useRef<HTMLImageElement>(null);
   const baseCanvasRef = useRef<HTMLCanvasElement>(null);
   const midCanvasRef = useRef<HTMLCanvasElement>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -637,6 +642,8 @@ export function CustomerMediaAnnotationViewer({
       setLineDraft(null);
       setTextPos(null);
       setTextDraft("");
+      setContentSize({ w: 0, h: 0 });
+      setLayoutCss({ w: 0, h: 0 });
       return;
     }
     const raw = annRemote as Record<string, unknown> | null | undefined;
@@ -658,22 +665,35 @@ export function CustomerMediaAnnotationViewer({
 
   const embeddedItems = useMemo((): JobPhotoAnnotation[] => {
     if (!embeddedAnnotationData || fileType !== "image") return [];
-    const w = Math.max(1, contentSize.w);
-    const h = Math.max(1, contentSize.h);
+    const refDim = readAnnotationPayloadReferenceSize(embeddedAnnotationData);
+    const w = Math.max(1, contentSize.w || refDim?.width || 1);
+    const h = Math.max(1, contentSize.h || refDim?.height || 1);
     return deserializeJobPhotoAnnotations(embeddedAnnotationData, w, h);
   }, [embeddedAnnotationData, fileType, contentSize.w, contentSize.h]);
 
+  const syncLayoutCssFromImage = useCallback(() => {
+    const el = baseImageRef.current;
+    if (!el || fileType !== "image") return;
+    const rw = Math.round(el.getBoundingClientRect().width);
+    const rh = Math.round(el.getBoundingClientRect().height);
+    if (rw > 0 && rh > 0) setLayoutCss({ w: rw, h: rh });
+  }, [fileType]);
+
   useEffect(() => {
     if (!open || fileType !== "image") return;
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => {
-      const w = img.naturalWidth || 800;
-      const h = img.naturalHeight || 600;
-      setContentSize({ w, h });
-    };
-    img.src = mediaUrl;
-  }, [open, fileType, mediaUrl]);
+    const el = baseImageRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      syncLayoutCssFromImage();
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open, fileType, mediaUrl, syncLayoutCssFromImage]);
+
+  useEffect(() => {
+    if (!open || fileType !== "image" || contentSize.w < 1) return;
+    requestAnimationFrame(() => syncLayoutCssFromImage());
+  }, [open, fileType, contentSize.w, contentSize.h, zoom, pan, syncLayoutCssFromImage]);
 
   useEffect(() => {
     if (!open || fileType !== "pdf") return;
@@ -755,6 +775,7 @@ export function CustomerMediaAnnotationViewer({
   const redrawMidAndOverlay = useCallback(() => {
     const cw = contentSize.w;
     const ch = contentSize.h;
+    if (cw < 1 || ch < 1) return;
     const mid = midCanvasRef.current;
     const ov = overlayCanvasRef.current;
     if (!mid || !ov) return;
@@ -762,6 +783,17 @@ export function CustomerMediaAnnotationViewer({
     mid.height = ch;
     ov.width = cw;
     ov.height = ch;
+    const applyCssDisplay = (canvas: HTMLCanvasElement) => {
+      if (fileType === "image" && layoutCss.w > 0 && layoutCss.h > 0) {
+        canvas.style.width = `${layoutCss.w}px`;
+        canvas.style.height = `${layoutCss.h}px`;
+      } else {
+        canvas.style.width = "";
+        canvas.style.height = "";
+      }
+    };
+    applyCssDisplay(mid);
+    applyCssDisplay(ov);
     const mctx = mid.getContext("2d");
     const octx = ov.getContext("2d");
     if (!mctx || !octx) return;
@@ -792,7 +824,19 @@ export function CustomerMediaAnnotationViewer({
       editableSelectedId,
       hoveredId
     );
-  }, [contentSize, embeddedItems, items, selectedId, userId, actorRole, readOnly, hoveredId, fileType, pdfPage]);
+  }, [
+    contentSize,
+    layoutCss,
+    embeddedItems,
+    items,
+    selectedId,
+    userId,
+    actorRole,
+    readOnly,
+    hoveredId,
+    fileType,
+    pdfPage,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -818,12 +862,10 @@ export function CustomerMediaAnnotationViewer({
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / Math.max(1, rect.width);
     const scaleY = canvas.height / Math.max(1, rect.height);
-    const coords = {
+    return {
       x: (clientX - rect.left) * scaleX,
       y: (clientY - rect.top) * scaleY,
     };
-    console.log("coords", coords);
-    return coords;
   }, []);
 
   const isAdmin = useMemo(() => {
@@ -1690,16 +1732,18 @@ export function CustomerMediaAnnotationViewer({
               {fileType === "image" ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
+                  ref={baseImageRef}
                   src={mediaUrl}
                   alt=""
-                  className="absolute left-0 top-0 max-h-[85vh] max-w-[90vw] object-contain"
-                  style={{ width: contentSize.w, height: contentSize.h }}
+                  className="absolute left-0 top-0 block max-h-[85vh] max-w-[90vw] object-contain"
                   onLoad={(e) => {
                     const el = e.currentTarget;
-                    setContentSize({
-                      w: el.naturalWidth || contentSize.w,
-                      h: el.naturalHeight || contentSize.h,
-                    });
+                    const nw = el.naturalWidth;
+                    const nh = el.naturalHeight;
+                    if (nw > 0 && nh > 0) {
+                      setContentSize({ w: nw, h: nh });
+                    }
+                    requestAnimationFrame(() => syncLayoutCssFromImage());
                   }}
                 />
               ) : null}
@@ -1709,19 +1753,15 @@ export function CustomerMediaAnnotationViewer({
                   "block max-h-[85vh] max-w-[90vw]",
                   fileType === "image" && "pointer-events-none opacity-0"
                 )}
-                style={{ width: contentSize.w, height: contentSize.h }}
               />
               <canvas
                 ref={midCanvasRef}
-                className="pointer-events-none absolute left-0 top-0"
-                style={{ width: contentSize.w, height: contentSize.h }}
+                className="pointer-events-none absolute left-0 top-0 max-h-[85vh] max-w-[90vw] object-contain"
               />
               <canvas
                 ref={overlayCanvasRef}
-                className="absolute left-0 top-0 touch-none"
+                className="absolute left-0 top-0 max-h-[85vh] max-w-[90vw] touch-none object-contain"
                 style={{
-                  width: contentSize.w,
-                  height: contentSize.h,
                   cursor: getCanvasCursor(),
                 }}
                 onPointerDown={onPointerDown}
