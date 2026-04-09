@@ -1705,7 +1705,13 @@ export function CustomerMediaAnnotationViewer({
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-black/90 text-white">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 px-3 py-2">
-        <div className="min-w-0 flex-1 truncate text-sm font-medium">{title}</div>
+        <div className="flex min-w-0 flex-1 items-center gap-2 truncate text-sm font-medium">
+          <span className="truncate">{title}</span>
+          {/* TODO: odstranit po ověření */}
+          <span className="shrink-0 rounded bg-yellow-400 px-2 py-0.5 text-[10px] font-bold text-black">
+            TEST ZMENA
+          </span>
+        </div>
         <div className="flex flex-wrap items-center gap-1">
           {toolbarBtn("draw", <Pencil className="h-4 w-4" />, "Kreslit")}
           {toolbarBtn("line", <Minus className="h-4 w-4 rotate-[-45deg]" />, "Čára")}

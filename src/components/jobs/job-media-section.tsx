@@ -2727,6 +2727,10 @@ export function JobMediaSection({
   return (
     <TooltipProvider delayDuration={250}>
       <>
+      {/* TODO: odstranit po ověření správné komponenty */}
+      <div className="mb-2 rounded-md bg-yellow-300 px-3 py-2 text-center text-sm font-bold text-black">
+        TEST ZMENA — JobMediaSection (správná větev UI)
+      </div>
       <Card
         className={cn(
           "bg-surface border-border overflow-hidden",
