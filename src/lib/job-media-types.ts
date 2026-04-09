@@ -109,6 +109,17 @@ export type JobFolderImageDoc = {
   customerVisible?: boolean;
   customerAnnotatable?: boolean;
   internalOnly?: boolean;
+  /** Schválení konkrétního souboru zákazníkem (doplněno v portálu). */
+  requiresCustomerApproval?: boolean;
+  approvalStatus?: "pending" | "approved" | "changes_requested";
+  approvalNoteFromAdmin?: string;
+  approvalRequestedAt?: unknown;
+  approvalRequestedBy?: string;
+  approvedAt?: unknown;
+  approvedBy?: string;
+  customerComment?: string;
+  customerCommentAt?: unknown;
+  customerCommentBy?: string;
 };
 
 /** Výběr z galerie / souborů: obrázky i PDF. */

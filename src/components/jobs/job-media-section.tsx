@@ -56,12 +56,14 @@ import {
   isLegacyPhotoCustomerVisible,
 } from "@/lib/job-customer-access";
 import { CustomerMediaAnnotationViewer } from "@/components/jobs/customer-media-annotation-viewer";
+import { MediaApprovalRequestDialog } from "@/components/jobs/media-approval-request-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
-  documentAnnotationDocId,
-  parseDocumentMediaReview,
-  type ParsedDocumentMediaReview,
-} from "@/lib/document-customer-annotations";
+  approvalStatusLabelCs,
+  parseJobMediaApproval,
+  type JobMediaRef,
+  type ParsedJobMediaApproval,
+} from "@/lib/job-media-customer-approval";
 import { Switch } from "@/components/ui/switch";
 import {
   commitFolderAccountingExpense,
@@ -128,6 +130,7 @@ import {
   StickyNote,
   Trash2,
   Upload,
+  UserCheck,
 } from "lucide-react";
 import {
   Collapsible,
@@ -361,32 +364,55 @@ function JobMediaOfficePreview() {
   );
 }
 
-function JobMediaReviewBadgeRow({ review }: { review: ParsedDocumentMediaReview }) {
-  if (review.status === "pending") {
-    return (
-      <Badge variant="secondary" className="text-[10px] font-medium">
-        Čeká na schválení
-      </Badge>
-    );
-  }
-  if (review.status === "approved") {
-    return (
-      <Badge className="bg-emerald-600 text-[10px] font-medium hover:bg-emerald-600">Schváleno</Badge>
-    );
-  }
+function shouldShowMediaApprovalAdminPanel(appr: ParsedJobMediaApproval): boolean {
   return (
-    <div className="space-y-1">
-      <Badge className="bg-amber-600 text-[10px] font-medium hover:bg-amber-600">
-        Připomínka od zákazníka
-      </Badge>
-      {review.customerComment ? (
-        <p className="line-clamp-4 text-[11px] leading-snug text-muted-foreground">
-          {review.customerComment}
+    appr.requiresCustomerApproval ||
+    appr.approvalStatus === "approved" ||
+    appr.approvalStatus === "changes_requested"
+  );
+}
+
+function JobMediaApprovalAdminBadgeRow({ appr }: { appr: ParsedJobMediaApproval }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap gap-1">
+        <Badge
+          variant={appr.requiresCustomerApproval ? "default" : "outline"}
+          className="text-[10px] font-medium"
+        >
+          {appr.requiresCustomerApproval ? "Čeká u zákazníka" : "Schválení: vypnuto"}
+        </Badge>
+        <Badge
+          className={cn(
+            "text-[10px] font-medium",
+            appr.approvalStatus === "approved" && "bg-emerald-600 hover:bg-emerald-600",
+            appr.approvalStatus === "changes_requested" && "bg-amber-600 hover:bg-amber-600",
+            appr.approvalStatus === "pending" && "bg-slate-600 hover:bg-slate-600"
+          )}
+        >
+          {approvalStatusLabelCs(appr.approvalStatus)}
+        </Badge>
+      </div>
+      {appr.approvalNoteFromAdmin ? (
+        <p className="text-[11px] leading-snug text-muted-foreground">
+          <span className="font-medium text-foreground/80">Zpráva ke schválení: </span>
+          {appr.approvalNoteFromAdmin}
         </p>
       ) : null}
-      {review.customerCommentAtMs ? (
+      {appr.approvalRequestedAtMs ? (
         <p className="text-[10px] text-muted-foreground">
-          {new Date(review.customerCommentAtMs).toLocaleString("cs-CZ")}
+          Vyžádáno: {new Date(appr.approvalRequestedAtMs).toLocaleString("cs-CZ")}
+        </p>
+      ) : null}
+      {appr.customerComment ? (
+        <p className="line-clamp-5 text-[11px] leading-snug text-amber-900/90 dark:text-amber-200/90">
+          <span className="font-medium">Zákazník: </span>
+          {appr.customerComment}
+        </p>
+      ) : null}
+      {appr.approvedAtMs ? (
+        <p className="text-[10px] text-muted-foreground">
+          Schváleno: {new Date(appr.approvedAtMs).toLocaleString("cs-CZ")}
         </p>
       ) : null}
     </div>
@@ -401,7 +427,7 @@ function JobMediaFileCard({
   note,
   hasNote,
   actions,
-  customerReview,
+  mediaApproval,
 }: {
   borderClassName?: string;
   preview: React.ReactNode;
@@ -410,8 +436,8 @@ function JobMediaFileCard({
   note?: string;
   hasNote: boolean;
   actions: React.ReactNode;
-  /** Stav schválení výkresu (jen admin / interní přehled). */
-  customerReview?: ParsedDocumentMediaReview | null;
+  /** Schválení zákazníkem — jen interní přehled. */
+  mediaApproval?: ParsedJobMediaApproval | null;
 }) {
   return (
     <div
@@ -441,9 +467,9 @@ function JobMediaFileCard({
           {title}
         </p>
         <p className="text-xs text-gray-700 sm:text-sm">{dateLine}</p>
-        {customerReview ? (
+        {mediaApproval && shouldShowMediaApprovalAdminPanel(mediaApproval) ? (
           <div className="rounded-md border border-border/50 bg-muted/30 px-2 py-1.5">
-            <JobMediaReviewBadgeRow review={customerReview} />
+            <JobMediaApprovalAdminBadgeRow appr={mediaApproval} />
           </div>
         ) : null}
         {note?.trim() ? (
@@ -473,7 +499,7 @@ function UserFolderBlock({
   mediaScope = "full",
   memberPermissions = null,
   employeeRecordId = null,
-  annotationReviewByDocId = {},
+  onOpenMediaApproval,
 }: {
   folder: JobFolderDoc;
   companyId: string;
@@ -493,8 +519,11 @@ function UserFolderBlock({
   mediaScope?: "full" | "employeeLimited" | "customer";
   memberPermissions?: JobMemberPermissions | null;
   employeeRecordId?: string | null;
-  /** Stav schválení výkresu z `document_annotations` (klíč = ID dokumentu anotace). */
-  annotationReviewByDocId?: Record<string, ParsedDocumentMediaReview>;
+  onOpenMediaApproval?: (args: {
+    target: JobMediaRef;
+    fileLabel: string;
+    row: Record<string, unknown>;
+  }) => void;
 }) {
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -528,6 +557,11 @@ function UserFolderBlock({
           folder as Record<string, unknown>,
           img as Record<string, unknown>
         );
+      const appr = parseJobMediaApproval(img as Record<string, unknown>);
+      const noteParts = [
+        typeof img.note === "string" ? img.note.trim() : "",
+        appr.approvalNoteFromAdmin,
+      ].filter((x) => typeof x === "string" && x.length > 0);
       setMediaViewer({
         url: openUrl,
         title,
@@ -535,7 +569,7 @@ function UserFolderBlock({
         mediaDocumentId: img.id,
         annotationData: img.annotationData,
         readOnly: readOnlyCustomer,
-        adminNote: typeof img.note === "string" ? img.note : "",
+        adminNote: noteParts.length ? noteParts.join("\n\n") : "",
       });
     },
     [folder, mediaScope]
@@ -1733,14 +1767,9 @@ function UserFolderBlock({
                     ? `Office · ${formatMediaDate(img.createdAt)}`
                     : formatMediaDate(img.createdAt);
               const hasNote = !!img.note?.trim();
-              const annDocId = documentAnnotationDocId(
-                { kind: "folderImages", folderId: folder.id },
-                img.id
-              );
-              const customerReviewCard =
-                !isCustomerScope && annotationReviewByDocId[annDocId]
-                  ? annotationReviewByDocId[annDocId]
-                  : null;
+              const appr = parseJobMediaApproval(img as Record<string, unknown>);
+              const mediaApprovalCard =
+                !isCustomerScope && shouldShowMediaApprovalAdminPanel(appr) ? appr : null;
 
                   if (!isCustomerScope && isFolderWide && (kind === "pdf" || kind === "office")) {
                 return null;
@@ -1766,7 +1795,7 @@ function UserFolderBlock({
                     dateLine={dateLine}
                     note={img.note}
                     hasNote={hasNote}
-                    customerReview={customerReviewCard}
+                    mediaApproval={mediaApprovalCard}
                     actions={
                       <>
                         <JobMediaIconButton
@@ -1840,6 +1869,24 @@ function UserFolderBlock({
                             >
                               <StickyNote className="size-[18px]" aria-hidden />
                             </JobMediaIconButton>
+                            {onOpenMediaApproval && kind !== "office" ? (
+                              <JobMediaIconButton
+                                label="Schválení zákazníkem"
+                                onClick={() =>
+                                  onOpenMediaApproval({
+                                    target: {
+                                      kind: "folderImages",
+                                      folderId: folder.id,
+                                      imageId: img.id,
+                                    },
+                                    fileLabel: title,
+                                    row: img as Record<string, unknown>,
+                                  })
+                                }
+                              >
+                                <UserCheck className="size-[18px]" aria-hidden />
+                              </JobMediaIconButton>
+                            ) : null}
                             <JobMediaIconButton
                               label="Smazat soubor"
                               disabled={busy}
@@ -1880,7 +1927,7 @@ function UserFolderBlock({
                   dateLine={dateLine}
                   note={img.note}
                   hasNote={hasNote}
-                  customerReview={customerReviewCard}
+                  mediaApproval={mediaApprovalCard}
                   actions={
                     <>
                       <JobMediaIconButton
@@ -1917,6 +1964,24 @@ function UserFolderBlock({
                           }
                         >
                           <Pencil className="size-[18px]" aria-hidden />
+                        </JobMediaIconButton>
+                      ) : null}
+                      {!isEmployeeLimited && onOpenMediaApproval ? (
+                        <JobMediaIconButton
+                          label="Schválení zákazníkem"
+                          onClick={() =>
+                            onOpenMediaApproval({
+                              target: {
+                                kind: "folderImages",
+                                folderId: folder.id,
+                                imageId: img.id,
+                              },
+                              fileLabel: title,
+                              row: img as Record<string, unknown>,
+                            })
+                          }
+                        >
+                          <UserCheck className="size-[18px]" aria-hidden />
                         </JobMediaIconButton>
                       ) : null}
                       {openUrl ? (
@@ -1965,6 +2030,24 @@ function UserFolderBlock({
                           >
                             <StickyNote className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
+                          {onOpenMediaApproval ? (
+                            <JobMediaIconButton
+                              label="Schválení zákazníkem"
+                              onClick={() =>
+                                onOpenMediaApproval({
+                                  target: {
+                                    kind: "folderImages",
+                                    folderId: folder.id,
+                                    imageId: img.id,
+                                  },
+                                  fileLabel: title,
+                                  row: img as Record<string, unknown>,
+                                })
+                              }
+                            >
+                              <UserCheck className="size-[18px]" aria-hidden />
+                            </JobMediaIconButton>
+                          ) : null}
                           <JobMediaIconButton
                             label="Smazat soubor"
                             disabled={busy}
@@ -2189,6 +2272,29 @@ export function JobMediaSection({
     [firestore, user?.uid]
   );
   const { data: actorProfile } = useDoc(actorRef);
+
+  const jobDocRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? doc(firestore, "companies", companyId, "jobs", jobId)
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: jobRecord } = useDoc(jobDocRef);
+
+  const [mediaApprovalDialog, setMediaApprovalDialog] = useState<{
+    target: JobMediaRef;
+    fileLabel: string;
+    row: Record<string, unknown>;
+  } | null>(null);
+
+  const openMediaApprovalDialog = useCallback(
+    (args: { target: JobMediaRef; fileLabel: string; row: Record<string, unknown> }) => {
+      setMediaApprovalDialog(args);
+    },
+    []
+  );
+
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderType, setNewFolderType] = useState<JobFolderType>("files");
@@ -2227,6 +2333,11 @@ export function JobMediaSection({
       const readOnly =
         mediaScope === "customer" &&
         !canCustomerAnnotateLegacyPhoto(p as Record<string, unknown>);
+      const appr = parseJobMediaApproval(p as Record<string, unknown>);
+      const noteParts = [
+        typeof p.note === "string" ? p.note.trim() : "",
+        appr.approvalNoteFromAdmin,
+      ].filter((x) => typeof x === "string" && x.length > 0);
       setLegacyMediaViewer({
         url: openUrl,
         title,
@@ -2234,7 +2345,7 @@ export function JobMediaSection({
         mediaDocumentId: p.id,
         annotationData: p.annotationData,
         readOnly,
-        adminNote: typeof p.note === "string" ? p.note : "",
+        adminNote: noteParts.length ? noteParts.join("\n\n") : "",
       });
     },
     [mediaScope]
@@ -2260,31 +2371,6 @@ export function JobMediaSection({
   );
 
   const { data: foldersRaw } = useCollection<JobFolderDoc>(foldersColRef);
-
-  const jobDocumentAnnotationsColRef = useMemoFirebase(
-    () =>
-      firestore && companyId && jobId
-        ? collection(
-            firestore,
-            "companies",
-            companyId,
-            "jobs",
-            jobId,
-            "document_annotations"
-          )
-        : null,
-    [firestore, companyId, jobId]
-  );
-  const { data: jobAnnotationDocs } = useCollection(jobDocumentAnnotationsColRef);
-  const annotationReviewByDocId = useMemo(() => {
-    const m: Record<string, ParsedDocumentMediaReview> = {};
-    for (const row of jobAnnotationDocs ?? []) {
-      if (row?.id) {
-        m[row.id] = parseDocumentMediaReview(row as Record<string, unknown>);
-      }
-    }
-    return m;
-  }, [jobAnnotationDocs]);
 
   const foldersSorted = useMemo(() => {
     const list = (foldersRaw || []).filter(
@@ -2727,10 +2813,6 @@ export function JobMediaSection({
   return (
     <TooltipProvider delayDuration={250}>
       <>
-      {/* TODO: odstranit po ověření správné komponenty */}
-      <div className="mb-2 rounded-md bg-yellow-300 px-3 py-2 text-center text-sm font-bold text-black">
-        TEST ZMENA — JobMediaSection (správná větev UI)
-      </div>
       <Card
         className={cn(
           "bg-surface border-border overflow-hidden",
@@ -2908,10 +2990,10 @@ export function JobMediaSection({
                         ? `Office · ${formatMediaDate(p.createdAt)}`
                         : formatMediaDate(p.createdAt);
                   const hasNote = !!p.note?.trim();
-                  const legacyAnnDocId = documentAnnotationDocId({ kind: "photos" }, p.id);
-                  const customerReviewCard =
-                    mediaScope !== "customer" && annotationReviewByDocId[legacyAnnDocId]
-                      ? annotationReviewByDocId[legacyAnnDocId]
+                  const apprLegacy = parseJobMediaApproval(p as Record<string, unknown>);
+                  const mediaApprovalCard =
+                    !hideJobMediaAdminUi && shouldShowMediaApprovalAdminPanel(apprLegacy)
+                      ? apprLegacy
                       : null;
 
                   if (mediaScope !== "customer" && isJobDetailWide && (kind === "pdf" || kind === "office")) {
@@ -2938,7 +3020,7 @@ export function JobMediaSection({
                         dateLine={dateLine}
                         note={p.note}
                         hasNote={hasNote}
-                        customerReview={customerReviewCard}
+                        mediaApproval={mediaApprovalCard}
                         actions={
                           <>
                             <JobMediaIconButton
@@ -3009,6 +3091,20 @@ export function JobMediaSection({
                                 >
                                   <StickyNote className="size-[18px]" aria-hidden />
                                 </JobMediaIconButton>
+                                {kind === "pdf" ? (
+                                  <JobMediaIconButton
+                                    label="Schválení zákazníkem"
+                                    onClick={() =>
+                                      openMediaApprovalDialog({
+                                        target: { kind: "photos", photoId: p.id },
+                                        fileLabel: title,
+                                        row: p as Record<string, unknown>,
+                                      })
+                                    }
+                                  >
+                                    <UserCheck className="size-[18px]" aria-hidden />
+                                  </JobMediaIconButton>
+                                ) : null}
                                 <JobMediaIconButton
                                   label="Smazat soubor"
                                   className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -3050,7 +3146,7 @@ export function JobMediaSection({
                       dateLine={dateLine}
                       note={p.note}
                       hasNote={hasNote}
-                      customerReview={customerReviewCard}
+                      mediaApproval={mediaApprovalCard}
                       actions={
                         <>
                           <JobMediaIconButton
@@ -3128,6 +3224,18 @@ export function JobMediaSection({
                                 }
                               >
                                 <StickyNote className="size-[18px]" aria-hidden />
+                              </JobMediaIconButton>
+                              <JobMediaIconButton
+                                label="Schválení zákazníkem"
+                                onClick={() =>
+                                  openMediaApprovalDialog({
+                                    target: { kind: "photos", photoId: p.id },
+                                    fileLabel: title,
+                                    row: p as Record<string, unknown>,
+                                  })
+                                }
+                              >
+                                <UserCheck className="size-[18px]" aria-hidden />
                               </JobMediaIconButton>
                               <JobMediaIconButton
                                 label="Smazat soubor"
@@ -3228,6 +3336,20 @@ export function JobMediaSection({
                                         >
                                           <StickyNote className="size-[18px]" aria-hidden />
                                         </JobMediaIconButton>
+                                        {kind === "pdf" ? (
+                                          <JobMediaIconButton
+                                            label="Schválení zákazníkem"
+                                            onClick={() =>
+                                              openMediaApprovalDialog({
+                                                target: { kind: "photos", photoId: p.id },
+                                                fileLabel: title,
+                                                row: p as Record<string, unknown>,
+                                              })
+                                            }
+                                          >
+                                            <UserCheck className="size-[18px]" aria-hidden />
+                                          </JobMediaIconButton>
+                                        ) : null}
                                         <JobMediaIconButton
                                           label="Smazat"
                                           className="border-destructive/35 text-destructive hover:bg-destructive/10 hover:text-destructive"
@@ -3289,7 +3411,9 @@ export function JobMediaSection({
                           mediaScope={mediaScope}
                           memberPermissions={memberPermissions}
                           employeeRecordId={employeeRecordId}
-                          annotationReviewByDocId={annotationReviewByDocId}
+                          onOpenMediaApproval={
+                            hideJobMediaAdminUi ? undefined : openMediaApprovalDialog
+                          }
                         />
                       ))}
                     </div>
@@ -3384,6 +3508,29 @@ export function JobMediaSection({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {firestore && user && mediaApprovalDialog ? (
+        <MediaApprovalRequestDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setMediaApprovalDialog(null);
+          }}
+          firestore={firestore}
+          companyId={companyId}
+          jobId={jobId}
+          adminUid={user.uid}
+          jobRecord={(jobRecord as Record<string, unknown> | null | undefined) ?? null}
+          target={mediaApprovalDialog.target}
+          fileLabel={mediaApprovalDialog.fileLabel}
+          initialRequires={
+            parseJobMediaApproval(mediaApprovalDialog.row).requiresCustomerApproval
+          }
+          initialAdminNote={
+            parseJobMediaApproval(mediaApprovalDialog.row).approvalNoteFromAdmin
+          }
+          onApplied={() => setMediaApprovalDialog(null)}
+        />
+      ) : null}
 
       {firestore && user && legacyMediaViewer ? (
         <CustomerMediaAnnotationViewer
