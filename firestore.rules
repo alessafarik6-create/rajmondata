@@ -235,93 +235,68 @@ service cloud.firestore {
         jobId in userDoc().linkedJobIds;
     }
 
-    /** Složka zakázky viditelná zákazníkovi v portálu (customerVisible). */
-    function folderDocCustomerPortalListable(companyId, jobId, folderId) {
+    /** Složka viditelná zákazníkovi (klientský portál) — nesmí být interní ani účetní. */
+    function jobFolderDocCustomerPortalVisible(companyId, jobId, folderId) {
       let fp = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/folders/$(folderId);
       return exists(fp) &&
+        (!(get(fp).data.internalOnly is bool) || get(fp).data.internalOnly != true) &&
         get(fp).data.customerVisible == true &&
-        (!('internalOnly' in get(fp).data) || get(fp).data.internalOnly != true);
+        get(fp).data.type != 'documents';
     }
 
-    /** Obrázek ve složce — čtení pro zákazníka (shodně s job-customer-access). */
-    function jobFolderImageCustomerReadable(companyId, jobId, folderId) {
+    /** Legacy foto / obrázek ve složce — zákazník smí číst. */
+    function jobMediaCustomerPortalImageReadOk(companyId, jobId, folderId) {
       return customerPortalLinkedJob(companyId, jobId) &&
-        folderDocCustomerPortalListable(companyId, jobId, folderId) &&
-        (!('internalOnly' in resource.data) || resource.data.internalOnly != true) &&
-        (!('customerVisible' in resource.data) || resource.data.customerVisible != false);
+        jobFolderDocCustomerPortalVisible(companyId, jobId, folderId) &&
+        (!(resource.data.internalOnly is bool) || resource.data.internalOnly != true) &&
+        (!(resource.data.customerVisible is bool) || resource.data.customerVisible != false);
     }
 
-    /** Legacy řádek jobs/.../photos — čtení pro zákazníka. */
-    function jobLegacyPhotoCustomerReadable(companyId, jobId) {
-      return customerPortalLinkedJob(companyId, jobId) &&
-        resource.data.customerVisible == true &&
-        (!('internalOnly' in resource.data) || resource.data.internalOnly != true);
+    function jobLegacyPhotoCustomerPortalReadOk() {
+      return resource.data.customerVisible == true &&
+        (!(resource.data.internalOnly is bool) || resource.data.internalOnly != true);
     }
 
-    /** Zákazník aktualizuje jen pole schválení u jobs/.../folders/.../images. */
+    /** Zákazník může zapsat jen odpověď ke schválení konkrétního souboru. */
     function jobFolderImageCustomerApprovalUpdateOk() {
-      let affected = request.resource.data.diff(resource.data).affectedKeys();
-      return affected.hasOnly([
-        'approvalStatus', 'approvedAt', 'approvedBy',
-        'customerComment', 'customerCommentAt', 'customerCommentBy'
-      ]) &&
-        resource.data.requiresCustomerApproval == true &&
-        resource.data.approvalStatus != 'approved' &&
-        request.resource.data.companyId == resource.data.companyId &&
-        request.resource.data.jobId == resource.data.jobId &&
-        request.resource.data.folderId == resource.data.folderId &&
-        request.resource.data.createdBy == resource.data.createdBy &&
-        request.resource.data.requiresCustomerApproval == resource.data.requiresCustomerApproval &&
-        (!('approvalNoteFromAdmin' in request.resource.data) ||
-          request.resource.data.approvalNoteFromAdmin == resource.data.approvalNoteFromAdmin) &&
-        (!('approvalRequestedAt' in request.resource.data) ||
-          request.resource.data.approvalRequestedAt == resource.data.approvalRequestedAt) &&
-        (!('approvalRequestedBy' in request.resource.data) ||
-          request.resource.data.approvalRequestedBy == resource.data.approvalRequestedBy) &&
-        (
-          (request.resource.data.approvalStatus == 'approved' &&
-            request.resource.data.approvedBy == request.auth.uid &&
-            request.resource.data.approvedAt is timestamp) ||
-          (request.resource.data.approvalStatus == 'changes_requested' &&
-            request.resource.data.customerComment is string &&
-            request.resource.data.customerComment.size() >= 1 &&
-            request.resource.data.customerComment.size() <= 8000 &&
-            request.resource.data.customerCommentBy == request.auth.uid &&
-            request.resource.data.customerCommentAt is timestamp)
-        );
+      let d = request.resource.data;
+      let r = resource.data;
+      return r.requiresCustomerApproval == true &&
+        d.requiresCustomerApproval == true &&
+        d.companyId == r.companyId &&
+        d.jobId == r.jobId &&
+        d.folderId == r.folderId &&
+        d.createdBy == r.createdBy &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'approvalStatus', 'approvedAt', 'approvedBy',
+          'customerComment', 'customerCommentAt', 'customerCommentBy'
+        ]) &&
+        d.approvalStatus in ['approved', 'changes_requested'] &&
+        (d.approvalStatus != 'approved' ||
+          (d.approvedBy == request.auth.uid && d.approvedAt is timestamp)) &&
+        (d.approvalStatus != 'changes_requested' ||
+          (d.customerComment is string && d.customerComment.size() > 0 && d.customerComment.size() <= 8000 &&
+            d.customerCommentBy == request.auth.uid && d.customerCommentAt is timestamp));
     }
 
-    /** Zákazník aktualizuje jen pole schválení u jobs/.../photos. */
     function jobLegacyPhotoCustomerApprovalUpdateOk() {
-      let affected = request.resource.data.diff(resource.data).affectedKeys();
-      return affected.hasOnly([
-        'approvalStatus', 'approvedAt', 'approvedBy',
-        'customerComment', 'customerCommentAt', 'customerCommentBy'
-      ]) &&
-        resource.data.requiresCustomerApproval == true &&
-        resource.data.approvalStatus != 'approved' &&
-        resource.data.customerVisible == true &&
-        request.resource.data.companyId == resource.data.companyId &&
-        request.resource.data.jobId == resource.data.jobId &&
-        request.resource.data.createdBy == resource.data.createdBy &&
-        request.resource.data.requiresCustomerApproval == resource.data.requiresCustomerApproval &&
-        (!('approvalNoteFromAdmin' in request.resource.data) ||
-          request.resource.data.approvalNoteFromAdmin == resource.data.approvalNoteFromAdmin) &&
-        (!('approvalRequestedAt' in request.resource.data) ||
-          request.resource.data.approvalRequestedAt == resource.data.approvalRequestedAt) &&
-        (!('approvalRequestedBy' in request.resource.data) ||
-          request.resource.data.approvalRequestedBy == resource.data.approvalRequestedBy) &&
-        (
-          (request.resource.data.approvalStatus == 'approved' &&
-            request.resource.data.approvedBy == request.auth.uid &&
-            request.resource.data.approvedAt is timestamp) ||
-          (request.resource.data.approvalStatus == 'changes_requested' &&
-            request.resource.data.customerComment is string &&
-            request.resource.data.customerComment.size() >= 1 &&
-            request.resource.data.customerComment.size() <= 8000 &&
-            request.resource.data.customerCommentBy == request.auth.uid &&
-            request.resource.data.customerCommentAt is timestamp)
-        );
+      let d = request.resource.data;
+      let r = resource.data;
+      return r.requiresCustomerApproval == true &&
+        d.requiresCustomerApproval == true &&
+        d.companyId == r.companyId &&
+        d.jobId == r.jobId &&
+        d.createdBy == r.createdBy &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'approvalStatus', 'approvedAt', 'approvedBy',
+          'customerComment', 'customerCommentAt', 'customerCommentBy'
+        ]) &&
+        d.approvalStatus in ['approved', 'changes_requested'] &&
+        (d.approvalStatus != 'approved' ||
+          (d.approvedBy == request.auth.uid && d.approvedAt is timestamp)) &&
+        (d.approvalStatus != 'changes_requested' ||
+          (d.customerComment is string && d.customerComment.size() > 0 && d.customerComment.size() <= 8000 &&
+            d.customerCommentBy == request.auth.uid && d.customerCommentAt is timestamp));
     }
 
     /** Vrstvy anotací zákazníka / firmy u média zakázky — validace zápisu. */
@@ -642,21 +617,21 @@ service cloud.firestore {
         match /photos/{photoId} {
           allow read: if terminalCompanyMatches(companyId) ||
             jobFinancialReadAccess(companyId, jobId) ||
-            jobLegacyPhotoCustomerReadable(companyId, jobId) ||
             (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
               legacyJobPhotosEmployeeAllowed(companyId, jobId) &&
               (!('employeeVisible' in resource.data) ||
-                resource.data.employeeVisible == true));
+                resource.data.employeeVisible == true)) ||
+            (customerPortalLinkedJob(companyId, jobId) && jobLegacyPhotoCustomerPortalReadOk());
           allow create: if jobFinancialReadAccess(companyId, jobId) &&
             request.resource.data.companyId == companyId &&
             request.resource.data.jobId == jobId &&
             request.resource.data.createdBy == request.auth.uid;
-          allow update: if (jobFinancialReadAccess(companyId, jobId) &&
+          allow update: if jobFinancialReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
             resource.data.jobId == jobId &&
-            (isPrivileged() || resource.data.createdBy == request.auth.uid)) ||
+            (isPrivileged() || resource.data.createdBy == request.auth.uid) ||
             (customerPortalLinkedJob(companyId, jobId) &&
-              jobLegacyPhotoCustomerReadable(companyId, jobId) &&
+              jobLegacyPhotoCustomerPortalReadOk() &&
               jobLegacyPhotoCustomerApprovalUpdateOk());
           allow delete: if jobFinancialReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
@@ -1073,10 +1048,12 @@ service cloud.firestore {
         match /folders/{folderId} {
           allow read: if terminalCompanyMatches(companyId) ||
             jobFinancialReadAccess(companyId, jobId) ||
-            (customerPortalLinkedJob(companyId, jobId) &&
-              folderDocCustomerPortalListable(companyId, jobId, folderId)) ||
             (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
-              folderDocEmployeeVisible(companyId, jobId, folderId));
+              folderDocEmployeeVisible(companyId, jobId, folderId)) ||
+            (customerPortalLinkedJob(companyId, jobId) &&
+              resource.data.internalOnly != true &&
+              resource.data.customerVisible == true &&
+              resource.data.type != 'documents');
           allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
             request.resource.data.companyId == companyId &&
             request.resource.data.jobId == jobId &&
@@ -1095,11 +1072,11 @@ service cloud.firestore {
           match /images/{imageId} {
             allow read: if terminalCompanyMatches(companyId) ||
               jobFinancialReadAccess(companyId, jobId) ||
-              jobFolderImageCustomerReadable(companyId, jobId, folderId) ||
               (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
                 folderDocEmployeeVisible(companyId, jobId, folderId) &&
                 (!('employeeVisible' in resource.data) ||
-                  resource.data.employeeVisible == true));
+                  resource.data.employeeVisible == true)) ||
+              jobMediaCustomerPortalImageReadOk(companyId, jobId, folderId);
             allow create: if (jobFinancialReadAccess(companyId, jobId) &&
                 request.resource.data.companyId == companyId &&
                 request.resource.data.jobId == jobId &&
@@ -1132,7 +1109,7 @@ service cloud.firestore {
                 request.resource.data.folderId == folderId &&
                 request.resource.data.createdBy == resource.data.createdBy) ||
               (customerPortalLinkedJob(companyId, jobId) &&
-                jobFolderImageCustomerReadable(companyId, jobId, folderId) &&
+                jobMediaCustomerPortalImageReadOk(companyId, jobId, folderId) &&
                 jobFolderImageCustomerApprovalUpdateOk());
             allow delete: if (jobFinancialReadAccess(companyId, jobId) &&
                 resource.data.companyId == companyId &&

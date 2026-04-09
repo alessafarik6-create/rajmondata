@@ -91,7 +91,7 @@ export function MediaApprovalRequestDialog({
             customerCommentBy: deleteField(),
             approvedAt: deleteField(),
             approvedBy: deleteField(),
-          }) as UpdateData<DocumentData>
+          }) as unknown as UpdateData<DocumentData>
         );
         if (portalUid) {
           await syncCustomerTaskForMediaApproval({
@@ -123,7 +123,7 @@ export function MediaApprovalRequestDialog({
             customerCommentBy: deleteField(),
             approvedAt: deleteField(),
             approvedBy: deleteField(),
-          }) as UpdateData<DocumentData>
+          }) as unknown as UpdateData<DocumentData>
         );
         if (portalUid) {
           await syncCustomerTaskForMediaApproval({

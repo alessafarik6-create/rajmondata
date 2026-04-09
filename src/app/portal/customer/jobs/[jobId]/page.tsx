@@ -19,12 +19,9 @@ import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { canCustomerAccessJob } from "@/lib/job-customer-access";
 import { CustomerProductCatalogsSection } from "@/components/customer/customer-product-catalogs-section";
 import { CustomerJobProgressCard } from "@/components/customer/customer-job-progress-card";
-import {
-  CustomerJobMediaApprovalsSection,
-  type LegacyPhoto,
-} from "@/components/customer/customer-job-media-approvals-section";
 import { CustomerJobTasksSection } from "@/components/customer/customer-job-tasks-section";
 import { CustomerJobQuestionnaireSection } from "@/components/customer/customer-job-questionnaire-section";
+import { CustomerJobMediaApprovalsSection } from "@/components/customer/customer-job-media-approvals-section";
 
 function safeJobFields(job: Record<string, unknown> | null | undefined) {
   if (!job) return null;
@@ -169,7 +166,9 @@ export default function CustomerJobDetailPage() {
         companyId={companyId}
         jobId={jobId}
         customerUid={user.uid}
-        legacyPhotos={legacyPhotos as LegacyPhoto[] | undefined}
+        legacyPhotos={
+          legacyPhotos as Array<Record<string, unknown> & { id: string }> | undefined
+        }
       />
 
       <Card>

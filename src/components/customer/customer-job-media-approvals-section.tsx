@@ -46,7 +46,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { FileText, Maximize2 } from "lucide-react";
 
-export type LegacyPhoto = Record<string, unknown> & { id: string };
+type LegacyPhoto = Record<string, unknown> & { id: string };
 
 export type PendingMediaItem = {
   key: string;
@@ -248,8 +248,10 @@ export function CustomerJobMediaApprovalsSection({
   const [commentOpenFor, setCommentOpenFor] = useState<string | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
   const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [lightboxCommentOpen, setLightboxCommentOpen] = useState(false);
+  const [lightboxCommentDraft, setLightboxCommentDraft] = useState("");
 
-  if (!firestore || !user?.uid || allItems.length === 0) {
+  if (!firestore || !user?.uid) {
     return null;
   }
 
@@ -263,14 +265,14 @@ export function CustomerJobMediaApprovalsSection({
           approvalStatus: "approved",
           approvedAt: serverTimestamp(),
           approvedBy: customerUid,
-        }) as UpdateData<DocumentData>
+        }) as unknown as UpdateData<DocumentData>
       );
       await syncCustomerTaskForMediaApproval({
         firestore,
         companyId,
         jobId,
         assignedCustomerUid: customerUid,
-        adminUid: customerUid,
+        adminUid: user.uid,
         fileLabel: it.title,
         target: it.target,
         enabled: false,
@@ -292,6 +294,8 @@ export function CustomerJobMediaApprovalsSection({
       });
       toast({ title: "Děkujeme", description: "Souhlas byl uložen." });
       setLightbox(null);
+      setLightboxCommentOpen(false);
+      setLightboxCommentDraft("");
     } catch (e) {
       console.error(e);
       toast({
@@ -304,8 +308,8 @@ export function CustomerJobMediaApprovalsSection({
     }
   };
 
-  const submitComment = async (it: PendingMediaItem) => {
-    const text = normalizeCustomerApprovalComment(commentDraft);
+  const submitComment = async (it: PendingMediaItem, textOverride?: string) => {
+    const text = normalizeCustomerApprovalComment(textOverride ?? commentDraft);
     if (!text) {
       toast({ variant: "destructive", title: "Zadejte text připomínky." });
       return;
@@ -320,7 +324,7 @@ export function CustomerJobMediaApprovalsSection({
           customerComment: text,
           customerCommentAt: serverTimestamp(),
           customerCommentBy: customerUid,
-        }) as UpdateData<DocumentData>
+        }) as unknown as UpdateData<DocumentData>
       );
       await createCustomerActivity(firestore, {
         organizationId: companyId,
@@ -341,6 +345,8 @@ export function CustomerJobMediaApprovalsSection({
       setCommentOpenFor(null);
       setCommentDraft("");
       setLightbox(null);
+      setLightboxCommentOpen(false);
+      setLightboxCommentDraft("");
     } catch (e) {
       console.error(e);
       toast({
@@ -373,6 +379,11 @@ export function CustomerJobMediaApprovalsSection({
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          {allItems.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Momentálně zde nejsou žádné obrázky ani výkresy čekající na váš souhlas.
+            </p>
+          ) : null}
           {allItems.map((it) => (
             <div
               key={it.key}
@@ -491,31 +502,109 @@ export function CustomerJobMediaApprovalsSection({
         </CardContent>
       </Card>
 
-      <Dialog open={!!lightbox} onOpenChange={(e) => !e && setLightbox(null)}>
+      <Dialog
+        open={!!lightbox}
+        onOpenChange={(e) => {
+          if (!e) {
+            setLightbox(null);
+            setLightboxCommentOpen(false);
+            setLightboxCommentDraft("");
+          }
+        }}
+      >
         <DialogContent className="max-h-[95vh] max-w-[95vw] overflow-y-auto p-2 sm:p-4">
           <DialogHeader>
             <DialogTitle>{lightbox?.title ?? ""}</DialogTitle>
           </DialogHeader>
           {lightbox?.openUrl ? (
-            <div className="flex max-h-[80vh] justify-center overflow-auto">
+            <div className="flex max-h-[min(78vh,720px)] justify-center overflow-auto">
               {inferJobMediaItemType(lightbox.raw as JobFolderImageDoc) === "pdf" ? (
                 <iframe
                   title={lightbox.title}
                   src={lightbox.openUrl}
-                  className="h-[70vh] w-full max-w-4xl rounded border bg-white"
+                  className="h-[min(72vh,680px)] w-full max-w-5xl rounded border bg-white"
                 />
               ) : (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
                   src={lightbox.openUrl}
                   alt=""
-                  className="max-h-[80vh] w-auto max-w-full object-contain"
+                  className="max-h-[min(78vh,720px)] w-auto max-w-full object-contain"
                 />
               )}
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">Náhled není k dispozici.</p>
           )}
+          {lightbox ? (
+            <div className="mt-4 space-y-3 border-t pt-3">
+              {lightbox.approval.approvalNoteFromAdmin ? (
+                <p className="text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">Poznámka od firmy: </span>
+                  {lightbox.approval.approvalNoteFromAdmin}
+                </p>
+              ) : null}
+              {lightboxCommentOpen ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={lightboxCommentDraft}
+                    onChange={(e) => setLightboxCommentDraft(e.target.value)}
+                    placeholder="Popište požadavek na opravu…"
+                    rows={3}
+                    className="min-h-[44px]"
+                  />
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-[44px]"
+                      disabled={busyKey === lightbox.key}
+                      onClick={() => {
+                        setLightboxCommentOpen(false);
+                        setLightboxCommentDraft("");
+                      }}
+                    >
+                      Zrušit
+                    </Button>
+                    <Button
+                      type="button"
+                      className="min-h-[44px]"
+                      disabled={
+                        busyKey === lightbox.key ||
+                        !normalizeCustomerApprovalComment(lightboxCommentDraft)
+                      }
+                      onClick={() => void submitComment(lightbox, lightboxCommentDraft)}
+                    >
+                      Odeslat poznámku
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                  <Button
+                    type="button"
+                    className="min-h-[44px] bg-emerald-600 hover:bg-emerald-700"
+                    disabled={busyKey === lightbox.key}
+                    onClick={() => void submitApprove(lightbox)}
+                  >
+                    Souhlasím
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="min-h-[44px]"
+                    disabled={busyKey === lightbox.key}
+                    onClick={() => {
+                      setLightboxCommentOpen(true);
+                      setLightboxCommentDraft("");
+                    }}
+                  >
+                    Požadavek na opravu
+                  </Button>
+                </div>
+              )}
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

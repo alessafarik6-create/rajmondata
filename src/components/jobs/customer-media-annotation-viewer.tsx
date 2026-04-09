@@ -32,9 +32,7 @@ import {
 import { drawNoteAnnotationOnCanvas } from "@/lib/job-photo-annotation-canvas";
 import type { JobPhotoDimensionAnnotation, JobPhotoNoteAnnotation } from "@/lib/job-photo-annotations";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
@@ -1549,9 +1547,7 @@ export function CustomerMediaAnnotationViewer({
   return (
     <div className="fixed inset-0 z-[200] flex flex-col bg-black/90 text-white">
       <header className="flex shrink-0 flex-wrap items-center gap-2 border-b border-white/10 px-3 py-2">
-        <div className="flex min-w-0 flex-1 items-center gap-2 truncate text-sm font-medium">
-          <span className="truncate">{title}</span>
-        </div>
+        <div className="min-w-0 flex-1 truncate text-sm font-medium">{title}</div>
         <div className="flex flex-wrap items-center gap-1">
           {toolbarBtn("draw", <Pencil className="h-4 w-4" />, "Kreslit")}
           {toolbarBtn("line", <Minus className="h-4 w-4 rotate-[-45deg]" />, "Čára")}

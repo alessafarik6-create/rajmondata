@@ -7110,6 +7110,7 @@ function JobDetailPageContent() {
               companyId={companyId}
               jobId={jobFirestoreId!}
               jobDisplayName={job?.name ?? null}
+              jobRecord={job ? (job as Record<string, unknown>) : null}
               user={user}
               canManageFolders={canManageFolders}
               photos={photos?.filter(isUsablePhotoRow) as PhotoDoc[] | undefined}

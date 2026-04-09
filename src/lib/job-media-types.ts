@@ -109,17 +109,17 @@ export type JobFolderImageDoc = {
   customerVisible?: boolean;
   customerAnnotatable?: boolean;
   internalOnly?: boolean;
-  /** Schválení konkrétního souboru zákazníkem (doplněno v portálu). */
+  /** Schválení konkrétního souboru zákazníkem (klientský portál). */
   requiresCustomerApproval?: boolean;
   approvalStatus?: "pending" | "approved" | "changes_requested";
-  approvalNoteFromAdmin?: string;
+  approvalNoteFromAdmin?: string | null;
   approvalRequestedAt?: unknown;
-  approvalRequestedBy?: string;
+  approvalRequestedBy?: string | null;
   approvedAt?: unknown;
-  approvedBy?: string;
-  customerComment?: string;
+  approvedBy?: string | null;
+  customerComment?: string | null;
   customerCommentAt?: unknown;
-  customerCommentBy?: string;
+  customerCommentBy?: string | null;
 };
 
 /** Výběr z galerie / souborů: obrázky i PDF. */
