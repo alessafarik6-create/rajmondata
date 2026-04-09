@@ -15,9 +15,12 @@ import {
   useMemoFirebase,
 } from "@/firebase";
 import {
+  buildEmptyCustomerOverlayAnnotationDoc,
   documentAnnotationDocId,
   newItemId,
+  normalizeCustomerReviewComment,
   parseDocumentAnnotationDoc,
+  parseDocumentMediaReview,
   serializePayload,
   type AnnotationStrokeColor,
   type CustomerOverlayItem,
@@ -32,7 +35,9 @@ import {
 import { drawNoteAnnotationOnCanvas } from "@/lib/job-photo-annotation-canvas";
 import type { JobPhotoDimensionAnnotation, JobPhotoNoteAnnotation } from "@/lib/job-photo-annotations";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 import {
@@ -489,6 +494,8 @@ export type CustomerMediaAnnotationViewerProps = {
   mediaDocumentId: string;
   /** Interní kóty z dokumentu média (read-only vrstva) */
   embeddedAnnotationData?: unknown;
+  /** Poznámka administrátora k souboru (ze složky / fotky). */
+  adminNote?: string;
 };
 
 export function CustomerMediaAnnotationViewer({
@@ -506,6 +513,7 @@ export function CustomerMediaAnnotationViewer({
   storagePath,
   mediaDocumentId,
   embeddedAnnotationData,
+  adminNote,
 }: CustomerMediaAnnotationViewerProps) {
   const isPlainObject = (value: unknown): value is Record<string, unknown> => {
     if (!value || typeof value !== "object") return false;
@@ -581,6 +589,9 @@ export function CustomerMediaAnnotationViewer({
   const [textDraft, setTextDraft] = useState("");
   const [textPos, setTextPos] = useState<{ nx: number; ny: number } | null>(null);
   const [noteInput, setNoteInput] = useState("");
+  const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [customerReviewFormOpen, setCustomerReviewFormOpen] = useState(false);
+  const [customerReviewDraft, setCustomerReviewDraft] = useState("");
   const initialItemsRef = useRef<CustomerOverlayItem[]>([]);
 
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -634,6 +645,8 @@ export function CustomerMediaAnnotationViewer({
       setLineDraft(null);
       setTextPos(null);
       setTextDraft("");
+      setCustomerReviewFormOpen(false);
+      setCustomerReviewDraft("");
       return;
     }
     const raw = annRemote as Record<string, unknown> | null | undefined;
@@ -833,6 +846,154 @@ export function CustomerMediaAnnotationViewer({
       r === "accountant"
     );
   }, [actorRole]);
+
+  const isCustomerReviewUi =
+    actorRole.toLowerCase() === "customer" && !readOnly;
+
+  const mediaReview = useMemo(
+    () => parseDocumentMediaReview(annRemote as Record<string, unknown> | null | undefined),
+    [annRemote]
+  );
+
+  const submitCustomerApprove = useCallback(async () => {
+    if (!annRef || !isCustomerReviewUi || reviewSubmitting) return;
+    setReviewSubmitting(true);
+    try {
+      const raw = annRemote as Record<string, unknown> | null | undefined;
+      const hasOverlay = !!parseDocumentAnnotationDoc(raw);
+      const patch: Record<string, unknown> = {
+        reviewStatus: "approved",
+        updatedBy: userId,
+        updatedAt: serverTimestamp(),
+      };
+      if (!hasOverlay) {
+        const base = buildEmptyCustomerOverlayAnnotationDoc({
+          companyId,
+          jobId,
+          storagePath,
+          mediaDocumentId,
+          fileType,
+          userId,
+        });
+        await setDoc(annRef, sanitizeFirestorePayload({ ...base, ...patch }), { merge: true });
+      } else {
+        await setDoc(annRef, sanitizeFirestorePayload(patch), { merge: true });
+      }
+      toast({
+        title: "Schváleno",
+        description: "Dokument jste schválili.",
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Uložení selhalo",
+        description: "Schválení se nepodařilo uložit.",
+      });
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }, [
+    annRef,
+    annRemote,
+    companyId,
+    fileType,
+    isCustomerReviewUi,
+    jobId,
+    mediaDocumentId,
+    reviewSubmitting,
+    storagePath,
+    toast,
+    userId,
+  ]);
+
+  const submitCustomerReviewComment = useCallback(async () => {
+    if (!annRef || !isCustomerReviewUi || reviewSubmitting) return;
+    const text = normalizeCustomerReviewComment(customerReviewDraft);
+    if (!text) {
+      toast({
+        variant: "destructive",
+        title: "Chybí text",
+        description: "Vyplňte poznámku, než ji odešlete.",
+      });
+      return;
+    }
+    setReviewSubmitting(true);
+    try {
+      const raw = annRemote as Record<string, unknown> | null | undefined;
+      const hasOverlay = !!parseDocumentAnnotationDoc(raw);
+      const patch: Record<string, unknown> = {
+        reviewStatus: "commented",
+        customerComment: text,
+        customerCommentAt: serverTimestamp(),
+        customerCommentBy: userId,
+        updatedBy: userId,
+        updatedAt: serverTimestamp(),
+      };
+      if (!hasOverlay) {
+        const base = buildEmptyCustomerOverlayAnnotationDoc({
+          companyId,
+          jobId,
+          storagePath,
+          mediaDocumentId,
+          fileType,
+          userId,
+        });
+        await setDoc(annRef, sanitizeFirestorePayload({ ...base, ...patch }), { merge: true });
+      } else {
+        await setDoc(annRef, sanitizeFirestorePayload(patch), { merge: true });
+      }
+      await createCustomerActivity(firestore, {
+        organizationId: companyId,
+        jobId,
+        customerUserId: userId,
+        customerId: null,
+        type: "customer_media_review_comment",
+        title: "Připomínka k výkresu / dokumentu",
+        message:
+          fileType === "pdf"
+            ? "Zákazník odeslal připomínku k PDF dokumentu."
+            : "Zákazník odeslal připomínku k výkresu / obrázku.",
+        createdBy: userId,
+        createdByRole: "customer",
+        isRead: false,
+        targetType: "annotation",
+        targetId: docId,
+        targetLink: `/portal/jobs/${jobId}`,
+        priority: "normal",
+      });
+      setCustomerReviewFormOpen(false);
+      setCustomerReviewDraft("");
+      toast({
+        title: "Připomínka odeslána",
+        description: "Vaše poznámka byla uložena.",
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Odeslání selhalo",
+        description: "Zkuste to znovu nebo zkontrolujte připojení.",
+      });
+    } finally {
+      setReviewSubmitting(false);
+    }
+  }, [
+    annRef,
+    annRemote,
+    companyId,
+    customerReviewDraft,
+    docId,
+    fileType,
+    firestore,
+    isCustomerReviewUi,
+    jobId,
+    mediaDocumentId,
+    reviewSubmitting,
+    storagePath,
+    toast,
+    userId,
+  ]);
 
   const currentUser = useMemo(
     () => ({ uid: userId, role: actorRole.toLowerCase() }),
@@ -1732,6 +1893,14 @@ export function CustomerMediaAnnotationViewer({
         </div>
 
         <aside className="flex max-h-[min(38vh,320px)] w-full shrink-0 flex-col border-t border-white/10 bg-black/40 md:max-h-none md:w-[280px] md:border-l md:border-t-0">
+          {adminNote?.trim() ? (
+            <div className="border-b border-white/10 p-3">
+              <p className="text-xs font-medium text-white/85">Poznámka od administrátora</p>
+              <p className="mt-1 whitespace-pre-wrap text-xs leading-snug text-white/80">
+                {adminNote.trim()}
+              </p>
+            </div>
+          ) : null}
           <div className="border-b border-white/10 p-3 text-sm font-medium">Poznámky</div>
           <ScrollArea className="flex-1 p-3">
             {readOnly ? (
@@ -1835,6 +2004,93 @@ export function CustomerMediaAnnotationViewer({
           ) : null}
         </aside>
       </div>
+      {isCustomerReviewUi ? (
+        <div className="shrink-0 border-t border-white/10 bg-black/50 px-3 py-3">
+          <div className="mx-auto flex w-full max-w-3xl flex-col gap-3">
+            <p className="text-center text-xs font-medium text-white/80">Schválení výkresu / dokumentu</p>
+            {mediaReview.status === "approved" ? (
+              <div className="flex justify-center">
+                <Badge className="bg-emerald-600 px-3 py-1 text-sm hover:bg-emerald-600">Schváleno</Badge>
+              </div>
+            ) : null}
+            {mediaReview.status === "commented" ? (
+              <div className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-950/40 p-3 text-center">
+                <Badge className="bg-amber-600 text-white hover:bg-amber-600">
+                  Připomínka odeslána
+                </Badge>
+                <p className="text-xs text-white/70">Čeká na úpravu ze strany firmy.</p>
+                {mediaReview.customerComment ? (
+                  <p className="text-left text-xs text-white/90 whitespace-pre-wrap">
+                    {mediaReview.customerComment}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+            {mediaReview.status === "pending" ? (
+              <>
+                {!customerReviewFormOpen ? (
+                  <div className="flex flex-col gap-2 sm:flex-row sm:justify-center">
+                    <Button
+                      type="button"
+                      className="min-h-[44px] flex-1 bg-emerald-600 text-white hover:bg-emerald-700 sm:max-w-[200px]"
+                      disabled={reviewSubmitting}
+                      onClick={() => void submitCustomerApprove()}
+                    >
+                      {reviewSubmitting ? "Ukládám…" : "Souhlasím"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="min-h-[44px] flex-1 border-white/40 bg-transparent text-white hover:bg-white/10 sm:max-w-[220px]"
+                      disabled={reviewSubmitting}
+                      onClick={() => setCustomerReviewFormOpen(true)}
+                    >
+                      Odesílám poznámku
+                    </Button>
+                  </div>
+                ) : null}
+                {customerReviewFormOpen ? (
+                  <div className="space-y-2 rounded-md border border-white/15 bg-black/30 p-3">
+                    <label className="block text-xs font-medium text-white/80" htmlFor="customer-review-note">
+                      Poznámka zákazníka
+                    </label>
+                    <Textarea
+                      id="customer-review-note"
+                      value={customerReviewDraft}
+                      onChange={(e) => setCustomerReviewDraft(e.target.value)}
+                      placeholder="Napište, co chcete upravit, co vám vadí, nebo co doplnit…"
+                      rows={4}
+                      className="min-h-[44px] border-white/20 bg-white/10 text-sm text-white placeholder:text-white/40"
+                    />
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="min-h-[44px] text-white hover:bg-white/10"
+                        disabled={reviewSubmitting}
+                        onClick={() => {
+                          setCustomerReviewFormOpen(false);
+                          setCustomerReviewDraft("");
+                        }}
+                      >
+                        Zrušit
+                      </Button>
+                      <Button
+                        type="button"
+                        className="min-h-[44px] bg-amber-600 text-white hover:bg-amber-700"
+                        disabled={reviewSubmitting || !normalizeCustomerReviewComment(customerReviewDraft)}
+                        onClick={() => void submitCustomerReviewComment()}
+                      >
+                        {reviewSubmitting ? "Odesílám…" : "Odeslat poznámku"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <p className="shrink-0 border-t border-white/10 px-3 py-1 text-center text-[11px] text-white/50">
         Ctrl + kolečko myši = zoom · Posun = režim ✋ nebo prostřední tlačítko · Role: {actorRole}
       </p>

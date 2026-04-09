@@ -56,6 +56,12 @@ import {
   isLegacyPhotoCustomerVisible,
 } from "@/lib/job-customer-access";
 import { CustomerMediaAnnotationViewer } from "@/components/jobs/customer-media-annotation-viewer";
+import { Badge } from "@/components/ui/badge";
+import {
+  documentAnnotationDocId,
+  parseDocumentMediaReview,
+  type ParsedDocumentMediaReview,
+} from "@/lib/document-customer-annotations";
 import { Switch } from "@/components/ui/switch";
 import {
   commitFolderAccountingExpense,
@@ -355,6 +361,38 @@ function JobMediaOfficePreview() {
   );
 }
 
+function JobMediaReviewBadgeRow({ review }: { review: ParsedDocumentMediaReview }) {
+  if (review.status === "pending") {
+    return (
+      <Badge variant="secondary" className="text-[10px] font-medium">
+        Čeká na schválení
+      </Badge>
+    );
+  }
+  if (review.status === "approved") {
+    return (
+      <Badge className="bg-emerald-600 text-[10px] font-medium hover:bg-emerald-600">Schváleno</Badge>
+    );
+  }
+  return (
+    <div className="space-y-1">
+      <Badge className="bg-amber-600 text-[10px] font-medium hover:bg-amber-600">
+        Připomínka od zákazníka
+      </Badge>
+      {review.customerComment ? (
+        <p className="line-clamp-4 text-[11px] leading-snug text-muted-foreground">
+          {review.customerComment}
+        </p>
+      ) : null}
+      {review.customerCommentAtMs ? (
+        <p className="text-[10px] text-muted-foreground">
+          {new Date(review.customerCommentAtMs).toLocaleString("cs-CZ")}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function JobMediaFileCard({
   borderClassName,
   preview,
@@ -363,6 +401,7 @@ function JobMediaFileCard({
   note,
   hasNote,
   actions,
+  customerReview,
 }: {
   borderClassName?: string;
   preview: React.ReactNode;
@@ -371,6 +410,8 @@ function JobMediaFileCard({
   note?: string;
   hasNote: boolean;
   actions: React.ReactNode;
+  /** Stav schválení výkresu (jen admin / interní přehled). */
+  customerReview?: ParsedDocumentMediaReview | null;
 }) {
   return (
     <div
@@ -400,6 +441,11 @@ function JobMediaFileCard({
           {title}
         </p>
         <p className="text-xs text-gray-700 sm:text-sm">{dateLine}</p>
+        {customerReview ? (
+          <div className="rounded-md border border-border/50 bg-muted/30 px-2 py-1.5">
+            <JobMediaReviewBadgeRow review={customerReview} />
+          </div>
+        ) : null}
         {note?.trim() ? (
           <p className="line-clamp-2 text-[11px] leading-snug text-foreground/88">
             {note.trim()}
@@ -427,6 +473,7 @@ function UserFolderBlock({
   mediaScope = "full",
   memberPermissions = null,
   employeeRecordId = null,
+  annotationReviewByDocId = {},
 }: {
   folder: JobFolderDoc;
   companyId: string;
@@ -446,6 +493,8 @@ function UserFolderBlock({
   mediaScope?: "full" | "employeeLimited" | "customer";
   memberPermissions?: JobMemberPermissions | null;
   employeeRecordId?: string | null;
+  /** Stav schválení výkresu z `document_annotations` (klíč = ID dokumentu anotace). */
+  annotationReviewByDocId?: Record<string, ParsedDocumentMediaReview>;
 }) {
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -461,6 +510,7 @@ function UserFolderBlock({
     mediaDocumentId: string;
     annotationData?: unknown;
     readOnly: boolean;
+    adminNote?: string;
   };
   const [mediaViewer, setMediaViewer] = useState<FolderMediaViewerOpen | null>(null);
 
@@ -485,6 +535,7 @@ function UserFolderBlock({
         mediaDocumentId: img.id,
         annotationData: img.annotationData,
         readOnly: readOnlyCustomer,
+        adminNote: typeof img.note === "string" ? img.note : "",
       });
     },
     [folder, mediaScope]
@@ -1682,6 +1733,14 @@ function UserFolderBlock({
                     ? `Office · ${formatMediaDate(img.createdAt)}`
                     : formatMediaDate(img.createdAt);
               const hasNote = !!img.note?.trim();
+              const annDocId = documentAnnotationDocId(
+                { kind: "folderImages", folderId: folder.id },
+                img.id
+              );
+              const customerReviewCard =
+                !isCustomerScope && annotationReviewByDocId[annDocId]
+                  ? annotationReviewByDocId[annDocId]
+                  : null;
 
                   if (!isCustomerScope && isFolderWide && (kind === "pdf" || kind === "office")) {
                 return null;
@@ -1707,6 +1766,7 @@ function UserFolderBlock({
                     dateLine={dateLine}
                     note={img.note}
                     hasNote={hasNote}
+                    customerReview={customerReviewCard}
                     actions={
                       <>
                         <JobMediaIconButton
@@ -1820,6 +1880,7 @@ function UserFolderBlock({
                   dateLine={dateLine}
                   note={img.note}
                   hasNote={hasNote}
+                  customerReview={customerReviewCard}
                   actions={
                     <>
                       <JobMediaIconButton
@@ -2068,6 +2129,7 @@ function UserFolderBlock({
         storagePath={{ kind: "folderImages", folderId: folder.id }}
         mediaDocumentId={mediaViewer.mediaDocumentId}
         embeddedAnnotationData={mediaViewer.annotationData}
+        adminNote={mediaViewer.adminNote}
       />
     ) : null}
     </>
@@ -2150,6 +2212,7 @@ export function JobMediaSection({
     mediaDocumentId: string;
     annotationData?: unknown;
     readOnly: boolean;
+    adminNote?: string;
   };
   const [legacyMediaViewer, setLegacyMediaViewer] = useState<LegacyMediaViewerOpen | null>(null);
 
@@ -2171,6 +2234,7 @@ export function JobMediaSection({
         mediaDocumentId: p.id,
         annotationData: p.annotationData,
         readOnly,
+        adminNote: typeof p.note === "string" ? p.note : "",
       });
     },
     [mediaScope]
@@ -2196,6 +2260,31 @@ export function JobMediaSection({
   );
 
   const { data: foldersRaw } = useCollection<JobFolderDoc>(foldersColRef);
+
+  const jobDocumentAnnotationsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobId,
+            "document_annotations"
+          )
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: jobAnnotationDocs } = useCollection(jobDocumentAnnotationsColRef);
+  const annotationReviewByDocId = useMemo(() => {
+    const m: Record<string, ParsedDocumentMediaReview> = {};
+    for (const row of jobAnnotationDocs ?? []) {
+      if (row?.id) {
+        m[row.id] = parseDocumentMediaReview(row as Record<string, unknown>);
+      }
+    }
+    return m;
+  }, [jobAnnotationDocs]);
 
   const foldersSorted = useMemo(() => {
     const list = (foldersRaw || []).filter(
@@ -2815,6 +2904,11 @@ export function JobMediaSection({
                         ? `Office · ${formatMediaDate(p.createdAt)}`
                         : formatMediaDate(p.createdAt);
                   const hasNote = !!p.note?.trim();
+                  const legacyAnnDocId = documentAnnotationDocId({ kind: "photos" }, p.id);
+                  const customerReviewCard =
+                    mediaScope !== "customer" && annotationReviewByDocId[legacyAnnDocId]
+                      ? annotationReviewByDocId[legacyAnnDocId]
+                      : null;
 
                   if (mediaScope !== "customer" && isJobDetailWide && (kind === "pdf" || kind === "office")) {
                     return null;
@@ -2840,6 +2934,7 @@ export function JobMediaSection({
                         dateLine={dateLine}
                         note={p.note}
                         hasNote={hasNote}
+                        customerReview={customerReviewCard}
                         actions={
                           <>
                             <JobMediaIconButton
@@ -2951,6 +3046,7 @@ export function JobMediaSection({
                       dateLine={dateLine}
                       note={p.note}
                       hasNote={hasNote}
+                      customerReview={customerReviewCard}
                       actions={
                         <>
                           <JobMediaIconButton
@@ -3189,6 +3285,7 @@ export function JobMediaSection({
                           mediaScope={mediaScope}
                           memberPermissions={memberPermissions}
                           employeeRecordId={employeeRecordId}
+                          annotationReviewByDocId={annotationReviewByDocId}
                         />
                       ))}
                     </div>
@@ -3305,6 +3402,7 @@ export function JobMediaSection({
           storagePath={{ kind: "photos" }}
           mediaDocumentId={legacyMediaViewer.mediaDocumentId}
           embeddedAnnotationData={legacyMediaViewer.annotationData}
+          adminNote={legacyMediaViewer.adminNote}
         />
       ) : null}
       </>

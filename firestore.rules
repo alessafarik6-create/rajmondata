@@ -251,6 +251,48 @@ service cloud.firestore {
         request.resource.data.visibleFor is list;
     }
 
+    /** Volitelná pole schválení / připomínky zákazníka u document_annotations. */
+    function jobDocumentAnnotationReviewFieldsOk() {
+      let d = request.resource.data;
+      if (!('reviewStatus' in d) && !('customerComment' in d) &&
+          !('customerCommentAt' in d) && !('customerCommentBy' in d)) {
+        return true;
+      }
+      if ('reviewStatus' in d) {
+        if (!(d.reviewStatus in ['pending', 'approved', 'commented'])) {
+          return false;
+        }
+      }
+      if ('customerComment' in d) {
+        if (!(d.customerComment is string) || d.customerComment.size() > 8000) {
+          return false;
+        }
+      }
+      if ('customerCommentAt' in d && d.customerCommentAt != null) {
+        if (!(d.customerCommentAt is timestamp)) {
+          return false;
+        }
+      }
+      if ('customerCommentBy' in d) {
+        if (!(d.customerCommentBy is string) ||
+            d.customerCommentBy.size() < 1 || d.customerCommentBy.size() > 128) {
+          return false;
+        }
+      }
+      if ('reviewStatus' in d && d.reviewStatus == 'commented') {
+        if (!('customerComment' in d) || d.customerComment.size() < 1) {
+          return false;
+        }
+        if (!('customerCommentAt' in d) || d.customerCommentAt == null) {
+          return false;
+        }
+        if (!('customerCommentBy' in d) || d.customerCommentBy != request.auth.uid) {
+          return false;
+        }
+      }
+      return true;
+    }
+
     /** Pokud je u docházky vyplněno jobId, musí být přiřazeno pro terminál danému zaměstnanci. */
     function attendanceJobValid(companyId) {
       return !('jobId' in request.resource.data) ||
@@ -543,6 +585,7 @@ service cloud.firestore {
             customerPortalLinkedJob(companyId, jobId);
           allow create: if signedIn() && sameCompany(companyId) &&
             jobDocumentAnnotationPayloadOk() &&
+            jobDocumentAnnotationReviewFieldsOk() &&
             request.resource.data.companyId == companyId &&
             request.resource.data.jobId == jobId && (
               (isPrivileged() &&
@@ -553,7 +596,8 @@ service cloud.firestore {
           allow update: if signedIn() && sameCompany(companyId) &&
             resource.data.companyId == companyId &&
             resource.data.jobId == jobId &&
-            jobDocumentAnnotationPayloadOk() && (
+            jobDocumentAnnotationPayloadOk() &&
+            jobDocumentAnnotationReviewFieldsOk() && (
               (isPrivileged() &&
                 jobDetailReadAccess(companyId, jobId) &&
                 !jobEmployeeMustUseSummaryOnly(companyId, jobId)) ||

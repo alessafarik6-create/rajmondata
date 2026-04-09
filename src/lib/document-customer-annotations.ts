@@ -142,6 +142,9 @@ export type CustomerAnnotationPayload = {
   items: CustomerOverlayItem[];
 };
 
+/** Schválení / připomínka k výkresu od zákazníka (Firestore: document_annotations). */
+export type DocumentMediaReviewStatus = "pending" | "approved" | "commented";
+
 export type DocumentAnnotationFirestoreDoc = {
   companyId: string;
   jobId: string;
@@ -159,7 +162,103 @@ export type DocumentAnnotationFirestoreDoc = {
   visibleFor: string[];
   updatedBy: string;
   updatedAt?: unknown;
+  /** Stav schválení média zákazníkem. */
+  reviewStatus?: DocumentMediaReviewStatus;
+  /** Poznámka zákazníka při nesouhlasu (reviewStatus === "commented"). */
+  customerComment?: string;
+  customerCommentAt?: unknown;
+  customerCommentBy?: string;
 };
+
+export type ParsedDocumentMediaReview = {
+  status: DocumentMediaReviewStatus;
+  customerComment: string;
+  customerCommentAtMs: number | null;
+  customerCommentBy: string | null;
+};
+
+const MAX_CUSTOMER_REVIEW_COMMENT = 8000;
+
+export function parseDocumentMediaReview(
+  raw: Record<string, unknown> | null | undefined
+): ParsedDocumentMediaReview {
+  const rs = raw?.reviewStatus;
+  const status: DocumentMediaReviewStatus =
+    rs === "approved" || rs === "commented" || rs === "pending" ? rs : "pending";
+  const comment =
+    typeof raw?.customerComment === "string"
+      ? raw.customerComment.trim().slice(0, MAX_CUSTOMER_REVIEW_COMMENT)
+      : "";
+  let atMs: number | null = null;
+  const cat = raw?.customerCommentAt;
+  if (cat && typeof (cat as { toMillis?: () => number }).toMillis === "function") {
+    atMs = (cat as { toMillis: () => number }).toMillis();
+  } else if (cat && typeof (cat as { seconds?: number }).seconds === "number") {
+    atMs = (cat as { seconds: number }).seconds * 1000;
+  } else if (typeof cat === "number" && Number.isFinite(cat)) {
+    atMs = cat;
+  }
+  const by =
+    typeof raw?.customerCommentBy === "string" && raw.customerCommentBy.trim()
+      ? raw.customerCommentBy.trim()
+      : null;
+  return {
+    status,
+    customerComment: comment,
+    customerCommentAtMs: atMs,
+    customerCommentBy: by,
+  };
+}
+
+export function normalizeCustomerReviewComment(text: string): string {
+  return String(text ?? "")
+    .trim()
+    .slice(0, MAX_CUSTOMER_REVIEW_COMMENT);
+}
+
+/**
+ * Minimální záznam document_annotations (prázdný overlay) — např. schválení bez uložených čar.
+ * Musí odpovídat validaci ve Firestore (`jobDocumentAnnotationPayloadOk`).
+ */
+export function buildEmptyCustomerOverlayAnnotationDoc(params: {
+  companyId: string;
+  jobId: string;
+  storagePath: DocumentAnnotationStoragePath;
+  mediaDocumentId: string;
+  fileType: "image" | "pdf";
+  userId: string;
+}): DocumentAnnotationFirestoreDoc {
+  const { companyId, jobId, storagePath, mediaDocumentId, fileType, userId } = params;
+  const normalizedFileId = String(mediaDocumentId ?? "").trim();
+  const docId = documentAnnotationDocId(storagePath, mediaDocumentId);
+  const targetId = normalizedFileId || docId;
+  const targetType: "image" | "pdf" = fileType;
+  const photoId =
+    storagePath.kind === "photos" && targetType === "image" && normalizedFileId
+      ? normalizedFileId
+      : undefined;
+  const documentId =
+    storagePath.kind === "folderImages" && normalizedFileId ? normalizedFileId : targetId;
+  const payload = serializePayload([]);
+  return {
+    companyId,
+    jobId,
+    documentId,
+    targetId,
+    targetType,
+    fileId: normalizedFileId || undefined,
+    targetKind: storagePath.kind === "photos" ? "photos" : "folderImages",
+    ...(storagePath.kind === "folderImages" && storagePath.folderId
+      ? { folderId: storagePath.folderId, imageId: documentId }
+      : {}),
+    ...(photoId ? { photoId } : {}),
+    mediaKind: fileType,
+    type: "customer_overlay",
+    data: payload,
+    visibleFor: ["customer", "admin"],
+    updatedBy: userId,
+  };
+}
 
 function clamp01(n: number): number {
   if (!Number.isFinite(n)) return 0;

@@ -9,7 +9,8 @@ export type CustomerActivityType =
   | "customer_chat_message"
   | "customer_document_comment"
   | "customer_pdf_annotation"
-  | "customer_image_annotation";
+  | "customer_image_annotation"
+  | "customer_media_review_comment";
 
 export type CustomerActivityPayload = {
   organizationId: string;
