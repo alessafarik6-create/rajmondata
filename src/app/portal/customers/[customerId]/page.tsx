@@ -5,7 +5,7 @@ import { Loader2 } from "lucide-react";
 import React, { useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from '@/firebase';
-import { doc, collection, query, where, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, collection, query, where, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -41,10 +41,25 @@ import { getJobMediaPreviewUrl, formatMediaDate } from '@/lib/job-media-types';
 import type { MeasurementPhotoStatus } from '@/lib/measurement-photos';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from '@/lib/employee-password-policy';
 
+type CustomerDisplay = {
+  id: string;
+  companyName?: string;
+  firstName?: string;
+  lastName?: string;
+  email?: string;
+  phone?: string;
+  address?: string;
+  ico?: string;
+  notes?: string;
+  createdAt?: { toDate?: () => Date };
+};
+
 export default function CustomerDetailPage() {
-  const { customerId } = useParams();
+  const params = useParams();
+  const customerId = params?.customerId;
   const router = useRouter();
   const { user } = useUser();
   const firestore = useFirestore();
@@ -54,27 +69,40 @@ export default function CustomerDetailPage() {
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
   const companyId = profile?.companyId;
 
-  const customerRef = useMemoFirebase(() => companyId && customerId ? doc(firestore, 'companies', companyId, 'customers', customerId as string) : null, [firestore, companyId, customerId]);
+  const customerIdStr =
+    typeof customerId === 'string'
+      ? customerId
+      : Array.isArray(customerId)
+        ? customerId[0] ?? ''
+        : '';
+
+  const customerRef = useMemoFirebase(
+    () =>
+      companyId && customerIdStr
+        ? doc(firestore, 'companies', companyId, 'customers', customerIdStr)
+        : null,
+    [firestore, companyId, customerIdStr]
+  );
   const { data: customer, isLoading } = useDoc(customerRef);
 
   // Načtení zakázek tohoto zákazníka
   const jobsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !customerId) return null;
+    if (!firestore || !companyId || !customerIdStr) return null;
     return query(
       collection(firestore, 'companies', companyId, 'jobs'),
-      where('customerId', '==', customerId)
+      where('customerId', '==', customerIdStr)
     );
-  }, [firestore, companyId, customerId]);
+  }, [firestore, companyId, customerIdStr]);
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
 
   const measurementPhotosQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !customerId) return null;
+    if (!firestore || !companyId || !customerIdStr) return null;
     return query(
       collection(firestore, 'companies', companyId, 'measurement_photos'),
-      where('customerId', '==', customerId as string)
+      where('customerId', '==', customerIdStr)
     );
-  }, [firestore, companyId, customerId]);
+  }, [firestore, companyId, customerIdStr]);
 
   const { data: measurementPhotos, isLoading: measurementPhotosLoading } =
     useCollection(measurementPhotosQuery);
@@ -92,6 +120,18 @@ export default function CustomerDetailPage() {
   const [resetLinkDialogOpen, setResetLinkDialogOpen] = useState(false);
   const [resetLinkValue, setResetLinkValue] = useState('');
   const [portalActionLoading, setPortalActionLoading] = useState(false);
+
+  const [profileEditOpen, setProfileEditOpen] = useState(false);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [editCompanyName, setEditCompanyName] = useState('');
+  const [editFirstName, setEditFirstName] = useState('');
+  const [editLastName, setEditLastName] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editIco, setEditIco] = useState('');
+  const [editDic, setEditDic] = useState('');
+  const [editNotes, setEditNotes] = useState('');
 
   const crm = (customer ?? {}) as Record<string, unknown> & {
     customerPortalUid?: string;
@@ -173,17 +213,28 @@ export default function CustomerDetailPage() {
     );
   }
 
-  if (!customer) {
+  if (!customerIdStr) {
     return (
-      <div className="text-center py-20">
-        <h2 className="text-2xl font-bold">Zákazník nenalezen</h2>
-        <Button variant="link" onClick={() => router.push('/portal/customers')}>Zpět na seznam</Button>
-      </div>
+      <Alert className="max-w-xl border-slate-200 bg-slate-50">
+        <AlertTitle>Neplatná adresa</AlertTitle>
+        <AlertDescription>Chybí ID zákazníka v URL.</AlertDescription>
+      </Alert>
     );
   }
 
+  const effectiveCustomer = (customer ?? {
+    id: customerIdStr,
+    companyName: '',
+    firstName: '',
+    lastName: '',
+    email: '',
+    phone: '',
+    address: '',
+    notes: '',
+  }) as CustomerDisplay;
+
   const openPortalCreateDialog = () => {
-    setPortalEmail(String(customer.email || '').trim());
+    setPortalEmail(String(effectiveCustomer.email || '').trim());
     setPortalPassword('');
     setPortalPassword2('');
     setPortalDialogOpen(true);
@@ -214,7 +265,7 @@ export default function CustomerDetailPage() {
           Authorization: `Bearer ${idToken}`,
         },
         body: JSON.stringify({
-          customerId: customerId as string,
+          customerId: customerIdStr,
           email: portalEmail.trim() || undefined,
           password: portalPassword,
         }),
@@ -254,7 +305,7 @@ export default function CustomerDetailPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ customerId: customerId as string }),
+        body: JSON.stringify({ customerId: customerIdStr }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; count?: number };
       if (!res.ok) {
@@ -286,7 +337,7 @@ export default function CustomerDetailPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ customerId: customerId as string }),
+        body: JSON.stringify({ customerId: customerIdStr }),
       });
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
@@ -325,7 +376,7 @@ export default function CustomerDetailPage() {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ customerId: customerId as string, enabled }),
+        body: JSON.stringify({ customerId: customerIdStr, enabled }),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
       if (!res.ok) {
@@ -355,23 +406,123 @@ export default function CustomerDetailPage() {
     }
   };
 
+  const openProfileEdit = () => {
+    console.log('[customer profile] Upravit profil clicked', {
+      customerIdStr,
+      hasFirestoreDoc: Boolean(customer),
+    });
+    const c = (customer ?? {}) as Record<string, unknown>;
+    setEditCompanyName(String(c.companyName ?? ''));
+    setEditFirstName(String(c.firstName ?? ''));
+    setEditLastName(String(c.lastName ?? ''));
+    setEditEmail(String(c.email ?? ''));
+    setEditPhone(String(c.phone ?? ''));
+    setEditAddress(String(c.address ?? ''));
+    setEditIco(String(c.ico ?? ''));
+    setEditDic(
+      String(c.dic ?? c.DIČ ?? c.DIC ?? c['dič'] ?? '')
+    );
+    setEditNotes(String(c.notes ?? ''));
+    setProfileEditOpen(true);
+    console.log('[customer profile] edit dialog open');
+  };
+
+  const handleSaveCustomerProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!firestore || !companyId || !customerIdStr) return;
+    const isNewRecord = customer == null;
+    console.log('[customer profile] saving profile', {
+      customerIdStr,
+      isNewRecord,
+    });
+    setProfileSaving(true);
+    try {
+      const ref = doc(
+        firestore,
+        'companies',
+        companyId,
+        'customers',
+        customerIdStr
+      );
+      await setDoc(
+        ref,
+        {
+          companyId,
+          companyName: editCompanyName.trim(),
+          firstName: editFirstName.trim(),
+          lastName: editLastName.trim(),
+          email: editEmail.trim(),
+          phone: editPhone.trim(),
+          address: editAddress.trim(),
+          ico: editIco.trim(),
+          dic: editDic.trim(),
+          notes: editNotes.trim(),
+          updatedAt: serverTimestamp(),
+          ...(isNewRecord ? { createdAt: serverTimestamp() } : {}),
+        },
+        { merge: true }
+      );
+      toast({
+        title: isNewRecord
+          ? 'Profil zákazníka byl vytvořen'
+          : 'Profil zákazníka byl upraven',
+      });
+      setProfileEditOpen(false);
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: 'destructive',
+        title: 'Uložení se nezdařilo',
+        description:
+          err instanceof Error ? err.message : 'Zkuste to prosím znovu.',
+      });
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-8 max-w-6xl mx-auto">
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => router.push('/portal/customers')}>
-          <ChevronLeft className="w-6 h-6" />
-        </Button>
-        <div className="flex-1">
-          <h1 className="portal-page-title">{customer.companyName || `${customer.firstName} ${customer.lastName}`}</h1>
-          <p className="text-muted-foreground">Profil zákazníka a historie spolupráce</p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+        <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+          <Button variant="ghost" size="icon" type="button" onClick={() => router.push('/portal/customers')}>
+            <ChevronLeft className="w-6 h-6" />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <h1 className="portal-page-title break-words">
+              {effectiveCustomer.companyName ||
+                `${effectiveCustomer.firstName ?? ''} ${effectiveCustomer.lastName ?? ''}`.trim() ||
+                'Zákazník'}
+            </h1>
+            <p className="text-muted-foreground">Profil zákazníka a historie spolupráce</p>
+          </div>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" className="gap-2"><Edit2 className="w-4 h-4" /> Upravit profil</Button>
-          <Link href="/portal/jobs">
-            <Button className="gap-2"><Briefcase className="w-4 h-4" /> Nová zakázka</Button>
-          </Link>
+        <div className="flex shrink-0 flex-wrap gap-2 sm:ml-auto">
+          <Button
+            type="button"
+            variant="outline"
+            className="cursor-pointer gap-2"
+            onClick={openProfileEdit}
+          >
+            <Edit2 className="w-4 h-4" /> Upravit profil
+          </Button>
+          <Button type="button" className="gap-2" asChild>
+            <Link href="/portal/jobs">
+              <Briefcase className="w-4 h-4" /> Nová zakázka
+            </Link>
+          </Button>
         </div>
       </div>
+
+      {!customer ? (
+        <Alert className="border-amber-200 bg-amber-50 text-amber-950">
+          <AlertTitle>Záznam v CRM zatím neexistuje</AlertTitle>
+          <AlertDescription>
+            Dokument ve Firestore pro toto ID chybí. Pomocí tlačítka <strong>Upravit profil</strong> můžete údaje
+            vyplnit a uložením záznam vytvořit.
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-1 space-y-6">
@@ -384,14 +535,16 @@ export default function CustomerDetailPage() {
                 <Building2 className="w-5 h-5 text-primary mt-0.5" />
                 <div>
                   <p className="text-xs text-muted-foreground uppercase font-bold">Firma / Název</p>
-                  <p className="font-semibold">{customer.companyName || '-'}</p>
+                  <p className="font-semibold">{effectiveCustomer.companyName || '-'}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
                 <User className="w-5 h-5 text-primary mt-0.5" />
                 <div>
                   <p className="text-xs text-muted-foreground uppercase font-bold">Kontaktní osoba</p>
-                  <p className="font-semibold">{customer.firstName} {customer.lastName}</p>
+                  <p className="font-semibold">
+                    {effectiveCustomer.firstName} {effectiveCustomer.lastName}
+                  </p>
                 </div>
               </div>
               <Separator className="bg-border/50" />
@@ -399,28 +552,28 @@ export default function CustomerDetailPage() {
                 <Mail className="w-5 h-5 text-primary mt-0.5" />
                 <div>
                   <p className="text-xs text-muted-foreground uppercase font-bold">Email</p>
-                  <p className="font-semibold select-all">{customer.email || '-'}</p>
+                  <p className="font-semibold select-all">{effectiveCustomer.email || '-'}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
                 <Phone className="w-5 h-5 text-primary mt-0.5" />
                 <div>
                   <p className="text-xs text-muted-foreground uppercase font-bold">Telefon</p>
-                  <p className="font-semibold">{customer.phone || '-'}</p>
+                  <p className="font-semibold">{effectiveCustomer.phone || '-'}</p>
                 </div>
               </div>
               <div className="flex items-start gap-3">
                 <MapPin className="w-5 h-5 text-primary mt-0.5" />
                 <div>
                   <p className="text-xs text-muted-foreground uppercase font-bold">Adresa</p>
-                  <p className="text-sm">{customer.address || '-'}</p>
+                  <p className="text-sm">{effectiveCustomer.address || '-'}</p>
                 </div>
               </div>
-              {customer.ico && (
+              {effectiveCustomer.ico ? (
                 <div className="pt-2">
-                  <Badge variant="outline" className="font-mono text-[10px] tracking-tighter">IČO: {customer.ico}</Badge>
+                  <Badge variant="outline" className="font-mono text-[10px] tracking-tighter">IČO: {effectiveCustomer.ico}</Badge>
                 </div>
-              )}
+              ) : null}
             </CardContent>
           </Card>
 
@@ -436,6 +589,12 @@ export default function CustomerDetailPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
+              {!customer ? (
+                <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                  Nejprve uložte profil zákazníka (tlačítko <strong>Upravit profil</strong>). Bez záznamu v CRM nelze
+                  bezpečně navázat klientský účet.
+                </p>
+              ) : null}
               {!portalUid ? (
                 <p className="text-muted-foreground">
                   Účet pro zákazníka zatím není vytvořen. Přístup do portálu neexistuje, dokud ho zde nezaložíte.
@@ -451,7 +610,7 @@ export default function CustomerDetailPage() {
                   <div>
                     <p className="text-xs text-muted-foreground uppercase font-bold">E-mail přihlášení</p>
                     <p className="font-mono text-xs break-all select-all">
-                      {portalEmailStored || customer.email || '—'}
+                      {portalEmailStored || effectiveCustomer.email || '—'}
                     </p>
                   </div>
                   <div>
@@ -468,7 +627,12 @@ export default function CustomerDetailPage() {
               {canManagePortal ? (
                 <div className="flex flex-col gap-2 pt-2">
                   {!portalUid ? (
-                    <Button type="button" className="w-full gap-2" onClick={openPortalCreateDialog}>
+                    <Button
+                      type="button"
+                      className="w-full gap-2"
+                      disabled={!customer}
+                      onClick={openPortalCreateDialog}
+                    >
                       <KeyRound className="w-4 h-4" />
                       Vytvořit přístup do portálu
                     </Button>
@@ -478,7 +642,7 @@ export default function CustomerDetailPage() {
                         type="button"
                         variant="outline"
                         className="w-full gap-2"
-                        disabled={portalActionLoading}
+                        disabled={portalActionLoading || !customer}
                         onClick={() => void handleSyncPortalJobs()}
                       >
                         <RefreshCw className="w-4 h-4" />
@@ -488,7 +652,7 @@ export default function CustomerDetailPage() {
                         type="button"
                         variant="outline"
                         className="w-full gap-2"
-                        disabled={portalActionLoading || !portalEnabled}
+                        disabled={portalActionLoading || !portalEnabled || !customer}
                         onClick={() => void handlePortalPasswordResetLink()}
                       >
                         <KeyRound className="w-4 h-4" />
@@ -499,7 +663,7 @@ export default function CustomerDetailPage() {
                           type="button"
                           variant="secondary"
                           className="w-full"
-                          disabled={portalActionLoading}
+                          disabled={portalActionLoading || !customer}
                           onClick={() => void handleSetPortalEnabled(false)}
                         >
                           Deaktivovat přístup
@@ -508,7 +672,7 @@ export default function CustomerDetailPage() {
                         <Button
                           type="button"
                           className="w-full"
-                          disabled={portalActionLoading}
+                          disabled={portalActionLoading || !customer}
                           onClick={() => void handleSetPortalEnabled(true)}
                         >
                           Znovu povolit přístup
@@ -531,7 +695,7 @@ export default function CustomerDetailPage() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground italic leading-relaxed">
-                {customer.notes || 'Žádné interní poznámky.'}
+                {effectiveCustomer.notes || 'Žádné interní poznámky.'}
               </p>
             </CardContent>
           </Card>
@@ -665,7 +829,9 @@ export default function CustomerDetailPage() {
                   <div>
                     <p className="font-semibold">Zákazník vytvořen v systému</p>
                     <p className="text-xs text-muted-foreground">
-                      {customer.createdAt?.toDate ? customer.createdAt.toDate().toLocaleString('cs-CZ') : '-'}
+                      {effectiveCustomer.createdAt?.toDate
+                        ? effectiveCustomer.createdAt.toDate().toLocaleString('cs-CZ')
+                        : '-'}
                     </p>
                   </div>
                 </div>
@@ -769,6 +935,128 @@ export default function CustomerDetailPage() {
               </Button>
               <Button type="submit" disabled={portalSubmitting}>
                 {portalSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Vytvořit účet'}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={profileEditOpen}
+        onOpenChange={(open) => {
+          if (!open && profileSaving) return;
+          setProfileEditOpen(open);
+        }}
+      >
+        <DialogContent className="max-h-[90vh] overflow-y-auto bg-white border-slate-200 text-slate-900 sm:max-w-lg">
+          <form onSubmit={(e) => void handleSaveCustomerProfile(e)}>
+            <DialogHeader>
+              <DialogTitle>Upravit profil zákazníka</DialogTitle>
+              <DialogDescription>
+                Změny se uloží do CRM. Pole mohou zůstat prázdná, pokud údaje neznáte.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-3 py-2 sm:grid-cols-2">
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="cust-edit-company">Název firmy</Label>
+                <Input
+                  id="cust-edit-company"
+                  value={editCompanyName}
+                  onChange={(e) => setEditCompanyName(e.target.value)}
+                  autoComplete="organization"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="cust-edit-fn">Jméno</Label>
+                <Input
+                  id="cust-edit-fn"
+                  value={editFirstName}
+                  onChange={(e) => setEditFirstName(e.target.value)}
+                  autoComplete="given-name"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="cust-edit-ln">Příjmení</Label>
+                <Input
+                  id="cust-edit-ln"
+                  value={editLastName}
+                  onChange={(e) => setEditLastName(e.target.value)}
+                  autoComplete="family-name"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="cust-edit-email">E-mail</Label>
+                <Input
+                  id="cust-edit-email"
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  autoComplete="email"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="cust-edit-phone">Telefon</Label>
+                <Input
+                  id="cust-edit-phone"
+                  type="tel"
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  autoComplete="tel"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="cust-edit-address">Adresa</Label>
+                <Input
+                  id="cust-edit-address"
+                  value={editAddress}
+                  onChange={(e) => setEditAddress(e.target.value)}
+                  autoComplete="street-address"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="cust-edit-ico">IČO</Label>
+                <Input
+                  id="cust-edit-ico"
+                  value={editIco}
+                  onChange={(e) => setEditIco(e.target.value)}
+                  inputMode="numeric"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="cust-edit-dic">DIČ (volitelné)</Label>
+                <Input
+                  id="cust-edit-dic"
+                  value={editDic}
+                  onChange={(e) => setEditDic(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="cust-edit-notes">Interní poznámka</Label>
+                <Textarea
+                  id="cust-edit-notes"
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  rows={3}
+                  className="resize-y"
+                />
+              </div>
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={profileSaving}
+                onClick={() => setProfileEditOpen(false)}
+              >
+                Zrušit
+              </Button>
+              <Button type="submit" disabled={profileSaving} className="cursor-pointer">
+                {profileSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  'Uložit'
+                )}
               </Button>
             </DialogFooter>
           </form>

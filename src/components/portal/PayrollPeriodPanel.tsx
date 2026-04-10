@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   doc,
   serverTimestamp,
@@ -8,6 +8,7 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import type { PayrollOverviewEmployeeRow } from "@/lib/payroll-overview-compute";
+import type { EmployeeDailyDetailRow } from "@/lib/attendance-overview-compute";
 import {
   type PayrollPeriodPaymentDoc,
   type PayrollPeriodPaymentStatus,
@@ -16,8 +17,14 @@ import {
   paymentStatusLabel,
 } from "@/lib/payroll-period-payments";
 import { formatKc } from "@/lib/employee-money";
+import { getPaymentBadgeLabel } from "@/lib/payroll-entry-display";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogContent,
@@ -37,7 +44,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Pencil } from "lucide-react";
+import { Loader2, Pencil, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type ToastFn = (opts: {
@@ -46,15 +53,28 @@ type ToastFn = (opts: {
   variant?: "default" | "destructive";
 }) => void;
 
+function dayRowHasPayrollActivity(row: EmployeeDailyDetailRow): boolean {
+  return (
+    (row.odpracovanoH != null && row.odpracovanoH > 0) ||
+    row.tariffSegments.length > 0 ||
+    row.jobSegments.length > 0 ||
+    row.bloku > 0 ||
+    row.orientacniKc > 0.001
+  );
+}
+
 export function PayrollPeriodPanel(props: {
   firestore: Firestore | null;
   companyId: string;
   userId: string | undefined;
   payrollPeriod: string;
   periodLabel: string;
+  periodRangeStr: string;
   overviewRows: PayrollOverviewEmployeeRow[];
   paymentRaw: Record<string, unknown>[] | null | undefined;
   toast: ToastFn;
+  dailyDetailByEmployee: ReadonlyMap<string, EmployeeDailyDetailRow[]>;
+  autoExpandEmployeeId: string | null;
 }) {
   const {
     firestore,
@@ -62,9 +82,12 @@ export function PayrollPeriodPanel(props: {
     userId,
     payrollPeriod,
     periodLabel,
+    periodRangeStr,
     overviewRows,
     paymentRaw,
     toast,
+    dailyDetailByEmployee,
+    autoExpandEmployeeId,
   } = props;
 
   const payments = useMemo(() => {
@@ -101,6 +124,40 @@ export function PayrollPeriodPanel(props: {
       };
     });
   }, [overviewRows, paymentByEmployee]);
+
+  const overviewIdsKey = useMemo(
+    () => mergedRows.map((r) => r.employeeId).sort().join(","),
+    [mergedRows]
+  );
+
+  const [openEmployees, setOpenEmployees] = useState<Record<string, boolean>>(
+    {}
+  );
+
+  useEffect(() => {
+    const ids = new Set(
+      overviewIdsKey.length > 0 ? overviewIdsKey.split(",") : []
+    );
+    const next: Record<string, boolean> = {};
+    if (autoExpandEmployeeId && ids.has(autoExpandEmployeeId)) {
+      next[autoExpandEmployeeId] = true;
+    }
+    setOpenEmployees(next);
+  }, [payrollPeriod, periodRangeStr, overviewIdsKey, autoExpandEmployeeId]);
+
+  const setOpen = useCallback((employeeId: string, open: boolean) => {
+    setOpenEmployees((prev) => ({ ...prev, [employeeId]: open }));
+  }, []);
+
+  const expandAll = useCallback(() => {
+    setOpenEmployees(
+      Object.fromEntries(mergedRows.map((r) => [r.employeeId, true]))
+    );
+  }, [mergedRows]);
+
+  const collapseAll = useCallback(() => {
+    setOpenEmployees({});
+  }, []);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editEmployeeId, setEditEmployeeId] = useState<string | null>(null);
@@ -183,107 +240,315 @@ export function PayrollPeriodPanel(props: {
     }
   };
 
+  const resolvedStatus = (row: (typeof mergedRows)[0]) =>
+    row.record?.paymentStatus ??
+    (row.paidDisplay <= 0
+      ? "unpaid"
+      : row.paidDisplay + 0.009 >= row.calculatedDisplay
+        ? "paid"
+        : "partial");
+
   return (
     <>
       <Card className="border-slate-200 bg-white print:hidden">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg text-black">
-            Přehled výplat za období ({periodLabel})
-          </CardTitle>
-          <p className="text-sm text-slate-700">
-            Sloupce „Vypočteno“ vycházejí ze schválených výkazů a denních výkazů v
-            zvoleném měsíci. „Vyplaceno“ a stav evidujte zde — údaje se ukládají
-            do databáze.
-          </p>
+        <CardHeader className="space-y-3 pb-2">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <CardTitle className="text-lg text-black">
+                Přehled výplat za období ({periodLabel})
+              </CardTitle>
+              <p className="text-sm text-slate-700">
+                Sloupce „Vypočteno“ vycházejí ze schválených výkazů a denních výkazů v
+                zvoleném měsíci. „Vyplaceno“ a stav evidujte zde — údaje se ukládají
+                do databáze. Rozbalením řádku uvidíte rozpis po dnech ({periodRangeStr}).
+              </p>
+            </div>
+            {mergedRows.length > 0 ? (
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-slate-300 text-black"
+                  onClick={expandAll}
+                >
+                  Rozbalit vše
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="border-slate-300 text-black"
+                  onClick={collapseAll}
+                >
+                  Sbalit vše
+                </Button>
+              </div>
+            ) : null}
+          </div>
         </CardHeader>
-        <CardContent className="overflow-x-auto">
+        <CardContent className="space-y-3">
           {mergedRows.length === 0 ? (
             <p className="text-sm text-slate-700">
               Žádní zaměstnanci ve firmě.
             </p>
           ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="text-black">Zaměstnanec</TableHead>
-                  <TableHead className="text-black">Období</TableHead>
-                  <TableHead className="text-black">Hodiny</TableHead>
-                  <TableHead className="text-black">Vypočteno</TableHead>
-                  <TableHead className="text-black">Vyplaceno</TableHead>
-                  <TableHead className="text-black">Doplatek</TableHead>
-                  <TableHead className="text-black">Stav</TableHead>
-                  <TableHead className="text-black">Datum výplaty</TableHead>
-                  <TableHead className="w-[100px] print:hidden">Akce</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {mergedRows.map((row) => (
-                  <TableRow key={row.employeeId}>
-                    <TableCell className="font-medium text-black">
-                      {row.displayName || "—"}
-                    </TableCell>
-                    <TableCell className="text-black">{payrollPeriod}</TableCell>
-                    <TableCell className="tabular-nums text-black">
-                      {Number.isFinite(row.hoursTotal) ? row.hoursTotal : "—"}
-                    </TableCell>
-                    <TableCell className="tabular-nums text-black">
-                      {formatKc(row.calculatedDisplay)}
-                    </TableCell>
-                    <TableCell className="tabular-nums text-black">
-                      {formatKc(row.paidDisplay)}
-                    </TableCell>
-                    <TableCell
-                      className={cn(
-                        "tabular-nums font-medium",
-                        row.diffDisplay > 0.009
-                          ? "text-amber-800"
-                          : "text-slate-800"
-                      )}
-                    >
-                      {formatKc(row.diffDisplay)}
-                    </TableCell>
-                    <TableCell>
-                      <Badge
-                        className={paymentStatusBadgeClass(
-                          row.record?.paymentStatus ??
-                            (row.paidDisplay <= 0
-                              ? "unpaid"
-                              : row.paidDisplay + 0.009 >= row.calculatedDisplay
-                                ? "paid"
-                                : "partial")
-                        )}
-                      >
-                        {paymentStatusLabel(
-                          row.record?.paymentStatus ??
-                            (row.paidDisplay <= 0
-                              ? "unpaid"
-                              : row.paidDisplay + 0.009 >= row.calculatedDisplay
-                                ? "paid"
-                                : "partial")
-                        )}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-black">
-                      {row.record?.paymentDate?.trim()
-                        ? row.record.paymentDate
-                        : "—"}
-                    </TableCell>
-                    <TableCell className="print:hidden">
-                      <Button
+            mergedRows.map((row) => {
+              const open = Boolean(openEmployees[row.employeeId]);
+              const dailyRows = dailyDetailByEmployee.get(row.employeeId) ?? [];
+              const activeDays =
+                dailyRows.filter(dayRowHasPayrollActivity).length ||
+                row.activeDaysCount;
+              const st = resolvedStatus(row);
+
+              return (
+                <Card
+                  key={row.employeeId}
+                  className="overflow-hidden border border-slate-200 shadow-sm"
+                >
+                  <Collapsible
+                    open={open}
+                    onOpenChange={(v) => setOpen(row.employeeId, v)}
+                  >
+                    <CollapsibleTrigger asChild>
+                      <button
                         type="button"
-                        size="sm"
-                        variant="outline"
-                        className="min-h-10 border-slate-300"
-                        onClick={() => openFor(row.employeeId)}
+                        className="flex w-full cursor-pointer items-start gap-2 border-b border-slate-100 bg-slate-50/90 px-3 py-3 text-left transition-colors hover:bg-slate-100 sm:items-center sm:gap-3 sm:px-4"
                       >
-                        <Pencil className="mr-1 h-4 w-4" />
-                        Evidovat
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+                        <span className="mt-0.5 shrink-0 text-slate-600 sm:mt-0">
+                          {open ? (
+                            <ChevronUp className="h-5 w-5" aria-hidden />
+                          ) : (
+                            <ChevronDown className="h-5 w-5" aria-hidden />
+                          )}
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-semibold text-black">
+                            {row.displayName || "—"}
+                          </p>
+                          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-600">
+                            <span>
+                              <span className="text-slate-500">Dny s evidencí:</span>{" "}
+                              <strong className="text-slate-800">{activeDays}</strong>
+                            </span>
+                            <span>
+                              <span className="text-slate-500">Hodiny:</span>{" "}
+                              <strong className="text-slate-800">
+                                {Number.isFinite(row.hoursTotal)
+                                  ? `${row.hoursTotal} h`
+                                  : "—"}
+                              </strong>
+                            </span>
+                            <span>
+                              <span className="text-slate-500">Vypočteno:</span>{" "}
+                              <strong className="text-slate-900">
+                                {formatKc(row.calculatedDisplay)}
+                              </strong>
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+                          <Badge className={paymentStatusBadgeClass(st)}>
+                            {paymentStatusLabel(st)}
+                          </Badge>
+                          <span className="hidden text-[10px] text-slate-500 sm:inline">
+                            {payrollPeriod}
+                          </span>
+                        </div>
+                      </button>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <CardContent className="space-y-4 border-t border-slate-100 bg-white px-3 py-4 sm:px-4">
+                        <div className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                          <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
+                            <p className="text-xs font-medium uppercase text-slate-500">
+                              Období uzávěrky
+                            </p>
+                            <p className="font-mono text-sm text-black">{payrollPeriod}</p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
+                            <p className="text-xs font-medium uppercase text-slate-500">
+                              Vyplaceno
+                            </p>
+                            <p className="tabular-nums text-sm font-semibold text-black">
+                              {formatKc(row.paidDisplay)}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
+                            <p className="text-xs font-medium uppercase text-slate-500">
+                              Doplatek
+                            </p>
+                            <p
+                              className={cn(
+                                "tabular-nums text-sm font-semibold",
+                                row.diffDisplay > 0.009
+                                  ? "text-amber-800"
+                                  : "text-slate-800"
+                              )}
+                            >
+                              {formatKc(row.diffDisplay)}
+                            </p>
+                          </div>
+                          <div className="rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
+                            <p className="text-xs font-medium uppercase text-slate-500">
+                              Datum výplaty
+                            </p>
+                            <p className="text-sm text-black">
+                              {row.record?.paymentDate?.trim()
+                                ? row.record.paymentDate
+                                : "—"}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap justify-end gap-2 print:hidden">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="min-h-10 border-slate-300"
+                            onClick={() => openFor(row.employeeId)}
+                          >
+                            <Pencil className="mr-1 h-4 w-4" />
+                            Evidovat výplatu
+                          </Button>
+                        </div>
+
+                        <div>
+                          <p className="mb-2 text-sm font-semibold text-black">
+                            Rozpis po dnech ({periodRangeStr})
+                          </p>
+                          {dailyRows.length === 0 ? (
+                            <p className="text-sm text-slate-600">
+                              Pro tohoto zaměstnance nejsou v tomto období žádné denní řádky.
+                            </p>
+                          ) : (
+                            <>
+                              <div className="hidden overflow-x-auto md:block">
+                                <Table>
+                                  <TableHeader>
+                                    <TableRow>
+                                      <TableHead className="text-black">Den</TableHead>
+                                      <TableHead className="text-black">Odprac. (h)</TableHead>
+                                      <TableHead className="text-black">Schváleno</TableHead>
+                                      <TableHead className="text-black">Výplata</TableHead>
+                                      <TableHead className="text-black">Bloky</TableHead>
+                                      <TableHead className="text-black">Schv. Kč</TableHead>
+                                      <TableHead className="text-black">Neschv. Kč</TableHead>
+                                    </TableRow>
+                                  </TableHeader>
+                                  <TableBody>
+                                    {dailyRows.map((drow) => (
+                                      <TableRow key={drow.key}>
+                                        <TableCell className="whitespace-nowrap text-black">
+                                          {drow.dayTitle}
+                                        </TableCell>
+                                        <TableCell className="text-black">
+                                          {drow.odpracovanoH != null
+                                            ? `${drow.odpracovanoH} h`
+                                            : "—"}
+                                        </TableCell>
+                                        <TableCell className="text-black">
+                                          <Badge
+                                            variant={
+                                              drow.schvalenoStatus === "approved"
+                                                ? "default"
+                                                : drow.schvalenoStatus === "pending"
+                                                  ? "secondary"
+                                                  : "outline"
+                                            }
+                                            className="font-normal"
+                                          >
+                                            {drow.schvalenoStatus === "approved"
+                                              ? "Schváleno"
+                                              : drow.schvalenoStatus === "pending"
+                                                ? "Čeká"
+                                                : "—"}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-black">
+                                          <Badge
+                                            variant={
+                                              drow.paidStatus === "paid"
+                                                ? "default"
+                                                : drow.paidStatus === "unpaid"
+                                                  ? "secondary"
+                                                  : "outline"
+                                            }
+                                            className="font-normal"
+                                          >
+                                            {getPaymentBadgeLabel(drow.paidStatus)}
+                                          </Badge>
+                                        </TableCell>
+                                        <TableCell className="text-black">{drow.bloku}</TableCell>
+                                        <TableCell className="text-black">
+                                          {formatKc(drow.schvalenoKc)}
+                                        </TableCell>
+                                        <TableCell className="text-black">
+                                          {formatKc(drow.neschvalenoKc)}
+                                        </TableCell>
+                                      </TableRow>
+                                    ))}
+                                  </TableBody>
+                                </Table>
+                              </div>
+                              <div className="space-y-3 md:hidden">
+                                {dailyRows.map((drow) => (
+                                  <div
+                                    key={drow.key}
+                                    className="rounded-md border border-slate-200 p-3 text-sm"
+                                  >
+                                    <p className="font-semibold text-black">{drow.dayTitle}</p>
+                                    <p className="text-slate-700">
+                                      Odpracováno:{" "}
+                                      {drow.odpracovanoH != null
+                                        ? `${drow.odpracovanoH} h`
+                                        : "—"}
+                                    </p>
+                                    <p className="mt-1 flex flex-wrap items-center gap-2 text-slate-700">
+                                      <Badge
+                                        variant={
+                                          drow.schvalenoStatus === "approved"
+                                            ? "default"
+                                            : drow.schvalenoStatus === "pending"
+                                              ? "secondary"
+                                              : "outline"
+                                        }
+                                      >
+                                        {drow.schvalenoStatus === "approved"
+                                          ? "Schváleno"
+                                          : drow.schvalenoStatus === "pending"
+                                            ? "Čeká"
+                                            : "—"}
+                                      </Badge>
+                                      <Badge
+                                        variant={
+                                          drow.paidStatus === "paid"
+                                            ? "default"
+                                            : drow.paidStatus === "unpaid"
+                                              ? "secondary"
+                                              : "outline"
+                                        }
+                                      >
+                                        {getPaymentBadgeLabel(drow.paidStatus)}
+                                      </Badge>
+                                    </p>
+                                    <p className="mt-1 text-slate-700">
+                                      Bloky: {drow.bloku} · Schv. {formatKc(drow.schvalenoKc)} ·
+                                      Neschv. {formatKc(drow.neschvalenoKc)}
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </CardContent>
+                    </CollapsibleContent>
+                  </Collapsible>
+                </Card>
+              );
+            })
           )}
         </CardContent>
       </Card>

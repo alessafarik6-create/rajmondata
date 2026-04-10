@@ -17,6 +17,8 @@ export type PayrollOverviewEmployeeRow = {
   hourlyRate: number;
   hoursTotal: number;
   calculatedKc: number;
+  /** Počet kalendářních dnů v období s alespoň jedním blokem nebo denním výkazem v rozsahu. */
+  activeDaysCount: number;
 };
 
 function toEmployeeLite(e: Record<string, unknown>): EmployeeLite {
@@ -86,12 +88,34 @@ export function buildPayrollOverviewRows(
     const calculatedKc =
       Math.round((fromBlocks + fromDaily) * 100) / 100;
 
+    const activeDayKeys = new Set<string>();
+    for (const b of empBlocks) {
+      const d = String(b.date ?? "").trim().slice(0, 10);
+      if (
+        /^\d{4}-\d{2}-\d{2}$/.test(d) &&
+        dateStrInInclusiveRange(d, startStr, endStr)
+      ) {
+        activeDayKeys.add(d);
+      }
+    }
+    for (const r of dailyReports) {
+      if (!firestoreEmployeeIdMatches(r?.employeeId, emp)) continue;
+      const dk = String(r?.date ?? "").trim().slice(0, 10);
+      if (
+        /^\d{4}-\d{2}-\d{2}$/.test(dk) &&
+        dateStrInInclusiveRange(dk, startStr, endStr)
+      ) {
+        activeDayKeys.add(dk);
+      }
+    }
+
     rows.push({
       employeeId: emp.id,
       displayName: emp.displayName,
       hourlyRate: rate,
       hoursTotal: Math.round(hours * 100) / 100,
       calculatedKc,
+      activeDaysCount: activeDayKeys.size,
     });
   }
   rows.sort((a, b) => a.displayName.localeCompare(b.displayName, "cs"));

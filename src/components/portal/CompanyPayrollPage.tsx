@@ -155,6 +155,23 @@ function dayRowHasPayrollActivity(row: EmployeeDailyDetailRow): boolean {
   );
 }
 
+function employeeRecordToLite(e: Record<string, unknown>): EmployeeLite | null {
+  const id = String(e?.id ?? "").trim();
+  if (!id) return null;
+  const au = e.authUserId;
+  return {
+    id,
+    displayName:
+      [String(e.firstName ?? "").trim(), String(e.lastName ?? "").trim()]
+        .filter(Boolean)
+        .join(" ")
+        .trim() || String(e.email ?? id),
+    hourlyRate: Number(e.hourlyRate) || 0,
+    authUserId:
+      typeof au === "string" && au.trim() ? au.trim() : undefined,
+  };
+}
+
 function debtCreatedSortMs(d: { createdAt?: unknown; date: string }): number {
   const v = d.createdAt;
   if (v instanceof Date && !Number.isNaN(v.getTime())) return v.getTime();
@@ -520,6 +537,74 @@ function PayrollAdminPageInner() {
   const { data: workSegmentsPayrollRaw = [] } =
     useCollection(workSegmentsPayrollQuery);
 
+  const payrollOverviewAllMode = selectedEmployeeId === "all";
+
+  const attendanceBulkQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !payrollOverviewAllMode) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      limit(2500)
+    );
+  }, [firestore, companyId, payrollOverviewAllMode]);
+
+  const workSegmentsBulkQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !payrollOverviewAllMode) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      limit(2500)
+    );
+  }, [firestore, companyId, payrollOverviewAllMode]);
+
+  const dayPayoutsBulkQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !payrollOverviewAllMode) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_day_payouts"),
+      limit(4000)
+    );
+  }, [firestore, companyId, payrollOverviewAllMode]);
+
+  const { data: attendanceBulkRaw = [] } = useCollection(attendanceBulkQuery);
+  const { data: workSegmentsBulkRaw = [] } =
+    useCollection(workSegmentsBulkQuery);
+  const { data: dayPayoutsBulkRaw = [] } = useCollection(dayPayoutsBulkQuery);
+
+  const attendanceBulkFiltered = useMemo(() => {
+    const raw = Array.isArray(attendanceBulkRaw) ? attendanceBulkRaw : [];
+    return raw.filter((r) => {
+      const ds = attendanceRowCalendarDateKey(r as AttendanceRow);
+      return dateStrInInclusiveRange(
+        ds,
+        periodBounds.startStr,
+        periodBounds.endStr
+      );
+    });
+  }, [attendanceBulkRaw, periodBounds.startStr, periodBounds.endStr]);
+
+  const workSegmentsBulkFiltered = useMemo(() => {
+    const raw = Array.isArray(workSegmentsBulkRaw) ? workSegmentsBulkRaw : [];
+    return raw.filter((s) => {
+      const dk = segmentCalendarDateIsoKey(s as WorkSegmentClient);
+      return dateStrInInclusiveRange(
+        dk,
+        periodBounds.startStr,
+        periodBounds.endStr
+      );
+    });
+  }, [workSegmentsBulkRaw, periodBounds.startStr, periodBounds.endStr]);
+
+  const dayPayoutGlobalMapAll = useMemo(
+    () =>
+      buildGlobalDayPayoutMap(
+        (Array.isArray(dayPayoutsBulkRaw) ? dayPayoutsBulkRaw : []) as Record<
+          string,
+          unknown
+        >[],
+        periodBounds.startStr,
+        periodBounds.endStr
+      ),
+    [dayPayoutsBulkRaw, periodBounds.startStr, periodBounds.endStr]
+  );
+
   const allBlocksInPeriod = useMemo(() => {
     const raw = Array.isArray(blocksRaw) ? blocksRaw : [];
     return raw.map((b: any) => ({
@@ -774,6 +859,65 @@ function PayrollAdminPageInner() {
     blocksMoney,
     workSegmentsPayrollFiltered,
     dayPayoutGlobalMap,
+  ]);
+
+  const dailyDetailByEmployeeForPayrollOverview = useMemo(() => {
+    const map = new Map<string, EmployeeDailyDetailRow[]>();
+    const drAll = (Array.isArray(dailyReportsRaw) ? dailyReportsRaw : []) as Record<
+      string,
+      unknown
+    >[];
+
+    for (const raw of employees) {
+      const lite = employeeRecordToLite(raw as Record<string, unknown>);
+      if (!lite) continue;
+
+      if (payrollTargetEmployee && lite.id === payrollTargetEmployee.id) {
+        map.set(lite.id, employeeDailySummaryRows);
+        continue;
+      }
+
+      const blocksF = allBlocksInPeriod.filter((b) =>
+        firestoreEmployeeIdMatches(b.employeeId, lite)
+      );
+      const drF = drAll.filter((r) =>
+        firestoreEmployeeIdMatches(r?.employeeId, lite)
+      );
+
+      const attendanceRaw = payrollOverviewAllMode
+        ? (attendanceBulkFiltered as AttendanceRow[])
+        : [];
+      const segments = payrollOverviewAllMode
+        ? (workSegmentsBulkFiltered as WorkSegmentClient[])
+        : [];
+      const payoutGlobal = payrollOverviewAllMode
+        ? dayPayoutGlobalMapAll
+        : dayPayoutGlobalMap;
+
+      const rows = buildEmployeeDailyDetailRows({
+        range: payrollDetailRange,
+        employee: lite,
+        attendanceRaw,
+        dailyReports: drF,
+        workBlocks: blocksF,
+        segments,
+        dayPayoutByDate: dayPayoutMapForEmployee(payoutGlobal, lite.id),
+      });
+      map.set(lite.id, rows);
+    }
+    return map;
+  }, [
+    employees,
+    payrollTargetEmployee,
+    employeeDailySummaryRows,
+    dailyReportsRaw,
+    allBlocksInPeriod,
+    attendanceBulkFiltered,
+    workSegmentsBulkFiltered,
+    dayPayoutGlobalMapAll,
+    dayPayoutGlobalMap,
+    payrollDetailRange,
+    payrollOverviewAllMode,
   ]);
 
   const bulkPayrollTargetDaysCount = useMemo(
@@ -2316,9 +2460,16 @@ function PayrollAdminPageInner() {
           userId={user?.uid}
           payrollPeriod={periodBounds.payrollPeriod}
           periodLabel={periodBounds.label}
+          periodRangeStr={`${periodBounds.startStr} — ${periodBounds.endStr}`}
           overviewRows={payrollOverviewRows}
           paymentRaw={payrollPaymentsRaw ?? []}
           toast={toast}
+          dailyDetailByEmployee={dailyDetailByEmployeeForPayrollOverview}
+          autoExpandEmployeeId={
+            selectedEmployeeId && selectedEmployeeId !== "all"
+              ? selectedEmployeeId
+              : null
+          }
         />
       ) : null}
 
