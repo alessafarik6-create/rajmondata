@@ -91,10 +91,7 @@ import {
   computeFlexiblePayrollBounds,
   type PayrollPeriodPreset,
 } from "@/lib/payroll-flexible-period";
-import {
-  computePayrollEmployeeSummary,
-  filterAdvancesInPeriod,
-} from "@/lib/payroll-employee-summary-compute";
+import { filterAdvancesInPeriod } from "@/lib/payroll-employee-summary-compute";
 import { PayrollPeriodPanel } from "@/components/portal/PayrollPeriodPanel";
 import {
   buildWorklogPdfFileName,
@@ -610,8 +607,9 @@ function PayrollAdminPageInner() {
       hourlyRate: rate,
       authUserId,
     };
-    const anchor = new Date(`${periodBounds.startStr}T12:00:00`);
-    const range = computePeriodRange("month", anchor);
+    const fromD = new Date(`${periodBounds.startStr}T12:00:00`);
+    const toD = new Date(`${periodBounds.endStr}T12:00:00`);
+    const range = computePeriodRange("custom", fromD, { from: fromD, to: toD });
     const attF = attendancePayrollFiltered as AttendanceRow[];
     const dr = dailyReportsForSelected;
     const segF = workSegmentsPayrollFiltered as WorkSegmentClient[];
@@ -641,6 +639,7 @@ function PayrollAdminPageInner() {
     dailyReportsForSelected,
     workSegmentsPayrollFiltered,
     periodBounds.startStr,
+    periodBounds.endStr,
   ]);
 
   const earnedAll = useMemo(() => {
@@ -663,50 +662,6 @@ function PayrollAdminPageInner() {
       ),
     [advances, periodBounds.startStr, periodBounds.endStr]
   );
-
-  const payrollSummary = useMemo(() => {
-    if (!selectedEmp || selectedEmployeeId === "all") return null;
-    return computePayrollEmployeeSummary({
-      blocks: blocksMoney,
-      dailyReports: dailyReportsForSelected as Record<string, unknown>[],
-      advancesForEmployee: advances,
-      periodStartStr: periodBounds.startStr,
-      periodEndStr: periodBounds.endStr,
-      hourlyRate,
-    });
-  }, [
-    selectedEmp,
-    selectedEmployeeId,
-    blocksMoney,
-    dailyReportsForSelected,
-    advances,
-    periodBounds.startStr,
-    periodBounds.endStr,
-    hourlyRate,
-  ]);
-
-  const paidTotal = sumPaidAdvances(advancesInPeriod);
-  const displayEarnedApproved =
-    payrollSummary?.grossApprovedKc ?? earnedAll;
-  const remaining = useMemo(() => {
-    if (payrollSummary) return payrollSummary.netAfterAdvancesKc;
-    return Math.max(
-      0,
-      Math.round((earnedAll - paidTotal) * 100) / 100
-    );
-  }, [payrollSummary, earnedAll, paidTotal]);
-
-  const employeeLabelById = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const e of employees) {
-      const label =
-        [e.firstName, e.lastName].filter(Boolean).join(" ").trim() ||
-        e.email ||
-        e.id;
-      m[e.id] = label;
-    }
-    return m;
-  }, [employees]);
 
   const payrollDetailRange = useMemo(() => {
     const a = new Date(`${periodBounds.startStr}T12:00:00`);
@@ -745,6 +700,63 @@ function PayrollAdminPageInner() {
     blocksMoney,
     workSegmentsPayrollFiltered,
   ]);
+
+  /**
+   * Jeden zdroj pravdy s tabulkou „Rozpis po dnech“ — stejná data jako totalsFromDailyDetailRows(...).
+   */
+  const payrollSummaryFromDailyDetail = useMemo(() => {
+    if (!selectedEmp || selectedEmployeeId === "all") return null;
+    const dailyTotals = totalsFromDailyDetailRows(employeeDailySummaryRows);
+    const advPaid = sumPaidAdvances(advancesInPeriod);
+    const grossApprovedKc = Math.round(dailyTotals.approvedKc * 100) / 100;
+    const grossPendingKc = Math.round(dailyTotals.pendingKc * 100) / 100;
+    const orientacniKc = Math.round(dailyTotals.orientacniKc * 100) / 100;
+    const netAfterAdvancesKc = Math.max(
+      0,
+      Math.round((grossApprovedKc - advPaid) * 100) / 100
+    );
+    return {
+      dailyTotals,
+      advancesInPeriod,
+      advancesPaidTotalKc: advPaid,
+      grossApprovedKc,
+      grossPendingKc,
+      orientacniKc,
+      totalHours: dailyTotals.hours,
+      approvedHours: dailyTotals.approvedHourlyHours,
+      unapprovedHours: dailyTotals.pendingHourlyHours,
+      netAfterAdvancesKc,
+    };
+  }, [
+    selectedEmp,
+    selectedEmployeeId,
+    employeeDailySummaryRows,
+    advancesInPeriod,
+  ]);
+
+  const paidTotal = sumPaidAdvances(advancesInPeriod);
+  const displayEarnedApproved =
+    payrollSummaryFromDailyDetail?.grossApprovedKc ?? earnedAll;
+  const remaining = useMemo(() => {
+    if (payrollSummaryFromDailyDetail)
+      return payrollSummaryFromDailyDetail.netAfterAdvancesKc;
+    return Math.max(
+      0,
+      Math.round((earnedAll - paidTotal) * 100) / 100
+    );
+  }, [payrollSummaryFromDailyDetail, earnedAll, paidTotal]);
+
+  const employeeLabelById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const e of employees) {
+      const label =
+        [e.firstName, e.lastName].filter(Boolean).join(" ").trim() ||
+        e.email ||
+        e.id;
+      m[e.id] = label;
+    }
+    return m;
+  }, [employees]);
 
   const sortedBlocks = useMemo(() => {
     return [...blocksMoney].sort((a, b) => {
@@ -1696,12 +1708,12 @@ function PayrollAdminPageInner() {
                   {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "není nastavena"}
                 </p>
                 <p className="mt-1">
-                  <span className="font-semibold">Hrubá schválená částka (bloky + denní výkazy):</span>{" "}
+                  <span className="font-semibold">Schválená částka (součet rozpisu po dnech):</span>{" "}
                   {formatKc(displayEarnedApproved)}
                 </p>
                 <p className="text-xs text-slate-800">
-                  Bloky výkazu: {formatKc(earnedFromBlocks)} · Denní výkazy (schv.):{" "}
-                  {formatKc(earnedFromDailyReports)}
+                  Orientačně z výkazů bez docházky: bloky {formatKc(earnedFromBlocks)} · denní
+                  výkazy (schv.) {formatKc(earnedFromDailyReports)}
                 </p>
                 <p>
                   <span className="font-semibold">Zálohy vyplacené v období:</span>{" "}
@@ -1724,7 +1736,7 @@ function PayrollAdminPageInner() {
         </CardContent>
       </Card>
 
-      {payrollSummary && selectedEmployeeId !== "all" && selectedEmp ? (
+      {payrollSummaryFromDailyDetail && selectedEmployeeId !== "all" && selectedEmp ? (
         <Card className="border-slate-200 bg-white print:border-0">
           <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between print:hidden">
             <div>
@@ -1732,7 +1744,8 @@ function PayrollAdminPageInner() {
                 Souhrn výplaty za období
               </CardTitle>
               <p className="text-xs text-slate-600">
-                Data z výkazů práce, denních výkazů, záloh a sazby zaměstnance.
+                Součty jsou agregací rozpisu po dnech níže (docházka, segmenty, výkazy) a záloh ve
+                stejném období.
               </p>
             </div>
             <Button
@@ -1778,77 +1791,44 @@ function PayrollAdminPageInner() {
                 </p>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="rounded-lg border border-slate-200 p-4">
-                  <h3 className="mb-2 font-semibold">Odpracované hodiny — bloky výkazu</h3>
-                  <ul className="space-y-1 text-sm">
-                    <li>
-                      Celkem zapsáno (výkaz):{" "}
-                      <strong>{payrollSummary.blocksTotalLoggedHours} h</strong>
-                    </li>
-                    <li>
-                      Schválené / započitatelné:{" "}
-                      <strong>{payrollSummary.blocksPayableHours} h</strong>
-                    </li>
-                    <li>
-                      Čeká na schválení (zapsáno):{" "}
-                      <strong>{payrollSummary.blocksPendingLoggedHours} h</strong>
-                    </li>
-                    <li>
-                      Zamítnuto (zapsáno):{" "}
-                      <strong>{payrollSummary.blocksRejectedLoggedHours} h</strong>
-                    </li>
-                  </ul>
-                </div>
-                <div className="rounded-lg border border-slate-200 p-4">
-                  <h3 className="mb-2 font-semibold">Denní výkazy</h3>
-                  <ul className="space-y-1 text-sm">
-                    <li>
-                      Hodiny ve schválených výkazech:{" "}
-                      <strong>{payrollSummary.dailyApprovedHours} h</strong>
-                    </li>
-                    <li>
-                      Hodiny v ostatních stavech:{" "}
-                      <strong>{payrollSummary.dailyOtherHours} h</strong>
-                    </li>
-                  </ul>
-                </div>
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">Hodiny (součet dní v rozpisu)</h3>
+                <ul className="space-y-1 text-sm">
+                  <li>
+                    Celkem odpracovaných hodin:{" "}
+                    <strong>{payrollSummaryFromDailyDetail.totalHours} h</strong>
+                  </li>
+                  <li>
+                    Schválené hodiny (model výplaty):{" "}
+                    <strong>{payrollSummaryFromDailyDetail.approvedHours} h</strong>
+                  </li>
+                  <li>
+                    Neschválené / čekající hodiny:{" "}
+                    <strong>{payrollSummaryFromDailyDetail.unapprovedHours} h</strong>
+                  </li>
+                </ul>
               </div>
 
               <div className="rounded-lg border border-slate-200 p-4">
-                <h3 className="mb-2 font-semibold">Mzdové údaje (orientačně)</h3>
+                <h3 className="mb-2 font-semibold">Částky (součet sloupců Schv. / Neschv. Kč)</h3>
                 <p className="text-sm">
-                  Hodinová sazba:{" "}
+                  Hodinová sazba zaměstnance:{" "}
                   <strong>
                     {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "není nastavena"}
                   </strong>
                 </p>
                 <ul className="mt-2 space-y-1 text-sm">
-                  <li>
-                    Částka ze schválených bloků:{" "}
-                    <strong>{formatKc(payrollSummary.blocksApprovedKc)}</strong>
-                  </li>
-                  <li>
-                    Částka ze schválených denních výkazů:{" "}
-                    <strong>{formatKc(payrollSummary.dailyApprovedKc)}</strong>
-                  </li>
                   <li className="font-semibold">
-                    Hrubá schválená částka:{" "}
-                    {formatKc(payrollSummary.grossApprovedKc)}
+                    Schválená částka (součet „Schv. Kč“ za období):{" "}
+                    {formatKc(payrollSummaryFromDailyDetail.grossApprovedKc)}
                   </li>
                   <li className="text-slate-700">
-                    Orientačně nevyřízené (bloky čekající × sazba):{" "}
-                    {formatKc(payrollSummary.blocksUnapprovedEstimateKc)}
+                    Neschválená částka (součet „Neschv. Kč“):{" "}
+                    {formatKc(payrollSummaryFromDailyDetail.grossPendingKc)}
                   </li>
                   <li className="text-slate-700">
-                    Orientačně nevyřízené denní výkazy:{" "}
-                    {formatKc(payrollSummary.dailyPendingEstimateKc)}
-                  </li>
-                  <li>
-                    Celkem včetně odhadů nevyřízeného:{" "}
-                    <strong>
-                      {formatKc(payrollSummary.grossWithPendingEstimateKc)}
-                    </strong>
+                    Orientační částka dle denního modelu (tarify / zakázky / sazba):{" "}
+                    {formatKc(payrollSummaryFromDailyDetail.orientacniKc)}
                   </li>
                 </ul>
               </div>
@@ -1857,7 +1837,7 @@ function PayrollAdminPageInner() {
                 <h3 className="mb-2 font-semibold">
                   Zálohy ve vybraném období (stav vyplaceno)
                 </h3>
-                {payrollSummary.advancesInPeriod.length === 0 ? (
+                {payrollSummaryFromDailyDetail.advancesInPeriod.length === 0 ? (
                   <p className="text-sm text-slate-600">Žádné zálohy v období.</p>
                 ) : (
                   <div className="overflow-x-auto">
@@ -1871,7 +1851,7 @@ function PayrollAdminPageInner() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {payrollSummary.advancesInPeriod.map((a) => (
+                        {payrollSummaryFromDailyDetail.advancesInPeriod.map((a) => (
                           <TableRow key={a.id}>
                             <TableCell className="text-black">
                               {String(a.date ?? "").slice(0, 10)}
@@ -1893,23 +1873,25 @@ function PayrollAdminPageInner() {
                 )}
                 <p className="mt-3 text-sm font-semibold">
                   Součet vyplacených záloh v období:{" "}
-                  {formatKc(payrollSummary.advancesPaidTotalKc)}
+                  {formatKc(payrollSummaryFromDailyDetail.advancesPaidTotalKc)}
                 </p>
               </div>
 
               <div className="rounded-lg border-2 border-emerald-700/40 bg-emerald-50/50 p-4">
                 <h3 className="mb-2 font-semibold text-emerald-900">Výsledek</h3>
                 <p className="text-sm">
-                  Hrubá schválená výplata za období:{" "}
-                  <strong>{formatKc(payrollSummary.grossApprovedKc)}</strong>
+                  Schválená částka za období (jako součet „Schv. Kč“):{" "}
+                  <strong>{formatKc(payrollSummaryFromDailyDetail.grossApprovedKc)}</strong>
                 </p>
                 <p className="text-sm">
                   Mínus vyplacené zálohy v období:{" "}
-                  <strong>-{formatKc(payrollSummary.advancesPaidTotalKc)}</strong>
+                  <strong>
+                    -{formatKc(payrollSummaryFromDailyDetail.advancesPaidTotalKc)}
+                  </strong>
                 </p>
                 <p className="mt-2 text-lg font-bold text-emerald-900">
                   K doplacení (po zálohách v období):{" "}
-                  {formatKc(payrollSummary.netAfterAdvancesKc)}
+                  {formatKc(payrollSummaryFromDailyDetail.netAfterAdvancesKc)}
                 </p>
               </div>
 
