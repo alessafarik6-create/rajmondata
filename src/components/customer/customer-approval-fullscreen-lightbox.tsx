@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { CustomerMediaDisplaySource } from "@/lib/job-media-types";
 
 type Props = {
   open: boolean;
@@ -13,6 +14,8 @@ type Props = {
   /** Obrázek / PDF — u obrázků preferujte annotatedImageUrl (export z editoru). */
   url: string;
   isPdf: boolean;
+  /** Pro ladění: zda se používá raster s kótami nebo náhradní URL. */
+  imageDisplaySource?: CustomerMediaDisplaySource;
   footer?: React.ReactNode;
 };
 
@@ -25,6 +28,7 @@ export function CustomerApprovalFullscreenLightbox({
   title,
   url,
   isPdf,
+  imageDisplaySource,
   footer,
 }: Props) {
   const [mounted, setMounted] = useState(false);
@@ -156,6 +160,14 @@ export function CustomerApprovalFullscreenLightbox({
                   transformOrigin: "center center",
                 }}
                 draggable={false}
+                data-customer-media-source={imageDisplaySource}
+                title={
+                  process.env.NODE_ENV === "development" && imageDisplaySource
+                    ? imageDisplaySource === "annotated"
+                      ? "Zdroj: anotovaný export"
+                      : "Zdroj: náhradní URL"
+                    : undefined
+                }
               />
             </div>
           )}

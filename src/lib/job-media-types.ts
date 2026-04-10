@@ -134,12 +134,14 @@ export function getJobMediaPreviewUrl(row: {
   imageUrl?: string;
   url?: string;
   downloadURL?: string;
+  originalImageUrl?: string;
 }): string {
   const candidates = [
     row.annotatedImageUrl,
     row.imageUrl,
     row.url,
     row.downloadURL,
+    row.originalImageUrl,
   ];
   for (const c of candidates) {
     if (typeof c === "string" && c.trim()) return c.trim();
@@ -148,16 +150,38 @@ export function getJobMediaPreviewUrl(row: {
 }
 
 /**
- * Zobrazení pro zákazníka (schválení, náhled): vždy upřednostni export z editoru
- * (`annotatedImageUrl`), teprve pak původní URL. Kóty a popisky jsou v PNG „zapečené“.
+ * Zobrazení pro zákazníka — stejné pořadí URL jako `getJobMediaPreviewUrl`
+ * (annotated → image → … → original naposledy).
  */
 export function getJobMediaCustomerDisplayUrl(row: {
   annotatedImageUrl?: string;
   imageUrl?: string;
   url?: string;
   downloadURL?: string;
+  originalImageUrl?: string;
 }): string {
   return getJobMediaPreviewUrl(row);
+}
+
+/** Admin uložil raster s kótami — u zákazníka nepřekresluj vektorovou vrstvu z `annotationData`. */
+export function jobMediaHasFlattenedAdminExport(row: {
+  annotatedImageUrl?: string;
+}): boolean {
+  return typeof row.annotatedImageUrl === "string" && row.annotatedImageUrl.trim().length > 0;
+}
+
+export type CustomerMediaDisplaySource = "annotated" | "fallback";
+
+export function getCustomerMediaDisplaySource(row: {
+  annotatedImageUrl?: string;
+  imageUrl?: string;
+  url?: string;
+  downloadURL?: string;
+  originalImageUrl?: string;
+}): CustomerMediaDisplaySource {
+  const u = getJobMediaCustomerDisplayUrl(row);
+  const ann = typeof row.annotatedImageUrl === "string" ? row.annotatedImageUrl.trim() : "";
+  return ann && u === ann ? "annotated" : "fallback";
 }
 
 /** Formát data pro náhled v mřížce. */

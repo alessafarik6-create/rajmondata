@@ -30,6 +30,7 @@ import {
 import {
   formatMediaDate,
   getJobMediaPreviewUrl,
+  jobMediaHasFlattenedAdminExport,
   inferJobMediaItemType,
   isAllowedJobImageFile,
   isAllowedJobMediaFile,
@@ -551,12 +552,14 @@ function UserFolderBlock({
           folder as Record<string, unknown>,
           img as Record<string, unknown>
         );
+      const skipVectorLayer =
+        fileType === "image" && jobMediaHasFlattenedAdminExport(img);
       setMediaViewer({
         url: openUrl,
         title,
         fileType,
         mediaDocumentId: img.id,
-        annotationData: img.annotationData,
+        annotationData: skipVectorLayer ? undefined : img.annotationData,
         readOnly: readOnlyCustomer,
         adminNote: typeof img.note === "string" ? img.note : "",
       });
@@ -2307,12 +2310,14 @@ export function JobMediaSection({
       const readOnly =
         mediaScope === "customer" &&
         !canCustomerAnnotateLegacyPhoto(p as Record<string, unknown>);
+      const skipVectorLayer =
+        fileType === "image" && jobMediaHasFlattenedAdminExport(p);
       setLegacyMediaViewer({
         url: openUrl,
         title,
         fileType,
         mediaDocumentId: p.id,
-        annotationData: p.annotationData,
+        annotationData: skipVectorLayer ? undefined : p.annotationData,
         readOnly,
         adminNote: typeof p.note === "string" ? p.note : "",
       });

@@ -18,8 +18,10 @@ import {
 import type { JobFolderDoc, JobFolderImageDoc } from "@/lib/job-media-types";
 import {
   formatMediaDate,
+  getCustomerMediaDisplaySource,
   getJobMediaCustomerDisplayUrl,
   inferJobMediaItemType,
+  jobMediaHasFlattenedAdminExport,
 } from "@/lib/job-media-types";
 import { CustomerApprovalFullscreenLightbox } from "@/components/customer/customer-approval-fullscreen-lightbox";
 import {
@@ -94,12 +96,21 @@ function MediaThumbMini({ row, className }: { row: Record<string, unknown>; clas
       </div>
     );
   }
+  const srcKind = getCustomerMediaDisplaySource(row);
   // eslint-disable-next-line @next/next/no-img-element
   return (
     <img
       src={url}
       alt=""
       className={cn("aspect-[4/3] w-full object-cover", className)}
+      data-customer-media-source={srcKind}
+      title={
+        process.env.NODE_ENV === "development"
+          ? srcKind === "annotated"
+            ? "Zdroj: anotovaný export (annotatedImageUrl)"
+            : "Zdroj: náhradní URL (bez annotatedImageUrl)"
+          : undefined
+      }
     />
   );
 }
@@ -417,6 +428,14 @@ export function CustomerJobMediaApprovalsSection({
                       {it.approval.approvalNoteFromAdmin}
                     </div>
                   ) : null}
+                  {inferJobMediaItemType(it.raw as JobFolderImageDoc) !== "pdf" &&
+                  !jobMediaHasFlattenedAdminExport(it.raw as JobFolderImageDoc) ? (
+                    <p className="text-xs text-amber-800 dark:text-amber-200/90">
+                      U tohoto souboru není uložený anotovaný výstup z editoru — kóty se mohou
+                      zobrazovat jen pokud jsou v datech zakázky; po uložení anotace v administraci
+                      vznikne soubor s kótami (annotatedImageUrl).
+                    </p>
+                  ) : null}
                   {it.approval.customerComment ? (
                     <div className="rounded-md border border-amber-200/60 bg-amber-50/50 px-2.5 py-2 text-sm dark:border-amber-900/40 dark:bg-amber-950/30">
                       <span className="text-xs font-medium">Vaše připomínka: </span>
@@ -508,6 +527,7 @@ export function CustomerJobMediaApprovalsSection({
           title={lightbox.title}
           url={lightbox.openUrl}
           isPdf={inferJobMediaItemType(lightbox.raw as JobFolderImageDoc) === "pdf"}
+          imageDisplaySource={getCustomerMediaDisplaySource(lightbox.raw)}
           footer={
             <div className="space-y-3 text-foreground">
               {!lightbox.openUrl ? (
