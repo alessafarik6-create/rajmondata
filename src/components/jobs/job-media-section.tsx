@@ -572,6 +572,8 @@ function UserFolderBlock({
   const folderType: JobFolderType = folder.type ?? "files";
   const isEmployeeLimited = mediaScope === "employeeLimited";
   const isCustomerScope = mediaScope === "customer";
+  /** Mazání, poznámky, anotace v seznamu souborů — ne pro zákaznický portál. */
+  const allowFolderStaffFileActions = !isEmployeeLimited && !isCustomerScope;
   const isAccountingFolder =
     folderType === "documents" && !isEmployeeLimited && !isCustomerScope;
   const [folderPermBusy, setFolderPermBusy] = useState(false);
@@ -1132,6 +1134,14 @@ function UserFolderBlock({
   };
 
   const deleteImage = async (img: JobFolderImageDoc) => {
+    if (isCustomerScope) {
+      toast({
+        variant: "destructive",
+        title: "Nepovolená akce",
+        description: "Zákazník nemůže mazat soubory zakázky.",
+      });
+      return;
+    }
     if (
       !window.confirm(
         `Smazat soubor „${img.fileName || img.id}“? Tato akce je nevratná.`
@@ -1233,6 +1243,14 @@ function UserFolderBlock({
   };
 
   const deleteFolder = async () => {
+    if (isCustomerScope) {
+      toast({
+        variant: "destructive",
+        title: "Nepovolená akce",
+        description: "Zákazník nemůže mazat složky ani soubory.",
+      });
+      return;
+    }
     if (
       !window.confirm(
         `Smazat složku „${folder.name || folder.id}“ včetně všech souborů?`
@@ -1844,7 +1862,7 @@ function UserFolderBlock({
                             <Download className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
                         )}
-                        {!isEmployeeLimited ? (
+                        {allowFolderStaffFileActions ? (
                           <>
                             <JobMediaIconButton
                               label="Poznámka"
@@ -1906,7 +1924,9 @@ function UserFolderBlock({
                     isFolderWide ? (
                       <ImageThumbWithQuickActions
                         busy={busy}
-                        canManage={canManageFolders && !isEmployeeLimited}
+                        canManage={
+                          canManageFolders && allowFolderStaffFileActions
+                        }
                         onPreview={() => {
                           if (openUrl) openFolderMediaViewer(img, openUrl, title);
                         }}
@@ -1934,7 +1954,7 @@ function UserFolderBlock({
                       >
                         <Eye className="size-[18px]" aria-hidden />
                       </JobMediaIconButton>
-                      {!isEmployeeLimited ? (
+                      {allowFolderStaffFileActions ? (
                         <JobMediaIconButton
                           label="Anotovat"
                           onClick={() =>
@@ -1989,7 +2009,7 @@ function UserFolderBlock({
                           <Download className="size-[18px]" aria-hidden />
                         </JobMediaIconButton>
                       )}
-                      {!isEmployeeLimited ? (
+                      {allowFolderStaffFileActions ? (
                         <>
                           <JobMediaIconButton
                             label="Poznámka"
@@ -2110,7 +2130,7 @@ function UserFolderBlock({
                             </TooltipContent>
                           </Tooltip>
                         ) : null}
-                        {!isEmployeeLimited ? (
+                        {allowFolderStaffFileActions ? (
                           <>
                             <JobMediaIconButton
                               label="Poznámka"
@@ -2377,6 +2397,7 @@ export function JobMediaSection({
       currentNote: string;
       fileNameHint: string;
     }) => {
+      if (mediaScope === "customer") return;
       setNoteCtx({
         path: ctx.path,
         imageId: ctx.imageId,
@@ -2385,10 +2406,18 @@ export function JobMediaSection({
       setNoteDraft(ctx.currentNote);
       setNoteOpen(true);
     },
-    []
+    [mediaScope]
   );
 
   const saveNote = async () => {
+    if (mediaScope === "customer") {
+      toast({
+        variant: "destructive",
+        title: "Nepovolená akce",
+        description: "Zákazník nemůže upravovat poznámky u souborů.",
+      });
+      return;
+    }
     if (!firestore || !user || !noteCtx) return;
     const text = noteDraft.trim();
     setNoteSaving(true);
@@ -2531,6 +2560,14 @@ export function JobMediaSection({
 
   const deleteLegacyPhoto = async (p: LegacyPhotoDoc) => {
     if (!firestore) return;
+    if (mediaScope === "customer") {
+      toast({
+        variant: "destructive",
+        title: "Nepovolená akce",
+        description: "Zákazník nemůže mazat soubory zakázky.",
+      });
+      return;
+    }
     if (
       !window.confirm(
         `Smazat soubor „${p.fileName || p.id}“? Tato akce je nevratná.`

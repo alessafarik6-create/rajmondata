@@ -633,7 +633,8 @@ service cloud.firestore {
             (customerPortalLinkedJob(companyId, jobId) &&
               jobLegacyPhotoCustomerPortalReadOk() &&
               jobLegacyPhotoCustomerApprovalUpdateOk());
-          allow delete: if jobFinancialReadAccess(companyId, jobId) &&
+          allow delete: if userRole() != 'customer' &&
+            jobFinancialReadAccess(companyId, jobId) &&
             resource.data.companyId == companyId &&
             resource.data.jobId == jobId &&
             (isPrivileged() || resource.data.createdBy == request.auth.uid);
@@ -1111,7 +1112,8 @@ service cloud.firestore {
               (customerPortalLinkedJob(companyId, jobId) &&
                 jobMediaCustomerPortalImageReadOk(companyId, jobId, folderId) &&
                 jobFolderImageCustomerApprovalUpdateOk());
-            allow delete: if (jobFinancialReadAccess(companyId, jobId) &&
+            allow delete: if userRole() != 'customer' &&
+              ((jobFinancialReadAccess(companyId, jobId) &&
                 resource.data.companyId == companyId &&
                 resource.data.jobId == jobId &&
                 resource.data.folderId == folderId &&
@@ -1121,7 +1123,7 @@ service cloud.firestore {
                 resource.data.companyId == companyId &&
                 resource.data.jobId == jobId &&
                 resource.data.folderId == folderId &&
-                resource.data.createdBy == request.auth.uid);
+                resource.data.createdBy == request.auth.uid));
           }
         }
       }
