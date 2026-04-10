@@ -585,7 +585,23 @@ service cloud.firestore {
           (!('paidNote' in request.resource.data) ||
             request.resource.data.paidNote == null ||
             (request.resource.data.paidNote is string &&
-              request.resource.data.paidNote.size() <= 400));
+              request.resource.data.paidNote.size() <= 400)) &&
+          (!('approved' in request.resource.data) ||
+            request.resource.data.approved is bool) &&
+          (!('approvedAt' in request.resource.data) ||
+            request.resource.data.approvedAt == null ||
+            request.resource.data.approvedAt is timestamp) &&
+          (!('approvedBy' in request.resource.data) ||
+            request.resource.data.approvedBy == null ||
+            (request.resource.data.approvedBy is string &&
+              request.resource.data.approvedBy.size() > 0)) &&
+          (!('paidAt' in request.resource.data) ||
+            request.resource.data.paidAt == null ||
+            request.resource.data.paidAt is timestamp) &&
+          (!('paidBy' in request.resource.data) ||
+            request.resource.data.paidBy == null ||
+            (request.resource.data.paidBy is string &&
+              request.resource.data.paidBy.size() > 0));
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

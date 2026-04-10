@@ -671,8 +671,13 @@ export function buildEmployeeDailyDetailRows(params: {
       dayBlocks,
     });
 
+    const payout = dayPayoutByDate?.get(dateIso);
+    const adminDayApproved = payout?.approved === true;
+
     let schvalenoStatus: "approved" | "pending" | "none" = "none";
-    if (explicitWorkApproved) {
+    if (adminDayApproved) {
+      schvalenoStatus = "approved";
+    } else if (explicitWorkApproved) {
       schvalenoStatus = "approved";
     } else if (repSt && repSt !== "rejected" && repSt !== "approved") {
       schvalenoStatus = "pending";
@@ -681,7 +686,6 @@ export function buildEmployeeDailyDetailRows(params: {
     } else if (orientacniKc > 0) {
       schvalenoStatus = "pending";
     }
-    const payout = dayPayoutByDate?.get(dateIso);
     let paidNote: string | null = null;
     let paidStatus: "paid" | "unpaid" | "none" = "none";
     if (payout) {
@@ -700,6 +704,7 @@ export function buildEmployeeDailyDetailRows(params: {
       workNeschvalenoKc,
       explicitWorkApproved,
       paidForDay,
+      adminDayApproved,
     });
     const schvalenoKc = payrollApprovedKc;
     const neschvalenoKc = payrollUnapprovedKc;
@@ -716,6 +721,7 @@ export function buildEmployeeDailyDetailRows(params: {
         explicitWorkApproved,
         paidForDay,
         hasIncompleteAttendance,
+        adminDayApproved,
       });
 
     const paidKc = paidForDay ? Math.round(Math.max(0, orientacniKc) * 100) / 100 : 0;

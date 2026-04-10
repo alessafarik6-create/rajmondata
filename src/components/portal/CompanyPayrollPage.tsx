@@ -1,6 +1,13 @@
 "use client";
 
-import React, { useEffect, useMemo, useState, Suspense, useRef } from "react";
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useCallback,
+  Suspense,
+  useRef,
+} from "react";
 import { useSearchParams } from "next/navigation";
 import {
   useUser,
@@ -20,7 +27,10 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  setDoc,
+  writeBatch,
   serverTimestamp,
+  deleteField,
   type Firestore,
 } from "firebase/firestore";
 import { Badge } from "@/components/ui/badge";
@@ -80,8 +90,16 @@ import {
   computePeriodRange,
   firestoreEmployeeIdMatches,
   totalsFromDailyDetailRows,
+  type EmployeeDailyDetailRow,
   type EmployeeLite,
 } from "@/lib/attendance-overview-compute";
+import {
+  buildGlobalDayPayoutMap,
+  dayPayoutMapForEmployee,
+  employeeDayPayoutDocId,
+  MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN,
+} from "@/lib/employee-day-payout";
+import { getPaymentBadgeLabel } from "@/lib/payroll-entry-display";
 import { buildPayrollOverviewRows } from "@/lib/payroll-overview-compute";
 import {
   dateStrInInclusiveRange,
@@ -126,6 +144,16 @@ import {
 } from "@/lib/employee-debt-recalc";
 
 const PRIV_ROLES = ["owner", "admin", "manager", "accountant"];
+
+function dayRowHasPayrollActivity(row: EmployeeDailyDetailRow): boolean {
+  return (
+    (row.odpracovanoH != null && row.odpracovanoH > 0) ||
+    row.tariffSegments.length > 0 ||
+    row.jobSegments.length > 0 ||
+    row.bloku > 0 ||
+    row.orientacniKc > 0.001
+  );
+}
 
 function debtCreatedSortMs(d: { createdAt?: unknown; date: string }): number {
   const v = d.createdAt;
@@ -268,6 +296,9 @@ function PayrollAdminPageInner() {
   const payrollSummaryRef = useRef<HTMLDivElement>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
   const [pdfSummaryExporting, setPdfSummaryExporting] = useState(false);
+  const [bulkPayrollBusy, setBulkPayrollBusy] = useState(false);
+  const [bulkApproveDialogOpen, setBulkApproveDialogOpen] = useState(false);
+  const [bulkPaidDialogOpen, setBulkPaidDialogOpen] = useState(false);
   const [showCzechTranslation, setShowCzechTranslation] = useState(false);
   const [translatingId, setTranslatingId] = useState<string | null>(null);
 
@@ -393,6 +424,40 @@ function PayrollAdminPageInner() {
 
   const { data: advancesRaw, isLoading: advancesLoading } =
     useCollection(advancesQuery);
+
+  const dayPayoutsQuery = useMemoFirebase(() => {
+    if (
+      !firestore ||
+      !companyId ||
+      !selectedEmployeeId ||
+      selectedEmployeeId === "all"
+    )
+      return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_day_payouts"),
+      where("employeeId", "==", selectedEmployeeId),
+      limit(800)
+    );
+  }, [firestore, companyId, selectedEmployeeId]);
+
+  const { data: dayPayoutsRaw = [] } = useCollection(dayPayoutsQuery);
+
+  const dayPayoutGlobalMap = useMemo(
+    () =>
+      buildGlobalDayPayoutMap(
+        (Array.isArray(dayPayoutsRaw) ? dayPayoutsRaw : []) as Record<
+          string,
+          unknown
+        >[],
+        periodBounds.startStr,
+        periodBounds.endStr
+      ),
+    [
+      dayPayoutsRaw,
+      periodBounds.startStr,
+      periodBounds.endStr,
+    ]
+  );
 
   const dailyReportsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -576,7 +641,32 @@ function PayrollAdminPageInner() {
   }, [advancesRaw]);
 
   const selectedEmp = employees.find((e) => e.id === selectedEmployeeId);
-  const hourlyRate = Number(selectedEmp?.hourlyRate) || 0;
+  const payrollTargetEmployee = useMemo((): EmployeeLite | null => {
+    if (!selectedEmployeeId || selectedEmployeeId === "all") return null;
+    const emp = employees.find((e) => e.id === selectedEmployeeId);
+    if (emp) {
+      return {
+        id: String(emp.id),
+        displayName:
+          [emp.firstName, emp.lastName].filter(Boolean).join(" ").trim() ||
+          String(emp.email || emp.id),
+        hourlyRate: Number(emp.hourlyRate) || 0,
+        authUserId:
+          typeof (emp as { authUserId?: string }).authUserId === "string" &&
+          String((emp as { authUserId?: string }).authUserId).trim()
+            ? String((emp as { authUserId?: string }).authUserId).trim()
+            : undefined,
+      };
+    }
+    return {
+      id: selectedEmployeeId,
+      displayName: selectedEmployeeId,
+      hourlyRate: 0,
+      authUserId: undefined,
+    };
+  }, [employees, selectedEmployeeId]);
+
+  const hourlyRate = Number(payrollTargetEmployee?.hourlyRate) || 0;
   const earnedFromDailyReports = useMemo(() => {
     return sumMoneyForApprovedDailyReports(
       dailyReportsForSelected as DailyWorkReportMoney[]
@@ -594,19 +684,8 @@ function PayrollAdminPageInner() {
   );
 
   const earnedAllFromAttendance = useMemo(() => {
-    if (selectedEmployeeId === "all" || !selectedEmp) return null;
-    const rate = Number(selectedEmp.hourlyRate) || 0;
-    const auRaw = (selectedEmp as { authUserId?: string }).authUserId;
-    const authUserId =
-      typeof auRaw === "string" && auRaw.trim() ? auRaw.trim() : null;
-    const lite: EmployeeLite = {
-      id: String(selectedEmp.id),
-      displayName:
-        [selectedEmp.firstName, selectedEmp.lastName].filter(Boolean).join(" ").trim() ||
-        String(selectedEmp.email || selectedEmp.id),
-      hourlyRate: rate,
-      authUserId,
-    };
+    if (selectedEmployeeId === "all" || !payrollTargetEmployee) return null;
+    const lite = payrollTargetEmployee;
     const fromD = new Date(`${periodBounds.startStr}T12:00:00`);
     const toD = new Date(`${periodBounds.endStr}T12:00:00`);
     const range = computePeriodRange("custom", fromD, { from: fromD, to: toD });
@@ -629,26 +708,31 @@ function PayrollAdminPageInner() {
       dailyReports: dr,
       workBlocks: blocksF,
       segments: segF,
+      dayPayoutByDate: dayPayoutMapForEmployee(
+        dayPayoutGlobalMap,
+        lite.id
+      ),
     });
     return totalsFromDailyDetailRows(rows).approvedKc;
   }, [
     selectedEmployeeId,
-    selectedEmp,
+    payrollTargetEmployee,
     blocksMoney,
     attendancePayrollFiltered,
     dailyReportsForSelected,
     workSegmentsPayrollFiltered,
     periodBounds.startStr,
     periodBounds.endStr,
+    dayPayoutGlobalMap,
   ]);
 
   const earnedAll = useMemo(() => {
-    if (selectedEmployeeId === "all" || !selectedEmp) return earnedAllLegacy;
+    if (selectedEmployeeId === "all" || !payrollTargetEmployee) return earnedAllLegacy;
     if (earnedAllFromAttendance != null) return earnedAllFromAttendance;
     return earnedAllLegacy;
   }, [
     selectedEmployeeId,
-    selectedEmp,
+    payrollTargetEmployee,
     earnedAllFromAttendance,
     earnedAllLegacy,
   ]);
@@ -670,19 +754,8 @@ function PayrollAdminPageInner() {
   }, [periodBounds.startStr, periodBounds.endStr]);
 
   const employeeDailySummaryRows = useMemo(() => {
-    if (selectedEmployeeId === "all" || !selectedEmp) return [];
-    const rate = Number(selectedEmp.hourlyRate) || 0;
-    const auRaw = (selectedEmp as { authUserId?: string }).authUserId;
-    const authUserId =
-      typeof auRaw === "string" && auRaw.trim() ? auRaw.trim() : undefined;
-    const lite: EmployeeLite = {
-      id: String(selectedEmp.id),
-      displayName:
-        [selectedEmp.firstName, selectedEmp.lastName].filter(Boolean).join(" ").trim() ||
-        String(selectedEmp.email || selectedEmp.id),
-      hourlyRate: rate,
-      authUserId,
-    };
+    if (selectedEmployeeId === "all" || !payrollTargetEmployee) return [];
+    const lite = payrollTargetEmployee;
     return buildEmployeeDailyDetailRows({
       range: payrollDetailRange,
       employee: lite,
@@ -690,22 +763,24 @@ function PayrollAdminPageInner() {
       dailyReports: dailyReportsForSelected as Record<string, unknown>[],
       workBlocks: blocksMoney,
       segments: workSegmentsPayrollFiltered as WorkSegmentClient[],
+      dayPayoutByDate: dayPayoutMapForEmployee(dayPayoutGlobalMap, lite.id),
     });
   }, [
     selectedEmployeeId,
-    selectedEmp,
+    payrollTargetEmployee,
     payrollDetailRange,
     attendancePayrollFiltered,
     dailyReportsForSelected,
     blocksMoney,
     workSegmentsPayrollFiltered,
+    dayPayoutGlobalMap,
   ]);
 
   /**
    * Jeden zdroj pravdy s tabulkou „Rozpis po dnech“ — stejná data jako totalsFromDailyDetailRows(...).
    */
   const payrollSummaryFromDailyDetail = useMemo(() => {
-    if (!selectedEmp || selectedEmployeeId === "all") return null;
+    if (!payrollTargetEmployee || selectedEmployeeId === "all") return null;
     const dailyTotals = totalsFromDailyDetailRows(employeeDailySummaryRows);
     const advPaid = sumPaidAdvances(advancesInPeriod);
     const grossApprovedKc = Math.round(dailyTotals.approvedKc * 100) / 100;
@@ -728,7 +803,7 @@ function PayrollAdminPageInner() {
       netAfterAdvancesKc,
     };
   }, [
-    selectedEmp,
+    payrollTargetEmployee,
     selectedEmployeeId,
     employeeDailySummaryRows,
     advancesInPeriod,
@@ -888,6 +963,127 @@ function PayrollAdminPageInner() {
       setPdfSummaryExporting(false);
     }
   };
+
+  const runBulkDayPayoutUpdates = useCallback(
+    async (mode: "approve" | "paid") => {
+      if (!firestore || !companyId || !user?.uid || !payrollTargetEmployee) {
+        toast({
+          variant: "destructive",
+          title: "Nelze uložit",
+          description: "Chybí přihlášení nebo zaměstnanec.",
+        });
+        return;
+      }
+      const targets = employeeDailySummaryRows.filter(dayRowHasPayrollActivity);
+      if (targets.length === 0) {
+        toast({
+          title: "Žádné dny k úpravě",
+          description:
+            "V zvoleném období nejsou dny s evidovanou prací (docházka, úseky, bloky).",
+        });
+        return;
+      }
+      const perMap = dayPayoutMapForEmployee(
+        dayPayoutGlobalMap,
+        payrollTargetEmployee.id
+      );
+      setBulkPayrollBusy(true);
+      try {
+        const CHUNK = 400;
+        for (let i = 0; i < targets.length; i += CHUNK) {
+          const batch = writeBatch(firestore);
+          const slice = targets.slice(i, i + CHUNK);
+          for (const row of slice) {
+            const dateIso = row.dateIso;
+            const id = employeeDayPayoutDocId(payrollTargetEmployee.id, dateIso);
+            const ref = doc(
+              firestore,
+              "companies",
+              companyId,
+              "employee_day_payouts",
+              id
+            );
+            const st = perMap?.get(dateIso);
+            const wasPaid = st?.paid === true;
+            const noteRaw = st?.paidNote;
+            const paidNote =
+              noteRaw != null && String(noteRaw).trim()
+                ? String(noteRaw)
+                    .trim()
+                    .slice(0, MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN)
+                : null;
+
+            if (mode === "paid") {
+              batch.set(
+                ref,
+                {
+                  companyId,
+                  employeeId: payrollTargetEmployee.id,
+                  date: dateIso,
+                  paid: true,
+                  paidNote,
+                  paidAt: serverTimestamp(),
+                  paidBy: user.uid,
+                  approved: true,
+                  approvedAt: serverTimestamp(),
+                  approvedBy: user.uid,
+                  updatedAt: serverTimestamp(),
+                },
+                { merge: true }
+              );
+            } else {
+              batch.set(
+                ref,
+                {
+                  companyId,
+                  employeeId: payrollTargetEmployee.id,
+                  date: dateIso,
+                  paid: wasPaid,
+                  paidNote,
+                  approved: true,
+                  approvedAt: serverTimestamp(),
+                  approvedBy: user.uid,
+                  updatedAt: serverTimestamp(),
+                  ...(wasPaid
+                    ? { paidAt: serverTimestamp(), paidBy: user.uid }
+                    : { paidAt: deleteField(), paidBy: deleteField() }),
+                },
+                { merge: true }
+              );
+            }
+          }
+          await batch.commit();
+        }
+        setBulkApproveDialogOpen(false);
+        setBulkPaidDialogOpen(false);
+        toast({
+          title:
+            mode === "paid"
+              ? "Dny označeny jako vyplacené"
+              : "Dny schváleny za období",
+          description: `Uloženo ${targets.length} záznamů.`,
+        });
+      } catch (e) {
+        console.error(e);
+        toast({
+          variant: "destructive",
+          title: "Uložení se nezdařilo",
+          description: e instanceof Error ? e.message : undefined,
+        });
+      } finally {
+        setBulkPayrollBusy(false);
+      }
+    },
+    [
+      firestore,
+      companyId,
+      user?.uid,
+      payrollTargetEmployee,
+      employeeDailySummaryRows,
+      dayPayoutGlobalMap,
+      toast,
+    ]
+  );
 
   const [reviewOpen, setReviewOpen] = useState(false);
   const [reviewBlock, setReviewBlock] = useState<WorkTimeBlockMoney | null>(
@@ -1693,9 +1889,9 @@ function PayrollAdminPageInner() {
             {periodBounds.payrollPeriod}).
           </p>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-            {selectedEmp && selectedEmployeeId !== "all" && (
+            {payrollTargetEmployee && selectedEmployeeId !== "all" && (
               <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-black">
-                {selectedEmp.jobTitle ? (
+                {selectedEmp?.jobTitle ? (
                   <p className="mb-1 text-xs text-slate-600">
                     Pozice:{" "}
                     <span className="font-medium text-slate-800">
@@ -1733,10 +1929,37 @@ function PayrollAdminPageInner() {
               </div>
             )}
           </div>
+          {payrollTargetEmployee && selectedEmployeeId !== "all" ? (
+            <div className="flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:flex-wrap">
+              <Button
+                type="button"
+                variant="secondary"
+                className="min-h-[44px] border-slate-300 text-black"
+                disabled={bulkPayrollBusy}
+                onClick={() => setBulkApproveDialogOpen(true)}
+              >
+                Schválit za období
+              </Button>
+              <Button
+                type="button"
+                className="min-h-[44px] bg-emerald-700 text-white hover:bg-emerald-800"
+                disabled={bulkPayrollBusy}
+                onClick={() => setBulkPaidDialogOpen(true)}
+              >
+                Vyplaceno za období
+              </Button>
+              <p className="w-full text-xs text-slate-600 sm:pl-1">
+                Platí pro <strong>{payrollTargetEmployee.displayName}</strong> a období{" "}
+                {periodBounds.startStr} — {periodBounds.endStr}. Upraví se jen dny s evidencí práce.
+              </p>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
-      {payrollSummaryFromDailyDetail && selectedEmployeeId !== "all" && selectedEmp ? (
+      {payrollSummaryFromDailyDetail &&
+      payrollTargetEmployee &&
+      selectedEmployeeId !== "all" ? (
         <Card className="border-slate-200 bg-white print:border-0">
           <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between print:hidden">
             <div>
@@ -1774,9 +1997,10 @@ function PayrollAdminPageInner() {
                   <p className="text-sm text-slate-700">{companyName}</p>
                 ) : null}
                 <p className="mt-2 font-medium">
-                  {employeeLabelById[selectedEmp.id] || selectedEmp.id}
+                  {employeeLabelById[payrollTargetEmployee.id] ||
+                    payrollTargetEmployee.displayName}
                 </p>
-                {selectedEmp.jobTitle ? (
+                {selectedEmp?.jobTitle ? (
                   <p className="text-sm text-slate-600">
                     Pozice: {String(selectedEmp.jobTitle)}
                   </p>
@@ -1805,6 +2029,20 @@ function PayrollAdminPageInner() {
                   <li>
                     Neschválené / čekající hodiny:{" "}
                     <strong>{payrollSummaryFromDailyDetail.unapprovedHours} h</strong>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">Stav výplaty (dny v rozpisu)</h3>
+                <ul className="space-y-1 text-sm">
+                  <li>
+                    Vyplacené dny:{" "}
+                    <strong>{payrollSummaryFromDailyDetail.dailyTotals.paidDays}</strong>
+                  </li>
+                  <li>
+                    Nevyplacené dny (evidence k výplatě):{" "}
+                    <strong>{payrollSummaryFromDailyDetail.dailyTotals.unpaidDays}</strong>
                   </li>
                 </ul>
               </div>
@@ -1911,6 +2149,7 @@ function PayrollAdminPageInner() {
                             <TableHead className="text-black">Den</TableHead>
                             <TableHead className="text-black">Odprac. (h)</TableHead>
                             <TableHead className="text-black">Schváleno</TableHead>
+                            <TableHead className="text-black">Výplata</TableHead>
                             <TableHead className="text-black">Bloky</TableHead>
                             <TableHead className="text-black">Schv. Kč</TableHead>
                             <TableHead className="text-black">Neschv. Kč</TableHead>
@@ -1928,11 +2167,38 @@ function PayrollAdminPageInner() {
                                   : "—"}
                               </TableCell>
                               <TableCell className="text-black">
-                                {row.schvalenoStatus === "approved"
-                                  ? "Schváleno"
-                                  : row.schvalenoStatus === "pending"
-                                    ? "Čeká"
-                                    : "—"}
+                                <div className="flex flex-wrap gap-1">
+                                  <Badge
+                                    variant={
+                                      row.schvalenoStatus === "approved"
+                                        ? "default"
+                                        : row.schvalenoStatus === "pending"
+                                          ? "secondary"
+                                          : "outline"
+                                    }
+                                    className="font-normal"
+                                  >
+                                    {row.schvalenoStatus === "approved"
+                                      ? "Schváleno"
+                                      : row.schvalenoStatus === "pending"
+                                        ? "Čeká"
+                                        : "—"}
+                                  </Badge>
+                                </div>
+                              </TableCell>
+                              <TableCell className="text-black">
+                                <Badge
+                                  variant={
+                                    row.paidStatus === "paid"
+                                      ? "default"
+                                      : row.paidStatus === "unpaid"
+                                        ? "secondary"
+                                        : "outline"
+                                  }
+                                  className="font-normal"
+                                >
+                                  {getPaymentBadgeLabel(row.paidStatus)}
+                                </Badge>
                               </TableCell>
                               <TableCell className="text-black">{row.bloku}</TableCell>
                               <TableCell className="text-black">
@@ -1957,13 +2223,35 @@ function PayrollAdminPageInner() {
                             Odpracováno:{" "}
                             {row.odpracovanoH != null ? `${row.odpracovanoH} h` : "—"}
                           </p>
-                          <p className="text-slate-700">
-                            Stav:{" "}
-                            {row.schvalenoStatus === "approved"
-                              ? "Schváleno"
-                              : row.schvalenoStatus === "pending"
-                                ? "Čeká"
-                                : "—"}
+                          <p className="flex flex-wrap items-center gap-2 text-slate-700">
+                            <span>Schválení:</span>
+                            <Badge
+                              variant={
+                                row.schvalenoStatus === "approved"
+                                  ? "default"
+                                  : row.schvalenoStatus === "pending"
+                                    ? "secondary"
+                                    : "outline"
+                              }
+                            >
+                              {row.schvalenoStatus === "approved"
+                                ? "Schváleno"
+                                : row.schvalenoStatus === "pending"
+                                  ? "Čeká"
+                                  : "—"}
+                            </Badge>
+                            <span>Výplata:</span>
+                            <Badge
+                              variant={
+                                row.paidStatus === "paid"
+                                  ? "default"
+                                  : row.paidStatus === "unpaid"
+                                    ? "secondary"
+                                    : "outline"
+                              }
+                            >
+                              {getPaymentBadgeLabel(row.paidStatus)}
+                            </Badge>
                           </p>
                           <p className="text-slate-700">
                             Bloky: {row.bloku} · Schv. {formatKc(row.schvalenoKc)} ·
@@ -3218,6 +3506,76 @@ function PayrollAdminPageInner() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={bulkApproveDialogOpen}
+        onOpenChange={setBulkApproveDialogOpen}
+      >
+        <AlertDialogContent className="border-slate-200 bg-white text-black">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Schválit všechny dny v období?</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-700">
+              Pro{" "}
+              <strong>
+                {payrollTargetEmployee?.displayName ?? "zaměstnance"}
+              </strong>{" "}
+              a období {periodBounds.startStr} — {periodBounds.endStr} se u všech dnů s evidencí
+              práce uloží administrátorské schválení. Vyplacení dne se nemění (zůstane nevyplaceno,
+              pokud už není označeno).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-slate-300 text-black">
+              Zrušit
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              className="bg-slate-900 text-white"
+              disabled={bulkPayrollBusy}
+              onClick={() => void runBulkDayPayoutUpdates("approve")}
+            >
+              {bulkPayrollBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Schválit"
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={bulkPaidDialogOpen} onOpenChange={setBulkPaidDialogOpen}>
+        <AlertDialogContent className="border-slate-200 bg-white text-black">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Označit všechny dny jako vyplacené?</AlertDialogTitle>
+            <AlertDialogDescription className="text-slate-700">
+              Pro{" "}
+              <strong>
+                {payrollTargetEmployee?.displayName ?? "zaměstnance"}
+              </strong>{" "}
+              a období {periodBounds.startStr} — {periodBounds.endStr} se u dnů s evidencí práce
+              nastaví <strong>vyplaceno</strong> a zároveň <strong>schváleno</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel className="border-slate-300 text-black">
+              Zrušit
+            </AlertDialogCancel>
+            <Button
+              type="button"
+              className="bg-emerald-700 text-white hover:bg-emerald-800"
+              disabled={bulkPayrollBusy}
+              onClick={() => void runBulkDayPayoutUpdates("paid")}
+            >
+              {bulkPayrollBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Vyplaceno"
+              )}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

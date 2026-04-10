@@ -101,6 +101,8 @@ export type PayrollDisplayMoneyInput = {
   workNeschvalenoKc: number;
   explicitWorkApproved: boolean;
   paidForDay: boolean;
+  /** Schválení dne adminem (employee_day_payouts.approved) — celý orientační výdělek do schváleného sloupce. */
+  adminDayApproved?: boolean;
 };
 
 /**
@@ -122,7 +124,7 @@ export function computePayrollDisplayEarningsKc(
   const o = roundMoney2(p.orientacniKc);
   const workApproved = isWorkApprovedForPayroll(p.explicitWorkApproved);
 
-  if (p.paidForDay) {
+  if (p.paidForDay || p.adminDayApproved === true) {
     return { payrollApprovedKc: o, payrollUnapprovedKc: 0 };
   }
   if (!workApproved) {
@@ -142,6 +144,7 @@ export type PayrollDisplayHourlyInput = {
   explicitWorkApproved: boolean;
   paidForDay: boolean;
   hasIncompleteAttendance: boolean;
+  adminDayApproved?: boolean;
 };
 
 const H_EPS = 1e-6;
@@ -158,7 +161,7 @@ export function computePayrollDisplayHourlyHours(
 
   const workApproved = isWorkApprovedForPayroll(p.explicitWorkApproved);
 
-  if (p.paidForDay) {
+  if (p.paidForDay || p.adminDayApproved === true) {
     return { approvedH: Math.round(oh * 100) / 100, pendingH: 0 };
   }
   if (!workApproved) {

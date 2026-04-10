@@ -8,6 +8,8 @@ export const MAX_EMPLOYEE_DAY_PAYOUT_NOTE_LEN = 400;
 export type EmployeeDayPayoutState = {
   paid: boolean;
   paidNote: string | null;
+  /** Admin hromadně / ručně schválil den pro výplatu (employee_day_payouts). */
+  approved?: boolean;
 };
 
 export function employeeDayPayoutDocId(
@@ -40,6 +42,7 @@ export function buildGlobalDayPayoutMap(
     m.set(`${eid}|${date}`, {
       paid: d?.paid === true,
       paidNote: note,
+      approved: d?.approved === true,
     });
   }
   return m;
