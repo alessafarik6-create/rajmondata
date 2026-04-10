@@ -70,6 +70,7 @@ import {
   type WorkTimeBlockMoney,
 } from "@/lib/employee-money";
 import { format } from "date-fns";
+import { cs } from "date-fns/locale";
 import type { AttendanceRow } from "@/lib/employee-attendance";
 import { attendanceRowCalendarDateKey } from "@/lib/employee-attendance";
 import type { WorkSegmentClient } from "@/lib/work-segment-client";
@@ -86,6 +87,14 @@ import {
   dateStrInInclusiveRange,
   payrollPeriodBounds,
 } from "@/lib/payroll-period";
+import {
+  computeFlexiblePayrollBounds,
+  type PayrollPeriodPreset,
+} from "@/lib/payroll-flexible-period";
+import {
+  computePayrollEmployeeSummary,
+  filterAdvancesInPeriod,
+} from "@/lib/payroll-employee-summary-compute";
 import { PayrollPeriodPanel } from "@/components/portal/PayrollPeriodPanel";
 import {
   buildWorklogPdfFileName,
@@ -259,7 +268,9 @@ function PayrollAdminPageInner() {
   const { toast } = useToast();
   const { companyName } = useCompany();
   const worklogReportRef = useRef<HTMLDivElement>(null);
+  const payrollSummaryRef = useRef<HTMLDivElement>(null);
   const [pdfExporting, setPdfExporting] = useState(false);
+  const [pdfSummaryExporting, setPdfSummaryExporting] = useState(false);
   const [showCzechTranslation, setShowCzechTranslation] = useState(false);
   const [translatingId, setTranslatingId] = useState<string | null>(null);
 
@@ -294,10 +305,51 @@ function PayrollAdminPageInner() {
   const nowInit = new Date();
   const [payrollYear, setPayrollYear] = useState(nowInit.getFullYear());
   const [payrollMonth, setPayrollMonth] = useState(nowInit.getMonth() + 1);
+  const [periodPreset, setPeriodPreset] =
+    useState<PayrollPeriodPreset>("calendar_month");
+  const [customFromStr, setCustomFromStr] = useState("");
+  const [customToStr, setCustomToStr] = useState("");
+  const [employeeSearchQuery, setEmployeeSearchQuery] = useState("");
+
+  const employeesForSelect = useMemo(() => {
+    const q = employeeSearchQuery.trim().toLowerCase();
+    let list = employees;
+    if (q) {
+      list = employees.filter((e: any) => {
+        const label = [e.firstName, e.lastName, e.email]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return label.includes(q) || String(e.id).toLowerCase().includes(q);
+      });
+    }
+    if (selectedEmployeeId && selectedEmployeeId !== "all") {
+      const sel = employees.find((e) => e.id === selectedEmployeeId);
+      if (sel && !list.some((e) => e.id === sel.id)) {
+        list = [sel, ...list];
+      }
+    }
+    return list;
+  }, [employees, employeeSearchQuery, selectedEmployeeId]);
+
   const periodBounds = useMemo(
-    () => payrollPeriodBounds(payrollYear, payrollMonth),
-    [payrollYear, payrollMonth]
+    () =>
+      computeFlexiblePayrollBounds(periodPreset, {
+        calendarYear: payrollYear,
+        calendarMonth: payrollMonth,
+        customFromStr,
+        customToStr,
+      }),
+    [periodPreset, payrollYear, payrollMonth, customFromStr, customToStr]
   );
+
+  useEffect(() => {
+    if (periodPreset !== "custom") return;
+    if (customFromStr && customToStr) return;
+    const b = payrollPeriodBounds(payrollYear, payrollMonth);
+    setCustomFromStr(b.startStr);
+    setCustomToStr(b.endStr);
+  }, [periodPreset, payrollYear, payrollMonth, customFromStr, customToStr]);
 
   useEffect(() => {
     if (employees.length === 0) return;
@@ -601,11 +653,48 @@ function PayrollAdminPageInner() {
     earnedAllFromAttendance,
     earnedAllLegacy,
   ]);
-  const paidTotal = sumPaidAdvances(advances);
-  const remaining = Math.max(
-    0,
-    Math.round((earnedAll - paidTotal) * 100) / 100
+
+  const advancesInPeriod = useMemo(
+    () =>
+      filterAdvancesInPeriod(
+        advances,
+        periodBounds.startStr,
+        periodBounds.endStr
+      ),
+    [advances, periodBounds.startStr, periodBounds.endStr]
   );
+
+  const payrollSummary = useMemo(() => {
+    if (!selectedEmp || selectedEmployeeId === "all") return null;
+    return computePayrollEmployeeSummary({
+      blocks: blocksMoney,
+      dailyReports: dailyReportsForSelected as Record<string, unknown>[],
+      advancesForEmployee: advances,
+      periodStartStr: periodBounds.startStr,
+      periodEndStr: periodBounds.endStr,
+      hourlyRate,
+    });
+  }, [
+    selectedEmp,
+    selectedEmployeeId,
+    blocksMoney,
+    dailyReportsForSelected,
+    advances,
+    periodBounds.startStr,
+    periodBounds.endStr,
+    hourlyRate,
+  ]);
+
+  const paidTotal = sumPaidAdvances(advancesInPeriod);
+  const displayEarnedApproved =
+    payrollSummary?.grossApprovedKc ?? earnedAll;
+  const remaining = useMemo(() => {
+    if (payrollSummary) return payrollSummary.netAfterAdvancesKc;
+    return Math.max(
+      0,
+      Math.round((earnedAll - paidTotal) * 100) / 100
+    );
+  }, [payrollSummary, earnedAll, paidTotal]);
 
   const employeeLabelById = useMemo(() => {
     const m: Record<string, string> = {};
@@ -618,6 +707,44 @@ function PayrollAdminPageInner() {
     }
     return m;
   }, [employees]);
+
+  const payrollDetailRange = useMemo(() => {
+    const a = new Date(`${periodBounds.startStr}T12:00:00`);
+    const b = new Date(`${periodBounds.endStr}T12:00:00`);
+    return computePeriodRange("custom", a, { from: a, to: b });
+  }, [periodBounds.startStr, periodBounds.endStr]);
+
+  const employeeDailySummaryRows = useMemo(() => {
+    if (selectedEmployeeId === "all" || !selectedEmp) return [];
+    const rate = Number(selectedEmp.hourlyRate) || 0;
+    const auRaw = (selectedEmp as { authUserId?: string }).authUserId;
+    const authUserId =
+      typeof auRaw === "string" && auRaw.trim() ? auRaw.trim() : undefined;
+    const lite: EmployeeLite = {
+      id: String(selectedEmp.id),
+      displayName:
+        [selectedEmp.firstName, selectedEmp.lastName].filter(Boolean).join(" ").trim() ||
+        String(selectedEmp.email || selectedEmp.id),
+      hourlyRate: rate,
+      authUserId,
+    };
+    return buildEmployeeDailyDetailRows({
+      range: payrollDetailRange,
+      employee: lite,
+      attendanceRaw: attendancePayrollFiltered as AttendanceRow[],
+      dailyReports: dailyReportsForSelected as Record<string, unknown>[],
+      workBlocks: blocksMoney,
+      segments: workSegmentsPayrollFiltered as WorkSegmentClient[],
+    });
+  }, [
+    selectedEmployeeId,
+    selectedEmp,
+    payrollDetailRange,
+    attendancePayrollFiltered,
+    dailyReportsForSelected,
+    blocksMoney,
+    workSegmentsPayrollFiltered,
+  ]);
 
   const sortedBlocks = useMemo(() => {
     return [...blocksMoney].sort((a, b) => {
@@ -718,6 +845,35 @@ function PayrollAdminPageInner() {
       });
     } finally {
       setPdfExporting(false);
+    }
+  };
+
+  const handlePayrollSummaryPdf = async () => {
+    const el = payrollSummaryRef.current;
+    if (!el) {
+      toast({
+        variant: "destructive",
+        title: "Nelze exportovat",
+        description: "Chybí oblast souhrnu výplaty.",
+      });
+      return;
+    }
+    setPdfSummaryExporting(true);
+    try {
+      const prefix = `${reportEmployeeTitle}_souhrn_vyplaty`;
+      await downloadWorklogPdfFromElement(
+        el,
+        buildWorklogPdfFileName(prefix)
+      );
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Export PDF souhrnu se nezdařil",
+        description: "Zkuste to znovu nebo použijte tisk do PDF.",
+      });
+    } finally {
+      setPdfSummaryExporting(false);
     }
   };
 
@@ -1394,11 +1550,23 @@ function PayrollAdminPageInner() {
 
       <Card className="border-slate-200 bg-white print:hidden">
         <CardHeader className="pb-2">
-          <CardTitle className="text-lg text-black">Zaměstnanec</CardTitle>
+          <CardTitle className="text-lg text-black">
+            Zaměstnanec a období
+          </CardTitle>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="space-y-2 sm:col-span-2">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="space-y-2">
+              <Label className="text-black">Hledat podle jména nebo e-mailu</Label>
+              <Input
+                className="h-12 border-slate-300 text-black"
+                placeholder="Začněte psát…"
+                value={employeeSearchQuery}
+                onChange={(e) => setEmployeeSearchQuery(e.target.value)}
+                disabled={employeesLoading || employees.length === 0}
+              />
+            </div>
+            <div className="space-y-2">
               <Label className="text-black">Vyberte zaměstnance</Label>
               <select
                 className={cn(
@@ -1414,91 +1582,421 @@ function PayrollAdminPageInner() {
                 ) : (
                   <>
                     <option value="all">Všichni zaměstnanci (výkazy)</option>
-                    {employees.map((e) => (
+                    {employeesForSelect.map((e) => (
                       <option key={e.id} value={e.id}>
                         {[e.firstName, e.lastName].filter(Boolean).join(" ") ||
                           e.email ||
                           e.id}
+                        {e.jobTitle ? ` — ${e.jobTitle}` : ""}
                       </option>
                     ))}
                   </>
                 )}
               </select>
             </div>
-            <div className="space-y-2">
-              <Label className="text-black">Rok</Label>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="space-y-2 sm:col-span-2 lg:col-span-1">
+              <Label className="text-black">Období</Label>
               <select
                 className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black"
-                value={payrollYear}
-                onChange={(e) => setPayrollYear(Number(e.target.value))}
+                value={periodPreset}
+                onChange={(e) =>
+                  setPeriodPreset(e.target.value as PayrollPeriodPreset)
+                }
               >
-                {Array.from(
-                  { length: 14 },
-                  (_, i) => new Date().getFullYear() - 6 + i
-                ).map((y) => (
-                  <option key={y} value={y}>
-                    {y}
-                  </option>
-                ))}
+                <option value="this_week">Tento týden (po–ne)</option>
+                <option value="last_week">Minulý týden</option>
+                <option value="this_month">Tento kalendářní měsíc</option>
+                <option value="last_month">Minulý kalendářní měsíc</option>
+                <option value="calendar_month">Kalendářní měsíc (rok + měsíc)</option>
+                <option value="custom">Vlastní od – do</option>
               </select>
             </div>
-            <div className="space-y-2">
-              <Label className="text-black">Měsíc</Label>
-              <select
-                className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black"
-                value={payrollMonth}
-                onChange={(e) => setPayrollMonth(Number(e.target.value))}
-              >
-                {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
-                  <option key={m} value={m}>
-                    {String(m).padStart(2, "0")}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {periodPreset === "calendar_month" ? (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-black">Rok</Label>
+                  <select
+                    className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black"
+                    value={payrollYear}
+                    onChange={(e) => setPayrollYear(Number(e.target.value))}
+                  >
+                    {Array.from(
+                      { length: 14 },
+                      (_, i) => new Date().getFullYear() - 6 + i
+                    ).map((y) => (
+                      <option key={y} value={y}>
+                        {y}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-black">Měsíc</Label>
+                  <select
+                    className="h-12 w-full rounded-md border border-slate-300 bg-white px-3 text-base font-medium text-black"
+                    value={payrollMonth}
+                    onChange={(e) => setPayrollMonth(Number(e.target.value))}
+                  >
+                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                      <option key={m} value={m}>
+                        {String(m).padStart(2, "0")}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : null}
+            {periodPreset === "custom" ? (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-black">Od</Label>
+                  <Input
+                    type="date"
+                    className="h-12 border-slate-300 text-black"
+                    value={customFromStr}
+                    onChange={(e) => setCustomFromStr(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label className="text-black">Do</Label>
+                  <Input
+                    type="date"
+                    className="h-12 border-slate-300 text-black"
+                    value={customToStr}
+                    onChange={(e) => setCustomToStr(e.target.value)}
+                  />
+                </div>
+              </>
+            ) : null}
           </div>
           <p className="text-xs text-slate-600">
-            Výkazy a mzdy za období:{" "}
+            Aktuální rozsah dat:{" "}
             <span className="font-semibold text-slate-800">
-              {periodBounds.label}
+              {periodBounds.startStr} — {periodBounds.endStr} ({periodBounds.label})
             </span>
-            .
+            . Měsíční uzávěrka v přehledu níže používá měsíc konce období (
+            {periodBounds.payrollPeriod}).
           </p>
           <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-          {selectedEmp && selectedEmployeeId !== "all" && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-black">
-              <p>
-                <span className="font-semibold">Sazba:</span>{" "}
-                {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "není nastavena"}
-              </p>
-              <p className="mt-1">
-                <span className="font-semibold">Vyděláno (schv.):</span>{" "}
-                {formatKc(earnedAll)}
-              </p>
-              <p className="text-xs text-slate-800">
-                Bloky výkazu: {formatKc(earnedFromBlocks)} · Denní výkazy (schv.):{" "}
-                {formatKc(earnedFromDailyReports)}
-              </p>
-              <p>
-                <span className="font-semibold">Vyplaceno:</span>{" "}
-                {formatKc(paidTotal)}
-              </p>
-              <p className="font-bold text-emerald-900">
-                Zbývá: {formatKc(remaining)}
-              </p>
-            </div>
-          )}
-          {selectedEmployeeId === "all" && (
-            <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-black">
-              <p className="font-medium">
-                Zobrazují se výkazy všech zaměstnanců. Pro výpočet mezd a záloh
-                vyberte konkrétního zaměstnance.
-              </p>
-            </div>
-          )}
+            {selectedEmp && selectedEmployeeId !== "all" && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-black">
+                {selectedEmp.jobTitle ? (
+                  <p className="mb-1 text-xs text-slate-600">
+                    Pozice:{" "}
+                    <span className="font-medium text-slate-800">
+                      {String(selectedEmp.jobTitle)}
+                    </span>
+                  </p>
+                ) : null}
+                <p>
+                  <span className="font-semibold">Sazba:</span>{" "}
+                  {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "není nastavena"}
+                </p>
+                <p className="mt-1">
+                  <span className="font-semibold">Hrubá schválená částka (bloky + denní výkazy):</span>{" "}
+                  {formatKc(displayEarnedApproved)}
+                </p>
+                <p className="text-xs text-slate-800">
+                  Bloky výkazu: {formatKc(earnedFromBlocks)} · Denní výkazy (schv.):{" "}
+                  {formatKc(earnedFromDailyReports)}
+                </p>
+                <p>
+                  <span className="font-semibold">Zálohy vyplacené v období:</span>{" "}
+                  {formatKc(paidTotal)}
+                </p>
+                <p className="font-bold text-emerald-900">
+                  Po odečtu záloh (období): {formatKc(remaining)}
+                </p>
+              </div>
+            )}
+            {selectedEmployeeId === "all" && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-black">
+                <p className="font-medium">
+                  Zobrazují se výkazy všech zaměstnanců. Pro souhrn výplaty, záloh
+                  a PDF vyberte konkrétního zaměstnance.
+                </p>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>
+
+      {payrollSummary && selectedEmployeeId !== "all" && selectedEmp ? (
+        <Card className="border-slate-200 bg-white print:border-0">
+          <CardHeader className="flex flex-col gap-3 pb-2 sm:flex-row sm:items-center sm:justify-between print:hidden">
+            <div>
+              <CardTitle className="text-lg text-black">
+                Souhrn výplaty za období
+              </CardTitle>
+              <p className="text-xs text-slate-600">
+                Data z výkazů práce, denních výkazů, záloh a sazby zaměstnance.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-slate-300 text-black"
+              disabled={pdfSummaryExporting}
+              onClick={() => void handlePayrollSummaryPdf()}
+            >
+              {pdfSummaryExporting ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <FileDown className="mr-2 h-4 w-4" />
+              )}
+              Export souhrnu do PDF
+            </Button>
+          </CardHeader>
+          <CardContent>
+            <div
+              ref={payrollSummaryRef}
+              className="space-y-6 bg-white p-2 text-black sm:p-4 print:border-0 print:bg-white"
+            >
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                <h2 className="text-xl font-bold">Souhrn výplaty</h2>
+                {companyName ? (
+                  <p className="text-sm text-slate-700">{companyName}</p>
+                ) : null}
+                <p className="mt-2 font-medium">
+                  {employeeLabelById[selectedEmp.id] || selectedEmp.id}
+                </p>
+                {selectedEmp.jobTitle ? (
+                  <p className="text-sm text-slate-600">
+                    Pozice: {String(selectedEmp.jobTitle)}
+                  </p>
+                ) : null}
+                <p className="mt-1 text-sm">
+                  Období: {periodBounds.startStr} — {periodBounds.endStr} (
+                  {periodBounds.label})
+                </p>
+                <p className="text-xs text-slate-600">
+                  Přehled vygenerován:{" "}
+                  {format(new Date(), "d. M. yyyy HH:mm", { locale: cs })}
+                </p>
+              </div>
+
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="rounded-lg border border-slate-200 p-4">
+                  <h3 className="mb-2 font-semibold">Odpracované hodiny — bloky výkazu</h3>
+                  <ul className="space-y-1 text-sm">
+                    <li>
+                      Celkem zapsáno (výkaz):{" "}
+                      <strong>{payrollSummary.blocksTotalLoggedHours} h</strong>
+                    </li>
+                    <li>
+                      Schválené / započitatelné:{" "}
+                      <strong>{payrollSummary.blocksPayableHours} h</strong>
+                    </li>
+                    <li>
+                      Čeká na schválení (zapsáno):{" "}
+                      <strong>{payrollSummary.blocksPendingLoggedHours} h</strong>
+                    </li>
+                    <li>
+                      Zamítnuto (zapsáno):{" "}
+                      <strong>{payrollSummary.blocksRejectedLoggedHours} h</strong>
+                    </li>
+                  </ul>
+                </div>
+                <div className="rounded-lg border border-slate-200 p-4">
+                  <h3 className="mb-2 font-semibold">Denní výkazy</h3>
+                  <ul className="space-y-1 text-sm">
+                    <li>
+                      Hodiny ve schválených výkazech:{" "}
+                      <strong>{payrollSummary.dailyApprovedHours} h</strong>
+                    </li>
+                    <li>
+                      Hodiny v ostatních stavech:{" "}
+                      <strong>{payrollSummary.dailyOtherHours} h</strong>
+                    </li>
+                  </ul>
+                </div>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">Mzdové údaje (orientačně)</h3>
+                <p className="text-sm">
+                  Hodinová sazba:{" "}
+                  <strong>
+                    {hourlyRate > 0 ? `${hourlyRate} Kč/h` : "není nastavena"}
+                  </strong>
+                </p>
+                <ul className="mt-2 space-y-1 text-sm">
+                  <li>
+                    Částka ze schválených bloků:{" "}
+                    <strong>{formatKc(payrollSummary.blocksApprovedKc)}</strong>
+                  </li>
+                  <li>
+                    Částka ze schválených denních výkazů:{" "}
+                    <strong>{formatKc(payrollSummary.dailyApprovedKc)}</strong>
+                  </li>
+                  <li className="font-semibold">
+                    Hrubá schválená částka:{" "}
+                    {formatKc(payrollSummary.grossApprovedKc)}
+                  </li>
+                  <li className="text-slate-700">
+                    Orientačně nevyřízené (bloky čekající × sazba):{" "}
+                    {formatKc(payrollSummary.blocksUnapprovedEstimateKc)}
+                  </li>
+                  <li className="text-slate-700">
+                    Orientačně nevyřízené denní výkazy:{" "}
+                    {formatKc(payrollSummary.dailyPendingEstimateKc)}
+                  </li>
+                  <li>
+                    Celkem včetně odhadů nevyřízeného:{" "}
+                    <strong>
+                      {formatKc(payrollSummary.grossWithPendingEstimateKc)}
+                    </strong>
+                  </li>
+                </ul>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">
+                  Zálohy ve vybraném období (stav vyplaceno)
+                </h3>
+                {payrollSummary.advancesInPeriod.length === 0 ? (
+                  <p className="text-sm text-slate-600">Žádné zálohy v období.</p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-black">Datum</TableHead>
+                          <TableHead className="text-black">Částka</TableHead>
+                          <TableHead className="text-black">Stav</TableHead>
+                          <TableHead className="text-black">Poznámka</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {payrollSummary.advancesInPeriod.map((a) => (
+                          <TableRow key={a.id}>
+                            <TableCell className="text-black">
+                              {String(a.date ?? "").slice(0, 10)}
+                            </TableCell>
+                            <TableCell className="text-black">
+                              {formatKc(a.amount)}
+                            </TableCell>
+                            <TableCell className="text-black">
+                              {a.status === "paid" ? "Vyplaceno" : "Nezaplaceno"}
+                            </TableCell>
+                            <TableCell className="max-w-[240px] text-black">
+                              {a.note?.trim() || "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+                <p className="mt-3 text-sm font-semibold">
+                  Součet vyplacených záloh v období:{" "}
+                  {formatKc(payrollSummary.advancesPaidTotalKc)}
+                </p>
+              </div>
+
+              <div className="rounded-lg border-2 border-emerald-700/40 bg-emerald-50/50 p-4">
+                <h3 className="mb-2 font-semibold text-emerald-900">Výsledek</h3>
+                <p className="text-sm">
+                  Hrubá schválená výplata za období:{" "}
+                  <strong>{formatKc(payrollSummary.grossApprovedKc)}</strong>
+                </p>
+                <p className="text-sm">
+                  Mínus vyplacené zálohy v období:{" "}
+                  <strong>-{formatKc(payrollSummary.advancesPaidTotalKc)}</strong>
+                </p>
+                <p className="mt-2 text-lg font-bold text-emerald-900">
+                  K doplacení (po zálohách v období):{" "}
+                  {formatKc(payrollSummary.netAfterAdvancesKc)}
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-slate-200 p-4">
+                <h3 className="mb-2 font-semibold">Rozpis po dnech (agregace)</h3>
+                {employeeDailySummaryRows.length === 0 ? (
+                  <p className="text-sm text-slate-600">
+                    Za toto období nejsou žádné denní řádky (docházka / segmenty /
+                    výkazy podle stejné logiky jako přehled docházky).
+                  </p>
+                ) : (
+                  <>
+                    <div className="hidden overflow-x-auto md:block">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-black">Den</TableHead>
+                            <TableHead className="text-black">Odprac. (h)</TableHead>
+                            <TableHead className="text-black">Schváleno</TableHead>
+                            <TableHead className="text-black">Bloky</TableHead>
+                            <TableHead className="text-black">Schv. Kč</TableHead>
+                            <TableHead className="text-black">Neschv. Kč</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {employeeDailySummaryRows.map((row) => (
+                            <TableRow key={row.key}>
+                              <TableCell className="whitespace-nowrap text-black">
+                                {row.dayTitle}
+                              </TableCell>
+                              <TableCell className="text-black">
+                                {row.odpracovanoH != null
+                                  ? `${row.odpracovanoH} h`
+                                  : "—"}
+                              </TableCell>
+                              <TableCell className="text-black">
+                                {row.schvalenoStatus === "approved"
+                                  ? "Schváleno"
+                                  : row.schvalenoStatus === "pending"
+                                    ? "Čeká"
+                                    : "—"}
+                              </TableCell>
+                              <TableCell className="text-black">{row.bloku}</TableCell>
+                              <TableCell className="text-black">
+                                {formatKc(row.schvalenoKc)}
+                              </TableCell>
+                              <TableCell className="text-black">
+                                {formatKc(row.neschvalenoKc)}
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                    <div className="space-y-3 md:hidden">
+                      {employeeDailySummaryRows.map((row) => (
+                        <div
+                          key={row.key}
+                          className="rounded-md border border-slate-200 p-3 text-sm"
+                        >
+                          <p className="font-semibold text-black">{row.dayTitle}</p>
+                          <p className="text-slate-700">
+                            Odpracováno:{" "}
+                            {row.odpracovanoH != null ? `${row.odpracovanoH} h` : "—"}
+                          </p>
+                          <p className="text-slate-700">
+                            Stav:{" "}
+                            {row.schvalenoStatus === "approved"
+                              ? "Schváleno"
+                              : row.schvalenoStatus === "pending"
+                                ? "Čeká"
+                                : "—"}
+                          </p>
+                          <p className="text-slate-700">
+                            Bloky: {row.bloku} · Schv. {formatKc(row.schvalenoKc)} ·
+                            Neschv. {formatKc(row.neschvalenoKc)}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
 
       {companyId ? (
         <PayrollPeriodPanel
