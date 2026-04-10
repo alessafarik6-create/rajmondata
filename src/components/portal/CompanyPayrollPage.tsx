@@ -776,6 +776,17 @@ function PayrollAdminPageInner() {
     dayPayoutGlobalMap,
   ]);
 
+  const bulkPayrollTargetDaysCount = useMemo(
+    () => employeeDailySummaryRows.filter(dayRowHasPayrollActivity).length,
+    [employeeDailySummaryRows]
+  );
+
+  const bulkPayrollActionsDisabled =
+    bulkPayrollBusy ||
+    !selectedEmployeeId ||
+    selectedEmployeeId === "all" ||
+    bulkPayrollTargetDaysCount === 0;
+
   /**
    * Jeden zdroj pravdy s tabulkou „Rozpis po dnech“ — stejná data jako totalsFromDailyDetailRows(...).
    */
@@ -1757,10 +1768,65 @@ function PayrollAdminPageInner() {
       </div>
 
       <Card className="border-slate-200 bg-white print:hidden">
-        <CardHeader className="pb-2">
-          <CardTitle className="text-lg text-black">
-            Zaměstnanec a období
-          </CardTitle>
+        <CardHeader className="space-y-4 pb-2">
+          <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+            <div className="min-w-0">
+              <CardTitle className="text-lg text-black">
+                Zaměstnanec a období
+              </CardTitle>
+              <p className="mt-1 text-xs text-slate-600">
+                Hromadné schválení a výplata za aktuální filtr (zaměstnanec + období).
+              </p>
+            </div>
+            <div
+              className="shrink-0 rounded-xl border-2 border-amber-600 bg-amber-50 p-3 shadow-sm sm:min-w-[280px]"
+              data-testid="payroll-bulk-actions"
+            >
+              <p className="mb-2 text-center text-sm font-black uppercase tracking-wider text-amber-950 sm:text-left">
+                HROMADNE AKCE
+              </p>
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-[48px] flex-1 border-2 border-slate-400 bg-white text-base font-semibold text-black hover:bg-slate-50"
+                  disabled={bulkPayrollActionsDisabled}
+                  onClick={() => setBulkApproveDialogOpen(true)}
+                >
+                  Schválit za období
+                </Button>
+                <Button
+                  type="button"
+                  className="min-h-[48px] flex-1 bg-emerald-700 text-base font-semibold text-white hover:bg-emerald-800"
+                  disabled={bulkPayrollActionsDisabled}
+                  onClick={() => setBulkPaidDialogOpen(true)}
+                >
+                  Vyplaceno za období
+                </Button>
+              </div>
+              <p className="mt-2 text-xs leading-snug text-amber-950">
+                {!selectedEmployeeId ? (
+                  <>Vyberte zaměstnance v seznamu níže.</>
+                ) : selectedEmployeeId === "all" ? (
+                  <>
+                    Pro hromadné akce vyberte <strong>jednoho</strong> zaměstnance (ne
+                    „Všichni zaměstnanci“).
+                  </>
+                ) : bulkPayrollTargetDaysCount === 0 ? (
+                  <>
+                    V období {periodBounds.startStr} — {periodBounds.endStr} nejsou dny s evidencí
+                    práce — tlačítka jsou neaktivní.
+                  </>
+                ) : (
+                  <>
+                    Platí pro <strong>{payrollTargetEmployee?.displayName ?? "zaměstnance"}</strong> ·{" "}
+                    {bulkPayrollTargetDaysCount}{" "}
+                    {bulkPayrollTargetDaysCount === 1 ? "den" : bulkPayrollTargetDaysCount < 5 ? "dny" : "dnů"} k úpravě.
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="grid gap-4 lg:grid-cols-2">
@@ -1929,31 +1995,6 @@ function PayrollAdminPageInner() {
               </div>
             )}
           </div>
-          {payrollTargetEmployee && selectedEmployeeId !== "all" ? (
-            <div className="flex flex-col gap-2 border-t border-slate-100 pt-4 sm:flex-row sm:flex-wrap">
-              <Button
-                type="button"
-                variant="secondary"
-                className="min-h-[44px] border-slate-300 text-black"
-                disabled={bulkPayrollBusy}
-                onClick={() => setBulkApproveDialogOpen(true)}
-              >
-                Schválit za období
-              </Button>
-              <Button
-                type="button"
-                className="min-h-[44px] bg-emerald-700 text-white hover:bg-emerald-800"
-                disabled={bulkPayrollBusy}
-                onClick={() => setBulkPaidDialogOpen(true)}
-              >
-                Vyplaceno za období
-              </Button>
-              <p className="w-full text-xs text-slate-600 sm:pl-1">
-                Platí pro <strong>{payrollTargetEmployee.displayName}</strong> a období{" "}
-                {periodBounds.startStr} — {periodBounds.endStr}. Upraví se jen dny s evidencí práce.
-              </p>
-            </div>
-          ) : null}
         </CardContent>
       </Card>
 
