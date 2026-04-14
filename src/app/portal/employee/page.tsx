@@ -30,6 +30,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { EmployeeAttendanceOverview } from "./employee-attendance-overview";
 import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
+import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
 
 const DEBUG_EMPLOYEE_HOME = process.env.NODE_ENV === "development";
 
@@ -159,6 +160,9 @@ export default function EmployeeHomePage() {
     );
   }
 
+  // Upozornění z kalendáře / systému – v profilu i na domovské stránce zaměstnance.
+  // Zobrazuje se i na mobilu; nepřečtené zvýrazní.
+
   if (!profile) {
     return (
       <Alert variant="destructive" className="max-w-lg">
@@ -241,6 +245,12 @@ export default function EmployeeHomePage() {
         companyId={companyId}
         employeeId={employeeId}
         isPrivileged={false}
+      />
+
+      <EmployeeNotificationsPanel
+        companyId={companyId}
+        employeeId={employeeId}
+        compact
       />
 
       <div

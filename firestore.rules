@@ -493,6 +493,41 @@ service cloud.firestore {
       }
 
       /**
+       * Upozornění zaměstnancům (např. z kalendáře).
+       * companies/{companyId}/employee_notifications/{notificationId}
+       *
+       * - zápis hromadných upozornění: jen privileged role
+       * - zaměstnanec: může číst své a označit jako přečtené
+       */
+      match /employee_notifications/{notificationId} {
+        allow read: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() ||
+          (
+            userRole() == 'employee' &&
+            (
+              resource.data.employeeId == request.auth.uid ||
+              (('employeeId' in userDoc()) && resource.data.employeeId == userDoc().employeeId)
+            )
+          )
+        );
+
+        allow create, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+
+        allow update: if signedIn() && sameCompany(companyId) && (
+          isPrivileged() ||
+          (
+            userRole() == 'employee' &&
+            (
+              resource.data.employeeId == request.auth.uid ||
+              (('employeeId' in userDoc()) && resource.data.employeeId == userDoc().employeeId)
+            ) &&
+            request.resource.data.diff(resource.data).changedKeys().hasOnly(['isRead', 'readAt', 'updatedAt']) &&
+            request.resource.data.isRead == true
+          )
+        );
+      }
+
+      /**
        * Zákaznický chat s administrací.
        * companies/{companyId}/customer_conversations/{conversationId}
        */

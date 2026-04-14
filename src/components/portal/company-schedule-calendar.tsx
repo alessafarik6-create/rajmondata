@@ -25,13 +25,14 @@ import {
   orderBy,
   Timestamp,
   updateDoc,
+  deleteDoc,
   doc,
   serverTimestamp,
   addDoc,
   type DocumentData,
   type UpdateData,
 } from "firebase/firestore";
-import { useFirestore, useMemoFirebase, useCollection } from "@/firebase";
+import { useFirestore, useMemoFirebase, useCollection, useUser, useDoc } from "@/firebase";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Select,
   SelectContent,
@@ -57,6 +59,11 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
+import {
+  deleteEmployeeNotificationsForEvent,
+  upsertEmployeeNotificationsForEvent,
+  type EmployeeNotificationType,
+} from "@/lib/employee-notifications";
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
 
@@ -81,6 +88,9 @@ type CalendarEvent = {
   accentClass: string;
   /** Firestore id pro update (např. lead_meetings/{id}) */
   sourceId?: string;
+  sentToAllEmployees?: boolean;
+  notificationType?: EmployeeNotificationType;
+  notificationMessage?: string | null;
 };
 
 function isValidCalendarEvent(e: unknown): e is CalendarEvent {
@@ -194,6 +204,11 @@ function ScheduleMobileEventCard({ ev }: { ev: CalendarEvent }) {
             <span className={cn(ev.kind === "meeting" ? (ev as any).titleClass : "")}>
               {ev.headline}
             </span>
+            {ev.sentToAllEmployees ? (
+              <span className="ml-2 inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 align-middle text-[10px] font-semibold text-indigo-900">
+                Rozesláno
+              </span>
+            ) : null}
           </p>
         </div>
 
@@ -263,6 +278,28 @@ export function CompanyScheduleCalendar({
 }) {
   const firestore = useFirestore();
   const { toast } = useToast();
+  const { user } = useUser();
+
+  const userRef = useMemoFirebase(
+    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
+    [firestore, user]
+  );
+  const { data: profile } = useDoc<any>(userRef);
+  const role = String(profile?.role ?? "");
+  const canSendToAllEmployees =
+    role === "owner" || role === "admin" || role === "manager" || role === "accountant";
+
+  const employeesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !canSendToAllEmployees) return null;
+    return collection(firestore, "companies", companyId, "employees");
+  }, [firestore, companyId, canSendToAllEmployees]);
+  const { data: employeesRaw = [] } = useCollection(employeesQuery);
+  const employeeIds = useMemo(() => {
+    const raw = Array.isArray(employeesRaw) ? employeesRaw : [];
+    return raw
+      .map((e: any) => String(e?.id ?? "").trim())
+      .filter(Boolean);
+  }, [employeesRaw]);
   const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
   const [mobileSelectedDay, setMobileSelectedDay] = useState(() =>
     startOfDay(new Date())
@@ -279,6 +316,10 @@ export function CompanyScheduleCalendar({
   const [meetingDate, setMeetingDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [meetingTime, setMeetingTime] = useState(() => format(new Date(), "HH:mm"));
   const [meetingStatus, setMeetingStatus] = useState<MeetingStatus>("planned");
+  const [sendToAllEmployees, setSendToAllEmployees] = useState(false);
+  const [notificationType, setNotificationType] =
+    useState<EmployeeNotificationType>("info");
+  const [notificationText, setNotificationText] = useState("");
 
   const monthStart = startOfMonth(visibleMonth);
   const monthEnd = endOfMonth(visibleMonth);
@@ -329,6 +370,20 @@ export function CompanyScheduleCalendar({
           : "planned";
       const v = meetingVisuals(st);
       const headline = String(raw.title ?? "").trim() || note || "Schůzka";
+      const sentToAllEmployees = raw?.sentToAllEmployees === true;
+      const notificationType =
+        String(raw?.notificationType ?? "").trim() as EmployeeNotificationType;
+      const nt: EmployeeNotificationType =
+        notificationType === "important" ||
+        notificationType === "training" ||
+        notificationType === "meeting" ||
+        notificationType === "info"
+          ? notificationType
+          : "info";
+      const notificationMessage =
+        typeof raw?.notificationMessage === "string" && raw.notificationMessage.trim()
+          ? raw.notificationMessage.trim()
+          : null;
       out.push({
         id: `m-${id}`,
         at,
@@ -343,6 +398,9 @@ export function CompanyScheduleCalendar({
         badgeClass: v.badgeClass,
         accentClass: v.accentClass,
         sourceId: id,
+        sentToAllEmployees,
+        notificationType: nt,
+        notificationMessage,
         // @ts-expect-error: internal styling field for meeting only
         titleClass: v.titleClass,
       });
@@ -428,6 +486,9 @@ export function CompanyScheduleCalendar({
     setMeetingNote("");
     setMeetingDate(format(day, "yyyy-MM-dd"));
     setMeetingTime("09:00");
+    setSendToAllEmployees(false);
+    setNotificationType("info");
+    setNotificationText("");
     setFormOpen(true);
   };
 
@@ -442,7 +503,16 @@ export function CompanyScheduleCalendar({
     setMeetingNote("");
     setMeetingDate(format(ev.at, "yyyy-MM-dd"));
     setMeetingTime(format(ev.at, "HH:mm"));
+    setSendToAllEmployees(ev.sentToAllEmployees === true);
+    setNotificationType(ev.notificationType ?? "info");
+    setNotificationText(ev.notificationMessage ?? "");
     setFormOpen(true);
+  };
+
+  const buildDefaultNotificationText = (title: string, dateStr: string, timeStr: string) => {
+    const t = timeStr.trim();
+    const d = dateStr.trim();
+    return `${title}${d ? ` · ${d}` : ""}${t ? ` ${t}` : ""}`;
   };
 
   const saveMeeting = async () => {
@@ -477,10 +547,19 @@ export function CompanyScheduleCalendar({
         calendarEventType: "lead_meeting",
         title,
         status,
+        sentToAllEmployees: sendToAllEmployees === true,
+        notificationType: notificationType,
+        notificationMessage: notificationText.trim() || null,
         updatedAt: serverTimestamp(),
         ...(status === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
         ...(status === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
       } as Record<string, unknown>;
+
+      const eventIdExisting =
+        editingEvent?.kind === "meeting" && editingEvent.sourceId
+          ? editingEvent.sourceId
+          : null;
+      let createdEventId: string | null = null;
 
       if (editingEvent?.kind === "meeting" && editingEvent.sourceId) {
         await updateDoc(
@@ -489,13 +568,69 @@ export function CompanyScheduleCalendar({
         );
         toast({ title: "Uloženo", description: "Schůzka byla upravena." });
       } else {
-        await addDoc(collection(firestore, "companies", companyId, "lead_meetings"), {
+        const created = await addDoc(collection(firestore, "companies", companyId, "lead_meetings"), {
           ...payload,
           createdAt: serverTimestamp(),
           createdBy: "dashboard",
         });
+        createdEventId = created.id;
         toast({ title: "Uloženo", description: "Schůzka byla vytvořena." });
       }
+
+      const realEventId =
+        eventIdExisting ?? createdEventId;
+
+      const wasSentBefore = editingEvent?.sentToAllEmployees === true;
+      const shouldFanout =
+        canSendToAllEmployees &&
+        user?.uid &&
+        realEventId &&
+        sendToAllEmployees === true;
+
+      if (shouldFanout) {
+        const msg =
+          notificationText.trim() ||
+          buildDefaultNotificationText(title, dateStr, timeStr);
+        const res = await upsertEmployeeNotificationsForEvent({
+          firestore,
+          companyId,
+          eventId: realEventId,
+          employeeIds,
+          title,
+          message: msg,
+          type: notificationType,
+          eventDate: dateStr,
+          eventTime: timeStr,
+          sentBy: user.uid,
+        });
+        toast({
+          title: "Akce uložena",
+          description: `Upozornění odesláno: ${res.upserted} zaměstnancům.`,
+        });
+      } else if (
+        canSendToAllEmployees &&
+        user?.uid &&
+        realEventId &&
+        wasSentBefore &&
+        sendToAllEmployees === false
+      ) {
+        await deleteEmployeeNotificationsForEvent({
+          firestore,
+          companyId,
+          eventId: realEventId,
+        });
+        toast({
+          title: "Akce uložena",
+          description: "Upozornění bylo deaktivováno (smazáno) pro zaměstnance.",
+        });
+      } else if (sendToAllEmployees && !canSendToAllEmployees) {
+        toast({
+          variant: "destructive",
+          title: "Nelze odeslat upozornění",
+          description: "Hromadné upozornění může odeslat jen admin / vedoucí / účetní.",
+        });
+      }
+
       setFormOpen(false);
       setEditingEvent(null);
     } catch (e) {
@@ -503,6 +638,37 @@ export function CompanyScheduleCalendar({
       toast({
         variant: "destructive",
         title: "Uložení se nezdařilo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const deleteMeeting = async () => {
+    if (!firestore || !companyId) return;
+    if (editingEvent?.kind !== "meeting" || !editingEvent.sourceId) return;
+    if (!canSendToAllEmployees) {
+      toast({
+        variant: "destructive",
+        title: "Přístup zamítnut",
+        description: "Smazání může provést jen oprávněná role.",
+      });
+      return;
+    }
+    setSaving(true);
+    try {
+      const eventId = editingEvent.sourceId;
+      await deleteDoc(doc(firestore, "companies", companyId, "lead_meetings", eventId));
+      await deleteEmployeeNotificationsForEvent({ firestore, companyId, eventId });
+      toast({ title: "Smazáno", description: "Akce i upozornění byly odstraněny." });
+      setFormOpen(false);
+      setEditingEvent(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Smazání se nezdařilo",
         description: e instanceof Error ? e.message : "Zkuste to znovu.",
       });
     } finally {
@@ -794,6 +960,11 @@ export function CompanyScheduleCalendar({
                         >
                           <span className="font-semibold tabular-nums">{format(ev.at, "HH:mm")}</span>{" "}
                           <span className="font-medium">{ev.title}</span>
+                          {ev.sentToAllEmployees ? (
+                            <span className="ml-1 text-[9px] font-semibold text-indigo-900">
+                              · rozesláno
+                            </span>
+                          ) : null}
                           {ev.detail ? (
                             <span className="block truncate text-[9px] opacity-90 sm:text-[10px]">
                               {ev.detail}
@@ -858,6 +1029,60 @@ export function CompanyScheduleCalendar({
               <Label>Popis / poznámka</Label>
               <Textarea rows={3} value={meetingNote} onChange={(e) => setMeetingNote(e.target.value)} />
             </div>
+            <div className="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <p className="text-sm font-semibold text-slate-900">
+                    Odeslat jako upozornění všem zaměstnancům
+                  </p>
+                  <p className="text-xs text-slate-700">
+                    Upozornění se zobrazí v profilu zaměstnance a v jeho sekci Upozornění.
+                  </p>
+                </div>
+                <Switch
+                  checked={sendToAllEmployees}
+                  onCheckedChange={setSendToAllEmployees}
+                  disabled={!canSendToAllEmployees}
+                />
+              </div>
+              {sendToAllEmployees ? (
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1">
+                    <Label>Typ upozornění</Label>
+                    <Select
+                      value={notificationType}
+                      onValueChange={(v) =>
+                        setNotificationType(v as EmployeeNotificationType)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="info">Informace</SelectItem>
+                        <SelectItem value="important">Důležité</SelectItem>
+                        <SelectItem value="training">Školení</SelectItem>
+                        <SelectItem value="meeting">Porada</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1 sm:col-span-2">
+                    <Label>Text upozornění (volitelné)</Label>
+                    <Textarea
+                      rows={2}
+                      value={notificationText}
+                      onChange={(e) => setNotificationText(e.target.value)}
+                      placeholder="Pokud necháte prázdné, použije se název a datum/čas akce."
+                    />
+                  </div>
+                  {!canSendToAllEmployees ? (
+                    <p className="text-xs text-rose-700 sm:col-span-2">
+                      Hromadné upozornění může odeslat jen admin / vedoucí / účetní.
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
             <div className="sm:col-span-2 space-y-1">
               <Label>Stav</Label>
               <Select value={meetingStatus} onValueChange={(v) => setMeetingStatus(v as MeetingStatus)}>
@@ -877,6 +1102,17 @@ export function CompanyScheduleCalendar({
             <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => (setFormOpen(false), setEditingEvent(null))}>
               Zrušit
             </Button>
+            {editingEvent?.kind === "meeting" && editingEvent.sourceId ? (
+              <Button
+                type="button"
+                variant="destructive"
+                className="min-h-[44px]"
+                disabled={saving}
+                onClick={() => void deleteMeeting()}
+              >
+                Smazat
+              </Button>
+            ) : null}
             <Button type="button" className="min-h-[44px]" disabled={saving} onClick={() => void saveMeeting()}>
               {saving ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent" /> : null}
               Uložit

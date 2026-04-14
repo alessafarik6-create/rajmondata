@@ -29,6 +29,7 @@ import { Loader2, Upload, Trash2, AlertCircle, KeyRound, Briefcase } from "lucid
 import Link from "next/link";
 import { EmployeeDebtsReadonlySection } from "@/components/portal/employee-debts-readonly";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
 
 const DEBUG = process.env.NODE_ENV === "development";
 import { LIGHT_FORM_CONTROL_CLASS } from "@/lib/light-form-control-classes";
@@ -428,6 +429,12 @@ export default function EmployeeProfilePage() {
           Vaše údaje a nastavení účtu.
         </p>
       </div>
+
+      <EmployeeNotificationsPanel
+        companyId={companyId}
+        employeeId={employeeId}
+        compact
+      />
 
       <Card className="bg-white border-slate-200 shadow-sm">
         <CardHeader>
