@@ -2,17 +2,9 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import {
-  collection,
-  doc,
-  limit,
-  orderBy,
-  query,
-  serverTimestamp,
-  updateDoc,
-  where,
-} from "firebase/firestore";
-import { useCollection, useMemoFirebase, useFirestore } from "@/firebase";
+import { doc, serverTimestamp, updateDoc } from "firebase/firestore";
+import { useFirestore } from "@/firebase";
+import { useEmployeeNotificationsInbox } from "@/hooks/use-employee-notifications-inbox";
 import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -49,8 +41,6 @@ function typeBadgeVariant(
   return "outline";
 }
 
-const silentListen = { suppressGlobalPermissionError: true as const };
-
 export function EmployeeNotificationsPanel(props: {
   companyId: string | undefined;
   employeeId: string | undefined;
@@ -60,35 +50,22 @@ export function EmployeeNotificationsPanel(props: {
   const firestore = useFirestore();
   const [filter, setFilter] = useState<"all" | "unread" | "important">("all");
 
-  const qRef = useMemoFirebase(() => {
-    if (!firestore || !companyId || !employeeId) return null;
-    return query(
-      collection(firestore, "companies", companyId, "employee_notifications"),
-      where("employeeId", "==", employeeId),
-      orderBy("createdAt", "desc"),
-      limit(50)
-    );
-  }, [firestore, companyId, employeeId]);
-
-  const { data: raw = [], isLoading, error, isIndexPending } = useCollection(
-    qRef,
-    silentListen
-  );
+  const { sortedDocs, unreadCount, isLoading, error, isIndexPending } =
+    useEmployeeNotificationsInbox({ companyId, employeeId });
 
   useEffect(() => {
     if (!companyId || !employeeId) return;
-    const list = Array.isArray(raw) ? raw : [];
     console.log("[employee-notifications] snapshot", {
       companyId,
       employeeId,
-      count: list.length,
+      count: sortedDocs.length,
       isIndexPending,
       error: error?.message ?? null,
     });
-  }, [companyId, employeeId, raw, isIndexPending, error]);
+  }, [companyId, employeeId, sortedDocs.length, isIndexPending, error]);
 
   const items = useMemo((): EmployeeNotifRow[] => {
-    const list = Array.isArray(raw) ? raw : [];
+    const list = Array.isArray(sortedDocs) ? sortedDocs : [];
     return list
       .map((r: any) => ({
         id: String(r?.id ?? ""),
@@ -109,18 +86,13 @@ export function EmployeeNotificationsPanel(props: {
             : null,
       }))
       .filter((i) => Boolean(i.id));
-  }, [raw]);
+  }, [sortedDocs]);
 
   const filtered = useMemo(() => {
     if (filter === "unread") return items.filter((i) => !i.isRead);
     if (filter === "important") return items.filter((i) => i.type === "important");
     return items;
   }, [items, filter]);
-
-  const unreadCount = useMemo(
-    () => items.filter((i) => !i.isRead).length,
-    [items]
-  );
 
   const markRead = async (id: string) => {
     if (!firestore || !companyId) return;
@@ -155,10 +127,9 @@ export function EmployeeNotificationsPanel(props: {
             <AlertCircle className="h-4 w-4" />
             <AlertTitle>Upozornění se nepodařilo načíst</AlertTitle>
             <AlertDescription>
-              Chybí nebo se právě vytváří databázový index pro řazení podle data.
-              Po nasazení indexu ze souboru{" "}
-              <code className="rounded bg-amber-100/80 px-1">firestore.indexes.json</code>{" "}
-              zkuste stránku znovu za pár minut.
+              Firestore hlásí chybějící nebo rozpracovaný index, nebo dočasnou chybu dotazu.
+              Ověřte nasazení indexů (<code className="rounded bg-amber-100/80 px-1">firebase deploy --only firestore:indexes</code>)
+              a zkuste stránku za chvíli znovu. Pokud problém přetrvá, kontaktujte administrátora.
             </AlertDescription>
           </Alert>
         ) : null}

@@ -1,36 +1,12 @@
 "use client";
 
-import { useMemo } from "react";
-import { collection, limit, query, where } from "firebase/firestore";
-import { useCollection, useFirestore, useMemoFirebase } from "@/firebase";
+import { useEmployeeNotificationsInbox } from "@/hooks/use-employee-notifications-inbox";
 
-/**
- * Lehký dotaz bez orderBy (stačí automatický jednopolový index) — jen pro badge počtu nepřečtených.
- */
+/** Počítadlo nepřečtených — stejný Firestore dotaz jako `EmployeeNotificationsPanel` (sdílená logika v `useEmployeeNotificationsInbox`). */
 export function useEmployeeNotificationUnreadCount(params: {
   companyId: string | undefined;
   employeeId: string | undefined;
 }) {
-  const { companyId, employeeId } = params;
-  const firestore = useFirestore();
-
-  const qRef = useMemoFirebase(() => {
-    if (!firestore || !companyId || !employeeId) return null;
-    return query(
-      collection(firestore, "companies", companyId, "employee_notifications"),
-      where("employeeId", "==", employeeId),
-      limit(100)
-    );
-  }, [firestore, companyId, employeeId]);
-
-  const { data: raw = [], isLoading } = useCollection(qRef, {
-    suppressGlobalPermissionError: true,
-  });
-
-  const unreadCount = useMemo(() => {
-    const list = Array.isArray(raw) ? raw : [];
-    return list.filter((d: { isRead?: boolean }) => d?.isRead !== true).length;
-  }, [raw]);
-
+  const { unreadCount, isLoading } = useEmployeeNotificationsInbox(params);
   return { unreadCount, isLoading };
 }
