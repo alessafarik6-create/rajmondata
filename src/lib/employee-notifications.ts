@@ -22,6 +22,8 @@ export type EmployeeNotificationType =
 export type EmployeeNotificationDoc = {
   id: string;
   companyId: string;
+  /** Alias organizationId === companyId (kvůli konzistenci s požadovaným modelem). */
+  organizationId?: string;
   employeeId: string;
   eventId?: string | null;
   title: string;
@@ -82,6 +84,12 @@ export async function upsertEmployeeNotificationsForEvent(params: {
   const ids = employeeIds.map((s) => String(s).trim()).filter(Boolean);
   if (ids.length === 0) return { upserted: 0 };
 
+  console.log("[employee-notifications] upsert start", {
+    companyId,
+    eventId,
+    recipientCount: ids.length,
+  });
+
   const existingSnap = await getDocs(
     query(
       collection(firestore, "companies", companyId, "employee_notifications"),
@@ -111,6 +119,8 @@ export async function upsertEmployeeNotificationsForEvent(params: {
       );
       const base = {
         companyId,
+        /** Stejná hodnota jako companyId — alias pro přehled v datech / integrace. */
+        organizationId: companyId,
         employeeId,
         eventId,
         title,
@@ -118,7 +128,8 @@ export async function upsertEmployeeNotificationsForEvent(params: {
         type,
         eventDate,
         eventTime,
-        linkUrl: linkUrl ?? "/portal/dashboard",
+        /** Výchozí cíl pro zaměstnance (dashboard organizace často nemá). */
+        linkUrl: linkUrl ?? "/portal/employee",
         sentBy,
         sentToAllEmployees: true,
         updatedAt: serverTimestamp(),
@@ -132,6 +143,7 @@ export async function upsertEmployeeNotificationsForEvent(params: {
     }
     await batch.commit();
   }
+  console.log("[employee-notifications] upsert done", { upserted });
   return { upserted };
 }
 

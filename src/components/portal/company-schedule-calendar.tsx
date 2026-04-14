@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   addMonths,
   subMonths,
@@ -60,6 +61,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useIsMobile } from "@/hooks/use-mobile";
+import {
   deleteEmployeeNotificationsForEvent,
   upsertEmployeeNotificationsForEvent,
   type EmployeeNotificationType,
@@ -88,6 +100,8 @@ type CalendarEvent = {
   accentClass: string;
   /** Firestore id pro update (např. lead_meetings/{id}) */
   sourceId?: string;
+  /** Poznámka z dokumentu schůzky (pro editaci formuláře). */
+  eventNote?: string;
   sentToAllEmployees?: boolean;
   notificationType?: EmployeeNotificationType;
   notificationMessage?: string | null;
@@ -277,6 +291,8 @@ export function CompanyScheduleCalendar({
   companyId: string;
 }) {
   const firestore = useFirestore();
+  const router = useRouter();
+  const isMobile = useIsMobile();
   const { toast } = useToast();
   const { user } = useUser();
 
@@ -307,6 +323,7 @@ export function CompanyScheduleCalendar({
 
   const [formOpen, setFormOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingCustomerName, setMeetingCustomerName] = useState("");
@@ -390,7 +407,7 @@ export function CompanyScheduleCalendar({
         title: customerName,
         headline,
         kind: "meeting",
-        detail: "Schůzka",
+        detail: note || "Schůzka",
         phone: phone || undefined,
         address: place || undefined,
         status: st,
@@ -398,6 +415,7 @@ export function CompanyScheduleCalendar({
         badgeClass: v.badgeClass,
         accentClass: v.accentClass,
         sourceId: id,
+        eventNote: note,
         sentToAllEmployees,
         notificationType: nt,
         notificationMessage,
@@ -477,6 +495,7 @@ export function CompanyScheduleCalendar({
   const loading = meetingsLoading || measurementsLoading;
 
   const openCreateForDay = (day: Date) => {
+    console.log("[calendar] open create for day", format(day, "yyyy-MM-dd"));
     setEditingEvent(null);
     setMeetingStatus("planned");
     setMeetingTitle("");
@@ -494,13 +513,17 @@ export function CompanyScheduleCalendar({
 
   const openEditMeeting = (ev: CalendarEvent) => {
     if (ev.kind !== "meeting") return;
+    console.log("[calendar] open edit meeting", {
+      calendarId: ev.id,
+      sourceId: ev.sourceId,
+    });
     setEditingEvent(ev);
     setMeetingStatus((ev.status as MeetingStatus) ?? "planned");
     setMeetingTitle(ev.headline || "");
     setMeetingCustomerName(ev.title || "");
     setMeetingPlace(ev.address || "");
     setMeetingPhone(ev.phone || "");
-    setMeetingNote("");
+    setMeetingNote(ev.eventNote ?? "");
     setMeetingDate(format(ev.at, "yyyy-MM-dd"));
     setMeetingTime(format(ev.at, "HH:mm"));
     setSendToAllEmployees(ev.sentToAllEmployees === true);
@@ -537,6 +560,12 @@ export function CompanyScheduleCalendar({
     const customerName = meetingCustomerName.trim() || "—";
     setSaving(true);
     try {
+      console.log("[calendar] saveMeeting start", {
+        companyId,
+        isEdit: Boolean(editingEvent?.sourceId),
+        sendToAllEmployees,
+        employeeTargetCount: employeeIds.length,
+      });
       const payload = {
         companyId,
         customerName,
@@ -562,6 +591,7 @@ export function CompanyScheduleCalendar({
       let createdEventId: string | null = null;
 
       if (editingEvent?.kind === "meeting" && editingEvent.sourceId) {
+        console.log("[calendar] lead_meeting update", editingEvent.sourceId);
         await updateDoc(
           doc(firestore, "companies", companyId, "lead_meetings", editingEvent.sourceId),
           payload as UpdateData<DocumentData>
@@ -574,6 +604,7 @@ export function CompanyScheduleCalendar({
           createdBy: "dashboard",
         });
         createdEventId = created.id;
+        console.log("[calendar] lead_meeting created", createdEventId);
         toast({ title: "Uloženo", description: "Schůzka byla vytvořena." });
       }
 
@@ -591,6 +622,10 @@ export function CompanyScheduleCalendar({
         const msg =
           notificationText.trim() ||
           buildDefaultNotificationText(title, dateStr, timeStr);
+        console.log("[calendar] upsert employee notifications", {
+          eventId: realEventId,
+          recipients: employeeIds.length,
+        });
         const res = await upsertEmployeeNotificationsForEvent({
           firestore,
           companyId,
@@ -602,7 +637,9 @@ export function CompanyScheduleCalendar({
           eventDate: dateStr,
           eventTime: timeStr,
           sentBy: user.uid,
+          linkUrl: "/portal/employee",
         });
+        console.log("[calendar] upsert employee notifications done", res);
         toast({
           title: "Akce uložena",
           description: `Upozornění odesláno: ${res.upserted} zaměstnancům.`,
@@ -645,7 +682,7 @@ export function CompanyScheduleCalendar({
     }
   };
 
-  const deleteMeeting = async () => {
+  const performDeleteMeeting = async () => {
     if (!firestore || !companyId) return;
     if (editingEvent?.kind !== "meeting" || !editingEvent.sourceId) return;
     if (!canSendToAllEmployees) {
@@ -659,9 +696,11 @@ export function CompanyScheduleCalendar({
     setSaving(true);
     try {
       const eventId = editingEvent.sourceId;
+      console.log("[calendar] delete meeting", { eventId, companyId });
       await deleteDoc(doc(firestore, "companies", companyId, "lead_meetings", eventId));
       await deleteEmployeeNotificationsForEvent({ firestore, companyId, eventId });
       toast({ title: "Smazáno", description: "Akce i upozornění byly odstraněny." });
+      setDeleteConfirmOpen(false);
       setFormOpen(false);
       setEditingEvent(null);
     } catch (e) {
@@ -942,39 +981,57 @@ export function CompanyScheduleCalendar({
                     </div>
                     <ul className="space-y-0.5">
                       {dayEvents.slice(0, 4).map((ev) => (
-                        <li
-                          key={ev.id}
-                          className={cn(
-                            "truncate rounded border px-1 py-0.5 text-[10px] leading-tight sm:text-[11px] text-slate-900",
-                            ev.kind === "meeting"
-                              ? ev.status === "done"
-                                ? "border-emerald-200 bg-emerald-100"
-                                : ev.status === "cancelled"
-                                  ? "border-slate-200 bg-slate-100 text-slate-600 line-through"
-                                  : "border-orange-200 bg-orange-100"
-                              : ev.badgeClass.includes("slate")
-                                ? "border-slate-200 bg-slate-100 text-slate-700"
-                                : "border-emerald-200 bg-emerald-100"
-                          )}
-                          title={`${format(ev.at, "HH:mm")} — ${ev.title} — ${ev.detail ?? ""}`}
-                        >
-                          <span className="font-semibold tabular-nums">{format(ev.at, "HH:mm")}</span>{" "}
-                          <span className="font-medium">{ev.title}</span>
-                          {ev.sentToAllEmployees ? (
-                            <span className="ml-1 text-[9px] font-semibold text-indigo-900">
-                              · rozesláno
-                            </span>
-                          ) : null}
-                          {ev.detail ? (
-                            <span className="block truncate text-[9px] opacity-90 sm:text-[10px]">
-                              {ev.detail}
-                            </span>
-                          ) : null}
-                          {ev.kind === "meeting" ? (
-                            <span className="ml-1 text-[9px] opacity-80">
-                              · {ev.statusLabel}
-                            </span>
-                          ) : null}
+                        <li key={ev.id} className="list-none">
+                          <button
+                            type="button"
+                            className={cn(
+                              "w-full min-h-[44px] cursor-pointer truncate rounded border px-1.5 py-1 text-left text-[10px] leading-tight transition-colors sm:min-h-[36px] sm:text-[11px] text-slate-900",
+                              "hover:ring-2 hover:ring-orange-300/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500",
+                              ev.kind === "meeting"
+                                ? ev.status === "done"
+                                  ? "border-emerald-200 bg-emerald-100"
+                                  : ev.status === "cancelled"
+                                    ? "border-slate-200 bg-slate-100 text-slate-600 line-through"
+                                    : "border-orange-200 bg-orange-100"
+                                : ev.badgeClass.includes("slate")
+                                  ? "border-slate-200 bg-slate-100 text-slate-700"
+                                  : "border-emerald-200 bg-emerald-100"
+                            )}
+                            title={`${format(ev.at, "HH:mm")} — ${ev.title} — ${ev.detail ?? ""}`}
+                            onClick={() => {
+                              console.log("[calendar] desktop event click", {
+                                id: ev.id,
+                                kind: ev.kind,
+                              });
+                              if (ev.kind === "meeting") {
+                                openEditMeeting(ev);
+                              } else {
+                                toast({
+                                  title: "Zaměření",
+                                  description: "Otevřete detail v sekci Zaměření.",
+                                });
+                                router.push("/portal/jobs/measurements");
+                              }
+                            }}
+                          >
+                            <span className="font-semibold tabular-nums">{format(ev.at, "HH:mm")}</span>{" "}
+                            <span className="font-medium">{ev.title}</span>
+                            {ev.sentToAllEmployees ? (
+                              <span className="ml-1 text-[9px] font-semibold text-indigo-900">
+                                · rozesláno
+                              </span>
+                            ) : null}
+                            {ev.detail ? (
+                              <span className="block truncate text-[9px] opacity-90 sm:text-[10px]">
+                                {ev.detail}
+                              </span>
+                            ) : null}
+                            {ev.kind === "meeting" ? (
+                              <span className="ml-1 text-[9px] opacity-80">
+                                · {ev.statusLabel}
+                              </span>
+                            ) : null}
+                          </button>
                         </li>
                       ))}
                       {dayEvents.length > 4 ? (
@@ -991,12 +1048,28 @@ export function CompanyScheduleCalendar({
         )}
       </div>
 
-      <Sheet open={formOpen} onOpenChange={(o) => !o && (setFormOpen(false), setEditingEvent(null))}>
-        <SheetContent side="bottom" className="max-h-[92vh] overflow-auto sm:side-right sm:max-w-lg">
+      <Sheet
+        open={formOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setFormOpen(false);
+            setEditingEvent(null);
+          }
+        }}
+      >
+        <SheetContent
+          side={isMobile ? "bottom" : "right"}
+          className={cn(
+            "flex w-full flex-col overflow-y-auto sm:max-w-lg",
+            isMobile ? "max-h-[92vh]" : "h-full max-h-screen"
+          )}
+        >
           <SheetHeader>
             <SheetTitle>{editingEvent ? "Upravit schůzku / akci" : "Nová schůzka / akce"}</SheetTitle>
             <SheetDescription>
-              Na mobilu je formulář v plné šířce, aby šlo pohodlně plánovat datum i čas.
+              {isMobile
+                ? "Formulář v dolním panelu — datum a čas pohodlně na výšku."
+                : "Boční panel — úpravy schůzky, stav a upozornění pro zaměstnance."}
             </SheetDescription>
           </SheetHeader>
 
@@ -1108,7 +1181,10 @@ export function CompanyScheduleCalendar({
                 variant="destructive"
                 className="min-h-[44px]"
                 disabled={saving}
-                onClick={() => void deleteMeeting()}
+                onClick={() => {
+                  console.log("[calendar] delete button → confirm");
+                  setDeleteConfirmOpen(true);
+                }}
               >
                 Smazat
               </Button>
@@ -1120,6 +1196,34 @@ export function CompanyScheduleCalendar({
           </SheetFooter>
         </SheetContent>
       </Sheet>
+
+      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Smazat akci z kalendáře?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Schůzka bude trvale odstraněna z kalendáře. Navázaná upozornění zaměstnancům budou
+              smazána. Tuto akci nelze vrátit zpět.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button" disabled={saving}>
+              Zrušit
+            </AlertDialogCancel>
+            <AlertDialogAction
+              type="button"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={saving}
+              onClick={(e) => {
+                e.preventDefault();
+                void performDeleteMeeting();
+              }}
+            >
+              {saving ? "Mažu…" : "Smazat"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

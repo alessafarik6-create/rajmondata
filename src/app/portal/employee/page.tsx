@@ -31,6 +31,8 @@ import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
 import { EmployeeAttendanceOverview } from "./employee-attendance-overview";
 import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
 import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
+import { Badge } from "@/components/ui/badge";
+import { useEmployeeNotificationUnreadCount } from "@/hooks/use-employee-notification-unread-count";
 
 const DEBUG_EMPLOYEE_HOME = process.env.NODE_ENV === "development";
 
@@ -53,6 +55,10 @@ export default function EmployeeHomePage() {
 
   const companyId = profile?.companyId as string | undefined;
   const employeeId = profile?.employeeId as string | undefined;
+  const { unreadCount: homeNotifUnread } = useEmployeeNotificationUnreadCount({
+    companyId,
+    employeeId,
+  });
 
   const employeeRef = useMemoFirebase(
     () =>
@@ -267,8 +273,19 @@ export default function EmployeeHomePage() {
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-neutral-950 sm:text-3xl">
-            {t("goodDay")}, {greetingName}!
+          <h1 className="flex flex-wrap items-center gap-2 text-2xl font-bold tracking-tight text-neutral-950 sm:text-3xl">
+            <span>
+              {t("goodDay")}, {greetingName}!
+            </span>
+            {homeNotifUnread > 0 ? (
+              <Badge
+                variant="destructive"
+                className="text-xs font-semibold tabular-nums"
+                title={`Nepřečtená upozornění: ${homeNotifUnread}`}
+              >
+                {homeNotifUnread > 99 ? "99+" : homeNotifUnread} nepřečtených
+              </Badge>
+            ) : null}
           </h1>
           <p className="mt-2 text-base leading-relaxed text-neutral-950">
             {profile?.jobTitle ? (

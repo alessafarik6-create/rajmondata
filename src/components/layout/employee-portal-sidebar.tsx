@@ -35,6 +35,8 @@ import {
   DEFAULT_EMPLOYEE_PORTAL_MODULES,
   type EmployeePortalModules,
 } from "@/lib/employee-portal-modules";
+import { Badge } from "@/components/ui/badge";
+import { useEmployeeNotificationUnreadCount } from "@/hooks/use-employee-notification-unread-count";
 
 export type EmployeePortalSidebarProps = {
   mobileSheetClose?: () => void;
@@ -72,6 +74,12 @@ export function EmployeePortalSidebar({
   );
   const { data: employeeDoc } = useDoc<any>(employeeRef);
   const { company } = useCompany();
+  const companyIdStr = profile?.companyId as string | undefined;
+  const employeeIdStr = profile?.employeeId as string | undefined;
+  const { unreadCount: employeeNotifUnread } = useEmployeeNotificationUnreadCount({
+    companyId: companyIdStr,
+    employeeId: employeeIdStr,
+  });
   const portalRole = String(profile?.role || "employee");
   const platformCatalog = useMergedPlatformModuleCatalog();
 
@@ -230,11 +238,27 @@ export function EmployeePortalSidebar({
             >
               <link.icon className="w-5 h-5 shrink-0" />
               <span className="min-w-0 flex-1 truncate text-left">{link.label}</span>
+              {link.href === "/portal/employee" && employeeNotifUnread > 0 ? (
+                <Badge
+                  variant="destructive"
+                  className="ml-auto shrink-0 px-1.5 text-[10px] tabular-nums"
+                >
+                  {employeeNotifUnread > 99 ? "99+" : employeeNotifUnread}
+                </Badge>
+              ) : null}
             </button>
           ) : (
             <Link key={link.href} href={link.href} className={linkClass(link.href)}>
               <link.icon className="w-5 h-5 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{link.label}</span>
+              {link.href === "/portal/employee" && employeeNotifUnread > 0 ? (
+                <Badge
+                  variant="destructive"
+                  className="ml-auto shrink-0 px-1.5 text-[10px] tabular-nums"
+                >
+                  {employeeNotifUnread > 99 ? "99+" : employeeNotifUnread}
+                </Badge>
+              ) : null}
             </Link>
           )
         )}

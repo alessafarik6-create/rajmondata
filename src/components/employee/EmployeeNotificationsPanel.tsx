@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   collection,
@@ -13,7 +13,10 @@ import {
   where,
 } from "firebase/firestore";
 import { useCollection, useMemoFirebase, useFirestore } from "@/firebase";
+import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -46,6 +49,8 @@ function typeBadgeVariant(
   return "outline";
 }
 
+const silentListen = { suppressGlobalPermissionError: true as const };
+
 export function EmployeeNotificationsPanel(props: {
   companyId: string | undefined;
   employeeId: string | undefined;
@@ -65,7 +70,22 @@ export function EmployeeNotificationsPanel(props: {
     );
   }, [firestore, companyId, employeeId]);
 
-  const { data: raw = [], isLoading } = useCollection(qRef);
+  const { data: raw = [], isLoading, error, isIndexPending } = useCollection(
+    qRef,
+    silentListen
+  );
+
+  useEffect(() => {
+    if (!companyId || !employeeId) return;
+    const list = Array.isArray(raw) ? raw : [];
+    console.log("[employee-notifications] snapshot", {
+      companyId,
+      employeeId,
+      count: list.length,
+      isIndexPending,
+      error: error?.message ?? null,
+    });
+  }, [companyId, employeeId, raw, isIndexPending, error]);
 
   const items = useMemo((): EmployeeNotifRow[] => {
     const list = Array.isArray(raw) ? raw : [];
@@ -130,13 +150,34 @@ export function EmployeeNotificationsPanel(props: {
         </Tabs>
       </CardHeader>
       <CardContent className={cn(compact ? "pt-0" : "")}>
+        {isIndexPending || (error != null && isFirestoreIndexError(error)) ? (
+          <Alert className="border-amber-300 bg-amber-50 text-amber-950">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Upozornění se nepodařilo načíst</AlertTitle>
+            <AlertDescription>
+              Chybí nebo se právě vytváří databázový index pro řazení podle data.
+              Po nasazení indexu ze souboru{" "}
+              <code className="rounded bg-amber-100/80 px-1">firestore.indexes.json</code>{" "}
+              zkuste stránku znovu za pár minut.
+            </AlertDescription>
+          </Alert>
+        ) : null}
+        {error != null && !isFirestoreIndexError(error) ? (
+          <Alert variant="destructive" className="mb-3">
+            <AlertCircle className="h-4 w-4" />
+            <AlertTitle>Chyba</AlertTitle>
+            <AlertDescription>
+              {error.message || "Nelze načíst upozornění."}
+            </AlertDescription>
+          </Alert>
+        ) : null}
         {isLoading ? (
           <p className="text-sm text-muted-foreground py-4">Načítání…</p>
-        ) : filtered.length === 0 ? (
+        ) : error == null && !isIndexPending && filtered.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4">
             Žádná upozornění.
           </p>
-        ) : (
+        ) : filtered.length > 0 ? (
           <ul className="divide-y rounded-md border">
             {filtered.map((n) => (
               <li key={n.id}>
@@ -193,7 +234,7 @@ export function EmployeeNotificationsPanel(props: {
               </li>
             ))}
           </ul>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );
