@@ -18,7 +18,14 @@ import {
   startOfDay,
 } from "date-fns";
 import { cs } from "date-fns/locale";
-import { CheckCircle2, ChevronLeft, ChevronRight, Plus, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  Plus,
+  XCircle,
+} from "lucide-react";
 import {
   collection,
   query,
@@ -62,7 +69,6 @@ import {
 } from "@/components/ui/sheet";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -324,6 +330,7 @@ export function CompanyScheduleCalendar({
   const [formOpen, setFormOpen] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [meetingTitle, setMeetingTitle] = useState("");
   const [meetingCustomerName, setMeetingCustomerName] = useState("");
@@ -683,35 +690,63 @@ export function CompanyScheduleCalendar({
   };
 
   const performDeleteMeeting = async () => {
-    if (!firestore || !companyId) return;
-    if (editingEvent?.kind !== "meeting" || !editingEvent.sourceId) return;
+    if (!firestore || !companyId) {
+      setDeleteConfirmOpen(false);
+      return;
+    }
+    const eventId = editingEvent?.sourceId;
+    if (editingEvent?.kind !== "meeting" || !eventId) {
+      setDeleteConfirmOpen(false);
+      return;
+    }
     if (!canSendToAllEmployees) {
       toast({
         variant: "destructive",
         title: "Přístup zamítnut",
         description: "Smazání může provést jen oprávněná role.",
       });
+      setDeleteConfirmOpen(false);
       return;
     }
-    setSaving(true);
+
+    setIsDeleting(true);
     try {
-      const eventId = editingEvent.sourceId;
       console.log("[calendar] delete meeting", { eventId, companyId });
       await deleteDoc(doc(firestore, "companies", companyId, "lead_meetings", eventId));
-      await deleteEmployeeNotificationsForEvent({ firestore, companyId, eventId });
-      toast({ title: "Smazáno", description: "Akce i upozornění byly odstraněny." });
+
+      let notifError: unknown = null;
+      try {
+        await deleteEmployeeNotificationsForEvent({ firestore, companyId, eventId });
+      } catch (n) {
+        notifError = n;
+        console.error("[calendar] delete linked notifications failed", n);
+      }
+
       setDeleteConfirmOpen(false);
       setFormOpen(false);
       setEditingEvent(null);
+
+      if (notifError) {
+        toast({
+          title: "Záznam byl smazán",
+          description:
+            "Kalendářová akce byla odstraněna. Navázaná upozornění se nepodařilo smazat — zkuste to prosím znovu nebo kontaktujte administrátora.",
+        });
+      } else {
+        toast({
+          title: "Záznam byl smazán",
+          description: "Akce byla odstraněna z kalendáře včetně upozornění pro zaměstnance.",
+        });
+      }
     } catch (e) {
-      console.error(e);
+      console.error("Delete event error:", e);
       toast({
         variant: "destructive",
         title: "Smazání se nezdařilo",
         description: e instanceof Error ? e.message : "Zkuste to znovu.",
       });
     } finally {
-      setSaving(false);
+      setIsDeleting(false);
     }
   };
 
@@ -1054,6 +1089,8 @@ export function CompanyScheduleCalendar({
           if (!open) {
             setFormOpen(false);
             setEditingEvent(null);
+            setDeleteConfirmOpen(false);
+            setIsDeleting(false);
           }
         }}
       >
@@ -1172,7 +1209,13 @@ export function CompanyScheduleCalendar({
           </div>
 
           <SheetFooter className="mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end">
-            <Button type="button" variant="outline" className="min-h-[44px]" onClick={() => (setFormOpen(false), setEditingEvent(null))}>
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-[44px]"
+              disabled={saving || isDeleting}
+              onClick={() => (setFormOpen(false), setEditingEvent(null))}
+            >
               Zrušit
             </Button>
             {editingEvent?.kind === "meeting" && editingEvent.sourceId ? (
@@ -1180,7 +1223,7 @@ export function CompanyScheduleCalendar({
                 type="button"
                 variant="destructive"
                 className="min-h-[44px]"
-                disabled={saving}
+                disabled={saving || isDeleting}
                 onClick={() => {
                   console.log("[calendar] delete button → confirm");
                   setDeleteConfirmOpen(true);
@@ -1189,7 +1232,12 @@ export function CompanyScheduleCalendar({
                 Smazat
               </Button>
             ) : null}
-            <Button type="button" className="min-h-[44px]" disabled={saving} onClick={() => void saveMeeting()}>
+            <Button
+              type="button"
+              className="min-h-[44px]"
+              disabled={saving || isDeleting}
+              onClick={() => void saveMeeting()}
+            >
               {saving ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent" /> : null}
               Uložit
             </Button>
@@ -1197,30 +1245,41 @@ export function CompanyScheduleCalendar({
         </SheetContent>
       </Sheet>
 
-      <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
-        <AlertDialogContent>
+      <AlertDialog
+        open={deleteConfirmOpen}
+        onOpenChange={(open) => {
+          setDeleteConfirmOpen(open);
+          if (!open) setIsDeleting(false);
+        }}
+      >
+        <AlertDialogContent className="border-slate-200 bg-white">
           <AlertDialogHeader>
-            <AlertDialogTitle>Smazat akci z kalendáře?</AlertDialogTitle>
+            <AlertDialogTitle>Smazat záznam z kalendáře?</AlertDialogTitle>
             <AlertDialogDescription>
               Schůzka bude trvale odstraněna z kalendáře. Navázaná upozornění zaměstnancům budou
               smazána. Tuto akci nelze vrátit zpět.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel type="button" disabled={saving}>
+            <AlertDialogCancel type="button" disabled={isDeleting}>
               Zrušit
             </AlertDialogCancel>
-            <AlertDialogAction
+            <Button
               type="button"
+              variant="destructive"
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={saving}
-              onClick={(e) => {
-                e.preventDefault();
-                void performDeleteMeeting();
-              }}
+              disabled={isDeleting}
+              onClick={() => void performDeleteMeeting()}
             >
-              {saving ? "Mažu…" : "Smazat"}
-            </AlertDialogAction>
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Mažu…
+                </>
+              ) : (
+                "Smazat záznam"
+              )}
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
