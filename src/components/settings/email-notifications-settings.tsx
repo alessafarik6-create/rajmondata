@@ -40,10 +40,37 @@ type EmployeeRow = {
   firstName?: string;
   lastName?: string;
   email?: string;
+  authUserId?: string;
 };
+
+type RecipientIdLists = { userIds: string[]; employeeIds: string[] };
 
 function isValidEmail(s: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
+function isEmpSelected(emp: EmployeeRow, lists: RecipientIdLists): boolean {
+  const uid = emp.authUserId?.trim();
+  if (uid && lists.userIds.includes(uid)) return true;
+  return lists.employeeIds.includes(emp.id);
+}
+
+function toggleEmpInLists(emp: EmployeeRow, checked: boolean, lists: RecipientIdLists): RecipientIdLists {
+  const uid = emp.authUserId?.trim();
+  const u = new Set(lists.userIds);
+  const e = new Set(lists.employeeIds);
+  if (checked) {
+    if (uid) {
+      u.add(uid);
+      e.delete(emp.id);
+    } else {
+      e.add(emp.id);
+    }
+  } else {
+    if (uid) u.delete(uid);
+    e.delete(emp.id);
+  }
+  return { userIds: [...u], employeeIds: [...e] };
 }
 
 const MODULE_ORDER: EmailModuleKey[] = [
@@ -58,6 +85,101 @@ const MODULE_ORDER: EmailModuleKey[] = [
   "system",
 ];
 
+function EmployeeRecipientList(props: {
+  idPrefix: string;
+  employees: EmployeeRow[];
+  employeesLoading: boolean;
+  lists: RecipientIdLists;
+  onToggle: (emp: EmployeeRow, checked: boolean) => void;
+  disabled?: boolean;
+}) {
+  const { idPrefix, employees, employeesLoading, lists, onToggle, disabled } = props;
+  return (
+    <div className="space-y-2">
+      <Label>Vybraní zaměstnanci</Label>
+      <div
+        className={cn(
+          "rounded-lg border border-border bg-background",
+          employeesLoading && "opacity-70",
+          disabled && "pointer-events-none opacity-50"
+        )}
+      >
+        <ScrollArea className="h-[min(200px,35vh)] p-3">
+          {employees.length === 0 ? (
+            <p className="text-sm text-muted-foreground py-4 text-center">
+              {employeesLoading ? "Načítání…" : "Žádní zaměstnanci."}
+            </p>
+          ) : (
+            <ul className="space-y-2">
+              {employees.map((emp) => {
+                const label =
+                  `${emp.firstName ?? ""} ${emp.lastName ?? ""}`.trim() || emp.email || emp.id;
+                const checked = isEmpSelected(emp, lists);
+                return (
+                  <li key={emp.id} className="flex items-start gap-3 min-h-[44px]">
+                    <Checkbox
+                      id={`${idPrefix}-${emp.id}`}
+                      checked={checked}
+                      onCheckedChange={(v) => onToggle(emp, v === true)}
+                      disabled={disabled}
+                      className="mt-1"
+                    />
+                    <label
+                      htmlFor={`${idPrefix}-${emp.id}`}
+                      className="flex flex-col cursor-pointer flex-1 min-w-0"
+                    >
+                      <span className="text-sm font-medium leading-tight">{label}</span>
+                      {emp.email ? (
+                        <span className="text-xs text-muted-foreground truncate">{emp.email}</span>
+                      ) : (
+                        <span className="text-xs text-amber-600">
+                          Bez e-mailu v profilu — u účtovaného zaměstnance se e-mail nepoužije.
+                        </span>
+                      )}
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </ScrollArea>
+      </div>
+    </div>
+  );
+}
+
+function ManualEmailChips(props: {
+  emails: string[];
+  onRemove: (e: string) => void;
+  disabled?: boolean;
+}) {
+  const { emails, onRemove, disabled } = props;
+  if (emails.length === 0) return null;
+  return (
+    <ul className="flex flex-wrap gap-2 pt-1">
+      {emails.map((r) => (
+        <li
+          key={r}
+          className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 pl-2.5 pr-1 py-0.5 text-sm"
+        >
+          <span className="max-w-[200px] truncate">{r}</span>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7 shrink-0"
+            onClick={() => onRemove(r)}
+            disabled={disabled}
+            aria-label={`Odebrat ${r}`}
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function EmailNotificationsSettings(props: {
   companyId: string | undefined;
   company: Record<string, unknown> | null | undefined;
@@ -70,9 +192,13 @@ export function EmailNotificationsSettings(props: {
   const [draft, setDraft] = useState<EmailNotificationsSettings>(() =>
     mergeEmailNotifications((company as { emailNotifications?: unknown })?.emailNotifications)
   );
-  const [emailInput, setEmailInput] = useState("");
+  const [globalEmailInput, setGlobalEmailInput] = useState("");
+  const [moduleEmailInputs, setModuleEmailInputs] = useState<Partial<Record<EmailModuleKey, string>>>(
+    {}
+  );
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
+  const [moduleTesting, setModuleTesting] = useState<EmailModuleKey | null>(null);
 
   useEffect(() => {
     setDraft(
@@ -102,17 +228,22 @@ export function EmailNotificationsSettings(props: {
       });
   }, [employeesRaw]);
 
-  const toggleEmployee = (id: string, checked: boolean) => {
-    setDraft((prev) => {
-      const set = new Set(prev.recipientEmployeeIds);
-      if (checked) set.add(id);
-      else set.delete(id);
-      return { ...prev, recipientEmployeeIds: [...set] };
-    });
+  const globalLists: RecipientIdLists = {
+    userIds: draft.globalRecipientUserIds,
+    employeeIds: draft.globalRecipientEmployeeIds,
   };
 
-  const addManualEmail = () => {
-    const e = emailInput.trim().toLowerCase();
+  const toggleGlobalEmployee = (emp: EmployeeRow, checked: boolean) => {
+    const next = toggleEmpInLists(emp, checked, globalLists);
+    setDraft((prev) => ({
+      ...prev,
+      globalRecipientUserIds: next.userIds,
+      globalRecipientEmployeeIds: next.employeeIds,
+    }));
+  };
+
+  const addGlobalManualEmail = () => {
+    const e = globalEmailInput.trim().toLowerCase();
     if (!e) return;
     if (!isValidEmail(e)) {
       toast({
@@ -123,15 +254,17 @@ export function EmailNotificationsSettings(props: {
       return;
     }
     setDraft((prev) =>
-      prev.recipients.includes(e) ? prev : { ...prev, recipients: [...prev.recipients, e] }
+      prev.globalRecipients.includes(e)
+        ? prev
+        : { ...prev, globalRecipients: [...prev.globalRecipients, e] }
     );
-    setEmailInput("");
+    setGlobalEmailInput("");
   };
 
-  const removeManualEmail = (e: string) => {
+  const removeGlobalManualEmail = (e: string) => {
     setDraft((prev) => ({
       ...prev,
-      recipients: prev.recipients.filter((x) => x !== e),
+      globalRecipients: prev.globalRecipients.filter((x) => x !== e),
     }));
   };
 
@@ -141,6 +274,16 @@ export function EmailNotificationsSettings(props: {
       modules: {
         ...prev.modules,
         [module]: { ...prev.modules[module], enabled },
+      },
+    }));
+  };
+
+  const setModuleUseGlobalRecipients = (module: EmailModuleKey, useGlobal: boolean) => {
+    setDraft((prev) => ({
+      ...prev,
+      modules: {
+        ...prev.modules,
+        [module]: { ...prev.modules[module], useGlobalRecipients: useGlobal },
       },
     }));
   };
@@ -156,6 +299,66 @@ export function EmailNotificationsSettings(props: {
         },
       },
     }));
+  };
+
+  const toggleModuleEmployee = (module: EmailModuleKey, emp: EmployeeRow, checked: boolean) => {
+    setDraft((prev) => {
+      const m = prev.modules[module];
+      const cur: RecipientIdLists = {
+        userIds: m.recipientUserIds,
+        employeeIds: m.recipientEmployeeIds,
+      };
+      const next = toggleEmpInLists(emp, checked, cur);
+      return {
+        ...prev,
+        modules: {
+          ...prev.modules,
+          [module]: {
+            ...m,
+            recipientUserIds: next.userIds,
+            recipientEmployeeIds: next.employeeIds,
+          },
+        },
+      };
+    });
+  };
+
+  const addModuleManualEmail = (module: EmailModuleKey) => {
+    const raw = (moduleEmailInputs[module] ?? "").trim().toLowerCase();
+    if (!raw) return;
+    if (!isValidEmail(raw)) {
+      toast({
+        variant: "destructive",
+        title: "Neplatný e-mail",
+        description: "Zadejte adresu ve tvaru jmeno@domena.cz.",
+      });
+      return;
+    }
+    setDraft((prev) => {
+      const m = prev.modules[module];
+      if (m.recipients.includes(raw)) return prev;
+      return {
+        ...prev,
+        modules: {
+          ...prev.modules,
+          [module]: { ...m, recipients: [...m.recipients, raw] },
+        },
+      };
+    });
+    setModuleEmailInputs((p) => ({ ...p, [module]: "" }));
+  };
+
+  const removeModuleManualEmail = (module: EmailModuleKey, e: string) => {
+    setDraft((prev) => {
+      const m = prev.modules[module];
+      return {
+        ...prev,
+        modules: {
+          ...prev.modules,
+          [module]: { ...m, recipients: m.recipients.filter((x) => x !== e) },
+        },
+      };
+    });
   };
 
   const toggleCalendarOffset = (minutes: number, checked: boolean) => {
@@ -187,8 +390,8 @@ export function EmailNotificationsSettings(props: {
         setDoc(doc(firestore, ORGANIZATIONS_COLLECTION, companyId), payload, { merge: true }),
       ]);
       toast({
-        title: "Nastavení bylo uloženo",
-        description: "E-mailové notifikace byly aktualizovány.",
+        title: "Uloženo",
+        description: "Notifikace pro modul byly uloženy.",
       });
     } catch (e) {
       console.error(e);
@@ -220,7 +423,7 @@ export function EmailNotificationsSettings(props: {
       if (res.ok && json.ok) {
         toast({
           title: "Test odeslán",
-          description: "Zkontrolujte schránku nastavených příjemců.",
+          description: "Zkontrolujte schránku globálních příjemců.",
         });
       } else {
         toast({
@@ -237,6 +440,44 @@ export function EmailNotificationsSettings(props: {
       });
     } finally {
       setTesting(false);
+    }
+  };
+
+  const handleTestModule = async (module: EmailModuleKey) => {
+    if (!companyId || !user) return;
+    setModuleTesting(module);
+    try {
+      const token = await getAuth().currentUser?.getIdToken();
+      if (!token) throw new Error("Nepřihlášen");
+      const res = await fetch("/api/company/email-notifications/test-module", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ companyId, module }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (res.ok && json.ok) {
+        toast({
+          title: "Test odeslán",
+          description: "Zkontrolujte schránku příjemců tohoto modulu.",
+        });
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Test se nezdařil",
+          description: json.error || "Zkuste to znovu.",
+        });
+      }
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Test se nezdařil",
+        description: e instanceof Error ? e.message : "Chyba sítě.",
+      });
+    } finally {
+      setModuleTesting(null);
     }
   };
 
@@ -259,7 +500,7 @@ export function EmailNotificationsSettings(props: {
           <CardTitle className="text-xl">E-mailové notifikace</CardTitle>
         </div>
         <CardDescription>
-          Komu budou chodit upozornění a které události mají vyvolat e-mail napříč moduly.
+          Nastavte výchozí příjemce a u každého modulu volitelně vlastní okruh lidí a událostí.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-8">
@@ -278,9 +519,10 @@ export function EmailNotificationsSettings(props: {
         </div>
 
         <div className="space-y-3">
-          <h3 className="text-sm font-semibold">Komu budou chodit upozornění</h3>
+          <h3 className="text-sm font-semibold">Globální příjemci (výchozí)</h3>
           <p className="text-xs text-muted-foreground">
-            Vyberte zaměstnance nebo zadejte e-mailové adresy ručně. Můžete kombinovat obojí.
+            Tyto adresy a zaměstnanci se použijí u modulů, u kterých je zapnuto „Použít globální
+            příjemce“. Administrátoři se přidají vždy, pokud je volba níže zapnutá.
           </p>
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
@@ -288,7 +530,7 @@ export function EmailNotificationsSettings(props: {
               <div>
                 <Label className="text-sm">Automaticky přidat administrátory organizace</Label>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  E-maily uživatelů s rolí vlastník nebo administrátor.
+                  E-maily uživatelů s rolí vlastník nebo administrátor (ke každé odeslané notifikaci).
                 </p>
               </div>
               <Switch
@@ -300,101 +542,40 @@ export function EmailNotificationsSettings(props: {
             </div>
           </div>
 
-          <div className="space-y-2">
-            <Label>Zaměstnanci</Label>
-            <div
-              className={cn(
-                "rounded-lg border border-border bg-background",
-                employeesLoading && "opacity-70"
-              )}
-            >
-              <ScrollArea className="h-[min(220px,40vh)] p-3">
-                {employees.length === 0 ? (
-                  <p className="text-sm text-muted-foreground py-4 text-center">
-                    {employeesLoading ? "Načítání…" : "Žádní zaměstnanci."}
-                  </p>
-                ) : (
-                  <ul className="space-y-2">
-                    {employees.map((emp) => {
-                      const label =
-                        `${emp.firstName ?? ""} ${emp.lastName ?? ""}`.trim() ||
-                        emp.email ||
-                        emp.id;
-                      const checked = draft.recipientEmployeeIds.includes(emp.id);
-                      return (
-                        <li key={emp.id} className="flex items-start gap-3 min-h-[44px]">
-                          <Checkbox
-                            id={`emp-${emp.id}`}
-                            checked={checked}
-                            onCheckedChange={(v) => toggleEmployee(emp.id, v === true)}
-                            className="mt-1"
-                          />
-                          <label
-                            htmlFor={`emp-${emp.id}`}
-                            className="flex flex-col cursor-pointer flex-1 min-w-0"
-                          >
-                            <span className="text-sm font-medium leading-tight">{label}</span>
-                            {emp.email ? (
-                              <span className="text-xs text-muted-foreground truncate">
-                                {emp.email}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-amber-600">
-                                Bez e-mailu v profilu — nepoužije se jako příjemce.
-                              </span>
-                            )}
-                          </label>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </ScrollArea>
-            </div>
-          </div>
+          <EmployeeRecipientList
+            idPrefix="global-emp"
+            employees={employees}
+            employeesLoading={employeesLoading}
+            lists={globalLists}
+            onToggle={toggleGlobalEmployee}
+          />
 
           <div className="space-y-2">
-            <Label>Ruční e-mailové adresy</Label>
+            <Label>Další e-mailové adresy</Label>
             <div className="flex flex-col sm:flex-row gap-2">
               <Input
                 type="email"
                 placeholder="např. jednatel@firma.cz"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
+                value={globalEmailInput}
+                onChange={(e) => setGlobalEmailInput(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    addManualEmail();
+                    addGlobalManualEmail();
                   }
                 }}
                 className="bg-background flex-1"
               />
-              <Button type="button" variant="secondary" className="shrink-0" onClick={addManualEmail}>
-                Přidat adresu
+              <Button
+                type="button"
+                variant="secondary"
+                className="shrink-0"
+                onClick={addGlobalManualEmail}
+              >
+                Přidat e-mail
               </Button>
             </div>
-            {draft.recipients.length > 0 ? (
-              <ul className="flex flex-wrap gap-2 pt-1">
-                {draft.recipients.map((r) => (
-                  <li
-                    key={r}
-                    className="inline-flex items-center gap-1 rounded-full border border-border bg-muted/40 pl-2.5 pr-1 py-0.5 text-sm"
-                  >
-                    <span className="max-w-[200px] truncate">{r}</span>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 shrink-0"
-                      onClick={() => removeManualEmail(r)}
-                      aria-label={`Odebrat ${r}`}
-                    >
-                      <X className="h-3.5 w-3.5" />
-                    </Button>
-                  </li>
-                ))}
-              </ul>
-            ) : null}
+            <ManualEmailChips emails={draft.globalRecipients} onRemove={removeGlobalManualEmail} />
           </div>
         </div>
 
@@ -403,13 +584,19 @@ export function EmailNotificationsSettings(props: {
         <div className="space-y-2">
           <h3 className="text-sm font-semibold">Moduly a události</h3>
           <p className="text-xs text-muted-foreground">
-            Každý modul lze vypnout celý; uvnitř pak jednotlivé typy změn.
+            Každý modul má vlastní přepínače událostí a volitelně vlastní příjemce.
           </p>
 
           <Accordion type="multiple" className="w-full border border-border rounded-lg divide-y">
             {MODULE_ORDER.map((moduleKey) => {
               const mod = draft.modules[moduleKey];
               const events = MODULE_EVENT_LABELS[moduleKey];
+              const moduleLists: RecipientIdLists = {
+                userIds: mod.recipientUserIds,
+                employeeIds: mod.recipientEmployeeIds,
+              };
+              const showOwnRecipients = !mod.useGlobalRecipients;
+
               return (
                 <AccordionItem value={moduleKey} key={moduleKey} className="border-0 px-3">
                   <AccordionTrigger className="text-left hover:no-underline py-3 min-h-[48px]">
@@ -423,6 +610,72 @@ export function EmailNotificationsSettings(props: {
                         onCheckedChange={(v) => setModuleEnabled(moduleKey, v)}
                       />
                     </div>
+
+                    <div className="space-y-3 rounded-lg border border-border/80 p-3">
+                      <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between gap-3">
+                        <div>
+                          <Label className="text-sm">Použít globální příjemce</Label>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {mod.useGlobalRecipients
+                              ? "Použije se výchozí seznam nahoře."
+                              : "Použít vlastní příjemce pro tento modul — nastavte níže."}
+                          </p>
+                        </div>
+                        <Switch
+                          checked={mod.useGlobalRecipients}
+                          onCheckedChange={(v) => setModuleUseGlobalRecipients(moduleKey, v)}
+                        />
+                      </div>
+
+                      {showOwnRecipients ? (
+                        <div className="space-y-4 pt-1 border-t border-dashed border-border/80">
+                          <p className="text-sm font-medium">Vlastní příjemci modulu</p>
+                          <EmployeeRecipientList
+                            idPrefix={`mod-${moduleKey}`}
+                            employees={employees}
+                            employeesLoading={employeesLoading}
+                            lists={moduleLists}
+                            onToggle={(emp, c) => toggleModuleEmployee(moduleKey, emp, c)}
+                          />
+                          <div className="space-y-2">
+                            <Label>Další e-mailové adresy</Label>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <Input
+                                type="email"
+                                placeholder="např. oddeleni@firma.cz"
+                                value={moduleEmailInputs[moduleKey] ?? ""}
+                                onChange={(e) =>
+                                  setModuleEmailInputs((p) => ({
+                                    ...p,
+                                    [moduleKey]: e.target.value,
+                                  }))
+                                }
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    addModuleManualEmail(moduleKey);
+                                  }
+                                }}
+                                className="bg-background flex-1"
+                              />
+                              <Button
+                                type="button"
+                                variant="secondary"
+                                className="shrink-0"
+                                onClick={() => addModuleManualEmail(moduleKey)}
+                              >
+                                Přidat e-mail
+                              </Button>
+                            </div>
+                            <ManualEmailChips
+                              emails={mod.recipients}
+                              onRemove={(em) => removeModuleManualEmail(moduleKey, em)}
+                            />
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+
                     <ul className="space-y-3">
                       {events.map(({ eventKey, label }) => (
                         <li
@@ -486,6 +739,24 @@ export function EmailNotificationsSettings(props: {
                         </div>
                       </div>
                     ) : null}
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full sm:w-auto"
+                      disabled={moduleTesting !== null}
+                      onClick={() => void handleTestModule(moduleKey)}
+                    >
+                      {moduleTesting === moduleKey ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Odesílám…
+                        </>
+                      ) : (
+                        "Odeslat test pro tento modul"
+                      )}
+                    </Button>
                   </AccordionContent>
                 </AccordionItem>
               );
@@ -522,13 +793,13 @@ export function EmailNotificationsSettings(props: {
                 Odesílám…
               </>
             ) : (
-              "Odeslat testovací e-mail"
+              "Odeslat testovací e-mail (globální příjemci)"
             )}
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Test odešle jednoduchou zprávu na všechny aktuálně vyřešené příjemce (včetně administrátorů,
-          pokud je volba zapnutá).
+          Globální test odešle zprávu jen na výchozí seznam a administrátory (podle přepínače). V
+          každém modulu můžete otestovat doručení konkrétnímu okruhu.
         </p>
       </CardContent>
     </Card>

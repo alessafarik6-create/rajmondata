@@ -13,7 +13,23 @@ export type EmailModuleKey =
   | "messages"
   | "system";
 
-export type OrdersEmailFlags = {
+/** Společná pole příjemců u každého modulu (nebo globálně u firmy). */
+export type ModuleRecipientFields = {
+  /**
+   * true = použít globální seznamy (globalRecipients, …).
+   * false = použít jen recipients / recipientUserIds / recipientEmployeeIds u modulu.
+   * Výchozí true — migrace ze starého nastavení.
+   */
+  useGlobalRecipients: boolean;
+  /** Ruční e-maily pro tento modul (když useGlobalRecipients === false). */
+  recipients: string[];
+  /** Firebase Auth UID — e-mail z users/{uid}. */
+  recipientUserIds: string[];
+  /** ID dokumentu companies/{cid}/employees/{id}. */
+  recipientEmployeeIds: string[];
+};
+
+export type OrdersEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   newOrder: boolean;
   orderUpdated: boolean;
@@ -22,7 +38,7 @@ export type OrdersEmailFlags = {
   attachmentAdded: boolean;
 };
 
-export type DocumentsEmailFlags = {
+export type DocumentsEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   newDocument: boolean;
   pendingAssignment: boolean;
@@ -30,7 +46,7 @@ export type DocumentsEmailFlags = {
   approvedOrProcessed: boolean;
 };
 
-export type InvoicesEmailFlags = {
+export type InvoicesEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   newInvoice: boolean;
   invoiceUpdated: boolean;
@@ -38,34 +54,31 @@ export type InvoicesEmailFlags = {
   dueReminder: boolean;
 };
 
-export type LeadsEmailFlags = {
+export type LeadsEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   newLead: boolean;
   leadStatusChanged: boolean;
 };
 
-export type CalendarEmailFlags = {
+export type CalendarEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   eventCreated: boolean;
   eventUpdated: boolean;
   eventDeleted: boolean;
-  /** Připomenutí X minut před začátkem (hodnoty v minutách). */
   reminderEnabled: boolean;
   reminderOffsetsMinutes: number[];
-  /** true = jen schůzky (lead_meetings), false = i zaměření apod. */
   reminderMeetingsOnly: boolean;
-  /** Krátké upozornění při události konané „dnes“ (odesláno při uložení záznamu). */
   todayEventReminder: boolean;
 };
 
-export type WarehouseEmailFlags = {
+export type WarehouseEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   stockIn: boolean;
   stockOut: boolean;
   productionStatusChanged: boolean;
 };
 
-export type AttendanceEmailFlags = {
+export type AttendanceEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   newWorkReports: boolean;
   payrollApproved: boolean;
@@ -73,13 +86,13 @@ export type AttendanceEmailFlags = {
   leaveRequestChanged: boolean;
 };
 
-export type MessagesEmailFlags = {
+export type MessagesEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   newCustomerMessage: boolean;
   newInternalMessage: boolean;
 };
 
-export type SystemEmailFlags = {
+export type SystemEmailFlags = ModuleRecipientFields & {
   enabled: boolean;
   importantDataChange: boolean;
   importError: boolean;
@@ -99,24 +112,36 @@ export type EmailNotificationsModules = {
 };
 
 export type EmailNotificationsSettings = {
-  /** Hlavní vypínač — vypnuto = žádné modulové e-maily. */
   enabled: boolean;
-  /** Ručně zadané adresy. */
-  recipients: string[];
-  /** ID dokumentů companies/{cid}/employees/{id}. */
-  recipientEmployeeIds: string[];
-  /** Přidat e-maily všech uživatelů s rolí owner nebo admin v organizaci. */
+  /** Výchozí ruční adresy (fallback pro moduly s useGlobalRecipients). */
+  globalRecipients: string[];
+  /** Výchozí Firebase Auth UID → users/{uid}. */
+  globalRecipientUserIds: string[];
+  /** Výchozí ID zaměstnanců (employees/{id}) — migrace / ruční výběr bez účtu. */
+  globalRecipientEmployeeIds: string[];
   includeOrganizationAdmins: boolean;
   modules: EmailNotificationsModules;
 };
 
+const EMPTY_RECIPIENTS = (): Pick<
+  ModuleRecipientFields,
+  "useGlobalRecipients" | "recipients" | "recipientUserIds" | "recipientEmployeeIds"
+> => ({
+  useGlobalRecipients: true,
+  recipients: [],
+  recipientUserIds: [],
+  recipientEmployeeIds: [],
+});
+
 export const DEFAULT_EMAIL_NOTIFICATIONS: EmailNotificationsSettings = {
   enabled: false,
-  recipients: [],
-  recipientEmployeeIds: [],
+  globalRecipients: [],
+  globalRecipientUserIds: [],
+  globalRecipientEmployeeIds: [],
   includeOrganizationAdmins: true,
   modules: {
     orders: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       newOrder: true,
       orderUpdated: true,
@@ -125,6 +150,7 @@ export const DEFAULT_EMAIL_NOTIFICATIONS: EmailNotificationsSettings = {
       attachmentAdded: true,
     },
     documents: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       newDocument: true,
       pendingAssignment: true,
@@ -132,6 +158,7 @@ export const DEFAULT_EMAIL_NOTIFICATIONS: EmailNotificationsSettings = {
       approvedOrProcessed: true,
     },
     invoices: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       newInvoice: true,
       invoiceUpdated: true,
@@ -139,11 +166,13 @@ export const DEFAULT_EMAIL_NOTIFICATIONS: EmailNotificationsSettings = {
       dueReminder: false,
     },
     leads: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       newLead: true,
       leadStatusChanged: true,
     },
     calendar: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       eventCreated: true,
       eventUpdated: true,
@@ -154,12 +183,14 @@ export const DEFAULT_EMAIL_NOTIFICATIONS: EmailNotificationsSettings = {
       todayEventReminder: false,
     },
     warehouse: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       stockIn: true,
       stockOut: true,
       productionStatusChanged: true,
     },
     attendance: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       newWorkReports: true,
       payrollApproved: true,
@@ -167,11 +198,13 @@ export const DEFAULT_EMAIL_NOTIFICATIONS: EmailNotificationsSettings = {
       leaveRequestChanged: true,
     },
     messages: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       newCustomerMessage: true,
       newInternalMessage: true,
     },
     system: {
+      ...EMPTY_RECIPIENTS(),
       enabled: true,
       importantDataChange: false,
       importError: true,
@@ -194,6 +227,14 @@ function mergeFlags<T extends Record<string, unknown>>(defaults: T, raw: unknown
     if (k in rawObj) {
       const rv = rawObj[k];
       const dv = defaults[k];
+      if (
+        k === "useGlobalRecipients" ||
+        k === "recipients" ||
+        k === "recipientUserIds" ||
+        k === "recipientEmployeeIds"
+      ) {
+        continue;
+      }
       if (typeof dv === "boolean" && typeof rv === "boolean") {
         out[k] = rv;
       } else if (typeof dv === "number" && typeof rv === "number") {
@@ -204,6 +245,27 @@ function mergeFlags<T extends Record<string, unknown>>(defaults: T, raw: unknown
     }
   }
   return out as T;
+}
+
+function mergeRecipientFields(
+  defaults: ModuleRecipientFields,
+  raw: unknown
+): ModuleRecipientFields {
+  if (!isPlainObject(raw)) return { ...defaults };
+  const r = raw as Record<string, unknown>;
+  return {
+    useGlobalRecipients:
+      typeof r.useGlobalRecipients === "boolean" ? r.useGlobalRecipients : defaults.useGlobalRecipients,
+    recipients: Array.isArray(r.recipients)
+      ? r.recipients.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+      : defaults.recipients,
+    recipientUserIds: Array.isArray(r.recipientUserIds)
+      ? r.recipientUserIds.map((x) => String(x).trim()).filter(Boolean)
+      : defaults.recipientUserIds,
+    recipientEmployeeIds: Array.isArray(r.recipientEmployeeIds)
+      ? r.recipientEmployeeIds.map((x) => String(x).trim()).filter(Boolean)
+      : defaults.recipientEmployeeIds,
+  };
 }
 
 function normalizeOffsets(raw: unknown): number[] {
@@ -223,46 +285,80 @@ export function mergeEmailNotifications(raw: unknown): EmailNotificationsSetting
   const d = DEFAULT_EMAIL_NOTIFICATIONS;
   if (!isPlainObject(raw)) return structuredClone(d);
 
-  const recipients = Array.isArray(raw.recipients)
-    ? raw.recipients.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
-    : d.recipients;
+  const r = raw as Record<string, unknown>;
 
-  const recipientEmployeeIds = Array.isArray(raw.recipientEmployeeIds)
-    ? raw.recipientEmployeeIds.map((x) => String(x).trim()).filter(Boolean)
-    : Array.isArray((raw as { recipientUserIds?: unknown }).recipientUserIds)
-      ? (raw as { recipientUserIds: string[] }).recipientUserIds.map((x) => String(x).trim()).filter(Boolean)
-      : d.recipientEmployeeIds;
+  const globalRecipients = Array.isArray(r.globalRecipients)
+    ? r.globalRecipients.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+    : Array.isArray(r.recipients)
+      ? r.recipients.map((x) => String(x).trim().toLowerCase()).filter(Boolean)
+      : d.globalRecipients;
+
+  const globalRecipientUserIds = Array.isArray(r.globalRecipientUserIds)
+    ? r.globalRecipientUserIds.map((x) => String(x).trim()).filter(Boolean)
+    : d.globalRecipientUserIds;
+
+  let globalRecipientEmployeeIds = Array.isArray(r.globalRecipientEmployeeIds)
+    ? r.globalRecipientEmployeeIds.map((x) => String(x).trim()).filter(Boolean)
+    : d.globalRecipientEmployeeIds;
+
+  if (globalRecipientEmployeeIds.length === 0 && Array.isArray(r.recipientEmployeeIds)) {
+    globalRecipientEmployeeIds = r.recipientEmployeeIds.map((x) => String(x).trim()).filter(Boolean);
+  }
+  if (
+    globalRecipientEmployeeIds.length === 0 &&
+    Array.isArray(r.recipientUserIds) &&
+    !Array.isArray(r.globalRecipientUserIds)
+  ) {
+    const legacy = r.recipientUserIds.map((x) => String(x).trim()).filter(Boolean);
+    if (legacy.length && !Array.isArray(r.globalRecipientUserIds)) {
+      globalRecipientEmployeeIds = legacy;
+    }
+  }
 
   const includeOrganizationAdmins =
-    typeof raw.includeOrganizationAdmins === "boolean"
-      ? raw.includeOrganizationAdmins
+    typeof r.includeOrganizationAdmins === "boolean"
+      ? r.includeOrganizationAdmins
       : d.includeOrganizationAdmins;
 
-  const enabled = typeof raw.enabled === "boolean" ? raw.enabled : d.enabled;
+  const enabled = typeof r.enabled === "boolean" ? r.enabled : d.enabled;
 
-  const mods = isPlainObject(raw.modules) ? raw.modules : {};
-  const calendarRaw = isPlainObject(mods.calendar) ? mods.calendar : {};
+  const mods = isPlainObject(r.modules) ? r.modules : {};
 
-  const calendarMerged = mergeFlags(d.modules.calendar, calendarRaw);
-  calendarMerged.reminderOffsetsMinutes = normalizeOffsets(
-    (calendarRaw as { reminderOffsetsMinutes?: unknown }).reminderOffsetsMinutes
-  );
+  function mergeMod<K extends EmailModuleKey>(key: K, rawMod: unknown): EmailNotificationsModules[K] {
+    const def = d.modules[key];
+    const merged = {
+      ...mergeRecipientFields(def, rawMod),
+      ...mergeFlags(def as unknown as Record<string, unknown>, rawMod),
+    } as EmailNotificationsModules[K];
+    if (key === "calendar") {
+      (merged as CalendarEmailFlags).reminderOffsetsMinutes = normalizeOffsets(
+        isPlainObject(rawMod)
+          ? (rawMod as { reminderOffsetsMinutes?: unknown }).reminderOffsetsMinutes
+          : undefined
+      );
+    }
+    if (!isPlainObject(rawMod) || typeof (rawMod as ModuleRecipientFields).useGlobalRecipients !== "boolean") {
+      (merged as ModuleRecipientFields).useGlobalRecipients = true;
+    }
+    return merged;
+  }
 
   return {
     enabled,
-    recipients,
-    recipientEmployeeIds,
+    globalRecipients,
+    globalRecipientUserIds,
+    globalRecipientEmployeeIds,
     includeOrganizationAdmins,
     modules: {
-      orders: mergeFlags(d.modules.orders, mods.orders),
-      documents: mergeFlags(d.modules.documents, mods.documents),
-      invoices: mergeFlags(d.modules.invoices, mods.invoices),
-      leads: mergeFlags(d.modules.leads, mods.leads),
-      calendar: calendarMerged,
-      warehouse: mergeFlags(d.modules.warehouse, mods.warehouse),
-      attendance: mergeFlags(d.modules.attendance, mods.attendance),
-      messages: mergeFlags(d.modules.messages, mods.messages),
-      system: mergeFlags(d.modules.system, mods.system),
+      orders: mergeMod("orders", mods.orders),
+      documents: mergeMod("documents", mods.documents),
+      invoices: mergeMod("invoices", mods.invoices),
+      leads: mergeMod("leads", mods.leads),
+      calendar: mergeMod("calendar", mods.calendar),
+      warehouse: mergeMod("warehouse", mods.warehouse),
+      attendance: mergeMod("attendance", mods.attendance),
+      messages: mergeMod("messages", mods.messages),
+      system: mergeMod("system", mods.system),
     },
   };
 }

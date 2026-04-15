@@ -5,6 +5,7 @@ import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-
 import {
   type EmailModuleKey,
   type EmailNotificationsSettings,
+  type ModuleRecipientFields,
   isModuleEventEnabled,
   mergeEmailNotifications,
 } from "./schema";
@@ -97,42 +98,119 @@ async function companyDisplayName(
   return String(d.companyName || d.name || "").trim() || null;
 }
 
-export async function resolveNotificationEmails(
+function normEmail(s: string): string | null {
+  const x = s.trim().toLowerCase();
+  return x || null;
+}
+
+async function addEmailsFromLists(
+  db: Firestore,
+  companyId: string,
+  out: Set<string>,
+  lists: {
+    manual: string[];
+    authUserIds: string[];
+    employeeIds: string[];
+  }
+): Promise<void> {
+  for (const e of lists.manual) {
+    const n = normEmail(e);
+    if (n) out.add(n);
+  }
+  for (const uid of lists.authUserIds) {
+    if (!uid?.trim()) continue;
+    const snap = await db.collection("users").doc(uid.trim()).get();
+    const mail = normEmail(
+      String((snap.data() as { email?: string } | undefined)?.email ?? "")
+    );
+    if (mail) out.add(mail);
+  }
+  for (const empId of lists.employeeIds) {
+    if (!empId?.trim()) continue;
+    const snap = await db
+      .collection(COMPANIES_COLLECTION)
+      .doc(companyId)
+      .collection("employees")
+      .doc(empId.trim())
+      .get();
+    const mail = normEmail(
+      String((snap.data() as { email?: string } | undefined)?.email ?? "")
+    );
+    if (mail) out.add(mail);
+  }
+}
+
+async function addOrganizationAdminEmails(
+  db: Firestore,
+  companyId: string,
+  out: Set<string>
+): Promise<void> {
+  const uq = await db.collection("users").where("companyId", "==", companyId).get();
+  for (const doc of uq.docs) {
+    const role = String((doc.data() as { role?: string }).role ?? "");
+    if (role === "owner" || role === "admin") {
+      const mail = normEmail(String((doc.data() as { email?: string }).email ?? ""));
+      if (mail) out.add(mail);
+    }
+  }
+}
+
+/** Příjemci z globálních seznamů + volitelně administrátoři (test e-mailu / fallback). */
+export async function resolveGlobalRecipientEmails(
   db: Firestore,
   companyId: string,
   settings: EmailNotificationsSettings
 ): Promise<string[]> {
   const out = new Set<string>();
-  for (const e of settings.recipients) {
-    const x = e.trim().toLowerCase();
-    if (x) out.add(x);
-  }
-  for (const empId of settings.recipientEmployeeIds) {
-    if (!empId) continue;
-    const snap = await db
-      .collection(COMPANIES_COLLECTION)
-      .doc(companyId)
-      .collection("employees")
-      .doc(empId)
-      .get();
-    const mail = String((snap.data() as { email?: string } | undefined)?.email ?? "")
-      .trim()
-      .toLowerCase();
-    if (mail) out.add(mail);
-  }
+  await addEmailsFromLists(db, companyId, out, {
+    manual: settings.globalRecipients,
+    authUserIds: settings.globalRecipientUserIds,
+    employeeIds: settings.globalRecipientEmployeeIds,
+  });
   if (settings.includeOrganizationAdmins) {
-    const uq = await db.collection("users").where("companyId", "==", companyId).get();
-    for (const doc of uq.docs) {
-      const role = String((doc.data() as { role?: string }).role ?? "");
-      if (role === "owner" || role === "admin") {
-        const mail = String((doc.data() as { email?: string }).email ?? "")
-          .trim()
-          .toLowerCase();
-        if (mail) out.add(mail);
-      }
-    }
+    await addOrganizationAdminEmails(db, companyId, out);
   }
   return [...out];
+}
+
+/**
+ * Příjemci pro konkrétní modul: podle useGlobalRecipients buď globální seznamy, nebo vlastní u modulu.
+ * Administrátoři se přidají, pokud je zapnuto includeOrganizationAdmins.
+ */
+export async function resolveNotificationEmailsForModule(
+  db: Firestore,
+  companyId: string,
+  settings: EmailNotificationsSettings,
+  module: EmailModuleKey
+): Promise<string[]> {
+  const out = new Set<string>();
+  const mod = settings.modules[module] as ModuleRecipientFields;
+  if (mod.useGlobalRecipients) {
+    await addEmailsFromLists(db, companyId, out, {
+      manual: settings.globalRecipients,
+      authUserIds: settings.globalRecipientUserIds,
+      employeeIds: settings.globalRecipientEmployeeIds,
+    });
+  } else {
+    await addEmailsFromLists(db, companyId, out, {
+      manual: mod.recipients,
+      authUserIds: mod.recipientUserIds,
+      employeeIds: mod.recipientEmployeeIds,
+    });
+  }
+  if (settings.includeOrganizationAdmins) {
+    await addOrganizationAdminEmails(db, companyId, out);
+  }
+  return [...out];
+}
+
+/** @deprecated Použijte resolveGlobalRecipientEmails nebo resolveNotificationEmailsForModule. */
+export async function resolveNotificationEmails(
+  db: Firestore,
+  companyId: string,
+  settings: EmailNotificationsSettings
+): Promise<string[]> {
+  return resolveGlobalRecipientEmails(db, companyId, settings);
 }
 
 /**
@@ -152,7 +230,12 @@ export async function dispatchOrgModuleEmail(
   if (!isModuleEventEnabled(settings, input.module, input.eventKey)) {
     return { ok: true, skipped: "disabled" };
   }
-  const recipients = await resolveNotificationEmails(db, input.companyId, settings);
+  const recipients = await resolveNotificationEmailsForModule(
+    db,
+    input.companyId,
+    settings,
+    input.module
+  );
   if (recipients.length === 0) {
     return { ok: true, skipped: "no_recipients" };
   }
