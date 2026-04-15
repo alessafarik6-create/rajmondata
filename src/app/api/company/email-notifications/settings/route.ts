@@ -62,5 +62,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: msg }, { status: 500 });
   }
 
+  console.log("[email-notifications/settings] OK", {
+    companyId,
+    paths: [`${COMPANIES_COLLECTION}/${companyId}`, `${ORGANIZATIONS_COLLECTION}/${companyId}`],
+  });
   return NextResponse.json({ ok: true });
 }

@@ -25,7 +25,7 @@ import {
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-collections";
+import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import {
   type EmailModuleKey,
   type EmailNotificationsSettings,
@@ -72,6 +72,12 @@ function toggleEmpInLists(emp: EmployeeRow, checked: boolean, lists: RecipientId
     e.delete(emp.id);
   }
   return { userIds: [...u], employeeIds: [...e] };
+}
+
+/** Stejný původ jako stránka — spolehlivější než relativní `/api/...` na některých hostitelích. */
+function companyApiUrl(path: string): string {
+  if (typeof window === "undefined") return path;
+  return new URL(path, window.location.origin).toString();
 }
 
 const MODULE_ORDER: EmailModuleKey[] = [
@@ -195,7 +201,12 @@ export function EmailNotificationsSettings(props: {
   );
   const [isDirty, setIsDirty] = useState(false);
   const lastAppliedRemoteJsonRef = useRef<string | null>(null);
-  const postSaveIgnoreSnapshotsRef = useRef(0);
+  /**
+   * Po úspěšném uložení zůstává `company` z useCompany chvíli se starým `emailNotifications`.
+   * Bez této brány useEffect s isDirty=false znovu aplikuje starý remoteRaw a smaže čerstvě uložený draft.
+   */
+  const gateRemoteSyncUntilRemoteChangesRef = useRef(false);
+  const remoteJsonWhenSaveCompletedRef = useRef<string | null>(null);
   /** První hydratace z merged company — další sync jen při změně remoteJson a !isDirty. */
   const hasHydratedFromPropsRef = useRef(false);
   const [globalEmailInput, setGlobalEmailInput] = useState("");
@@ -221,6 +232,9 @@ export function EmailNotificationsSettings(props: {
     }
   }, [remoteRaw]);
 
+  const latestRemoteJsonRef = useRef("");
+  latestRemoteJsonRef.current = remoteJson;
+
   useEffect(() => {
     if (!companyId) return;
 
@@ -228,19 +242,26 @@ export function EmailNotificationsSettings(props: {
       console.debug("[email-notifications-settings] listener tick", {
         companyId,
         isDirty,
-        postSaveIgnoreSnapshots: postSaveIgnoreSnapshotsRef.current,
+        gateRemoteSync: gateRemoteSyncUntilRemoteChangesRef.current,
+        remoteJsonWhenSave: remoteJsonWhenSaveCompletedRef.current?.slice(0, 120),
         remoteChanged: remoteJson !== lastAppliedRemoteJsonRef.current,
       });
     }
 
-    if (postSaveIgnoreSnapshotsRef.current > 0) {
-      postSaveIgnoreSnapshotsRef.current -= 1;
-      if (typeof window !== "undefined") {
-        console.debug(
-          "[email-notifications-settings] skip Firestore snapshot (post-save echo / race)"
-        );
+    if (gateRemoteSyncUntilRemoteChangesRef.current && remoteJsonWhenSaveCompletedRef.current != null) {
+      if (remoteJson === remoteJsonWhenSaveCompletedRef.current) {
+        if (typeof window !== "undefined") {
+          console.debug(
+            "[email-notifications-settings] gate: props still have pre-save emailNotifications — nechávám lokální draft po uložení"
+          );
+        }
+        return;
       }
-      return;
+      gateRemoteSyncUntilRemoteChangesRef.current = false;
+      remoteJsonWhenSaveCompletedRef.current = null;
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] gate: remoteJson se změnil — pokračuji v sync z DB");
+      }
     }
 
     if (remoteJson === lastAppliedRemoteJsonRef.current) {
@@ -255,7 +276,7 @@ export function EmailNotificationsSettings(props: {
     }
 
     if (typeof window !== "undefined") {
-      console.debug("[email-notifications-settings] load from DB into form", {
+      console.debug("[email-notifications-settings] loaded settings from merged company → apply to form", {
         rawFromMergedCompany: remoteRaw,
         firstHydrate: !hasHydratedFromPropsRef.current,
       });
@@ -446,7 +467,7 @@ export function EmailNotificationsSettings(props: {
     if (!currentUser) {
       toast({
         variant: "destructive",
-        title: "Nastavení notifikací se nepodařilo uložit.",
+        title: "Nastavení e-mailových notifikací se nepodařilo uložit.",
         description: "Nejste přihlášeni.",
       });
       return;
@@ -454,16 +475,14 @@ export function EmailNotificationsSettings(props: {
     setSaving(true);
     try {
       const firestorePayload = JSON.parse(JSON.stringify(draft)) as Record<string, unknown>;
+      const saveUrl = companyApiUrl("/api/company/email-notifications/settings");
       if (typeof window !== "undefined") {
-        console.debug("[email-notifications-settings] save: form draft", draft);
-        console.debug("[email-notifications-settings] save: payload keys", Object.keys(firestorePayload));
-        console.debug(
-          "[email-notifications-settings] save: POST /api/company/email-notifications/settings",
-          { companyId }
-        );
+        console.debug("[email-notifications-settings] save: current form state (draft)", draft);
+        console.debug("[email-notifications-settings] save: payload before POST", firestorePayload);
+        console.debug("[email-notifications-settings] save: endpoint", saveUrl, { companyId });
       }
       const token = await currentUser.getIdToken();
-      const res = await fetch("/api/company/email-notifications/settings", {
+      const res = await fetch(saveUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -489,6 +508,7 @@ export function EmailNotificationsSettings(props: {
           status: res.status,
           ok: res.ok,
           json,
+          responseTextPreview: responseText.slice(0, 500),
         });
       }
       if (!res.ok || !json.ok) {
@@ -504,20 +524,25 @@ export function EmailNotificationsSettings(props: {
       setDraft(normalized);
       setIsDirty(false);
       lastAppliedRemoteJsonRef.current = normalizedJson;
-      postSaveIgnoreSnapshotsRef.current = 1;
+      remoteJsonWhenSaveCompletedRef.current = latestRemoteJsonRef.current;
+      gateRemoteSyncUntilRemoteChangesRef.current = true;
       if (typeof window !== "undefined") {
-        console.debug("[email-notifications-settings] save: server confirmed OK", normalized);
+        console.debug("[email-notifications-settings] save: server OK; Firestore paths companies & společnosti", {
+          companyId,
+          gateRemoteJsonFingerprint: remoteJsonWhenSaveCompletedRef.current?.slice(0, 200),
+        });
+        console.debug("[email-notifications-settings] save: normalized draft after merge", normalized);
       }
       toast({
         title: "Uloženo",
-        description: "Nastavení notifikací bylo uloženo.",
+        description: "Nastavení e-mailových notifikací bylo uloženo.",
       });
     } catch (e) {
-      console.error("[email-notifications-settings] save: failed", e);
+      console.error("[email-notifications-settings] save: catch — full error", e);
       const msg = e instanceof Error ? e.message : String(e);
       toast({
         variant: "destructive",
-        title: "Nastavení notifikací se nepodařilo uložit.",
+        title: "Nastavení e-mailových notifikací se nepodařilo uložit.",
         description:
           msg === "Failed to fetch" || msg.includes("NetworkError")
             ? "Nelze se spojit se serverem (síť nebo dostupnost API). Zkuste to znovu."
@@ -586,7 +611,7 @@ export function EmailNotificationsSettings(props: {
     try {
       const token = await getAuth().currentUser?.getIdToken();
       if (!token) throw new Error("Nepřihlášen");
-      const url = "/api/company/email-notifications/test-module";
+      const url = companyApiUrl("/api/company/email-notifications/test-module");
       if (typeof window !== "undefined") {
         console.debug("[email-notifications-settings] test-module fetch", url, { companyId, module });
       }
