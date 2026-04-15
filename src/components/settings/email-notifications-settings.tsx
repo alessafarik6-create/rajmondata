@@ -369,6 +369,12 @@ export function EmailNotificationsSettings(props: {
   };
 
   const setModuleEvent = (module: EmailModuleKey, eventKey: string, value: boolean) => {
+    if (typeof window !== "undefined") {
+      console.debug("[email-notifications-settings] switch → draft path", {
+        fieldPath: `emailNotifications.modules.${module}.${eventKey}`,
+        value,
+      });
+    }
     patchDraft((prev) => ({
       ...prev,
       modules: {
@@ -477,8 +483,17 @@ export function EmailNotificationsSettings(props: {
       const firestorePayload = JSON.parse(JSON.stringify(draft)) as Record<string, unknown>;
       const saveUrl = companyApiUrl("/api/company/email-notifications/settings");
       if (typeof window !== "undefined") {
+        const mods = firestorePayload.modules as Record<string, unknown> | undefined;
+        const docMod = mods?.documents as Record<string, unknown> | undefined;
         console.debug("[email-notifications-settings] save: current form state (draft)", draft);
         console.debug("[email-notifications-settings] save: payload before POST", firestorePayload);
+        console.debug("[email-notifications-settings] save: documents booleans in payload", {
+          newDocument: docMod?.newDocument,
+          pendingAssignment: docMod?.pendingAssignment,
+          updated: docMod?.updated,
+          approvedOrProcessed: docMod?.approvedOrProcessed,
+          enabled: docMod?.enabled,
+        });
         console.debug("[email-notifications-settings] save: endpoint", saveUrl, { companyId });
       }
       const token = await currentUser.getIdToken();
@@ -863,7 +878,7 @@ export function EmailNotificationsSettings(props: {
                           </Label>
                           <Switch
                             id={`${moduleKey}-${eventKey}`}
-                            checked={Boolean((mod as Record<string, unknown>)[eventKey])}
+                            checked={(mod as Record<string, unknown>)[eventKey] === true}
                             onCheckedChange={(v) => setModuleEvent(moduleKey, eventKey, v)}
                             disabled={!mod.enabled}
                           />

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import {
@@ -10,6 +11,29 @@ import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-
 import { mergeEmailNotifications } from "@/lib/email-notifications/schema";
 
 export const dynamic = "force-dynamic";
+
+/**
+ * Nahradí celé pole `emailNotifications` jedním objektem: `update()` přepíše mapu atomicky,
+ * zatímco `set(..., { merge: true })` u vnořených map může nechat staré klíče s opačnými booleany.
+ */
+async function writeEmailNotificationsField(
+  db: Firestore,
+  collectionName: string,
+  companyId: string,
+  emailNotifications: Record<string, unknown>
+): Promise<void> {
+  const ref = db.collection(collectionName).doc(companyId);
+  const snap = await ref.get();
+  const payload = {
+    emailNotifications,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (!snap.exists) {
+    await ref.set(payload, { merge: true });
+  } else {
+    await ref.update(payload);
+  }
+}
 
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -46,15 +70,21 @@ export async function POST(request: NextRequest) {
 
   const normalized = mergeEmailNotifications(body.emailNotifications);
   const toStore = JSON.parse(JSON.stringify(normalized)) as Record<string, unknown>;
-  const payload = {
-    emailNotifications: toStore,
-    updatedAt: FieldValue.serverTimestamp(),
-  };
+  const mods = toStore.modules as Record<string, unknown> | undefined;
+  const documents = mods?.documents as Record<string, unknown> | undefined;
+  console.log("[email-notifications/settings] payload sample (documents module)", {
+    companyId,
+    newDocument: documents?.newDocument,
+    pendingAssignment: documents?.pendingAssignment,
+    updated: documents?.updated,
+    approvedOrProcessed: documents?.approvedOrProcessed,
+    enabled: documents?.enabled,
+  });
 
   try {
     await Promise.all([
-      db.collection(COMPANIES_COLLECTION).doc(companyId).set(payload, { merge: true }),
-      db.collection(ORGANIZATIONS_COLLECTION).doc(companyId).set(payload, { merge: true }),
+      writeEmailNotificationsField(db, COMPANIES_COLLECTION, companyId, toStore),
+      writeEmailNotificationsField(db, ORGANIZATIONS_COLLECTION, companyId, toStore),
     ]);
   } catch (e) {
     console.error("[email-notifications/settings] Firestore write failed", companyId, e);

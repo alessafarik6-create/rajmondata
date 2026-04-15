@@ -235,8 +235,12 @@ function mergeFlags<T extends Record<string, unknown>>(defaults: T, raw: unknown
       ) {
         continue;
       }
-      if (typeof dv === "boolean" && typeof rv === "boolean") {
-        out[k] = rv;
+      if (typeof dv === "boolean") {
+        if (typeof rv === "boolean") {
+          out[k] = rv;
+        } else if (rv === "true" || rv === "false") {
+          out[k] = rv === "true";
+        }
       } else if (typeof dv === "number" && typeof rv === "number") {
         out[k] = rv;
       } else if (Array.isArray(dv) && Array.isArray(rv)) {
@@ -245,6 +249,26 @@ function mergeFlags<T extends Record<string, unknown>>(defaults: T, raw: unknown
     }
   }
   return out as T;
+}
+
+/**
+ * Sloučí případné vnořené `events` do plochých klíčů (stejné jako UI / dispatch).
+ * Podpora legacy: `approved` → `approvedOrProcessed`.
+ */
+function flattenModuleRawForMerge(rawMod: unknown): Record<string, unknown> {
+  if (!isPlainObject(rawMod)) return {};
+  const r: Record<string, unknown> = { ...(rawMod as Record<string, unknown>) };
+  const ev = r.events;
+  if (isPlainObject(ev)) {
+    for (const [key, val] of Object.entries(ev)) {
+      if (!(key in r)) r[key] = val;
+    }
+    delete r.events;
+  }
+  if (typeof r.approved === "boolean" && !("approvedOrProcessed" in r)) {
+    r.approvedOrProcessed = r.approved;
+  }
+  return r;
 }
 
 function mergeRecipientFields(
@@ -326,15 +350,17 @@ export function mergeEmailNotifications(raw: unknown): EmailNotificationsSetting
 
   function mergeMod<K extends EmailModuleKey>(key: K, rawMod: unknown): EmailNotificationsModules[K] {
     const def = d.modules[key];
+    const flatRaw = flattenModuleRawForMerge(rawMod);
+    /** Nejdřív příznaky včetně explicitních `false`, pak příjemci — mergeFlags dřív přepisoval recipient pole výchozími hodnotami. */
     const merged = {
-      ...mergeRecipientFields(def, rawMod),
-      ...mergeFlags(def as unknown as Record<string, unknown>, rawMod),
+      ...mergeFlags(def as unknown as Record<string, unknown>, flatRaw),
+      ...mergeRecipientFields(def, flatRaw),
     } as EmailNotificationsModules[K];
     if (key === "calendar") {
       (merged as CalendarEmailFlags).reminderOffsetsMinutes = normalizeOffsets(
         isPlainObject(rawMod)
           ? (rawMod as { reminderOffsetsMinutes?: unknown }).reminderOffsetsMinutes
-          : undefined
+          : flatRaw.reminderOffsetsMinutes
       );
     }
     if (!isPlainObject(rawMod) || typeof (rawMod as ModuleRecipientFields).useGlobalRecipients !== "boolean") {
