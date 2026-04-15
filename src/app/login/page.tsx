@@ -177,7 +177,6 @@ export default function LoginPage() {
     }
 
     setResetLoading(true);
-    let showNeutralResetToast = true;
     try {
       const res = await fetch("/api/auth/reset-password", {
         method: "POST",
@@ -192,26 +191,37 @@ export default function LoginPage() {
       };
 
       if (res.status === 400) {
-        showNeutralResetToast = false;
         toast({
           variant: "destructive",
           title: "Obnova hesla",
           description: json.error || "Zkuste to znovu.",
         });
-      } else if (!json.success) {
-        console.warn("[passwordReset] unexpected response", res.status, json);
+        return;
       }
+
+      if (res.ok && json.success === true) {
+        toast({
+          title: "Hotovo",
+          description: "Pokud účet existuje, poslali jsme email.",
+        });
+        return;
+      }
+
+      console.warn("[passwordReset] server error or no success", res.status, json);
+      toast({
+        variant: "destructive",
+        title: "Obnova hesla",
+        description: "Reset hesla se nepodařilo odeslat.",
+      });
     } catch (e) {
       console.error("[passwordReset] fetch failed", e);
+      toast({
+        variant: "destructive",
+        title: "Obnova hesla",
+        description: "Reset hesla se nepodařilo odeslat.",
+      });
     } finally {
       setResetLoading(false);
-    }
-
-    if (showNeutralResetToast) {
-      toast({
-        title: "Hotovo",
-        description: "Pokud účet existuje, poslali jsme email.",
-      });
     }
   };
 
