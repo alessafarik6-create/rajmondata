@@ -29,6 +29,12 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { doc, getDoc } from "firebase/firestore";
 import { describeFirebaseAuthError } from "@/lib/firebase-client-env";
+import {
+  describeSendPasswordResetError,
+  getPasswordResetActionCodeSettings,
+  logPasswordResetAuthContext,
+  logPasswordResetConsoleReminder,
+} from "@/lib/firebase-password-reset";
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
@@ -39,7 +45,7 @@ function isValidEmail(email: string): boolean {
 }
 
 export default function LoginPage() {
-  const { auth, firestore, areServicesAvailable, firebaseConfigError } =
+  const { auth, firestore, areServicesAvailable, firebaseConfigError, firebaseApp } =
     useFirebase();
   const { toast } = useToast();
 
@@ -188,6 +194,10 @@ export default function LoginPage() {
     }
 
     if (!auth || !areServicesAvailable) {
+      console.warn("[passwordReset] blocked: auth or services not ready", {
+        hasAuth: Boolean(auth),
+        areServicesAvailable,
+      });
       toast({
         variant: "destructive",
         title: "Obnova hesla není připravená",
@@ -197,40 +207,69 @@ export default function LoginPage() {
       return;
     }
 
+    logPasswordResetAuthContext("pre-send", auth, normalizedEmail, {
+      sameAppAsLogin: Boolean(firebaseApp && auth.app === firebaseApp),
+    });
+
     setResetLoading(true);
+    let outcome: "success" | "error" | "aborted" = "aborted";
 
     try {
-      await sendPasswordResetEmail(auth, normalizedEmail);
-
-      toast({
-        title: "Email odeslán",
-        description:
-          "Pokud účet existuje, poslali jsme na zadaný email odkaz pro obnovu hesla. Zkontrolujte i spam.",
-      });
-    } catch (error) {
-      console.error("[LoginPage] password reset failed", error);
-
-      const authError = error as AuthError;
-      const code = authError?.code;
-      let description = "Obnovu hesla se nepodařilo odeslat. Zkuste to znovu.";
-      if (code === "auth/missing-email") {
-        description = "Zadejte emailovou adresu.";
-      } else if (code === "auth/invalid-email") {
-        description = "Email nemá správný formát.";
-      } else if (code === "auth/too-many-requests") {
-        description =
-          "Příliš mnoho pokusů. Zkuste odeslání znovu za chvíli.";
-      } else if (code === "auth/network-request-failed") {
-        description = describeFirebaseAuthError(code);
+      const actionCodeSettings = getPasswordResetActionCodeSettings();
+      if (actionCodeSettings) {
+        console.log(
+          "[passwordReset] using ActionCodeSettings (NEXT_PUBLIC_FIREBASE_PASSWORD_RESET_CONTINUE_URL)"
+        );
+        await sendPasswordResetEmail(auth, normalizedEmail, actionCodeSettings);
+      } else {
+        await sendPasswordResetEmail(auth, normalizedEmail);
       }
 
+      outcome = "success";
+      logPasswordResetAuthContext("post-success", auth, normalizedEmail, {
+        outcome,
+        note: "Promise sendPasswordResetEmail resolved — Firebase Auth accepted the request (email delivery is separate).",
+      });
+      console.log("[passwordReset] sendPasswordResetEmail OK (no thrown error)");
+      logPasswordResetConsoleReminder();
+
+      toast({
+        title: "Požadavek odeslán",
+        description:
+          "Firebase Auth požadavek dokončil bez chyby. Pokud pro tento e‑mail existuje účet, měl by dorazit e‑mail s odkazem — zkontrolujte i spam. Podrobnosti a případné chyby jsou v konzoli (F12).",
+      });
+    } catch (error) {
+      outcome = "error";
+      const authError = error as AuthError;
+      const code = authError?.code;
+      const message = authError?.message ?? String(error);
+
+      console.error("[passwordReset] sendPasswordResetEmail FAILED", {
+        code,
+        message,
+        email: normalizedEmail,
+        projectId: auth.app?.options?.projectId,
+        authDomain: auth.app?.options?.authDomain,
+      });
+      logPasswordResetAuthContext("post-error", auth, normalizedEmail, {
+        outcome,
+        authErrorCode: code,
+        authErrorMessage: message,
+      });
+
+      const { title, description } = describeSendPasswordResetError(code);
       toast({
         variant: "destructive",
-        title: "Obnova hesla selhala",
+        title,
         description,
       });
     } finally {
       setResetLoading(false);
+      console.log("[passwordReset] flow finished", {
+        outcome,
+        email: normalizedEmail,
+        projectId: auth.app?.options?.projectId ?? null,
+      });
     }
   };
 
