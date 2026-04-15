@@ -77,6 +77,7 @@ import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
 import { MeasurementPhotoCaptureDialog } from "@/components/jobs/measurement-photo-capture-dialog";
+import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import {
   JOB_TAG_CUSTOM_VALUE,
   JOB_TAG_PRESETS,
@@ -575,6 +576,19 @@ function JobsPageContent() {
           customerId: payload.customerId,
           customerName: payload.customerName,
         },
+      });
+
+      void sendModuleEmailNotificationFromBrowser({
+        companyId,
+        module: "orders",
+        eventKey: "newOrder",
+        entityId: createdJobRef.id,
+        title: `Nová zakázka: ${newJob.name}`,
+        lines: [
+          `Zákazník: ${customerName}`,
+          `Stav: ${newJob.status}`,
+        ],
+        actionPath: `/portal/jobs/${createdJobRef.id}`,
       });
 
       toast({

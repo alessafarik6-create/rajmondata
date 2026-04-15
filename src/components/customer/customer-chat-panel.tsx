@@ -17,6 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { createCustomerActivity } from "@/lib/customer-activity";
+import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import { useToast } from "@/hooks/use-toast";
 
 type Props = {
@@ -132,6 +133,15 @@ export function CustomerChatPanel({ companyId, linkedJobId = null, compact = fal
       targetId: conversationId,
       targetLink: `/portal/customer-chats?conversationId=${encodeURIComponent(conversationId)}`,
       priority: "high",
+    });
+    void sendModuleEmailNotificationFromBrowser({
+      companyId,
+      module: "messages",
+      eventKey: "newCustomerMessage",
+      entityId: conversationId,
+      title: "Nová zpráva od zákazníka",
+      lines: [msg.slice(0, 240)],
+      actionPath: `/portal/customer-chats?conversationId=${encodeURIComponent(conversationId)}`,
     });
     setText("");
     toast({ title: "Zpráva odeslána" });

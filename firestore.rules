@@ -1654,5 +1654,14 @@ service cloud.firestore {
     match /superadmins/{id} {
       allow read, write: if false;
     }
+
+    /** Fronta odchozích e-mailů a deduplikace — pouze Admin SDK / server. */
+    match /mail_dispatch_queue/{id} {
+      allow read, write: if false;
+    }
+
+    match /mail_notify_dedup/{id} {
+      allow read, write: if false;
+    }
   }
 }

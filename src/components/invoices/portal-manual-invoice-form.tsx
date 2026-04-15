@@ -30,6 +30,7 @@ import type { Firestore } from "firebase/firestore";
 import { allocateNextDocumentNumber } from "@/lib/invoice-number-series";
 import { buildCustomerAddressMultiline } from "@/lib/customer-address-display";
 import { lookupCzechCompanyByIco } from "@/lib/company-lookup-api";
+import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import {
   type OrgBankAccountRow,
   resolvePaymentAccount,
@@ -440,6 +441,23 @@ export function PortalManualInvoiceForm({
     basePayload.createdBy = userId;
 
     const invRef = await addDoc(collection(firestore, "companies", companyId, "invoices"), basePayload);
+
+    const recipientLine =
+      [
+        recipient.companyName?.trim(),
+        recipient.name?.trim(),
+        recipient.email?.trim(),
+      ]
+        .find(Boolean) ?? "";
+    void sendModuleEmailNotificationFromBrowser({
+      companyId,
+      module: "invoices",
+      eventKey: "newInvoice",
+      entityId: invRef.id,
+      title: `Nová faktura: ${invoiceNumberStr}`,
+      lines: [`Částka: ${amountGross} Kč`, recipientLine ? `Odběratel: ${recipientLine}` : ""].filter(Boolean),
+      actionPath: `/portal/invoices/${invRef.id}`,
+    });
 
     await addDoc(collection(firestore, "companies", companyId, "finance"), {
       amount: amountGross,

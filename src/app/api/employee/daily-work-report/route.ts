@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { dispatchOrgModuleEmail } from "@/lib/email-notifications/dispatch";
 import {
   DAILY_REPORT_ROW_SOURCE_MANUAL,
   DAILY_REPORT_ROW_SOURCE_TERMINAL,
@@ -568,6 +569,23 @@ export async function POST(request: NextRequest) {
         rid,
         companyId,
       });
+    }
+
+    try {
+      await dispatchOrgModuleEmail(db, {
+        companyId,
+        module: "attendance",
+        eventKey: "newWorkReports",
+        entityId: rid,
+        title: `Nový denní výkaz ke schválení (${date})`,
+        lines: [
+          `Zaměstnanec: ${employeeName}`,
+          jobName ? `Zakázka: ${jobName}` : "",
+        ].filter(Boolean),
+        actionPath: "/portal/labor/dochazka?tab=approvals",
+      });
+    } catch (emailErr) {
+      console.warn("[employee/daily-work-report] email notify skipped", emailErr);
     }
 
     return NextResponse.json({ ok: true, id: rid });

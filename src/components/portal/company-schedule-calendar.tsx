@@ -40,7 +40,7 @@ import {
   type DocumentData,
   type UpdateData,
 } from "firebase/firestore";
-import { useFirestore, useMemoFirebase, useCollection, useUser, useDoc } from "@/firebase";
+import { useFirestore, useMemoFirebase, useCollection, useUser, useDoc, useCompany } from "@/firebase";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -82,6 +82,11 @@ import {
   upsertEmployeeNotificationsForEvent,
   type EmployeeNotificationType,
 } from "@/lib/employee-notifications";
+import {
+  sendModuleEmailNotificationFromBrowser,
+  syncCalendarEmailRemindersFromBrowser,
+} from "@/lib/email-notifications/client";
+import { mergeEmailNotifications } from "@/lib/email-notifications/schema";
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
 
@@ -301,6 +306,14 @@ export function CompanyScheduleCalendar({
   const isMobile = useIsMobile();
   const { toast } = useToast();
   const { user } = useUser();
+  const { company } = useCompany();
+  const emailPref = React.useMemo(
+    () =>
+      mergeEmailNotifications(
+        (company as { emailNotifications?: unknown } | null | undefined)?.emailNotifications
+      ),
+    [company]
+  );
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -675,6 +688,43 @@ export function CompanyScheduleCalendar({
         });
       }
 
+      if (realEventId) {
+        const iso = d.toISOString();
+        void syncCalendarEmailRemindersFromBrowser({
+          companyId,
+          eventId: realEventId,
+          eventStartsAtIso: iso,
+          title,
+          calendarKind: "meeting",
+        });
+        const isEditMeeting = Boolean(eventIdExisting);
+        void sendModuleEmailNotificationFromBrowser({
+          companyId,
+          module: "calendar",
+          eventKey: isEditMeeting ? "eventUpdated" : "eventCreated",
+          entityId: realEventId,
+          title: isEditMeeting ? `Událost upravena: ${title}` : `Nová událost: ${title}`,
+          lines: [`Začátek: ${format(d, "d. M. yyyy HH:mm", { locale: cs })}`],
+          actionPath: "/portal/dashboard",
+        });
+        if (
+          emailPref.enabled &&
+          emailPref.modules.calendar.enabled &&
+          emailPref.modules.calendar.todayEventReminder &&
+          isToday(d)
+        ) {
+          void sendModuleEmailNotificationFromBrowser({
+            companyId,
+            module: "calendar",
+            eventKey: "todayEventReminder",
+            entityId: realEventId,
+            title: `Dnešní událost: ${title}`,
+            lines: [`Začátek: ${format(d, "HH:mm", { locale: cs })}`],
+            actionPath: "/portal/dashboard",
+          });
+        }
+      }
+
       setFormOpen(false);
       setEditingEvent(null);
     } catch (e) {
@@ -713,6 +763,24 @@ export function CompanyScheduleCalendar({
     try {
       console.log("[calendar] delete meeting", { eventId, companyId });
       await deleteDoc(doc(firestore, "companies", companyId, "lead_meetings", eventId));
+
+      void syncCalendarEmailRemindersFromBrowser({
+        companyId,
+        eventId,
+        eventStartsAtIso: new Date().toISOString(),
+        title: "",
+        calendarKind: "meeting",
+        cancel: true,
+      });
+      void sendModuleEmailNotificationFromBrowser({
+        companyId,
+        module: "calendar",
+        eventKey: "eventDeleted",
+        entityId: eventId,
+        title: `Smazaná událost: ${editingEvent?.headline?.trim() || "schůzka"}`,
+        lines: [],
+        actionPath: "/portal/dashboard",
+      });
 
       let notifError: unknown = null;
       try {

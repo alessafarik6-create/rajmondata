@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
+import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import {
   Plus,
   FileText,
@@ -813,6 +814,29 @@ function DocumentsPageContent() {
           await syncDeliveryNoteInvoiceLink({
             documentId: newDocRef.id,
             nextInvoiceId: invoiceId,
+          });
+        }
+        void sendModuleEmailNotificationFromBrowser({
+          companyId: companyId!,
+          module: "documents",
+          eventKey: "newDocument",
+          entityId: newDocRef.id,
+          title: `Nový doklad: ${formData.number.trim()}`,
+          lines: [
+            `Dodavatel: ${formData.entityName.trim()}`,
+            assignmentFinal === "pending_assignment" ? "Zařazení: čeká na přiřazení" : "",
+          ].filter(Boolean),
+          actionPath: `/portal/documents`,
+        });
+        if (assignmentFinal === "pending_assignment") {
+          void sendModuleEmailNotificationFromBrowser({
+            companyId: companyId!,
+            module: "documents",
+            eventKey: "pendingAssignment",
+            entityId: newDocRef.id,
+            title: `Doklad k zařazení: ${formData.number.trim()}`,
+            lines: [formData.entityName.trim()],
+            actionPath: `/portal/documents`,
           });
         }
         toast({ title: "Dodací list uložen" });

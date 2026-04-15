@@ -34,6 +34,7 @@ import {
   useMemoFirebase,
   useCompany,
 } from "@/firebase";
+import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -341,6 +342,8 @@ export default function SkladPage() {
     }
     setSaving(true);
     try {
+      let inboundMovementId: string | null = null;
+      let inboundItemName = "";
       await runTransaction(firestore, async (tx) => {
         let itemRef;
         let itemName: string;
@@ -393,6 +396,8 @@ export default function SkladPage() {
         }
 
         const movRef = doc(collection(firestore, "companies", companyId, "inventoryMovements"));
+        inboundMovementId = movRef.id;
+        inboundItemName = itemName;
         tx.set(movRef, {
           companyId,
           type: "in",
@@ -408,6 +413,17 @@ export default function SkladPage() {
           createdBy: user.uid,
         });
       });
+      if (inboundMovementId) {
+        void sendModuleEmailNotificationFromBrowser({
+          companyId,
+          module: "warehouse",
+          eventKey: "stockIn",
+          entityId: inboundMovementId,
+          title: "Naskladnění",
+          lines: [`Položka: ${inboundItemName || "—"}`, `Množství: ${qty}`],
+          actionPath: "/portal/sklad",
+        });
+      }
       toast({ title: "Naskladněno", description: "Pohyb byl zaznamenán." });
       setInOpen(false);
       resetIn();
@@ -445,6 +461,8 @@ export default function SkladPage() {
     }
     setSaving(true);
     try {
+      let outboundMovementId: string | null = null;
+      let outboundItemName = "";
       await runTransaction(firestore, async (tx) => {
         const itemRef = doc(firestore, "companies", companyId, "inventoryItems", outItemId);
         const itemSnap = await tx.get(itemRef);
@@ -464,6 +482,8 @@ export default function SkladPage() {
         });
 
         const movRef = doc(collection(firestore, "companies", companyId, "inventoryMovements"));
+        outboundMovementId = movRef.id;
+        outboundItemName = itemName;
         const movType = outToProduction ? "out_to_production" : "out";
         let productionTitle: string | null = null;
 
@@ -504,6 +524,21 @@ export default function SkladPage() {
           createdBy: user.uid,
         });
       });
+      if (outboundMovementId) {
+        void sendModuleEmailNotificationFromBrowser({
+          companyId,
+          module: "warehouse",
+          eventKey: "stockOut",
+          entityId: outboundMovementId,
+          title: "Vyskladnění",
+          lines: [
+            `Položka: ${outboundItemName || "—"}`,
+            `Množství: ${qty}`,
+            outToProduction ? "Pohyb do výroby" : "",
+          ].filter(Boolean),
+          actionPath: "/portal/sklad",
+        });
+      }
       toast({ title: "Vyskladněno", description: "Pohyb byl zaznamenán." });
       setOutOpen(false);
       resetOut();

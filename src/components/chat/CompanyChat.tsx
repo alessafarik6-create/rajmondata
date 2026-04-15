@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Send } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
+import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 
 export type CompanyChatSenderMode = "employee" | "admin";
 
@@ -241,7 +242,7 @@ export function CompanyChat({
           ? profile.employeeId
           : "";
 
-      await addDoc(collection(firestore, "companies", companyId, "chat"), {
+      const msgRef = await addDoc(collection(firestore, "companies", companyId, "chat"), {
         companyId,
         senderId: user.uid,
         senderRole,
@@ -251,6 +252,18 @@ export function CompanyChat({
         text,
         read: false,
         createdAt: serverTimestamp(),
+      });
+      void sendModuleEmailNotificationFromBrowser({
+        companyId,
+        module: "messages",
+        eventKey: "newInternalMessage",
+        entityId: msgRef.id,
+        title:
+          senderRole === "employee"
+            ? "Nová interní zpráva od zaměstnance"
+            : "Nová interní zpráva",
+        lines: [senderName, text.slice(0, 240)].filter(Boolean),
+        actionPath: "/portal/dashboard",
       });
       setDraft("");
     } finally {

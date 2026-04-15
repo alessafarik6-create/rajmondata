@@ -73,6 +73,7 @@ import {
 } from "@/lib/lead-tag-colors";
 import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
 import { resolveInquiryTypeRaw } from "@/lib/inquiry-type-badge";
+import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -472,6 +473,16 @@ export default function PortalLeadsPage() {
         },
         { merge: true }
       );
+      const leadLabel = String(lead.jmeno ?? lead.id ?? "").trim() || "Poptávka";
+      void sendModuleEmailNotificationFromBrowser({
+        companyId,
+        module: "leads",
+        eventKey: "leadStatusChanged",
+        entityId: key,
+        title: `Změna stavu poptávky: ${leadLabel}`,
+        lines: [tagId ? `Nový štítek / stav byl uložen.` : `Stav / štítek byl odebrán.`],
+        actionPath: `/portal/leads`,
+      });
     } catch (e) {
       console.error(e);
       toast({

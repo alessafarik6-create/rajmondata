@@ -8,6 +8,7 @@ import {
   syncApprovedWorkReportLaborJobExpenses,
 } from "@/lib/daily-work-report-job-labor-expenses";
 import { applyApprovedJobLaborFromSegments } from "@/lib/work-segment-server";
+import { dispatchOrgModuleEmail } from "@/lib/email-notifications/dispatch";
 
 type Body = {
   companyId?: string;
@@ -114,6 +115,9 @@ export async function POST(request: NextRequest) {
       .get();
     const empData = empSnap.data() as Record<string, unknown> | undefined;
     const hourlyRate = parseHourlyRate(empData?.hourlyRate) ?? 0;
+    const employeeDisplayName =
+      `${String(empData?.firstName ?? "").trim()} ${String(empData?.lastName ?? "").trim()}`.trim() ||
+      employeeId;
 
     const hoursConfirmed =
       typeof report.hoursConfirmed === "number" && Number.isFinite(report.hoursConfirmed)
@@ -184,6 +188,26 @@ export async function POST(request: NextRequest) {
         adminNote: adminNote ?? FieldValue.delete(),
         updatedAt: FieldValue.serverTimestamp(),
       });
+
+      try {
+        await dispatchOrgModuleEmail(db, {
+          companyId,
+          module: "attendance",
+          eventKey: "payrollApproved",
+          entityId: rid,
+          title: `Denní výkaz schválen (${date})`,
+          lines: [
+            `Zaměstnanec: ${employeeDisplayName}`,
+            `Schválil: ${reviewerName}`,
+            typeof payableAmountCzk === "number"
+              ? `Částka k výplatě: ${payableAmountCzk} Kč`
+              : "",
+          ].filter(Boolean),
+          actionPath: "/portal/labor/dochazka?tab=approvals",
+        });
+      } catch (emailErr) {
+        console.warn("[daily-work-reports/review] email notify skipped", emailErr);
+      }
 
       console.log("Daily work report approved by admin");
     } else if (action === "reject") {

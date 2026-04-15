@@ -89,6 +89,9 @@ export type CompanyProfile = {
 
   /** Logo firmy pro doklady (URL z Firebase Storage). */
   organizationLogoUrl?: string | null;
+
+  /** Centrální nastavení modulových e-mailových notifikací (viz email-notifications/schema). */
+  emailNotifications?: unknown;
 };
 
 function resolveTenantCompanyId(userProfile: unknown): string | undefined {

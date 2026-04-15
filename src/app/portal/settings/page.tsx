@@ -20,7 +20,8 @@ import {
   collection,
 } from 'firebase/firestore';
 import Link from 'next/link';
-import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2 } from 'lucide-react';
+import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail } from 'lucide-react';
+import { EmailNotificationsSettings } from '@/components/settings/email-notifications-settings';
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
 import { getFirebaseStorage } from '@/firebase/storage';
@@ -457,6 +458,11 @@ export default function SettingsPage() {
           <TabsTrigger value="profile" className="gap-2 min-h-[44px] sm:min-h-0"><Building2 className="w-4 h-4 shrink-0" /> Profil</TabsTrigger>
           {isAdmin && <TabsTrigger value="organization" className="gap-2 min-h-[44px] sm:min-h-0"><ShieldCheck className="w-4 h-4 shrink-0" /> Organizace</TabsTrigger>}
           {isAdmin && <TabsTrigger value="management" className="gap-2 min-h-[44px] sm:min-h-0"><Users className="w-4 h-4 shrink-0" /> Správa týmu</TabsTrigger>}
+          {isAdmin && (
+            <TabsTrigger value="email-notifications" className="gap-2 min-h-[44px] sm:min-h-0">
+              <Mail className="w-4 h-4 shrink-0" /> E-mailové notifikace
+            </TabsTrigger>
+          )}
           <TabsTrigger value="notifications" className="gap-2 min-h-[44px] sm:min-h-0"><Bell className="w-4 h-4 shrink-0" /> Oznámení</TabsTrigger>
         </TabsList>
 
@@ -1157,6 +1163,12 @@ export default function SettingsPage() {
                 </Link>
               </CardContent>
             </Card>
+          </TabsContent>
+        )}
+
+        {isAdmin && (
+          <TabsContent value="email-notifications" className="mt-6">
+            <EmailNotificationsSettings companyId={companyId} company={company as Record<string, unknown> | null | undefined} />
           </TabsContent>
         )}
 

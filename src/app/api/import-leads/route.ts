@@ -3,6 +3,7 @@ import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-collections";
 import { parseLeadImportPayload, type LeadImportRow } from "@/lib/lead-import-parse";
 import { syncImportLeadsToFirestoreAdmin } from "@/lib/import-lead-sync-firestore";
+import { dispatchOrgModuleEmail } from "@/lib/email-notifications/dispatch";
 
 export const dynamic = "force-dynamic";
 
@@ -257,6 +258,34 @@ export async function GET(request: NextRequest) {
       console.error("[import-leads] Firestore sync failed", e);
       syncWarning =
         "Nepodařilo se uložit synchronizaci do databáze (poptávky se zobrazí z JSON, ale stav v systému může být zastaralý).";
+    }
+
+    try {
+      if (syncWarning) {
+        await dispatchOrgModuleEmail(db, {
+          companyId,
+          module: "system",
+          eventKey: "importError",
+          entityId: `import-leads-${companyId}`,
+          title: "Chyba synchronizace importu poptávek",
+          lines: [syncWarning],
+          actionPath: "/portal/leads",
+        });
+      } else if (sync && sync.created > 0) {
+        await dispatchOrgModuleEmail(db, {
+          companyId,
+          module: "leads",
+          eventKey: "newLead",
+          entityId: `import-${companyId}-${Date.now()}`,
+          title: `Import poptávek: ${sync.created} nových záznamů`,
+          lines: [
+            `Aktualizováno: ${sync.updated}, přeskočeno: ${sync.skipped}, celkem v dávce: ${sync.total}.`,
+          ],
+          actionPath: "/portal/leads",
+        });
+      }
+    } catch (notifyErr) {
+      console.warn("[import-leads] email notification skipped", notifyErr);
     }
 
     return NextResponse.json({

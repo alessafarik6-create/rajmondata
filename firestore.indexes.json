@@ -225,6 +225,11 @@
         { "fieldPath": "type", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "mail_dispatch_queue",
+      "queryScope": "COLLECTION",
+      "fields": [{ "fieldPath": "sendAt", "order": "ASCENDING" }]
     }
   ],
   "fieldOverrides": []
