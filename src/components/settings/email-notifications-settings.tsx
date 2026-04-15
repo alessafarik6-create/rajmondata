@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import type { SetStateAction } from "react";
 import { collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
 import {
   useFirestore,
@@ -192,6 +193,9 @@ export function EmailNotificationsSettings(props: {
   const [draft, setDraft] = useState<EmailNotificationsSettings>(() =>
     mergeEmailNotifications((company as { emailNotifications?: unknown })?.emailNotifications)
   );
+  const [isDirty, setIsDirty] = useState(false);
+  const lastAppliedRemoteJsonRef = useRef<string | null>(null);
+  const postSaveIgnoreSnapshotsRef = useRef(0);
   const [globalEmailInput, setGlobalEmailInput] = useState("");
   const [moduleEmailInputs, setModuleEmailInputs] = useState<Partial<Record<EmailModuleKey, string>>>(
     {}
@@ -200,11 +204,62 @@ export function EmailNotificationsSettings(props: {
   const [testing, setTesting] = useState(false);
   const [moduleTesting, setModuleTesting] = useState<EmailModuleKey | null>(null);
 
+  const patchDraft = (updater: SetStateAction<EmailNotificationsSettings>) => {
+    setIsDirty(true);
+    setDraft(updater);
+  };
+
+  const remoteRaw = (company as { emailNotifications?: unknown } | null | undefined)
+    ?.emailNotifications;
+  const remoteJson = useMemo(() => {
+    try {
+      return JSON.stringify(remoteRaw ?? null);
+    } catch {
+      return '"<unserializable>"';
+    }
+  }, [remoteRaw]);
+
   useEffect(() => {
-    setDraft(
-      mergeEmailNotifications((company as { emailNotifications?: unknown })?.emailNotifications)
-    );
-  }, [company]);
+    if (!companyId) return;
+
+    if (typeof window !== "undefined") {
+      console.debug("[email-notifications-settings] listener tick", {
+        companyId,
+        isDirty,
+        postSaveIgnoreSnapshots: postSaveIgnoreSnapshotsRef.current,
+        remoteChanged: remoteJson !== lastAppliedRemoteJsonRef.current,
+      });
+    }
+
+    if (postSaveIgnoreSnapshotsRef.current > 0) {
+      postSaveIgnoreSnapshotsRef.current -= 1;
+      if (typeof window !== "undefined") {
+        console.debug(
+          "[email-notifications-settings] skip Firestore snapshot (post-save echo / race)"
+        );
+      }
+      return;
+    }
+
+    if (remoteJson === lastAppliedRemoteJsonRef.current) {
+      return;
+    }
+
+    if (isDirty) {
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] skip sync: edited form (dirty)");
+      }
+      return;
+    }
+
+    if (typeof window !== "undefined") {
+      console.debug("[email-notifications-settings] load from DB into form", {
+        rawFromMergedCompany: remoteRaw,
+      });
+    }
+    lastAppliedRemoteJsonRef.current = remoteJson;
+    setDraft(mergeEmailNotifications(remoteRaw));
+  }, [companyId, remoteJson, remoteRaw, isDirty]);
 
   const employeesColRef = useMemoFirebase(
     () =>
@@ -235,7 +290,7 @@ export function EmailNotificationsSettings(props: {
 
   const toggleGlobalEmployee = (emp: EmployeeRow, checked: boolean) => {
     const next = toggleEmpInLists(emp, checked, globalLists);
-    setDraft((prev) => ({
+    patchDraft((prev) => ({
       ...prev,
       globalRecipientUserIds: next.userIds,
       globalRecipientEmployeeIds: next.employeeIds,
@@ -253,7 +308,7 @@ export function EmailNotificationsSettings(props: {
       });
       return;
     }
-    setDraft((prev) =>
+    patchDraft((prev) =>
       prev.globalRecipients.includes(e)
         ? prev
         : { ...prev, globalRecipients: [...prev.globalRecipients, e] }
@@ -262,14 +317,14 @@ export function EmailNotificationsSettings(props: {
   };
 
   const removeGlobalManualEmail = (e: string) => {
-    setDraft((prev) => ({
+    patchDraft((prev) => ({
       ...prev,
       globalRecipients: prev.globalRecipients.filter((x) => x !== e),
     }));
   };
 
   const setModuleEnabled = (module: EmailModuleKey, enabled: boolean) => {
-    setDraft((prev) => ({
+    patchDraft((prev) => ({
       ...prev,
       modules: {
         ...prev.modules,
@@ -279,7 +334,7 @@ export function EmailNotificationsSettings(props: {
   };
 
   const setModuleUseGlobalRecipients = (module: EmailModuleKey, useGlobal: boolean) => {
-    setDraft((prev) => ({
+    patchDraft((prev) => ({
       ...prev,
       modules: {
         ...prev.modules,
@@ -289,7 +344,7 @@ export function EmailNotificationsSettings(props: {
   };
 
   const setModuleEvent = (module: EmailModuleKey, eventKey: string, value: boolean) => {
-    setDraft((prev) => ({
+    patchDraft((prev) => ({
       ...prev,
       modules: {
         ...prev.modules,
@@ -302,7 +357,7 @@ export function EmailNotificationsSettings(props: {
   };
 
   const toggleModuleEmployee = (module: EmailModuleKey, emp: EmployeeRow, checked: boolean) => {
-    setDraft((prev) => {
+    patchDraft((prev) => {
       const m = prev.modules[module];
       const cur: RecipientIdLists = {
         userIds: m.recipientUserIds,
@@ -334,7 +389,7 @@ export function EmailNotificationsSettings(props: {
       });
       return;
     }
-    setDraft((prev) => {
+    patchDraft((prev) => {
       const m = prev.modules[module];
       if (m.recipients.includes(raw)) return prev;
       return {
@@ -349,7 +404,7 @@ export function EmailNotificationsSettings(props: {
   };
 
   const removeModuleManualEmail = (module: EmailModuleKey, e: string) => {
-    setDraft((prev) => {
+    patchDraft((prev) => {
       const m = prev.modules[module];
       return {
         ...prev,
@@ -362,7 +417,7 @@ export function EmailNotificationsSettings(props: {
   };
 
   const toggleCalendarOffset = (minutes: number, checked: boolean) => {
-    setDraft((prev) => {
+    patchDraft((prev) => {
       const cur = new Set(prev.modules.calendar.reminderOffsetsMinutes);
       if (checked) cur.add(minutes);
       else cur.delete(minutes);
@@ -384,17 +439,34 @@ export function EmailNotificationsSettings(props: {
     if (!firestore || !companyId) return;
     setSaving(true);
     try {
-      const payload = { emailNotifications: draft, updatedAt: serverTimestamp() };
+      const firestorePayload = JSON.parse(JSON.stringify(draft)) as Record<string, unknown>;
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] save: form draft", draft);
+        console.debug("[email-notifications-settings] save: Firestore emailNotifications payload", firestorePayload);
+      }
+      const payload = { emailNotifications: firestorePayload, updatedAt: serverTimestamp() };
       await Promise.all([
         setDoc(doc(firestore, COMPANIES_COLLECTION, companyId), payload, { merge: true }),
         setDoc(doc(firestore, ORGANIZATIONS_COLLECTION, companyId), payload, { merge: true }),
       ]);
+      const normalized = mergeEmailNotifications(firestorePayload);
+      const normalizedJson = JSON.stringify(firestorePayload);
+      setDraft(normalized);
+      setIsDirty(false);
+      lastAppliedRemoteJsonRef.current = normalizedJson;
+      postSaveIgnoreSnapshotsRef.current = 1;
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] save: success; applied normalized draft", normalized);
+      }
       toast({
         title: "Uloženo",
-        description: "Notifikace pro modul byly uloženy.",
+        description: "Nastavení notifikací bylo uloženo.",
       });
     } catch (e) {
       console.error(e);
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] save: failed", e);
+      }
       toast({
         variant: "destructive",
         title: "Uložení se nezdařilo",
@@ -513,7 +585,7 @@ export function EmailNotificationsSettings(props: {
           </div>
           <Switch
             checked={draft.enabled}
-            onCheckedChange={(v) => setDraft((p) => ({ ...p, enabled: v }))}
+            onCheckedChange={(v) => patchDraft((p) => ({ ...p, enabled: v }))}
             className="shrink-0"
           />
         </div>
@@ -536,7 +608,7 @@ export function EmailNotificationsSettings(props: {
               <Switch
                 checked={draft.includeOrganizationAdmins}
                 onCheckedChange={(v) =>
-                  setDraft((p) => ({ ...p, includeOrganizationAdmins: v }))
+                  patchDraft((p) => ({ ...p, includeOrganizationAdmins: v }))
                 }
               />
             </div>
@@ -726,7 +798,7 @@ export function EmailNotificationsSettings(props: {
                           <Switch
                             checked={draft.modules.calendar.reminderMeetingsOnly}
                             onCheckedChange={(v) =>
-                              setDraft((p) => ({
+                              patchDraft((p) => ({
                                 ...p,
                                 modules: {
                                   ...p.modules,
@@ -763,6 +835,12 @@ export function EmailNotificationsSettings(props: {
             })}
           </Accordion>
         </div>
+
+        {isDirty ? (
+          <p className="text-sm text-amber-700 dark:text-amber-500" role="status">
+            Máte neuložené změny.
+          </p>
+        ) : null}
 
         <div className="flex flex-col sm:flex-row gap-3">
           <Button

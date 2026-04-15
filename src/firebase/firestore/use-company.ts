@@ -196,6 +196,42 @@ function mergeModuleEntitlementsMaps(fromCompanies: unknown, fromOrg: unknown): 
   return { ...(ce ?? {}), ...(oe ?? {}) };
 }
 
+function updatedAtToMillis(u: unknown): number {
+  if (u == null) return 0;
+  if (typeof u === 'object' && u !== null && 'toMillis' in u) {
+    const t = (u as { toMillis?: () => number }).toMillis;
+    if (typeof t === 'function') {
+      try {
+        return t.call(u);
+      } catch {
+        return 0;
+      }
+    }
+  }
+  if (u instanceof Date) return u.getTime();
+  return 0;
+}
+
+/**
+ * `emailNotifications` se z portálu zapisuje do `companies` i `společnosti`.
+ * Sloučený profil musí brát čerstvější / dostupný zdroj, ne jen spread z `companies`.
+ */
+function mergeEmailNotificationsField(
+  c: Record<string, unknown> | null,
+  o: Record<string, unknown> | null | undefined
+): unknown {
+  const cEmail = c?.emailNotifications;
+  const oEmail = o?.emailNotifications;
+  if (cEmail !== undefined && cEmail !== null && oEmail !== undefined && oEmail !== null) {
+    const cMs = updatedAtToMillis(c?.updatedAt);
+    const oMs = updatedAtToMillis(o?.updatedAt);
+    return oMs >= cMs ? oEmail : cEmail;
+  }
+  if (oEmail !== undefined && oEmail !== null) return oEmail;
+  if (cEmail !== undefined && cEmail !== null) return cEmail;
+  return undefined;
+}
+
 /**
  * Superadmin čte/zapisuje `společnosti/{id}`; portál poslouchá `companies/{id}`.
  * Sloučení: licence + moduly z obou dokumentů; lepší `platformLicense`; org má prioritu u stavu firmy.
@@ -254,6 +290,11 @@ function mergeCompanyWithOrganizationRecord(
   }
   if (o && 'active' in o && o.active !== undefined) {
     merged.active = o.active;
+  }
+
+  const mergedEmailNotifications = mergeEmailNotificationsField(c, o);
+  if (mergedEmailNotifications !== undefined) {
+    merged.emailNotifications = mergedEmailNotifications;
   }
 
   return merged as CompanyProfile & { id: string };
@@ -371,6 +412,7 @@ export function useCompany() {
         orgLoading,
         tenantDocsLoading,
       });
+      console.debug('[useCompany] merged emailNotifications (companies + společnosti)', company?.emailNotifications);
     } catch {
       /* ignore logging failures */
     }
