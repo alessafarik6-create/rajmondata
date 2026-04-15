@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { SetStateAction } from "react";
-import { collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
+import { collection } from "firebase/firestore";
 import {
   useFirestore,
   useCollection,
@@ -196,6 +196,8 @@ export function EmailNotificationsSettings(props: {
   const [isDirty, setIsDirty] = useState(false);
   const lastAppliedRemoteJsonRef = useRef<string | null>(null);
   const postSaveIgnoreSnapshotsRef = useRef(0);
+  /** První hydratace z merged company — další sync jen při změně remoteJson a !isDirty. */
+  const hasHydratedFromPropsRef = useRef(false);
   const [globalEmailInput, setGlobalEmailInput] = useState("");
   const [moduleEmailInputs, setModuleEmailInputs] = useState<Partial<Record<EmailModuleKey, string>>>(
     {}
@@ -255,8 +257,10 @@ export function EmailNotificationsSettings(props: {
     if (typeof window !== "undefined") {
       console.debug("[email-notifications-settings] load from DB into form", {
         rawFromMergedCompany: remoteRaw,
+        firstHydrate: !hasHydratedFromPropsRef.current,
       });
     }
+    hasHydratedFromPropsRef.current = true;
     lastAppliedRemoteJsonRef.current = remoteJson;
     setDraft(mergeEmailNotifications(remoteRaw));
   }, [companyId, remoteJson, remoteRaw, isDirty]);
@@ -436,19 +440,65 @@ export function EmailNotificationsSettings(props: {
   };
 
   const handleSave = async () => {
-    if (!firestore || !companyId) return;
+    if (!companyId) return;
+    const auth = getAuth();
+    const currentUser = auth.currentUser;
+    if (!currentUser) {
+      toast({
+        variant: "destructive",
+        title: "Nastavení notifikací se nepodařilo uložit.",
+        description: "Nejste přihlášeni.",
+      });
+      return;
+    }
     setSaving(true);
     try {
       const firestorePayload = JSON.parse(JSON.stringify(draft)) as Record<string, unknown>;
       if (typeof window !== "undefined") {
         console.debug("[email-notifications-settings] save: form draft", draft);
-        console.debug("[email-notifications-settings] save: Firestore emailNotifications payload", firestorePayload);
+        console.debug("[email-notifications-settings] save: payload keys", Object.keys(firestorePayload));
+        console.debug(
+          "[email-notifications-settings] save: POST /api/company/email-notifications/settings",
+          { companyId }
+        );
       }
-      const payload = { emailNotifications: firestorePayload, updatedAt: serverTimestamp() };
-      await Promise.all([
-        setDoc(doc(firestore, COMPANIES_COLLECTION, companyId), payload, { merge: true }),
-        setDoc(doc(firestore, ORGANIZATIONS_COLLECTION, companyId), payload, { merge: true }),
-      ]);
+      const token = await currentUser.getIdToken();
+      const res = await fetch("/api/company/email-notifications/settings", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ companyId, emailNotifications: firestorePayload }),
+      });
+      const responseText = await res.text();
+      let json: { ok?: boolean; error?: string } = {};
+      try {
+        json = responseText ? (JSON.parse(responseText) as { ok?: boolean; error?: string }) : {};
+      } catch (parseErr) {
+        console.error(
+          "[email-notifications-settings] save: response is not JSON",
+          res.status,
+          responseText,
+          parseErr
+        );
+        throw new Error(`Neplatná odpověď serveru (HTTP ${res.status}).`);
+      }
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] save: response", {
+          status: res.status,
+          ok: res.ok,
+          json,
+        });
+      }
+      if (!res.ok || !json.ok) {
+        console.error("[email-notifications-settings] save: API returned error", {
+          status: res.status,
+          json,
+          responseText,
+        });
+        throw new Error(json.error || `Požadavek selhal (HTTP ${res.status}).`);
+      }
       const normalized = mergeEmailNotifications(firestorePayload);
       const normalizedJson = JSON.stringify(firestorePayload);
       setDraft(normalized);
@@ -456,21 +506,22 @@ export function EmailNotificationsSettings(props: {
       lastAppliedRemoteJsonRef.current = normalizedJson;
       postSaveIgnoreSnapshotsRef.current = 1;
       if (typeof window !== "undefined") {
-        console.debug("[email-notifications-settings] save: success; applied normalized draft", normalized);
+        console.debug("[email-notifications-settings] save: server confirmed OK", normalized);
       }
       toast({
         title: "Uloženo",
         description: "Nastavení notifikací bylo uloženo.",
       });
     } catch (e) {
-      console.error(e);
-      if (typeof window !== "undefined") {
-        console.debug("[email-notifications-settings] save: failed", e);
-      }
+      console.error("[email-notifications-settings] save: failed", e);
+      const msg = e instanceof Error ? e.message : String(e);
       toast({
         variant: "destructive",
-        title: "Uložení se nezdařilo",
-        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+        title: "Nastavení notifikací se nepodařilo uložit.",
+        description:
+          msg === "Failed to fetch" || msg.includes("NetworkError")
+            ? "Nelze se spojit se serverem (síť nebo dostupnost API). Zkuste to znovu."
+            : msg,
       });
     } finally {
       setSaving(false);
@@ -483,7 +534,11 @@ export function EmailNotificationsSettings(props: {
     try {
       const token = await getAuth().currentUser?.getIdToken();
       if (!token) throw new Error("Nepřihlášen");
-      const res = await fetch("/api/company/email-notifications/test", {
+      const url = "/api/company/email-notifications/test";
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] test fetch", url, { companyId });
+      }
+      const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -491,24 +546,34 @@ export function EmailNotificationsSettings(props: {
         },
         body: JSON.stringify({ companyId }),
       });
-      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-      if (res.ok && json.ok) {
-        toast({
-          title: "Test odeslán",
-          description: "Zkontrolujte schránku globálních příjemců.",
-        });
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Test se nezdařil",
-          description: json.error || "Zkuste to znovu.",
-        });
+      const responseText = await res.text();
+      let json: { ok?: boolean; error?: string } = {};
+      try {
+        json = responseText ? (JSON.parse(responseText) as { ok?: boolean; error?: string }) : {};
+      } catch {
+        console.error("[email-notifications-settings] test: bad JSON", res.status, responseText);
+        throw new Error(`Neplatná odpověď serveru (${res.status}).`);
       }
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] test response", res.status, json);
+      }
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || `HTTP ${res.status}`);
+      }
+      toast({
+        title: "Test odeslán",
+        description: "Zkontrolujte schránku globálních příjemců.",
+      });
     } catch (e) {
+      console.error("[email-notifications-settings] test failed", e);
+      const msg = e instanceof Error ? e.message : "Chyba sítě.";
       toast({
         variant: "destructive",
         title: "Test se nezdařil",
-        description: e instanceof Error ? e.message : "Chyba sítě.",
+        description:
+          msg === "Failed to fetch" || msg.includes("NetworkError")
+            ? "Nelze se spojit se serverem. Zkontrolujte připojení."
+            : msg,
       });
     } finally {
       setTesting(false);
@@ -521,7 +586,11 @@ export function EmailNotificationsSettings(props: {
     try {
       const token = await getAuth().currentUser?.getIdToken();
       if (!token) throw new Error("Nepřihlášen");
-      const res = await fetch("/api/company/email-notifications/test-module", {
+      const url = "/api/company/email-notifications/test-module";
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] test-module fetch", url, { companyId, module });
+      }
+      const res = await fetch(url, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -529,24 +598,34 @@ export function EmailNotificationsSettings(props: {
         },
         body: JSON.stringify({ companyId, module }),
       });
-      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
-      if (res.ok && json.ok) {
-        toast({
-          title: "Test odeslán",
-          description: "Zkontrolujte schránku příjemců tohoto modulu.",
-        });
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Test se nezdařil",
-          description: json.error || "Zkuste to znovu.",
-        });
+      const responseText = await res.text();
+      let json: { ok?: boolean; error?: string } = {};
+      try {
+        json = responseText ? (JSON.parse(responseText) as { ok?: boolean; error?: string }) : {};
+      } catch {
+        console.error("[email-notifications-settings] test-module: bad JSON", res.status, responseText);
+        throw new Error(`Neplatná odpověď serveru (${res.status}).`);
       }
+      if (typeof window !== "undefined") {
+        console.debug("[email-notifications-settings] test-module response", res.status, json);
+      }
+      if (!res.ok || !json.ok) {
+        throw new Error(json.error || `HTTP ${res.status}`);
+      }
+      toast({
+        title: "Test odeslán",
+        description: "Zkontrolujte schránku příjemců tohoto modulu.",
+      });
     } catch (e) {
+      console.error("[email-notifications-settings] test-module failed", e);
+      const msg = e instanceof Error ? e.message : "Chyba sítě.";
       toast({
         variant: "destructive",
         title: "Test se nezdařil",
-        description: e instanceof Error ? e.message : "Chyba sítě.",
+        description:
+          msg === "Failed to fetch" || msg.includes("NetworkError")
+            ? "Nelze se spojit se serverem. Zkontrolujte připojení."
+            : msg,
       });
     } finally {
       setModuleTesting(null);
