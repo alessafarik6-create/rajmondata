@@ -43,6 +43,32 @@ function normalizeAppUrl(): string {
     .replace(/\/$/, "");
 }
 
+/**
+ * Přepíše Firebase výchozí odkaz (__/auth/action) na vlastní stránku v aplikaci,
+ * aby uživatel nastavil heslo v UI projektu (stejný design jako přihlášení).
+ */
+function toAppPasswordResetUrl(firebaseLink: string, appBase: string): string {
+  const base = appBase.replace(/\/$/, "");
+  try {
+    const u = new URL(firebaseLink);
+    const oobCode = u.searchParams.get("oobCode");
+    const mode = u.searchParams.get("mode");
+    const apiKey = u.searchParams.get("apiKey");
+    const lang = u.searchParams.get("lang");
+    if (!oobCode || mode !== "resetPassword") {
+      return firebaseLink;
+    }
+    const out = new URL(`${base}/login/obnova-hesla`);
+    out.searchParams.set("mode", "resetPassword");
+    out.searchParams.set("oobCode", oobCode);
+    if (apiKey) out.searchParams.set("apiKey", apiKey);
+    if (lang) out.searchParams.set("lang", lang);
+    return out.toString();
+  } catch {
+    return firebaseLink;
+  }
+}
+
 function ensureFirebaseAdminInitialized(): void {
   if (getApps().length > 0) {
     console.log(LOG, "firebase admin: app already exists, skip init");
@@ -142,11 +168,14 @@ export async function POST(req: Request) {
       );
     }
 
-    console.log(LOG, "generatePasswordResetLink: started", { continueUrl: appUrl });
+    const continueAfterReset = `${appUrl}/login`;
+    console.log(LOG, "generatePasswordResetLink: started", {
+      continueUrl: continueAfterReset,
+    });
     let link: string;
     try {
       link = await getAuth().generatePasswordResetLink(email, {
-        url: appUrl,
+        url: continueAfterReset,
       });
       console.log(LOG, "generatePasswordResetLink: success", {
         linkLength: link?.length ?? 0,
@@ -164,6 +193,11 @@ export async function POST(req: Request) {
       );
     }
 
+    const emailHref = toAppPasswordResetUrl(link, appUrl);
+    console.log(LOG, "password reset email href", {
+      rewritten: emailHref !== link,
+    });
+
     console.log(LOG, "Resend: client creating");
     const resend = new Resend(resendKey);
     console.log(LOG, "Resend: send started", { to: email, from: emailFrom });
@@ -175,7 +209,7 @@ export async function POST(req: Request) {
       html: `
         <h2>Obnova hesla</h2>
         <p>Klikněte na odkaz pro nastavení nového hesla:</p>
-        <a href="${link}">Obnovit heslo</a>
+        <a href="${emailHref}">Obnovit heslo</a>
       `,
     });
 
