@@ -6,6 +6,8 @@ export type SendTransactionalEmailInput = {
   to: string[];
   subject: string;
   html: string;
+  /** Resend: kopie (bez duplicit s `to`). */
+  cc?: string[];
 };
 
 export async function sendTransactionalEmail(
@@ -22,10 +24,17 @@ export async function sendTransactionalEmail(
     return { ok: false, error: "Žádní příjemci." };
   }
 
+  const toSet = new Set(uniqueTo);
+  const ccRaw = Array.isArray(input.cc)
+    ? input.cc.map((e) => e.trim().toLowerCase()).filter(Boolean)
+    : [];
+  const ccUnique = [...new Set(ccRaw)].filter((e) => !toSet.has(e));
+
   const resend = new Resend(key);
   const result = await resend.emails.send({
     from,
     to: uniqueTo,
+    ...(ccUnique.length > 0 ? { cc: ccUnique } : {}),
     subject: input.subject,
     html: input.html,
   });

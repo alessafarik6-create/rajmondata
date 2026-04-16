@@ -936,6 +936,16 @@ service cloud.firestore {
         }
 
         /**
+         * Historie odeslání dokumentů e-mailem ze zakázky (zápis přes Admin API).
+         * companies/{companyId}/jobs/{jobId}/documentEmailLogs/{logId}
+         */
+        match /documentEmailLogs/{logId} {
+          allow read: if terminalCompanyMatches(companyId) ||
+            jobFinancialReadAccess(companyId, jobId);
+          allow create, update, delete: if false;
+        }
+
+        /**
          * Úkoly zakázky: companies/{companyId}/jobs/{jobId}/tasks/{taskId}
          * taskScope == 'job' odliší záznam od companies/{companyId}/tasks (task manager).
          */

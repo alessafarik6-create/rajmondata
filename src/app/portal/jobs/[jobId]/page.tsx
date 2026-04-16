@@ -38,6 +38,7 @@ import {
 } from "@/lib/job-linked-document-sync";
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
 import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoices-section";
+import { JobDocumentEmailSection } from "@/components/jobs/job-document-email-section";
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
@@ -911,6 +912,13 @@ function JobDetailPageContent() {
     [firestore, companyId, customerId]
   );
   const { data: customer } = useDoc<any>(customerRef);
+
+  const customerEmailForJob = useMemo(() => {
+    const fromCustomer = String(customer?.email ?? "").trim();
+    if (fromCustomer) return fromCustomer;
+    const j = job as { customerEmail?: string } | null | undefined;
+    return String(j?.customerEmail ?? "").trim();
+  }, [customer, job]);
 
   const customersColRef = useMemoFirebase(
     () =>
@@ -6770,6 +6778,25 @@ function JobDetailPageContent() {
                   ? String((job as { status: string }).status)
                   : ""
               }
+            />
+          ) : null}
+
+          {companyId && jobFirestoreId ? (
+            <JobDocumentEmailSection
+              companyId={companyId}
+              jobId={String(jobFirestoreId)}
+              job={job as Record<string, unknown>}
+              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
+              companyDisplayName={
+                companyNameFromDoc ||
+                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
+                "Organizace"
+              }
+              customerName={jobCustomerAddressBlock.displayName}
+              customerEmail={customerEmailForJob}
+              workContractsForJob={workContractsForJob}
+              jobBudgetBreakdown={jobBudgetBreakdown}
+              canManage={canManageFolders}
             />
           ) : null}
 

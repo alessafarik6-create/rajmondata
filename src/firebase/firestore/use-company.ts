@@ -9,6 +9,7 @@ import {
   COMPANIES_COLLECTION,
   ORGANIZATIONS_COLLECTION,
 } from '@/lib/firestore-collections';
+import type { DocumentEmailOutboundSettings } from '@/lib/document-email-outbound';
 import { MODULE_KEYS } from '@/lib/license-modules';
 
 export type CompanyProfile = {
@@ -101,6 +102,9 @@ export type CompanyProfile = {
 
   /** Centrální nastavení modulových e-mailových notifikací (viz email-notifications/schema). */
   emailNotifications?: unknown;
+
+  /** Šablony a CC pro odesílání dokumentů ze zakázky e-mailem. */
+  documentEmailOutbound?: DocumentEmailOutboundSettings | null;
 };
 
 function resolveTenantCompanyId(userProfile: unknown): string | undefined {
