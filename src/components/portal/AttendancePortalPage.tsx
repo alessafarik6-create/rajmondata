@@ -52,6 +52,13 @@ import Link from "next/link";
 import { formatKc } from "@/lib/employee-money";
 import { AdminDailyWorkReportDetailSheet } from "@/components/portal/AdminDailyWorkReportDetailSheet";
 import { EmployeeAttendanceOverview } from "@/app/portal/employee/employee-attendance-overview";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 /** Veřejná cesta terminálu — pouze z kanonického companyId (žádná jiná adresa do QR). */
 function buildAttendanceTerminalPath(companyId: string): string {
@@ -146,6 +153,8 @@ export function AttendancePortalPage() {
   const [adminDwrDetail, setAdminDwrDetail] = useState<{ employeeId: string; date: string } | null>(
     null
   );
+  const ALL_EMPLOYEES = "__all__";
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>(ALL_EMPLOYEES);
 
   const userRef = useMemoFirebase(
     () =>
@@ -266,6 +275,39 @@ export function AttendancePortalPage() {
     data: dailyReports = [],
     isLoading: dailyReportsLoading,
   } = useCollection(dailyReportsQuery);
+
+  const employeesQuery = useMemoFirebase(() => {
+    if (!areServicesAvailable || !firestore || !companyId || !isAttendancePrivileged) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employees"),
+      orderBy("lastName", "asc"),
+      limit(500)
+    );
+  }, [areServicesAvailable, firestore, companyId, isAttendancePrivileged]);
+
+  const { data: employees = [] } = useCollection<Record<string, unknown>>(employeesQuery);
+
+  const employeeOptions = useMemo(() => {
+    const rows = Array.isArray(employees) ? employees : [];
+    const items = rows
+      .map((e) => {
+        const id = String((e as any).id ?? "");
+        const fn = String((e as any).firstName ?? "").trim();
+        const ln = String((e as any).lastName ?? "").trim();
+        const name = [fn, ln].filter(Boolean).join(" ").trim() || String((e as any).name ?? "").trim();
+        return { id, label: name || id };
+      })
+      .filter((x) => x.id && x.label);
+    // Fallback sort by label (in case lastName missing)
+    items.sort((a, b) => a.label.localeCompare(b.label, "cs"));
+    return items;
+  }, [employees]);
+
+  const filteredDailyReports = useMemo(() => {
+    const rows = Array.isArray(dailyReports) ? (dailyReports as Record<string, unknown>[]) : [];
+    if (!selectedEmployeeId || selectedEmployeeId === ALL_EMPLOYEES) return rows;
+    return rows.filter((r) => String(r.employeeId ?? "") === selectedEmployeeId);
+  }, [dailyReports, selectedEmployeeId]);
 
   const tabParam = searchParams.get("tab");
   const tabsKey = "priv";
@@ -617,11 +659,37 @@ export function AttendancePortalPage() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
+                  <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                    <div className="w-full md:max-w-[360px]">
+                      <div className="text-sm font-medium text-foreground mb-2">Zaměstnanec</div>
+                      <Select
+                        value={selectedEmployeeId}
+                        onValueChange={(v) => setSelectedEmployeeId(v)}
+                      >
+                        <SelectTrigger className="w-full bg-background">
+                          <SelectValue placeholder="Všichni zaměstnanci" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={ALL_EMPLOYEES}>Všichni zaměstnanci</SelectItem>
+                          {employeeOptions.map((e) => (
+                            <SelectItem key={e.id} value={e.id}>
+                              {e.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="text-sm text-muted-foreground">
+                      {dailyReportsLoading ? "Načítám…" : `Zobrazeno: ${filteredDailyReports.length} záznamů`}
+                    </div>
+                  </div>
+
                   {dailyReportsLoading ? (
                     <div className="flex justify-center p-12">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
                     </div>
-                  ) : Array.isArray(dailyReports) && dailyReports.length > 0 ? (
+                  ) : Array.isArray(filteredDailyReports) && filteredDailyReports.length > 0 ? (
                     <Table>
                       <TableHeader>
                         <TableRow>
@@ -636,7 +704,7 @@ export function AttendancePortalPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(dailyReports as Record<string, unknown>[]).map((row, i) => {
+                        {filteredDailyReports.map((row, i) => {
                           const employeeId = String(row.employeeId || "");
                           const date = String(row.date || "");
                           const st = String(row.status || "");
@@ -677,7 +745,6 @@ export function AttendancePortalPage() {
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    className="border-slate-300 bg-white text-black"
                                     onClick={() => setAdminDwrDetail({ employeeId, date })}
                                   >
                                     <PanelRightOpen className="mr-1 h-4 w-4" />
