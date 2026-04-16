@@ -507,11 +507,11 @@ export function AdminDailyWorkReportDetailSheet(props: {
       <Sheet open={open && hasTarget} onOpenChange={onOpenChange}>
         <SheetContent
           side="right"
-          className="flex w-full max-w-full flex-col border-border bg-background text-foreground sm:max-w-2xl lg:max-w-[900px] xl:max-w-[980px]"
+          className="flex w-full max-w-full flex-col border-gray-200 bg-white text-gray-900 sm:max-w-2xl lg:max-w-[900px] xl:max-w-[980px] dark:border-slate-800 dark:bg-slate-950 dark:text-slate-50"
         >
-          <SheetHeader className="space-y-1 border-b border-border pb-4 text-left">
+          <SheetHeader className="space-y-1 border-b border-gray-200 pb-4 text-left dark:border-slate-800">
             <SheetTitle>Detail výkazu práce</SheetTitle>
-            <SheetDescription>
+            <SheetDescription className="text-gray-600 dark:text-slate-300">
               {employeeName} · {date}
             </SheetDescription>
           </SheetHeader>
@@ -524,33 +524,33 @@ export function AdminDailyWorkReportDetailSheet(props: {
             ) : (
               <>
                 <div className="grid gap-6 lg:grid-cols-3">
-                  <div className="grid gap-3 rounded-lg border border-border bg-card p-4 text-sm shadow-sm lg:col-span-1">
+                  <div className="grid gap-3 rounded-lg border border-gray-200 bg-white p-4 text-sm shadow-sm lg:col-span-1 dark:border-slate-800 dark:bg-slate-950">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-medium">Stav:</span>
+                      <span className="font-medium text-gray-900 dark:text-slate-50">Stav:</span>
                     {statusBadge(String(report.status ?? ""))}
                     </div>
                     <div className="grid gap-1 sm:grid-cols-2">
                       <div>
-                        <span className="text-muted-foreground">Celkem hodin (řádky):</span>{" "}
+                        <span className="text-gray-600 dark:text-slate-300">Celkem hodin (řádky):</span>{" "}
                         <span className="font-semibold tabular-nums">{totalHours} h</span>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Z terminálu (řádky):</span>{" "}
+                        <span className="text-gray-600 dark:text-slate-300">Z terminálu (řádky):</span>{" "}
                         <span className="font-semibold tabular-nums">{sumTerminalHours} h</span>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Ruční řádky:</span>{" "}
+                        <span className="text-gray-600 dark:text-slate-300">Ruční řádky:</span>{" "}
                         <span className="font-semibold tabular-nums">{sumManualHours} h</span>
                       </div>
                       <div>
-                        <span className="text-muted-foreground">Tarifní úseky (dokumenty dne):</span>{" "}
+                        <span className="text-gray-600 dark:text-slate-300">Tarifní úseky (dokumenty dne):</span>{" "}
                         <span className="font-semibold tabular-nums">{tariffHoursDay} h</span>
                       </div>
                     </div>
                     {typeof report.estimatedLaborFromSegmentsCzk === "number" &&
                     report.estimatedLaborFromSegmentsCzk > 0 ? (
                       <div>
-                        <span className="text-muted-foreground">Odhad práce (segmenty, uloženo):</span>{" "}
+                        <span className="text-gray-600 dark:text-slate-300">Odhad práce (segmenty, uloženo):</span>{" "}
                         <span className="font-medium tabular-nums">
                           {formatKc(report.estimatedLaborFromSegmentsCzk)}
                         </span>
@@ -558,19 +558,19 @@ export function AdminDailyWorkReportDetailSheet(props: {
                     ) : null}
                     {typeof report.payableAmountCzk === "number" && report.payableAmountCzk > 0 ? (
                       <div>
-                        <span className="text-muted-foreground">K výplatě (schváleno):</span>{" "}
+                        <span className="text-gray-600 dark:text-slate-300">K výplatě (schváleno):</span>{" "}
                         <span className="font-medium tabular-nums">
                           {formatKc(report.payableAmountCzk)}
                         </span>
                       </div>
                     ) : null}
-                    <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                    <div className="grid gap-1 text-xs text-gray-600 sm:grid-cols-2 dark:text-slate-300">
                       <div>Vytvořeno: {tsLabel(report.createdAt)}</div>
                       <div>Odesláno: {tsLabel(report.submittedAt)}</div>
                       <div>Upraveno: {tsLabel(report.updatedAt)}</div>
                     </div>
                     {typeof report.adminNote === "string" && report.adminNote.trim() ? (
-                      <div className="rounded border border-border bg-muted p-2 text-xs">
+                      <div className="rounded border border-gray-200 bg-gray-50 p-2 text-xs text-gray-800 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-100">
                         <span className="font-medium">Poznámka administrátora (schválení):</span>{" "}
                         {report.adminNote}
                       </div>
@@ -579,23 +579,27 @@ export function AdminDailyWorkReportDetailSheet(props: {
 
                   <div className="space-y-4 lg:col-span-2">
                     <div className="space-y-2">
-                      <Label htmlFor="dwr-note">Poznámka k výkazu</Label>
+                      <Label htmlFor="dwr-note" className="text-gray-900 dark:text-slate-50">
+                        Poznámka k výkazu
+                      </Label>
                       <Textarea
                         id="dwr-note"
                         value={note}
                         onChange={(e) => setNote(e.target.value)}
-                        className="w-full min-h-[150px] rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed"
+                        className="w-full min-h-[150px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm leading-relaxed text-gray-900 placeholder:text-gray-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:placeholder:text-slate-400"
                         placeholder="Interní / sdílená poznámka k výkazu…"
                       />
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="dwr-desc">Souhrnný popis práce (text výkazu)</Label>
+                      <Label htmlFor="dwr-desc" className="text-gray-900 dark:text-slate-50">
+                        Souhrnný popis práce (text výkazu)
+                      </Label>
                       <Textarea
                         id="dwr-desc"
                         value={description}
                         onChange={(e) => setDescription(e.target.value)}
-                        className="w-full min-h-[220px] rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed"
+                        className="w-full min-h-[220px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm leading-relaxed text-gray-900 placeholder:text-gray-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:placeholder:text-slate-400"
                         placeholder="Popis činností…"
                       />
                     </div>
@@ -628,7 +632,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                     </Button>
                   </div>
 
-                  <div className="overflow-x-auto rounded-lg border border-border bg-card">
+                  <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white dark:border-slate-800 dark:bg-slate-950">
                     <Table>
                       <TableHeader>
                         <TableRow className="border-border hover:bg-transparent">
@@ -668,7 +672,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                               </TableCell>
                               <TableCell className="align-top">
                                 <Input
-                                  className="h-9 w-20 tabular-nums"
+                                  className="h-9 w-20 tabular-nums border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:placeholder:text-slate-400"
                                   value={r.hoursStr}
                                   onChange={(e) =>
                                     setRows((prev) =>
@@ -682,7 +686,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                               <TableCell className="align-top">
                                 <div className="flex max-w-[220px] flex-col gap-1">
                                   <select
-                                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                                    className="h-9 w-full rounded-md border border-gray-300 bg-white px-2 text-sm text-gray-900 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50"
                                     value={isNoJobSegmentJobId(r.jobId) ? "" : r.jobId}
                                     onChange={(e) => {
                                       const v = e.target.value;
@@ -711,7 +715,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                               </TableCell>
                               <TableCell className="align-top">
                                 <Textarea
-                                  className="min-h-[64px] text-sm leading-relaxed"
+                                  className="min-h-[64px] border-gray-300 bg-white text-sm leading-relaxed text-gray-900 placeholder:text-gray-400 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-50 dark:placeholder:text-slate-400"
                                   value={r.lineNote}
                                   onChange={(e) =>
                                     setRows((prev) =>
@@ -748,7 +752,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                   </div>
                 </div>
 
-                <div className="mt-auto flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:flex-wrap">
+                <div className="mt-auto flex flex-col gap-2 border-t border-gray-200 pt-4 sm:flex-row sm:flex-wrap dark:border-slate-800">
                   <Button
                     type="button"
                     variant="default"
