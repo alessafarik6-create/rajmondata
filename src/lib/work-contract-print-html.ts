@@ -58,6 +58,8 @@ export type WorkContractPrintModel = {
   additionalInfoHtml: string;
   zhotovitelHtml: string;
   objednatelHtml: string;
+  /** Elektronický podpis organizace (zhotovitel) — URL (ideálně PNG s průhledným pozadím). */
+  organizationSignatureUrl?: string | null;
   /** Job / summary (optional) */
   jobTitle?: string;
   jobDescription?: string;
@@ -264,6 +266,18 @@ const WORK_CONTRACT_PRINT_CSS = `
         border-bottom: 1px solid var(--ink);
         min-height: 44px;
         margin-bottom: 8px;
+        position: relative;
+        overflow: hidden;
+      }
+      .org-signature {
+        position: absolute;
+        left: 0;
+        bottom: 2px;
+        max-width: 100%;
+        max-height: 42px;
+        object-fit: contain;
+        /* Snaha o ostřejší raster při tisku */
+        image-rendering: -webkit-optimize-contrast;
       }
       .sign-name {
         font-size: 10pt;
@@ -373,6 +387,10 @@ function buildWorkContractAttachmentPrintHtml(m: WorkContractPrintModel): string
 
   const zhot = firstSignatoryLine(m.zhotovitelHtml);
   const objed = firstSignatoryLine(m.objednatelHtml);
+  const orgSigUrl = String(m.organizationSignatureUrl ?? "").trim();
+  const orgSigImg = orgSigUrl
+    ? `<img class="org-signature" alt="Podpis organizace" src="${escapeHtml(orgSigUrl)}" />`
+    : "";
 
   const subline = parentNum && parentNum !== "—"
     ? `Příloha ke smlouvě č. ${escapeHtml(parentNum)}`
@@ -480,7 +498,7 @@ function buildWorkContractAttachmentPrintHtml(m: WorkContractPrintModel): string
         <div class="signatures">
           <div class="sign-block">
             <h3>Zhotovitel</h3>
-            <div class="sign-line"></div>
+            <div class="sign-line">${orgSigImg}</div>
             <div class="sign-name">${escapeHtml(zhot)}</div>
           </div>
           <div class="sign-block">
@@ -551,6 +569,10 @@ export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
 
   const zhot = firstSignatoryLine(m.zhotovitelHtml);
   const objed = firstSignatoryLine(m.objednatelHtml);
+  const orgSigUrl = String(m.organizationSignatureUrl ?? "").trim();
+  const orgSigImg = orgSigUrl
+    ? `<img class="org-signature" alt="Podpis organizace" src="${escapeHtml(orgSigUrl)}" />`
+    : "";
 
   const pageTitle = escapeHtml(m.pageTitle || "Smlouva o dílo");
 
@@ -653,7 +675,7 @@ export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
         <div class="signatures">
           <div class="sign-block">
             <h3>Zhotovitel</h3>
-            <div class="sign-line"></div>
+            <div class="sign-line">${orgSigImg}</div>
             <div class="sign-name">${escapeHtml(zhot)}</div>
           </div>
           <div class="sign-block">

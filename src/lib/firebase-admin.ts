@@ -4,6 +4,7 @@ import { getFirestore } from "firebase-admin/firestore";
 
 let adminFirestore: Firestore | null = null;
 let adminAuth: Auth | null = null;
+let adminBucket: any | null = null;
 
 const LOG_PREFIX = "[firebase-admin]";
 
@@ -14,11 +15,16 @@ export function getAdminFirestore(): Firestore | null {
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const rawPrivateKey = process.env.FIREBASE_PRIVATE_KEY;
   const privateKey = rawPrivateKey?.replace(/\\n/g, "\n");
+  const storageBucket =
+    process.env.FIREBASE_STORAGE_BUCKET ||
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET ||
+    "";
 
   // Safe logging: presence only (no secrets)
   console.log(`${LOG_PREFIX} FIREBASE_PROJECT_ID: ${projectId ? "present" : "missing"}`);
   console.log(`${LOG_PREFIX} FIREBASE_CLIENT_EMAIL: ${clientEmail ? "present" : "missing"}`);
   console.log(`${LOG_PREFIX} FIREBASE_PRIVATE_KEY: ${rawPrivateKey ? `present (length ${rawPrivateKey.length})` : "missing"}`);
+  console.log(`${LOG_PREFIX} FIREBASE_STORAGE_BUCKET: ${storageBucket ? "present" : "missing"}`);
 
   if (!projectId || !clientEmail || !privateKey) {
     console.warn(`${LOG_PREFIX} Skipping init: one or more required env vars missing.`);
@@ -30,6 +36,7 @@ export function getAdminFirestore(): Firestore | null {
     if (!admin.apps?.length) {
       admin.initializeApp({
         credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
+        ...(storageBucket ? { storageBucket } : {}),
       });
       console.log(`${LOG_PREFIX} initializeApp succeeded (single default app).`);
     }
@@ -64,6 +71,21 @@ export function getAdminAuth(): Auth | null {
     return adminAuth;
   } catch (e) {
     console.error(`${LOG_PREFIX} getAdminAuth:`, (e as Error)?.message ?? e);
+    return null;
+  }
+}
+
+/** Firebase Storage bucket (Admin). */
+export function getAdminStorageBucket(): any | null {
+  if (adminBucket) return adminBucket;
+  if (!getAdminFirestore()) return null;
+  try {
+    const admin = require("firebase-admin") as typeof import("firebase-admin");
+    const b = admin.storage().bucket();
+    adminBucket = b;
+    return adminBucket;
+  } catch (e) {
+    console.error(`${LOG_PREFIX} getAdminStorageBucket:`, (e as Error)?.message ?? e);
     return null;
   }
 }

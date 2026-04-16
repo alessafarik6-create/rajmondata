@@ -22,6 +22,7 @@ import {
 import Link from 'next/link';
 import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail } from 'lucide-react';
 import { EmailNotificationsSettings } from '@/components/settings/email-notifications-settings';
+import { OrganizationSignatureSettingsCard } from "@/components/settings/organization-signature-settings";
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
 import { getFirebaseStorage } from '@/firebase/storage';
@@ -616,6 +617,15 @@ export default function SettingsPage() {
                       </div>
                     </div>
                   </div>
+
+                  {isAdmin && companyId ? (
+                    <div className="pt-2">
+                      <OrganizationSignatureSettingsCard
+                        companyId={companyId}
+                        signatureUrl={String((company as any)?.organizationSignature?.url ?? "").trim() || null}
+                      />
+                    </div>
+                  ) : null}
                 </div>
 
                 <Separator className="bg-border" />

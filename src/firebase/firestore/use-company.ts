@@ -90,6 +90,15 @@ export type CompanyProfile = {
   /** Logo firmy pro doklady (URL z Firebase Storage). */
   organizationLogoUrl?: string | null;
 
+  /** Elektronický podpis organizace (URL z Firebase Storage + metadata). */
+  organizationSignature?: {
+    url?: string;
+    storagePath?: string;
+    updatedAt?: unknown;
+    updatedBy?: string;
+    contentType?: string;
+  } | null;
+
   /** Centrální nastavení modulových e-mailových notifikací (viz email-notifications/schema). */
   emailNotifications?: unknown;
 };

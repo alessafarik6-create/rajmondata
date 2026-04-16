@@ -1728,6 +1728,12 @@ function JobDetailPageContent() {
 
   const buildContractHtmlForForm = useCallback(
     (form: WorkContractForm) => {
+      const orgSigUrl = String((companyDoc as any)?.organizationSignature?.url ?? "").trim();
+      if (!orgSigUrl) {
+        throw new Error(
+          "Organizace nemá nastavený elektronický podpis. Nastavte ho v Nastavení organizace (Elektronický podpis organizace)."
+        );
+      }
       if (form.documentRole === "attachment") {
         const headerRaw = applyTemplateVariables(
           form.contractHeader || "",
@@ -1781,6 +1787,7 @@ function JobDetailPageContent() {
           additionalInfoHtml: withLineBreaks(additionalRaw),
           zhotovitelHtml: withLineBreaks(contractorRaw),
           objednatelHtml: withLineBreaks(clientRaw),
+          organizationSignatureUrl: orgSigUrl,
           jobTitle: jobTitleAtt,
           jobDescription: jobDescAtt,
           priceFormatted: priceFormattedAtt,
@@ -1864,6 +1871,7 @@ function JobDetailPageContent() {
         additionalInfoHtml: withLineBreaks(additionalRaw),
         zhotovitelHtml: withLineBreaks(contractorRaw),
         objednatelHtml: withLineBreaks(clientRaw),
+        organizationSignatureUrl: orgSigUrl,
         jobTitle,
         jobDescription: jobDesc,
         priceFormatted,
@@ -1874,6 +1882,7 @@ function JobDetailPageContent() {
     },
     [
       applyTemplateVariables,
+      companyDoc,
       job?.name,
       job?.description,
       job?.endDate,
