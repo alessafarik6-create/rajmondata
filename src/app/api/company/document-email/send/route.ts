@@ -211,20 +211,16 @@ export async function POST(request: NextRequest) {
         contractId,
         invoiceId,
       });
-    } catch (pdfErr) {
-      const msg = errorMessageFromUnknown(pdfErr);
-      const detail = errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr);
-      console.error(ROUTE_LOG, "getDocumentPdfBuffer threw", {
-        companyId,
-        jobId,
-        documentType: type,
-        contractId,
-        invoiceId,
-        message: msg,
-        stack: errorStackFromUnknown(pdfErr),
-        serialized: serializeUnknownForLog(pdfErr),
-      });
-      return jsonFail(400, msg, detail.slice(0, 12_000), { step: "getDocumentPdfBuffer.throw" });
+    } catch (error) {
+      console.error("PDF GENERATION ERROR:", error);
+      return NextResponse.json(
+        {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          detail: error instanceof Error ? error.stack ?? null : null,
+        },
+        { status: 500 }
+      );
     }
 
     if (!pdf.ok) {
@@ -303,13 +299,15 @@ export async function POST(request: NextRequest) {
     }
     console.info(ROUTE_LOG, "email sent ok", { companyId, jobId, documentType: type });
     return NextResponse.json({ ok: true as const });
-  } catch (unexpected) {
-    const msg = errorMessageFromUnknown(unexpected);
-    const detail = errorStackFromUnknown(unexpected) ?? serializeUnknownForLog(unexpected);
-    console.error(ROUTE_LOG, "unhandled route error", {
-      message: msg,
-      serialized: serializeUnknownForLog(unexpected),
-    });
-    return jsonFail(500, msg, detail.slice(0, 12_000), { step: "route.unhandled" });
+  } catch (error: unknown) {
+    console.error("[document-email] failed", error);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : "Unknown server error",
+        detail: error instanceof Error ? (error.stack ?? String(error)) : String(error),
+      },
+      { status: 400 }
+    );
   }
 }

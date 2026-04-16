@@ -391,7 +391,7 @@ export function JobDocumentEmailSection({
     const html = normalizeEmailBodyToHtml(bodyPlain);
     setSending(true);
     try {
-      const r = await sendJobDocumentEmailFromBrowser({
+      await sendJobDocumentEmailFromBrowser({
         companyId,
         jobId,
         type: modalType,
@@ -403,21 +403,17 @@ export function JobDocumentEmailSection({
         invoiceId,
         contractId,
       });
-      if (!r.ok) {
-        const fromServer = [r.error, r.detail].filter((s) => s != null && String(s).trim() !== "").join("\n\n");
-        console.info("[document-email/send] toast payload", { error: r.error, detail: r.detail });
-        toast({
-          variant: "destructive",
-          title: "Odeslání se nezdařilo",
-          description: fromServer.slice(0, 6000),
-        });
-        return;
-      }
       toast({
         title: "Odesláno",
         description: "E-mail včetně PDF přílohy byl odeslán a zapsán do historie.",
       });
       setModalOpen(false);
+    } catch (error) {
+      toast({
+        title: "Odeslání se nezdařilo",
+        description: error instanceof Error ? error.message : "Neznámá chyba",
+        variant: "destructive",
+      });
     } finally {
       setSending(false);
     }

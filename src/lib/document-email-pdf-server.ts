@@ -16,11 +16,7 @@ import type { DocumentEmailType } from "@/lib/document-email-outbound";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
 import { sanitizeInvoicePreviewHtml } from "@/lib/invoice-a4-html";
-import {
-  errorMessageFromUnknown,
-  errorStackFromUnknown,
-  serializeUnknownForLog,
-} from "@/lib/server-error-serialize";
+import { serializeUnknownForLog } from "@/lib/server-error-serialize";
 
 const MAX_PDF_BYTES = 9 * 1024 * 1024;
 const LOG = "[document-email-pdf]";
@@ -37,14 +33,6 @@ function logPdfError(phase: string, err: unknown): void {
     stack: e.stack,
     serialized: serializeUnknownForLog(err),
   });
-}
-
-function wrapPdfStep(step: string, err: unknown): Error {
-  const inner = errorMessageFromUnknown(err);
-  const out = new Error(`[PDF:${step}] ${inner}`);
-  const st = errorStackFromUnknown(err);
-  out.stack = st ? `${out.message}\n--- inner stack ---\n${st}` : out.stack;
-  return out;
 }
 
 /**
@@ -87,22 +75,25 @@ async function launchPdfBrowser(): Promise<Browser> {
 
   if (custom) {
     logPdf("browser", `pre-launch localChrome path=${custom}`);
+    const localArgs = [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-gpu",
+    ];
+    console.log("executablePath", custom);
+    console.log("chromium.args", "(local launch)", localArgs);
     try {
       const browser = await puppeteer.launch({
         executablePath: custom,
         headless: true,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-        ],
+        args: localArgs,
       });
       logPdf("browser", "launch ok (local Chrome)");
       return browser;
     } catch (e) {
       logPdfError("browser.localChrome", e);
-      throw wrapPdfStep("puppeteer.launch", e);
+      throw e;
     }
   }
 
@@ -121,8 +112,10 @@ async function launchPdfBrowser(): Promise<Browser> {
     executablePath = await chromium.executablePath(binDir);
   } catch (e) {
     logPdfError("chromium.executablePath", e);
-    throw wrapPdfStep("chromium.executablePath", e);
+    throw e;
   }
+  console.log("executablePath", executablePath);
+  console.log("chromium.args", chromium.args);
   logPdf(
     "chromium",
     `executablePath len=${executablePath.length} path=${executablePath}`
@@ -139,7 +132,7 @@ async function launchPdfBrowser(): Promise<Browser> {
     return browser;
   } catch (e) {
     logPdfError("browser.launch", e);
-    throw wrapPdfStep("puppeteer.launch", e);
+    throw e;
   }
 }
 
@@ -152,50 +145,37 @@ export async function renderStoredHtmlToPdfBuffer(html: string): Promise<Buffer>
     logPdfError("html", new Error("empty html"));
     throw new Error("Prázdné HTML pro PDF.");
   }
+  console.log("START PDF GENERATION");
+  console.log("HTML LENGTH:", trimmed.length);
   logPdf("html", `ready server-side string chars=${trimmed.length} (no window/document)`);
 
   let browser: Browser | null = null;
   try {
     logPdf("chromium", "about to launch browser");
-    try {
-      browser = await launchPdfBrowser();
-    } catch (e) {
-      logPdfError("step.browserLaunch", e);
-      throw wrapPdfStep("browserLaunch", e);
-    }
+    browser = await launchPdfBrowser();
 
     logPdf("page", "newPage");
     const page = await browser.newPage();
 
     logPdf("page", "setContent start waitUntil=networkidle0 timeout=90000");
-    try {
-      await page.setContent(trimmed, {
-        waitUntil: "networkidle0",
-        timeout: 90_000,
-      });
-    } catch (e) {
-      logPdfError("step.page.setContent", e);
-      throw wrapPdfStep("page.setContent", e);
-    }
+    await page.setContent(trimmed, {
+      waitUntil: "networkidle0",
+      timeout: 90_000,
+    });
     logPdf("page", "setContent done (networkidle0)");
 
     logPdf("page", "page.pdf() start format=A4 printBackground=true");
-    let pdfUint8: Uint8Array;
-    try {
-      pdfUint8 = await page.pdf({
-        format: "A4",
-        printBackground: true,
-      });
-    } catch (e) {
-      logPdfError("step.page.pdf", e);
-      throw wrapPdfStep("page.pdf", e);
-    }
+    const pdfUint8 = await page.pdf({
+      format: "A4",
+      printBackground: true,
+    });
     const buf = Buffer.from(pdfUint8);
     logPdf("pdf", `buffer created bytes=${buf.length}`);
     return buf;
-  } catch (e) {
-    logPdfError("renderStoredHtmlToPdfBuffer", e);
-    throw e;
+  } catch (error) {
+    logPdfError("renderStoredHtmlToPdfBuffer", error);
+    console.error("PDF GENERATION ERROR:", error);
+    throw error;
   } finally {
     if (browser) {
       try {
@@ -231,8 +211,7 @@ export async function getDocumentPdfBuffer(
 
   logPdf("input", `companyId=${companyId} jobId=${jobId} documentType=${type}`);
 
-  try {
-    if (type === "contract") {
+  if (type === "contract") {
       const cid = String(input.contractId ?? "").trim();
       if (!cid) {
         return {
@@ -286,9 +265,9 @@ export async function getDocumentPdfBuffer(
       const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
       logPdf("done", `contract filename=smlouva-${safeNum}.pdf bytes=${buffer.length}`);
       return { ok: true, buffer, filename: `smlouva-${safeNum}.pdf` };
-    }
+  }
 
-    if (type === "invoice" || type === "advance_invoice") {
+  if (type === "invoice" || type === "advance_invoice") {
       const iid = String(input.invoiceId ?? "").trim();
       if (!iid) {
         return {
@@ -380,25 +359,13 @@ export async function getDocumentPdfBuffer(
       const prefix = type === "advance_invoice" ? "zalohova-faktura" : "faktura";
       logPdf("done", `invoice filename=${prefix}-${safeNum}.pdf bytes=${buffer.length}`);
       return { ok: true, buffer, filename: `${prefix}-${safeNum}.pdf` };
-    }
-
-    return {
-      ok: false,
-      error: "Nepodporovaný typ dokumentu.",
-      detail: `type=${type}`,
-    };
-  } catch (e) {
-    logPdfError("getDocumentPdfBuffer", e);
-    console.error(`${LOG} getDocumentPdfBuffer serialized`, serializeUnknownForLog(e));
-    const msg = errorMessageFromUnknown(e);
-    const st = errorStackFromUnknown(e);
-    const errOut = msg.length > 4000 ? `${msg.slice(0, 4000)}…` : msg;
-    return {
-      ok: false,
-      error: errOut,
-      detail: (st ?? serializeUnknownForLog(e)).slice(0, 12_000),
-    };
   }
+
+  return {
+    ok: false,
+    error: "Nepodporovaný typ dokumentu.",
+    detail: `type=${type}`,
+  };
 }
 
 export async function generateContractPdfBuffer(
