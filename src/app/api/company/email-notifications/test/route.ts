@@ -65,7 +65,10 @@ export async function POST(request: NextRequest) {
 
   const sent = await sendTransactionalEmail({ to: recipients, subject, html });
   if (!sent.ok) {
-    return NextResponse.json({ ok: false, error: sent.error }, { status: 500 });
+    return NextResponse.json(
+      { ok: false, error: sent.error, detail: sent.detail },
+      { status: 500 }
+    );
   }
   return NextResponse.json({ ok: true });
 }

@@ -202,7 +202,7 @@ export async function resolveNotificationEmails(
 export async function dispatchOrgModuleEmail(
   db: Firestore | null,
   input: DispatchOrgEmailInput
-): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+): Promise<{ ok: boolean; skipped?: string; error?: string; detail?: string | null }> {
   if (!db) {
     return { ok: false, error: "Databáze není dostupná." };
   }
@@ -244,7 +244,7 @@ export async function dispatchOrgModuleEmail(
 
   const sent = await sendTransactionalEmail({ to: recipients, subject, html });
   if (!sent.ok) {
-    return { ok: false, error: sent.error };
+    return { ok: false, error: sent.error, detail: sent.detail };
   }
   return { ok: true };
 }

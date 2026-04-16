@@ -1,4 +1,8 @@
 import { Resend } from "resend";
+import {
+  errorMessageFromUnknown,
+  serializeUnknownForLog,
+} from "@/lib/server-error-serialize";
 
 const LOG = "[email-notifications/resend]";
 
@@ -17,18 +21,26 @@ export type SendTransactionalEmailInput = {
   attachments?: SendTransactionalEmailAttachment[];
 };
 
+export type SendTransactionalEmailResult =
+  | { ok: true }
+  | { ok: false; error: string; detail: string | null };
+
 export async function sendTransactionalEmail(
   input: SendTransactionalEmailInput
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<SendTransactionalEmailResult> {
   const key = String(process.env.RESEND_API_KEY ?? "").trim();
   const from = String(process.env.EMAIL_FROM ?? "").trim();
   if (!key || !from) {
     console.warn(LOG, "missing RESEND_API_KEY or EMAIL_FROM");
-    return { ok: false, error: "E-mail není na serveru nakonfigurován." };
+    return {
+      ok: false,
+      error: "E-mail není na serveru nakonfigurován.",
+      detail: "RESEND_API_KEY nebo EMAIL_FROM chybí v proměnných prostředí.",
+    };
   }
   const uniqueTo = [...new Set(input.to.map((e) => e.trim().toLowerCase()).filter(Boolean))];
   if (uniqueTo.length === 0) {
-    return { ok: false, error: "Žádní příjemci." };
+    return { ok: false, error: "Žádní příjemci.", detail: null };
   }
 
   const toSet = new Set(uniqueTo);
@@ -49,18 +61,42 @@ export async function sendTransactionalEmail(
       : {};
 
   const resend = new Resend(key);
-  const result = await resend.emails.send({
-    from,
-    to: uniqueTo,
-    ...(ccUnique.length > 0 ? { cc: ccUnique } : {}),
-    subject: input.subject,
-    html: input.html,
-    ...attachmentPayload,
-  });
+  let result: Awaited<ReturnType<Resend["emails"]["send"]>>;
+  try {
+    result = await resend.emails.send({
+      from,
+      to: uniqueTo,
+      ...(ccUnique.length > 0 ? { cc: ccUnique } : {}),
+      subject: input.subject,
+      html: input.html,
+      ...attachmentPayload,
+    });
+  } catch (err) {
+    const detail = serializeUnknownForLog(err);
+    console.error(LOG, "Resend send threw", detail);
+    return {
+      ok: false,
+      error: errorMessageFromUnknown(err),
+      detail: detail.slice(0, 12_000),
+    };
+  }
 
   if (result.error) {
-    console.error(LOG, "Resend error", result.error);
-    return { ok: false, error: "Odeslání e-mailu se nezdařilo." };
+    const raw = result.error;
+    const detail = serializeUnknownForLog(raw);
+    console.error(LOG, "Resend API error object", detail);
+    const msgFromApi =
+      typeof raw === "object" &&
+      raw !== null &&
+      "message" in raw &&
+      typeof (raw as { message: unknown }).message === "string"
+        ? String((raw as { message: string }).message).trim()
+        : "";
+    return {
+      ok: false,
+      error: msgFromApi || errorMessageFromUnknown(raw) || "Resend vrátil chybu.",
+      detail: detail.slice(0, 12_000),
+    };
   }
   return { ok: true };
 }

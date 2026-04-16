@@ -17,6 +17,11 @@ import {
 } from "@/lib/document-email-outbound";
 import { sendDocumentEmail } from "@/lib/document-email-outbound-admin";
 import { getDocumentPdfBuffer } from "@/lib/document-email-pdf-server";
+import {
+  errorMessageFromUnknown,
+  errorStackFromUnknown,
+  serializeUnknownForLog,
+} from "@/lib/server-error-serialize";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -57,167 +62,254 @@ function summarizeBody(body: Body): Record<string, unknown> {
   };
 }
 
+function jsonFail(
+  status: number,
+  error: string,
+  detail: string | null,
+  serverLog?: Record<string, unknown>
+): NextResponse {
+  if (serverLog) {
+    console.error(ROUTE_LOG, "response error", serverLog);
+  }
+  return NextResponse.json({ ok: false as const, error, detail }, { status });
+}
+
 export async function POST(request: NextRequest) {
-  const db = getAdminFirestore();
-  const auth = getAdminAuth();
-  if (!db || !auth) {
-    return NextResponse.json({ ok: false, error: "Server není nakonfigurován." }, { status: 503 });
-  }
-
-  const authHeader = request.headers.get("authorization") || "";
-  const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
-  const caller = await verifyBearerAndLoadCaller(auth, db, idToken);
-  if (!caller) {
-    return NextResponse.json({ ok: false, error: "Neplatné přihlášení." }, { status: 401 });
-  }
-  if (!callerCanTriggerOrgNotifications(caller)) {
-    return NextResponse.json({ ok: false, error: "Nemáte oprávnění." }, { status: 403 });
-  }
-
-  let body: Body;
   try {
-    body = (await request.json()) as Body;
-  } catch (parseErr) {
-    console.error(ROUTE_LOG, "JSON parse failed", parseErr);
-    return NextResponse.json({ ok: false, error: "Neplatné tělo požadavku." }, { status: 400 });
-  }
+    const db = getAdminFirestore();
+    const auth = getAdminAuth();
+    if (!db || !auth) {
+      return jsonFail(503, "Server není nakonfigurován.", "getAdminFirestore/getAdminAuth null", {
+        step: "init",
+      });
+    }
 
-  console.info(ROUTE_LOG, "payload summary", summarizeBody(body), {
-    vercel: process.env.VERCEL,
-    nodeEnv: process.env.NODE_ENV,
-    runtime: "nodejs",
-  });
+    const authHeader = request.headers.get("authorization") || "";
+    const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+    const caller = await verifyBearerAndLoadCaller(auth, db, idToken);
+    if (!caller) {
+      return jsonFail(401, "Neplatné přihlášení.", null, { step: "auth" });
+    }
+    if (!callerCanTriggerOrgNotifications(caller)) {
+      return jsonFail(403, "Nemáte oprávnění.", null, { step: "permission", uid: caller.uid });
+    }
 
-  const companyId = String(body.companyId ?? "").trim();
-  const jobId = String(body.jobId ?? "").trim();
-  const type = String(body.type ?? "").trim();
-  const to = String(body.to ?? "").trim();
-  const subject = String(body.subject ?? "").trim();
-  const html = String(body.html ?? "").trim();
-  const contractId = body.contractId != null ? String(body.contractId).trim() || null : null;
-  const invoiceId = body.invoiceId != null ? String(body.invoiceId).trim() || null : null;
-
-  if (!companyId || !jobId || !type || !to) {
-    return NextResponse.json({ ok: false, error: "Chybí povinná pole." }, { status: 400 });
-  }
-  if (!callerCanAccessCompany(caller, companyId)) {
-    return NextResponse.json({ ok: false, error: "Nemáte přístup k organizaci." }, { status: 403 });
-  }
-  if (!isDocEmailType(type)) {
-    return NextResponse.json({ ok: false, error: "Neplatný typ dokumentu." }, { status: 400 });
-  }
-  if (!isValidEmailAddress(to)) {
-    return NextResponse.json({ ok: false, error: "Neplatná e-mailová adresa příjemce." }, { status: 400 });
-  }
-  const plainFromHtml = stripHtmlToPlain(html);
-  if (!hasNonEmptyTextSubjectAndBody({ subject, bodyPlain: plainFromHtml })) {
-    return NextResponse.json(
-      { ok: false, error: "Vyplňte předmět i text zprávy." },
-      { status: 400 }
-    );
-  }
-
-  if (type === "contract" && !contractId) {
-    return NextResponse.json({ ok: false, error: "Chybí identifikátor smlouvy." }, { status: 400 });
-  }
-  if ((type === "invoice" || type === "advance_invoice") && !invoiceId) {
-    return NextResponse.json({ ok: false, error: "Chybí identifikátor dokladu." }, { status: 400 });
-  }
-
-  const jobRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("jobs").doc(jobId);
-  const jobSnap = await jobRef.get();
-  console.info(ROUTE_LOG, "job lookup", {
-    companyId,
-    jobId,
-    jobExists: jobSnap.exists,
-    jobName: jobSnap.exists ? String((jobSnap.data() as { name?: string })?.name ?? "").slice(0, 80) : null,
-  });
-  if (!jobSnap.exists) {
-    return NextResponse.json({ ok: false, error: "Zakázka nenalezena." }, { status: 404 });
-  }
-
-  const ccExtra = parseCommaSeparatedEmails(String(body.cc ?? ""));
-  for (const addr of ccExtra) {
-    if (!isValidEmailAddress(addr)) {
-      return NextResponse.json(
-        { ok: false, error: `Neplatná adresa v kopii (CC): ${addr}` },
-        { status: 400 }
+    let body: Body;
+    try {
+      body = (await request.json()) as Body;
+    } catch (parseErr) {
+      console.error(ROUTE_LOG, "JSON parse failed", serializeUnknownForLog(parseErr));
+      return jsonFail(
+        400,
+        "Neplatné tělo požadavku.",
+        errorStackFromUnknown(parseErr) ?? serializeUnknownForLog(parseErr),
+        { step: "parseJson" }
       );
     }
-  }
 
-  let sentByEmail: string | null = null;
-  try {
-    const u = await auth.getUser(caller.uid);
-    sentByEmail = String(u.email ?? "").trim() || null;
-  } catch {
-    sentByEmail = null;
-  }
+    console.info(ROUTE_LOG, "payload summary", summarizeBody(body), {
+      vercel: process.env.VERCEL,
+      nodeEnv: process.env.NODE_ENV,
+      runtime: "nodejs",
+    });
 
-  console.info(ROUTE_LOG, "pdf generation start", { type, contractId, invoiceId });
-  let pdf: Awaited<ReturnType<typeof getDocumentPdfBuffer>>;
-  try {
-    pdf = await getDocumentPdfBuffer({
-      db,
+    const companyId = String(body.companyId ?? "").trim();
+    const jobId = String(body.jobId ?? "").trim();
+    const type = String(body.type ?? "").trim();
+    const to = String(body.to ?? "").trim();
+    const subject = String(body.subject ?? "").trim();
+    const html = String(body.html ?? "").trim();
+    const contractId = body.contractId != null ? String(body.contractId).trim() || null : null;
+    const invoiceId = body.invoiceId != null ? String(body.invoiceId).trim() || null : null;
+
+    if (!companyId || !jobId || !type || !to) {
+      return jsonFail(400, "Chybí povinná pole.", null, {
+        step: "validate",
+        companyId: !!companyId,
+        jobId: !!jobId,
+        type: !!type,
+        to: !!to,
+      });
+    }
+    if (!callerCanAccessCompany(caller, companyId)) {
+      return jsonFail(403, "Nemáte přístup k organizaci.", `companyId=${companyId}`, {
+        step: "companyAccess",
+        uid: caller.uid,
+      });
+    }
+    if (!isDocEmailType(type)) {
+      return jsonFail(400, "Neplatný typ dokumentu.", `type=${type}`, { step: "docType" });
+    }
+    if (!isValidEmailAddress(to)) {
+      return jsonFail(400, "Neplatná e-mailová adresa příjemce.", `to=${to.slice(0, 40)}`, {
+        step: "validateTo",
+      });
+    }
+    const plainFromHtml = stripHtmlToPlain(html);
+    if (!hasNonEmptyTextSubjectAndBody({ subject, bodyPlain: plainFromHtml })) {
+      return jsonFail(400, "Vyplňte předmět i text zprávy.", null, { step: "validateBody" });
+    }
+
+    if (type === "contract" && !contractId) {
+      return jsonFail(400, "Chybí identifikátor smlouvy.", null, { step: "contractId" });
+    }
+    if ((type === "invoice" || type === "advance_invoice") && !invoiceId) {
+      return jsonFail(400, "Chybí identifikátor dokladu.", null, { step: "invoiceId" });
+    }
+
+    const jobRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("jobs").doc(jobId);
+    const jobSnap = await jobRef.get();
+    const jobData = jobSnap.exists ? (jobSnap.data() ?? {}) : null;
+    console.info(ROUTE_LOG, "job lookup", {
       companyId,
       jobId,
-      type,
+      documentType: type,
+      jobExists: jobSnap.exists,
+      jobName: jobSnap.exists ? String((jobData as { name?: string })?.name ?? "").slice(0, 80) : null,
+      jobHasData: jobData != null,
+    });
+    if (!jobSnap.exists) {
+      return jsonFail(404, "Zakázka nenalezena.", `Firestore path=${jobRef.path} exists=false`, {
+        step: "jobLookup",
+        companyId,
+        jobId,
+      });
+    }
+
+    const ccExtra = parseCommaSeparatedEmails(String(body.cc ?? ""));
+    for (const addr of ccExtra) {
+      if (!isValidEmailAddress(addr)) {
+        return jsonFail(400, `Neplatná adresa v kopii (CC): ${addr}`, null, { step: "cc" });
+      }
+    }
+
+    let sentByEmail: string | null = null;
+    try {
+      const u = await auth.getUser(caller.uid);
+      sentByEmail = String(u.email ?? "").trim() || null;
+    } catch (authUserErr) {
+      console.warn(ROUTE_LOG, "auth.getUser failed", serializeUnknownForLog(authUserErr));
+      sentByEmail = null;
+    }
+
+    console.info(ROUTE_LOG, "pdf generation start", {
+      companyId,
+      jobId,
+      documentType: type,
       contractId,
       invoiceId,
+      htmlLen: html.length,
     });
-  } catch (pdfErr) {
-    const e = pdfErr instanceof Error ? pdfErr : new Error(String(pdfErr));
-    console.error(ROUTE_LOG, "getDocumentPdfBuffer threw", {
-      message: e.message,
-      stack: e.stack,
-    });
-    return NextResponse.json(
-      {
-        ok: false,
-        error: `PDF: ${e.message.slice(0, 500)}`,
-      },
-      { status: 400 }
-    );
-  }
 
-  if (!pdf.ok) {
-    console.error(ROUTE_LOG, "pdf generation failed (ok=false)", { error: pdf.error });
-    return NextResponse.json({ ok: false, error: pdf.error }, { status: 400 });
-  }
+    let pdf: Awaited<ReturnType<typeof getDocumentPdfBuffer>>;
+    try {
+      pdf = await getDocumentPdfBuffer({
+        db,
+        companyId,
+        jobId,
+        type,
+        contractId,
+        invoiceId,
+      });
+    } catch (pdfErr) {
+      const msg = errorMessageFromUnknown(pdfErr);
+      const detail = errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr);
+      console.error(ROUTE_LOG, "getDocumentPdfBuffer threw", {
+        companyId,
+        jobId,
+        documentType: type,
+        contractId,
+        invoiceId,
+        message: msg,
+        stack: errorStackFromUnknown(pdfErr),
+        serialized: serializeUnknownForLog(pdfErr),
+      });
+      return jsonFail(400, msg, detail.slice(0, 12_000), { step: "getDocumentPdfBuffer.throw" });
+    }
 
-  console.info(ROUTE_LOG, "pdf ok", {
-    filename: pdf.filename,
-    bufferBytes: pdf.buffer.length,
-  });
+    if (!pdf.ok) {
+      console.error(ROUTE_LOG, "pdf generation failed (ok=false)", {
+        companyId,
+        jobId,
+        documentType: type,
+        contractId,
+        invoiceId,
+        error: pdf.error,
+        detail: pdf.detail,
+      });
+      return jsonFail(400, pdf.error, pdf.detail, { step: "getDocumentPdfBuffer.okFalse" });
+    }
 
-  const attachments = [
-    {
+    console.info(ROUTE_LOG, "pdf ok", {
+      companyId,
+      jobId,
+      documentType: type,
       filename: pdf.filename,
-      content: pdf.buffer,
-      contentType: "application/pdf" as const,
-    },
-  ];
+      bufferBytes: pdf.buffer.length,
+    });
 
-  const result = await sendDocumentEmail(db, {
-    companyId,
-    jobId,
-    type,
-    to,
-    ccExtra,
-    subject,
-    html: html.includes("<") ? html : normalizeEmailBodyToHtml(plainFromHtml),
-    documentUrl: body.documentUrl != null ? String(body.documentUrl) : null,
-    userId: caller.uid,
-    sentByEmail,
-    invoiceId,
-    contractId,
-    attachments,
-  });
+    const attachments = [
+      {
+        filename: pdf.filename,
+        content: pdf.buffer,
+        contentType: "application/pdf" as const,
+      },
+    ];
 
-  if (!result.ok) {
-    console.error(ROUTE_LOG, "Resend failed", { error: result.error });
-    return NextResponse.json({ ok: false, error: result.error }, { status: 502 });
+    console.info(ROUTE_LOG, "email send start", {
+      attachmentFilename: pdf.filename,
+      attachmentBytes: pdf.buffer.length,
+    });
+
+    let result: Awaited<ReturnType<typeof sendDocumentEmail>>;
+    try {
+      result = await sendDocumentEmail(db, {
+        companyId,
+        jobId,
+        type,
+        to,
+        ccExtra,
+        subject,
+        html: html.includes("<") ? html : normalizeEmailBodyToHtml(plainFromHtml),
+        documentUrl: body.documentUrl != null ? String(body.documentUrl) : null,
+        userId: caller.uid,
+        sentByEmail,
+        invoiceId,
+        contractId,
+        attachments,
+      });
+    } catch (sendErr) {
+      const msg = errorMessageFromUnknown(sendErr);
+      const detail = errorStackFromUnknown(sendErr) ?? serializeUnknownForLog(sendErr);
+      console.error(ROUTE_LOG, "sendDocumentEmail threw", {
+        companyId,
+        jobId,
+        documentType: type,
+        message: msg,
+        serialized: serializeUnknownForLog(sendErr),
+      });
+      return jsonFail(502, msg, detail.slice(0, 12_000), { step: "sendDocumentEmail.throw" });
+    }
+
+    if (!result.ok) {
+      console.error(ROUTE_LOG, "Resend / outbound failed", {
+        companyId,
+        jobId,
+        documentType: type,
+        error: result.error,
+        detail: result.detail,
+      });
+      return jsonFail(502, result.error, result.detail, { step: "sendDocumentEmail.result" });
+    }
+    console.info(ROUTE_LOG, "email sent ok", { companyId, jobId, documentType: type });
+    return NextResponse.json({ ok: true as const });
+  } catch (unexpected) {
+    const msg = errorMessageFromUnknown(unexpected);
+    const detail = errorStackFromUnknown(unexpected) ?? serializeUnknownForLog(unexpected);
+    console.error(ROUTE_LOG, "unhandled route error", {
+      message: msg,
+      serialized: serializeUnknownForLog(unexpected),
+    });
+    return jsonFail(500, msg, detail.slice(0, 12_000), { step: "route.unhandled" });
   }
-  console.info(ROUTE_LOG, "email sent ok");
-  return NextResponse.json({ ok: true });
 }

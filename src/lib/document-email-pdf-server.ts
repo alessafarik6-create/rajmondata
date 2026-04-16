@@ -16,6 +16,11 @@ import type { DocumentEmailType } from "@/lib/document-email-outbound";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
 import { sanitizeInvoicePreviewHtml } from "@/lib/invoice-a4-html";
+import {
+  errorMessageFromUnknown,
+  errorStackFromUnknown,
+  serializeUnknownForLog,
+} from "@/lib/server-error-serialize";
 
 const MAX_PDF_BYTES = 9 * 1024 * 1024;
 const LOG = "[document-email-pdf]";
@@ -27,7 +32,19 @@ function logPdf(phase: string, detail?: string): void {
 
 function logPdfError(phase: string, err: unknown): void {
   const e = err instanceof Error ? err : new Error(String(err));
-  console.error(`${LOG} ${phase} FAILED`, { message: e.message, stack: e.stack });
+  console.error(`${LOG} ${phase} FAILED`, {
+    message: e.message,
+    stack: e.stack,
+    serialized: serializeUnknownForLog(err),
+  });
+}
+
+function wrapPdfStep(step: string, err: unknown): Error {
+  const inner = errorMessageFromUnknown(err);
+  const out = new Error(`[PDF:${step}] ${inner}`);
+  const st = errorStackFromUnknown(err);
+  out.stack = st ? `${out.message}\n--- inner stack ---\n${st}` : out.stack;
+  return out;
 }
 
 /**
@@ -61,12 +78,6 @@ function resolveChromiumBinDir(): string {
   );
 }
 
-function formatPdfFailure(err: unknown): string {
-  const msg = (err instanceof Error ? err.message : String(err)).trim().replace(/\s+/g, " ");
-  const tail = msg.length > 480 ? `${msg.slice(0, 480)}…` : msg;
-  return tail || "Neznámá chyba při generování PDF.";
-}
-
 async function launchPdfBrowser(): Promise<Browser> {
   const isVercel = process.env.VERCEL === "1";
   const customRaw = String(
@@ -91,20 +102,31 @@ async function launchPdfBrowser(): Promise<Browser> {
       return browser;
     } catch (e) {
       logPdfError("browser.localChrome", e);
-      throw e;
+      throw wrapPdfStep("puppeteer.launch", e);
     }
   }
 
   logPdf("chromium", "pre-launch serverless (Vercel / @sparticuz/chromium + puppeteer-core)");
   const binDir = resolveChromiumBinDir();
+  const brPath = path.join(binDir, "chromium.br");
+  try {
+    const st = fs.statSync(brPath);
+    logPdf("chromium.pack", `chromium.br exists=true bytes=${st.size} path=${brPath}`);
+  } catch (statErr) {
+    logPdfError("chromium.pack.stat", statErr);
+    logPdf("chromium.pack", `chromium.br exists=false path=${brPath}`);
+  }
   let executablePath: string;
   try {
     executablePath = await chromium.executablePath(binDir);
   } catch (e) {
     logPdfError("chromium.executablePath", e);
-    throw e;
+    throw wrapPdfStep("chromium.executablePath", e);
   }
-  logPdf("chromium", `executablePath len=${executablePath.length} preview=${executablePath.slice(0, 80)}`);
+  logPdf(
+    "chromium",
+    `executablePath len=${executablePath.length} path=${executablePath}`
+  );
 
   logPdf("browser", "puppeteer.launch start (args: chromium.args, headless: true)");
   try {
@@ -117,7 +139,7 @@ async function launchPdfBrowser(): Promise<Browser> {
     return browser;
   } catch (e) {
     logPdfError("browser.launch", e);
-    throw e;
+    throw wrapPdfStep("puppeteer.launch", e);
   }
 }
 
@@ -135,23 +157,39 @@ export async function renderStoredHtmlToPdfBuffer(html: string): Promise<Buffer>
   let browser: Browser | null = null;
   try {
     logPdf("chromium", "about to launch browser");
-    browser = await launchPdfBrowser();
+    try {
+      browser = await launchPdfBrowser();
+    } catch (e) {
+      logPdfError("step.browserLaunch", e);
+      throw wrapPdfStep("browserLaunch", e);
+    }
 
     logPdf("page", "newPage");
     const page = await browser.newPage();
 
     logPdf("page", "setContent start waitUntil=networkidle0 timeout=90000");
-    await page.setContent(trimmed, {
-      waitUntil: "networkidle0",
-      timeout: 90_000,
-    });
+    try {
+      await page.setContent(trimmed, {
+        waitUntil: "networkidle0",
+        timeout: 90_000,
+      });
+    } catch (e) {
+      logPdfError("step.page.setContent", e);
+      throw wrapPdfStep("page.setContent", e);
+    }
     logPdf("page", "setContent done (networkidle0)");
 
     logPdf("page", "page.pdf() start format=A4 printBackground=true");
-    const pdfUint8 = await page.pdf({
-      format: "A4",
-      printBackground: true,
-    });
+    let pdfUint8: Uint8Array;
+    try {
+      pdfUint8 = await page.pdf({
+        format: "A4",
+        printBackground: true,
+      });
+    } catch (e) {
+      logPdfError("step.page.pdf", e);
+      throw wrapPdfStep("page.pdf", e);
+    }
     const buf = Buffer.from(pdfUint8);
     logPdf("pdf", `buffer created bytes=${buf.length}`);
     return buf;
@@ -181,7 +219,7 @@ export type GetDocumentPdfBufferInput = {
 
 export type GetDocumentPdfBufferResult =
   | { ok: true; buffer: Buffer; filename: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; detail: string | null };
 
 /**
  * Načte HTML dokladu z Firestore a převede ho na PDF buffer.
@@ -191,10 +229,18 @@ export async function getDocumentPdfBuffer(
 ): Promise<GetDocumentPdfBufferResult> {
   const { db, companyId, jobId, type } = input;
 
+  logPdf("input", `companyId=${companyId} jobId=${jobId} documentType=${type}`);
+
   try {
     if (type === "contract") {
       const cid = String(input.contractId ?? "").trim();
-      if (!cid) return { ok: false, error: "Chybí identifikátor smlouvy." };
+      if (!cid) {
+        return {
+          ok: false,
+          error: "Chybí identifikátor smlouvy.",
+          detail: "contractId missing in getDocumentPdfBuffer input",
+        };
+      }
 
       logPdf("firestore", `contract companyId=${companyId} jobId=${jobId} contractId=${cid}`);
       const cref = db
@@ -207,24 +253,34 @@ export async function getDocumentPdfBuffer(
       const snap = await cref.get();
       if (!snap.exists) {
         logPdf("firestore", "contract snapshot missing");
-        return { ok: false, error: "Smlouva nebyla nalezena." };
+        return {
+          ok: false,
+          error: "Smlouva nebyla nalezena.",
+          detail: `Firestore path=${cref.path} exists=false`,
+        };
       }
 
-      const d = snap.data() as { pdfHtml?: string; contractNumber?: string };
+      const d = (snap.data() ?? {}) as { pdfHtml?: string; contractNumber?: string };
       const raw = String(d.pdfHtml ?? "").trim();
+      logPdf("firestore", `contract data keys ok pdfHtmlEmpty=${raw.length === 0}`);
       if (!raw) {
         logPdf("firestore", "contract pdfHtml empty");
         return {
           ok: false,
           error:
             "Smlouva nemá uložený obsah pro PDF. V detailu zakázky otevřete smlouvu a vygenerujte PDF (tím se uloží tisková verze).",
+          detail: `Firestore path=${cref.path} exists=true pdfHtmlLen=0`,
         };
       }
       logPdf("firestore", `contract pdfHtml ok len=${raw.length}`);
 
       const buffer = await renderStoredHtmlToPdfBuffer(raw);
       if (buffer.length > MAX_PDF_BYTES) {
-        return { ok: false, error: "Vygenerované PDF je příliš velké pro odeslání e-mailem." };
+        return {
+          ok: false,
+          error: "Vygenerované PDF je příliš velké pro odeslání e-mailem.",
+          detail: `pdfBytes=${buffer.length} max=${MAX_PDF_BYTES}`,
+        };
       }
       const num = String(d.contractNumber ?? "").trim() || cid;
       const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
@@ -234,42 +290,70 @@ export async function getDocumentPdfBuffer(
 
     if (type === "invoice" || type === "advance_invoice") {
       const iid = String(input.invoiceId ?? "").trim();
-      if (!iid) return { ok: false, error: "Chybí identifikátor dokladu." };
+      if (!iid) {
+        return {
+          ok: false,
+          error: "Chybí identifikátor dokladu.",
+          detail: "invoiceId missing in getDocumentPdfBuffer input",
+        };
+      }
 
       logPdf("firestore", `invoice companyId=${companyId} invoiceId=${iid}`);
       const iref = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("invoices").doc(iid);
       const snap = await iref.get();
       if (!snap.exists) {
         logPdf("firestore", "invoice snapshot missing");
-        return { ok: false, error: "Doklad nebyl nalezen." };
+        return {
+          ok: false,
+          error: "Doklad nebyl nalezen.",
+          detail: `Firestore path=${iref.path} exists=false`,
+        };
       }
 
-      const data = snap.data() as Record<string, unknown>;
+      const data = (snap.data() ?? {}) as Record<string, unknown>;
       if (!isActiveFirestoreDoc(data)) {
-        return { ok: false, error: "Doklad byl odebrán." };
+        return {
+          ok: false,
+          error: "Doklad byl odebrán.",
+          detail: `Firestore path=${iref.path} isDeleted/inactive`,
+        };
       }
 
       const jobIdOnDoc = String(data.jobId ?? "").trim();
       if (jobIdOnDoc !== jobId) {
         logPdf("firestore", `invoice jobId mismatch doc=${jobIdOnDoc} expected=${jobId}`);
-        return { ok: false, error: "Doklad nepatří k této zakázce." };
+        return {
+          ok: false,
+          error: "Doklad nepatří k této zakázce.",
+          detail: `invoice.jobId=${jobIdOnDoc || "(empty)"} expected=${jobId}`,
+        };
       }
 
       const invType = String(data.type ?? "");
       if (type === "invoice") {
         if (invType !== JOB_INVOICE_TYPES.FINAL_INVOICE) {
-          return { ok: false, error: "Vybraný doklad není vyúčtovací faktura." };
+          return {
+            ok: false,
+            error: "Vybraný doklad není vyúčtovací faktura.",
+            detail: `invoice.type=${invType || "(empty)"} expected=${JOB_INVOICE_TYPES.FINAL_INVOICE}`,
+          };
         }
       } else if (invType !== JOB_INVOICE_TYPES.ADVANCE) {
-        return { ok: false, error: "Vybraný doklad není zálohová faktura." };
+        return {
+          ok: false,
+          error: "Vybraný doklad není zálohová faktura.",
+          detail: `invoice.type=${invType || "(empty)"} expected=${JOB_INVOICE_TYPES.ADVANCE}`,
+        };
       }
 
       const rawHtml = String(data.pdfHtml ?? "").trim();
+      logPdf("firestore", `invoice pdfHtmlEmpty=${rawHtml.length === 0}`);
       if (!rawHtml) {
         logPdf("firestore", "invoice pdfHtml empty");
         return {
           ok: false,
           error: "Doklad nemá uložený obsah pro PDF. Otevřete ho v portálu a uložte znovu.",
+          detail: `Firestore path=${iref.path} exists=true pdfHtmlLen=0`,
         };
       }
       logPdf("firestore", `invoice pdfHtml ok len=${rawHtml.length}`);
@@ -279,7 +363,11 @@ export async function getDocumentPdfBuffer(
 
       const buffer = await renderStoredHtmlToPdfBuffer(html);
       if (buffer.length > MAX_PDF_BYTES) {
-        return { ok: false, error: "Vygenerované PDF je příliš velké pro odeslání e-mailem." };
+        return {
+          ok: false,
+          error: "Vygenerované PDF je příliš velké pro odeslání e-mailem.",
+          detail: `pdfBytes=${buffer.length} max=${MAX_PDF_BYTES}`,
+        };
       }
 
       const num =
@@ -294,10 +382,22 @@ export async function getDocumentPdfBuffer(
       return { ok: true, buffer, filename: `${prefix}-${safeNum}.pdf` };
     }
 
-    return { ok: false, error: "Nepodporovaný typ dokumentu." };
+    return {
+      ok: false,
+      error: "Nepodporovaný typ dokumentu.",
+      detail: `type=${type}`,
+    };
   } catch (e) {
     logPdfError("getDocumentPdfBuffer", e);
-    return { ok: false, error: `PDF: ${formatPdfFailure(e)}` };
+    console.error(`${LOG} getDocumentPdfBuffer serialized`, serializeUnknownForLog(e));
+    const msg = errorMessageFromUnknown(e);
+    const st = errorStackFromUnknown(e);
+    const errOut = msg.length > 4000 ? `${msg.slice(0, 4000)}…` : msg;
+    return {
+      ok: false,
+      error: errOut,
+      detail: (st ?? serializeUnknownForLog(e)).slice(0, 12_000),
+    };
   }
 }
 

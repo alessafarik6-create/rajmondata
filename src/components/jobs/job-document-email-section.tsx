@@ -404,10 +404,12 @@ export function JobDocumentEmailSection({
         contractId,
       });
       if (!r.ok) {
+        const fromServer = [r.error, r.detail].filter((s) => s != null && String(s).trim() !== "").join("\n\n");
+        console.info("[document-email/send] toast payload", { error: r.error, detail: r.detail });
         toast({
           variant: "destructive",
           title: "Odeslání se nezdařilo",
-          description: r.error,
+          description: fromServer.slice(0, 6000),
         });
         return;
       }

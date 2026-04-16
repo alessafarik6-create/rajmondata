@@ -121,13 +121,21 @@ export async function logDocumentSend(
   return ref.id;
 }
 
+export type SendDocumentEmailResult =
+  | { ok: true }
+  | { ok: false; error: string; detail: string | null };
+
 export async function sendDocumentEmail(
   db: Firestore,
   params: SendDocumentEmailParams
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<SendDocumentEmailResult> {
   const companySnap = await db.collection(COMPANIES_COLLECTION).doc(params.companyId).get();
   if (!companySnap.exists) {
-    return { ok: false, error: "Organizace nenalezena." };
+    return {
+      ok: false,
+      error: "Organizace nenalezena.",
+      detail: `companies/${params.companyId} exists=false`,
+    };
   }
   const company = (companySnap.data() ?? {}) as Record<string, unknown>;
   const outbound = readDocumentEmailOutbound(company);
@@ -144,7 +152,11 @@ export async function sendDocumentEmail(
 
   const attachmentFilenames = (params.attachments ?? []).map((a) => a.filename).filter(Boolean);
   if (!params.attachments || params.attachments.length === 0) {
-    return { ok: false, error: "Chybí PDF příloha." };
+    return {
+      ok: false,
+      error: "Chybí PDF příloha.",
+      detail: "sendDocumentEmail: params.attachments prázdné",
+    };
   }
 
   const send = await sendTransactionalEmail({
