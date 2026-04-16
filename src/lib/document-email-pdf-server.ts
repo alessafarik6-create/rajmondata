@@ -1,9 +1,12 @@
 /**
- * PDF přílohy pro odeslání dokumentů e-mailem — server (bez base64 z klienta).
- * Chromium: `puppeteer-core` + `@sparticuz/chromium` (Vercel / serverless).
- * Lokálně volitelně `CHROME_EXECUTABLE_PATH` nebo `PUPPETEER_EXECUTABLE_PATH`.
+ * PDF přílohy pro odeslání dokumentů e-mailem — čistě na serveru z Firestore `pdfHtml`.
+ * Vercel / serverless: `puppeteer-core` + `@sparticuz/chromium` podle oficiálního vzoru (defaultArgs + headless shell).
+ * Lokálně: volitelně vlastní Chrome, pokud není VERCEL a je nastaven CHROME_EXECUTABLE_PATH.
  */
 
+import fs from "node:fs";
+import path from "node:path";
+import { createRequire } from "node:module";
 import type { Firestore } from "firebase-admin/firestore";
 import type { Browser } from "puppeteer-core";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
@@ -25,24 +28,63 @@ function logPdfError(phase: string, err: unknown): void {
   console.error(`${LOG} ${phase} FAILED`, { message: e.message, stack: e.stack });
 }
 
+/** Adresář s chromium.br (nutné na Vercelu — bundlovaný __dirname uvnitř @sparticuz/chromium často neexistuje). */
+function resolveChromiumBinDir(): string {
+  const cwd = process.cwd();
+  const candidates = [
+    path.join(cwd, "node_modules", "@sparticuz", "chromium", "bin"),
+    path.join(cwd, "..", "node_modules", "@sparticuz", "chromium", "bin"),
+  ];
+  for (const dir of candidates) {
+    if (fs.existsSync(path.join(dir, "chromium.br"))) {
+      logPdf("chromium.bin", `resolved=${dir}`);
+      return dir;
+    }
+  }
+  try {
+    const require = createRequire(import.meta.url);
+    const pkgJson = require.resolve("@sparticuz/chromium/package.json");
+    const dir = path.join(path.dirname(pkgJson), "bin");
+    if (fs.existsSync(path.join(dir, "chromium.br"))) {
+      logPdf("chromium.bin", `resolved via require=${dir}`);
+      return dir;
+    }
+  } catch {
+    /* ignore */
+  }
+  throw new Error(
+    `Nelze najít @sparticuz/chromium/bin/chromium.br (cwd=${cwd}). Ověřte, že je balíček v production dependencies.`
+  );
+}
+
+function formatPdfFailure(err: unknown): string {
+  const msg = (err instanceof Error ? err.message : String(err)).trim().replace(/\s+/g, " ");
+  const tail = msg.length > 480 ? `${msg.slice(0, 480)}…` : msg;
+  return tail || "Neznámá chyba při generování PDF.";
+}
+
 async function launchPdfBrowser(): Promise<Browser> {
-  const puppeteer = await import("puppeteer-core");
-  const custom = String(
+  const isVercel = process.env.VERCEL === "1";
+  const customRaw = String(
     process.env.CHROME_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || ""
   ).trim();
+  /** Na Vercelu nikdy nepoužívat lokální cestu z .env — často neexistuje v lambdě a rozbije launch. */
+  const custom = !isVercel && customRaw ? customRaw : "";
+
+  const puppeteerMod = await import("puppeteer-core");
+  const { launch, defaultArgs } = puppeteerMod;
 
   if (custom) {
-    logPdf("browser", `mode=customChrome path=${custom}`);
+    logPdf("browser", `mode=localChrome path=${custom}`);
     try {
-      return await puppeteer.default.launch({
+      return await launch({
         executablePath: custom,
         headless: true,
-        args: [
-          "--no-sandbox",
-          "--disable-setuid-sandbox",
-          "--disable-dev-shm-usage",
-          "--disable-gpu",
-        ],
+        args: defaultArgs({
+          headless: true,
+          args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        }),
+        defaultViewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
       });
     } catch (e) {
       logPdfError("browser.customLaunch", e);
@@ -50,26 +92,40 @@ async function launchPdfBrowser(): Promise<Browser> {
     }
   }
 
-  logPdf("browser", "mode=serverless @sparticuz/chromium + puppeteer-core");
+  logPdf("browser", "mode=serverless @sparticuz/chromium + puppeteer-core (defaultArgs merge)");
+  const chromiumMod = await import("@sparticuz/chromium");
+  const chromium = chromiumMod.default as {
+    executablePath: (input?: string) => Promise<string>;
+    args: string[];
+    defaultViewport: { width: number; height: number; deviceScaleFactor?: number };
+    headless: true | "shell";
+  };
+
+  const binDir = resolveChromiumBinDir();
+  let executablePath: string;
   try {
-    const chromiumMod = await import("@sparticuz/chromium");
-    const Chromium = chromiumMod.default as {
-      executablePath: (input?: string) => Promise<string>;
-      args: string[];
-      defaultViewport: { width: number; height: number; deviceScaleFactor?: number };
-      headless: true | "shell";
-    };
+    executablePath = await chromium.executablePath(binDir);
+  } catch (e) {
+    logPdfError("chromium.executablePath", e);
+    throw e;
+  }
+  logPdf("chromium", `executablePath=${executablePath.slice(0, 96)}… len=${executablePath.length}`);
 
-    const executablePath = await Chromium.executablePath();
-    logPdf("chromium", `executablePath len=${executablePath.length} prefix=${executablePath.slice(0, 64)}`);
+  const headless = chromium.headless;
+  const mergedArgs = defaultArgs({
+    args: chromium.args,
+    headless: headless === "shell" ? "shell" : true,
+  });
+  logPdf("browser", `mergedArgs count=${mergedArgs.length} headless=${String(headless)}`);
 
-    const browser = await puppeteer.default.launch({
-      args: Chromium.args,
-      defaultViewport: Chromium.defaultViewport,
+  try {
+    const browser = await launch({
+      args: mergedArgs,
+      defaultViewport: chromium.defaultViewport,
       executablePath,
-      headless: Chromium.headless,
+      headless: headless === "shell" ? "shell" : true,
     });
-    logPdf("browser", "launched ok");
+    logPdf("browser", "launch ok");
     return browser;
   } catch (e) {
     logPdfError("browser.sparticuzLaunch", e);
@@ -94,15 +150,15 @@ export async function renderStoredHtmlToPdfBuffer(html: string): Promise<Buffer>
     logPdf("page", "newPage");
     const page = await browser.newPage();
 
-    logPdf("page", "setContent start waitUntil=domcontentloaded");
+    logPdf("page", "setContent waitUntil=domcontentloaded");
     await page.setContent(trimmed, {
       waitUntil: "domcontentloaded",
       timeout: 90_000,
     });
     logPdf("page", "setContent done");
 
-    await page.evaluate(() => new Promise<void>((resolve) => setTimeout(resolve, 400)));
-    logPdf("page", "post-render settle 400ms");
+    await page.evaluate(() => new Promise<void>((resolve) => setTimeout(resolve, 500)));
+    logPdf("page", "settle 500ms");
 
     logPdf("page", "pdf() start");
     const pdfUint8 = await page.pdf({
@@ -141,22 +197,6 @@ export type GetDocumentPdfBufferInput = {
 export type GetDocumentPdfBufferResult =
   | { ok: true; buffer: Buffer; filename: string }
   | { ok: false; error: string };
-
-function publicPdfError(err: unknown): string {
-  const msg = err instanceof Error ? err.message : String(err);
-  const lower = msg.toLowerCase();
-  if (lower.includes("timeout")) {
-    return "Vypršel čas při vykreslování PDF na serveru.";
-  }
-  const dev =
-    process.env.NODE_ENV !== "production" ||
-    process.env.VERCEL_ENV === "preview" ||
-    process.env.VERCEL_ENV === "development";
-  if (dev && msg.length > 0) {
-    return `Generování PDF selhalo: ${msg.slice(0, 400)}`;
-  }
-  return "Generování PDF na serveru selhalo. Zkuste to prosím znovu; pokud chyba přetrvává, zkontrolujte logy nasazení (Chromium / paměť).";
-}
 
 /**
  * Načte HTML dokladu z Firestore a převede ho na PDF buffer.
@@ -203,7 +243,7 @@ export async function getDocumentPdfBuffer(
       }
       const num = String(d.contractNumber ?? "").trim() || cid;
       const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
-      logPdf("done", `contract filename=smlouva-${safeNum}.pdf`);
+      logPdf("done", `contract filename=smlouva-${safeNum}.pdf bytes=${buffer.length}`);
       return { ok: true, buffer, filename: `smlouva-${safeNum}.pdf` };
     }
 
@@ -265,18 +305,18 @@ export async function getDocumentPdfBuffer(
         ).trim() || iid;
       const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
       const prefix = type === "advance_invoice" ? "zalohova-faktura" : "faktura";
-      logPdf("done", `invoice filename=${prefix}-${safeNum}.pdf`);
+      logPdf("done", `invoice filename=${prefix}-${safeNum}.pdf bytes=${buffer.length}`);
       return { ok: true, buffer, filename: `${prefix}-${safeNum}.pdf` };
     }
 
     return { ok: false, error: "Nepodporovaný typ dokumentu." };
   } catch (e) {
     logPdfError("getDocumentPdfBuffer", e);
-    return { ok: false, error: publicPdfError(e) };
+    return { ok: false, error: `PDF: ${formatPdfFailure(e)}` };
   }
 }
 
-/** Alias pro smlouvu — stejné jako {@link getDocumentPdfBuffer} s typem `contract`. */
+/** Alias — smlouva. */
 export async function generateContractPdfBuffer(
   input: Omit<GetDocumentPdfBufferInput, "type" | "invoiceId"> & { contractId: string }
 ): Promise<GetDocumentPdfBufferResult> {

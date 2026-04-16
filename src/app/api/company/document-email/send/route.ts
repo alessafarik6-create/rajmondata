@@ -22,6 +22,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+const ROUTE_LOG = "[document-email/send]";
+
 type Body = {
   companyId?: string;
   jobId?: string;
@@ -37,6 +39,22 @@ type Body = {
 
 function isDocEmailType(s: string): s is DocumentEmailType {
   return (DOCUMENT_EMAIL_TYPES as readonly string[]).includes(s);
+}
+
+function summarizeBody(body: Body): Record<string, unknown> {
+  const html = String(body.html ?? "");
+  return {
+    companyId: body.companyId,
+    jobId: body.jobId,
+    type: body.type,
+    to: body.to != null ? String(body.to).slice(0, 3) + "…" : null,
+    ccLen: String(body.cc ?? "").length,
+    subjectLen: String(body.subject ?? "").length,
+    htmlLen: html.length,
+    documentUrlLen: body.documentUrl != null ? String(body.documentUrl).length : 0,
+    invoiceId: body.invoiceId,
+    contractId: body.contractId,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -59,9 +77,16 @@ export async function POST(request: NextRequest) {
   let body: Body;
   try {
     body = (await request.json()) as Body;
-  } catch {
+  } catch (parseErr) {
+    console.error(ROUTE_LOG, "JSON parse failed", parseErr);
     return NextResponse.json({ ok: false, error: "Neplatné tělo požadavku." }, { status: 400 });
   }
+
+  console.info(ROUTE_LOG, "payload summary", summarizeBody(body), {
+    vercel: process.env.VERCEL,
+    nodeEnv: process.env.NODE_ENV,
+    runtime: "nodejs",
+  });
 
   const companyId = String(body.companyId ?? "").trim();
   const jobId = String(body.jobId ?? "").trim();
@@ -101,6 +126,12 @@ export async function POST(request: NextRequest) {
 
   const jobRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("jobs").doc(jobId);
   const jobSnap = await jobRef.get();
+  console.info(ROUTE_LOG, "job lookup", {
+    companyId,
+    jobId,
+    jobExists: jobSnap.exists,
+    jobName: jobSnap.exists ? String((jobSnap.data() as { name?: string })?.name ?? "").slice(0, 80) : null,
+  });
   if (!jobSnap.exists) {
     return NextResponse.json({ ok: false, error: "Zakázka nenalezena." }, { status: 404 });
   }
@@ -123,17 +154,41 @@ export async function POST(request: NextRequest) {
     sentByEmail = null;
   }
 
-  const pdf = await getDocumentPdfBuffer({
-    db,
-    companyId,
-    jobId,
-    type,
-    contractId,
-    invoiceId,
-  });
+  console.info(ROUTE_LOG, "pdf generation start", { type, contractId, invoiceId });
+  let pdf: Awaited<ReturnType<typeof getDocumentPdfBuffer>>;
+  try {
+    pdf = await getDocumentPdfBuffer({
+      db,
+      companyId,
+      jobId,
+      type,
+      contractId,
+      invoiceId,
+    });
+  } catch (pdfErr) {
+    const e = pdfErr instanceof Error ? pdfErr : new Error(String(pdfErr));
+    console.error(ROUTE_LOG, "getDocumentPdfBuffer threw", {
+      message: e.message,
+      stack: e.stack,
+    });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `PDF: ${e.message.slice(0, 500)}`,
+      },
+      { status: 400 }
+    );
+  }
+
   if (!pdf.ok) {
+    console.error(ROUTE_LOG, "pdf generation failed (ok=false)", { error: pdf.error });
     return NextResponse.json({ ok: false, error: pdf.error }, { status: 400 });
   }
+
+  console.info(ROUTE_LOG, "pdf ok", {
+    filename: pdf.filename,
+    bufferBytes: pdf.buffer.length,
+  });
 
   const attachments = [
     {
@@ -160,7 +215,9 @@ export async function POST(request: NextRequest) {
   });
 
   if (!result.ok) {
+    console.error(ROUTE_LOG, "Resend failed", { error: result.error });
     return NextResponse.json({ ok: false, error: result.error }, { status: 502 });
   }
+  console.info(ROUTE_LOG, "email sent ok");
   return NextResponse.json({ ok: true });
 }
