@@ -717,19 +717,11 @@ export function EmailNotificationsSettings(props: {
           </p>
 
           <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-            <div className="flex items-center justify-between gap-3 rounded-lg border border-border p-3 flex-1">
-              <div>
-                <Label className="text-sm">Automaticky přidat administrátory organizace</Label>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  E-maily uživatelů s rolí vlastník nebo administrátor (ke každé odeslané notifikaci).
-                </p>
-              </div>
-              <Switch
-                checked={draft.includeOrganizationAdmins}
-                onCheckedChange={(v) =>
-                  patchDraft((p) => ({ ...p, includeOrganizationAdmins: v }))
-                }
-              />
+            <div className="rounded-lg border border-border p-3 flex-1">
+              <Label className="text-sm">Administrátoři organizace</Label>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Notifikace se už neposílají automaticky všem administrátorům — pouze podle nastavených příjemců.
+              </p>
             </div>
           </div>
 

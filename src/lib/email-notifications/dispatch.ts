@@ -103,6 +103,10 @@ function normEmail(s: string): string | null {
   return x || null;
 }
 
+function isValidEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+
 async function addEmailsFromLists(
   db: Firestore,
   companyId: string,
@@ -115,7 +119,7 @@ async function addEmailsFromLists(
 ): Promise<void> {
   for (const e of lists.manual) {
     const n = normEmail(e);
-    if (n) out.add(n);
+    if (n && isValidEmail(n)) out.add(n);
   }
   for (const uid of lists.authUserIds) {
     if (!uid?.trim()) continue;
@@ -123,7 +127,7 @@ async function addEmailsFromLists(
     const mail = normEmail(
       String((snap.data() as { email?: string } | undefined)?.email ?? "")
     );
-    if (mail) out.add(mail);
+    if (mail && isValidEmail(mail)) out.add(mail);
   }
   for (const empId of lists.employeeIds) {
     if (!empId?.trim()) continue;
@@ -136,26 +140,11 @@ async function addEmailsFromLists(
     const mail = normEmail(
       String((snap.data() as { email?: string } | undefined)?.email ?? "")
     );
-    if (mail) out.add(mail);
+    if (mail && isValidEmail(mail)) out.add(mail);
   }
 }
 
-async function addOrganizationAdminEmails(
-  db: Firestore,
-  companyId: string,
-  out: Set<string>
-): Promise<void> {
-  const uq = await db.collection("users").where("companyId", "==", companyId).get();
-  for (const doc of uq.docs) {
-    const role = String((doc.data() as { role?: string }).role ?? "");
-    if (role === "owner" || role === "admin") {
-      const mail = normEmail(String((doc.data() as { email?: string }).email ?? ""));
-      if (mail) out.add(mail);
-    }
-  }
-}
-
-/** Příjemci z globálních seznamů + volitelně administrátoři (test e-mailu / fallback). */
+/** Příjemci pouze z globálních seznamů (bez fallbacku na administrátory). */
 export async function resolveGlobalRecipientEmails(
   db: Firestore,
   companyId: string,
@@ -167,15 +156,12 @@ export async function resolveGlobalRecipientEmails(
     authUserIds: settings.globalRecipientUserIds,
     employeeIds: settings.globalRecipientEmployeeIds,
   });
-  if (settings.includeOrganizationAdmins) {
-    await addOrganizationAdminEmails(db, companyId, out);
-  }
   return [...out];
 }
 
 /**
  * Příjemci pro konkrétní modul: podle useGlobalRecipients buď globální seznamy, nebo vlastní u modulu.
- * Administrátoři se přidají, pokud je zapnuto includeOrganizationAdmins.
+ * Bez fallbacku na administrátory — pouze uložená konfigurace notifikací.
  */
 export async function resolveNotificationEmailsForModule(
   db: Firestore,
@@ -197,9 +183,6 @@ export async function resolveNotificationEmailsForModule(
       authUserIds: mod.recipientUserIds,
       employeeIds: mod.recipientEmployeeIds,
     });
-  }
-  if (settings.includeOrganizationAdmins) {
-    await addOrganizationAdminEmails(db, companyId, out);
   }
   return [...out];
 }
