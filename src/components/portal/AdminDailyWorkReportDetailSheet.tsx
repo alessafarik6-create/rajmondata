@@ -507,11 +507,11 @@ export function AdminDailyWorkReportDetailSheet(props: {
       <Sheet open={open && hasTarget} onOpenChange={onOpenChange}>
         <SheetContent
           side="right"
-          className="flex w-full max-w-full flex-col border-slate-200 bg-white text-neutral-950 sm:max-w-2xl"
+          className="flex w-full max-w-full flex-col border-border bg-background text-foreground sm:max-w-2xl lg:max-w-[900px] xl:max-w-[980px]"
         >
-          <SheetHeader className="space-y-1 border-b border-slate-200 pb-4 text-left">
-            <SheetTitle className="text-neutral-950">Detail výkazu práce</SheetTitle>
-            <SheetDescription className="text-neutral-700">
+          <SheetHeader className="space-y-1 border-b border-border pb-4 text-left">
+            <SheetTitle>Detail výkazu práce</SheetTitle>
+            <SheetDescription>
               {employeeName} · {date}
             </SheetDescription>
           </SheetHeader>
@@ -523,93 +523,92 @@ export function AdminDailyWorkReportDetailSheet(props: {
               </div>
             ) : (
               <>
-                <div className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 text-sm text-neutral-950 shadow-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">Stav:</span>
+                <div className="grid gap-6 lg:grid-cols-3">
+                  <div className="grid gap-3 rounded-lg border border-border bg-card p-4 text-sm shadow-sm lg:col-span-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="font-medium">Stav:</span>
                     {statusBadge(String(report.status ?? ""))}
+                    </div>
+                    <div className="grid gap-1 sm:grid-cols-2">
+                      <div>
+                        <span className="text-muted-foreground">Celkem hodin (řádky):</span>{" "}
+                        <span className="font-semibold tabular-nums">{totalHours} h</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Z terminálu (řádky):</span>{" "}
+                        <span className="font-semibold tabular-nums">{sumTerminalHours} h</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Ruční řádky:</span>{" "}
+                        <span className="font-semibold tabular-nums">{sumManualHours} h</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">Tarifní úseky (dokumenty dne):</span>{" "}
+                        <span className="font-semibold tabular-nums">{tariffHoursDay} h</span>
+                      </div>
+                    </div>
+                    {typeof report.estimatedLaborFromSegmentsCzk === "number" &&
+                    report.estimatedLaborFromSegmentsCzk > 0 ? (
+                      <div>
+                        <span className="text-muted-foreground">Odhad práce (segmenty, uloženo):</span>{" "}
+                        <span className="font-medium tabular-nums">
+                          {formatKc(report.estimatedLaborFromSegmentsCzk)}
+                        </span>
+                      </div>
+                    ) : null}
+                    {typeof report.payableAmountCzk === "number" && report.payableAmountCzk > 0 ? (
+                      <div>
+                        <span className="text-muted-foreground">K výplatě (schváleno):</span>{" "}
+                        <span className="font-medium tabular-nums">
+                          {formatKc(report.payableAmountCzk)}
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className="grid gap-1 text-xs text-muted-foreground sm:grid-cols-2">
+                      <div>Vytvořeno: {tsLabel(report.createdAt)}</div>
+                      <div>Odesláno: {tsLabel(report.submittedAt)}</div>
+                      <div>Upraveno: {tsLabel(report.updatedAt)}</div>
+                    </div>
+                    {typeof report.adminNote === "string" && report.adminNote.trim() ? (
+                      <div className="rounded border border-border bg-muted p-2 text-xs">
+                        <span className="font-medium">Poznámka administrátora (schválení):</span>{" "}
+                        {report.adminNote}
+                      </div>
+                    ) : null}
                   </div>
-                  <div className="grid gap-1 sm:grid-cols-2">
-                    <div>
-                      <span className="text-neutral-600">Celkem hodin (řádky):</span>{" "}
-                      <span className="font-semibold tabular-nums">{totalHours} h</span>
-                    </div>
-                    <div>
-                      <span className="text-neutral-600">Z terminálu (řádky):</span>{" "}
-                      <span className="font-semibold tabular-nums">{sumTerminalHours} h</span>
-                    </div>
-                    <div>
-                      <span className="text-neutral-600">Ruční řádky:</span>{" "}
-                      <span className="font-semibold tabular-nums">{sumManualHours} h</span>
-                    </div>
-                    <div>
-                      <span className="text-neutral-600">Tarifní úseky (dokumenty dne):</span>{" "}
-                      <span className="font-semibold tabular-nums">{tariffHoursDay} h</span>
-                    </div>
-                  </div>
-                  {typeof report.estimatedLaborFromSegmentsCzk === "number" &&
-                  report.estimatedLaborFromSegmentsCzk > 0 ? (
-                    <div>
-                      <span className="text-neutral-600">Odhad práce (segmenty, uloženo):</span>{" "}
-                      <span className="font-medium tabular-nums">
-                        {formatKc(report.estimatedLaborFromSegmentsCzk)}
-                      </span>
-                    </div>
-                  ) : null}
-                  {typeof report.payableAmountCzk === "number" && report.payableAmountCzk > 0 ? (
-                    <div>
-                      <span className="text-neutral-600">K výplatě (schváleno):</span>{" "}
-                      <span className="font-medium tabular-nums">
-                        {formatKc(report.payableAmountCzk)}
-                      </span>
-                    </div>
-                  ) : null}
-                  <div className="grid gap-1 text-xs text-neutral-600 sm:grid-cols-2">
-                    <div>Vytvořeno: {tsLabel(report.createdAt)}</div>
-                    <div>Odesláno: {tsLabel(report.submittedAt)}</div>
-                    <div>Upraveno: {tsLabel(report.updatedAt)}</div>
-                  </div>
-                  {typeof report.adminNote === "string" && report.adminNote.trim() ? (
-                    <div className="rounded border border-slate-100 bg-slate-50 p-2 text-xs text-neutral-800">
-                      <span className="font-medium">Poznámka administrátora (schválení):</span>{" "}
-                      {report.adminNote}
-                    </div>
-                  ) : null}
-                </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="dwr-note" className="text-neutral-950">
-                    Poznámka k výkazu
-                  </Label>
-                  <Textarea
-                    id="dwr-note"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    className="min-h-[72px] border-slate-300 bg-white text-neutral-950"
-                    placeholder="Interní / sdílená poznámka k výkazu…"
-                  />
-                </div>
+                  <div className="space-y-4 lg:col-span-2">
+                    <div className="space-y-2">
+                      <Label htmlFor="dwr-note">Poznámka k výkazu</Label>
+                      <Textarea
+                        id="dwr-note"
+                        value={note}
+                        onChange={(e) => setNote(e.target.value)}
+                        className="w-full min-h-[150px] rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed"
+                        placeholder="Interní / sdílená poznámka k výkazu…"
+                      />
+                    </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="dwr-desc" className="text-neutral-950">
-                    Souhrnný popis práce (text výkazu)
-                  </Label>
-                  <Textarea
-                    id="dwr-desc"
-                    value={description}
-                    onChange={(e) => setDescription(e.target.value)}
-                    className="min-h-[100px] border-slate-300 bg-white text-neutral-950"
-                    placeholder="Popis činností…"
-                  />
+                    <div className="space-y-2">
+                      <Label htmlFor="dwr-desc">Souhrnný popis práce (text výkazu)</Label>
+                      <Textarea
+                        id="dwr-desc"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        className="w-full min-h-[220px] rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed"
+                        placeholder="Popis činností…"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <h3 className="text-base font-semibold text-neutral-950">Řádky výkazu</h3>
+                    <h3 className="text-base font-semibold">Řádky výkazu</h3>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="border-slate-300 text-neutral-950"
                       onClick={() =>
                         setRows((prev) => [
                           ...prev,
@@ -629,16 +628,16 @@ export function AdminDailyWorkReportDetailSheet(props: {
                     </Button>
                   </div>
 
-                  <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                  <div className="overflow-x-auto rounded-lg border border-border bg-card">
                     <Table>
                       <TableHeader>
-                        <TableRow className="border-slate-200 hover:bg-transparent">
-                          <TableHead className="text-neutral-950">Typ</TableHead>
-                          <TableHead className="text-neutral-950">Hodiny</TableHead>
-                          <TableHead className="text-neutral-950">Zakázka</TableHead>
-                          <TableHead className="min-w-[140px] text-neutral-950">Popis řádku</TableHead>
-                          <TableHead className="text-right text-neutral-950">Odhad</TableHead>
-                          <TableHead className="w-[100px] text-right text-neutral-950">Akce</TableHead>
+                        <TableRow className="border-border hover:bg-transparent">
+                          <TableHead>Typ</TableHead>
+                          <TableHead>Hodiny</TableHead>
+                          <TableHead>Zakázka</TableHead>
+                          <TableHead className="min-w-[140px]">Popis řádku</TableHead>
+                          <TableHead className="text-right">Odhad</TableHead>
+                          <TableHead className="w-[100px] text-right">Akce</TableHead>
                         </TableRow>
                       </TableHeader>
                       <TableBody>
@@ -650,26 +649,26 @@ export function AdminDailyWorkReportDetailSheet(props: {
                           </TableRow>
                         ) : (
                           rows.map((r) => (
-                            <TableRow key={r.key} className="border-slate-200">
-                              <TableCell className="align-top text-neutral-900">
+                            <TableRow key={r.key} className="border-border">
+                              <TableCell className="align-top">
                                 <div className="flex flex-col gap-1">
-                                  <Badge variant="outline" className="w-fit border-slate-400 text-neutral-900">
+                                  <Badge variant="outline" className="w-fit">
                                     {r.segmentType === DAILY_REPORT_ROW_SOURCE_TERMINAL
                                       ? "Terminál"
                                       : "Ruční"}
                                   </Badge>
                                   {r.segmentType === DAILY_REPORT_ROW_SOURCE_TERMINAL && r.segmentId ? (
-                                    <span className="max-w-[120px] break-all text-[10px] text-neutral-500">
+                                    <span className="max-w-[120px] break-all text-[10px] text-muted-foreground">
                                       Úsek: {r.segmentId.slice(0, 10)}…
                                     </span>
                                   ) : (
-                                    <span className="text-[10px] text-neutral-500">Interní / bez úseku</span>
+                                    <span className="text-[10px] text-muted-foreground">Interní / bez úseku</span>
                                   )}
                                 </div>
                               </TableCell>
                               <TableCell className="align-top">
                                 <Input
-                                  className="h-9 w-20 border-slate-300 bg-white text-neutral-950 tabular-nums"
+                                  className="h-9 w-20 tabular-nums"
                                   value={r.hoursStr}
                                   onChange={(e) =>
                                     setRows((prev) =>
@@ -683,7 +682,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                               <TableCell className="align-top">
                                 <div className="flex max-w-[220px] flex-col gap-1">
                                   <select
-                                    className="h-9 w-full rounded-md border border-slate-300 bg-white px-2 text-sm text-neutral-950"
+                                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
                                     value={isNoJobSegmentJobId(r.jobId) ? "" : r.jobId}
                                     onChange={(e) => {
                                       const v = e.target.value;
@@ -704,7 +703,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                                     ))}
                                   </select>
                                   {r.segmentType === DAILY_REPORT_ROW_SOURCE_TERMINAL ? (
-                                    <span className="text-[10px] text-neutral-500">
+                                    <span className="text-[10px] text-muted-foreground">
                                       Řádek z úseku terminálu — změna zakázky přepíše přiřazení v tomto výkazu.
                                     </span>
                                   ) : null}
@@ -712,7 +711,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                               </TableCell>
                               <TableCell className="align-top">
                                 <Textarea
-                                  className="min-h-[64px] border-slate-300 bg-white text-sm text-neutral-950"
+                                  className="min-h-[64px] text-sm leading-relaxed"
                                   value={r.lineNote}
                                   onChange={(e) =>
                                     setRows((prev) =>
@@ -724,7 +723,7 @@ export function AdminDailyWorkReportDetailSheet(props: {
                                   placeholder="Co dělal…"
                                 />
                               </TableCell>
-                              <TableCell className="align-top text-right text-sm tabular-nums text-neutral-900">
+                              <TableCell className="align-top text-right text-sm tabular-nums">
                                 {rowAmountHint(r) > 0 ? formatKc(rowAmountHint(r)) : "—"}
                               </TableCell>
                               <TableCell className="align-top text-right">
@@ -749,10 +748,11 @@ export function AdminDailyWorkReportDetailSheet(props: {
                   </div>
                 </div>
 
-                <div className="mt-auto flex flex-col gap-2 border-t border-slate-200 pt-4 sm:flex-row sm:flex-wrap">
+                <div className="mt-auto flex flex-col gap-2 border-t border-border pt-4 sm:flex-row sm:flex-wrap">
                   <Button
                     type="button"
-                    className="gap-2 bg-neutral-900 text-white hover:bg-neutral-800"
+                    variant="default"
+                    className="gap-2"
                     disabled={saving}
                     onClick={() => void save()}
                   >
@@ -762,7 +762,6 @@ export function AdminDailyWorkReportDetailSheet(props: {
                   <Button
                     type="button"
                     variant="outline"
-                    className="border-slate-300 text-neutral-950"
                     disabled={saving || deletingWhole}
                     onClick={() => setDeleteWholeOpen(true)}
                   >
