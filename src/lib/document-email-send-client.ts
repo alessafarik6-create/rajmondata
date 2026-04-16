@@ -8,6 +8,12 @@ function apiUrl(path: string): string {
   return new URL(path, window.location.origin).toString();
 }
 
+export type SendJobDocumentEmailAttachmentPayload = {
+  filename: string;
+  contentType: "application/pdf";
+  contentBase64: string;
+};
+
 export type SendJobDocumentEmailPayload = {
   companyId: string;
   jobId: string;
@@ -19,6 +25,7 @@ export type SendJobDocumentEmailPayload = {
   documentUrl?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
+  attachments: SendJobDocumentEmailAttachmentPayload[];
 };
 
 export async function sendJobDocumentEmailFromBrowser(

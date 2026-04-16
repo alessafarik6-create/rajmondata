@@ -61,6 +61,7 @@ type EmailLogRow = {
   documentUrl?: string | null;
   sentByEmail?: string | null;
   sentByUid?: string | null;
+  attachmentFilenames?: string[];
 };
 
 function appOrigin(): string {
@@ -91,6 +92,11 @@ type Props = {
   workContractsForJob: WorkContractLike[];
   jobBudgetBreakdown: JobBudgetBreakdown | null;
   canManage: boolean;
+  prepareDocumentEmailPdf: (input: {
+    type: DocumentEmailType;
+    contractId: string | null;
+    invoiceId: string | null;
+  }) => Promise<{ filename: string; contentBase64: string }>;
 };
 
 export function JobDocumentEmailSection({
@@ -104,6 +110,7 @@ export function JobDocumentEmailSection({
   workContractsForJob,
   jobBudgetBreakdown,
   canManage,
+  prepareDocumentEmailPdf,
 }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -350,6 +357,21 @@ export function JobDocumentEmailSection({
     const html = normalizeEmailBodyToHtml(bodyPlain);
     setSending(true);
     try {
+      let pdf: { filename: string; contentBase64: string };
+      try {
+        pdf = await prepareDocumentEmailPdf({
+          type: modalType,
+          contractId,
+          invoiceId,
+        });
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "PDF se nepodařilo vytvořit",
+          description: e instanceof Error ? e.message : "Neznámá chyba.",
+        });
+        return;
+      }
       const r = await sendJobDocumentEmailFromBrowser({
         companyId,
         jobId,
@@ -361,6 +383,13 @@ export function JobDocumentEmailSection({
         documentUrl,
         invoiceId,
         contractId,
+        attachments: [
+          {
+            filename: pdf.filename,
+            contentType: "application/pdf",
+            contentBase64: pdf.contentBase64,
+          },
+        ],
       });
       if (!r.ok) {
         toast({
@@ -370,7 +399,10 @@ export function JobDocumentEmailSection({
         });
         return;
       }
-      toast({ title: "Odesláno", description: "E-mail byl odeslán a zapsán do historie." });
+      toast({
+        title: "Odesláno",
+        description: "E-mail včetně PDF přílohy byl odeslán a zapsán do historie.",
+      });
       setModalOpen(false);
     } finally {
       setSending(false);
@@ -389,7 +421,8 @@ export function JobDocumentEmailSection({
             Odeslání dokumentu e-mailem
           </CardTitle>
           <p className="text-xs text-gray-600">
-            Odeslání přes server (Resend). Historie a kopie dle nastavení organizace.
+            Odeslání přes server (Resend) s PDF přílohou dokladu. Historie a kopie dle nastavení
+            organizace.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -471,6 +504,12 @@ export function JobDocumentEmailSection({
                     {Array.isArray(row.cc) && row.cc.length > 0 ? (
                       <div className="text-[10px] text-gray-500">Kopie: {row.cc.join(", ")}</div>
                     ) : null}
+                    {Array.isArray(row.attachmentFilenames) &&
+                    row.attachmentFilenames.length > 0 ? (
+                      <div className="text-[10px] text-gray-500">
+                        PDF: {row.attachmentFilenames.join(", ")}
+                      </div>
+                    ) : null}
                     {row.status === "error" && row.errorMessage ? (
                       <div className="text-[10px] text-red-700">{row.errorMessage}</div>
                     ) : null}
@@ -489,7 +528,8 @@ export function JobDocumentEmailSection({
               Odeslat: {DOCUMENT_EMAIL_TYPE_LABELS[modalType]}
             </DialogTitle>
             <DialogDescription>
-              Zkontrolujte příjemce a text. Kopie organizace se přidají při odeslání dle nastavení.
+              Před odesláním se vygeneruje PDF příloha. Zkontrolujte příjemce a text — kopie
+              organizace se přidají při odeslání dle nastavení.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
@@ -541,7 +581,7 @@ export function JobDocumentEmailSection({
               {sending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Odesílám…
+                  PDF a odeslání…
                 </>
               ) : (
                 <>

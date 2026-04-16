@@ -2,12 +2,19 @@ import { Resend } from "resend";
 
 const LOG = "[email-notifications/resend]";
 
+export type SendTransactionalEmailAttachment = {
+  filename: string;
+  content: Buffer;
+  contentType?: string;
+};
+
 export type SendTransactionalEmailInput = {
   to: string[];
   subject: string;
   html: string;
   /** Resend: kopie (bez duplicit s `to`). */
   cc?: string[];
+  attachments?: SendTransactionalEmailAttachment[];
 };
 
 export async function sendTransactionalEmail(
@@ -30,6 +37,17 @@ export async function sendTransactionalEmail(
     : [];
   const ccUnique = [...new Set(ccRaw)].filter((e) => !toSet.has(e));
 
+  const attachmentPayload =
+    Array.isArray(input.attachments) && input.attachments.length > 0
+      ? {
+          attachments: input.attachments.map((a) => ({
+            filename: a.filename,
+            content: a.content,
+            content_type: a.contentType ?? "application/octet-stream",
+          })),
+        }
+      : {};
+
   const resend = new Resend(key);
   const result = await resend.emails.send({
     from,
@@ -37,6 +55,7 @@ export async function sendTransactionalEmail(
     ...(ccUnique.length > 0 ? { cc: ccUnique } : {}),
     subject: input.subject,
     html: input.html,
+    ...attachmentPayload,
   });
 
   if (result.error) {

@@ -16,6 +16,7 @@ import {
   stripHtmlToPlain,
 } from "@/lib/document-email-outbound";
 import { sendDocumentEmail } from "@/lib/document-email-outbound-admin";
+import type { SendTransactionalEmailAttachment } from "@/lib/email-notifications/resend-send";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +33,36 @@ type Body = {
   documentUrl?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
+  /** PDF přílohy (base64), typicky jedna položka. */
+  attachments?: unknown;
 };
+
+const MAX_PDF_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+function parsePdfAttachments(raw: unknown): SendTransactionalEmailAttachment[] | null {
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const out: SendTransactionalEmailAttachment[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") return null;
+    const o = item as Record<string, unknown>;
+    const filename = String(o.filename ?? "").trim();
+    const b64 = String(o.contentBase64 ?? "").trim();
+    const contentType = String(o.contentType ?? "application/pdf").trim() || "application/pdf";
+    if (!filename || !b64) return null;
+    if (filename.length > 220 || /[/\\]/.test(filename)) return null;
+    if (!filename.toLowerCase().endsWith(".pdf")) return null;
+    if (contentType !== "application/pdf") return null;
+    let buf: Buffer;
+    try {
+      buf = Buffer.from(b64, "base64");
+    } catch {
+      return null;
+    }
+    if (!buf.length || buf.length > MAX_PDF_ATTACHMENT_BYTES) return null;
+    out.push({ filename, content: buf, contentType: "application/pdf" });
+  }
+  return out.length ? out : null;
+}
 
 function isDocEmailType(s: string): s is DocumentEmailType {
   return (DOCUMENT_EMAIL_TYPES as readonly string[]).includes(s);
@@ -113,6 +143,14 @@ export async function POST(request: NextRequest) {
     sentByEmail = null;
   }
 
+  const attachments = parsePdfAttachments(body.attachments);
+  if (!attachments) {
+    return NextResponse.json(
+      { ok: false, error: "Chybí platná PDF příloha (base64)." },
+      { status: 400 }
+    );
+  }
+
   const result = await sendDocumentEmail(db, {
     companyId,
     jobId,
@@ -126,6 +164,7 @@ export async function POST(request: NextRequest) {
     sentByEmail,
     invoiceId: body.invoiceId != null ? String(body.invoiceId).trim() || null : null,
     contractId: body.contractId != null ? String(body.contractId).trim() || null : null,
+    attachments,
   });
 
   if (!result.ok) {

@@ -17,7 +17,10 @@ import {
   parseCommaSeparatedEmails,
   readDocumentEmailOutbound,
 } from "@/lib/document-email-outbound";
-import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
+import {
+  sendTransactionalEmail,
+  type SendTransactionalEmailAttachment,
+} from "@/lib/email-notifications/resend-send";
 
 export async function getEmailTemplateFromCompany(
   db: Firestore,
@@ -65,6 +68,8 @@ export type SendDocumentEmailParams = {
   sentByEmail?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
+  /** PDF přílohy (povinné pro dokumenty ze zakázky). */
+  attachments: SendTransactionalEmailAttachment[];
 };
 
 export async function logDocumentSend(
@@ -84,6 +89,8 @@ export async function logDocumentSend(
     documentUrl?: string | null;
     invoiceId?: string | null;
     contractId?: string | null;
+    /** Názvy PDF příloh odeslaných s e-mailem. */
+    attachmentFilenames?: string[] | null;
   }
 ): Promise<string> {
   const col = db
@@ -106,6 +113,9 @@ export async function logDocumentSend(
     contractId: input.contractId ?? null,
     sentByUid: input.userId,
     sentByEmail: input.sentByEmail != null ? String(input.sentByEmail).trim() || null : null,
+    attachmentFilenames: Array.isArray(input.attachmentFilenames)
+      ? input.attachmentFilenames.filter(Boolean)
+      : [],
     sentAt: FieldValue.serverTimestamp(),
   });
   return ref.id;
@@ -132,11 +142,17 @@ export async function sendDocumentEmail(
     toLower: toNorm,
   });
 
+  const attachmentFilenames = (params.attachments ?? []).map((a) => a.filename).filter(Boolean);
+  if (!params.attachments || params.attachments.length === 0) {
+    return { ok: false, error: "Chybí PDF příloha." };
+  }
+
   const send = await sendTransactionalEmail({
     to: [toNorm],
     cc: cc.length ? cc : undefined,
     subject: params.subject.trim(),
     html: params.html,
+    attachments: params.attachments,
   });
 
   if (!send.ok) {
@@ -154,6 +170,7 @@ export async function sendDocumentEmail(
       documentUrl: params.documentUrl ?? null,
       invoiceId: params.invoiceId ?? null,
       contractId: params.contractId ?? null,
+      attachmentFilenames,
     });
     return send;
   }
@@ -171,6 +188,7 @@ export async function sendDocumentEmail(
     documentUrl: params.documentUrl ?? null,
     invoiceId: params.invoiceId ?? null,
     contractId: params.contractId ?? null,
+    attachmentFilenames,
   });
 
   return { ok: true };
