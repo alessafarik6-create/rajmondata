@@ -95,6 +95,11 @@ import {
   type CompanyDocumentPaymentRow,
   urgencyLabel,
 } from "@/lib/company-document-payment";
+import {
+  classifyCompanyDocumentPaymentHighlight,
+  classifyInvoicePaymentHighlight,
+  companyDocumentPaymentHighlightRowClasses,
+} from "@/lib/company-document-row-highlight";
 import { cn } from "@/lib/utils";
 import {
   LIGHT_FORM_CONTROL_CLASS,
@@ -3179,6 +3184,9 @@ function DocumentTableReceived({
               const canEditRow = !fromJobMedia && !readOnlyTrash;
               const pr = row as CompanyDocumentPaymentRow;
               const payU = getDocumentPaymentUrgency(pr, todayIso);
+              const payHighlight = classifyCompanyDocumentPaymentHighlight(pr, todayIso);
+              const payHighlightClasses =
+                companyDocumentPaymentHighlightRowClasses(payHighlight);
 
               const assignmentBadge = resolveDocumentAssignmentBadge(row);
 
@@ -3190,11 +3198,15 @@ function DocumentTableReceived({
                   key={row.id}
                   className={cn(
                     receivedRowGrid,
-                    "border-b border-gray-200 text-gray-900 hover:bg-gray-50/80 max-lg:rounded-lg max-lg:border max-lg:border-gray-200 max-lg:bg-white",
-                    fromJobExpense && "bg-amber-50/90",
-                    fromJobMedia && "bg-sky-50/90",
+                    "border-b border-gray-200 max-lg:rounded-lg max-lg:border",
+                    payHighlightClasses ||
+                      "text-gray-900 hover:bg-gray-50/80 max-lg:border-gray-200 max-lg:bg-white",
+                    !payHighlightClasses &&
+                      fromJobExpense &&
+                      "bg-amber-50/90",
+                    !payHighlightClasses && fromJobMedia && "bg-sky-50/90",
                     showPendingHighlight &&
-                      "bg-amber-50/90 ring-1 ring-inset ring-amber-200"
+                      "ring-1 ring-inset ring-amber-200"
                   )}
                 >
                   <div className="flex flex-wrap gap-1.5">
@@ -3543,7 +3555,7 @@ function DocumentTableIssued({
   onAssign,
   search,
   onSearchChange,
-  todayIso: _todayIso,
+  todayIso,
   onMarkPaid: _onMarkPaid,
   onMarkUnpaid: _onMarkUnpaid,
   readOnlyTrash = false,
@@ -3633,6 +3645,10 @@ function DocumentTableIssued({
   };
 
   const loading = isLoading || isLoadingInvoices;
+  const todayIsoSafe =
+    typeof todayIso === "string" && todayIso.trim()
+      ? todayIso.trim().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
 
   return (
     <Card className="min-w-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
@@ -3700,12 +3716,21 @@ function DocumentTableIssued({
                 const issuedAm = docDisplayAmounts(docRow);
                 const title = docDisplayTitle(docRow);
                 const issuedJobId = documentJobLinkId(docRow);
+                const issuedPr = docRow as CompanyDocumentPaymentRow;
+                const issuedHl = classifyCompanyDocumentPaymentHighlight(
+                  issuedPr,
+                  todayIsoSafe
+                );
+                const issuedHlCls =
+                  companyDocumentPaymentHighlightRowClasses(issuedHl);
                 return (
                   <div
                     key={`doc-${docRow.id}`}
                     className={cn(
                       issuedRow,
-                      "text-gray-900 hover:bg-gray-50/80 max-lg:rounded-lg max-lg:border max-lg:border-gray-200 max-lg:bg-white"
+                      "max-lg:rounded-lg max-lg:border",
+                      issuedHlCls ||
+                        "text-gray-900 hover:bg-gray-50/80 max-lg:border-gray-200 max-lg:bg-white"
                     )}
                   >
                     <div className="flex flex-wrap gap-1.5">
@@ -3885,13 +3910,16 @@ function DocumentTableIssued({
                 String(inv.invoiceNumber ?? inv.documentNumber ?? inv.id) ||
                 "Faktura";
               const cust = String(inv.customerName ?? "").trim() || "—";
+              const invHl = classifyInvoicePaymentHighlight(inv, todayIsoSafe);
+              const invHlCls = companyDocumentPaymentHighlightRowClasses(invHl);
               return (
                 <div
                   key={`inv-${inv.id}`}
                   className={cn(
                     issuedRow,
-                    "text-gray-900 hover:bg-gray-50/80 max-lg:rounded-lg max-lg:border max-lg:border-emerald-200 max-lg:bg-emerald-50/40",
-                    "lg:border-l-2 lg:border-l-emerald-500/80"
+                    "max-lg:rounded-lg max-lg:border",
+                    invHlCls ||
+                      "text-gray-900 hover:bg-gray-50/80 max-lg:border-emerald-200 max-lg:bg-emerald-50/40 lg:border-l-2 lg:border-l-emerald-500/80"
                   )}
                 >
                   <div className="flex flex-wrap gap-1.5">
