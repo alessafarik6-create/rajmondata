@@ -92,11 +92,6 @@ type Props = {
   workContractsForJob: WorkContractLike[];
   jobBudgetBreakdown: JobBudgetBreakdown | null;
   canManage: boolean;
-  prepareDocumentEmailPdf: (input: {
-    type: DocumentEmailType;
-    contractId: string | null;
-    invoiceId: string | null;
-  }) => Promise<{ filename: string; contentBase64: string }>;
 };
 
 export function JobDocumentEmailSection({
@@ -110,7 +105,6 @@ export function JobDocumentEmailSection({
   workContractsForJob,
   jobBudgetBreakdown,
   canManage,
-  prepareDocumentEmailPdf,
 }: Props) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -306,6 +300,46 @@ export function JobDocumentEmailSection({
       });
       return;
     }
+    if (type === "contract" && primaryContract) {
+      const ph = String(
+        (primaryContract as Record<string, unknown>).pdfHtml ?? ""
+      ).trim();
+      if (!ph) {
+        toast({
+          variant: "destructive",
+          title: "Chybí tisková verze smlouvy",
+          description:
+            "Otevřete smlouvu v editoru a vygenerujte PDF — tím se uloží obsah potřebný pro e-mailovou přílohu.",
+        });
+        return;
+      }
+    }
+    if (type === "invoice" && latestFinalInvoice) {
+      const ph = String(
+        (latestFinalInvoice as Record<string, unknown>).pdfHtml ?? ""
+      ).trim();
+      if (!ph) {
+        toast({
+          variant: "destructive",
+          title: "Chybí obsah faktury",
+          description: "Doklad nemá uložený obsah pro PDF. Otevřete fakturu a uložte ji znovu.",
+        });
+        return;
+      }
+    }
+    if (type === "advance_invoice" && latestAdvanceInvoice) {
+      const ph = String(
+        (latestAdvanceInvoice as Record<string, unknown>).pdfHtml ?? ""
+      ).trim();
+      if (!ph) {
+        toast({
+          variant: "destructive",
+          title: "Chybí obsah zálohy",
+          description: "Doklad nemá uložený obsah pro PDF. Otevřete fakturu a uložte ji znovu.",
+        });
+        return;
+      }
+    }
     const tpl = getEmailTemplate(outbound, type);
     setModalType(type);
     setTo(String(customerEmail ?? "").trim());
@@ -357,21 +391,6 @@ export function JobDocumentEmailSection({
     const html = normalizeEmailBodyToHtml(bodyPlain);
     setSending(true);
     try {
-      let pdf: { filename: string; contentBase64: string };
-      try {
-        pdf = await prepareDocumentEmailPdf({
-          type: modalType,
-          contractId,
-          invoiceId,
-        });
-      } catch (e) {
-        toast({
-          variant: "destructive",
-          title: "PDF se nepodařilo vytvořit",
-          description: e instanceof Error ? e.message : "Neznámá chyba.",
-        });
-        return;
-      }
       const r = await sendJobDocumentEmailFromBrowser({
         companyId,
         jobId,
@@ -383,13 +402,6 @@ export function JobDocumentEmailSection({
         documentUrl,
         invoiceId,
         contractId,
-        attachments: [
-          {
-            filename: pdf.filename,
-            contentType: "application/pdf",
-            contentBase64: pdf.contentBase64,
-          },
-        ],
       });
       if (!r.ok) {
         toast({
@@ -421,8 +433,8 @@ export function JobDocumentEmailSection({
             Odeslání dokumentu e-mailem
           </CardTitle>
           <p className="text-xs text-gray-600">
-            Odeslání přes server (Resend) s PDF přílohou dokladu. Historie a kopie dle nastavení
-            organizace.
+            Odeslání přes server (Resend) — PDF příloha se vygeneruje na serveru z uloženého dokladu
+            (malý požadavek z prohlížeče). Historie a kopie dle nastavení organizace.
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -528,8 +540,8 @@ export function JobDocumentEmailSection({
               Odeslat: {DOCUMENT_EMAIL_TYPE_LABELS[modalType]}
             </DialogTitle>
             <DialogDescription>
-              Před odesláním se vygeneruje PDF příloha. Zkontrolujte příjemce a text — kopie
-              organizace se přidají při odeslání dle nastavení.
+              PDF příloha vznikne na serveru z uloženého tisku dokladu. Zkontrolujte příjemce a text
+              — kopie organizace se přidají při odeslání dle nastavení.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
@@ -581,7 +593,7 @@ export function JobDocumentEmailSection({
               {sending ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  PDF a odeslání…
+                  Odesílám…
                 </>
               ) : (
                 <>

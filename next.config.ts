@@ -1,5 +1,6 @@
 import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["puppeteer"],
   async redirects() {
     return [
       { source: "/dashboard", destination: "/portal/dashboard", permanent: false },

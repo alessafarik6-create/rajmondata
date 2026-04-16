@@ -16,53 +16,24 @@ import {
   stripHtmlToPlain,
 } from "@/lib/document-email-outbound";
 import { sendDocumentEmail } from "@/lib/document-email-outbound-admin";
-import type { SendTransactionalEmailAttachment } from "@/lib/email-notifications/resend-send";
+import { getDocumentPdfBuffer } from "@/lib/document-email-pdf-server";
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
+export const maxDuration = 120;
 
 type Body = {
   companyId?: string;
   jobId?: string;
   type?: string;
   to?: string;
-  /** Volitelné ruční CC (čárkou), bez sloučení s nastavením — sloučení na serveru. */
   cc?: string;
   subject?: string;
-  /** Odesílá se jako HTML (klient převádí z textarea). */
   html?: string;
   documentUrl?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
-  /** PDF přílohy (base64), typicky jedna položka. */
-  attachments?: unknown;
 };
-
-const MAX_PDF_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-
-function parsePdfAttachments(raw: unknown): SendTransactionalEmailAttachment[] | null {
-  if (!Array.isArray(raw) || raw.length === 0) return null;
-  const out: SendTransactionalEmailAttachment[] = [];
-  for (const item of raw) {
-    if (!item || typeof item !== "object") return null;
-    const o = item as Record<string, unknown>;
-    const filename = String(o.filename ?? "").trim();
-    const b64 = String(o.contentBase64 ?? "").trim();
-    const contentType = String(o.contentType ?? "application/pdf").trim() || "application/pdf";
-    if (!filename || !b64) return null;
-    if (filename.length > 220 || /[/\\]/.test(filename)) return null;
-    if (!filename.toLowerCase().endsWith(".pdf")) return null;
-    if (contentType !== "application/pdf") return null;
-    let buf: Buffer;
-    try {
-      buf = Buffer.from(b64, "base64");
-    } catch {
-      return null;
-    }
-    if (!buf.length || buf.length > MAX_PDF_ATTACHMENT_BYTES) return null;
-    out.push({ filename, content: buf, contentType: "application/pdf" });
-  }
-  return out.length ? out : null;
-}
 
 function isDocEmailType(s: string): s is DocumentEmailType {
   return (DOCUMENT_EMAIL_TYPES as readonly string[]).includes(s);
@@ -98,6 +69,8 @@ export async function POST(request: NextRequest) {
   const to = String(body.to ?? "").trim();
   const subject = String(body.subject ?? "").trim();
   const html = String(body.html ?? "").trim();
+  const contractId = body.contractId != null ? String(body.contractId).trim() || null : null;
+  const invoiceId = body.invoiceId != null ? String(body.invoiceId).trim() || null : null;
 
   if (!companyId || !jobId || !type || !to) {
     return NextResponse.json({ ok: false, error: "Chybí povinná pole." }, { status: 400 });
@@ -117,6 +90,13 @@ export async function POST(request: NextRequest) {
       { ok: false, error: "Vyplňte předmět i text zprávy." },
       { status: 400 }
     );
+  }
+
+  if (type === "contract" && !contractId) {
+    return NextResponse.json({ ok: false, error: "Chybí identifikátor smlouvy." }, { status: 400 });
+  }
+  if ((type === "invoice" || type === "advance_invoice") && !invoiceId) {
+    return NextResponse.json({ ok: false, error: "Chybí identifikátor dokladu." }, { status: 400 });
   }
 
   const jobRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("jobs").doc(jobId);
@@ -143,13 +123,25 @@ export async function POST(request: NextRequest) {
     sentByEmail = null;
   }
 
-  const attachments = parsePdfAttachments(body.attachments);
-  if (!attachments) {
-    return NextResponse.json(
-      { ok: false, error: "Chybí platná PDF příloha (base64)." },
-      { status: 400 }
-    );
+  const pdf = await getDocumentPdfBuffer({
+    db,
+    companyId,
+    jobId,
+    type,
+    contractId,
+    invoiceId,
+  });
+  if (!pdf.ok) {
+    return NextResponse.json({ ok: false, error: pdf.error }, { status: 400 });
   }
+
+  const attachments = [
+    {
+      filename: pdf.filename,
+      content: pdf.buffer,
+      contentType: "application/pdf" as const,
+    },
+  ];
 
   const result = await sendDocumentEmail(db, {
     companyId,
@@ -162,8 +154,8 @@ export async function POST(request: NextRequest) {
     documentUrl: body.documentUrl != null ? String(body.documentUrl) : null,
     userId: caller.uid,
     sentByEmail,
-    invoiceId: body.invoiceId != null ? String(body.invoiceId).trim() || null : null,
-    contractId: body.contractId != null ? String(body.contractId).trim() || null : null,
+    invoiceId,
+    contractId,
     attachments,
   });
 

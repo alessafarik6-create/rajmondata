@@ -143,10 +143,6 @@ import {
   buildWorkContractPrintHtml,
   withLineBreaks,
 } from "@/lib/work-contract-print-html";
-import { sanitizeInvoicePreviewHtml } from "@/lib/invoice-a4-html";
-import { htmlDocumentStringToPdfBase64 } from "@/lib/html-document-to-pdf-browser";
-import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
-import type { DocumentEmailType } from "@/lib/document-email-outbound";
 import {
   buildJobTemplateDataSectionInnerHtml,
   formatJobTemplateDataPlainText,
@@ -1903,76 +1899,6 @@ function JobDetailPageContent() {
       jobBudgetKc,
       companyProfileBankAccountDisplay,
       workContractsForJob,
-    ]
-  );
-
-  const prepareDocumentEmailPdfAttachment = useCallback(
-    async (input: {
-      type: DocumentEmailType;
-      contractId: string | null;
-      invoiceId: string | null;
-    }): Promise<{ filename: string; contentBase64: string }> => {
-      if (input.type === "contract") {
-        const cid = String(input.contractId ?? "").trim();
-        if (!cid) throw new Error("Chybí identifikátor smlouvy.");
-        const c = workContractsForJob.find((x) => x.id === cid);
-        if (!c) throw new Error("Smlouva nebyla nalezena.");
-        let html = String((c as WorkContractDoc).pdfHtml ?? "").trim();
-        if (!html) {
-          html = buildContractHtmlForForm(
-            workContractDocToForm(c as WorkContractDoc, companyBankAccountNumber)
-          );
-        }
-        const b64 = await htmlDocumentStringToPdfBase64(html);
-        const num = String((c as WorkContractDoc).contractNumber ?? "").trim() || cid;
-        const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
-        return { filename: `smlouva-${safeNum}.pdf`, contentBase64: b64 };
-      }
-
-      if (input.type === "invoice" || input.type === "advance_invoice") {
-        const iid = String(input.invoiceId ?? "").trim();
-        if (!iid || !firestore || !companyId) {
-          throw new Error("Chybí doklad nebo připojení k databázi.");
-        }
-        const iref = doc(firestore, "companies", companyId, "invoices", iid);
-        const snap = await getDoc(iref);
-        if (!snap.exists()) throw new Error("Doklad nebyl nalezen.");
-        const d = snap.data() as {
-          pdfHtml?: string;
-          invoiceNumber?: string;
-          documentNumber?: string;
-          type?: string;
-        };
-        if (input.type === "invoice") {
-          if (String(d.type ?? "") !== JOB_INVOICE_TYPES.FINAL_INVOICE) {
-            throw new Error("Vybraný doklad není vyúčtovací faktura.");
-          }
-        } else if (String(d.type ?? "") !== JOB_INVOICE_TYPES.ADVANCE) {
-          throw new Error("Vybraný doklad není zálohová faktura.");
-        }
-        const rawHtml = String(d.pdfHtml ?? "").trim();
-        if (!rawHtml) {
-          throw new Error(
-            "Doklad nemá uložený obsah pro PDF. Otevřete ho v portálu a uložte znovu."
-          );
-        }
-        const html = sanitizeInvoicePreviewHtml(rawHtml);
-        const b64 = await htmlDocumentStringToPdfBase64(html);
-        const num = String(d.invoiceNumber ?? d.documentNumber ?? "").trim() || iid;
-        const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
-        const prefix =
-          input.type === "advance_invoice" ? "zalohova-faktura" : "faktura";
-        return { filename: `${prefix}-${safeNum}.pdf`, contentBase64: b64 };
-      }
-
-      throw new Error("Nepodporovaný typ dokumentu.");
-    },
-    [
-      workContractsForJob,
-      companyBankAccountNumber,
-      buildContractHtmlForForm,
-      firestore,
-      companyId,
     ]
   );
 
@@ -6871,7 +6797,6 @@ function JobDetailPageContent() {
               workContractsForJob={workContractsForJob}
               jobBudgetBreakdown={jobBudgetBreakdown}
               canManage={canManageFolders}
-              prepareDocumentEmailPdf={prepareDocumentEmailPdfAttachment}
             />
           ) : null}
 

@@ -54,6 +54,7 @@
     "next": "15.5.9",
     "patch-package": "^8.0.0",
     "pdfjs-dist": "^4.10.38",
+    "puppeteer": "^24.41.0",
     "qrcode.react": "^4.1.0",
     "react": "^19.2.1",
     "react-day-picker": "^9.11.3",
