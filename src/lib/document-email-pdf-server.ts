@@ -1,7 +1,7 @@
 /**
  * PDF přílohy pro odeslání dokumentů e-mailem — čistě na serveru z Firestore `pdfHtml`.
- * Vercel / serverless: `puppeteer-core` + `@sparticuz/chromium` podle oficiálního vzoru (defaultArgs + headless shell).
- * Lokálně: volitelně vlastní Chrome, pokud není VERCEL a je nastaven CHROME_EXECUTABLE_PATH.
+ * Vercel serverless: puppeteer-core + @sparticuz/chromium (žádný klasický puppeteer).
+ * HTML je vždy řetězec z DB — žádné window/document, žádné načítání portálové URL.
  */
 
 import fs from "node:fs";
@@ -9,6 +9,8 @@ import path from "node:path";
 import { createRequire } from "node:module";
 import type { Firestore } from "firebase-admin/firestore";
 import type { Browser } from "puppeteer-core";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import type { DocumentEmailType } from "@/lib/document-email-outbound";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
@@ -28,7 +30,9 @@ function logPdfError(phase: string, err: unknown): void {
   console.error(`${LOG} ${phase} FAILED`, { message: e.message, stack: e.stack });
 }
 
-/** Adresář s chromium.br (nutné na Vercelu — bundlovaný __dirname uvnitř @sparticuz/chromium často neexistuje). */
+/**
+ * Na Vercelu musí být cesta k `chromium.br` — výchozí __dirname uvnitř balíčku po bundlu Next často nefunguje.
+ */
 function resolveChromiumBinDir(): string {
   const cwd = process.cwd();
   const candidates = [
@@ -53,7 +57,7 @@ function resolveChromiumBinDir(): string {
     /* ignore */
   }
   throw new Error(
-    `Nelze najít @sparticuz/chromium/bin/chromium.br (cwd=${cwd}). Ověřte, že je balíček v production dependencies.`
+    `Nelze najít @sparticuz/chromium/bin/chromium.br (cwd=${cwd}). Ověřte production dependency.`
   );
 }
 
@@ -68,39 +72,30 @@ async function launchPdfBrowser(): Promise<Browser> {
   const customRaw = String(
     process.env.CHROME_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || ""
   ).trim();
-  /** Na Vercelu nikdy nepoužívat lokální cestu z .env — často neexistuje v lambdě a rozbije launch. */
   const custom = !isVercel && customRaw ? customRaw : "";
 
-  const puppeteerMod = await import("puppeteer-core");
-  const { launch, defaultArgs } = puppeteerMod;
-
   if (custom) {
-    logPdf("browser", `mode=localChrome path=${custom}`);
+    logPdf("browser", `pre-launch localChrome path=${custom}`);
     try {
-      return await launch({
+      const browser = await puppeteer.launch({
         executablePath: custom,
         headless: true,
-        args: defaultArgs({
-          headless: true,
-          args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
-        }),
-        defaultViewport: { width: 1280, height: 720, deviceScaleFactor: 1 },
+        args: [
+          "--no-sandbox",
+          "--disable-setuid-sandbox",
+          "--disable-dev-shm-usage",
+          "--disable-gpu",
+        ],
       });
+      logPdf("browser", "launch ok (local Chrome)");
+      return browser;
     } catch (e) {
-      logPdfError("browser.customLaunch", e);
+      logPdfError("browser.localChrome", e);
       throw e;
     }
   }
 
-  logPdf("browser", "mode=serverless @sparticuz/chromium + puppeteer-core (defaultArgs merge)");
-  const chromiumMod = await import("@sparticuz/chromium");
-  const chromium = chromiumMod.default as {
-    executablePath: (input?: string) => Promise<string>;
-    args: string[];
-    defaultViewport: { width: number; height: number; deviceScaleFactor?: number };
-    headless: true | "shell";
-  };
-
+  logPdf("chromium", "pre-launch serverless (Vercel / @sparticuz/chromium + puppeteer-core)");
   const binDir = resolveChromiumBinDir();
   let executablePath: string;
   try {
@@ -109,26 +104,19 @@ async function launchPdfBrowser(): Promise<Browser> {
     logPdfError("chromium.executablePath", e);
     throw e;
   }
-  logPdf("chromium", `executablePath=${executablePath.slice(0, 96)}… len=${executablePath.length}`);
+  logPdf("chromium", `executablePath len=${executablePath.length} preview=${executablePath.slice(0, 80)}`);
 
-  const headless = chromium.headless;
-  const mergedArgs = defaultArgs({
-    args: chromium.args,
-    headless: headless === "shell" ? "shell" : true,
-  });
-  logPdf("browser", `mergedArgs count=${mergedArgs.length} headless=${String(headless)}`);
-
+  logPdf("browser", "puppeteer.launch start (args: chromium.args, headless: true)");
   try {
-    const browser = await launch({
-      args: mergedArgs,
-      defaultViewport: chromium.defaultViewport,
+    const browser = await puppeteer.launch({
+      args: chromium.args,
       executablePath,
-      headless: headless === "shell" ? "shell" : true,
+      headless: true,
     });
-    logPdf("browser", "launch ok");
+    logPdf("browser", "puppeteer.launch ok");
     return browser;
   } catch (e) {
-    logPdfError("browser.sparticuzLaunch", e);
+    logPdfError("browser.launch", e);
     throw e;
   }
 }
@@ -142,33 +130,30 @@ export async function renderStoredHtmlToPdfBuffer(html: string): Promise<Buffer>
     logPdfError("html", new Error("empty html"));
     throw new Error("Prázdné HTML pro PDF.");
   }
-  logPdf("html", `chars=${trimmed.length}`);
+  logPdf("html", `ready server-side string chars=${trimmed.length} (no window/document)`);
 
   let browser: Browser | null = null;
   try {
+    logPdf("chromium", "about to launch browser");
     browser = await launchPdfBrowser();
+
     logPdf("page", "newPage");
     const page = await browser.newPage();
 
-    logPdf("page", "setContent waitUntil=domcontentloaded");
+    logPdf("page", "setContent start waitUntil=networkidle0 timeout=90000");
     await page.setContent(trimmed, {
-      waitUntil: "domcontentloaded",
+      waitUntil: "networkidle0",
       timeout: 90_000,
     });
-    logPdf("page", "setContent done");
+    logPdf("page", "setContent done (networkidle0)");
 
-    await page.evaluate(() => new Promise<void>((resolve) => setTimeout(resolve, 500)));
-    logPdf("page", "settle 500ms");
-
-    logPdf("page", "pdf() start");
+    logPdf("page", "page.pdf() start format=A4 printBackground=true");
     const pdfUint8 = await page.pdf({
       format: "A4",
       printBackground: true,
-      margin: { top: "10mm", right: "8mm", bottom: "10mm", left: "8mm" },
-      preferCSSPageSize: true,
     });
     const buf = Buffer.from(pdfUint8);
-    logPdf("page", `pdf() done bytes=${buf.length}`);
+    logPdf("pdf", `buffer created bytes=${buf.length}`);
     return buf;
   } catch (e) {
     logPdfError("renderStoredHtmlToPdfBuffer", e);
@@ -316,7 +301,6 @@ export async function getDocumentPdfBuffer(
   }
 }
 
-/** Alias — smlouva. */
 export async function generateContractPdfBuffer(
   input: Omit<GetDocumentPdfBufferInput, "type" | "invoiceId"> & { contractId: string }
 ): Promise<GetDocumentPdfBufferResult> {
