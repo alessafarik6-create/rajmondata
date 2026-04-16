@@ -3,7 +3,7 @@ import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-collections";
 import { parseLeadImportPayload, type LeadImportRow } from "@/lib/lead-import-parse";
 import { syncImportLeadsToFirestoreAdmin } from "@/lib/import-lead-sync-firestore";
-import { dispatchOrgModuleEmail } from "@/lib/email-notifications/dispatch";
+import { sendModuleNotification } from "@/lib/email-notifications/module-notify";
 
 export const dynamic = "force-dynamic";
 
@@ -262,7 +262,7 @@ export async function GET(request: NextRequest) {
 
     try {
       if (syncWarning) {
-        await dispatchOrgModuleEmail(db, {
+        await sendModuleNotification(db, {
           companyId,
           module: "system",
           eventKey: "importError",
@@ -272,7 +272,7 @@ export async function GET(request: NextRequest) {
           actionPath: "/portal/leads",
         });
       } else if (sync && sync.created > 0) {
-        await dispatchOrgModuleEmail(db, {
+        await sendModuleNotification(db, {
           companyId,
           module: "leads",
           eventKey: "newLead",

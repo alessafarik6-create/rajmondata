@@ -81,7 +81,7 @@ export async function POST(request: NextRequest) {
     title: `Test notifikací: ${moduleLabelCs(module)}`,
     lines: [
       "Toto je zkušební zpráva pro vybraný modul.",
-      "Příjemci odpovídají aktuálnímu nastavení (globální nebo vlastní příjemci modulu včetně administrátorů, pokud jsou zapnutí).",
+      "Příjemci odpovídají aktuálnímu nastavení (globální nebo vlastní příjemci modulu, bez automatického přidání administrátorů).",
     ],
     actionUrl: null,
     companyName: null,

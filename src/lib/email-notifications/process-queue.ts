@@ -1,6 +1,7 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { Timestamp } from "firebase-admin/firestore";
-import { dispatchOrgModuleEmail, MAIL_DISPATCH_QUEUE } from "./dispatch";
+import { MAIL_DISPATCH_QUEUE } from "./dispatch";
+import { sendModuleNotification } from "./module-notify";
 import { defaultSubjectForEvent } from "./subjects";
 
 /**
@@ -44,7 +45,7 @@ export async function processDueMailDispatchQueue(
             })
           : "—";
         const subject = defaultSubjectForEvent("calendar", "reminder");
-        const res = await dispatchOrgModuleEmail(db, {
+        const res = await sendModuleNotification(db, {
           companyId,
           module: "calendar",
           eventKey: "reminder",

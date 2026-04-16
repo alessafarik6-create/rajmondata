@@ -3,6 +3,11 @@
 import { getAuth } from "firebase/auth";
 import type { EmailModuleKey } from "./schema";
 
+function companyApiUrl(path: string): string {
+  if (typeof window === "undefined") return path;
+  return new URL(path, window.location.origin).toString();
+}
+
 export type BrowserNotifyPayload = {
   companyId: string;
   module: EmailModuleKey;
@@ -25,7 +30,7 @@ export async function sendModuleEmailNotificationFromBrowser(
     const user = auth.currentUser;
     if (!user) return;
     const token = await user.getIdToken();
-    const res = await fetch("/api/company/email-notifications/notify", {
+    const res = await fetch(companyApiUrl("/api/company/email-notifications/notify"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -63,7 +68,7 @@ export async function syncCalendarEmailRemindersFromBrowser(input: {
     const user = auth.currentUser;
     if (!user) return;
     const token = await user.getIdToken();
-    await fetch("/api/company/email-notifications/calendar-reminders", {
+    await fetch(companyApiUrl("/api/company/email-notifications/calendar-reminders"), {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

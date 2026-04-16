@@ -1190,6 +1190,31 @@ function DocumentsPageContent() {
         console.error("documents: finance ledger write failed", financeErr);
       }
 
+      void sendModuleEmailNotificationFromBrowser({
+        companyId: companyId!,
+        module: "documents",
+        eventKey: "newDocument",
+        entityId: newDocRef.id,
+        title: `Nový doklad: ${formData.number.trim()}`,
+        lines: [
+          newDocType === "received" ? "Přijatý doklad" : "Vydaný doklad",
+          `Subjekt: ${formData.entityName.trim()}`,
+          assignmentType === "pending_assignment" ? "Zařazení: čeká na přiřazení" : "",
+        ].filter(Boolean),
+        actionPath: `/portal/documents`,
+      });
+      if (assignmentType === "pending_assignment") {
+        void sendModuleEmailNotificationFromBrowser({
+          companyId: companyId!,
+          module: "documents",
+          eventKey: "pendingAssignment",
+          entityId: newDocRef.id,
+          title: `Doklad k zařazení: ${formData.number.trim()}`,
+          lines: [formData.entityName.trim()],
+          actionPath: `/portal/documents`,
+        });
+      }
+
       toast({
         title: "Doklad uložen",
         description:
@@ -1283,6 +1308,32 @@ function DocumentsPageContent() {
         },
         updatedAt: serverTimestamp(),
       });
+      if (
+        documentShowsAsPendingAssignment(beforeRow) &&
+        assignTypeNext !== "pending_assignment"
+      ) {
+        const docTitle =
+          beforeRow.number?.trim() ||
+          beforeRow.entityName?.trim() ||
+          assigningDocId;
+        let placementLine = "";
+        if (assignTypeNext === "job_cost") {
+          placementLine = `Zařazeno do nákladů zakázky: ${selected?.name?.trim() || jid || "—"}`;
+        } else if (assignTypeNext === "warehouse") {
+          placementLine = "Zařazeno ke skladu";
+        } else if (assignTypeNext === "company" || assignTypeNext === "overhead") {
+          placementLine = "Zařazeno jako režie firmy";
+        }
+        void sendModuleEmailNotificationFromBrowser({
+          companyId: companyId!,
+          module: "documents",
+          eventKey: "updated",
+          entityId: assigningDocId,
+          title: `Doklad zařazen: ${docTitle}`,
+          lines: [placementLine].filter(Boolean),
+          actionPath: `/portal/documents`,
+        });
+      }
       if (isDl) {
         setAssignDialogOpen(false);
         setAssigningDocId(null);

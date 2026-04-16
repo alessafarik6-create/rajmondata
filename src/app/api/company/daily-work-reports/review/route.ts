@@ -8,7 +8,7 @@ import {
   syncApprovedWorkReportLaborJobExpenses,
 } from "@/lib/daily-work-report-job-labor-expenses";
 import { applyApprovedJobLaborFromSegments } from "@/lib/work-segment-server";
-import { dispatchOrgModuleEmail } from "@/lib/email-notifications/dispatch";
+import { sendModuleNotification } from "@/lib/email-notifications/module-notify";
 
 type Body = {
   companyId?: string;
@@ -190,7 +190,7 @@ export async function POST(request: NextRequest) {
       });
 
       try {
-        await dispatchOrgModuleEmail(db, {
+        await sendModuleNotification(db, {
           companyId,
           module: "attendance",
           eventKey: "payrollApproved",

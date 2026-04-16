@@ -5,7 +5,7 @@ import {
   callerCanTriggerOrgNotifications,
   verifyBearerAndLoadCaller,
 } from "@/lib/api-verify-company-user";
-import { dispatchOrgModuleEmail } from "@/lib/email-notifications/dispatch";
+import { sendModuleNotification } from "@/lib/email-notifications/module-notify";
 import type { EmailModuleKey } from "@/lib/email-notifications/schema";
 
 export const dynamic = "force-dynamic";
@@ -85,7 +85,7 @@ export async function POST(request: NextRequest) {
       ? body.subjectOverride.trim()
       : undefined;
 
-  const result = await dispatchOrgModuleEmail(db, {
+  const result = await sendModuleNotification(db, {
     companyId,
     module,
     eventKey,

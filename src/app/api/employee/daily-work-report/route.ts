@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
-import { dispatchOrgModuleEmail } from "@/lib/email-notifications/dispatch";
+import { sendModuleNotification } from "@/lib/email-notifications/module-notify";
 import {
   DAILY_REPORT_ROW_SOURCE_MANUAL,
   DAILY_REPORT_ROW_SOURCE_TERMINAL,
@@ -572,7 +572,7 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      await dispatchOrgModuleEmail(db, {
+      await sendModuleNotification(db, {
         companyId,
         module: "attendance",
         eventKey: "newWorkReports",
