@@ -96,9 +96,8 @@ import {
   urgencyLabel,
 } from "@/lib/company-document-payment";
 import {
-  classifyCompanyDocumentPaymentHighlight,
-  classifyInvoicePaymentHighlight,
-  companyDocumentPaymentHighlightRowClasses,
+  getDocumentStatusStyle,
+  getInvoiceDocumentStatusStyle,
 } from "@/lib/company-document-row-highlight";
 import { cn } from "@/lib/utils";
 import {
@@ -2284,7 +2283,6 @@ function DocumentsPageContent() {
               onAssign={openAssignDialog}
               search={issuedSearch}
               onSearchChange={setIssuedSearch}
-              todayIso={todayIso}
               onMarkPaid={markDocumentPaid}
               onMarkUnpaid={markDocumentUnpaid}
               readOnlyTrash={false}
@@ -2323,7 +2321,6 @@ function DocumentsPageContent() {
             onAssign={openAssignDialog}
             search={issuedSearch}
             onSearchChange={setIssuedSearch}
-            todayIso={todayIso}
             onMarkPaid={markDocumentPaid}
             onMarkUnpaid={markDocumentUnpaid}
             readOnlyTrash={false}
@@ -2374,7 +2371,6 @@ function DocumentsPageContent() {
               onAssign={openAssignDialog}
               search={issuedSearch}
               onSearchChange={setIssuedSearch}
-              todayIso={todayIso}
               onMarkPaid={markDocumentPaid}
               onMarkUnpaid={markDocumentUnpaid}
               readOnlyTrash
@@ -3184,9 +3180,7 @@ function DocumentTableReceived({
               const canEditRow = !fromJobMedia && !readOnlyTrash;
               const pr = row as CompanyDocumentPaymentRow;
               const payU = getDocumentPaymentUrgency(pr, todayIso);
-              const payHighlight = classifyCompanyDocumentPaymentHighlight(pr, todayIso);
-              const payHighlightClasses =
-                companyDocumentPaymentHighlightRowClasses(payHighlight);
+              const payHighlightClasses = getDocumentStatusStyle(pr);
 
               const assignmentBadge = resolveDocumentAssignmentBadge(row);
 
@@ -3555,7 +3549,6 @@ function DocumentTableIssued({
   onAssign,
   search,
   onSearchChange,
-  todayIso,
   onMarkPaid: _onMarkPaid,
   onMarkUnpaid: _onMarkUnpaid,
   readOnlyTrash = false,
@@ -3572,8 +3565,6 @@ function DocumentTableIssued({
   onAssign: (row: CompanyDocumentRow) => void;
   search: string;
   onSearchChange: (v: string) => void;
-  /** Volitelné — rozšíření pro úhrady (vydané tabulce stačí signatura API). */
-  todayIso?: string;
   onMarkPaid?: (row: CompanyDocumentRow) => void | Promise<void>;
   onMarkUnpaid?: (row: CompanyDocumentRow) => void | Promise<void>;
   readOnlyTrash?: boolean;
@@ -3645,10 +3636,6 @@ function DocumentTableIssued({
   };
 
   const loading = isLoading || isLoadingInvoices;
-  const todayIsoSafe =
-    typeof todayIso === "string" && todayIso.trim()
-      ? todayIso.trim().slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
 
   return (
     <Card className="min-w-0 overflow-hidden border border-gray-200 bg-white shadow-sm">
@@ -3717,12 +3704,7 @@ function DocumentTableIssued({
                 const title = docDisplayTitle(docRow);
                 const issuedJobId = documentJobLinkId(docRow);
                 const issuedPr = docRow as CompanyDocumentPaymentRow;
-                const issuedHl = classifyCompanyDocumentPaymentHighlight(
-                  issuedPr,
-                  todayIsoSafe
-                );
-                const issuedHlCls =
-                  companyDocumentPaymentHighlightRowClasses(issuedHl);
+                const issuedHlCls = getDocumentStatusStyle(issuedPr);
                 return (
                   <div
                     key={`doc-${docRow.id}`}
@@ -3910,8 +3892,7 @@ function DocumentTableIssued({
                 String(inv.invoiceNumber ?? inv.documentNumber ?? inv.id) ||
                 "Faktura";
               const cust = String(inv.customerName ?? "").trim() || "—";
-              const invHl = classifyInvoicePaymentHighlight(inv, todayIsoSafe);
-              const invHlCls = companyDocumentPaymentHighlightRowClasses(invHl);
+              const invHlCls = getInvoiceDocumentStatusStyle(inv);
               return (
                 <div
                   key={`inv-${inv.id}`}

@@ -1,7 +1,4 @@
-import {
-  type CompanyDocumentPaymentRow,
-  getDocumentPaymentUrgency,
-} from "@/lib/company-document-payment";
+import type { CompanyDocumentPaymentRow } from "@/lib/company-document-payment";
 
 /** Stejný typ jako u faktur z job billingu — daňový doklad k hotovostní platbě. */
 const TAX_RECEIPT_RECEIVED_PAYMENT_TYPE = "tax_receipt_received_payment";
@@ -61,22 +58,15 @@ export function rowIndicatesCashPayment(row: Record<string, unknown>): boolean {
  * Priorita:
  * 1) hotově → žlutá
  * 2) zaplaceno → zelená
- * 3) po splatnosti / blížící se splatnost / chybí splatnost u dokladu k úhradě → červená
+ * 3) nezaplaceno (výchozí) → červená — bez ohledu na splatnost / requiresPayment
  */
 export function classifyCompanyDocumentPaymentHighlight(
-  row: CompanyDocumentPaymentRow,
-  todayIso: string
-): CompanyDocumentPaymentHighlight | null {
+  row: CompanyDocumentPaymentRow
+): CompanyDocumentPaymentHighlight {
   const r = row as CompanyDocumentPaymentRow & Record<string, unknown>;
   if (rowIndicatesCashPayment(r)) return "cash";
   if (row.paid === true) return "paid";
-
-  if (!row.requiresPayment) return null;
-  const u = getDocumentPaymentUrgency(row, todayIso);
-  if (u === "paid" || u === "not_applicable") return null;
-  if (u === "overdue" || u === "due_soon" || u === "incomplete_no_due") return "urgent";
-  // `ok` = splatnost ještě daleko — bez červeného zvýraznění
-  return null;
+  return "urgent";
 }
 
 export function invoiceRecordToPaymentRow(
@@ -99,13 +89,10 @@ export function invoiceRecordToPaymentRow(
 }
 
 export function classifyInvoicePaymentHighlight(
-  inv: Record<string, unknown>,
-  todayIso: string
-): CompanyDocumentPaymentHighlight | null {
-  const status = String(inv.status ?? "");
-  if (status === "draft") return null;
+  inv: Record<string, unknown>
+): CompanyDocumentPaymentHighlight {
   const row = invoiceRecordToPaymentRow(inv);
-  return classifyCompanyDocumentPaymentHighlight(row, todayIso);
+  return classifyCompanyDocumentPaymentHighlight(row);
 }
 
 /** Tailwind třídy pro celý řádek / kartu dokladu (desktop + mobil). */
@@ -114,10 +101,24 @@ export function companyDocumentPaymentHighlightRowClasses(
 ): string {
   if (!h) return "";
   if (h === "cash") {
-    return "bg-yellow-50 text-gray-900 hover:bg-yellow-100/70 max-lg:border-yellow-200 max-lg:bg-yellow-50";
+    return "border-yellow-200 bg-yellow-50 text-gray-900 hover:bg-yellow-100/70 max-lg:border max-lg:border-yellow-200 max-lg:bg-yellow-50";
   }
   if (h === "paid") {
-    return "bg-green-50 text-gray-900 hover:bg-green-100/70 max-lg:border-green-200 max-lg:bg-green-50";
+    return "border-green-200 bg-green-50 text-gray-900 hover:bg-green-100/70 max-lg:border max-lg:border-green-200 max-lg:bg-green-50";
   }
-  return "bg-red-50 text-gray-900 hover:bg-red-100/70 max-lg:border-red-200 max-lg:bg-red-50";
+  return "border-red-200 bg-red-50 text-gray-900 hover:bg-red-100/70 max-lg:border max-lg:border-red-200 max-lg:bg-red-50";
+}
+
+/** Celý řádek dokladu — stejná logika jako `classifyCompanyDocumentPaymentHighlight` + Tailwind. */
+export function getDocumentStatusStyle(row: CompanyDocumentPaymentRow): string {
+  return companyDocumentPaymentHighlightRowClasses(
+    classifyCompanyDocumentPaymentHighlight(row)
+  );
+}
+
+/** Faktura v seznamu: stejná priorita jako u dokladů (včetně konceptu = nezaplaceno → červená). */
+export function getInvoiceDocumentStatusStyle(inv: Record<string, unknown>): string {
+  return companyDocumentPaymentHighlightRowClasses(
+    classifyInvoicePaymentHighlight(inv)
+  );
 }
