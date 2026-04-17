@@ -105,6 +105,11 @@ export type CompanyProfile = {
 
   /** Šablony a CC pro odesílání dokumentů ze zakázky e-mailem. */
   documentEmailOutbound?: DocumentEmailOutboundSettings | null;
+
+  /**
+   * Povolit zaměstnancům úpravu vlastního bankovního účtu v profilu (API employee/bank-account).
+   */
+  allowEmployeeBankAccountSelfEdit?: boolean;
 };
 
 function resolveTenantCompanyId(userProfile: unknown): string | undefined {

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
 import {
   useUser,
@@ -43,6 +43,12 @@ import { cn } from "@/lib/utils";
 import { MIN_TERMINAL_PIN_LENGTH, normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
 import { mapFirebaseAuthPasswordChangeError } from "@/lib/firebase-auth-password-errors";
+import {
+  EMPTY_EMPLOYEE_BANK_ACCOUNT,
+  parseBankAccountFromFirestore,
+  type EmployeeBankAccount,
+} from "@/lib/employee-bank-account";
+import { Textarea } from "@/components/ui/textarea";
 
 const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
 
@@ -63,7 +69,18 @@ export default function EmployeeProfilePage() {
   const firestore = useFirestore();
   const firebaseApp = useFirebaseApp();
   const { toast } = useToast();
-  const { companyName, isLoading: companyLoading } = useCompany();
+  const { companyName, company, isLoading: companyLoading } = useCompany();
+
+  const allowEmployeeBankAccountSelfEdit = useMemo(() => {
+    const c = company as Record<string, unknown> | null | undefined;
+    if (!c) return false;
+    if (c.allowEmployeeBankAccountSelfEdit === true) return true;
+    const s = c.settings;
+    if (s && typeof s === "object" && s !== null) {
+      return (s as Record<string, unknown>).allowEmployeeBankAccountSelfEdit === true;
+    }
+    return false;
+  }, [company]);
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -112,7 +129,22 @@ export default function EmployeeProfilePage() {
   const [tpConfirm, setTpConfirm] = useState("");
   const [tpSaving, setTpSaving] = useState(false);
 
+  const [empBankForm, setEmpBankForm] = useState<EmployeeBankAccount>({
+    ...EMPTY_EMPLOYEE_BANK_ACCOUNT,
+  });
+  const [empBankSaving, setEmpBankSaving] = useState(false);
+
   const { t, lang: uiLang } = useEmployeeUiLang(profile);
+
+  const employeeBankSnapshotKey = useMemo(
+    () => JSON.stringify(employeeRow?.bankAccount ?? null),
+    [employeeRow?.bankAccount]
+  );
+
+  useEffect(() => {
+    const p = parseBankAccountFromFirestore(employeeRow?.bankAccount);
+    setEmpBankForm(p ? { ...p } : { ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
+  }, [employeeBankSnapshotKey, employeeRowLoading]);
 
   useEffect(() => {
     if (!DEBUG) return;
@@ -288,6 +320,41 @@ export default function EmployeeProfilePage() {
       });
     } finally {
       setLangSaving(false);
+    }
+  };
+
+  const handleEmployeeBankSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!user || !allowEmployeeBankAccountSelfEdit) return;
+    setEmpBankSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/employee/bank-account", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ bankAccount: empBankForm }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Uložení se nezdařilo."
+        );
+      }
+      toast({
+        title: "Bankovní údaje uloženy",
+        description: "Údaje uvidí pouze oprávnění pracovníci firmy v administraci.",
+      });
+    } catch (err: unknown) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: err instanceof Error ? err.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setEmpBankSaving(false);
     }
   };
 
@@ -562,6 +629,108 @@ export default function EmployeeProfilePage() {
           </p>
         </CardContent>
       </Card>
+
+      {companyId && employeeId && allowEmployeeBankAccountSelfEdit ? (
+        <Card className="bg-white border-slate-200 shadow-sm">
+          <CardHeader>
+            <CardTitle>Bankovní údaje (výplata)</CardTitle>
+            <p className="text-sm text-slate-700 font-normal pt-1">
+              Vyplňte účet pro výplatu podle pokynů zaměstnavatele. Organizace má tuto možnost zapnutou
+              v administraci zaměstnanců.
+            </p>
+          </CardHeader>
+          <CardContent>
+            {employeeRowLoading ? (
+              <div className="flex items-center gap-2 text-sm text-slate-800">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Načítání…
+              </div>
+            ) : (
+              <form onSubmit={handleEmployeeBankSave} className="space-y-4 max-w-xl">
+                <p className="text-xs text-slate-600 rounded-md border border-slate-200 bg-slate-50 p-2">
+                  Formát: číslo účtu (např. <strong>19-123456789</strong>) a kód banky (
+                  <strong>0800</strong>), nebo jedním řádkem <strong>123456789/0800</strong>. Volitelně
+                  IBAN — musí projít kontrolním součtem.
+                </p>
+                <div className="space-y-2">
+                  <Label htmlFor="emp-bank-acc">Číslo účtu (CZ)</Label>
+                  <Input
+                    id="emp-bank-acc"
+                    className={LIGHT_FORM_CONTROL_CLASS}
+                    autoComplete="off"
+                    value={empBankForm.accountNumber}
+                    onChange={(e) =>
+                      setEmpBankForm((f) => ({ ...f, accountNumber: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="emp-bank-code">Kód banky</Label>
+                  <Input
+                    id="emp-bank-code"
+                    className={LIGHT_FORM_CONTROL_CLASS}
+                    inputMode="numeric"
+                    maxLength={4}
+                    autoComplete="off"
+                    value={empBankForm.bankCode}
+                    onChange={(e) =>
+                      setEmpBankForm((f) => ({ ...f, bankCode: e.target.value }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="emp-bank-iban">IBAN (volitelné)</Label>
+                  <Input
+                    id="emp-bank-iban"
+                    className={LIGHT_FORM_CONTROL_CLASS}
+                    autoComplete="off"
+                    value={empBankForm.iban}
+                    onChange={(e) =>
+                      setEmpBankForm((f) => ({
+                        ...f,
+                        iban: e.target.value.toUpperCase(),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="emp-bank-bic">BIC / SWIFT (volitelné)</Label>
+                  <Input
+                    id="emp-bank-bic"
+                    className={LIGHT_FORM_CONTROL_CLASS}
+                    autoComplete="off"
+                    value={empBankForm.bic}
+                    onChange={(e) =>
+                      setEmpBankForm((f) => ({
+                        ...f,
+                        bic: e.target.value.toUpperCase(),
+                      }))
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="emp-bank-note">Poznámka k výplatě (volitelné)</Label>
+                  <Textarea
+                    id="emp-bank-note"
+                    className="min-h-[72px] border-slate-200"
+                    value={empBankForm.paymentNote}
+                    onChange={(e) =>
+                      setEmpBankForm((f) => ({ ...f, paymentNote: e.target.value }))
+                    }
+                  />
+                </div>
+                <Button type="submit" disabled={empBankSaving}>
+                  {empBankSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Uložit bankovní údaje"
+                  )}
+                </Button>
+              </form>
+            )}
+          </CardContent>
+        </Card>
+      ) : null}
 
       {companyId && employeeId ? (
         <EmployeeDebtsReadonlySection companyId={companyId} employeeId={employeeId} />

@@ -25,6 +25,7 @@ import {
   Briefcase,
   AlertTriangle,
   Link2,
+  Landmark,
 } from 'lucide-react';
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -50,6 +51,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Label } from '@/components/ui/label';
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 /** Světlý styl polí v modálu „Pozvat člena týmu“ (neovlivní zbytek portálu). */
@@ -84,6 +86,12 @@ import {
   isWorkLogEnabled,
 } from "@/lib/employee-report-flags";
 import { parseEmployeePortalModules } from "@/lib/employee-portal-modules";
+import {
+  EMPTY_EMPLOYEE_BANK_ACCOUNT,
+  maskBankAccountForListDisplay,
+  parseBankAccountFromFirestore,
+  type EmployeeBankAccount,
+} from "@/lib/employee-bank-account";
 
 function releaseModalLocksAfterDismiss() {
   releaseDocumentModalLocks();
@@ -133,7 +141,13 @@ export default function EmployeesPage() {
   const canResetEmployeeAuthPassword =
     canManage || (isSuperAdmin && !!companyId);
   const canView =
-    ["owner", "admin", "manager"].includes(userRole) || isSuperAdmin;
+    ["owner", "admin", "manager", "accountant"].includes(userRole) ||
+    isSuperAdmin;
+
+  /** Úplné bankovní údaje a jejich úprava (včetně účtu pro výplatu). */
+  const canEditEmployeeBank =
+    ["owner", "admin", "manager", "accountant"].includes(userRole) ||
+    isSuperAdmin;
 
   const employeesQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -141,6 +155,22 @@ export default function EmployeesPage() {
   }, [firestore, companyId]);
 
   const { data: employees, isLoading } = useCollection(employeesQuery);
+
+  const companyDocRef = useMemoFirebase(
+    () =>
+      firestore && companyId ? doc(firestore, "companies", companyId) : null,
+    [firestore, companyId]
+  );
+  const { data: companyDoc } = useDoc(companyDocRef);
+
+  const allowEmployeeBankAccountSelfEdit =
+    companyDoc?.allowEmployeeBankAccountSelfEdit === true ||
+    (typeof companyDoc?.settings === "object" &&
+      companyDoc.settings !== null &&
+      (companyDoc.settings as Record<string, unknown>)
+        .allowEmployeeBankAccountSelfEdit === true);
+
+  const [companySelfBankSaving, setCompanySelfBankSaving] = useState(false);
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteData, setInviteData] = useState({
@@ -230,6 +260,12 @@ export default function EmployeesPage() {
   const [hourlyRateEmp, setHourlyRateEmp] = useState<any | null>(null);
   const [hourlyRateInput, setHourlyRateInput] = useState("");
   const [hourlyRateSaving, setHourlyRateSaving] = useState(false);
+
+  const [bankDialogEmp, setBankDialogEmp] = useState<Record<string, unknown> & { id?: string } | null>(null);
+  const [bankForm, setBankForm] = useState<EmployeeBankAccount>({
+    ...EMPTY_EMPLOYEE_BANK_ACCOUNT,
+  });
+  const [bankSaving, setBankSaving] = useState(false);
 
   const [assignWorklogEmployee, setAssignWorklogEmployee] = useState<any | null>(
     null
@@ -535,6 +571,75 @@ export default function EmployeesPage() {
       toast({ variant: "destructive", title: "Uložení se nezdařilo." });
     } finally {
       setHourlyRateSaving(false);
+    }
+  };
+
+  const openBankDialog = (emp: Record<string, unknown> & { id?: string }) => {
+    const parsed =
+      parseBankAccountFromFirestore(emp.bankAccount) ?? {
+        ...EMPTY_EMPLOYEE_BANK_ACCOUNT,
+      };
+    setBankForm({ ...parsed });
+    setBankDialogEmp(emp);
+  };
+
+  const saveEmployeeBankAccount = async () => {
+    if (!canEditEmployeeBank || !user || !companyId || !bankDialogEmp?.id) return;
+    setBankSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/employees/bank-account", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          employeeId: bankDialogEmp.id,
+          bankAccount: bankForm,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Uložení bankovních údajů selhalo."
+        );
+      }
+      toast({
+        title: "Bankovní údaje uloženy",
+        description: "Údaje jsou připravené pro budoucí výplaty a exporty.",
+      });
+      setBankDialogEmp(null);
+      setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
+    } catch (e: unknown) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setBankSaving(false);
+    }
+  };
+
+  const setAllowEmployeeBankSelfEdit = async (next: boolean) => {
+    if (!canManage || !firestore || !companyId) return;
+    setCompanySelfBankSaving(true);
+    try {
+      await updateDoc(doc(firestore, "companies", companyId), {
+        allowEmployeeBankAccountSelfEdit: next,
+        updatedAt: serverTimestamp(),
+      });
+      toast({
+        title: next ? "Zaměstnanci mohou upravovat vlastní účet" : "Vlastní účet u zaměstnanců vypnut",
+      });
+    } catch {
+      toast({
+        variant: "destructive",
+        title: "Nepodařilo se uložit nastavení organizace.",
+      });
+    } finally {
+      setCompanySelfBankSaving(false);
     }
   };
 
@@ -845,6 +950,28 @@ export default function EmployeesPage() {
             Správa zaměstnanců
           </h1>
           <p className="portal-page-description">Pracovníci organizace {companyId}.</p>
+          {canManage ? (
+            <div className="mt-3 flex max-w-xl flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 space-y-0.5">
+                <Label
+                  htmlFor="allow-emp-bank-self"
+                  className="text-sm font-medium text-foreground"
+                >
+                  Vlastní bankovní údaje v profilu zaměstnance
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Pokud zapnete, zaměstnanec si může číslo účtu vyplnit nebo změnit v sekci Profil
+                  (přístup přes API, data zůstávají v záznamu zaměstnance).
+                </p>
+              </div>
+              <Switch
+                id="allow-emp-bank-self"
+                checked={allowEmployeeBankAccountSelfEdit}
+                disabled={companySelfBankSaving}
+                onCheckedChange={(v) => void setAllowEmployeeBankSelfEdit(v)}
+              />
+            </div>
+          ) : null}
         </div>
         <div className="flex gap-2 sm:gap-3">
           {canManage && (
@@ -1267,13 +1394,14 @@ export default function EmployeesPage() {
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : employees && employees.length > 0 ? (
-            <Table className="min-w-[720px] w-full">
+            <Table className="min-w-[880px] w-full">
               <TableHeader>
                 <TableRow className="border-border hover:bg-transparent">
                   <TableHead className="pl-6">Zaměstnanec</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Terminál</TableHead>
                   <TableHead>PIN docházky</TableHead>
+                  <TableHead className="whitespace-nowrap">Účet (výplata)</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="pr-6 text-right">Akce</TableHead>
                 </TableRow>
@@ -1333,6 +1461,18 @@ export default function EmployeesPage() {
                             : "—"}
                         </span>
                       </div>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className="font-mono text-[11px] text-muted-foreground tabular-nums"
+                        title="V seznamu je účet zobrazen maskovaně. Celé údaje jsou v dialogu Bankovní údaje (oprávnění vedení)."
+                      >
+                        {maskBankAccountForListDisplay(
+                          parseBankAccountFromFirestore(
+                            (emp as Record<string, unknown>).bankAccount
+                          )
+                        )}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <Badge variant={emp.isActive ? 'default' : 'secondary'} className="capitalize">
@@ -1410,11 +1550,7 @@ export default function EmployeesPage() {
                                 <KeyRound className="w-4 h-4 mr-2" /> Bez přihlašovacího účtu
                               </DropdownMenuItem>
                             )}
-                            {(canManage ||
-                              ["owner", "admin", "manager", "accountant"].includes(
-                                userRole
-                              ) ||
-                              isSuperAdmin) && (
+                            {canEditEmployeeBank && (
                               <>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">
@@ -1429,6 +1565,15 @@ export default function EmployeesPage() {
                                 >
                                   <DollarSign className="w-4 h-4 mr-2" /> Výplaty
                                   a výkazy
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={(e) => {
+                                    e.preventDefault();
+                                    openBankDialog(emp as Record<string, unknown> & { id?: string });
+                                  }}
+                                >
+                                  <Landmark className="w-4 h-4 mr-2" /> Bankovní údaje
+                                  (výplata)
                                 </DropdownMenuItem>
                                 {canManage && (
                                   <DropdownMenuItem
@@ -1584,6 +1729,157 @@ export default function EmployeesPage() {
             <Button type="button" disabled={hourlyRateSaving} onClick={() => void saveHourlyRate()}>
               {hourlyRateSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!bankDialogEmp}
+        onOpenChange={(open) => {
+          if (!open) {
+            setBankDialogEmp(null);
+            setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+          <DialogHeader>
+            <DialogTitle className="text-lg font-semibold text-black">
+              Bankovní údaje (výplata)
+            </DialogTitle>
+            <DialogDescription className="text-sm text-gray-700">
+              {bankDialogEmp
+                ? `${String(bankDialogEmp.firstName ?? "")} ${String(bankDialogEmp.lastName ?? "")} — údaje pro budoucí schvalování výplat a exporty pro banku.`
+                : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-xs text-gray-600 rounded-md bg-gray-50 border border-gray-200 p-2">
+              Český účet: číslo ve tvaru <strong>123456789</strong> nebo{" "}
+              <strong>19-123456789</strong>, kód banky <strong>4 číslice</strong>. Lze zadat i
+              najednou <strong>123456789/0800</strong> do pole čísla účtu (kód banky pak nechte
+              prázdný). Nebo vyplňte <strong>IBAN</strong> (ověří se kontrolní součet).
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="bank-acc-num" className={INVITE_LABEL_CLASS}>
+                  Číslo účtu (CZ) / předčíslí-číslo
+                </Label>
+                <Input
+                  id="bank-acc-num"
+                  className={INVITE_INPUT_CLASS}
+                  autoComplete="off"
+                  value={bankForm.accountNumber}
+                  onChange={(e) =>
+                    setBankForm((f) => ({ ...f, accountNumber: e.target.value }))
+                  }
+                  placeholder="např. 123456789/0800 nebo 19-123456789"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="bank-code" className={INVITE_LABEL_CLASS}>
+                  Kód banky
+                </Label>
+                <Input
+                  id="bank-code"
+                  className={INVITE_INPUT_CLASS}
+                  inputMode="numeric"
+                  maxLength={4}
+                  autoComplete="off"
+                  value={bankForm.bankCode}
+                  onChange={(e) =>
+                    setBankForm((f) => ({ ...f, bankCode: e.target.value }))
+                  }
+                  placeholder="0800"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="bank-iban" className={INVITE_LABEL_CLASS}>
+                  IBAN (volitelné)
+                </Label>
+                <Input
+                  id="bank-iban"
+                  className={INVITE_INPUT_CLASS}
+                  autoComplete="off"
+                  value={bankForm.iban}
+                  onChange={(e) =>
+                    setBankForm((f) => ({
+                      ...f,
+                      iban: e.target.value.toUpperCase(),
+                    }))
+                  }
+                  placeholder="CZ65…"
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="bank-bic" className={INVITE_LABEL_CLASS}>
+                  BIC / SWIFT (volitelné)
+                </Label>
+                <Input
+                  id="bank-bic"
+                  className={INVITE_INPUT_CLASS}
+                  autoComplete="off"
+                  value={bankForm.bic}
+                  onChange={(e) =>
+                    setBankForm((f) => ({
+                      ...f,
+                      bic: e.target.value.toUpperCase(),
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="bank-note" className={INVITE_LABEL_CLASS}>
+                  Poznámka k výplatě (volitelné)
+                </Label>
+                <Textarea
+                  id="bank-note"
+                  className="min-h-[72px] border-gray-200 bg-white text-black"
+                  value={bankForm.paymentNote}
+                  onChange={(e) =>
+                    setBankForm((f) => ({ ...f, paymentNote: e.target.value }))
+                  }
+                  placeholder="Variabilní symbol, interní poznámka…"
+                />
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-between">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-gray-200"
+              disabled={bankSaving}
+              onClick={() => {
+                setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
+              }}
+            >
+              Vymazat formulář
+            </Button>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  setBankDialogEmp(null);
+                  setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
+                }}
+                disabled={bankSaving}
+              >
+                Zrušit
+              </Button>
+              <Button
+                type="button"
+                disabled={bankSaving || !canEditEmployeeBank}
+                onClick={() => void saveEmployeeBankAccount()}
+              >
+                {bankSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  "Uložit"
+                )}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
