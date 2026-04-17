@@ -300,20 +300,7 @@ export function JobDocumentEmailSection({
       });
       return;
     }
-    if (type === "contract" && primaryContract) {
-      const ph = String(
-        (primaryContract as Record<string, unknown>).pdfHtml ?? ""
-      ).trim();
-      if (!ph) {
-        toast({
-          variant: "destructive",
-          title: "Chybí tisková verze smlouvy",
-          description:
-            "Otevřete smlouvu v editoru a vygenerujte PDF — tím se uloží obsah potřebný pro e-mailovou přílohu.",
-        });
-        return;
-      }
-    }
+    /* Smlouva: PDF se na serveru sestaví z dat dokumentu (stejná logika jako „Generovat PDF“). */
     if (type === "invoice" && latestFinalInvoice) {
       const ph = String(
         (latestFinalInvoice as Record<string, unknown>).pdfHtml ?? ""

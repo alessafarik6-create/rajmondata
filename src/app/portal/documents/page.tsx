@@ -1,6 +1,12 @@
 "use client";
 
-import React, { Suspense, useEffect, useMemo, useState } from "react";
+import React, {
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -81,12 +87,24 @@ import { uploadJobPhotoFileViaFirebaseSdk } from "@/lib/job-photo-upload";
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import {
   companyDocumentMatchesAssignedJobFilter,
+  companyDocumentMatchesJobFilterRow,
   companyDocumentMatchesUnassignedJobFilter,
   documentJobLinkId,
+  documentLinkedJobIds,
   documentShowsAsPendingAssignment,
   effectiveCompanyDocumentAssignmentTypeForForm,
   resolveDocumentAssignmentBadge,
 } from "@/lib/company-document-assignment";
+import {
+  allocationBasisGrossCzk,
+  allocationJobIdsFromRows,
+  computeAllocationGrossCzkShares,
+  makeJobCostAllocationId,
+  resolveJobCostAllocationsFromDocument,
+  validateJobCostAllocations,
+  type JobCostAllocationMode,
+  type JobCostAllocationRow,
+} from "@/lib/company-document-job-allocations";
 import {
   compareDocumentsForPaymentQueue,
   documentGrossForPayment,
@@ -224,6 +242,10 @@ type CompanyDocumentRow = {
   /** Volitelné — klasifikace / fronta nezařazených (když existuje v datech). */
   unassigned?: boolean | null;
   classificationStatus?: string | null;
+  /** Rozdělení nákladů přijatého dokladu mezi zakázky / režii. */
+  jobCostAllocations?: unknown;
+  jobCostAllocationMode?: JobCostAllocationMode;
+  allocationJobIds?: string[];
 };
 
 type AssignmentType =
@@ -372,6 +394,74 @@ function parseVatPercentInput(raw: string): number {
   return Math.min(100, n);
 }
 
+type EditJobCostAllocFormRow = {
+  id: string;
+  kind: "job" | "overhead";
+  jobId: string;
+  amount: string;
+  percent: string;
+  note: string;
+  linkedExpenseId?: string | null;
+};
+
+/** Hrubá částka v CZK po úpravách ve formuláři (pro validaci rozdělení; EUR bez uloženého kurzu použije hrubý odhad). */
+function previewEditDocumentGrossCzk(
+  editRow: CompanyDocumentRow,
+  editForm: {
+    castka: string;
+    currency: "CZK" | "EUR";
+    sDPH: boolean;
+    dphSazba: string;
+  }
+): number {
+  const castkaNum = Number(String(editForm.castka).replace(",", "."));
+  if (!Number.isFinite(castkaNum) || castkaNum <= 0) return 0;
+  const dphPct = parseVatPercentInput(editForm.dphSazba);
+  const docCurrency = editForm.currency === "EUR" ? "EUR" : "CZK";
+  let rateEurCzk = 1;
+  if (docCurrency === "EUR") {
+    const stored = Number(editRow.exchangeRate ?? 0);
+    rateEurCzk =
+      Number.isFinite(stored) && stored > 0 ? stored : 25;
+  }
+  if (editForm.sDPH) {
+    const net = roundMoney2(castkaNum);
+    const vatAmount = roundMoney2((net * dphPct) / 100);
+    const gross = roundMoney2(net + vatAmount);
+    return amountsToCzk(docCurrency, rateEurCzk, {
+      amountNet: net,
+      vatAmount,
+      amountGross: gross,
+    }).castkaCZK;
+  }
+  const c = roundMoney2(castkaNum);
+  return amountsToCzk(docCurrency, rateEurCzk, {
+    amountNet: c,
+    vatAmount: 0,
+    amountGross: c,
+  }).castkaCZK;
+}
+
+function editAllocFormRowsToDomain(
+  rows: EditJobCostAllocFormRow[]
+): JobCostAllocationRow[] {
+  return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
+    jobId: r.kind === "job" && r.jobId.trim() ? r.jobId.trim() : null,
+    amount:
+      r.amount.trim() === ""
+        ? null
+        : roundMoney2(Number(String(r.amount).replace(",", "."))),
+    percent:
+      r.percent.trim() === ""
+        ? null
+        : Number(String(r.percent).replace(",", ".")),
+    note: r.note.trim() || null,
+    linkedExpenseId: r.linkedExpenseId?.trim() || null,
+  }));
+}
+
 function isReceivedDoc(d: CompanyDocumentRow) {
   if (d.documentType === "delivery_note") return true;
   return (
@@ -405,6 +495,114 @@ function isDeliveryNote(row: CompanyDocumentRow): boolean {
     row.documentType === "delivery_note" ||
     row.type === "delivery_note" ||
     row.documentKind === "delivery_note"
+  );
+}
+
+function ReceivedDocJobColumnCell({
+  row,
+  jobNamesById,
+  showPendingHighlight,
+}: {
+  row: CompanyDocumentRow;
+  jobNamesById: Map<string, string>;
+  showPendingHighlight: boolean;
+}) {
+  const { usesExplicitAllocations, rows, mode } =
+    resolveJobCostAllocationsFromDocument(row);
+  const basis = allocationBasisGrossCzk(
+    row as Parameters<typeof allocationBasisGrossCzk>[0]
+  );
+
+  if (usesExplicitAllocations && rows.length > 0) {
+    const shares = computeAllocationGrossCzkShares({
+      mode,
+      rows,
+      basisGrossCzk: basis,
+    });
+    return (
+      <div className="space-y-1 text-[11px] leading-snug sm:text-xs">
+        {rows.map((r) => {
+          const gross = shares.get(r.id) ?? 0;
+          const pctLabel =
+            mode === "percent" &&
+            r.percent != null &&
+            Number.isFinite(Number(r.percent))
+              ? ` (${roundMoney2(Number(r.percent))} %)`
+              : "";
+          if (r.kind === "overhead") {
+            return (
+              <div key={r.id} className="break-words text-gray-800">
+                <span className="font-medium text-amber-900">Režie</span>
+                <span className="tabular-nums text-gray-600">
+                  {" "}
+                  · {formatDocMoney(gross, "CZK")}
+                  {pctLabel}
+                </span>
+              </div>
+            );
+          }
+          const jid = r.jobId?.trim() ?? "";
+          const name =
+            jobNamesById.get(jid) ||
+            row.jobName ||
+            row.entityName ||
+            jid ||
+            "Zakázka";
+          if (jid) {
+            return (
+              <div key={r.id} className="min-w-0 break-words">
+                <Link
+                  href={`/portal/jobs/${jid}`}
+                  className="font-medium text-blue-800 underline-offset-2 hover:underline"
+                >
+                  {name}
+                </Link>
+                <span className="tabular-nums text-gray-700">
+                  {" "}
+                  · {formatDocMoney(gross, "CZK")}
+                  {pctLabel}
+                </span>
+              </div>
+            );
+          }
+          return (
+            <div key={r.id} className="text-gray-700">
+              Zakázka (nevybráno)
+              <span className="tabular-nums">
+                {" "}
+                · {formatDocMoney(gross, "CZK")}
+                {pctLabel}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const jobLinkId = documentJobLinkId(row);
+  if (jobLinkId) {
+    return (
+      <Link
+        href={`/portal/jobs/${jobLinkId}`}
+        className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2 break-words"
+        title={row.jobName ?? row.entityName ?? ""}
+      >
+        {row.jobName || row.entityName || "Zakázka"}
+      </Link>
+    );
+  }
+  return (
+    <span className="text-gray-800 line-clamp-2 break-words">
+      {showPendingHighlight
+        ? "Doklad není zařazen"
+        : row.assignmentType === "warehouse"
+          ? "Sklad"
+          : row.assignmentType === "company" ||
+              row.assignmentType === "overhead"
+            ? "Firma"
+            : row.entityName ?? "—"}
+    </span>
   );
 }
 
@@ -467,6 +665,11 @@ function DocumentsPageContent() {
       .filter((j) => j.id);
   }, [jobsRaw]);
 
+  const jobNamesById = useMemo(
+    () => new Map(jobs.map((j) => [j.id, j.name] as const)),
+    [jobs]
+  );
+
   const [isAddDocOpen, setIsAddDocOpen] = useState(false);
   const [newDocKind, setNewDocKind] = useState<"document" | "delivery_note">(
     "document"
@@ -525,6 +728,12 @@ function DocumentsPageContent() {
     requiresPayment: false,
     dueDate: "",
   });
+  const [editSplitToJobs, setEditSplitToJobs] = useState(false);
+  const [editAllocMode, setEditAllocMode] =
+    useState<JobCostAllocationMode>("amount");
+  const [editAllocRows, setEditAllocRows] = useState<EditJobCostAllocFormRow[]>(
+    []
+  );
   const [isEditSaving, setIsEditSaving] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<CompanyDocumentRow | null>(
@@ -1310,6 +1519,9 @@ function DocumentsPageContent() {
           companyId: assignTypeNext === "company" ? companyId : null,
           warehouseId: assignTypeNext === "warehouse" ? "main" : null,
         },
+        jobCostAllocations: deleteField(),
+        jobCostAllocationMode: deleteField(),
+        allocationJobIds: deleteField(),
         updatedAt: serverTimestamp(),
       });
       if (
@@ -1384,6 +1596,9 @@ function DocumentsPageContent() {
   };
 
   const openEditDocument = (row: CompanyDocumentRow) => {
+    setEditSplitToJobs(false);
+    setEditAllocMode("amount");
+    setEditAllocRows([]);
     if (isDeliveryNote(row)) {
       setEditInvoiceId(String(row.invoiceId ?? "").trim());
       {
@@ -1446,6 +1661,28 @@ function DocumentsPageContent() {
       requiresPayment: row.requiresPayment === true,
       dueDate: row.dueDate?.trim() ?? "",
     });
+    const resolved = resolveJobCostAllocationsFromDocument(row);
+    if (resolved.usesExplicitAllocations && resolved.rows.length > 0) {
+      setEditSplitToJobs(true);
+      setEditAllocMode(resolved.mode);
+      setEditAllocRows(
+        resolved.rows.map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          jobId: r.jobId?.trim() ?? "",
+          amount:
+            r.amount != null && Number.isFinite(r.amount)
+              ? String(r.amount)
+              : "",
+          percent:
+            r.percent != null && Number.isFinite(r.percent)
+              ? String(r.percent)
+              : "",
+          note: r.note?.trim() ?? "",
+          linkedExpenseId: r.linkedExpenseId ?? null,
+        }))
+      );
+    }
     setEditOpen(true);
   };
 
@@ -1620,17 +1857,83 @@ function DocumentsPageContent() {
         });
       }
 
-      if (zid) {
-        basePayload.zakazkaId = zid;
-        basePayload.jobId = zid;
-        basePayload.jobName = selectedJob?.name ?? null;
-        basePayload.assignmentType = "job_cost";
+      if (editSplitToJobs) {
+        const mergedForBasis = {
+          ...editRow,
+          ...basePayload,
+        } as CompanyDocumentRow;
+        const basis = allocationBasisGrossCzk(
+          mergedForBasis as Parameters<typeof allocationBasisGrossCzk>[0]
+        );
+        const domainRows = editAllocFormRowsToDomain(editAllocRows);
+        const val = validateJobCostAllocations({
+          mode: editAllocMode,
+          rows: domainRows,
+          basisGrossCzk: basis,
+        });
+        if (!val.ok) {
+          toast({
+            variant: "destructive",
+            title: "Rozdělení na zakázky",
+            description: val.message,
+          });
+          setIsEditSaving(false);
+          return;
+        }
+        const hasJob = domainRows.some(
+          (r) => r.kind === "job" && r.jobId?.trim()
+        );
+        if (hasJob) {
+          const first = domainRows.find(
+            (r) => r.kind === "job" && r.jobId?.trim()
+          )!;
+          const jid = first.jobId!.trim();
+          const sel = jobs.find((j) => j.id === jid);
+          basePayload.zakazkaId = jid;
+          basePayload.jobId = jid;
+          basePayload.jobName = sel?.name ?? null;
+          basePayload.assignmentType = "job_cost";
+        } else {
+          basePayload.zakazkaId = null;
+          basePayload.jobId = null;
+          basePayload.jobName = null;
+          basePayload.assignmentType = "overhead";
+        }
+        basePayload.jobCostAllocations = domainRows.map((r) => ({
+          id: r.id,
+          kind: r.kind,
+          jobId: r.jobId,
+          amount: r.amount ?? null,
+          percent: r.percent ?? null,
+          note: r.note ?? null,
+          linkedExpenseId: r.linkedExpenseId ?? null,
+        }));
+        basePayload.jobCostAllocationMode = editAllocMode;
+        basePayload.allocationJobIds =
+          allocationJobIdsFromRows(domainRows);
+        basePayload.assignedTo = {
+          jobId: hasJob ? String(basePayload.jobId ?? "") : null,
+          companyId: null,
+          warehouseId: null,
+        };
       } else {
-        basePayload.zakazkaId = null;
-        basePayload.jobId = null;
-        basePayload.jobName = null;
-        basePayload.assignmentType =
-          editForm.noJobMode === "overhead" ? "overhead" : "pending_assignment";
+        basePayload.jobCostAllocations = deleteField();
+        basePayload.jobCostAllocationMode = deleteField();
+        basePayload.allocationJobIds = deleteField();
+        if (zid) {
+          basePayload.zakazkaId = zid;
+          basePayload.jobId = zid;
+          basePayload.jobName = selectedJob?.name ?? null;
+          basePayload.assignmentType = "job_cost";
+        } else {
+          basePayload.zakazkaId = null;
+          basePayload.jobId = null;
+          basePayload.jobName = null;
+          basePayload.assignmentType =
+            editForm.noJobMode === "overhead"
+              ? "overhead"
+              : "pending_assignment";
+        }
       }
 
       basePayload.requiresPayment = editForm.requiresPayment;
@@ -1846,6 +2149,52 @@ function DocumentsPageContent() {
   }
 
   const isEditingDeliveryNote = editRow ? isDeliveryNote(editRow) : false;
+
+  const editSplitRemainder = useMemo(() => {
+    if (!editRow || !editSplitToJobs) {
+      return { kind: "amount" as const, value: 0 };
+    }
+    const basis = previewEditDocumentGrossCzk(editRow, editForm);
+    const d = editAllocFormRowsToDomain(editAllocRows);
+    if (editAllocMode === "amount") {
+      let sum = 0;
+      for (const r of d) {
+        sum += Number(r.amount ?? 0);
+      }
+      return { kind: "amount" as const, value: roundMoney2(basis - sum) };
+    }
+    let sumP = 0;
+    for (const r of d) {
+      sumP += Number(r.percent ?? 0);
+    }
+    return { kind: "percent" as const, value: roundMoney2(100 - sumP) };
+  }, [editRow, editSplitToJobs, editForm, editAllocRows, editAllocMode]);
+
+  const fillEditAllocRemainder = useCallback(() => {
+    setEditAllocRows((rows) => {
+      if (rows.length === 0 || !editRow) return rows;
+      const basis = previewEditDocumentGrossCzk(editRow, editForm);
+      const d = editAllocFormRowsToDomain(rows);
+      if (editAllocMode === "amount") {
+        let sum = 0;
+        for (let i = 0; i < d.length - 1; i++) {
+          sum += Number(d[i].amount ?? 0);
+        }
+        const rest = roundMoney2(Math.max(0, basis - sum));
+        const last = { ...rows[rows.length - 1] };
+        last.amount = String(rest);
+        return [...rows.slice(0, -1), last];
+      }
+      let sumP = 0;
+      for (let i = 0; i < d.length - 1; i++) {
+        sumP += Number(d[i].percent ?? 0);
+      }
+      const restP = roundMoney2(Math.max(0, 100 - sumP));
+      const last = { ...rows[rows.length - 1] };
+      last.percent = String(restP);
+      return [...rows.slice(0, -1), last];
+    });
+  }, [editRow, editForm, editAllocMode]);
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -2254,6 +2603,7 @@ function DocumentsPageContent() {
             </h2>
             <DocumentTableReceived
               data={receivedDocsBase}
+              jobNamesById={jobNamesById}
               isLoading={isLoading}
               onDelete={requestDeleteDocument}
               onEdit={openEditDocument}
@@ -2294,6 +2644,7 @@ function DocumentsPageContent() {
         <TabsContent value="received">
           <DocumentTableReceived
             data={receivedDocsBase}
+            jobNamesById={jobNamesById}
             isLoading={isLoading}
             onDelete={requestDeleteDocument}
             onEdit={openEditDocument}
@@ -2342,6 +2693,7 @@ function DocumentsPageContent() {
             </h2>
             <DocumentTableReceived
               data={receivedDocsBase}
+              jobNamesById={jobNamesById}
               isLoading={isLoading}
               onDelete={requestDeleteDocument}
               onEdit={openEditDocument}
@@ -2433,8 +2785,28 @@ function DocumentsPageContent() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-lg w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto">
+      <Dialog
+        open={editOpen}
+        onOpenChange={(o) => {
+          setEditOpen(o);
+          if (!o) {
+            setEditRow(null);
+            setEditInvoiceId("");
+            setEditAssignmentType("pending_assignment");
+            setEditWarehouseId("");
+            setEditSupplier("");
+            setEditSplitToJobs(false);
+            setEditAllocMode("amount");
+            setEditAllocRows([]);
+          }
+        }}
+      >
+        <DialogContent
+          className={cn(
+            "bg-white border-slate-200 text-slate-900 w-[95vw] sm:w-full max-h-[90vh] overflow-y-auto",
+            isEditingDeliveryNote ? "max-w-lg" : "max-w-2xl"
+          )}
+        >
           <DialogHeader>
             <DialogTitle>Upravit doklad</DialogTitle>
             <DialogDescription>
@@ -2704,71 +3076,385 @@ function DocumentsPageContent() {
               ) : null}
             </div>
             ) : null}
-            <div className="space-y-2">
-              <Label>Zakázka</Label>
-              {isEditingDeliveryNote && editAssignmentType !== "job_cost" ? (
-                <p className="text-xs text-muted-foreground">Doklad není zařazen k zakázce.</p>
-              ) : null}
-              <Select
-                value={editForm.zakazkaId || "__none__"}
-                onValueChange={(v) =>
-                  setEditForm({
-                    ...editForm,
-                    zakazkaId: v === "__none__" ? "" : v,
-                  })
-                }
-                disabled={isEditingDeliveryNote && editAssignmentType !== "job_cost"}
-              >
-                <SelectTrigger className="bg-background">
-                  <SelectValue placeholder="Nepřiřazeno" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="__none__">— bez zakázky —</SelectItem>
-                  {jobs.map((j) => (
-                    <SelectItem key={j.id} value={j.id}>
-                      {j.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              {!isEditingDeliveryNote && !editForm.zakazkaId.trim() ? (
-                <div className="space-y-2 rounded-md border border-border p-3">
-                  <Label className="text-xs text-muted-foreground">
-                    Bez zakázky
-                  </Label>
-                  <Select
-                    value={editForm.noJobMode}
-                    onValueChange={(v) =>
-                      setEditForm({
-                        ...editForm,
-                        noJobMode: v as "pending" | "overhead",
-                      })
-                    }
-                  >
-                    <SelectTrigger className="bg-background">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pending">
-                        Musí se zařadit později
+            {isEditingDeliveryNote ? (
+              <div className="space-y-2">
+                <Label>Zakázka</Label>
+                {editAssignmentType !== "job_cost" ? (
+                  <p className="text-xs text-muted-foreground">
+                    Doklad není zařazen k zakázce.
+                  </p>
+                ) : null}
+                <Select
+                  value={editForm.zakazkaId || "__none__"}
+                  onValueChange={(v) =>
+                    setEditForm({
+                      ...editForm,
+                      zakazkaId: v === "__none__" ? "" : v,
+                    })
+                  }
+                  disabled={editAssignmentType !== "job_cost"}
+                >
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="Nepřiřazeno" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— bez zakázky —</SelectItem>
+                    {jobs.map((j) => (
+                      <SelectItem key={j.id} value={j.id}>
+                        {j.name}
                       </SelectItem>
-                      <SelectItem value="overhead">Režie</SelectItem>
-                    </SelectContent>
-                  </Select>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="space-y-3 rounded-lg border border-border p-3">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="edit-split-jobs">Rozdělení na zakázky</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Více zakázek nebo část jako režie. Součet částek = částka dokladu
+                      (v Kč) nebo součet procent = 100 %.
+                    </p>
+                  </div>
+                  <Switch
+                    id="edit-split-jobs"
+                    checked={editSplitToJobs}
+                    onCheckedChange={(v) => {
+                      setEditSplitToJobs(v);
+                      if (v && editAllocRows.length === 0 && editRow) {
+                        const basis = previewEditDocumentGrossCzk(
+                          editRow,
+                          editForm
+                        );
+                        const jid = editForm.zakazkaId.trim();
+                        setEditAllocMode("amount");
+                        setEditAllocRows([
+                          {
+                            id: makeJobCostAllocationId(),
+                            kind: "job",
+                            jobId: jid,
+                            amount: basis > 0 ? String(basis) : "",
+                            percent: "",
+                            note: "",
+                          },
+                        ]);
+                      }
+                      if (!v) {
+                        setEditAllocRows([]);
+                        setEditAllocMode("amount");
+                      }
+                    }}
+                  />
                 </div>
-              ) : null}
-            </div>
+                {editSplitToJobs ? (
+                  <div className="space-y-3 border-t border-border pt-3">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                      <div className="space-y-1.5">
+                        <Label>Rozdělení podle</Label>
+                        <Select
+                          value={editAllocMode}
+                          onValueChange={(x) =>
+                            setEditAllocMode(x as JobCostAllocationMode)
+                          }
+                        >
+                          <SelectTrigger className="bg-background max-w-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="amount">
+                              Částky (Kč, hrubá po DPH jako u dokladu)
+                            </SelectItem>
+                            <SelectItem value="percent">Procenta (100 % celkem)</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="text-sm">
+                        {editSplitRemainder.kind === "amount" ? (
+                          <span
+                            className={cn(
+                              "font-medium tabular-nums",
+                              Math.abs(editSplitRemainder.value) <= 0.02
+                                ? "text-emerald-700"
+                                : "text-amber-900"
+                            )}
+                          >
+                            Zbývá rozdělit:{" "}
+                            {editSplitRemainder.value.toLocaleString("cs-CZ")} Kč
+                          </span>
+                        ) : (
+                          <span
+                            className={cn(
+                              "font-medium tabular-nums",
+                              Math.abs(editSplitRemainder.value) <= 0.02
+                                ? "text-emerald-700"
+                                : "text-amber-900"
+                            )}
+                          >
+                            Zbývá: {editSplitRemainder.value.toLocaleString("cs-CZ")}{" "}
+                            %
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() =>
+                          setEditAllocRows((rs) => [
+                            ...rs,
+                            {
+                              id: makeJobCostAllocationId(),
+                              kind: "job",
+                              jobId: "",
+                              amount: "",
+                              percent: "",
+                              note: "",
+                            },
+                          ])
+                        }
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Přidat zakázku
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        onClick={() =>
+                          setEditAllocRows((rs) => [
+                            ...rs,
+                            {
+                              id: makeJobCostAllocationId(),
+                              kind: "overhead",
+                              jobId: "",
+                              amount: "",
+                              percent: "",
+                              note: "",
+                            },
+                          ])
+                        }
+                      >
+                        <Plus className="h-3.5 w-3.5" /> Přidat režii
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => fillEditAllocRemainder()}
+                        disabled={editAllocRows.length === 0}
+                      >
+                        Doplnit zbytek do posledního řádku
+                      </Button>
+                    </div>
+                    <div className="space-y-2">
+                      {editAllocRows.map((ar, idx) => (
+                        <div
+                          key={ar.id}
+                          className="grid grid-cols-1 gap-2 rounded-md border border-border bg-muted/30 p-2 sm:grid-cols-12 sm:items-end"
+                        >
+                          <div className="sm:col-span-3">
+                            <Label className="text-xs text-muted-foreground">
+                              Typ
+                            </Label>
+                            <Select
+                              value={ar.kind}
+                              onValueChange={(x) =>
+                                setEditAllocRows((rs) =>
+                                  rs.map((r) =>
+                                    r.id === ar.id
+                                      ? {
+                                          ...r,
+                                          kind: x as "job" | "overhead",
+                                          jobId:
+                                            x === "overhead" ? "" : r.jobId,
+                                        }
+                                      : r
+                                  )
+                                )
+                              }
+                            >
+                              <SelectTrigger className="bg-background h-9">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="job">Zakázka</SelectItem>
+                                <SelectItem value="overhead">Režie</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {ar.kind === "job" ? (
+                            <div className="sm:col-span-4">
+                              <Label className="text-xs text-muted-foreground">
+                                Zakázka
+                              </Label>
+                              <Select
+                                value={ar.jobId || "__none__"}
+                                onValueChange={(v) =>
+                                  setEditAllocRows((rs) =>
+                                    rs.map((r) =>
+                                      r.id === ar.id
+                                        ? {
+                                            ...r,
+                                            jobId: v === "__none__" ? "" : v,
+                                          }
+                                        : r
+                                    )
+                                  )
+                                }
+                              >
+                                <SelectTrigger className="bg-background h-9">
+                                  <SelectValue placeholder="Vyberte" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">—</SelectItem>
+                                  {jobs.map((j) => (
+                                    <SelectItem key={j.id} value={j.id}>
+                                      {j.name}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ) : (
+                            <div className="sm:col-span-4 text-xs text-muted-foreground pb-2">
+                              Režijní podíl (nepřiřazeno k zakázce)
+                            </div>
+                          )}
+                          <div className="sm:col-span-2">
+                            <Label className="text-xs text-muted-foreground">
+                              {editAllocMode === "amount" ? "Kč" : "%"}
+                            </Label>
+                            <Input
+                              className="bg-background h-9 tabular-nums"
+                              type="number"
+                              min={0}
+                              step={editAllocMode === "amount" ? "0.01" : "0.1"}
+                              value={
+                                editAllocMode === "amount"
+                                  ? ar.amount
+                                  : ar.percent
+                              }
+                              onChange={(e) =>
+                                setEditAllocRows((rs) =>
+                                  rs.map((r) =>
+                                    r.id === ar.id
+                                      ? editAllocMode === "amount"
+                                        ? { ...r, amount: e.target.value }
+                                        : { ...r, percent: e.target.value }
+                                      : r
+                                  )
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="sm:col-span-2">
+                            <Label className="text-xs text-muted-foreground">
+                              Pozn.
+                            </Label>
+                            <Input
+                              className="bg-background h-9"
+                              value={ar.note}
+                              onChange={(e) =>
+                                setEditAllocRows((rs) =>
+                                  rs.map((r) =>
+                                    r.id === ar.id
+                                      ? { ...r, note: e.target.value }
+                                      : r
+                                  )
+                                )
+                              }
+                            />
+                          </div>
+                          <div className="sm:col-span-1 flex sm:justify-end">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 shrink-0 text-destructive"
+                              title="Odstranit řádek"
+                              disabled={editAllocRows.length <= 1}
+                              onClick={() =>
+                                setEditAllocRows((rs) =>
+                                  rs.filter((r) => r.id !== ar.id)
+                                )
+                              }
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                          <p className="sm:col-span-12 text-[11px] text-muted-foreground">
+                            Řádek {idx + 1}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-2 border-t border-border pt-3">
+                      <Label>Zakázka</Label>
+                      <Select
+                        value={editForm.zakazkaId || "__none__"}
+                        onValueChange={(v) =>
+                          setEditForm({
+                            ...editForm,
+                            zakazkaId: v === "__none__" ? "" : v,
+                          })
+                        }
+                      >
+                        <SelectTrigger className="bg-background">
+                          <SelectValue placeholder="Nepřiřazeno" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">— bez zakázky —</SelectItem>
+                          {jobs.map((j) => (
+                            <SelectItem key={j.id} value={j.id}>
+                              {j.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {!editForm.zakazkaId.trim() ? (
+                        <div className="space-y-2 rounded-md border border-border p-3">
+                          <Label className="text-xs text-muted-foreground">
+                            Bez zakázky
+                          </Label>
+                          <Select
+                            value={editForm.noJobMode}
+                            onValueChange={(v) =>
+                              setEditForm({
+                                ...editForm,
+                                noJobMode: v as "pending" | "overhead",
+                              })
+                            }
+                          >
+                            <SelectTrigger className="bg-background">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="pending">
+                                Musí se zařadit později
+                              </SelectItem>
+                              <SelectItem value="overhead">Režie</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
             <DialogFooter className="gap-2 sm:gap-0">
               <Button
                 type="button"
                 variant="outline"
                 onClick={() => {
                   setEditOpen(false);
-                  setEditRow(null);
-                  setEditInvoiceId("");
-                  setEditAssignmentType("pending_assignment");
-                  setEditWarehouseId("");
-                  setEditSupplier("");
                 }}
               >
                 Zrušit
@@ -2861,6 +3547,7 @@ function DocumentsPageContent() {
 
 function DocumentTableReceived({
   data,
+  jobNamesById,
   isLoading,
   onDelete,
   onEdit,
@@ -2874,6 +3561,7 @@ function DocumentTableReceived({
   showDeleteButton = true,
 }: {
   data: CompanyDocumentRow[];
+  jobNamesById: Map<string, string>;
   isLoading: boolean;
   onDelete: (row: CompanyDocumentRow) => void;
   onEdit: (row: CompanyDocumentRow) => void;
@@ -2901,15 +3589,27 @@ function DocumentTableReceived({
   const jobOptions = useMemo(() => {
     const m = new Map<string, string>();
     for (const d of data) {
-      const jid = documentJobLinkId(d);
-      if (jid) {
-        m.set(jid, d.jobName?.trim() || d.entityName?.trim() || jid);
+      for (const jid of documentLinkedJobIds(d)) {
+        m.set(
+          jid,
+          jobNamesById.get(jid) ||
+            d.jobName?.trim() ||
+            d.entityName?.trim() ||
+            jid
+        );
+      }
+      const primary = documentJobLinkId(d);
+      if (primary) {
+        m.set(
+          primary,
+          d.jobName?.trim() || d.entityName?.trim() || primary
+        );
       }
     }
     return [...m.entries()].sort((a, b) =>
       a[1].localeCompare(b[1], "cs", { sensitivity: "base" })
     );
-  }, [data]);
+  }, [data, jobNamesById]);
 
   const rows = useMemo(() => {
     let list = [...data];
@@ -2919,7 +3619,9 @@ function DocumentTableReceived({
       list = list.filter((d) => companyDocumentMatchesUnassignedJobFilter(d));
     }
     if (jobFilter !== "__all__") {
-      list = list.filter((d) => documentJobLinkId(d) === jobFilter);
+      list = list.filter((d) =>
+        companyDocumentMatchesJobFilterRow(d, jobFilter)
+      );
     }
     if (docTypeFilter !== "__all__") {
       list = list.filter((d) => {
@@ -2942,6 +3644,9 @@ function DocumentTableReceived({
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((d) => {
+        const allocNames = documentLinkedJobIds(d)
+          .map((jid) => jobNamesById.get(jid) ?? "")
+          .join(" ");
         const hay = [
           d.number,
           d.entityName,
@@ -2950,6 +3655,7 @@ function DocumentTableReceived({
           d.note ?? "",
           d.poznamka ?? "",
           d.jobName ?? "",
+          allocNames,
           d.sourceLabel ?? "",
           d.fileName ?? "",
           d.mimeType ?? "",
@@ -3000,6 +3706,7 @@ function DocumentTableReceived({
     dateTo,
     search,
     todayIso,
+    jobNamesById,
   ]);
 
   const fileKindLabel = (k: JobMediaFileType | "none") => {
@@ -3162,6 +3869,8 @@ function DocumentTableReceived({
             </div>
             {rows.map((row) => {
               const jobLinkId = documentJobLinkId(row);
+              const linkedJobIds = documentLinkedJobIds(row);
+              const briefcaseJobId = linkedJobIds[0] || jobLinkId;
               const showPendingHighlight = documentShowsAsPendingAssignment(row);
               const fromJobExpense =
                 row.source === JOB_EXPENSE_DOCUMENT_SOURCE ||
@@ -3248,7 +3957,7 @@ function DocumentTableReceived({
                         </a>
                       </Button>
                     ) : null}
-                    {jobLinkId ? (
+                    {briefcaseJobId ? (
                       <Button
                         variant="outline"
                         size="icon"
@@ -3256,7 +3965,7 @@ function DocumentTableReceived({
                         asChild
                         title="Zakázka"
                       >
-                        <Link href={`/portal/jobs/${jobLinkId}`}>
+                        <Link href={`/portal/jobs/${briefcaseJobId}`}>
                           <Briefcase className="h-3.5 w-3.5" />
                         </Link>
                       </Button>
@@ -3383,26 +4092,11 @@ function DocumentTableReceived({
                     <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-gray-500 lg:hidden">
                       Zakázka
                     </span>
-                    {jobLinkId ? (
-                      <Link
-                        href={`/portal/jobs/${jobLinkId}`}
-                        className="font-medium text-blue-800 underline-offset-2 hover:underline line-clamp-2 break-words"
-                        title={row.jobName ?? row.entityName ?? ""}
-                      >
-                        {row.jobName || row.entityName || "Zakázka"}
-                      </Link>
-                    ) : (
-                      <span className="text-gray-800 line-clamp-2 break-words">
-                        {showPendingHighlight
-                          ? "Doklad není zařazen"
-                          : row.assignmentType === "warehouse"
-                            ? "Sklad"
-                            : row.assignmentType === "company" ||
-                                row.assignmentType === "overhead"
-                              ? "Firma"
-                              : row.entityName ?? "—"}
-                      </span>
-                    )}
+                    <ReceivedDocJobColumnCell
+                      row={row}
+                      jobNamesById={jobNamesById}
+                      showPendingHighlight={showPendingHighlight}
+                    />
                   </div>
 
                   <div className="whitespace-normal text-gray-900 lg:whitespace-nowrap">

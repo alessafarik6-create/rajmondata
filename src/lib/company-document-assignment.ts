@@ -1,7 +1,13 @@
 /**
  * Jednotná logika zařazení firemního dokladu (companies/.../documents).
  * Zdroj pravdy pro vazbu na zakázku: jobId, zakazkaId nebo assignedTo.jobId.
+ * Rozdělení nákladu: jobCostAllocations / allocationJobIds.
  */
+
+import {
+  allocationJobIdsFromRows,
+  resolveJobCostAllocationsFromDocument,
+} from "@/lib/company-document-job-allocations";
 
 export type CompanyDocumentAssignmentLike = {
   jobId?: string | null;
@@ -10,7 +16,36 @@ export type CompanyDocumentAssignmentLike = {
   assignmentType?: string | null;
   unassigned?: boolean | null;
   classificationStatus?: string | null;
+  jobCostAllocations?: unknown;
+  jobCostAllocationMode?: string | null;
+  allocationJobIds?: unknown;
 };
+
+/** Všechny zakázky, na které doklad alokuje náklad (bez režie). */
+export function documentLinkedJobIds(
+  row: CompanyDocumentAssignmentLike
+): string[] {
+  const raw = row.allocationJobIds;
+  if (Array.isArray(raw)) {
+    const ids = raw
+      .map((x) => String(x).trim())
+      .filter(Boolean);
+    if (ids.length) return [...new Set(ids)];
+  }
+  const { rows } = resolveJobCostAllocationsFromDocument(row);
+  return allocationJobIdsFromRows(rows);
+}
+
+/** Filtr tabulky dokladů podle zakázky — primární vazba nebo libovolná alokace. */
+export function companyDocumentMatchesJobFilterRow(
+  row: CompanyDocumentAssignmentLike,
+  jobId: string
+): boolean {
+  const j = jobId.trim();
+  if (!j) return true;
+  if (documentLinkedJobIds(row).includes(j)) return true;
+  return documentJobLinkId(row) === j;
+}
 
 export function documentJobLinkId(row: CompanyDocumentAssignmentLike): string {
   for (const p of [row.jobId, row.zakazkaId, row.assignedTo?.jobId]) {

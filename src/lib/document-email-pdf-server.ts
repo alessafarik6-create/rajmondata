@@ -1,7 +1,8 @@
 /**
- * PDF přílohy pro odeslání dokumentů e-mailem — čistě na serveru z Firestore `pdfHtml`.
- * Vercel serverless: puppeteer-core + @sparticuz/chromium (žádný klasický puppeteer).
- * HTML je vždy řetězec z DB — žádné window/document, žádné načítání portálové URL.
+ * PDF přílohy pro odeslání dokumentů e-mailem — na serveru z HTML řetězce (setContent, ne chráněná URL).
+ * Smlouva: HTML se sestaví stejně jako tlačítko „Generovat PDF“ (`work-contract-print-html-build`),
+ * ne z uloženého `pdfHtml`.
+ * Vercel serverless: puppeteer-core + @sparticuz/chromium.
  */
 
 import fs from "node:fs";
@@ -17,7 +18,11 @@ import type { DocumentEmailType } from "@/lib/document-email-outbound";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { JOB_INVOICE_TYPES } from "@/lib/job-billing-invoices";
 import { sanitizeInvoicePreviewHtml } from "@/lib/invoice-a4-html";
-import { serializeUnknownForLog } from "@/lib/server-error-serialize";
+import {
+  errorStackFromUnknown,
+  serializeUnknownForLog,
+} from "@/lib/server-error-serialize";
+import { buildWorkContractHtmlForEmailAdmin } from "@/lib/work-contract-server-pdf-html";
 
 const MAX_PDF_BYTES = 9 * 1024 * 1024;
 const LOG = "[document-email-pdf]";
@@ -306,21 +311,37 @@ export async function getDocumentPdfBuffer(
         };
       }
 
-      const d = (snap.data() ?? {}) as { pdfHtml?: string; contractNumber?: string };
-      const raw = String(d.pdfHtml ?? "").trim();
-      logPdf("firestore", `contract data keys ok pdfHtmlEmpty=${raw.length === 0}`);
-      if (!raw) {
-        logPdf("firestore", "contract pdfHtml empty");
+      logPdf("html", "building print HTML from Firestore (same as „Generovat PDF“)");
+      const built = await buildWorkContractHtmlForEmailAdmin(db, companyId, jobId, cid);
+      if (!built.ok) {
+        logPdfError(
+          "contract.buildHtml",
+          new Error(built.detail ? `${built.error} | ${built.detail}` : built.error)
+        );
         return {
           ok: false,
-          error:
-            "Smlouva nemá uložený obsah pro PDF. V detailu zakázky otevřete smlouvu a vygenerujte PDF (tím se uloží tisková verze).",
-          detail: `Firestore path=${cref.path} exists=true pdfHtmlLen=0`,
+          error: built.error,
+          detail: built.detail,
         };
       }
-      logPdf("firestore", `contract pdfHtml ok len=${raw.length}`);
+      const raw = built.html;
+      logPdf(
+        "html",
+        `contract print HTML ok chars=${raw.length} sha256=${sha256Hex(raw).slice(0, 12)}…`
+      );
 
-      const buffer = await renderStoredHtmlToPdfBuffer(raw);
+      let buffer: Buffer;
+      try {
+        buffer = await renderStoredHtmlToPdfBuffer(raw);
+      } catch (pdfErr: unknown) {
+        const stack = errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr);
+        logPdfError("contract.renderPdf", pdfErr);
+        return {
+          ok: false,
+          error: "Nepodařilo se vykreslit PDF ze smlouvy.",
+          detail: stack.slice(0, 12_000),
+        };
+      }
       if (buffer.length > MAX_PDF_BYTES) {
         return {
           ok: false,
@@ -328,7 +349,7 @@ export async function getDocumentPdfBuffer(
           detail: `pdfBytes=${buffer.length} max=${MAX_PDF_BYTES}`,
         };
       }
-      const num = String(d.contractNumber ?? "").trim() || cid;
+      const num = String(built.form.contractNumber ?? "").trim() || cid;
       const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
       logPdf("done", `contract filename=smlouva-${safeNum}.pdf bytes=${buffer.length}`);
       return { ok: true, buffer, filename: `smlouva-${safeNum}.pdf` };

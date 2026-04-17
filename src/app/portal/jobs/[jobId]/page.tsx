@@ -140,13 +140,17 @@ import {
   allocateNextSodContractNumber,
 } from "@/lib/work-contract-counter";
 import {
-  buildWorkContractPrintHtml,
-  withLineBreaks,
-} from "@/lib/work-contract-print-html";
-import {
-  buildJobTemplateDataSectionInnerHtml,
-  formatJobTemplateDataPlainText,
-} from "@/lib/work-contract-job-template-data";
+  applyWorkContractTemplateVariables,
+  buildWorkContractPrintHtmlString,
+  formatCsDateFromFirestore,
+  parentContractKindLabelFromDoc,
+  type WorkContractBankAccountLike,
+  type WorkContractDoc,
+  type WorkContractForm,
+  type WorkContractPrintHtmlBuildContext,
+  workContractDocToForm,
+} from "@/lib/work-contract-print-html-build";
+import { formatJobTemplateDataPlainText } from "@/lib/work-contract-job-template-data";
 import {
   CONTRACT_TEMPLATES_COLLECTION,
   updateContractTemplate,
@@ -207,78 +211,6 @@ type DragMode =
   | "note-rect-draw"
   | "note-resize-br";
 
-type WorkContractForm = {
-  /** Zobrazovaný název dokumentu (PDF, seznam) — nezávislý na čísle */
-  documentTitle: string;
-  /** smlouva vs. dodatek vs. příloha ke smlouvě */
-  documentRole: "contract" | "addendum" | "attachment";
-  /** work_contract, reservation_contract, contract_addendum, custom, … */
-  documentSubtype: string;
-  /** Pro dodatek / přílohu — id nadřazené smlouvy ve stejné zakázce */
-  parentContractId: string;
-  /** Zrcadlení nadřazené smlouvy (příloha) — číslo a název */
-  parentContractNumber: string;
-  parentContractTitle: string;
-  /** Pořadí přílohy u dané smlouvy (1, 2, …) */
-  attachmentOrdinal: number;
-  /** Řada čísel: SOD sdílí stávající čítač, ostatní používají vlastní řadu */
-  numberSeriesPrefix: string;
-  templateName: string;
-  contractHeader: string;
-  mainContractContent: string;
-  client: string;
-  contractor: string;
-  additionalInfo: string;
-  depositPercentage: string;
-  depositAmount: string;
-  bankAccountNumber: string;
-  bankAccountId?: string | null;
-  /** Např. SOD-2026-0001 — přidělí se při uložení */
-  contractNumber: string;
-  /** Datum vystavení / smlouvy (cs-CZ), pro tisk a proměnné */
-  contractDateLabel: string;
-};
-
-type WorkContractDoc = {
-  id: string;
-  jobId?: string;
-  /** Legacy + nový obecný typ dokumentu ke zakázce */
-  contractType?: string;
-  /** Hlavní název v tisku / PDF; alias vázaný pole `title` (kompatibilita). */
-  documentTitle?: string | null;
-  title?: string | null;
-  documentRole?: "contract" | "addendum" | "attachment" | string | null;
-  documentSubtype?: string | null;
-  parentContractId?: string | null;
-  /** Zrcadlené údaje nadřazené smlouvy u přílohy */
-  parentContractNumber?: string | null;
-  parentContractTitle?: string | null;
-  attachmentOrdinal?: number | null;
-  numberSeriesPrefix?: string | null;
-  isTemplate?: boolean;
-  templateDocId?: string | null;
-  templateName?: string | null;
-  contractHeader?: string;
-  mainContractContent?: string;
-  client?: string;
-  contractor?: string;
-  additionalInfo?: string;
-  depositPercentage?: string | number | null;
-  depositAmount?: string | number | null;
-  /** Uložená částka zálohy (Kč), dopočtená při ukládání. */
-  zalohovaCastka?: string | number | null;
-  /** Uložené procento zálohy (0–100), pokud bylo zadáno. */
-  zalohovaProcenta?: string | number | null;
-  bankAccountNumber?: string | null;
-  bankAccountId?: string | null;
-  contractNumber?: string | null;
-  contractIssuedAt?: any;
-  pdfHtml?: string;
-  pdfSavedAt?: any;
-  createdAt?: any;
-  updatedAt?: any;
-};
-
 type ContractOpenPreset = "sod_work" | "new_contract" | "new_addendum" | "new_attachment";
 
 function workContractDisplayTitle(c: WorkContractDoc): string {
@@ -299,84 +231,6 @@ function workContractDisplayTypeLabel(c: WorkContractDoc): string {
   if (role === "addendum") return "Dodatek";
   if (role === "attachment") return "Příloha ke smlouvě";
   return "Smlouva";
-}
-
-function parentContractKindLabelFromDoc(c: WorkContractDoc): string {
-  const role = String(c.documentRole ?? "").trim();
-  if (role === "addendum") return "Dodatek";
-  const st = String(c.documentSubtype ?? "").trim();
-  const prefix = String(c.numberSeriesPrefix ?? "").trim().toUpperCase();
-  if (prefix === "RS" || st === "reservation_contract") {
-    return "Rezervační smlouva";
-  }
-  if (
-    st === "work_contract" ||
-    st === "" ||
-    st === "custom" ||
-    st === "smlouva_o_dilo"
-  ) {
-    return "Smlouva o dílo";
-  }
-  return "Smlouva";
-}
-
-function workContractDocToForm(
-  data: WorkContractDoc,
-  companyBankAccountNumber: string
-): WorkContractForm {
-  const rawRole = String(data.documentRole ?? "").trim();
-  const docRole: WorkContractForm["documentRole"] =
-    rawRole === "addendum"
-      ? "addendum"
-      : rawRole === "attachment"
-        ? "attachment"
-        : "contract";
-  const ct = String(data.contractType ?? "").trim();
-  const legacySubtype =
-    ct === "smlouva_o_dilo" || !ct ? "work_contract" : "custom";
-
-  return {
-    documentTitle: String(data.documentTitle ?? "").trim(),
-    documentRole: docRole,
-    documentSubtype:
-      String(data.documentSubtype ?? "").trim() || legacySubtype,
-    parentContractId: String(data.parentContractId ?? "").trim(),
-    parentContractNumber: String(data.parentContractNumber ?? "").trim(),
-    parentContractTitle: String(data.parentContractTitle ?? "").trim(),
-    attachmentOrdinal:
-      typeof data.attachmentOrdinal === "number" &&
-      Number.isFinite(data.attachmentOrdinal)
-        ? data.attachmentOrdinal
-        : 0,
-    numberSeriesPrefix:
-      String(data.numberSeriesPrefix ?? "").trim().toUpperCase() || "SOD",
-    templateName: (data.templateName as string) || "",
-    contractHeader: (data.contractHeader as string) || "",
-    mainContractContent: (data.mainContractContent as string) || "",
-    client: (data.client as string) || "",
-    contractor: (data.contractor as string) || "",
-    additionalInfo: (data.additionalInfo as string) || "",
-    depositPercentage:
-      data.zalohovaProcenta != null && String(data.zalohovaProcenta) !== ""
-        ? String(data.zalohovaProcenta)
-        : data.depositPercentage != null
-          ? String(data.depositPercentage)
-          : "",
-    depositAmount:
-      data.zalohovaCastka != null && String(data.zalohovaCastka) !== ""
-        ? String(data.zalohovaCastka)
-        : data.depositAmount != null
-          ? String(data.depositAmount)
-          : "",
-    bankAccountNumber:
-      (data.bankAccountNumber as string) || companyBankAccountNumber || "",
-    bankAccountId: (data.bankAccountId as string | null) ?? null,
-    contractNumber: (data.contractNumber as string) || "",
-    contractDateLabel:
-      formatCsDateFromFirestore(data.contractIssuedAt) ||
-      formatCsDateFromFirestore(data.createdAt) ||
-      "",
-  };
 }
 
 const EMPTY_CONTRACT_FORM_FIELDS: Pick<
@@ -639,22 +493,6 @@ type CompanyBankAccountDoc = {
   createdAt?: any;
   updatedAt?: any;
 };
-
-function formatCsDateFromFirestore(value: unknown): string {
-  if (value == null) return "";
-  try {
-    const d =
-      typeof (value as { toDate?: () => Date })?.toDate === "function"
-        ? (value as { toDate: () => Date }).toDate()
-        : value instanceof Date
-          ? value
-          : new Date(value as string | number);
-    if (Number.isNaN(d.getTime())) return "";
-    return new Intl.DateTimeFormat("cs-CZ").format(d);
-  } catch {
-    return "";
-  }
-}
 
 function JobDetailPageContent() {
   const { jobId } = useParams();
@@ -1485,233 +1323,49 @@ function JobDetailPageContent() {
       .join("\n");
   };
 
+  const workContractPrintHtmlContext = useMemo((): WorkContractPrintHtmlBuildContext => {
+    const jid = String(jobFirestoreId ?? jobIdParam ?? "").trim();
+    return {
+      companyDoc: (companyDoc ?? null) as Record<string, unknown> | null,
+      companyNameFromDoc: companyNameFromDoc || "",
+      companyBankAccountNumber: String(companyBankAccountNumber || ""),
+      bankAccounts: (bankAccounts || []) as WorkContractBankAccountLike[],
+      customer: (customer as Record<string, unknown> | null) ?? null,
+      job: (job as Record<string, unknown> | null) ?? null,
+      jobId: jid,
+      jobBudgetKc,
+      template: template as JobTemplate | undefined,
+      workContractsForJob: (workContractsForJob || []) as WorkContractDoc[],
+    };
+  }, [
+    companyDoc,
+    companyNameFromDoc,
+    companyBankAccountNumber,
+    bankAccounts,
+    customer,
+    job,
+    jobFirestoreId,
+    jobIdParam,
+    jobBudgetKc,
+    template,
+    workContractsForJob,
+  ]);
+
   const applyTemplateVariables = useCallback(
     (
       input: string,
       formOverride?: WorkContractForm,
       templateOpts?: { freezePlaceholders?: ReadonlySet<string> }
     ): string => {
-      const today = new Intl.DateTimeFormat("cs-CZ").format(new Date());
-
-      console.log("[WorkContract] template context — customer, companyDoc", {
-        customer,
-        companyDoc,
-        customerDic: pickEntityDic(customer),
-        supplierDic: pickEntityDic(companyDoc),
-      });
-
-      const supplierName =
-        companyNameFromDoc ||
-        companyDoc?.companyName ||
-        (companyDoc as any)?.name ||
-        "";
-      const supplierAddress = buildFullCompanyAddress(companyDoc as any);
-      const supplierIco = companyDoc?.ico || "";
-      const supplierDicRaw = pickEntityDic(companyDoc);
-
-      const bankAccountForTokens =
-        formOverride?.bankAccountId
-          ? (bankAccounts || []).find(
-              (a) => a.id === formOverride.bankAccountId
-            ) || null
-          : selectedBankAccount;
-
-      const supplierAutoText = deriveContractorText(
-        companyDoc,
-        companyNameFromDoc,
-        bankAccountForTokens
-      );
-
-      const customerName = customer
-        ? deriveCustomerDisplayName(customer)
-        : deriveCustomerDisplayNameFromJob(job as any);
-      const customerAddress =
-        (customer?.address as string | undefined) ||
-        (typeof (job as any)?.customerAddress === "string"
-          ? (job as any).customerAddress
-          : "") ||
-        "";
-      const customerIco = customer?.ico || "";
-      const customerDicRaw = pickEntityDic(customer);
-
-      const customerAutoText = customer
-        ? deriveClientText(customer)
-        : buildClientTextFromJobSnapshot(job as any);
-
-      const partySplit = parseCustomerNameForParty(customerName);
-      const objednatelJmeno = customer
-        ? String(customer.firstName || "").trim()
-        : partySplit.type === "person"
-          ? partySplit.firstName
-          : "";
-      const objednatelPrijmeni = customer
-        ? String(customer.lastName || "").trim()
-        : partySplit.type === "person"
-          ? partySplit.lastName
-          : "";
-
-      const depositPercentage =
-        formOverride?.depositPercentage ?? contractForm.depositPercentage;
-      const depositAmount =
-        formOverride?.depositAmount ?? contractForm.depositAmount;
-
-      const depKc = computeDepositAmountKc({
-        depositAmountStr: depositAmount ?? "",
-        depositPercentStr: depositPercentage ?? "",
-        budgetKc: jobBudgetKc,
-      });
-      const doplatekKc = computeDoplatekKc(jobBudgetKc, depKc);
-      const doplatekFormatted =
-        doplatekKc != null ? formatWorkContractAmountKcFromNumber(doplatekKc) : "";
-
-      // DEBUG (SOD): dočasné — rozpočet, záloha, doplatek
-      console.log("[SOD deposit]", {
-        rozpočetKč: jobBudgetKc,
-        zálohaKč: depKc,
-        doplatekKč: doplatekKc,
-      });
-
-      const pctFieldOnly = String(depositPercentage ?? "").trim();
-      const zalohovaProcentaTemplate = pctFieldOnly
-        ? formatPercentForTemplate(pctFieldOnly)
-        : "";
-
-      const bankAccountNumber =
-        formOverride?.bankAccountNumber ?? contractForm.bankAccountNumber;
-
-      const contractNo =
-        formOverride?.contractNumber?.trim() ||
-        contractForm.contractNumber?.trim() ||
-        "";
-      const parentContractNoTok =
-        formOverride?.parentContractNumber?.trim() ||
-        contractForm.parentContractNumber?.trim() ||
-        "";
-      const parentContractTitleTok =
-        formOverride?.parentContractTitle?.trim() ||
-        contractForm.parentContractTitle?.trim() ||
-        "";
-      const attachmentOrdTok =
-        formOverride?.attachmentOrdinal != null &&
-        formOverride.attachmentOrdinal > 0
-          ? String(formOverride.attachmentOrdinal)
-          : contractForm.attachmentOrdinal > 0
-            ? String(contractForm.attachmentOrdinal)
-            : "";
-      const contractDateForTokens =
-        formOverride?.contractDateLabel?.trim() ||
-        contractForm.contractDateLabel?.trim() ||
-        today;
-
-      const cenaZakazky =
-        jobBudgetKc != null && Number.isFinite(jobBudgetKc)
-          ? `${Math.round(jobBudgetKc).toLocaleString("cs-CZ")} Kč`
-          : "";
-
-      const tokenMap: Record<string, string> = {
-        "smlouva.cislo": contractNo,
-        "smlouva.vs": contractNo,
-        "smlouva.datum": contractDateForTokens,
-        "rodic_smlouva.cislo": parentContractNoTok,
-        "rodic_smlouva.nazev": parentContractTitleTok,
-        "priloha.poradi": attachmentOrdTok,
-        "smlouva.nadrazena_cislo": parentContractNoTok,
-        "smlouva.nadrazena_nazev": parentContractTitleTok,
-        nazev_firmy: supplierName,
-        ico: supplierIco ? String(supplierIco) : "",
-        dic: supplierDicRaw ? String(supplierDicRaw) : "—",
-        adresa: supplierAddress,
-        cislo_uctu_firmy: companyProfileBankAccountDisplay,
-        variabilni_symbol: contractNo,
-        jmeno_zakaznika: customerName,
-        nazev_zakazky: job?.name || "",
-        cena: cenaZakazky,
-        "dodavatel.nazev": supplierName,
-        "dodavatel.sidlo": supplierAddress,
-        "dodavatel.ico": supplierIco ? String(supplierIco) : "",
-        "dodavatel.dic": supplierDicRaw ? String(supplierDicRaw) : "—",
-        dodavatel: supplierAutoText,
-        "dodavatel.email": companyDoc?.email
-          ? String(companyDoc.email)
-          : "",
-        "dodavatel.telefon": companyDoc?.phone
-          ? String(companyDoc.phone)
-          : "",
-        "dodavatel.ucet":
-          (bankAccountNumber && String(bankAccountNumber).trim()) ||
-          companyProfileBankAccountDisplay ||
-          "",
-        "dodavatel.iban": bankAccountForTokens?.iban
-          ? String(bankAccountForTokens.iban)
-          : "",
-        "dodavatel.swift": bankAccountForTokens?.swift
-          ? String(bankAccountForTokens.swift)
-          : "",
-
-        "objednatel.nazev": customerName,
-        "objednatel.jmeno": objednatelJmeno,
-        "objednatel.prijmeni": objednatelPrijmeni,
-        "objednatel.sidlo": customerAddress,
-        "objednatel.ico": customerIco ? String(customerIco) : "",
-        "objednatel.dic": customerDicRaw || "—",
-        objednatel: customerAutoText,
-
-        "zakazka.nazev": job?.name || "",
-        "zakazka.id": jobId?.toString() || "",
-        datum: today,
-
-        "zaloha.procenta": zalohovaProcentaTemplate,
-        "zaloha.castka": formatWorkContractAmountKcFromNumber(depKc),
-        "zaloha.ucet":
-          (bankAccountNumber && String(bankAccountNumber).trim()) ||
-          companyProfileBankAccountDisplay ||
-          "",
-        zaloha: formatWorkContractAmountKcFromNumber(depKc),
-        zalohova_castka: formatWorkContractAmountKcFromNumber(depKc),
-        zalohova_procenta: zalohovaProcentaTemplate,
-        doplatek: doplatekFormatted,
-
-        data_sablony: formatJobTemplateDataPlainText(
-          template as JobTemplate | undefined,
-          (job?.templateValues as JobTemplateValues | undefined) ?? undefined
-        ),
-      };
-
-      if (!input) return "";
-      return input.replace(
-        /\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g,
-        (match, token) => {
-          if (templateOpts?.freezePlaceholders?.has(token)) return match;
-          const v = tokenMap[token];
-          return v !== undefined ? v : match;
-        }
+      const form = formOverride ?? contractForm;
+      return applyWorkContractTemplateVariables(
+        input,
+        form,
+        workContractPrintHtmlContext,
+        templateOpts
       );
     },
-    [
-      companyDoc,
-      companyNameFromDoc,
-      customer,
-      job,
-      deriveClientText,
-      deriveContractorText,
-      deriveCustomerDisplayName,
-      job?.name,
-      jobId,
-      contractForm.depositPercentage,
-      contractForm.depositAmount,
-      contractForm.bankAccountNumber,
-      contractForm.contractNumber,
-      contractForm.contractDateLabel,
-      contractForm.parentContractNumber,
-      contractForm.parentContractTitle,
-      contractForm.attachmentOrdinal,
-      selectedBankAccount,
-      bankAccounts,
-      template,
-      job?.templateValues,
-      companyProfileBankAccountDisplay,
-      jobBudgetKc,
-    ]
+    [contractForm, workContractPrintHtmlContext]
   );
 
   /** Chybějící základní údaje pro smlouvu (bez pádu při generování). */
@@ -1735,171 +1389,9 @@ function JobDetailPageContent() {
   }, [companyNameFromDoc, companyDoc, customer, job]);
 
   const buildContractHtmlForForm = useCallback(
-    (form: WorkContractForm) => {
-      const orgSigUrl = String((companyDoc as any)?.organizationSignature?.url ?? "").trim();
-      if (!orgSigUrl) {
-        throw new Error(
-          "Organizace nemá nastavený elektronický podpis. Nastavte ho v Nastavení organizace (Elektronický podpis organizace)."
-        );
-      }
-      if (form.documentRole === "attachment") {
-        const headerRaw = applyTemplateVariables(
-          form.contractHeader || "",
-          form
-        );
-        const bodyRaw = applyTemplateVariables(
-          form.mainContractContent || "",
-          form
-        );
-        const additionalRaw = applyTemplateVariables(
-          form.additionalInfo || "",
-          form
-        );
-        const clientRaw = applyTemplateVariables(form.client || "", form);
-        const contractorRaw = applyTemplateVariables(form.contractor || "", form);
-        const parentDoc = workContractsForJob.find(
-          (c) => c.id === form.parentContractId
-        );
-        const parentKind = parentDoc
-          ? parentContractKindLabelFromDoc(parentDoc as WorkContractDoc)
-          : "";
-
-        const jobTitleAtt = job?.name || "";
-        const jobDescAtt = job?.description || "";
-        const priceFormattedAtt =
-          jobBudgetKc != null && Number.isFinite(jobBudgetKc)
-            ? `${Math.round(jobBudgetKc).toLocaleString("cs-CZ")} Kč`
-            : "";
-        const deadlineFormattedAtt = (job?.endDate || "").trim();
-
-        const templateDataSectionInnerHtmlAtt =
-          buildJobTemplateDataSectionInnerHtml(
-            template as JobTemplate | undefined,
-            (job?.templateValues as JobTemplateValues | undefined) ?? undefined
-          );
-
-        return buildWorkContractPrintHtml({
-          printVariant: "attachment",
-          pageTitle:
-            form.documentTitle?.trim() ||
-            (form.attachmentOrdinal > 0
-              ? `Příloha č. ${form.attachmentOrdinal}`
-              : "Příloha ke smlouvě"),
-          contractNumber: form.contractNumber?.trim() || "",
-          variableSymbol: form.contractNumber?.trim() || "",
-          documentDate:
-            form.contractDateLabel?.trim() ||
-            new Intl.DateTimeFormat("cs-CZ").format(new Date()),
-          contractHeaderHtml: withLineBreaks(headerRaw),
-          mainBodyHtml: withLineBreaks(bodyRaw),
-          additionalInfoHtml: withLineBreaks(additionalRaw),
-          zhotovitelHtml: withLineBreaks(contractorRaw),
-          objednatelHtml: withLineBreaks(clientRaw),
-          organizationSignatureUrl: orgSigUrl,
-          jobTitle: jobTitleAtt,
-          jobDescription: jobDescAtt,
-          priceFormatted: priceFormattedAtt,
-          deadlineFormatted: deadlineFormattedAtt,
-          paymentTermsHtml: "",
-          templateDataSectionInnerHtml: templateDataSectionInnerHtmlAtt,
-          parentContractNumber: form.parentContractNumber?.trim() || "",
-          parentContractTitle: form.parentContractTitle?.trim() || "",
-          parentContractKindLabel: parentKind,
-        });
-      }
-
-      const headerRaw = applyTemplateVariables(
-        form.contractHeader || "",
-        form
-      );
-      const bodyRaw = applyTemplateVariables(
-        form.mainContractContent || "",
-        form
-      );
-      const additionalRaw = applyTemplateVariables(
-        form.additionalInfo || "",
-        form
-      );
-      const clientRaw = applyTemplateVariables(form.client || "", form);
-      const contractorRaw = applyTemplateVariables(form.contractor || "", form);
-
-      const payCompanyAcct = companyProfileBankAccountDisplay.trim();
-      const payFormAcct = (form.bankAccountNumber || "").trim();
-      const depPctForm = (form.depositPercentage || "").trim();
-      const depKcForm = computeDepositAmountKc({
-        depositAmountStr: form.depositAmount ?? "",
-        depositPercentStr: form.depositPercentage ?? "",
-        budgetKc: jobBudgetKc,
-      });
-      const depPctDisplay = depPctForm
-        ? formatPercentForTemplate(depPctForm)
-        : "";
-      const paymentLines = [
-        payCompanyAcct ? `Číslo účtu: ${payCompanyAcct}` : "",
-        form.contractNumber?.trim()
-          ? `Variabilní symbol: ${form.contractNumber.trim()}`
-          : "",
-        depPctForm
-          ? `Záloha ve výši ${depPctDisplay} z ceny díla.`
-          : "",
-        depKcForm > 0
-          ? `Částka zálohy: ${formatWorkContractAmountKcFromNumber(depKcForm)}.`
-          : "",
-        payFormAcct && payFormAcct !== payCompanyAcct
-          ? `Úhrada zálohy na účet: ${payFormAcct}.`
-          : "",
-      ].filter(Boolean);
-      const paymentTermsHtml = withLineBreaks(paymentLines.join("\n"));
-
-      const jobTitle = job?.name || "";
-      const jobDesc = job?.description || "";
-      const priceFormatted =
-        jobBudgetKc != null && Number.isFinite(jobBudgetKc)
-          ? `${Math.round(jobBudgetKc).toLocaleString("cs-CZ")} Kč`
-          : "";
-      const deadlineFormatted = (job?.endDate || "").trim();
-
-      const templateDataSectionInnerHtml = buildJobTemplateDataSectionInnerHtml(
-        template as JobTemplate | undefined,
-        (job?.templateValues as JobTemplateValues | undefined) ?? undefined
-      );
-
-      return buildWorkContractPrintHtml({
-        pageTitle:
-          form.documentTitle?.trim() ||
-          form.templateName?.trim() ||
-          "Smlouva o dílo",
-        contractNumber: form.contractNumber?.trim() || "",
-        variableSymbol: form.contractNumber?.trim() || "",
-        documentDate:
-          form.contractDateLabel?.trim() ||
-          new Intl.DateTimeFormat("cs-CZ").format(new Date()),
-        contractHeaderHtml: withLineBreaks(headerRaw),
-        mainBodyHtml: withLineBreaks(bodyRaw),
-        additionalInfoHtml: withLineBreaks(additionalRaw),
-        zhotovitelHtml: withLineBreaks(contractorRaw),
-        objednatelHtml: withLineBreaks(clientRaw),
-        organizationSignatureUrl: orgSigUrl,
-        jobTitle,
-        jobDescription: jobDesc,
-        priceFormatted,
-        deadlineFormatted,
-        paymentTermsHtml,
-        templateDataSectionInnerHtml,
-      });
-    },
-    [
-      applyTemplateVariables,
-      companyDoc,
-      job?.name,
-      job?.description,
-      job?.endDate,
-      job?.templateValues,
-      template,
-      jobBudgetKc,
-      companyProfileBankAccountDisplay,
-      workContractsForJob,
-    ]
+    (form: WorkContractForm) =>
+      buildWorkContractPrintHtmlString(form, workContractPrintHtmlContext),
+    [workContractPrintHtmlContext]
   );
 
   const depositValidationError = useMemo(
