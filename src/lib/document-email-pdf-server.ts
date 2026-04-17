@@ -7,6 +7,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
+import crypto from "node:crypto";
 import type { Firestore } from "firebase-admin/firestore";
 import type { Browser } from "puppeteer-core";
 import puppeteer from "puppeteer-core";
@@ -33,6 +34,65 @@ function logPdfError(phase: string, err: unknown): void {
     stack: e.stack,
     serialized: serializeUnknownForLog(err),
   });
+}
+
+function sha256Hex(text: string): string {
+  return crypto.createHash("sha256").update(text).digest("hex");
+}
+
+function existsFile(p: string): boolean {
+  try {
+    return fs.existsSync(p);
+  } catch {
+    return false;
+  }
+}
+
+function findLocalChromeExecutable(): string | null {
+  const platform = process.platform;
+  if (platform === "win32") {
+    const pf = process.env.PROGRAMFILES || "C:\\Program Files";
+    const pf86 = process.env["PROGRAMFILES(X86)"] || "C:\\Program Files (x86)";
+    const la = process.env.LOCALAPPDATA || "";
+    const candidates = [
+      // Chrome
+      path.join(pf, "Google", "Chrome", "Application", "chrome.exe"),
+      path.join(pf86, "Google", "Chrome", "Application", "chrome.exe"),
+      la ? path.join(la, "Google", "Chrome", "Application", "chrome.exe") : "",
+      // Edge (často dostupný i bez Chrome)
+      path.join(pf, "Microsoft", "Edge", "Application", "msedge.exe"),
+      path.join(pf86, "Microsoft", "Edge", "Application", "msedge.exe"),
+      la ? path.join(la, "Microsoft", "Edge", "Application", "msedge.exe") : "",
+    ].filter(Boolean);
+    for (const p of candidates) {
+      if (existsFile(p)) return p;
+    }
+    return null;
+  }
+  if (platform === "darwin") {
+    const candidates = [
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ];
+    for (const p of candidates) {
+      if (existsFile(p)) return p;
+    }
+    return null;
+  }
+  // linux
+  const candidates = [
+    "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
+    "/usr/bin/chromium-browser",
+    "/usr/bin/chromium",
+    "/usr/bin/microsoft-edge",
+    "/usr/bin/microsoft-edge-stable",
+  ];
+  for (const p of candidates) {
+    if (existsFile(p)) return p;
+  }
+  return null;
 }
 
 /**
@@ -71,28 +131,33 @@ async function launchPdfBrowser(): Promise<Browser> {
   const customRaw = String(
     process.env.CHROME_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || ""
   ).trim();
-  const custom = !isVercel && customRaw ? customRaw : "";
 
-  if (custom) {
-    logPdf("browser", `pre-launch localChrome path=${custom}`);
+  if (!isVercel) {
+    const localExec = customRaw || findLocalChromeExecutable() || "";
+    if (!localExec) {
+      const hint =
+        "Nenalezen lokální Chrome/Edge. Nastavte CHROME_EXECUTABLE_PATH (např. na Windows: C:\\\\Program Files\\\\Google\\\\Chrome\\\\Application\\\\chrome.exe).";
+      logPdfError("browser.localChrome.resolve", new Error(hint));
+      throw new Error(hint);
+    }
+    logPdf("browser", `pre-launch localChrome path=${localExec}`);
     const localArgs = [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
     ];
-    console.log("executablePath", custom);
-    console.log("chromium.args", "(local launch)", localArgs);
+    logPdf("browser", `local args=${localArgs.join(" ")}`);
     try {
       const browser = await puppeteer.launch({
-        executablePath: custom,
+        executablePath: localExec,
         headless: true,
         args: localArgs,
       });
-      logPdf("browser", "launch ok (local Chrome)");
+      logPdf("browser", "launch ok (local Chrome/Edge)");
       return browser;
     } catch (e) {
-      logPdfError("browser.localChrome", e);
+      logPdfError("browser.localChrome.launch", e);
       throw e;
     }
   }
@@ -109,13 +174,14 @@ async function launchPdfBrowser(): Promise<Browser> {
   }
   let executablePath: string;
   try {
-    executablePath = await chromium.executablePath(binDir);
+    // novější verze umí bez argumentu; ponecháme fallback pro starší/odlišné prostředí
+    executablePath = await chromium.executablePath().catch(() => chromium.executablePath(binDir));
   } catch (e) {
     logPdfError("chromium.executablePath", e);
     throw e;
   }
-  console.log("executablePath", executablePath);
-  console.log("chromium.args", chromium.args);
+  logPdf("chromium", `executablePath=${executablePath}`);
+  logPdf("chromium", `argsCount=${chromium.args.length}`);
   logPdf(
     "chromium",
     `executablePath len=${executablePath.length} path=${executablePath}`
@@ -145,9 +211,11 @@ export async function renderStoredHtmlToPdfBuffer(html: string): Promise<Buffer>
     logPdfError("html", new Error("empty html"));
     throw new Error("Prázdné HTML pro PDF.");
   }
-  console.log("START PDF GENERATION");
-  console.log("HTML LENGTH:", trimmed.length);
-  logPdf("html", `ready server-side string chars=${trimmed.length} (no window/document)`);
+  const hash = sha256Hex(trimmed);
+  logPdf(
+    "html",
+    `ready server-side string chars=${trimmed.length} sha256=${hash.slice(0, 12)}… (no window/document)`
+  );
 
   let browser: Browser | null = null;
   try {
@@ -174,7 +242,6 @@ export async function renderStoredHtmlToPdfBuffer(html: string): Promise<Buffer>
     return buf;
   } catch (error) {
     logPdfError("renderStoredHtmlToPdfBuffer", error);
-    console.error("PDF GENERATION ERROR:", error);
     throw error;
   } finally {
     if (browser) {

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import crypto from "node:crypto";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import {
   callerCanAccessCompany,
@@ -38,6 +39,10 @@ type Body = {
   subject?: string;
   html?: string;
   documentUrl?: string | null;
+  /** Legacy / alternativní id (některé klienty posílaly jen documentId). */
+  documentId?: string | null;
+  /** Legacy / alternativní org id (některé klienty posílaly organizationId). */
+  organizationId?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
 };
@@ -75,6 +80,7 @@ function jsonFail(
 }
 
 export async function POST(request: NextRequest) {
+  const requestId = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : String(Date.now());
   try {
     const db = getAdminFirestore();
     const auth = getAdminAuth();
@@ -98,7 +104,7 @@ export async function POST(request: NextRequest) {
     try {
       body = (await request.json()) as Body;
     } catch (parseErr) {
-      console.error(ROUTE_LOG, "JSON parse failed", serializeUnknownForLog(parseErr));
+      console.error(ROUTE_LOG, "JSON parse failed", { requestId, err: serializeUnknownForLog(parseErr) });
       return jsonFail(
         400,
         "Neplatné tělo požadavku.",
@@ -107,24 +113,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.info(ROUTE_LOG, "payload summary", summarizeBody(body), {
+    console.info(ROUTE_LOG, "start", {
+      requestId,
       vercel: process.env.VERCEL,
       nodeEnv: process.env.NODE_ENV,
       runtime: "nodejs",
     });
+    console.info(ROUTE_LOG, "payload summary", { requestId, ...summarizeBody(body) });
 
-    const companyId = String(body.companyId ?? "").trim();
+    const companyId =
+      String(body.companyId ?? "").trim() || String(body.organizationId ?? "").trim();
     const jobId = String(body.jobId ?? "").trim();
     const type = String(body.type ?? "").trim();
     const to = String(body.to ?? "").trim();
     const subject = String(body.subject ?? "").trim();
     const html = String(body.html ?? "").trim();
-    const contractId = body.contractId != null ? String(body.contractId).trim() || null : null;
-    const invoiceId = body.invoiceId != null ? String(body.invoiceId).trim() || null : null;
+    const docId = body.documentId != null ? String(body.documentId).trim() || null : null;
+    const contractIdRaw = body.contractId != null ? String(body.contractId).trim() || null : null;
+    const invoiceIdRaw = body.invoiceId != null ? String(body.invoiceId).trim() || null : null;
+    const contractId =
+      contractIdRaw || (type === "contract" ? docId : null);
+    const invoiceId =
+      invoiceIdRaw || (type === "invoice" || type === "advance_invoice" ? docId : null);
 
     if (!companyId || !jobId || !type || !to) {
       return jsonFail(400, "Chybí povinná pole.", null, {
         step: "validate",
+        requestId,
         companyId: !!companyId,
         jobId: !!jobId,
         type: !!type,
@@ -134,33 +149,36 @@ export async function POST(request: NextRequest) {
     if (!callerCanAccessCompany(caller, companyId)) {
       return jsonFail(403, "Nemáte přístup k organizaci.", `companyId=${companyId}`, {
         step: "companyAccess",
+        requestId,
         uid: caller.uid,
       });
     }
     if (!isDocEmailType(type)) {
-      return jsonFail(400, "Neplatný typ dokumentu.", `type=${type}`, { step: "docType" });
+      return jsonFail(400, "Neplatný typ dokumentu.", `type=${type}`, { step: "docType", requestId });
     }
     if (!isValidEmailAddress(to)) {
       return jsonFail(400, "Neplatná e-mailová adresa příjemce.", `to=${to.slice(0, 40)}`, {
         step: "validateTo",
+        requestId,
       });
     }
     const plainFromHtml = stripHtmlToPlain(html);
     if (!hasNonEmptyTextSubjectAndBody({ subject, bodyPlain: plainFromHtml })) {
-      return jsonFail(400, "Vyplňte předmět i text zprávy.", null, { step: "validateBody" });
+      return jsonFail(400, "Vyplňte předmět i text zprávy.", null, { step: "validateBody", requestId });
     }
 
     if (type === "contract" && !contractId) {
-      return jsonFail(400, "Chybí identifikátor smlouvy.", null, { step: "contractId" });
+      return jsonFail(400, "Chybí identifikátor smlouvy.", null, { step: "contractId", requestId });
     }
     if ((type === "invoice" || type === "advance_invoice") && !invoiceId) {
-      return jsonFail(400, "Chybí identifikátor dokladu.", null, { step: "invoiceId" });
+      return jsonFail(400, "Chybí identifikátor dokladu.", null, { step: "invoiceId", requestId });
     }
 
     const jobRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("jobs").doc(jobId);
     const jobSnap = await jobRef.get();
     const jobData = jobSnap.exists ? (jobSnap.data() ?? {}) : null;
     console.info(ROUTE_LOG, "job lookup", {
+      requestId,
       companyId,
       jobId,
       documentType: type,
@@ -171,6 +189,7 @@ export async function POST(request: NextRequest) {
     if (!jobSnap.exists) {
       return jsonFail(404, "Zakázka nenalezena.", `Firestore path=${jobRef.path} exists=false`, {
         step: "jobLookup",
+        requestId,
         companyId,
         jobId,
       });
@@ -179,7 +198,7 @@ export async function POST(request: NextRequest) {
     const ccExtra = parseCommaSeparatedEmails(String(body.cc ?? ""));
     for (const addr of ccExtra) {
       if (!isValidEmailAddress(addr)) {
-        return jsonFail(400, `Neplatná adresa v kopii (CC): ${addr}`, null, { step: "cc" });
+        return jsonFail(400, `Neplatná adresa v kopii (CC): ${addr}`, null, { step: "cc", requestId });
       }
     }
 
@@ -193,12 +212,16 @@ export async function POST(request: NextRequest) {
     }
 
     console.info(ROUTE_LOG, "pdf generation start", {
+      requestId,
       companyId,
       jobId,
       documentType: type,
+      documentId: docId,
       contractId,
       invoiceId,
       htmlLen: html.length,
+      recipient: to,
+      organizationId: companyId,
     });
 
     let pdf: Awaited<ReturnType<typeof getDocumentPdfBuffer>>;
@@ -212,19 +235,27 @@ export async function POST(request: NextRequest) {
         invoiceId,
       });
     } catch (error) {
-      console.error("PDF GENERATION ERROR:", error);
-      return NextResponse.json(
-        {
-          ok: false,
-          error: error instanceof Error ? error.message : String(error),
-          detail: error instanceof Error ? error.stack ?? null : null,
-        },
-        { status: 500 }
-      );
+      const msg = errorMessageFromUnknown(error);
+      const detail = errorStackFromUnknown(error) ?? serializeUnknownForLog(error);
+      console.error(ROUTE_LOG, "pdf generation threw", {
+        requestId,
+        companyId,
+        jobId,
+        documentType: type,
+        contractId,
+        invoiceId,
+        message: msg,
+        serialized: serializeUnknownForLog(error),
+      });
+      return jsonFail(500, "Server nedokázal vygenerovat PDF.", detail.slice(0, 12_000), {
+        step: "getDocumentPdfBuffer.throw",
+        requestId,
+      });
     }
 
     if (!pdf.ok) {
       console.error(ROUTE_LOG, "pdf generation failed (ok=false)", {
+        requestId,
         companyId,
         jobId,
         documentType: type,
@@ -233,10 +264,11 @@ export async function POST(request: NextRequest) {
         error: pdf.error,
         detail: pdf.detail,
       });
-      return jsonFail(400, pdf.error, pdf.detail, { step: "getDocumentPdfBuffer.okFalse" });
+      return jsonFail(400, pdf.error, pdf.detail, { step: "getDocumentPdfBuffer.okFalse", requestId });
     }
 
     console.info(ROUTE_LOG, "pdf ok", {
+      requestId,
       companyId,
       jobId,
       documentType: type,
@@ -253,6 +285,7 @@ export async function POST(request: NextRequest) {
     ];
 
     console.info(ROUTE_LOG, "email send start", {
+      requestId,
       attachmentFilename: pdf.filename,
       attachmentBytes: pdf.buffer.length,
     });
@@ -278,6 +311,7 @@ export async function POST(request: NextRequest) {
       const msg = errorMessageFromUnknown(sendErr);
       const detail = errorStackFromUnknown(sendErr) ?? serializeUnknownForLog(sendErr);
       console.error(ROUTE_LOG, "sendDocumentEmail threw", {
+        requestId,
         companyId,
         jobId,
         documentType: type,
@@ -289,6 +323,7 @@ export async function POST(request: NextRequest) {
 
     if (!result.ok) {
       console.error(ROUTE_LOG, "Resend / outbound failed", {
+        requestId,
         companyId,
         jobId,
         documentType: type,
@@ -297,17 +332,21 @@ export async function POST(request: NextRequest) {
       });
       return jsonFail(502, result.error, result.detail, { step: "sendDocumentEmail.result" });
     }
-    console.info(ROUTE_LOG, "email sent ok", { companyId, jobId, documentType: type });
+    console.info(ROUTE_LOG, "email sent ok", { requestId, companyId, jobId, documentType: type });
     return NextResponse.json({ ok: true as const });
   } catch (error: unknown) {
-    console.error("[document-email] failed", error);
+    console.error(ROUTE_LOG, "unhandled failed", {
+      requestId,
+      message: errorMessageFromUnknown(error),
+      serialized: serializeUnknownForLog(error),
+    });
     return NextResponse.json(
       {
         ok: false,
-        error: error instanceof Error ? error.message : "Unknown server error",
-        detail: error instanceof Error ? (error.stack ?? String(error)) : String(error),
+        error: errorMessageFromUnknown(error) || "Unknown server error",
+        detail: (errorStackFromUnknown(error) ?? serializeUnknownForLog(error)).slice(0, 12_000),
       },
-      { status: 400 }
+      { status: 500 }
     );
   }
 }
