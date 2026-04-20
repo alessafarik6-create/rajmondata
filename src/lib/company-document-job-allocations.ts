@@ -39,6 +39,25 @@ export function makeJobCostAllocationId(): string {
   return `jca_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/** Pole alokací z dokumentu — primárně `jobCostAllocations`, alternativně `allocations`. */
+export function documentJobCostAllocationsArray(
+  doc: Record<string, unknown>
+): unknown[] {
+  const primary = doc.jobCostAllocations;
+  if (Array.isArray(primary) && primary.length > 0) return primary;
+  const alt = doc.allocations;
+  if (Array.isArray(alt) && alt.length > 0) return alt;
+  return [];
+}
+
+/** Režim rozdělení: `jobCostAllocationMode` nebo alias `allocationMode`. */
+export function documentJobCostAllocationMode(
+  doc: Record<string, unknown>
+): JobCostAllocationMode {
+  const m = doc.jobCostAllocationMode ?? doc.allocationMode;
+  return m === "percent" ? "percent" : "amount";
+}
+
 /** Převod z Firestore (bez id) na řádek s id. */
 export function normalizeJobCostAllocationRows(
   raw: unknown
@@ -52,13 +71,18 @@ export function normalizeJobCostAllocationRows(
       typeof o.id === "string" && o.id.trim()
         ? o.id.trim()
         : makeJobCostAllocationId();
-    const kind = o.kind === "overhead" ? "overhead" : "job";
-    const jobId =
+    const jobIdRaw =
       typeof o.jobId === "string" && o.jobId.trim() ? o.jobId.trim() : null;
+    let kind: "job" | "overhead";
+    if (o.kind === "overhead") kind = "overhead";
+    else if (o.kind === "job") kind = "job";
+    else {
+      kind = jobIdRaw ? "job" : "overhead";
+    }
     out.push({
       id,
       kind,
-      jobId: kind === "job" ? jobId : null,
+      jobId: kind === "job" ? jobIdRaw : null,
       amount: o.amount != null ? Number(o.amount) : null,
       percent: o.percent != null ? Number(o.percent) : null,
       note: o.note != null ? String(o.note) : null,
@@ -76,7 +100,9 @@ export function normalizeJobCostAllocationRows(
  */
 export function resolveJobCostAllocationsFromDocument(doc: {
   jobCostAllocations?: unknown;
+  allocations?: unknown;
   jobCostAllocationMode?: unknown;
+  allocationMode?: unknown;
   jobId?: string | null;
   zakazkaId?: string | null;
   assignmentType?: string | null;
@@ -85,9 +111,11 @@ export function resolveJobCostAllocationsFromDocument(doc: {
   rows: JobCostAllocationRow[];
   usesExplicitAllocations: boolean;
 } {
-  const rows = normalizeJobCostAllocationRows(doc.jobCostAllocations);
-  const mode: JobCostAllocationMode =
-    doc.jobCostAllocationMode === "percent" ? "percent" : "amount";
+  const docRec = doc as Record<string, unknown>;
+  const rows = normalizeJobCostAllocationRows(
+    documentJobCostAllocationsArray(docRec)
+  );
+  const mode = documentJobCostAllocationMode(docRec);
   if (rows.length > 0) {
     return { mode, rows, usesExplicitAllocations: true };
   }
@@ -110,6 +138,27 @@ export function resolveJobCostAllocationsFromDocument(doc: {
     };
   }
   return { mode, rows: [], usesExplicitAllocations: false };
+}
+
+/** Zjednodušený zápis pro export / alias pole `allocations` na dokumentu. */
+export function allocationsMirrorForDocument(rows: JobCostAllocationRow[]): {
+  jobId: string | null;
+  percent: number | null;
+  amount: number | null;
+  note: string;
+}[] {
+  return rows.map((r) => ({
+    jobId: r.kind === "job" ? r.jobId?.trim() ?? null : null,
+    percent:
+      r.percent != null && Number.isFinite(Number(r.percent))
+        ? Number(r.percent)
+        : null,
+    amount:
+      r.amount != null && Number.isFinite(Number(r.amount))
+        ? roundMoney2(Number(r.amount))
+        : null,
+    note: r.note?.trim() ? String(r.note) : "",
+  }));
 }
 
 export function allocationJobIdsFromRows(rows: JobCostAllocationRow[]): string[] {
@@ -145,6 +194,18 @@ export function validateJobCostAllocations(params: {
     if (!r.jobId?.trim()) {
       return { ok: false, message: "U každého řádku zakázky vyberte zakázku." };
     }
+  }
+  const jobIdsSeen = new Set<string>();
+  for (const r of jobRows) {
+    const jid = r.jobId!.trim();
+    if (jobIdsSeen.has(jid)) {
+      return {
+        ok: false,
+        message:
+          "Stejná zakázka je ve více řádcích rozdělení. Sloučte řádky nebo zvolte jiné zakázky.",
+      };
+    }
+    jobIdsSeen.add(jid);
   }
   if (mode === "amount") {
     let sumAmt = 0;

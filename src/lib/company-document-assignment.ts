@@ -18,6 +18,10 @@ export type CompanyDocumentAssignmentLike = {
   classificationStatus?: string | null;
   jobCostAllocations?: unknown;
   jobCostAllocationMode?: string | null;
+  /** Zrcadlo k `jobCostAllocationMode`. */
+  allocationMode?: string | null;
+  /** Zrcadlo / zjednodušený zápis k `jobCostAllocations`. */
+  allocations?: unknown;
   allocationJobIds?: unknown;
 };
 

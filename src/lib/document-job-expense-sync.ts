@@ -20,9 +20,13 @@ import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import type { CompanyDocumentLike } from "@/lib/company-documents-financial";
 import {
   allocationJobIdsFromRows,
+  allocationsMirrorForDocument,
+  documentJobCostAllocationMode,
+  documentJobCostAllocationsArray,
   jobExpenseSlicesFromAllocations,
   normalizeJobCostAllocationRows,
   resolveJobCostAllocationsFromDocument,
+  type JobCostAllocationRow,
 } from "@/lib/company-document-job-allocations";
 import { JOB_EXPENSE_DOCUMENT_SOURCE } from "@/lib/job-expense-document-sync";
 import { roundMoney2 } from "@/lib/vat-calculations";
@@ -291,13 +295,17 @@ export async function reconcileCompanyDocumentJobExpense(params: {
     if (after.linkedExpenseId || before?.linkedExpenseId) {
       patch.linkedExpenseId = deleteField();
     }
-    const clearedAlloc = normalizeJobCostAllocationRows(after.jobCostAllocations);
+    const clearedAlloc = normalizeJobCostAllocationRows(
+      documentJobCostAllocationsArray(after as Record<string, unknown>)
+    );
     if (clearedAlloc.length > 0) {
       patch.jobCostAllocations = clearedAlloc.map((r) => ({
         ...r,
         linkedExpenseId: null,
       }));
     }
+    patch.allocations = deleteField();
+    patch.allocationMode = deleteField();
     await updateDoc(docRef, patch as UpdateData<DocumentData>);
     return;
   }
@@ -454,7 +462,9 @@ export async function reconcileCompanyDocumentJobExpense(params: {
   }
 
   const firstLinked = afterSlices.length ? rowIdToExpenseId.get(afterSlices[0].rowId) : null;
-  const allocRowsRaw = normalizeJobCostAllocationRows(after.jobCostAllocations);
+  const allocRowsRaw = normalizeJobCostAllocationRows(
+    documentJobCostAllocationsArray(after as Record<string, unknown>)
+  );
   const patchedAlloc =
     allocRowsRaw.length > 0
       ? allocRowsRaw.map((r) => ({
@@ -474,6 +484,12 @@ export async function reconcileCompanyDocumentJobExpense(params: {
   }
   if (patchedAlloc) {
     docPatch.jobCostAllocations = patchedAlloc;
+    docPatch.allocations = allocationsMirrorForDocument(
+      patchedAlloc as JobCostAllocationRow[]
+    );
+    docPatch.allocationMode = documentJobCostAllocationMode(
+      after as Record<string, unknown>
+    );
   }
   await updateDoc(docRef, docPatch as UpdateData<DocumentData>);
 }

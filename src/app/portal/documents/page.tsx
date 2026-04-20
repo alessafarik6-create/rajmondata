@@ -1,6 +1,7 @@
 "use client";
 
 import React, {
+  Fragment,
   Suspense,
   useCallback,
   useEffect,
@@ -98,6 +99,7 @@ import {
 import {
   allocationBasisGrossCzk,
   allocationJobIdsFromRows,
+  allocationsMirrorForDocument,
   computeAllocationGrossCzkShares,
   makeJobCostAllocationId,
   resolveJobCostAllocationsFromDocument,
@@ -252,6 +254,10 @@ type CompanyDocumentRow = {
   /** Rozdělení nákladů přijatého dokladu mezi zakázky / režii. */
   jobCostAllocations?: unknown;
   jobCostAllocationMode?: JobCostAllocationMode;
+  /** Stejné významy jako `jobCostAllocationMode` (zrcadlo pro export / čitelnost). */
+  allocationMode?: JobCostAllocationMode;
+  /** Zjednodušené řádky { jobId, percent, amount, note } — zrcadlo k `jobCostAllocations`. */
+  allocations?: unknown;
   allocationJobIds?: string[];
 };
 
@@ -545,6 +551,11 @@ function ReceivedDocJobColumnCell({
                   · {formatDocMoney(gross, "CZK")}
                   {pctLabel}
                 </span>
+                {r.note?.trim() ? (
+                  <span className="mt-0.5 block truncate text-gray-600" title={r.note ?? ""}>
+                    Pozn.: {r.note}
+                  </span>
+                ) : null}
               </div>
             );
           }
@@ -569,6 +580,11 @@ function ReceivedDocJobColumnCell({
                   · {formatDocMoney(gross, "CZK")}
                   {pctLabel}
                 </span>
+                {r.note?.trim() ? (
+                  <span className="mt-0.5 block truncate text-gray-600" title={r.note ?? ""}>
+                    Pozn.: {r.note}
+                  </span>
+                ) : null}
               </div>
             );
           }
@@ -610,6 +626,121 @@ function ReceivedDocJobColumnCell({
             ? "Firma"
             : row.entityName ?? "—"}
     </span>
+  );
+}
+
+/** Tabulkový přehled rozdělení nákladu přímo pod řádkem dokladu v seznamu. */
+function DocumentCostAllocationDetail({
+  row,
+  jobNamesById,
+}: {
+  row: CompanyDocumentRow;
+  jobNamesById: Map<string, string>;
+}) {
+  const { usesExplicitAllocations, rows, mode } =
+    resolveJobCostAllocationsFromDocument(row);
+  if (!usesExplicitAllocations || rows.length === 0) return null;
+  const basis = allocationBasisGrossCzk(
+    row as Parameters<typeof allocationBasisGrossCzk>[0]
+  );
+  if (basis <= 0) return null;
+  const shares = computeAllocationGrossCzkShares({
+    mode,
+    rows,
+    basisGrossCzk: basis,
+  });
+  return (
+    <div className="border-b border-gray-200 bg-slate-50/90 px-3 py-2 lg:px-2">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-gray-600">
+        Rozdělení nákladu na zakázky
+      </p>
+      <div className="overflow-x-auto rounded border border-gray-200 bg-white">
+        <table className="w-full min-w-[280px] border-collapse text-[11px] text-gray-900">
+          <thead>
+            <tr className="border-b border-gray-200 bg-gray-50 text-left">
+              <th className="px-2 py-1 font-medium">Cíl / zakázka</th>
+              <th className="px-2 py-1 font-medium tabular-nums">Částka (CZK)</th>
+              <th className="px-2 py-1 font-medium tabular-nums">% z dokladu</th>
+              <th className="px-2 py-1 font-medium">Poznámka</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const gross = shares.get(r.id) ?? 0;
+              const pctFromInput =
+                mode === "percent" &&
+                r.percent != null &&
+                Number.isFinite(Number(r.percent))
+                  ? roundMoney2(Number(r.percent))
+                  : basis > 0
+                    ? roundMoney2((gross / basis) * 100)
+                    : 0;
+              const note = r.note?.trim() ?? "";
+              if (r.kind === "overhead") {
+                return (
+                  <tr key={r.id} className="border-b border-gray-100 last:border-b-0">
+                    <td className="px-2 py-1 font-medium text-amber-950">Režie</td>
+                    <td className="px-2 py-1 tabular-nums">
+                      {formatDocMoney(gross, "CZK")}
+                    </td>
+                    <td className="px-2 py-1 tabular-nums">
+                      {pctFromInput.toLocaleString("cs-CZ")} %
+                    </td>
+                    <td
+                      className="max-w-[10rem] truncate px-2 py-1 text-gray-700"
+                      title={note}
+                    >
+                      {note || "—"}
+                    </td>
+                  </tr>
+                );
+              }
+              const jid = r.jobId?.trim() ?? "";
+              const name =
+                (jid ? jobNamesById.get(jid) : null) ||
+                row.jobName ||
+                jid ||
+                "Zakázka";
+              return (
+                <tr key={r.id} className="border-b border-gray-100 last:border-b-0">
+                  <td className="px-2 py-1">
+                    {jid ? (
+                      <Link
+                        href={`/portal/jobs/${jid}`}
+                        className="font-medium text-blue-800 underline-offset-2 hover:underline"
+                      >
+                        {name}
+                      </Link>
+                    ) : (
+                      <span className="text-gray-600">—</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1 tabular-nums">
+                    {formatDocMoney(gross, "CZK")}
+                  </td>
+                  <td className="px-2 py-1 tabular-nums">
+                    {pctFromInput.toLocaleString("cs-CZ")} %
+                  </td>
+                  <td
+                    className="max-w-[10rem] truncate px-2 py-1 text-gray-700"
+                    title={note}
+                  >
+                    {note || "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p className="border-t border-gray-100 bg-gray-50 px-2 py-1 text-[10px] text-gray-700">
+          Režim zápisu: {mode === "percent" ? "procenta" : "částky"} · Celková částka dokladu
+          (základ rozdělení):{" "}
+          <span className="font-semibold tabular-nums text-gray-900">
+            {formatDocMoney(basis, "CZK")}
+          </span>
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -1650,6 +1781,8 @@ function DocumentsPageContent() {
         },
         jobCostAllocations: deleteField(),
         jobCostAllocationMode: deleteField(),
+        allocations: deleteField(),
+        allocationMode: deleteField(),
         allocationJobIds: deleteField(),
         updatedAt: serverTimestamp(),
       });
@@ -1987,6 +2120,23 @@ function DocumentsPageContent() {
       }
 
       if (editSplitToJobs) {
+        const dupCheck = new Map<string, number>();
+        for (const ar of editAllocRows) {
+          if (ar.kind !== "job") continue;
+          const j = ar.jobId.trim();
+          if (!j) continue;
+          dupCheck.set(j, (dupCheck.get(j) ?? 0) + 1);
+        }
+        if ([...dupCheck.values()].some((n) => n > 1)) {
+          toast({
+            variant: "destructive",
+            title: "Duplicitní zakázka",
+            description:
+              "Ve rozdělení je stejná zakázka vícekrát. Sloučte řádky nebo zvolte jiné zakázky.",
+          });
+          setIsEditSaving(false);
+          return;
+        }
         const mergedForBasis = {
           ...editRow,
           ...basePayload,
@@ -2038,6 +2188,8 @@ function DocumentsPageContent() {
           linkedExpenseId: r.linkedExpenseId ?? null,
         }));
         basePayload.jobCostAllocationMode = editAllocMode;
+        basePayload.allocationMode = editAllocMode;
+        basePayload.allocations = allocationsMirrorForDocument(domainRows);
         basePayload.allocationJobIds =
           allocationJobIdsFromRows(domainRows);
         basePayload.assignedTo = {
@@ -2048,6 +2200,8 @@ function DocumentsPageContent() {
       } else {
         basePayload.jobCostAllocations = deleteField();
         basePayload.jobCostAllocationMode = deleteField();
+        basePayload.allocations = deleteField();
+        basePayload.allocationMode = deleteField();
         basePayload.allocationJobIds = deleteField();
         if (zid) {
           basePayload.zakazkaId = zid;
@@ -2324,6 +2478,57 @@ function DocumentsPageContent() {
       return [...rows.slice(0, -1), last];
     });
   }, [editRow, editForm, editAllocMode]);
+
+  const editAllocDuplicateJobIds = useMemo(() => {
+    if (!editSplitToJobs) return [] as string[];
+    const counts = new Map<string, number>();
+    for (const ar of editAllocRows) {
+      if (ar.kind !== "job") continue;
+      const j = ar.jobId.trim();
+      if (!j) continue;
+      counts.set(j, (counts.get(j) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .filter(([, n]) => n > 1)
+      .map(([id]) => id);
+  }, [editSplitToJobs, editAllocRows]);
+
+  const editAllocSavePreview = useMemo(() => {
+    if (!editRow || !editSplitToJobs) return null;
+    const basis = previewEditDocumentGrossCzk(editRow, editForm);
+    const domain = editAllocFormRowsToDomain(editAllocRows);
+    const val = validateJobCostAllocations({
+      mode: editAllocMode,
+      rows: domain,
+      basisGrossCzk: basis,
+    });
+    let allocatedCzk = 0;
+    let sumPct = 0;
+    if (editAllocMode === "amount") {
+      for (const r of domain) {
+        allocatedCzk += roundMoney2(Number(r.amount ?? 0));
+      }
+    } else {
+      for (const r of domain) {
+        sumPct += Number(r.percent ?? 0);
+      }
+      const grossByRow = computeAllocationGrossCzkShares({
+        mode: "percent",
+        rows: domain,
+        basisGrossCzk: basis,
+      });
+      for (const g of grossByRow.values()) {
+        allocatedCzk += g;
+      }
+    }
+    return {
+      basis,
+      val,
+      allocatedCzk: roundMoney2(allocatedCzk),
+      sumPct: roundMoney2(sumPct),
+      remainderCzk: roundMoney2(basis - allocatedCzk),
+    };
+  }, [editRow, editSplitToJobs, editForm, editAllocRows, editAllocMode]);
 
   return (
     <TooltipProvider delayDuration={250}>
@@ -3374,43 +3579,61 @@ function DocumentsPageContent() {
               </div>
             ) : (
               <div className="space-y-3 rounded-lg border border-border p-3">
-                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                  <div className="space-y-0.5">
-                    <Label htmlFor="edit-split-jobs">Rozdělení na zakázky</Label>
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-0.5 min-w-0">
+                    <Label htmlFor="edit-split-jobs">Rozdělení nákladu na zakázky</Label>
                     <p className="text-xs text-muted-foreground">
-                      Více zakázek nebo část jako režie. Součet částek = částka dokladu
-                      (v Kč) nebo součet procent = 100 %.
+                      Více zakázek nebo část jako režie. Režim částky: součet řádků = hrubá částka
+                      dokladu v CZK. Režim procenta: součet = 100 %. Bez zapnutí zůstává chování jako
+                      jedna zakázka níže.
                     </p>
                   </div>
-                  <Switch
-                    id="edit-split-jobs"
-                    checked={editSplitToJobs}
-                    onCheckedChange={(v) => {
-                      setEditSplitToJobs(v);
-                      if (v && editAllocRows.length === 0 && editRow) {
-                        const basis = previewEditDocumentGrossCzk(
-                          editRow,
-                          editForm
-                        );
-                        const jid = editForm.zakazkaId.trim();
-                        setEditAllocMode("amount");
-                        setEditAllocRows([
-                          {
-                            id: makeJobCostAllocationId(),
-                            kind: "job",
-                            jobId: jid,
-                            amount: basis > 0 ? String(basis) : "",
-                            percent: "",
-                            note: "",
-                          },
-                        ]);
-                      }
-                      if (!v) {
-                        setEditAllocRows([]);
-                        setEditAllocMode("amount");
-                      }
-                    }}
-                  />
+                  <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
+                    <Switch
+                      id="edit-split-jobs"
+                      checked={editSplitToJobs}
+                      onCheckedChange={(v) => {
+                        setEditSplitToJobs(v);
+                        if (v && editAllocRows.length === 0 && editRow) {
+                          const basis = previewEditDocumentGrossCzk(
+                            editRow,
+                            editForm
+                          );
+                          const jid = editForm.zakazkaId.trim();
+                          setEditAllocMode("amount");
+                          setEditAllocRows([
+                            {
+                              id: makeJobCostAllocationId(),
+                              kind: "job",
+                              jobId: jid,
+                              amount: basis > 0 ? String(basis) : "",
+                              percent: "",
+                              note: "",
+                            },
+                          ]);
+                        }
+                        if (!v) {
+                          setEditAllocRows([]);
+                          setEditAllocMode("amount");
+                        }
+                      }}
+                    />
+                    {editSplitToJobs ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="whitespace-nowrap"
+                        onClick={() => {
+                          setEditSplitToJobs(false);
+                          setEditAllocRows([]);
+                          setEditAllocMode("amount");
+                        }}
+                      >
+                        Odstranit rozdělení
+                      </Button>
+                    ) : null}
+                  </div>
                 </div>
                 {editSplitToJobs ? (
                   <div className="space-y-3 border-t border-border pt-3">
@@ -3657,6 +3880,86 @@ function DocumentsPageContent() {
                         </div>
                       ))}
                     </div>
+                    {editAllocDuplicateJobIds.length > 0 ? (
+                      <Alert variant="destructive" className="py-2">
+                        <AlertTitle>Duplicitní zakázka</AlertTitle>
+                        <AlertDescription>
+                          Stejná zakázka je ve více řádcích — sloučte je nebo zvolte jiné zakázky.
+                          Uložení není možné.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                    {editAllocSavePreview &&
+                    editAllocSavePreview.basis > 0 &&
+                    !editAllocSavePreview.val.ok ? (
+                      <Alert className="border-amber-300 bg-amber-50 py-2 text-amber-950">
+                        <AlertTitle>Rozdělení neodpovídá dokladu</AlertTitle>
+                        <AlertDescription>
+                          {editAllocSavePreview.val.ok === false
+                            ? editAllocSavePreview.val.message
+                            : ""}
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                    {editAllocSavePreview && editAllocSavePreview.basis > 0 ? (
+                      <div className="space-y-1.5 rounded-md border border-border bg-muted/40 p-3 text-sm">
+                        <p className="text-xs font-semibold text-foreground">Souhrn rozdělení</p>
+                        <div className="grid grid-cols-1 gap-1 text-xs sm:grid-cols-2">
+                          <div className="tabular-nums">
+                            Celková částka dokladu (CZK):{" "}
+                            <span className="font-semibold">
+                              {editAllocSavePreview.basis.toLocaleString("cs-CZ")} Kč
+                            </span>
+                          </div>
+                          <div className="tabular-nums">
+                            Rozděleno (CZK):{" "}
+                            <span className="font-semibold">
+                              {editAllocSavePreview.allocatedCzk.toLocaleString("cs-CZ")} Kč
+                            </span>
+                          </div>
+                          {editAllocMode === "amount" ? (
+                            <div className="tabular-nums sm:col-span-2">
+                              Zbývá rozdělit:{" "}
+                              <span
+                                className={cn(
+                                  "font-semibold",
+                                  Math.abs(editAllocSavePreview.remainderCzk) <= 0.02
+                                    ? "text-emerald-700"
+                                    : "text-amber-900"
+                                )}
+                              >
+                                {editAllocSavePreview.remainderCzk.toLocaleString("cs-CZ")} Kč
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="tabular-nums sm:col-span-2">
+                              Součet procent:{" "}
+                              <span
+                                className={cn(
+                                  "font-semibold",
+                                  Math.abs(editAllocSavePreview.sumPct - 100) <= 0.02
+                                    ? "text-emerald-700"
+                                    : "text-amber-900"
+                                )}
+                              >
+                                {editAllocSavePreview.sumPct.toLocaleString("cs-CZ")} % (cíl 100 %)
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <p className="border-t border-border/60 pt-1 text-xs font-medium">
+                          Stav validace:{" "}
+                          {editAllocSavePreview.val.ok &&
+                          editAllocDuplicateJobIds.length === 0 ? (
+                            <span className="text-emerald-700">OK — lze uložit</span>
+                          ) : (
+                            <span className="text-destructive">
+                              Nelze uložit — opravte rozdělení nebo duplicity
+                            </span>
+                          )}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 ) : (
                   <>
@@ -4162,8 +4465,8 @@ function DocumentTableReceived({
                 "h-10 w-10 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950 sm:h-7 sm:w-7 touch-manipulation";
 
               return (
+                <Fragment key={row.id}>
                 <div
-                  key={row.id}
                   className={cn(
                     receivedRowGrid,
                     "border-b border-gray-200 max-lg:rounded-lg max-lg:border",
@@ -4474,6 +4777,11 @@ function DocumentTableReceived({
                     </p>
                   </div>
                 </div>
+                <DocumentCostAllocationDetail
+                  row={row}
+                  jobNamesById={jobNamesById}
+                />
+                </Fragment>
               );
             })}
           </div>
