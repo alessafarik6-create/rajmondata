@@ -220,6 +220,11 @@ export type CompanyDocumentExpenseReconcileBefore = DocAmountInput & {
   mimeType?: string | null;
   requiresPayment?: boolean;
   paid?: boolean;
+  paymentStatus?: "unpaid" | "partial" | "paid" | null;
+  paidAmount?: number | null;
+  paidAt?: unknown;
+  paymentMethod?: string | null;
+  paymentNote?: string | null;
 };
 
 function collectExpenseIdsToRemoveBefore(

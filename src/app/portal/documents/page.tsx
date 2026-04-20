@@ -110,6 +110,9 @@ import {
   documentGrossForPayment,
   getDocumentPaymentUrgency,
   isDocumentEligibleForPaymentBox,
+  paymentStatusBadgeClass,
+  paymentStatusLabel,
+  resolveCompanyDocumentPaymentStatus,
   type CompanyDocumentPaymentRow,
   urgencyLabel,
 } from "@/lib/company-document-payment";
@@ -237,6 +240,10 @@ type CompanyDocumentRow = {
   paid?: boolean;
   paidAt?: unknown;
   paidBy?: string | null;
+  paymentStatus?: "unpaid" | "partial" | "paid" | null;
+  paidAmount?: number | null;
+  paymentMethod?: "cash" | "bank" | "card" | "other" | null;
+  paymentNote?: string | null;
   /** Měkké smazání — doklad zůstává ve Firestore. */
   isDeleted?: boolean;
   /** Volitelné — klasifikace / fronta nezařazených (když existuje v datech). */
@@ -692,12 +699,34 @@ function DocumentsPageContent() {
     description: "",
     requiresPayment: false,
     dueDate: "",
+    paymentStatus: "unpaid" as "unpaid" | "partial" | "paid",
+    paidAmount: "",
+    paidAt: "",
+    paymentMethod: "bank" as "cash" | "bank" | "card" | "other",
+    paymentNote: "",
   });
 
   const todayIso = useMemo(
     () => new Date().toISOString().split("T")[0],
     []
   );
+
+  const newDocGrossPreview = useMemo(() => {
+    const amountStr = String(formData.amount ?? "").trim();
+    const n =
+      amountStr === "" ? NaN : Number(String(amountStr).replace(",", "."));
+    if (!Number.isFinite(n) || n <= 0) return 0;
+    const docCurrency = formData.currency === "EUR" ? "EUR" : "CZK";
+    const vatRate = normalizeVatRate(Number(formData.vat));
+    if (docCurrency === "EUR") {
+      const net = roundMoney2(n);
+      const vatAmount = roundMoney2((net * vatRate) / 100);
+      return roundMoney2(net + vatAmount);
+    }
+    const netInt = Math.round(n);
+    const c = calculateVatAmountsFromNet(netInt, vatRate);
+    return roundMoney2(c.amountGross);
+  }, [formData.amount, formData.currency, formData.vat]);
 
   const [receivedSearch, setReceivedSearch] = useState("");
   const [issuedSearch, setIssuedSearch] = useState("");
@@ -855,9 +884,15 @@ function DocumentsPageContent() {
 
   const markDocumentPaid = async (row: CompanyDocumentRow) => {
     if (!companyId || !firestore || !user) return;
+    const todayIso = new Date().toISOString().split("T")[0];
+    const gross = documentGrossForPayment(row as CompanyDocumentPaymentRow);
     await updateDoc(doc(firestore, "companies", companyId, "documents", row.id), {
+      paymentStatus: "paid",
+      paidAmount: gross > 0 ? gross : null,
+      paidAt: todayIso,
+      paymentMethod: null,
+      paymentNote: null,
       paid: true,
-      paidAt: serverTimestamp(),
       paidBy: user.uid,
       updatedAt: serverTimestamp(),
     });
@@ -868,7 +903,14 @@ function DocumentsPageContent() {
         userId: user.uid,
         documentId: row.id,
         before: { ...row, id: row.id },
-        after: { ...row, id: row.id, paid: true },
+        after: {
+          ...row,
+          id: row.id,
+          paymentStatus: "paid",
+          paidAmount: gross > 0 ? gross : null,
+          paidAt: todayIso,
+          paid: true,
+        },
       });
     } catch (e) {
       console.error("documents: job income reconcile after paid", e);
@@ -879,8 +921,12 @@ function DocumentsPageContent() {
   const markDocumentUnpaid = async (row: CompanyDocumentRow) => {
     if (!companyId || !firestore || !user) return;
     await updateDoc(doc(firestore, "companies", companyId, "documents", row.id), {
+      paymentStatus: "unpaid",
+      paidAmount: deleteField(),
       paid: false,
       paidAt: deleteField(),
+      paymentMethod: deleteField(),
+      paymentNote: deleteField(),
       paidBy: deleteField(),
       updatedAt: serverTimestamp(),
     });
@@ -891,7 +937,14 @@ function DocumentsPageContent() {
         userId: user.uid,
         documentId: row.id,
         before: { ...row, id: row.id },
-        after: { ...row, id: row.id, paid: false },
+        after: {
+          ...row,
+          id: row.id,
+          paymentStatus: "unpaid",
+          paidAmount: null,
+          paidAt: null,
+          paid: false,
+        },
       });
     } catch (e) {
       console.error("documents: job income reconcile after unpaid", e);
@@ -1065,6 +1118,11 @@ function DocumentsPageContent() {
           description: "",
           requiresPayment: false,
           dueDate: "",
+          paymentStatus: "unpaid",
+          paidAmount: "",
+          paidAt: "",
+          paymentMethod: "bank",
+          paymentNote: "",
         });
         setNewDocFile(null);
         setAssignmentType("pending_assignment");
@@ -1182,6 +1240,11 @@ function DocumentsPageContent() {
         description: "",
         requiresPayment: false,
         dueDate: "",
+        paymentStatus: "unpaid",
+        paidAmount: "",
+        paidAt: "",
+        paymentMethod: "bank",
+        paymentNote: "",
       });
         setNewDocFile(null);
         setAssignmentType("pending_assignment");
@@ -1205,6 +1268,57 @@ function DocumentsPageContent() {
         amountNet = netInt;
         vatAmount = c.vatAmount;
         amountGross = c.amountGross;
+      }
+
+      const paymentStatus = formData.paymentStatus;
+      const paidAtInput = String(formData.paidAt ?? "").trim();
+      const paymentMethodInput = String(formData.paymentMethod ?? "").trim();
+      const paymentNoteInput = String(formData.paymentNote ?? "").trim();
+      const paidAmountInput = String(formData.paidAmount ?? "").trim();
+
+      let paidAmount: number | null = null;
+      let paidAt: string | null = null;
+      let paymentMethod: string | null = null;
+      let paymentNote: string | null = null;
+      const totalGross = amountGross;
+
+      if (paymentStatus === "paid") {
+        paidAmount = totalGross;
+        paidAt = paidAtInput || todayIso;
+        paymentMethod = paymentMethodInput || null;
+        paymentNote = paymentNoteInput || null;
+      } else if (paymentStatus === "partial") {
+        const pa =
+          paidAmountInput === ""
+            ? NaN
+            : Number(String(paidAmountInput).replace(",", "."));
+        if (!Number.isFinite(pa)) {
+          toast({
+            variant: "destructive",
+            title: "Neplatná uhrazená částka",
+            description: "Zadejte uhrazenou částku jako číslo.",
+          });
+          return;
+        }
+        const pa2 = roundMoney2(pa);
+        if (!(pa2 > 0 && pa2 < totalGross)) {
+          toast({
+            variant: "destructive",
+            title: "Neplatná částečná úhrada",
+            description:
+              "Uhrazená částka musí být větší než 0 a menší než celková částka dokladu.",
+          });
+          return;
+        }
+        paidAmount = pa2;
+        paidAt = paidAtInput || todayIso;
+        paymentMethod = paymentMethodInput || null;
+        paymentNote = paymentNoteInput || null;
+      } else {
+        paidAmount = null;
+        paidAt = null;
+        paymentMethod = null;
+        paymentNote = null;
       }
 
       let rateEurCzk = 1;
@@ -1298,7 +1412,12 @@ function DocumentsPageContent() {
         createdAt: serverTimestamp(),
         requiresPayment: formData.requiresPayment,
         dueDate: formData.dueDate.trim() || null,
-        paid: false,
+        paymentStatus,
+        paidAmount,
+        paidAt,
+        paymentMethod,
+        paymentNote,
+        paid: paymentStatus === "paid",
         isDeleted: false,
       });
 
@@ -1332,7 +1451,7 @@ function DocumentsPageContent() {
         assignmentType === "job_cost"
           ? selectedJob?.id ?? selectedJobId
           : null;
-      const afterReconcile: CompanyDocumentExpenseReconcileBefore = {
+      const afterReconcile = {
         assignmentType,
         jobId: jobIdForCost,
         zakazkaId: jobIdForCost,
@@ -1368,8 +1487,13 @@ function DocumentsPageContent() {
         mimeType: uploadMeta?.mimeType ?? null,
         storagePath: uploadMeta?.storagePath ?? null,
         requiresPayment: formData.requiresPayment,
-        paid: false,
-      };
+        paymentStatus,
+        paidAmount,
+        paidAt,
+        paymentMethod,
+        paymentNote,
+        paid: paymentStatus === "paid",
+      } as CompanyDocumentExpenseReconcileBefore;
       await reconcileCompanyDocumentJobExpense({
         firestore,
         companyId,
@@ -1447,6 +1571,11 @@ function DocumentsPageContent() {
         description: "",
         requiresPayment: false,
         dueDate: "",
+        paymentStatus: "unpaid",
+        paidAmount: "",
+        paidAt: "",
+        paymentMethod: "bank",
+        paymentNote: "",
       });
       setNewDocFile(null);
       setAssignmentType("pending_assignment");
@@ -2455,6 +2584,142 @@ function DocumentsPageContent() {
                       />
                     </div>
                   </div>
+                  ) : null}
+                  {newDocKind !== "delivery_note" ? (
+                    <div className="space-y-3 sm:col-span-2 rounded-lg border border-border p-3">
+                      <div className="space-y-1">
+                        <Label className="text-base">Úhrada</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Lze nastavit už při vytvoření. Pokud chybí, bere se jako neuhrazeno.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Stav úhrady</Label>
+                        <Select
+                          value={formData.paymentStatus}
+                          onValueChange={(v) =>
+                            setFormData({
+                              ...formData,
+                              paymentStatus:
+                                v === "paid" || v === "partial" ? (v as "paid" | "partial") : "unpaid",
+                              paidAt:
+                                v === "paid" || v === "partial"
+                                  ? formData.paidAt || todayIso
+                                  : "",
+                              paidAmount:
+                                v === "partial"
+                                  ? formData.paidAmount
+                                  : "",
+                            })
+                          }
+                        >
+                          <SelectTrigger className="bg-background">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="unpaid">Neuhrazeno</SelectItem>
+                            <SelectItem value="partial">Částečně uhrazeno</SelectItem>
+                            <SelectItem value="paid">Uhrazeno</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {formData.paymentStatus === "paid" || formData.paymentStatus === "partial" ? (
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          {formData.paymentStatus === "partial" ? (
+                            <div className="space-y-2">
+                              <Label>Uhrazená částka</Label>
+                              <Input
+                                type="number"
+                                min={0}
+                                step={formData.currency === "EUR" ? "0.01" : "1"}
+                                value={formData.paidAmount}
+                                onChange={(e) =>
+                                  setFormData({ ...formData, paidAmount: e.target.value })
+                                }
+                                className="bg-background tabular-nums"
+                              />
+                            </div>
+                          ) : (
+                            <div className="space-y-2">
+                              <Label>Uhrazená částka</Label>
+                              <Input
+                                value="(automaticky celá částka)"
+                                disabled
+                                className="bg-background"
+                              />
+                            </div>
+                          )}
+                          <div className="space-y-2">
+                            <Label>Datum úhrady</Label>
+                            <Input
+                              type="date"
+                              value={formData.paidAt}
+                              onChange={(e) =>
+                                setFormData({ ...formData, paidAt: e.target.value })
+                              }
+                              className="bg-background"
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Způsob úhrady (volitelné)</Label>
+                            <Select
+                              value={formData.paymentMethod}
+                              onValueChange={(v) =>
+                                setFormData({
+                                  ...formData,
+                                  paymentMethod:
+                                    v === "cash" || v === "bank" || v === "card" || v === "other"
+                                      ? (v as "cash" | "bank" | "card" | "other")
+                                      : "bank",
+                                })
+                              }
+                            >
+                              <SelectTrigger className="bg-background">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="cash">Hotově</SelectItem>
+                                <SelectItem value="bank">Převodem</SelectItem>
+                                <SelectItem value="card">Kartou</SelectItem>
+                                <SelectItem value="other">Jinak</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2 sm:col-span-2">
+                            <Label>Poznámka k úhradě (volitelné)</Label>
+                            <Input
+                              value={formData.paymentNote}
+                              onChange={(e) =>
+                                setFormData({ ...formData, paymentNote: e.target.value })
+                              }
+                              className="bg-background"
+                              placeholder="např. VS, poznámka…"
+                            />
+                          </div>
+                          {formData.paymentStatus === "partial" ? (
+                            <p className="sm:col-span-2 text-xs text-muted-foreground tabular-nums">
+                              {(() => {
+                                const pa =
+                                  formData.paidAmount.trim() === ""
+                                    ? 0
+                                    : Number(
+                                        String(formData.paidAmount).replace(",", ".")
+                                      );
+                                const paid = Number.isFinite(pa) ? roundMoney2(pa) : 0;
+                                const rest = roundMoney2(
+                                  Math.max(0, newDocGrossPreview - paid)
+                                );
+                                const cur = formData.currency === "EUR" ? "€" : "Kč";
+                                return `Zbývá doplatit: ${rest.toLocaleString(
+                                  "cs-CZ"
+                                )} ${cur}`;
+                              })()}
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : null}
+                    </div>
                   ) : null}
                   <div className="space-y-2 sm:col-span-2">
                     <Label>Zařazení dokladu</Label>
@@ -3928,7 +4193,9 @@ function DocumentTableReceived({
                         Zapl.
                       </Button>
                     ) : null}
-                    {!readOnlyTrash && row.paid === true && row.requiresPayment ? (
+                    {!readOnlyTrash &&
+                    resolveCompanyDocumentPaymentStatus(pr) === "paid" &&
+                    row.requiresPayment ? (
                       <Button
                         type="button"
                         variant="ghost"
@@ -4118,19 +4385,20 @@ function DocumentTableReceived({
                       </span>
                     </div>
                     <div className="flex flex-wrap items-center gap-0.5">
-                      {row.paid === true ? (
-                        <Badge className="h-5 bg-emerald-700 px-1.5 text-[10px] text-white hover:bg-emerald-700">
-                          Zaplaceno
-                        </Badge>
-                      ) : (
-                        <Badge
-                          variant="outline"
-                          className="h-5 border-gray-400 px-1.5 text-[10px] text-gray-900"
-                        >
-                          Nezaplaceno
-                        </Badge>
-                      )}
-                      {!row.requiresPayment || row.paid === true ? null : (
+                      <Badge
+                        className={cn(
+                          "h-5 px-1.5 text-[10px]",
+                          paymentStatusBadgeClass(
+                            resolveCompanyDocumentPaymentStatus(pr)
+                          )
+                        )}
+                      >
+                        {paymentStatusLabel(
+                          resolveCompanyDocumentPaymentStatus(pr)
+                        )}
+                      </Badge>
+                      {!row.requiresPayment ||
+                      resolveCompanyDocumentPaymentStatus(pr) === "paid" ? null : (
                         <Badge
                           className={cn(
                             "h-5 px-1.5 text-[10px]",

@@ -33,11 +33,26 @@ export type CompanyDocumentPaymentRow = CompanyDocumentLike & {
   paid?: boolean;
   paidAt?: unknown;
   paidBy?: string | null;
+  paymentStatus?: "unpaid" | "partial" | "paid" | null;
+  paidAmount?: number | null;
+  paymentMethod?: string | null;
+  paymentNote?: string | null;
   castka?: number;
   amountNet?: number;
   amountGross?: number;
   amount?: number;
 };
+
+export type CompanyDocumentPaymentStatus = "unpaid" | "partial" | "paid";
+
+export function resolveCompanyDocumentPaymentStatus(
+  row: CompanyDocumentPaymentRow
+): CompanyDocumentPaymentStatus {
+  const st = String(row.paymentStatus ?? "").trim();
+  if (st === "paid" || row.paid === true) return "paid";
+  if (st === "partial") return "partial";
+  return "unpaid";
+}
 
 function todayParts(todayIso: string): { y: number; m: number; d: number } {
   const [y, m, d] = todayIso.split("-").map(Number);
@@ -84,7 +99,7 @@ export function isDocumentEligibleForPaymentBox(
   row: CompanyDocumentPaymentRow
 ): boolean {
   if (!row.requiresPayment) return false;
-  if (row.paid === true) return false;
+  if (resolveCompanyDocumentPaymentStatus(row) === "paid") return false;
   if (!isFinancialCompanyDocument(row)) return false;
   return documentGrossForPayment(row) > 0;
 }
@@ -98,7 +113,7 @@ export function getDocumentPaymentUrgency(
   row: CompanyDocumentPaymentRow,
   todayIso: string
 ): PaymentUrgency {
-  if (row.paid === true) return "paid";
+  if (resolveCompanyDocumentPaymentStatus(row) === "paid") return "paid";
   if (!row.requiresPayment) return "not_applicable";
   const due = String(row.dueDate ?? "").trim();
   if (!due) return "incomplete_no_due";
@@ -106,6 +121,20 @@ export function getDocumentPaymentUrgency(
   const limitSoon = addDaysIso(todayIso, PAYMENT_DUE_SOON_DAYS);
   if (compareIsoDate(due, limitSoon) <= 0) return "due_soon";
   return "ok";
+}
+
+export function paymentStatusLabel(st: CompanyDocumentPaymentStatus): string {
+  if (st === "paid") return "Uhrazeno";
+  if (st === "partial") return "Částečně uhrazeno";
+  return "Neuhrazeno";
+}
+
+export function paymentStatusBadgeClass(st: CompanyDocumentPaymentStatus): string {
+  if (st === "paid") return "bg-emerald-700 text-white hover:bg-emerald-700";
+  if (st === "partial") {
+    return "border border-amber-600 bg-amber-100 text-amber-950";
+  }
+  return "border border-gray-400 bg-gray-100 text-gray-900";
 }
 
 export function urgencyLabel(cs: PaymentUrgency): string {

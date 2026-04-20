@@ -60,9 +60,14 @@ export function DashboardDocumentsToPayWidget({ companyId, todayIso }: Props) {
 
   const markPaid = async (id: string) => {
     if (!firestore || !user?.uid || !String(id ?? "").trim()) return;
+    const todayIso = new Date().toISOString().split("T")[0];
     await updateDoc(doc(firestore, "companies", companyId, "documents", id), {
+      paymentStatus: "paid",
+      paidAmount: null,
+      paidAt: todayIso,
+      paymentMethod: null,
+      paymentNote: null,
       paid: true,
-      paidAt: serverTimestamp(),
       paidBy: user.uid,
       updatedAt: serverTimestamp(),
     });
