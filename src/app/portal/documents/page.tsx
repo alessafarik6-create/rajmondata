@@ -5,7 +5,9 @@ import React, {
   Suspense,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import Link from "next/link";
@@ -781,6 +783,93 @@ function issuedMergedEntryMatchesPaymentFilter(
   return true;
 }
 
+type OverduePaymentSection = "received" | "issued";
+
+type OverduePaymentFlashTarget = {
+  flashRowKey: string;
+  due: string;
+  section: OverduePaymentSection;
+};
+
+function isIssuedFinancialDocRow(d: CompanyDocumentRow): boolean {
+  return (
+    d.type === "issued" ||
+    d.type === "vydane" ||
+    d.documentKind === "vydane"
+  );
+}
+
+function overduePaymentSectionForDoc(
+  d: CompanyDocumentRow
+): OverduePaymentSection | null {
+  if (isReceivedDoc(d)) return "received";
+  if (isIssuedFinancialDocRow(d)) return "issued";
+  return null;
+}
+
+/**
+ * Jednotná množina položek „po splatnosti“ pro badge, kliknutí a filtr tabulek
+ * (getDocumentPaymentUrgency / getPortalInvoicePaymentUrgency === overdue).
+ */
+function collectOverduePaymentFlashTargets(
+  financialActive: CompanyDocumentRow[],
+  invoices: Array<Record<string, unknown> & { id: string }>,
+  todayIso: string
+): OverduePaymentFlashTarget[] {
+  const out: OverduePaymentFlashTarget[] = [];
+  for (const d of financialActive) {
+    const pr = d as CompanyDocumentPaymentRow;
+    if (getDocumentPaymentUrgency(pr, todayIso) !== "overdue") continue;
+    const sec = overduePaymentSectionForDoc(d);
+    if (!sec) continue;
+    out.push({
+      flashRowKey: `doc:${d.id}`,
+      due: String(d.dueDate ?? "").trim() || "9999-12-31",
+      section: sec,
+    });
+  }
+  for (const inv of invoices) {
+    if (getPortalInvoicePaymentUrgency(inv, todayIso) !== "overdue") continue;
+    out.push({
+      flashRowKey: `inv:${inv.id}`,
+      due: String(inv.dueDate ?? "").trim() || "9999-12-31",
+      section: "issued",
+    });
+  }
+  out.sort(
+    (a, b) =>
+      a.due.localeCompare(b.due) || a.flashRowKey.localeCompare(b.flashRowKey)
+  );
+  return out;
+}
+
+function pickDocumentsTabForOverdueTargets(
+  targets: OverduePaymentFlashTarget[]
+): "all" | "received" | "issued" {
+  const hasR = targets.some((t) => t.section === "received");
+  const hasI = targets.some((t) => t.section === "issued");
+  if (hasR && hasI) return "all";
+  if (hasR) return "received";
+  return "issued";
+}
+
+function buildPaymentOverdueScrollDomId(
+  tab: "all" | "received" | "issued",
+  target: OverduePaymentFlashTarget
+): string {
+  const sep = target.flashRowKey.indexOf(":");
+  const kind = sep >= 0 ? target.flashRowKey.slice(0, sep) : "doc";
+  const rawId = sep >= 0 ? target.flashRowKey.slice(sep + 1) : "";
+  if (tab === "received") {
+    return `payment-flash-received-${kind}-${rawId}`;
+  }
+  if (tab === "issued") {
+    return `payment-flash-issued-${kind}-${rawId}`;
+  }
+  const block = target.section === "received" ? "received" : "issued";
+  return `payment-flash-all-${block}-${kind}-${rawId}`;
+}
+
 function DocumentsPageContent() {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -884,6 +973,39 @@ function DocumentsPageContent() {
       setDocumentsPaymentFilter("__all__");
     }
   }, [documentsMainTab]);
+
+  /** Zvýraznění řádku po kliknutí na „Po splatnosti“ v souhrnu (doc:id | inv:id). */
+  const [paymentFlashRowKey, setPaymentFlashRowKey] = useState<string | null>(
+    null
+  );
+  /** Remount tabulek = výchozí lokální filtry, ať overdue řádek nezmizí pod kategorií / zakázkou. */
+  const [paymentTableMountKey, setPaymentTableMountKey] = useState(0);
+  const paymentOverdueScrollRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!paymentFlashRowKey) return;
+    const t = window.setTimeout(() => setPaymentFlashRowKey(null), 3800);
+    return () => window.clearTimeout(t);
+  }, [paymentFlashRowKey]);
+
+  useLayoutEffect(() => {
+    const id = paymentOverdueScrollRef.current;
+    if (!id) return;
+    paymentOverdueScrollRef.current = null;
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        document.getElementById(id)?.scrollIntoView({
+          behavior: "smooth",
+          block: "center",
+        });
+      });
+    });
+  }, [
+    documentsMainTab,
+    documentsPaymentFilter,
+    paymentTableMountKey,
+    paymentFlashRowKey,
+  ]);
 
   const newDocGrossPreview = useMemo(() => {
     const amountStr = String(formData.amount ?? "").trim();
@@ -1034,14 +1156,11 @@ function DocumentsPageContent() {
   const paymentOverviewStats = useMemo(() => {
     const list = financialDocumentsActive as CompanyDocumentPaymentRow[];
     let toPay = 0;
-    let overdueDocuments = 0;
-    let overdueInvoices = 0;
     let totalKc = 0;
     for (const d of list) {
       if (!isDocumentEligibleForPaymentBox(d)) continue;
       toPay += 1;
       totalKc += documentGrossForPayment(d);
-      if (getDocumentPaymentUrgency(d, todayIso) === "overdue") overdueDocuments += 1;
     }
     const invList = invoicesActiveList;
     for (const raw of invList) {
@@ -1051,13 +1170,65 @@ function DocumentsPageContent() {
       if (!Number.isFinite(gross) || gross <= 0) continue;
       toPay += 1;
       totalKc += roundMoney2(gross);
-      if (getPortalInvoicePaymentUrgency(inv, todayIso) === "overdue") {
-        overdueInvoices += 1;
-      }
     }
-    const overdueTotal = overdueDocuments + overdueInvoices;
-    return { toPay, overdueDocuments, overdueInvoices, overdueTotal, totalKc };
+    const overdueTargets = collectOverduePaymentFlashTargets(
+      financialDocumentsActive,
+      invList as Array<Record<string, unknown> & { id: string }>,
+      todayIso
+    );
+    const overdueDocuments = overdueTargets.filter((t) =>
+      t.flashRowKey.startsWith("doc:")
+    ).length;
+    const overdueInvoices = overdueTargets.filter((t) =>
+      t.flashRowKey.startsWith("inv:")
+    ).length;
+    const overdueTotal = overdueTargets.length;
+    return {
+      toPay,
+      overdueDocuments,
+      overdueInvoices,
+      overdueTotal,
+      totalKc,
+      overdueTargets,
+    };
   }, [financialDocumentsActive, invoicesActiveList, todayIso]);
+
+  const onPaymentOverdueSummaryClick = useCallback(() => {
+    if (paymentOverviewStats.overdueTotal <= 0) {
+      toast({
+        title: "Žádná položka po splatnosti",
+        description:
+          "Nemáte doklady ani faktury po splatnosti (neuhrazené se splatností před dneškem).",
+      });
+      return;
+    }
+    const targets = paymentOverviewStats.overdueTargets;
+    if (targets.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Neshoda souhrnu a výpisu",
+        description:
+          "Badge hlásí položky po splatnosti, ale ve výpisu se nenašly žádné odpovídající záznamy. Zkuste obnovit stránku.",
+      });
+      return;
+    }
+    setDocumentsPaymentFilter("overdue");
+    setReceivedSearch("");
+    setIssuedSearch("");
+    setPaymentTableMountKey((k) => k + 1);
+    const tab = pickDocumentsTabForOverdueTargets(targets);
+    const primary = targets[0];
+    paymentOverdueScrollRef.current = buildPaymentOverdueScrollDomId(
+      tab,
+      primary
+    );
+    setDocumentsMainTab(tab);
+    setPaymentFlashRowKey(primary.flashRowKey);
+  }, [
+    paymentOverviewStats.overdueTargets,
+    paymentOverviewStats.overdueTotal,
+    toast,
+  ]);
 
   const markDocumentPaid = async (row: CompanyDocumentRow) => {
     if (!companyId || !firestore || !user) return;
@@ -3129,18 +3300,7 @@ function DocumentsPageContent() {
               </span>
               <button
                 type="button"
-                onClick={() => {
-                  if (paymentOverviewStats.overdueTotal <= 0) {
-                    toast({
-                      title: "Žádná položka po splatnosti",
-                      description:
-                        "V této sekci nemáte žádné doklady ani faktury po splatnosti (neuhrazené se splatností před dneškem).",
-                    });
-                    return;
-                  }
-                  setDocumentsPaymentFilter("overdue");
-                  setDocumentsMainTab("all");
-                }}
+                onClick={onPaymentOverdueSummaryClick}
                 className={cn(
                   "inline-flex max-w-full flex-wrap items-baseline gap-x-1 rounded-md border px-2 py-1 text-left text-sm transition-colors",
                   paymentOverviewStats.overdueTotal > 0
@@ -3152,7 +3312,7 @@ function DocumentsPageContent() {
                 )}
                 title={
                   paymentOverviewStats.overdueTotal > 0
-                    ? `Doklady: ${paymentOverviewStats.overdueDocuments}, faktury: ${paymentOverviewStats.overdueInvoices}. Kliknutím nastavíte filtr v přehledech.`
+                    ? `Doklady: ${paymentOverviewStats.overdueDocuments}, faktury: ${paymentOverviewStats.overdueInvoices}. Kliknutím nastavíte filtr „po splatnosti“, zruší se hledání v tabulkách a zvýrazní se první položka.`
                     : "Kliknutím ověříte stav"
                 }
               >
@@ -3209,15 +3369,30 @@ function DocumentsPageContent() {
             className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-950"
           >
             <span>
-              Aktivní filtr: <strong>Po splatnosti</strong> — v tabulkách níže se zobrazují jen
-              neuhrazené položky po splatnosti (stejná logika jako u badge nahoře).
+              Aktivní filtr: <strong>Po splatnosti</strong> — v souhrnu shoda{" "}
+              <strong className="tabular-nums">
+                {paymentOverviewStats.overdueTotal}
+              </strong>{" "}
+              položek (doklady {paymentOverviewStats.overdueDocuments}, faktury{" "}
+              {paymentOverviewStats.overdueInvoices}). Stejná logika jako u badge
+              nahoře.
+              {paymentFlashRowKey ? (
+                <>
+                  {" "}
+                  Zvýrazněný řádek odpovídá první položce po splatnosti
+                  {paymentFlashRowKey.startsWith("inv:") ? " (faktura)" : ""}.
+                </>
+              ) : null}
             </span>
             <Button
               type="button"
               variant="outline"
               size="sm"
               className="shrink-0 border-red-300 bg-white text-red-900 hover:bg-red-100"
-              onClick={() => setDocumentsPaymentFilter("__all__")}
+              onClick={() => {
+                setDocumentsPaymentFilter("__all__");
+                setPaymentFlashRowKey(null);
+              }}
             >
               Zrušit filtr
             </Button>
@@ -3230,6 +3405,9 @@ function DocumentsPageContent() {
               Přijaté doklady
             </h2>
             <DocumentTableReceived
+              key={`dtr-all-rcv-${paymentTableMountKey}`}
+              flashDomScope="all-received"
+              paymentFlashRowKey={paymentFlashRowKey}
               data={receivedDocsBase}
               jobNamesById={jobNamesById}
               isLoading={isLoading}
@@ -3252,6 +3430,9 @@ function DocumentsPageContent() {
               Vydané doklady a faktury
             </h2>
             <DocumentTableIssued
+              key={`dti-all-iss-${paymentTableMountKey}`}
+              flashDomScope="all-issued"
+              paymentFlashRowKey={paymentFlashRowKey}
               data={issuedDocs}
               invoices={issuedInvoicesFiltered}
               isLoadingInvoices={isInvoicesLoading}
@@ -3276,6 +3457,9 @@ function DocumentsPageContent() {
 
         <TabsContent value="received">
           <DocumentTableReceived
+            key={`dtr-received-${paymentTableMountKey}`}
+            flashDomScope="received"
+            paymentFlashRowKey={paymentFlashRowKey}
             data={receivedDocsBase}
             jobNamesById={jobNamesById}
             isLoading={isLoading}
@@ -3296,6 +3480,9 @@ function DocumentsPageContent() {
 
         <TabsContent value="issued">
           <DocumentTableIssued
+            key={`dti-issued-${paymentTableMountKey}`}
+            flashDomScope="issued"
+            paymentFlashRowKey={paymentFlashRowKey}
             data={issuedDocs}
             invoices={issuedInvoicesFiltered}
             isLoadingInvoices={isInvoicesLoading}
@@ -3330,6 +3517,8 @@ function DocumentsPageContent() {
               Smazané přijaté doklady
             </h2>
             <DocumentTableReceived
+              flashDomScope="trash-received"
+              paymentFlashRowKey={null}
               data={receivedDocsBase}
               jobNamesById={jobNamesById}
               isLoading={isLoading}
@@ -3352,6 +3541,8 @@ function DocumentsPageContent() {
               Smazané vydané doklady a faktury
             </h2>
             <DocumentTableIssued
+              flashDomScope="trash-issued"
+              paymentFlashRowKey={null}
               data={issuedDocs}
               invoices={issuedInvoicesFiltered}
               isLoadingInvoices={isInvoicesLoading}
@@ -4316,6 +4507,8 @@ function DocumentTableReceived({
   showDeleteButton = true,
   paymentFilter,
   onPaymentFilterChange,
+  flashDomScope,
+  paymentFlashRowKey = null,
 }: {
   data: CompanyDocumentRow[];
   jobNamesById: Map<string, string>;
@@ -4334,6 +4527,9 @@ function DocumentTableReceived({
   showDeleteButton?: boolean;
   paymentFilter: string;
   onPaymentFilterChange: (v: string) => void;
+  /** Unikátní prefix pro id řádku (scroll z souhrnu „po splatnosti“). */
+  flashDomScope: string;
+  paymentFlashRowKey?: string | null;
 }) {
   const [jobFilter, setJobFilter] = useState<string>("__all__");
   const [jobAssignmentFilter, setJobAssignmentFilter] = useState<
@@ -4660,9 +4856,13 @@ function DocumentTableReceived({
               const iconBtn =
                 "h-10 w-10 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950 sm:h-7 sm:w-7 touch-manipulation";
 
+              const flashThisRow =
+                paymentFlashRowKey === `doc:${row.id}` && paymentFlashRowKey !== null;
+
               return (
                 <Fragment key={row.id}>
                 <div
+                  id={`payment-flash-${flashDomScope}-doc-${row.id}`}
                   className={cn(
                     receivedRowGrid,
                     "border-b border-gray-200 max-lg:rounded-lg max-lg:border",
@@ -4673,7 +4873,9 @@ function DocumentTableReceived({
                       "bg-amber-50/90",
                     !payHighlightClasses && fromJobMedia && "bg-sky-50/90",
                     showPendingHighlight &&
-                      "ring-1 ring-inset ring-amber-200"
+                      "ring-1 ring-inset ring-amber-200",
+                    flashThisRow &&
+                      "z-[1] ring-2 ring-amber-500 shadow-md transition-shadow duration-300"
                   )}
                 >
                   <div className="flex flex-wrap gap-1.5">
@@ -5022,6 +5224,8 @@ function DocumentTableIssued({
   todayIso,
   paymentFilter,
   onPaymentFilterChange,
+  flashDomScope,
+  paymentFlashRowKey = null,
 }: {
   data: CompanyDocumentRow[];
   invoices?: Array<Record<string, unknown> & { id: string }>;
@@ -5041,6 +5245,8 @@ function DocumentTableIssued({
   todayIso: string;
   paymentFilter: string;
   onPaymentFilterChange: (v: string) => void;
+  flashDomScope: string;
+  paymentFlashRowKey?: string | null;
 }) {
   const { toast } = useToast();
   const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
@@ -5210,14 +5416,20 @@ function DocumentTableIssued({
                 const issuedJobId = documentJobLinkId(docRow);
                 const issuedPr = docRow as CompanyDocumentPaymentRow;
                 const issuedHlCls = getDocumentStatusStyle(issuedPr);
+                const flashIssuedDoc =
+                  paymentFlashRowKey === `doc:${docRow.id}` &&
+                  paymentFlashRowKey !== null;
                 return (
                   <div
                     key={`doc-${docRow.id}`}
+                    id={`payment-flash-${flashDomScope}-doc-${docRow.id}`}
                     className={cn(
                       issuedRow,
                       "max-lg:rounded-lg max-lg:border",
                       issuedHlCls ||
-                        "text-gray-900 hover:bg-gray-50/80 max-lg:border-gray-200 max-lg:bg-white"
+                        "text-gray-900 hover:bg-gray-50/80 max-lg:border-gray-200 max-lg:bg-white",
+                      flashIssuedDoc &&
+                        "z-[1] ring-2 ring-amber-500 shadow-md transition-shadow duration-300"
                     )}
                   >
                     <div className="flex flex-wrap gap-1.5">
@@ -5398,14 +5610,20 @@ function DocumentTableIssued({
                 "Faktura";
               const cust = String(inv.customerName ?? "").trim() || "—";
               const invHlCls = getInvoiceDocumentStatusStyle(inv);
+              const flashIssuedInv =
+                paymentFlashRowKey === `inv:${inv.id}` &&
+                paymentFlashRowKey !== null;
               return (
                 <div
                   key={`inv-${inv.id}`}
+                  id={`payment-flash-${flashDomScope}-inv-${inv.id}`}
                   className={cn(
                     issuedRow,
                     "max-lg:rounded-lg max-lg:border",
                     invHlCls ||
-                      "text-gray-900 hover:bg-gray-50/80 max-lg:border-emerald-200 max-lg:bg-emerald-50/40 lg:border-l-2 lg:border-l-emerald-500/80"
+                      "text-gray-900 hover:bg-gray-50/80 max-lg:border-emerald-200 max-lg:bg-emerald-50/40 lg:border-l-2 lg:border-l-emerald-500/80",
+                    flashIssuedInv &&
+                      "z-[1] ring-2 ring-amber-500 shadow-md transition-shadow duration-300"
                   )}
                 >
                   <div className="flex flex-wrap gap-1.5">
