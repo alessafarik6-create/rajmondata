@@ -230,6 +230,15 @@
       "collectionGroup": "mail_dispatch_queue",
       "queryScope": "COLLECTION",
       "fields": [{ "fieldPath": "sendAt", "order": "ASCENDING" }]
+    },
+    {
+      "collectionGroup": "documents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "documentType", "order": "ASCENDING" },
+        { "fieldPath": "assignmentType", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

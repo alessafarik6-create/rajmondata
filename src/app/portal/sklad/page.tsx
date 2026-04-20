@@ -469,34 +469,53 @@ export default function SkladPage() {
     try {
       let outboundMovementId: string | null = null;
       let outboundItemName = "";
+      /** ID pohybu musí být známé před zápisem do výroby (movementId na řádku materiálu). */
+      const movRef = doc(
+        collection(firestore, "companies", companyId, "inventoryMovements")
+      );
+      outboundMovementId = movRef.id;
+
       await runTransaction(firestore, async (tx) => {
-        const itemRef = doc(firestore, "companies", companyId, "inventoryItems", outItemId);
+        const itemRef = doc(
+          firestore,
+          "companies",
+          companyId,
+          "inventoryItems",
+          outItemId
+        );
         const itemSnap = await tx.get(itemRef);
-        if (!itemSnap.exists()) throw new Error("Položka neexistuje.");
+        if (!itemSnap.exists()) {
+          throw new Error("Načtení skladu: položka neexistuje.");
+        }
         const d = itemSnap.data() as InventoryItemRow;
         if (d.isDeleted === true) {
-          throw new Error("Tato položka byla odstraněna z přehledu.");
+          throw new Error("Načtení skladu: položka byla odstraněna z přehledu.");
         }
         const prev = Number(d.quantity ?? 0);
-        if (prev < qty) throw new Error("Nedostatek na skladě.");
+        if (prev < qty) {
+          throw new Error("Na skladě není dostatek materiálu (odečíst nelze více než je skladem).");
+        }
         const unit = d.unit || "ks";
         const itemName = d.name;
-
-        tx.update(itemRef, {
-          quantity: prev - qty,
-          updatedAt: serverTimestamp(),
-        });
-
-        const movRef = doc(collection(firestore, "companies", companyId, "inventoryMovements"));
-        outboundMovementId = movRef.id;
         outboundItemName = itemName;
+
         const movType = outToProduction ? "out_to_production" : "out";
         let productionTitle: string | null = null;
+        let prodRef: ReturnType<typeof doc> | null = null;
+        let nextMaterials: unknown[] | null = null;
 
         if (outToProduction && outProductionId) {
-          const prodRef = doc(firestore, "companies", companyId, "production", outProductionId);
+          prodRef = doc(
+            firestore,
+            "companies",
+            companyId,
+            "production",
+            outProductionId
+          );
           const pSnap = await tx.get(prodRef);
-          if (!pSnap.exists()) throw new Error("Výroba nenalezena.");
+          if (!pSnap.exists()) {
+            throw new Error("Načtení výroby: záznam nenalezen nebo byl smazán.");
+          }
           const p = pSnap.data() as { title?: string; materials?: unknown[] };
           productionTitle = (p.title as string) || "";
           const materials = Array.isArray(p.materials) ? [...p.materials] : [];
@@ -507,9 +526,19 @@ export default function SkladPage() {
             quantity: qty,
             unit,
             addedAt: new Date().toISOString(),
+            addedBy: user.uid,
           });
+          nextMaterials = materials;
+        }
+
+        tx.update(itemRef, {
+          quantity: prev - qty,
+          updatedAt: serverTimestamp(),
+        });
+
+        if (prodRef && nextMaterials != null) {
           tx.update(prodRef, {
-            materials,
+            materials: nextMaterials,
             updatedAt: serverTimestamp(),
           });
         }
@@ -549,10 +578,19 @@ export default function SkladPage() {
       setOutOpen(false);
       resetOut();
     } catch (e) {
+      const raw = e instanceof Error ? e.message : String(e);
+      console.error("[sklad vyskladnění]", raw, e);
+      let description = raw;
+      if (raw.includes("all reads to be executed before all writes")) {
+        description =
+          "Chyba synchronizace zápisu (transakce). Zkuste uložit znovu; pokud problém přetrvá, dejte vědět podpoře.";
+      } else if (raw.includes("Načtení skladu:") || raw.includes("Načtení výroby:")) {
+        description = raw;
+      }
       toast({
         variant: "destructive",
-        title: "Chyba",
-        description: e instanceof Error ? e.message : "Uložení se nezdařilo.",
+        title: "Vyskladnění se nezdařilo",
+        description,
       });
     } finally {
       setSaving(false);

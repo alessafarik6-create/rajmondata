@@ -14,6 +14,8 @@ export type ProductionMaterialLine = {
   quantity: number;
   unit: string;
   addedAt: string;
+  /** Firebase Auth uid — kdo provedl vyskladnění do výroby. */
+  addedBy?: string;
 };
 
 export type ProductionRecordRow = {

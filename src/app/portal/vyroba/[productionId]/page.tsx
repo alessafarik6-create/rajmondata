@@ -338,17 +338,47 @@ export default function VyrobaDetailPage() {
               Sklad.
             </p>
           ) : (
-            materials.map((m: any, idx: number) => (
-              <div
-                key={`${m.movementId || idx}-${m.itemId}`}
-                className="rounded-md border border-slate-200 p-3 text-sm text-slate-800"
-              >
-                <span className="font-medium">{m.itemName}</span> — {m.quantity} {m.unit}
-                {m.movementId ? (
-                  <span className="text-xs text-slate-500 block mt-1">Pohyb: {m.movementId}</span>
-                ) : null}
-              </div>
-            ))
+            materials.map((m: any, idx: number) => {
+              const when =
+                typeof m.addedAt === "string" && m.addedAt.trim()
+                  ? (() => {
+                      const d = new Date(m.addedAt);
+                      return Number.isNaN(d.getTime())
+                        ? m.addedAt
+                        : d.toLocaleString("cs-CZ");
+                    })()
+                  : null;
+              const by =
+                typeof m.addedBy === "string" && m.addedBy.trim()
+                  ? m.addedBy.trim()
+                  : null;
+              return (
+                <div
+                  key={`${m.movementId || idx}-${m.itemId}`}
+                  className="rounded-md border border-slate-200 p-3 text-sm text-slate-800"
+                >
+                  <span className="font-medium">{m.itemName}</span> — {m.quantity} {m.unit}
+                  {m.itemId ? (
+                    <span className="text-xs text-slate-500 block mt-1">
+                      Skladová položka (ID): {m.itemId}
+                    </span>
+                  ) : null}
+                  {when ? (
+                    <span className="text-xs text-slate-500 block mt-0.5">Vyskladněno: {when}</span>
+                  ) : null}
+                  {by ? (
+                    <span className="text-xs text-slate-500 block mt-0.5">
+                      Uživatel (uid): {by}
+                    </span>
+                  ) : null}
+                  {m.movementId ? (
+                    <span className="text-xs text-slate-500 block mt-0.5">
+                      Pohyb skladu: {m.movementId}
+                    </span>
+                  ) : null}
+                </div>
+              );
+            })
           )}
         </CardContent>
       </Card>
