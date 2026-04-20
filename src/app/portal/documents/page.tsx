@@ -2472,22 +2472,13 @@ function DocumentsPageContent() {
         });
       }
 
-      const docRef = doc(
-        firestore,
-        "companies",
-        companyId,
-        "documents",
-        editRow.id
+      await updateDoc(
+        doc(firestore, "companies", companyId, "documents", editRow.id),
+        basePayload as unknown as UpdateData<DocumentData>
       );
-      await updateDoc(docRef, basePayload as unknown as UpdateData<DocumentData>);
-      const serverSnap = await getDoc(docRef);
-      if (!serverSnap.exists()) {
-        throw new Error("Doklad po uložení nebyl v databázi nalezen.");
-      }
-      const serverData = serverSnap.data() as CompanyDocumentRow;
       const afterForExpense: CompanyDocumentExpenseReconcileBefore = {
         ...editRow,
-        ...serverData,
+        ...basePayload,
         id: editRow.id,
       };
       await reconcileCompanyDocumentJobExpense({
@@ -2516,14 +2507,13 @@ function DocumentsPageContent() {
       setEditOpen(false);
       setEditRow(null);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error("[documents saveEditDocument]", msg, err);
+      const msg =
+        err instanceof Error ? err.message : "Nepodařilo se uložit změny dokladu.";
+      console.error("[documents saveEditDocument]", err);
       toast({
         variant: "destructive",
         title: "Chyba při ukládání dokladu",
-        description:
-          msg.trim() ||
-          "Nepodařilo se uložit změny. Zkontrolujte oprávnění, síť a konzoli pro detail.",
+        description: msg,
       });
     } finally {
       setIsEditSaving(false);
