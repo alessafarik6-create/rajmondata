@@ -493,13 +493,13 @@ export async function reconcileCompanyDocumentJobExpense(params: {
     docPatch.linkedExpenseId = deleteField();
   }
   if (patchedAlloc) {
+    const mode = documentJobCostAllocationMode(after as Record<string, unknown>);
     docPatch.jobCostAllocations = patchedAlloc;
     docPatch.allocations = allocationsMirrorForDocument(
       patchedAlloc as JobCostAllocationRow[]
     );
-    docPatch.allocationMode = documentJobCostAllocationMode(
-      after as Record<string, unknown>
-    );
+    docPatch.allocationMode = mode;
+    docPatch.jobCostAllocationMode = mode;
   }
   await updateDoc(docRef, docPatch as UpdateData<DocumentData>);
 }

@@ -161,14 +161,19 @@ export function resolveJobCostAllocationsFromDocument(doc: {
   return { mode, rows: [], usesExplicitAllocations: false };
 }
 
-/** Zjednodušený zápis pro export / alias pole `allocations` na dokumentu. */
+/** Zrcadlo pole `allocations` na dokumentu — včetně id/kind kvůli stabilnímu načtení z DB. */
 export function allocationsMirrorForDocument(rows: JobCostAllocationRow[]): {
+  id: string;
+  kind: "job" | "overhead";
   jobId: string | null;
   percent: number | null;
   amount: number | null;
   note: string;
+  linkedExpenseId: string | null;
 }[] {
   return rows.map((r) => ({
+    id: r.id,
+    kind: r.kind,
     jobId: r.kind === "job" ? r.jobId?.trim() ?? null : null,
     percent:
       r.percent != null && Number.isFinite(Number(r.percent))
@@ -179,6 +184,10 @@ export function allocationsMirrorForDocument(rows: JobCostAllocationRow[]): {
         ? roundMoney2(Number(r.amount))
         : null,
     note: r.note?.trim() ? String(r.note) : "",
+    linkedExpenseId:
+      typeof r.linkedExpenseId === "string" && r.linkedExpenseId.trim()
+        ? r.linkedExpenseId.trim()
+        : null,
   }));
 }
 
