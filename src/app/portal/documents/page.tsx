@@ -1989,7 +1989,11 @@ function DocumentsPageContent() {
       dueDate: row.dueDate?.trim() ?? "",
     });
     const resolved = resolveJobCostAllocationsFromDocument(row);
-    if (resolved.usesExplicitAllocations && resolved.rows.length > 0) {
+    if (
+      isReceivedDoc(row) &&
+      resolved.usesExplicitAllocations &&
+      resolved.rows.length > 0
+    ) {
       setEditSplitToJobs(true);
       setEditAllocMode(resolved.mode);
       setEditAllocRows(
@@ -2184,7 +2188,9 @@ function DocumentsPageContent() {
         });
       }
 
-      if (editSplitToJobs) {
+      const applyJobCostSplit =
+        editSplitToJobs && editRow && isReceivedDoc(editRow);
+      if (applyJobCostSplit) {
         const dupCheck = new Map<string, number>();
         for (const ar of editAllocRows) {
           if (ar.kind !== "job") continue;
@@ -3746,6 +3752,8 @@ function DocumentsPageContent() {
               </div>
             ) : (
               <div className="space-y-3 rounded-lg border border-border p-3">
+                {editRow && isReceivedDoc(editRow) ? (
+                  <>
                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                   <div className="space-y-0.5 min-w-0">
                     <Label htmlFor="edit-split-jobs">Rozdělení nákladu na zakázky</Label>
@@ -3829,7 +3837,7 @@ function DocumentsPageContent() {
                           <span
                             className={cn(
                               "font-medium tabular-nums",
-                              Math.abs(editSplitRemainder.value) <= 0.02
+                              Math.abs(editSplitRemainder.value) <= 0.05
                                 ? "text-emerald-700"
                                 : "text-amber-900"
                             )}
@@ -3841,7 +3849,7 @@ function DocumentsPageContent() {
                           <span
                             className={cn(
                               "font-medium tabular-nums",
-                              Math.abs(editSplitRemainder.value) <= 0.02
+                              Math.abs(editSplitRemainder.value) <= 0.05
                                 ? "text-emerald-700"
                                 : "text-amber-900"
                             )}
@@ -4090,7 +4098,7 @@ function DocumentsPageContent() {
                               <span
                                 className={cn(
                                   "font-semibold",
-                                  Math.abs(editAllocSavePreview.remainderCzk) <= 0.02
+                                  Math.abs(editAllocSavePreview.remainderCzk) <= 0.05
                                     ? "text-emerald-700"
                                     : "text-amber-900"
                                 )}
@@ -4104,7 +4112,7 @@ function DocumentsPageContent() {
                               <span
                                 className={cn(
                                   "font-semibold",
-                                  Math.abs(editAllocSavePreview.sumPct - 100) <= 0.02
+                                  Math.abs(editAllocSavePreview.sumPct - 100) <= 0.05
                                     ? "text-emerald-700"
                                     : "text-amber-900"
                                 )}
@@ -4128,9 +4136,21 @@ function DocumentsPageContent() {
                       </div>
                     ) : null}
                   </div>
-                ) : (
+                ) : null}
+                  </>
+                ) : null}
+                {!editRow ||
+                !isReceivedDoc(editRow) ||
+                !editSplitToJobs ? (
                   <>
-                    <div className="space-y-2 border-t border-border pt-3">
+                    <div
+                      className={cn(
+                        "space-y-2",
+                        editRow && isReceivedDoc(editRow)
+                          ? "border-t border-border pt-3"
+                          : ""
+                      )}
+                    >
                       <Label>Zakázka</Label>
                       <Select
                         value={editForm.zakazkaId || "__none__"}
@@ -4181,7 +4201,7 @@ function DocumentsPageContent() {
                       ) : null}
                     </div>
                   </>
-                )}
+                ) : null}
               </div>
             )}
             <DialogFooter className="gap-2 sm:gap-0">

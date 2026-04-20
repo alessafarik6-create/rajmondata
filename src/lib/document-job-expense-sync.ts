@@ -289,6 +289,16 @@ export async function reconcileCompanyDocumentJobExpense(params: {
   }
 
   if (!nextActive) {
+    /** U vydaných / zrcadel se náklady v jobs/.../expenses netvoří — nesmíme přepsat uložené rozdělení. */
+    const isReceivedCostDoc =
+      after.type === "received" ||
+      after.documentKind === "prijate" ||
+      (after.type !== "issued" &&
+        after.type !== "vydane" &&
+        after.documentKind !== "vydane");
+    if (!isReceivedCostDoc) {
+      return;
+    }
     const patch: Record<string, unknown> = {
       updatedAt: serverTimestamp(),
     };

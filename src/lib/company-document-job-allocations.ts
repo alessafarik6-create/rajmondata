@@ -22,7 +22,8 @@ export type JobCostAllocationRow = {
   linkedExpenseId?: string | null;
 };
 
-const SUM_EPS = 0.02;
+/** Tolerance zaokrouhlení (Kč / %) — příliš přísná hodnota blokovala uložení po přepočtu DPH. */
+const SUM_EPS = 0.05;
 
 /** Hrubý základ v CZK pro rozdělení (shodně s náklady v zakázce). */
 export function allocationBasisGrossCzk(doc: DocAmountFields): number {
@@ -39,14 +40,34 @@ export function makeJobCostAllocationId(): string {
   return `jca_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 9)}`;
 }
 
+/**
+ * Firestore / starší importy občas uloží „pole“ jako mapu { "0": row, "1": row }.
+ * Bez převodu by `Array.isArray` selhalo a rozdělení by se nenačetlo ani nepropsalo.
+ */
+function coerceFirestoreAllocationArray(raw: unknown): unknown[] {
+  if (raw == null) return [];
+  if (Array.isArray(raw)) return raw;
+  if (typeof raw === "object") {
+    const o = raw as Record<string, unknown>;
+    const keys = Object.keys(o).filter((k) => /^\d+$/.test(k));
+    if (keys.length > 0) {
+      return keys
+        .sort((a, b) => Number(a) - Number(b))
+        .map((k) => o[k])
+        .filter((x) => x != null);
+    }
+  }
+  return [];
+}
+
 /** Pole alokací z dokumentu — primárně `jobCostAllocations`, alternativně `allocations`. */
 export function documentJobCostAllocationsArray(
   doc: Record<string, unknown>
 ): unknown[] {
-  const primary = doc.jobCostAllocations;
-  if (Array.isArray(primary) && primary.length > 0) return primary;
-  const alt = doc.allocations;
-  if (Array.isArray(alt) && alt.length > 0) return alt;
+  const primary = coerceFirestoreAllocationArray(doc.jobCostAllocations);
+  if (primary.length > 0) return primary;
+  const alt = coerceFirestoreAllocationArray(doc.allocations);
+  if (alt.length > 0) return alt;
   return [];
 }
 
