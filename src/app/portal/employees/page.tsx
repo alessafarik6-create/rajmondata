@@ -73,6 +73,7 @@ import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
 import {
+  releaseDocumentModalLocks,
   releaseDocumentModalLocksAfterTransition,
 } from "@/lib/release-modal-locks";
 import {
@@ -104,19 +105,25 @@ function releaseModalLocksAfterDismiss() {
  * — viz radix-ui/primitives#3300. Vždy volat uvolnění zámků při programovém dismissu.
  */
 function dismissWithModalLockRelease(close: () => void): void {
+  releaseDocumentModalLocks();
   close();
   releaseModalLocksAfterDismiss();
 }
 
-/** Otevření dialogu hned po kliknutí v DropdownMenu koliduje s Radix focus/pointer-events — počkej na zavření menu. */
+/**
+ * Otevření Dialogu ve stejném tiktu jako zavření DropdownMenu nechává Radix v rozporu
+ * (focus scope, pointer-events na body). Počkáme na dokončení dismiss menu.
+ */
 function runAfterDropdownMenuCloses(fn: () => void): void {
   if (typeof window === "undefined") {
     fn();
     return;
   }
-  window.requestAnimationFrame(() => {
-    window.requestAnimationFrame(fn);
-  });
+  window.setTimeout(() => {
+    window.requestAnimationFrame(() => {
+      fn();
+    });
+  }, 1);
 }
 
 /** Porovnání množin ID — zabrání zbytečným setState při stejném obsahu. */
@@ -190,6 +197,11 @@ export default function EmployeesPage() {
         .allowEmployeeBankAccountSelfEdit === true);
 
   const [companySelfBankSaving, setCompanySelfBankSaving] = useState(false);
+
+  /** Řízené menu „tři tečky“ — zabrání rozporu stavu s Dialogem po zavření. */
+  const [employeeActionMenuOpenId, setEmployeeActionMenuOpenId] = useState<
+    string | null
+  >(null);
 
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [inviteData, setInviteData] = useState({
@@ -1049,7 +1061,10 @@ export default function EmployeesPage() {
               open={isInviteOpen}
               onOpenChange={(open) => {
                 setIsInviteOpen(open);
-                if (!open) releaseModalLocksAfterDismiss();
+                if (!open) {
+                  releaseDocumentModalLocks();
+                  releaseModalLocksAfterDismiss();
+                }
               }}
             >
               <DialogTrigger asChild>
@@ -1058,7 +1073,6 @@ export default function EmployeesPage() {
                 </Button>
               </DialogTrigger>
               <DialogContent
-                onCloseAutoFocus={(e) => e.preventDefault()}
                 className="max-w-xl border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
               >
                 <DialogHeader>
@@ -1251,7 +1265,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg"
         >
           <DialogHeader>
@@ -1508,7 +1521,13 @@ export default function EmployeesPage() {
                     </TableCell>
                     <TableCell className="pr-6 text-right">
                       {canManage || canResetEmployeeAuthPassword ? (
-                        <DropdownMenu modal={false}>
+                        <DropdownMenu
+                          modal={false}
+                          open={employeeActionMenuOpenId === emp.id}
+                          onOpenChange={(open) =>
+                            setEmployeeActionMenuOpenId(open ? emp.id : null)
+                          }
+                        >
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
@@ -1594,9 +1613,11 @@ export default function EmployeesPage() {
                                 </DropdownMenuLabel>
                                 <DropdownMenuItem
                                   onSelect={() => {
-                                    router.push(
-                                      `/portal/labor/vyplaty?employee=${encodeURIComponent(emp.id)}`
-                                    );
+                                    runAfterDropdownMenuCloses(() => {
+                                      void router.push(
+                                        `/portal/labor/vyplaty?employee=${encodeURIComponent(emp.id)}`
+                                      );
+                                    });
                                   }}
                                 >
                                   <DollarSign className="w-4 h-4 mr-2" /> Výplaty
@@ -1711,7 +1732,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
         >
           <DialogHeader>
@@ -1757,7 +1777,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-lg max-h-[90vh] overflow-y-auto border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
         >
           <DialogHeader>
@@ -1905,7 +1924,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
         >
           <DialogHeader>
@@ -1982,7 +2000,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
         >
           <DialogHeader>
@@ -2057,7 +2074,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
         >
           <DialogHeader>
@@ -2129,7 +2145,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
         >
           <DialogHeader>
@@ -2177,7 +2192,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg"
         >
           <DialogHeader>
@@ -2270,7 +2284,6 @@ export default function EmployeesPage() {
         }}
       >
         <DialogContent
-          onCloseAutoFocus={(e) => e.preventDefault()}
           className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg"
         >
           <DialogHeader>

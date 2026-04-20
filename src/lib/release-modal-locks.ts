@@ -7,6 +7,8 @@ export function releaseDocumentModalLocks(): void {
   document.body.style.removeProperty("pointer-events");
   document.body.style.removeProperty("overflow");
   document.documentElement.style.removeProperty("overflow");
+  document.body.removeAttribute("inert");
+  document.documentElement.removeAttribute("inert");
 }
 
 /**
