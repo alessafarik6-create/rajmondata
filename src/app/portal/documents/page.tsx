@@ -1432,12 +1432,28 @@ function DocumentsPageContent() {
           return;
         }
         const pa2 = roundMoney2(pa);
-        if (!(pa2 > 0 && pa2 < totalGross)) {
+        if (pa2 <= 0) {
           toast({
             variant: "destructive",
-            title: "Neplatná částečná úhrada",
+            title: "Neplatná uhrazená částka",
+            description: "U částečné úhrady zadejte částku větší než 0.",
+          });
+          return;
+        }
+        if (pa2 > totalGross) {
+          toast({
+            variant: "destructive",
+            title: "Příliš vysoká úhrada",
             description:
-              "Uhrazená částka musí být větší než 0 a menší než celková částka dokladu.",
+              "Uhrazená částka nesmí překročit celkovou částku dokladu (s DPH).",
+          });
+          return;
+        }
+        if (pa2 >= totalGross) {
+          toast({
+            variant: "destructive",
+            title: "Plná částka",
+            description: 'Pro celou výši dokladu zvolte stav „Uhrazeno“.',
           });
           return;
         }
@@ -1549,6 +1565,9 @@ function DocumentsPageContent() {
         paymentMethod,
         paymentNote,
         paid: paymentStatus === "paid",
+        ...(paymentStatus === "paid" || paymentStatus === "partial"
+          ? { paidBy: user.uid }
+          : {}),
         isDeleted: false,
       });
 
@@ -2758,75 +2777,75 @@ function DocumentsPageContent() {
                     />
                   </div>
                   {newDocKind !== "delivery_note" ? (
-                  <div className="space-y-3 sm:col-span-2 rounded-lg border border-border p-3">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <Label htmlFor="requires-payment-new" className="text-base">
-                          K úhradě
+                    <div className="space-y-3 sm:col-span-2 rounded-lg border-2 border-primary/25 bg-primary/[0.04] p-3 shadow-sm">
+                      <div className="space-y-1">
+                        <Label className="text-base font-semibold text-gray-950">
+                          Stav úhrady (před uložením)
                         </Label>
                         <p className="text-xs text-muted-foreground">
-                          Zobrazí v přehledu Nutno uhradit na hlavní stránce (vyžaduje částku).
+                          Stejná pole jako při pozdějším „Označit jako zaplaceno“. Neuhrazeno = bez
+                          údajů o platbě.
                         </p>
                       </div>
-                      <Switch
-                        id="requires-payment-new"
-                        checked={formData.requiresPayment}
-                        onCheckedChange={(v) =>
-                          setFormData({ ...formData, requiresPayment: v })
-                        }
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="due-date-new">Splatnost</Label>
-                      <Input
-                        id="due-date-new"
-                        type="date"
-                        value={formData.dueDate}
-                        onChange={(e) =>
-                          setFormData({ ...formData, dueDate: e.target.value })
-                        }
-                        className="bg-background"
-                      />
-                    </div>
-                  </div>
-                  ) : null}
-                  {newDocKind !== "delivery_note" ? (
-                    <div className="space-y-3 sm:col-span-2 rounded-lg border border-border p-3">
-                      <div className="space-y-1">
-                        <Label className="text-base">Úhrada</Label>
-                        <p className="text-xs text-muted-foreground">
-                          Lze nastavit už při vytvoření. Pokud chybí, bere se jako neuhrazeno.
-                        </p>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Stav úhrady</Label>
-                        <Select
-                          value={formData.paymentStatus}
-                          onValueChange={(v) =>
+                      <div
+                        className="flex flex-col gap-2 sm:flex-row"
+                        role="group"
+                        aria-label="Stav úhrady dokladu"
+                      >
+                        <Button
+                          type="button"
+                          variant={formData.paymentStatus === "unpaid" ? "default" : "outline"}
+                          className={cn(
+                            "min-h-11 flex-1 touch-manipulation sm:min-h-9",
+                            formData.paymentStatus === "unpaid" && "shadow-sm"
+                          )}
+                          onClick={() =>
                             setFormData({
                               ...formData,
-                              paymentStatus:
-                                v === "paid" || v === "partial" ? (v as "paid" | "partial") : "unpaid",
-                              paidAt:
-                                v === "paid" || v === "partial"
-                                  ? formData.paidAt || todayIso
-                                  : "",
-                              paidAmount:
-                                v === "partial"
-                                  ? formData.paidAmount
-                                  : "",
+                              paymentStatus: "unpaid",
+                              paidAt: "",
+                              paidAmount: "",
                             })
                           }
                         >
-                          <SelectTrigger className="bg-background">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="unpaid">Neuhrazeno</SelectItem>
-                            <SelectItem value="partial">Částečně uhrazeno</SelectItem>
-                            <SelectItem value="paid">Uhrazeno</SelectItem>
-                          </SelectContent>
-                        </Select>
+                          Neuhrazeno
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={formData.paymentStatus === "partial" ? "default" : "outline"}
+                          className={cn(
+                            "min-h-11 flex-1 touch-manipulation sm:min-h-9",
+                            formData.paymentStatus === "partial" && "shadow-sm"
+                          )}
+                          onClick={() =>
+                            setFormData({
+                              ...formData,
+                              paymentStatus: "partial",
+                              paidAt: formData.paidAt || todayIso,
+                              paidAmount: formData.paidAmount,
+                            })
+                          }
+                        >
+                          Částečně uhrazeno
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={formData.paymentStatus === "paid" ? "default" : "outline"}
+                          className={cn(
+                            "min-h-11 flex-1 touch-manipulation sm:min-h-9",
+                            formData.paymentStatus === "paid" && "shadow-sm"
+                          )}
+                          onClick={() =>
+                            setFormData({
+                              ...formData,
+                              paymentStatus: "paid",
+                              paidAt: formData.paidAt || todayIso,
+                              paidAmount: "",
+                            })
+                          }
+                        >
+                          Uhrazeno
+                        </Button>
                       </div>
 
                       {formData.paymentStatus === "paid" || formData.paymentStatus === "partial" ? (
@@ -2924,6 +2943,46 @@ function DocumentsPageContent() {
                           ) : null}
                         </div>
                       ) : null}
+                      {formData.paymentStatus === "paid" && newDocGrossPreview > 0 ? (
+                        <p className="text-xs text-muted-foreground tabular-nums">
+                          Při uložení se nastaví úhrada v plné výši{" "}
+                          {newDocGrossPreview.toLocaleString("cs-CZ")}{" "}
+                          {formData.currency === "EUR" ? "€" : "Kč"} (s DPH).
+                        </p>
+                      ) : null}
+                    </div>
+                  ) : null}
+                  {newDocKind !== "delivery_note" ? (
+                    <div className="space-y-3 sm:col-span-2 rounded-lg border border-border p-3">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <Label htmlFor="requires-payment-new" className="text-base">
+                            K úhradě
+                          </Label>
+                          <p className="text-xs text-muted-foreground">
+                            Zobrazí v přehledu Nutno uhradit na hlavní stránce (vyžaduje částku).
+                          </p>
+                        </div>
+                        <Switch
+                          id="requires-payment-new"
+                          checked={formData.requiresPayment}
+                          onCheckedChange={(v) =>
+                            setFormData({ ...formData, requiresPayment: v })
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="due-date-new">Splatnost</Label>
+                        <Input
+                          id="due-date-new"
+                          type="date"
+                          value={formData.dueDate}
+                          onChange={(e) =>
+                            setFormData({ ...formData, dueDate: e.target.value })
+                          }
+                          className="bg-background"
+                        />
+                      </div>
                     </div>
                   ) : null}
                   <div className="space-y-2 sm:col-span-2">
