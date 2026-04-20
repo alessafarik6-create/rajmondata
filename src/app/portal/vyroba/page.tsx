@@ -195,6 +195,14 @@ export default function VyrobaListPage() {
           <p className="portal-page-description text-slate-700 mt-1">
             Výrobní záznamy, zakázky, materiál ze skladu a podklady v detailu záznamu.
           </p>
+          {role === "employee" ? (
+            <p className="mt-2 text-sm">
+              <Link href="/portal/vyroba/zakazky" className="text-primary font-medium underline-offset-4 hover:underline">
+                Moje zakázky ve výrobě
+              </Link>
+              <span className="text-slate-600"> — přiřazené realizace bez obchodních údajů a výdej materiálu.</span>
+            </p>
+          ) : null}
         </div>
         <Button
           type="button"

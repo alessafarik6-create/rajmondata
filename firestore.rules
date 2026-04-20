@@ -157,6 +157,53 @@ service cloud.firestore {
         jobId in get(empRef).data.assignedTerminalJobIds;
     }
 
+    /** Zakázka přiřazená pro výrobu / montáž (pole na dokumentu zakázky). */
+    function jobAssignedForProduction(companyId, jobId) {
+      let jobPath = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId);
+      return ownEmployeeId() != null &&
+        exists(jobPath) &&
+        'productionAssignedEmployeeIds' in get(jobPath).data &&
+        get(jobPath).data.productionAssignedEmployeeIds is list &&
+        ownEmployeeId() in get(jobPath).data.productionAssignedEmployeeIds;
+    }
+
+    /** Čtení skladu pro výdej ve výrobě — zaměstnanec s moduly Sklad nebo Výroba. */
+    function inventoryReadForProductionOrWarehouse(companyId) {
+      return signedIn() && sameCompany(companyId) && (
+        warehouseModuleUser(companyId) ||
+        (
+          userRole() == 'employee' &&
+          ownEmployeeId() != null &&
+          employeeProductionFlag(companyId)
+        ) ||
+        isSuperAdminFirebase()
+      );
+    }
+
+    /** Složka zakázky viditelná výrobnímu týmu (mimo typ documents). */
+    function folderDocProductionTeamVisible(companyId, jobId, folderId) {
+      let fp = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/folders/$(folderId);
+      let jp = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId);
+      return exists(fp) && exists(jp) &&
+        get(fp).data.type != 'documents' &&
+        (
+          ('productionTeamVisible' in get(fp).data && get(fp).data.productionTeamVisible == true) ||
+          (
+            'productionVisibleFolderIds' in get(jp).data &&
+            get(jp).data.productionVisibleFolderIds is list &&
+            folderId in get(jp).data.productionVisibleFolderIds
+          )
+        );
+    }
+
+    function jobProductionMediaReader(companyId, jobId) {
+      return signedIn() && sameCompany(companyId) &&
+        userRole() == 'employee' &&
+        ownEmployeeId() != null &&
+        employeeProductionFlag(companyId) &&
+        jobAssignedForProduction(companyId, jobId);
+    }
+
     /** Přístup člena zakázky — documents/.../jobs/{jobId}/jobMembers/{employeeId} */
     function jobMemberPathForEmp(companyId, jobId, memberEmpId) {
       return /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/jobMembers/$(memberEmpId);
@@ -430,7 +477,8 @@ service cloud.firestore {
 
       /** Sklad — položky a pohyby */
       match /inventoryItems/{itemId} {
-        allow read, write: if warehouseModuleUser(companyId);
+        allow read: if inventoryReadForProductionOrWarehouse(companyId);
+        allow write: if warehouseModuleUser(companyId);
       }
 
       /**
@@ -455,7 +503,8 @@ service cloud.firestore {
       }
 
       match /inventoryMovements/{movId} {
-        allow read, write: if warehouseModuleUser(companyId);
+        allow read: if inventoryReadForProductionOrWarehouse(companyId);
+        allow write: if warehouseModuleUser(companyId);
       }
 
       /**
@@ -647,6 +696,18 @@ service cloud.firestore {
             jobDetailReadAccess(companyId, jobId) &&
             !jobEmployeeMustUseSummaryOnly(companyId, jobId));
         allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+
+        /**
+         * Spotřeba materiálu na zakázce — zápis přes API (Admin SDK); čtení výroba / vedení.
+         * companies/{companyId}/jobs/{jobId}/materialConsumptions/{consumptionId}
+         */
+        match /materialConsumptions/{consumptionId} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          );
+          allow write: if false;
+        }
 
         /** Bezpečný náhled zakázky pro zaměstnance (bez rozpočtu). */
         match /employeeSummary/summary {
@@ -1112,6 +1173,8 @@ service cloud.firestore {
             jobFinancialReadAccess(companyId, jobId) ||
             (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
               folderDocEmployeeVisible(companyId, jobId, folderId)) ||
+            (jobProductionMediaReader(companyId, jobId) &&
+              folderDocProductionTeamVisible(companyId, jobId, folderId)) ||
             (customerPortalLinkedJob(companyId, jobId) &&
               resource.data.internalOnly != true &&
               resource.data.customerVisible == true &&
@@ -1138,6 +1201,9 @@ service cloud.firestore {
                 folderDocEmployeeVisible(companyId, jobId, folderId) &&
                 (!('employeeVisible' in resource.data) ||
                   resource.data.employeeVisible == true)) ||
+              (jobProductionMediaReader(companyId, jobId) &&
+                folderDocProductionTeamVisible(companyId, jobId, folderId) &&
+                (!(resource.data.internalOnly is bool) || resource.data.internalOnly != true)) ||
               jobMediaCustomerPortalImageReadOk(companyId, jobId, folderId);
             allow create: if (jobFinancialReadAccess(companyId, jobId) &&
                 request.resource.data.companyId == companyId &&

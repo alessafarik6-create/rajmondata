@@ -14,6 +14,7 @@ import {
   Factory,
   Briefcase,
   Bell,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/ui/logo";
@@ -160,7 +161,16 @@ export function EmployeePortalSidebar({
             ]
           : []),
       ...(showSklad ? [{ label: "Sklad", href: "/portal/sklad", icon: Package }] : []),
-      ...(showVyroba ? [{ label: "Výroba", href: "/portal/vyroba", icon: Factory }] : []),
+      ...(showVyroba
+        ? [
+            { label: "Výroba", href: "/portal/vyroba", icon: Factory },
+            {
+              label: "Zakázky ve výrobě",
+              href: "/portal/vyroba/zakazky",
+              icon: ClipboardList,
+            },
+          ]
+        : []),
       ...(v.penize
         ? [{ label: t("money"), href: "/portal/employee/money", icon: Wallet }]
         : []),

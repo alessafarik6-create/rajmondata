@@ -41,6 +41,9 @@ import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoice
 import { JobDocumentEmailSection } from "@/components/jobs/job-document-email-section";
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
+import { JobProductionTeamSection } from "@/components/jobs/job-production-team-section";
+import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
+import { canAccessCompanyModule } from "@/lib/platform-access";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
 import {
   doc,
@@ -608,6 +611,15 @@ function JobDetailPageContent() {
     profile?.role === "manager" ||
     profile?.role === "accountant" ||
     profile?.globalRoles?.includes("super_admin");
+
+  const platformCatalog = useMergedPlatformModuleCatalog();
+  const vyrobaModuleOn =
+    !!companyDoc &&
+    canAccessCompanyModule(
+      companyDoc as Parameters<typeof canAccessCompanyModule>[0],
+      "vyroba",
+      platformCatalog
+    );
 
   const photosColRef = useMemoFirebase(
     () =>
@@ -6306,6 +6318,17 @@ function JobDetailPageContent() {
               customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
               userId={user.uid}
               canManage={canManageFolders}
+            />
+          ) : null}
+
+          {companyId && jobFirestoreId && user && vyrobaModuleOn && firestore ? (
+            <JobProductionTeamSection
+              firestore={firestore}
+              companyId={companyId}
+              jobId={String(jobFirestoreId)}
+              job={job as Record<string, unknown>}
+              canManage={canManageFolders}
+              user={user}
             />
           ) : null}
 

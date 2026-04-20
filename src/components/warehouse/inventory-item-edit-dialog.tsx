@@ -30,7 +30,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { getFirebaseStorage } from "@/firebase";
-import type { InventoryItemRow } from "@/lib/inventory-types";
+import type { InventoryItemRow, InventoryStockTrackingMode } from "@/lib/inventory-types";
 import { INVENTORY_MATERIAL_CATEGORY_SUGGESTIONS } from "@/lib/inventory-helpers";
 
 function safeFileName(name: string): string {
@@ -71,6 +71,8 @@ export function InventoryItemEditDialog({
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [stockTrackingMode, setStockTrackingMode] = useState<InventoryStockTrackingMode>("pieces");
+  const [originalLengthInput, setOriginalLengthInput] = useState("");
 
   useEffect(() => {
     if (!open || !item) return;
@@ -100,6 +102,14 @@ export function InventoryItemEditDialog({
     setImageUrl(item.imageUrl ?? null);
     setPendingFile(null);
     setPreviewUrl(null);
+    const m = (item.stockTrackingMode as InventoryStockTrackingMode | undefined) || "pieces";
+    setStockTrackingMode(
+      m === "length" || m === "area" || m === "mass" || m === "generic" || m === "pieces" ? m : "pieces"
+    );
+    const ol = item.originalLength;
+    setOriginalLengthInput(
+      ol != null && Number.isFinite(Number(ol)) ? String(ol) : ""
+    );
   }, [open, item]);
 
   useEffect(() => {
@@ -168,21 +178,43 @@ export function InventoryItemEditDialog({
             : null;
         const oldImg = prev.imageUrl ?? null;
 
-        tx.update(itemRef, {
+        const u = unit.trim() || "ks";
+        const origLenParsed =
+          originalLengthInput.trim() === ""
+            ? null
+            : Number(String(originalLengthInput).replace(",", "."));
+        const origLen =
+          origLenParsed != null && Number.isFinite(origLenParsed) && origLenParsed >= 0
+            ? origLenParsed
+            : null;
+
+        const basePatch: Record<string, unknown> = {
           name: n,
           sku: sku.trim() || null,
           materialCategory: catResolved,
-          unit: unit.trim() || "ks",
+          unit: u,
           quantity: q,
+          stockTrackingMode: stockTrackingMode,
           unitPrice: priceNum,
           supplier: supplier.trim() || null,
           note: note.trim() || null,
           imageUrl: nextImage ?? null,
           updatedAt: serverTimestamp(),
-        });
+        };
+        if (stockTrackingMode === "length") {
+          basePatch.currentLength = q;
+          basePatch.lengthStockUnit = u;
+          basePatch.originalLength = origLen;
+        } else {
+          basePatch.currentLength = null;
+          basePatch.lengthStockUnit = null;
+          basePatch.originalLength = null;
+        }
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        tx.update(itemRef, basePatch as any);
 
         const today = new Date().toISOString().slice(0, 10);
-        const u = unit.trim() || "ks";
 
         if (q !== oldQty) {
           const movRef = doc(collection(firestore, "companies", companyId, "inventoryMovements"));
@@ -355,9 +387,46 @@ export function InventoryItemEditDialog({
             ) : null}
           </div>
 
+          <div className="space-y-1">
+            <Label>Evidence zásoby</Label>
+            <Select
+              value={stockTrackingMode}
+              onValueChange={(v) => setStockTrackingMode(v as InventoryStockTrackingMode)}
+            >
+              <SelectTrigger className="bg-white">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="pieces">Kusy</SelectItem>
+                <SelectItem value="length">Délka (řezivo / profily)</SelectItem>
+                <SelectItem value="area">Plocha</SelectItem>
+                <SelectItem value="mass">Hmotnost</SelectItem>
+                <SelectItem value="generic">Obecná jednotka</SelectItem>
+              </SelectContent>
+            </Select>
+            {stockTrackingMode === "length" ? (
+              <p className="text-[11px] text-slate-500">
+                Množství = aktuální dostupná délka v jednotce uvedené výše (např. mm). Při výdeji části zůstane
+                rozdíl na skladě u téže položky.
+              </p>
+            ) : null}
+          </div>
+
+          {stockTrackingMode === "length" ? (
+            <div className="space-y-1">
+              <Label>Původní délka při naskladnění (volitelné)</Label>
+              <Input
+                className="bg-white"
+                value={originalLengthInput}
+                onChange={(e) => setOriginalLengthInput(e.target.value)}
+                placeholder="např. 6000"
+              />
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>Množství</Label>
+              <Label>{stockTrackingMode === "length" ? "Aktuální množství / délka" : "Množství"}</Label>
               <Input value={quantity} onChange={(e) => setQuantity(e.target.value)} className="bg-white" />
             </div>
             <div className="space-y-1">

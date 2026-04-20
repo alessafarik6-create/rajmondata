@@ -94,6 +94,12 @@ function movementLabel(t: string) {
   if (t === "in") return "Naskladnění";
   if (t === "out") return "Vyskladnění";
   if (t === "out_to_production") return "Přesun do výroby";
+  if (t === "out_to_job") return "Výdej na zakázku";
+  if (t === "partial_out") return "Částečný výdej";
+  if (t === "remainder_created") return "Vznik zbytku";
+  if (t === "remainder_return") return "Vrácení zbytku";
+  if (t === "transfer_internal") return "Interní přesun";
+  if (t === "admin_adjustment") return "Korekce (admin)";
   if (t === "adjustment") return "Úprava množství";
   if (t === "item_edit") return "Úprava položky";
   return t;
