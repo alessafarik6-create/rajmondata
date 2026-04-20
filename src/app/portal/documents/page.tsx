@@ -2670,27 +2670,6 @@ function DocumentsPageContent() {
     });
   }, [invoicesForCurrentView, issuedSearch]);
 
-  if (isProfileLoading) {
-    return (
-      <div className="flex justify-center p-12">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
-  if (!companyId) {
-    return (
-      <Alert className="max-w-xl border-slate-200 bg-slate-50">
-        <AlertTitle>Není vybraná firma</AlertTitle>
-        <AlertDescription>
-          Nelze načíst doklady bez přiřazení k organizaci.
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
-  const isEditingDeliveryNote = editRow ? isDeliveryNote(editRow) : false;
-
   const editSplitRemainder = useMemo(() => {
     if (!editRow || !editSplitToJobs) {
       return { kind: "amount" as const, value: 0 };
@@ -2787,6 +2766,27 @@ function DocumentsPageContent() {
       remainderCzk: roundMoney2(basis - allocatedCzk),
     };
   }, [editRow, editSplitToJobs, editForm, editAllocRows, editAllocMode]);
+
+  if (isProfileLoading) {
+    return (
+      <div className="flex justify-center p-12">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (!companyId) {
+    return (
+      <Alert className="max-w-xl border-slate-200 bg-slate-50">
+        <AlertTitle>Není vybraná firma</AlertTitle>
+        <AlertDescription>
+          Nelze načíst doklady bez přiřazení k organizaci.
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const isEditingDeliveryNote = editRow ? isDeliveryNote(editRow) : false;
 
   return (
     <TooltipProvider delayDuration={250}>
