@@ -99,13 +99,24 @@ function releaseModalLocksAfterDismiss() {
   releaseDocumentModalLocksAfterTransition(320);
 }
 
+/**
+ * Radix Dialog při řízeném zavření z tlačítka (ne Overlay/Close) často nezavolá onOpenChange(false)
+ * — viz radix-ui/primitives#3300. Vždy volat uvolnění zámků při programovém dismissu.
+ */
+function dismissWithModalLockRelease(close: () => void): void {
+  close();
+  releaseModalLocksAfterDismiss();
+}
+
 /** Otevření dialogu hned po kliknutí v DropdownMenu koliduje s Radix focus/pointer-events — počkej na zavření menu. */
 function runAfterDropdownMenuCloses(fn: () => void): void {
   if (typeof window === "undefined") {
     fn();
     return;
   }
-  window.setTimeout(fn, 0);
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(fn);
+  });
 }
 
 /** Porovnání množin ID — zabrání zbytečným setState při stejném obsahu. */
@@ -332,7 +343,7 @@ export default function EmployeesPage() {
 
   useEffect(() => {
     if (!worklogEmployeeId) {
-      setEnableUnifiedWorkReportToggle(true);
+      setEnableUnifiedWorkReportToggle((prev) => (prev === true ? prev : true));
       return;
     }
     const fresh = employees?.find((e) => e.id === worklogEmployeeId) as
@@ -344,7 +355,9 @@ export default function EmployeesPage() {
     if (!fresh) return;
     const unified =
       isDailyWorkLogEnabled(fresh) || isWorkLogEnabled(fresh);
-    setEnableUnifiedWorkReportToggle(unified);
+    setEnableUnifiedWorkReportToggle((prev) =>
+      prev === unified ? prev : unified
+    );
   }, [worklogEmployeeId, employees]);
 
   useEffect(() => {
@@ -363,14 +376,15 @@ export default function EmployeesPage() {
 
   useEffect(() => {
     if (!terminalEmployeeId) {
-      setAutoApproveJobEarningsTerminal(false);
+      setAutoApproveJobEarningsTerminal((prev) => (prev === false ? prev : false));
       return;
     }
     const fresh = employees?.find((e) => e.id === terminalEmployeeId) as
       | { autoApproveJobEarnings?: boolean }
       | undefined;
     if (!fresh) return;
-    setAutoApproveJobEarningsTerminal(fresh.autoApproveJobEarnings === true);
+    const next = fresh.autoApproveJobEarnings === true;
+    setAutoApproveJobEarningsTerminal((prev) => (prev === next ? prev : next));
   }, [terminalEmployeeId, employees]);
 
   const toggleAssignWorklogJob = (jobId: string) => {
@@ -392,7 +406,13 @@ export default function EmployeesPage() {
   };
 
   const saveAssignedWorklogJobs = async () => {
-    if (!canManage || !companyId || !assignWorklogEmployee?.id) return;
+    if (
+      !canManage ||
+      !companyId ||
+      !assignWorklogEmployee?.id ||
+      savingAssignedWorklogJobs
+    )
+      return;
     setSavingAssignedWorklogJobs(true);
     try {
       await updateDoc(
@@ -414,7 +434,7 @@ export default function EmployeesPage() {
         title: "Uloženo",
         description: "Zakázky pro výkaz práce byly aktualizovány.",
       });
-      setAssignWorklogEmployee(null);
+      closeAssignWorklogDialog();
     } catch {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
@@ -423,7 +443,13 @@ export default function EmployeesPage() {
   };
 
   const saveAssignedTerminalJobs = async () => {
-    if (!canManage || !companyId || !assignTerminalEmployee?.id) return;
+    if (
+      !canManage ||
+      !companyId ||
+      !assignTerminalEmployee?.id ||
+      savingAssignedTerminalJobs
+    )
+      return;
     setSavingAssignedTerminalJobs(true);
     try {
       await updateDoc(
@@ -444,7 +470,7 @@ export default function EmployeesPage() {
         title: "Uloženo",
         description: "Zakázky pro veřejné přihlášení docházky byly aktualizovány.",
       });
-      setAssignTerminalEmployee(null);
+      closeAssignTerminalDialog();
     } catch {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
@@ -473,6 +499,7 @@ export default function EmployeesPage() {
       return;
     }
 
+    if (isSubmitting) return;
     setIsSubmitting(true);
     try {
       const rateStr = inviteData.hourlyRate.trim();
@@ -510,7 +537,7 @@ export default function EmployeesPage() {
           data.message ||
           `${inviteData.firstName} má účet a přístup do zaměstnaneckého portálu.`,
       });
-      setIsInviteOpen(false);
+      closeInviteFlow();
       setInviteData({
         firstName: "",
         lastName: "",
@@ -536,7 +563,8 @@ export default function EmployeesPage() {
   };
 
   const saveHourlyRate = async () => {
-    if (!canManage || !companyId || !hourlyRateEmp?.id || !firestore) return;
+    if (!canManage || !companyId || !hourlyRateEmp?.id || !firestore || hourlyRateSaving)
+      return;
     const raw = hourlyRateInput.trim();
     let hourlyRateValue: number | null = null;
     if (raw !== "") {
@@ -554,7 +582,7 @@ export default function EmployeesPage() {
         updatedAt: serverTimestamp(),
       });
       toast({ title: "Hodinová sazba uložena" });
-      setHourlyRateEmp(null);
+      closeHourlyRateDialog();
     } catch (e) {
       console.error("[employees] hourly rate save", e);
       toast({ variant: "destructive", title: "Uložení se nezdařilo." });
@@ -573,7 +601,14 @@ export default function EmployeesPage() {
   };
 
   const saveEmployeeBankAccount = async () => {
-    if (!canEditEmployeeBank || !user || !companyId || !bankDialogEmp?.id) return;
+    if (
+      !canEditEmployeeBank ||
+      !user ||
+      !companyId ||
+      !bankDialogEmp?.id ||
+      bankSaving
+    )
+      return;
     setBankSaving(true);
     try {
       const idToken = await user.getIdToken();
@@ -598,8 +633,7 @@ export default function EmployeesPage() {
         title: "Bankovní údaje uloženy",
         description: "Údaje jsou připravené pro budoucí výplaty a exporty.",
       });
-      setBankDialogEmp(null);
-      setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
+      dismissBankDialog();
     } catch (e: unknown) {
       toast({
         variant: "destructive",
@@ -680,10 +714,12 @@ export default function EmployeesPage() {
   };
 
   const closeTerminalPinManual = () => {
-    setTerminalPinManualOpen(false);
-    setTerminalPinManualEmp(null);
-    setTerminalPinManualValue("");
-    setTerminalPinManualConfirm("");
+    dismissWithModalLockRelease(() => {
+      setTerminalPinManualOpen(false);
+      setTerminalPinManualEmp(null);
+      setTerminalPinManualValue("");
+      setTerminalPinManualConfirm("");
+    });
   };
 
   const submitTerminalPinManual = async (e: React.FormEvent) => {
@@ -756,9 +792,18 @@ export default function EmployeesPage() {
   };
 
   const closeTerminalPinGenerateDialog = () => {
-    setTerminalPinGenerateOpen(false);
-    setTerminalPinGenerateEmp(null);
-    setTerminalPinGeneratedDisplay(null);
+    dismissWithModalLockRelease(() => {
+      setTerminalPinGenerateOpen(false);
+      setTerminalPinGenerateEmp(null);
+      setTerminalPinGeneratedDisplay(null);
+    });
+  };
+
+  const closeTerminalPinClearDialog = () => {
+    dismissWithModalLockRelease(() => {
+      setTerminalPinClearOpen(false);
+      setTerminalPinClearEmp(null);
+    });
   };
 
   const runTerminalPinClear = async () => {
@@ -773,8 +818,7 @@ export default function EmployeesPage() {
         title: "PIN zrušen",
         description: data.message || "Docházkový PIN byl odstraněn.",
       });
-      setTerminalPinClearOpen(false);
-      setTerminalPinClearEmp(null);
+      closeTerminalPinClearDialog();
     } catch (error: unknown) {
       console.error("PIN save error", error);
       const msg =
@@ -816,10 +860,42 @@ export default function EmployeesPage() {
     setPortalModDochazka(pm.dochazka);
   };
 
+  const closeOrgSettingsDialog = () => {
+    dismissWithModalLockRelease(() => setOrgSettingsEmp(null));
+  };
+
+  const closeHourlyRateDialog = () => {
+    dismissWithModalLockRelease(() => {
+      setHourlyRateEmp(null);
+      setHourlyRateInput("");
+    });
+  };
+
+  const dismissBankDialog = () => {
+    dismissWithModalLockRelease(() => {
+      setBankDialogEmp(null);
+      setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
+    });
+  };
+
+  const closeAssignWorklogDialog = () => {
+    dismissWithModalLockRelease(() => setAssignWorklogEmployee(null));
+  };
+
+  const closeAssignTerminalDialog = () => {
+    dismissWithModalLockRelease(() => setAssignTerminalEmployee(null));
+  };
+
+  const closeInviteFlow = () => {
+    dismissWithModalLockRelease(() => setIsInviteOpen(false));
+  };
+
   const closePwdResetDialog = () => {
-    setPwdResetEmployee(null);
-    setPwdResetNew("");
-    setPwdResetConfirm("");
+    dismissWithModalLockRelease(() => {
+      setPwdResetEmployee(null);
+      setPwdResetNew("");
+      setPwdResetConfirm("");
+    });
   };
 
   const handleAdminPasswordReset = async (e: React.FormEvent) => {
@@ -924,7 +1000,7 @@ export default function EmployeesPage() {
         description:
           "Role, terminál, sklad / výroba a moduly zaměstnaneckého portálu byly aktualizovány.",
       });
-      setOrgSettingsEmp(null);
+      closeOrgSettingsDialog();
     } catch (error: unknown) {
       const msg =
         error instanceof Error ? error.message : "Uložení se nezdařilo.";
@@ -969,13 +1045,22 @@ export default function EmployeesPage() {
         </div>
         <div className="flex gap-2 sm:gap-3">
           {canManage && (
-            <Dialog open={isInviteOpen} onOpenChange={setIsInviteOpen}>
+            <Dialog
+              open={isInviteOpen}
+              onOpenChange={(open) => {
+                setIsInviteOpen(open);
+                if (!open) releaseModalLocksAfterDismiss();
+              }}
+            >
               <DialogTrigger asChild>
                 <Button className="gap-2">
                   <UserPlus className="w-4 h-4" /> Pozvat zaměstnance
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-xl border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+              <DialogContent
+                onCloseAutoFocus={(e) => e.preventDefault()}
+                className="max-w-xl border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
+              >
                 <DialogHeader>
                   <DialogTitle className="text-lg font-semibold text-black">
                     Pozvat nového člena týmu
@@ -1162,13 +1247,13 @@ export default function EmployeesPage() {
       <Dialog
         open={!!orgSettingsEmp}
         onOpenChange={(open) => {
-          if (!open) {
-            setOrgSettingsEmp(null);
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) closeOrgSettingsDialog();
         }}
       >
-        <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
               Role, terminál a moduly sklad / výroba
@@ -1299,10 +1384,7 @@ export default function EmployeesPage() {
               type="button"
               variant="outline"
               className="border-gray-200 bg-white text-black"
-              onClick={() => {
-                setOrgSettingsEmp(null);
-                releaseModalLocksAfterDismiss();
-              }}
+              onClick={() => closeOrgSettingsDialog()}
               disabled={orgSettingsSaving}
             >
               Zrušit
@@ -1426,7 +1508,7 @@ export default function EmployeesPage() {
                     </TableCell>
                     <TableCell className="pr-6 text-right">
                       {canManage || canResetEmployeeAuthPassword ? (
-                        <DropdownMenu>
+                        <DropdownMenu modal={false}>
                           <DropdownMenuTrigger asChild>
                             <Button variant="ghost" size="icon"><MoreVertical className="w-4 h-4" /></Button>
                           </DropdownMenuTrigger>
@@ -1625,14 +1707,13 @@ export default function EmployeesPage() {
       <Dialog
         open={!!hourlyRateEmp}
         onOpenChange={(open) => {
-          if (!open) {
-            setHourlyRateEmp(null);
-            setHourlyRateInput("");
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) closeHourlyRateDialog();
         }}
       >
-        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">Hodinová sazba</DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
@@ -1658,10 +1739,7 @@ export default function EmployeesPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => {
-                setHourlyRateEmp(null);
-                setHourlyRateInput("");
-              }}
+              onClick={() => closeHourlyRateDialog()}
             >
               Zrušit
             </Button>
@@ -1675,14 +1753,13 @@ export default function EmployeesPage() {
       <Dialog
         open={!!bankDialogEmp}
         onOpenChange={(open) => {
-          if (!open) {
-            setBankDialogEmp(null);
-            setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) dismissBankDialog();
         }}
       >
-        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-lg max-h-[90vh] overflow-y-auto border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
               Bankovní údaje (výplata)
@@ -1800,10 +1877,7 @@ export default function EmployeesPage() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => {
-                  setBankDialogEmp(null);
-                  setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
-                }}
+                onClick={() => dismissBankDialog()}
                 disabled={bankSaving}
               >
                 Zrušit
@@ -1827,13 +1901,13 @@ export default function EmployeesPage() {
       <Dialog
         open={!!pwdResetEmployee}
         onOpenChange={(open) => {
-          if (!open) {
-            closePwdResetDialog();
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) closePwdResetDialog();
         }}
       >
-        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
               Nastavit nové heslo
@@ -1904,13 +1978,13 @@ export default function EmployeesPage() {
       <Dialog
         open={terminalPinManualOpen}
         onOpenChange={(open) => {
-          if (!open) {
-            closeTerminalPinManual();
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) closeTerminalPinManual();
         }}
       >
-        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
               Nastavit PIN docházky
@@ -1979,13 +2053,13 @@ export default function EmployeesPage() {
       <Dialog
         open={terminalPinGenerateOpen}
         onOpenChange={(open) => {
-          if (!open) {
-            closeTerminalPinGenerateDialog();
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) closeTerminalPinGenerateDialog();
         }}
       >
-        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
               {terminalPinGeneratedDisplay ? "Nový PIN docházky" : "Vygenerovat nový PIN"}
@@ -2051,14 +2125,13 @@ export default function EmployeesPage() {
       <Dialog
         open={terminalPinClearOpen}
         onOpenChange={(open) => {
-          if (!open) {
-            setTerminalPinClearOpen(false);
-            setTerminalPinClearEmp(null);
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) closeTerminalPinClearDialog();
         }}
       >
-        <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">Zrušit PIN docházky</DialogTitle>
             <DialogDescription className="text-sm text-gray-700">
@@ -2076,10 +2149,7 @@ export default function EmployeesPage() {
               type="button"
               variant="outline"
               className="border-gray-200 bg-white text-black hover:bg-gray-50"
-              onClick={() => {
-                setTerminalPinClearOpen(false);
-                setTerminalPinClearEmp(null);
-              }}
+              onClick={() => closeTerminalPinClearDialog()}
               disabled={terminalPinClearSaving}
             >
               Zpět
@@ -2103,13 +2173,13 @@ export default function EmployeesPage() {
       <Dialog
         open={!!assignWorklogEmployee}
         onOpenChange={(open) => {
-          if (!open) {
-            setAssignWorklogEmployee(null);
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) closeAssignWorklogDialog();
         }}
       >
-        <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
               Zakázky pro výkaz práce
@@ -2173,10 +2243,7 @@ export default function EmployeesPage() {
               type="button"
               variant="outline"
               className="border-gray-200 bg-white text-black"
-              onClick={() => {
-                setAssignWorklogEmployee(null);
-                releaseModalLocksAfterDismiss();
-              }}
+              onClick={() => closeAssignWorklogDialog()}
               disabled={savingAssignedWorklogJobs}
             >
               Zrušit
@@ -2199,13 +2266,13 @@ export default function EmployeesPage() {
       <Dialog
         open={!!assignTerminalEmployee}
         onOpenChange={(open) => {
-          if (!open) {
-            setAssignTerminalEmployee(null);
-            releaseModalLocksAfterDismiss();
-          }
+          if (!open) closeAssignTerminalDialog();
         }}
       >
-        <DialogContent className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg">
+        <DialogContent
+          onCloseAutoFocus={(e) => e.preventDefault()}
+          className="max-w-lg border border-gray-200 bg-white p-6 text-black shadow-lg"
+        >
           <DialogHeader>
             <DialogTitle className="text-lg font-semibold text-black">
               Zakázky pro veřejné přihlášení docházky
@@ -2267,10 +2334,7 @@ export default function EmployeesPage() {
               type="button"
               variant="outline"
               className="border-gray-200 bg-white text-black"
-              onClick={() => {
-                setAssignTerminalEmployee(null);
-                releaseModalLocksAfterDismiss();
-              }}
+              onClick={() => closeAssignTerminalDialog()}
               disabled={savingAssignedTerminalJobs}
             >
               Zrušit
