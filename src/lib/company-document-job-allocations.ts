@@ -25,14 +25,27 @@ export type JobCostAllocationRow = {
 /** Tolerance zaokrouhlení (Kč / %) — příliš přísná hodnota blokovala uložení po přepočtu DPH. */
 const SUM_EPS = 0.05;
 
+function coerceMoneyField(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === "number") return Number.isFinite(v) ? v : 0;
+  if (typeof v === "string") {
+    const t = v.trim();
+    if (t === "") return 0;
+    const n = Number(String(t).replace(",", "."));
+    return Number.isFinite(n) ? n : 0;
+  }
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+}
+
 /** Hrubý základ v CZK pro rozdělení (shodně s náklady v zakázce). */
 export function allocationBasisGrossCzk(doc: DocAmountFields): number {
   const czk = roundMoney2(
-    Number(doc.castkaCZK ?? doc.amountGrossCZK ?? 0)
+    coerceMoneyField(doc.castkaCZK ?? doc.amountGrossCZK ?? 0)
   );
   if (czk > 0) return czk;
   return roundMoney2(
-    Number(doc.castka ?? doc.amountGross ?? doc.amount ?? 0)
+    coerceMoneyField(doc.castka ?? doc.amountGross ?? doc.amount ?? 0)
   );
 }
 
@@ -85,10 +98,13 @@ export function normalizeJobCostAllocationRows(
 ): JobCostAllocationRow[] {
   if (!Array.isArray(raw)) return [];
   const out: JobCostAllocationRow[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    const x = raw[i];
+  for (const x of raw) {
     if (!x || typeof x !== "object") continue;
     const o = x as Record<string, unknown>;
+    const id =
+      typeof o.id === "string" && o.id.trim()
+        ? o.id.trim()
+        : makeJobCostAllocationId();
     const jobIdRaw =
       typeof o.jobId === "string" && o.jobId.trim() ? o.jobId.trim() : null;
     let kind: "job" | "overhead";
@@ -97,17 +113,24 @@ export function normalizeJobCostAllocationRows(
     else {
       kind = jobIdRaw ? "job" : "overhead";
     }
-    /** Stabilní id při chybějícím poli `id` (jinak by se při každém načtení měnilo a rozbilo vazbu na náklady). */
-    const id =
-      typeof o.id === "string" && o.id.trim()
-        ? o.id.trim()
-        : `jca_auto_${i}_${kind}_${jobIdRaw ?? "oh"}`;
+    const amountParsed =
+      o.amount == null
+        ? null
+        : typeof o.amount === "string" && String(o.amount).trim() === ""
+          ? null
+          : roundMoney2(coerceMoneyField(o.amount));
+    const percentParsed =
+      o.percent == null
+        ? null
+        : typeof o.percent === "string" && String(o.percent).trim() === ""
+          ? null
+          : coerceMoneyField(o.percent);
     out.push({
       id,
       kind,
       jobId: kind === "job" ? jobIdRaw : null,
-      amount: o.amount != null ? Number(o.amount) : null,
-      percent: o.percent != null ? Number(o.percent) : null,
+      amount: amountParsed,
+      percent: percentParsed,
       note: o.note != null ? String(o.note) : null,
       linkedExpenseId:
         typeof o.linkedExpenseId === "string" && o.linkedExpenseId.trim()

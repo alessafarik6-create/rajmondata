@@ -19,7 +19,6 @@ import {
 import { isFinancialCompanyDocument } from "@/lib/company-documents-financial";
 import type { CompanyDocumentLike } from "@/lib/company-documents-financial";
 import {
-  allocationBasisGrossCzk,
   allocationJobIdsFromRows,
   allocationsMirrorForDocument,
   documentJobCostAllocationMode,
@@ -309,48 +308,30 @@ export async function reconcileCompanyDocumentJobExpense(params: {
     const clearedAlloc = normalizeJobCostAllocationRows(
       documentJobCostAllocationsArray(after as Record<string, unknown>)
     );
-    const modeUnlinked = documentJobCostAllocationMode(
-      after as Record<string, unknown>
-    );
     if (clearedAlloc.length > 0) {
-      patch.jobCostAllocations = clearedAlloc.map((r) => ({
+      const mapped = clearedAlloc.map((r) => ({
         ...r,
         linkedExpenseId: null,
-      }));
-      patch.allocations = allocationsMirrorForDocument(
-        clearedAlloc as JobCostAllocationRow[]
+      })) as JobCostAllocationRow[];
+      patch.jobCostAllocations = mapped;
+      patch.allocations = allocationsMirrorForDocument(mapped);
+      const mode = documentJobCostAllocationMode(
+        after as Record<string, unknown>
       );
-      patch.allocationMode = modeUnlinked;
-      patch.jobCostAllocationMode = modeUnlinked;
+      patch.allocationMode = mode;
+      patch.jobCostAllocationMode = mode;
     } else {
       patch.jobCostAllocations = deleteField();
+      patch.jobCostAllocationMode = deleteField();
       patch.allocations = deleteField();
       patch.allocationMode = deleteField();
-      patch.jobCostAllocationMode = deleteField();
     }
     await updateDoc(docRef, patch as UpdateData<DocumentData>);
     return;
   }
 
   let amounts = companyDocumentExpenseAmounts(after);
-  const basisCzk = allocationBasisGrossCzk(
-    after as Parameters<typeof allocationBasisGrossCzk>[0]
-  );
-  /** Některé záznamy mají kladný základ v CZK v `castkaCZK`, ale `companyDocumentExpenseAmounts` vrátí 0 (legacy / neúplná pole). */
-  if (amounts.amountGross <= 0 && basisCzk > 0) {
-    amounts = companyDocumentExpenseAmounts({
-      ...(after as DocAmountInput),
-      castkaCZK: basisCzk,
-      amountGrossCZK: basisCzk,
-      castka: basisCzk,
-      amountGross: basisCzk,
-    });
-  }
   if (amounts.amountGross <= 0) {
-    console.warn(
-      "[reconcileCompanyDocumentJobExpense] Přeskakuji náklady zakázky: amountGross <= 0",
-      { documentId, basisCzk }
-    );
     return;
   }
   let amountNet = amounts.amountNet;
@@ -372,10 +353,6 @@ export async function reconcileCompanyDocumentJobExpense(params: {
     };
   }
   if (amountNet <= 0) {
-    console.warn(
-      "[reconcileCompanyDocumentJobExpense] Přeskakuji náklady zakázky: amountNet <= 0 po dopočtu",
-      { documentId, amountGross: amounts.amountGross, basisCzk }
-    );
     return;
   }
 
@@ -504,14 +481,7 @@ export async function reconcileCompanyDocumentJobExpense(params: {
     rowIdToExpenseId.set(slice.rowId, expRef.id);
   }
 
-  let firstLinked: string | null = null;
-  for (const slice of afterSlices) {
-    const eid = rowIdToExpenseId.get(slice.rowId)?.trim();
-    if (eid) {
-      firstLinked = eid;
-      break;
-    }
-  }
+  const firstLinked = afterSlices.length ? rowIdToExpenseId.get(afterSlices[0].rowId) : null;
   const allocRowsRaw = normalizeJobCostAllocationRows(
     documentJobCostAllocationsArray(after as Record<string, unknown>)
   );
@@ -533,15 +503,13 @@ export async function reconcileCompanyDocumentJobExpense(params: {
     docPatch.linkedExpenseId = deleteField();
   }
   if (patchedAlloc) {
-    const modeVal = documentJobCostAllocationMode(
-      after as Record<string, unknown>
-    );
     docPatch.jobCostAllocations = patchedAlloc;
     docPatch.allocations = allocationsMirrorForDocument(
       patchedAlloc as JobCostAllocationRow[]
     );
-    docPatch.allocationMode = modeVal;
-    docPatch.jobCostAllocationMode = modeVal;
+    docPatch.allocationMode = documentJobCostAllocationMode(
+      after as Record<string, unknown>
+    );
   }
   await updateDoc(docRef, docPatch as UpdateData<DocumentData>);
 }

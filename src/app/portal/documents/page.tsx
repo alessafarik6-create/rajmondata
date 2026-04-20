@@ -2472,21 +2472,33 @@ function DocumentsPageContent() {
         });
       }
 
-      await updateDoc(
-        doc(firestore, "companies", companyId, "documents", editRow.id),
-        basePayload as unknown as UpdateData<DocumentData>
+      const docRef = doc(
+        firestore,
+        "companies",
+        companyId,
+        "documents",
+        editRow.id
       );
-      const afterForExpense: CompanyDocumentExpenseReconcileBefore = {
-        ...editRow,
-        ...basePayload,
+      await updateDoc(docRef, basePayload as unknown as UpdateData<DocumentData>);
+      /** Po uložení vždy přečíst z DB — sloučení s `editRow` občas neodrazilo pole alokací / CZK správně a reconcile pak nesprávně vyhodnotil „bez zakázky“ a poškodil split. */
+      const savedSnap = await getDoc(docRef);
+      if (!savedSnap.exists()) {
+        throw new Error("Doklad po uložení v databázi nenalezen.");
+      }
+      const afterForExpense = {
+        ...(savedSnap.data() as CompanyDocumentRow),
         id: editRow.id,
-      };
+      } as CompanyDocumentExpenseReconcileBefore;
+      const beforeForExpense = {
+        ...editRow,
+        id: editRow.id,
+      } as CompanyDocumentExpenseReconcileBefore;
       await reconcileCompanyDocumentJobExpense({
         firestore,
         companyId,
         userId: user.uid,
         documentId: editRow.id,
-        before: { ...editRow, id: editRow.id },
+        before: beforeForExpense,
         after: afterForExpense,
       });
       await reconcileCompanyDocumentJobIncome({
@@ -2494,7 +2506,7 @@ function DocumentsPageContent() {
         companyId,
         userId: user.uid,
         documentId: editRow.id,
-        before: { ...editRow, id: editRow.id },
+        before: beforeForExpense,
         after: afterForExpense,
       });
       toast({
@@ -2507,13 +2519,14 @@ function DocumentsPageContent() {
       setEditOpen(false);
       setEditRow(null);
     } catch (err) {
-      const msg =
-        err instanceof Error ? err.message : "Nepodařilo se uložit změny dokladu.";
-      console.error("[documents saveEditDocument]", err);
+      console.error("documents: saveEditDocument", err);
       toast({
         variant: "destructive",
-        title: "Chyba při ukládání dokladu",
-        description: msg,
+        title: "Chyba",
+        description:
+          err instanceof Error
+            ? err.message
+            : "Nepodařilo se uložit změny dokladu.",
       });
     } finally {
       setIsEditSaving(false);
