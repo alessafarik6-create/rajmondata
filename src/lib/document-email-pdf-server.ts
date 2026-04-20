@@ -131,13 +131,40 @@ function resolveChromiumBinDir(): string {
   );
 }
 
+/**
+ * @sparticuz/chromium je linuxový balíček. Na Windows/mac (vč. `vercel dev`) vždy lokální Chrome.
+ * Na Linuxu ve Vercel/Lambda bez ručního CHROME_EXECUTABLE_PATH použijeme bundled Chromium.
+ */
+function shouldUseBundledServerlessChromium(): boolean {
+  const custom = String(
+    process.env.CHROME_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || ""
+  ).trim();
+  if (custom) return false;
+  if (process.platform !== "linux") return false;
+  if (process.env.VERCEL === "1" || process.env.VERCEL === "true") return true;
+  if (process.env.AWS_LAMBDA_FUNCTION_NAME) return true;
+  if (String(process.env.VERCEL ?? "").length > 0) return true;
+  return false;
+}
+
+function launchConfigSummary(mode: "local" | "serverless", extra: Record<string, string>): void {
+  logPdf("launch.config", JSON.stringify({
+    mode,
+    platform: process.platform,
+    node: process.version,
+    vercel: process.env.VERCEL ?? null,
+    vercelEnv: process.env.VERCEL_ENV ?? null,
+    ...extra,
+  }));
+}
+
 async function launchPdfBrowser(): Promise<Browser> {
-  const isVercel = process.env.VERCEL === "1";
   const customRaw = String(
     process.env.CHROME_EXECUTABLE_PATH || process.env.PUPPETEER_EXECUTABLE_PATH || ""
   ).trim();
+  const useBundled = shouldUseBundledServerlessChromium();
 
-  if (!isVercel) {
+  if (!useBundled) {
     const localExec = customRaw || findLocalChromeExecutable() || "";
     if (!localExec) {
       const hint =
@@ -145,14 +172,17 @@ async function launchPdfBrowser(): Promise<Browser> {
       logPdfError("browser.localChrome.resolve", new Error(hint));
       throw new Error(hint);
     }
-    logPdf("browser", `pre-launch localChrome path=${localExec}`);
+    launchConfigSummary("local", {
+      executablePath: localExec,
+      headless: "true(new)",
+    });
     const localArgs = [
       "--no-sandbox",
       "--disable-setuid-sandbox",
       "--disable-dev-shm-usage",
       "--disable-gpu",
     ];
-    logPdf("browser", `local args=${localArgs.join(" ")}`);
+    logPdf("browser", `pre-launch localChrome path=${localExec} args=${localArgs.join(" ")}`);
     try {
       const browser = await puppeteer.launch({
         executablePath: localExec,
@@ -167,7 +197,17 @@ async function launchPdfBrowser(): Promise<Browser> {
     }
   }
 
-  logPdf("chromium", "pre-launch serverless (Vercel / @sparticuz/chromium + puppeteer-core)");
+  process.env.HOME ??= "/tmp";
+
+  const nodeMajor = Number.parseInt(process.versions.node.split(".")[0] ?? "0", 10);
+  if (process.env.VERCEL && nodeMajor > 0 && nodeMajor < 20) {
+    logPdf(
+      "warn",
+      "Vercel s Node.js < 20: @sparticuz/chromium nemusí rozbalit al2023.tar.br — v nastavení projektu zvolte Node 20+ (doporučeno pro Chromium na Vercelu)."
+    );
+  }
+
+  logPdf("chromium", "pre-launch serverless (@sparticuz/chromium + puppeteer-core; headless must match shell build)");
   const binDir = resolveChromiumBinDir();
   const brPath = path.join(binDir, "chromium.br");
   try {
@@ -179,27 +219,36 @@ async function launchPdfBrowser(): Promise<Browser> {
   }
   let executablePath: string;
   try {
-    // novější verze umí bez argumentu; ponecháme fallback pro starší/odlišné prostředí
-    executablePath = await chromium.executablePath().catch(() => chromium.executablePath(binDir));
+    executablePath = await chromium.executablePath(binDir);
   } catch (e) {
-    logPdfError("chromium.executablePath", e);
+    logPdfError("chromium.executablePath(binDir)", e);
     throw e;
   }
-  logPdf("chromium", `executablePath=${executablePath}`);
-  logPdf("chromium", `argsCount=${chromium.args.length}`);
-  logPdf(
-    "chromium",
-    `executablePath len=${executablePath.length} path=${executablePath}`
-  );
+  /**
+   * @sparticuz/chromium v131+ a zejm. v147+ nemá `chromium.headless` — režim je v `args` jako
+   * `--headless='shell'`. `headless: true` u Puppeteer 24 by přidalo `--headless=new` a režimy by
+   * kolidovaly → „Failed to launch the browser process!“. Proto `headless: false` a nechat jen
+   * `chromium.args` (doporučení upstream).
+   */
+  launchConfigSummary("serverless", {
+    binDir,
+    executablePath,
+    headless: "false(Puppeteer)+shell-in-args",
+    chromiumArgCount: String(chromium.args.length),
+  });
+  logPdf("chromium", `executablePath len=${executablePath.length}`);
 
-  logPdf("browser", "puppeteer.launch start (args: chromium.args, headless: true)");
+  logPdf(
+    "browser",
+    "puppeteer.launch start headless=false (shell headless only from chromium.args)"
+  );
   try {
     const browser = await puppeteer.launch({
       args: chromium.args,
       executablePath,
-      headless: true,
+      headless: false,
     });
-    logPdf("browser", "puppeteer.launch ok");
+    logPdf("browser", "puppeteer.launch ok (serverless chromium)");
     return browser;
   } catch (e) {
     logPdfError("browser.launch", e);
@@ -428,7 +477,18 @@ export async function getDocumentPdfBuffer(
       const html = sanitizeInvoicePreviewHtml(rawHtml);
       logPdf("html", `invoice sanitized len=${html.length}`);
 
-      const buffer = await renderStoredHtmlToPdfBuffer(html);
+      let buffer: Buffer;
+      try {
+        buffer = await renderStoredHtmlToPdfBuffer(html);
+      } catch (pdfErr: unknown) {
+        const stack = errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr);
+        logPdfError("invoice.renderPdf", pdfErr);
+        return {
+          ok: false,
+          error: "Nepodařilo se vykreslit PDF z dokladu.",
+          detail: stack.slice(0, 12_000),
+        };
+      }
       if (buffer.length > MAX_PDF_BYTES) {
         return {
           ok: false,
