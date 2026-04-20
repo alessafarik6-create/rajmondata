@@ -1495,8 +1495,7 @@ export default function EmployeesPage() {
                                 <DropdownMenuSeparator />
                                 <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Identifikace</DropdownMenuLabel>
                                 <DropdownMenuItem
-                                  onSelect={(e) => {
-                                    e.preventDefault();
+                                  onClick={() => {
                                     setTerminalPinManualEmp(emp);
                                     setTerminalPinManualValue("");
                                     setTerminalPinManualConfirm("");
@@ -1506,8 +1505,7 @@ export default function EmployeesPage() {
                                   <KeyRound className="w-4 h-4 mr-2" /> Nastavit PIN ručně
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onSelect={(e) => {
-                                    e.preventDefault();
+                                  onClick={() => {
                                     setTerminalPinGenerateEmp(emp);
                                     setTerminalPinGenerateOpen(true);
                                   }}
@@ -1519,8 +1517,7 @@ export default function EmployeesPage() {
                                 </DropdownMenuItem>
                                 {employeeTerminalPinActive(emp as Record<string, unknown>) && (
                                   <DropdownMenuItem
-                                    onSelect={(e) => {
-                                      e.preventDefault();
+                                    onClick={() => {
                                       setTerminalPinClearEmp(emp);
                                       setTerminalPinClearOpen(true);
                                     }}
@@ -1567,8 +1564,7 @@ export default function EmployeesPage() {
                                   a výkazy
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onSelect={(e) => {
-                                    e.preventDefault();
+                                  onClick={() => {
                                     openBankDialog(emp as Record<string, unknown> & { id?: string });
                                   }}
                                 >
@@ -1577,8 +1573,7 @@ export default function EmployeesPage() {
                                 </DropdownMenuItem>
                                 {canManage && (
                                   <DropdownMenuItem
-                                    onSelect={(e) => {
-                                      e.preventDefault();
+                                    onClick={() => {
                                       setHourlyRateEmp(emp);
                                       setHourlyRateInput(
                                         emp.hourlyRate != null && emp.hourlyRate !== ""
@@ -1593,25 +1588,13 @@ export default function EmployeesPage() {
                                 {canManage && (
                                   <>
                                     <DropdownMenuItem
-                                      onSelect={(e) => {
-                                        e.preventDefault();
-                                        releaseDocumentModalLocks();
-                                        queueMicrotask(() =>
-                                          setAssignWorklogEmployee(emp)
-                                        );
-                                      }}
+                                      onClick={() => setAssignWorklogEmployee(emp)}
                                     >
                                       <Briefcase className="w-4 h-4 mr-2" /> Zakázky
                                       pro výkaz práce
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      onSelect={(e) => {
-                                        e.preventDefault();
-                                        releaseDocumentModalLocks();
-                                        queueMicrotask(() =>
-                                          setAssignTerminalEmployee(emp)
-                                        );
-                                      }}
+                                      onClick={() => setAssignTerminalEmployee(emp)}
                                     >
                                       <Briefcase className="w-4 h-4 mr-2" /> Zakázky
                                       pro veřejné přihlášení docházky
@@ -1624,8 +1607,7 @@ export default function EmployeesPage() {
                               <>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
-                                  onSelect={(e) => {
-                                    e.preventDefault();
+                                  onClick={() => {
                                     setOrgSettingsEmp(emp);
                                     setOrgSettingsRole(parseEmployeeOrgRole(emp as { role?: unknown }));
                                     setOrgSettingsTerminalVisible(
