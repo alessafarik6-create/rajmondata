@@ -111,6 +111,7 @@ import {
   compareDocumentsForPaymentQueue,
   documentGrossForPayment,
   getDocumentPaymentUrgency,
+  getPortalInvoicePaymentUrgency,
   isDocumentEligibleForPaymentBox,
   paymentStatusBadgeClass,
   paymentStatusLabel,
@@ -747,6 +748,39 @@ function DocumentCostAllocationDetail({
 /** Stejný limit jako u nahrávání médií na kartě zakázky. */
 const MAX_JOB_PHOTO_BYTES = 20 * 1024 * 1024;
 
+function issuedMergedEntryMatchesPaymentFilter(
+  entry:
+    | { kind: "doc"; row: CompanyDocumentRow }
+    | { kind: "inv"; inv: Record<string, unknown> & { id: string } },
+  paymentFilter: string,
+  todayIso: string
+): boolean {
+  if (paymentFilter === "__all__") return true;
+  if (entry.kind === "doc") {
+    const pr = entry.row as CompanyDocumentPaymentRow;
+    const u = getDocumentPaymentUrgency(pr, todayIso);
+    if (paymentFilter === "to_pay") return isDocumentEligibleForPaymentBox(pr);
+    if (paymentFilter === "needs_flag") return pr.requiresPayment === true;
+    if (paymentFilter === "paid") return pr.paid === true;
+    if (paymentFilter === "unpaid") return pr.paid !== true;
+    if (paymentFilter === "overdue") return u === "overdue";
+    if (paymentFilter === "due_soon") return u === "due_soon";
+    return true;
+  }
+  const inv = entry.inv;
+  const u = getPortalInvoicePaymentUrgency(inv, todayIso);
+  const gross = Number(inv.amountGross ?? inv.totalAmount ?? 0);
+  if (paymentFilter === "to_pay") {
+    return u !== "paid" && u !== "not_applicable" && Number.isFinite(gross) && gross > 0;
+  }
+  if (paymentFilter === "needs_flag") return false;
+  if (paymentFilter === "paid") return u === "paid";
+  if (paymentFilter === "unpaid") return u !== "paid" && u !== "not_applicable";
+  if (paymentFilter === "overdue") return u === "overdue";
+  if (paymentFilter === "due_soon") return u === "due_soon";
+  return true;
+}
+
 function DocumentsPageContent() {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -841,6 +875,15 @@ function DocumentsPageContent() {
     () => new Date().toISOString().split("T")[0],
     []
   );
+
+  const [documentsPaymentFilter, setDocumentsPaymentFilter] =
+    useState<string>("__all__");
+
+  useEffect(() => {
+    if (documentsMainTab === "trash") {
+      setDocumentsPaymentFilter("__all__");
+    }
+  }, [documentsMainTab]);
 
   const newDocGrossPreview = useMemo(() => {
     const amountStr = String(formData.amount ?? "").trim();
@@ -991,13 +1034,14 @@ function DocumentsPageContent() {
   const paymentOverviewStats = useMemo(() => {
     const list = financialDocumentsActive as CompanyDocumentPaymentRow[];
     let toPay = 0;
-    let overdue = 0;
+    let overdueDocuments = 0;
+    let overdueInvoices = 0;
     let totalKc = 0;
     for (const d of list) {
       if (!isDocumentEligibleForPaymentBox(d)) continue;
       toPay += 1;
       totalKc += documentGrossForPayment(d);
-      if (getDocumentPaymentUrgency(d, todayIso) === "overdue") overdue += 1;
+      if (getDocumentPaymentUrgency(d, todayIso) === "overdue") overdueDocuments += 1;
     }
     const invList = invoicesActiveList;
     for (const raw of invList) {
@@ -1007,10 +1051,12 @@ function DocumentsPageContent() {
       if (!Number.isFinite(gross) || gross <= 0) continue;
       toPay += 1;
       totalKc += roundMoney2(gross);
-      const due = String(inv.dueDate ?? "").trim();
-      if (due && due < todayIso) overdue += 1;
+      if (getPortalInvoicePaymentUrgency(inv, todayIso) === "overdue") {
+        overdueInvoices += 1;
+      }
     }
-    return { toPay, overdue, totalKc };
+    const overdueTotal = overdueDocuments + overdueInvoices;
+    return { toPay, overdueDocuments, overdueInvoices, overdueTotal, totalKc };
   }, [financialDocumentsActive, invoicesActiveList, todayIso]);
 
   const markDocumentPaid = async (row: CompanyDocumentRow) => {
@@ -3075,14 +3121,40 @@ function DocumentsPageContent() {
                   {Math.round(paymentOverviewStats.totalKc).toLocaleString("cs-CZ")} Kč
                 </strong>
               </span>
-              {paymentOverviewStats.overdue > 0 ? (
-                <span className="text-red-700">
-                  Po splatnosti:{" "}
-                  <strong className="tabular-nums">{paymentOverviewStats.overdue}</strong>
-                </span>
-              ) : (
-                <span className="text-gray-600">Po splatnosti: 0</span>
-              )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (paymentOverviewStats.overdueTotal <= 0) {
+                    toast({
+                      title: "Žádná položka po splatnosti",
+                      description:
+                        "V této sekci nemáte žádné doklady ani faktury po splatnosti (neuhrazené se splatností před dneškem).",
+                    });
+                    return;
+                  }
+                  setDocumentsPaymentFilter("overdue");
+                  setDocumentsMainTab("all");
+                }}
+                className={cn(
+                  "inline-flex max-w-full flex-wrap items-baseline gap-x-1 rounded-md border px-2 py-1 text-left text-sm transition-colors",
+                  paymentOverviewStats.overdueTotal > 0
+                    ? "cursor-pointer border-red-200 bg-red-50 text-red-900 hover:bg-red-100"
+                    : "cursor-pointer border-transparent text-gray-600 hover:bg-gray-50",
+                  documentsPaymentFilter === "overdue" &&
+                    paymentOverviewStats.overdueTotal > 0 &&
+                    "ring-2 ring-red-400/60"
+                )}
+                title={
+                  paymentOverviewStats.overdueTotal > 0
+                    ? `Doklady: ${paymentOverviewStats.overdueDocuments}, faktury: ${paymentOverviewStats.overdueInvoices}. Kliknutím nastavíte filtr v přehledech.`
+                    : "Kliknutím ověříte stav"
+                }
+              >
+                <span className="font-normal">Po splatnosti:</span>{" "}
+                <strong className="tabular-nums">
+                  {paymentOverviewStats.overdueTotal}
+                </strong>
+              </button>
             </div>
           </CardContent>
         </Card>
@@ -3125,6 +3197,27 @@ function DocumentsPageContent() {
           ) : null}
         </TabsList>
 
+        {documentsMainTab !== "trash" && documentsPaymentFilter === "overdue" ? (
+          <div
+            role="status"
+            className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-950"
+          >
+            <span>
+              Aktivní filtr: <strong>Po splatnosti</strong> — v tabulkách níže se zobrazují jen
+              neuhrazené položky po splatnosti (stejná logika jako u badge nahoře).
+            </span>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0 border-red-300 bg-white text-red-900 hover:bg-red-100"
+              onClick={() => setDocumentsPaymentFilter("__all__")}
+            >
+              Zrušit filtr
+            </Button>
+          </div>
+        ) : null}
+
         <TabsContent value="all" className="space-y-10">
           <section className="space-y-2">
             <h2 className="text-base font-semibold text-gray-950">
@@ -3144,6 +3237,8 @@ function DocumentsPageContent() {
               onMarkUnpaid={markDocumentUnpaid}
               readOnlyTrash={false}
               showDeleteButton={canSoftDelete}
+              paymentFilter={documentsPaymentFilter}
+              onPaymentFilterChange={setDocumentsPaymentFilter}
             />
           </section>
           <section className="space-y-2">
@@ -3166,6 +3261,9 @@ function DocumentsPageContent() {
               onMarkUnpaid={markDocumentUnpaid}
               readOnlyTrash={false}
               showDeleteButton={canSoftDelete}
+              todayIso={todayIso}
+              paymentFilter={documentsPaymentFilter}
+              onPaymentFilterChange={setDocumentsPaymentFilter}
             />
           </section>
         </TabsContent>
@@ -3185,6 +3283,8 @@ function DocumentsPageContent() {
             onMarkUnpaid={markDocumentUnpaid}
             readOnlyTrash={false}
             showDeleteButton={canSoftDelete}
+            paymentFilter={documentsPaymentFilter}
+            onPaymentFilterChange={setDocumentsPaymentFilter}
           />
         </TabsContent>
 
@@ -3205,6 +3305,9 @@ function DocumentsPageContent() {
             onMarkUnpaid={markDocumentUnpaid}
             readOnlyTrash={false}
             showDeleteButton={canSoftDelete}
+            todayIso={todayIso}
+            paymentFilter={documentsPaymentFilter}
+            onPaymentFilterChange={setDocumentsPaymentFilter}
           />
         </TabsContent>
 
@@ -3234,6 +3337,8 @@ function DocumentsPageContent() {
               onMarkUnpaid={markDocumentUnpaid}
               readOnlyTrash
               showDeleteButton={false}
+              paymentFilter={documentsPaymentFilter}
+              onPaymentFilterChange={setDocumentsPaymentFilter}
             />
           </section>
           <section className="space-y-2">
@@ -3256,6 +3361,9 @@ function DocumentsPageContent() {
               onMarkUnpaid={markDocumentUnpaid}
               readOnlyTrash
               showDeleteButton={false}
+              todayIso={todayIso}
+              paymentFilter={documentsPaymentFilter}
+              onPaymentFilterChange={setDocumentsPaymentFilter}
             />
           </section>
         </TabsContent>
@@ -4186,6 +4294,8 @@ function DocumentTableReceived({
   onMarkUnpaid,
   readOnlyTrash = false,
   showDeleteButton = true,
+  paymentFilter,
+  onPaymentFilterChange,
 }: {
   data: CompanyDocumentRow[];
   jobNamesById: Map<string, string>;
@@ -4202,6 +4312,8 @@ function DocumentTableReceived({
   readOnlyTrash?: boolean;
   /** Skrýt ikonu koše (např. pro nepřihlášené role). */
   showDeleteButton?: boolean;
+  paymentFilter: string;
+  onPaymentFilterChange: (v: string) => void;
 }) {
   const [jobFilter, setJobFilter] = useState<string>("__all__");
   const [jobAssignmentFilter, setJobAssignmentFilter] = useState<
@@ -4209,7 +4321,6 @@ function DocumentTableReceived({
   >("all");
   const [docTypeFilter, setDocTypeFilter] = useState<string>("__all__");
   const [typeFilter, setTypeFilter] = useState<string>("__all__");
-  const [paymentFilter, setPaymentFilter] = useState<string>("__all__");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
 
@@ -4455,8 +4566,14 @@ function DocumentTableReceived({
           </div>
           <div className="space-y-1 min-w-0 sm:col-span-2 lg:col-span-6">
             <Label className="text-[11px] font-medium text-gray-800">Platba / splatnost</Label>
-            <Select value={paymentFilter} onValueChange={setPaymentFilter}>
-              <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
+            <Select value={paymentFilter} onValueChange={onPaymentFilterChange}>
+              <SelectTrigger
+                className={cn(
+                  "h-9 w-full border-gray-300 bg-white text-gray-900",
+                  paymentFilter !== "__all__" &&
+                    "border-primary/60 ring-1 ring-primary/25"
+                )}
+              >
                 <SelectValue placeholder="Vše" />
               </SelectTrigger>
               <SelectContent>
@@ -4882,6 +4999,9 @@ function DocumentTableIssued({
   onMarkUnpaid: _onMarkUnpaid,
   readOnlyTrash = false,
   showDeleteButton = true,
+  todayIso,
+  paymentFilter,
+  onPaymentFilterChange,
 }: {
   data: CompanyDocumentRow[];
   invoices?: Array<Record<string, unknown> & { id: string }>;
@@ -4898,6 +5018,9 @@ function DocumentTableIssued({
   onMarkUnpaid?: (row: CompanyDocumentRow) => void | Promise<void>;
   readOnlyTrash?: boolean;
   showDeleteButton?: boolean;
+  todayIso: string;
+  paymentFilter: string;
+  onPaymentFilterChange: (v: string) => void;
 }) {
   const { toast } = useToast();
   const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
@@ -4939,6 +5062,14 @@ function DocumentTableIssued({
     out.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
     return out;
   }, [data, invoices, categoryFilter]);
+
+  const mergedShown = useMemo(
+    () =>
+      merged.filter((entry) =>
+        issuedMergedEntryMatchesPaymentFilter(entry, paymentFilter, todayIso)
+      ),
+    [merged, paymentFilter, todayIso]
+  );
 
   const jobNameForId = (jid: string) =>
     jobs.find((j) => j.id === jid)?.name ?? null;
@@ -4990,6 +5121,31 @@ function DocumentTableIssued({
               <SelectItem value="delivery_notes">Dodací listy</SelectItem>
             </SelectContent>
           </Select>
+          <div className="flex min-w-[min(100%,220px)] flex-col gap-0.5">
+            <span className="text-[10px] font-medium text-gray-600">
+              Platba / splatnost
+            </span>
+            <Select value={paymentFilter} onValueChange={onPaymentFilterChange}>
+              <SelectTrigger
+                className={cn(
+                  "h-8 border-gray-300 bg-white text-xs text-gray-900",
+                  paymentFilter !== "__all__" &&
+                    "border-primary/60 ring-1 ring-primary/25"
+                )}
+              >
+                <SelectValue placeholder="Vše" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="__all__">Všechny položky</SelectItem>
+                <SelectItem value="to_pay">K úhradě (nezaplacené)</SelectItem>
+                <SelectItem value="needs_flag">Označené k úhradě</SelectItem>
+                <SelectItem value="unpaid">Nezaplacené</SelectItem>
+                <SelectItem value="paid">Zaplacené</SelectItem>
+                <SelectItem value="overdue">Po splatnosti</SelectItem>
+                <SelectItem value="due_soon">Blíží se splatnost</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {!readOnlyTrash ? (
             <Button variant="outlineLight" size="sm" className="h-8 gap-1.5 px-2 text-xs" asChild>
               <Link href="/portal/invoices/new">
@@ -5010,7 +5166,7 @@ function DocumentTableIssued({
           <div className="flex justify-center p-8">
             <Loader2 className="h-7 w-7 animate-spin text-primary" />
           </div>
-        ) : merged.length > 0 ? (
+        ) : mergedShown.length > 0 ? (
           <div className="w-full overflow-hidden bg-white">
             <div
               className={cn(
@@ -5024,7 +5180,7 @@ function DocumentTableIssued({
               <span>Datum / splatnost</span>
               <span className="text-left tabular-nums lg:text-right">Částka</span>
             </div>
-            {merged.map((entry) => {
+            {mergedShown.map((entry) => {
               const ib =
                 "h-10 w-10 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950 sm:h-7 sm:w-7 touch-manipulation";
               if (entry.kind === "doc") {
@@ -5356,6 +5512,18 @@ function DocumentTableIssued({
                 </div>
               );
             })}
+          </div>
+        ) : merged.length > 0 && mergedShown.length === 0 ? (
+          <div className="text-center py-20 text-muted-foreground">
+            Žádná položka neodpovídá filtru platby / splatnosti (zkuste jiný filtr nebo{" "}
+            <button
+              type="button"
+              className="font-medium text-primary underline-offset-2 hover:underline"
+              onClick={() => onPaymentFilterChange("__all__")}
+            >
+              zrušit filtr
+            </button>
+            ).
           </div>
         ) : (
           <div className="text-center py-20 text-muted-foreground">

@@ -123,6 +123,35 @@ export function getDocumentPaymentUrgency(
   return "ok";
 }
 
+/** Faktury ve výpisu Doklady (portal) — stejná časová logika splatnosti jako u firemních dokladů. */
+export type PortalInvoiceRow = Record<string, unknown>;
+
+export function getPortalInvoicePaymentUrgency(
+  inv: PortalInvoiceRow,
+  todayIso: string
+): PaymentUrgency {
+  const status = String(inv.status ?? "")
+    .trim()
+    .toLowerCase();
+  if (status === "paid") return "paid";
+  if (
+    status === "draft" ||
+    status === "cancelled" ||
+    status === "canceled" ||
+    status === "storno"
+  ) {
+    return "not_applicable";
+  }
+  const gross = Number(inv.amountGross ?? inv.totalAmount ?? 0);
+  if (!Number.isFinite(gross) || gross <= 0) return "not_applicable";
+  const due = String(inv.dueDate ?? "").trim();
+  if (!due) return "incomplete_no_due";
+  if (compareIsoDate(due, todayIso) < 0) return "overdue";
+  const limitSoon = addDaysIso(todayIso, PAYMENT_DUE_SOON_DAYS);
+  if (compareIsoDate(due, limitSoon) <= 0) return "due_soon";
+  return "ok";
+}
+
 export function paymentStatusLabel(st: CompanyDocumentPaymentStatus): string {
   if (st === "paid") return "Uhrazeno";
   if (st === "partial") return "Částečně uhrazeno";
