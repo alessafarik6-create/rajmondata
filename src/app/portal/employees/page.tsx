@@ -72,7 +72,9 @@ import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
-import { releaseDocumentModalLocks } from "@/lib/release-modal-locks";
+import {
+  releaseDocumentModalLocksAfterTransition,
+} from "@/lib/release-modal-locks";
 import {
   normalizeTerminalPin,
   validateTerminalPinFormat,
@@ -94,10 +96,16 @@ import {
 } from "@/lib/employee-bank-account";
 
 function releaseModalLocksAfterDismiss() {
-  releaseDocumentModalLocks();
-  if (typeof window !== "undefined") {
-    window.requestAnimationFrame(() => releaseDocumentModalLocks());
+  releaseDocumentModalLocksAfterTransition(320);
+}
+
+/** Otevření dialogu hned po kliknutí v DropdownMenu koliduje s Radix focus/pointer-events — počkej na zavření menu. */
+function runAfterDropdownMenuCloses(fn: () => void): void {
+  if (typeof window === "undefined") {
+    fn();
+    return;
   }
+  window.setTimeout(fn, 0);
 }
 
 /** Porovnání množin ID — zabrání zbytečným setState při stejném obsahu. */
@@ -194,9 +202,6 @@ export default function EmployeesPage() {
   const [portalModPenize, setPortalModPenize] = useState(true);
   const [portalModZpravy, setPortalModZpravy] = useState(true);
   const [portalModDochazka, setPortalModDochazka] = useState(true);
-  const [reloadDebugEmployeeId, setReloadDebugEmployeeId] = useState<string | null>(
-    null
-  );
 
   const [qrEmployee, setQrEmployee] = useState<any | null>(null);
 
@@ -217,19 +222,6 @@ export default function EmployeesPage() {
     // toast z useToast() má nestabilní referenci — v deps způsobuje zbytečné opakování efektu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, canView, userRole, router]);
-
-  useEffect(() => {
-    if (!reloadDebugEmployeeId || !employees?.length) return;
-    const row = employees.find(
-      (e: { id?: string }) => e.id === reloadDebugEmployeeId
-    ) as Record<string, unknown> | undefined;
-    if (!row) return;
-    if (process.env.NODE_ENV === "development") {
-      console.log("RELOAD employee data", row);
-      console.log("RELOAD loaded employeePortalModules", parseEmployeePortalModules(row));
-    }
-    setReloadDebugEmployeeId(null);
-  }, [employees, reloadDebugEmployeeId]);
 
   const [invitePassword, setInvitePassword] = useState("");
   const [invitePasswordConfirm, setInvitePasswordConfirm] = useState("");
@@ -427,7 +419,6 @@ export default function EmployeesPage() {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
       setSavingAssignedWorklogJobs(false);
-      releaseModalLocksAfterDismiss();
     }
   };
 
@@ -458,7 +449,6 @@ export default function EmployeesPage() {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
       setSavingAssignedTerminalJobs(false);
-      releaseModalLocksAfterDismiss();
     }
   };
 
@@ -563,11 +553,10 @@ export default function EmployeesPage() {
         hourlyRate: hourlyRateValue,
         updatedAt: serverTimestamp(),
       });
-      console.log("Employee hourly rate updated", { employeeId: hourlyRateEmp.id });
       toast({ title: "Hodinová sazba uložena" });
       setHourlyRateEmp(null);
     } catch (e) {
-      console.error(e);
+      console.error("[employees] hourly rate save", e);
       toast({ variant: "destructive", title: "Uložení se nezdařilo." });
     } finally {
       setHourlyRateSaving(false);
@@ -715,13 +704,11 @@ export default function EmployeesPage() {
     setTerminalPinManualSaving(true);
     try {
       const pinNorm = normalizeTerminalPin(terminalPinManualValue);
-      console.log("Saving PIN", terminalPinManualEmp.id);
       const data = await postTerminalPinAdmin({
         employeeId: terminalPinManualEmp.id,
         action: "set",
         pin: pinNorm,
       });
-      console.log("PIN saved");
       toast({
         title: "PIN uložen",
         description:
@@ -743,7 +730,6 @@ export default function EmployeesPage() {
     if (!terminalPinGenerateEmp?.id || !canManage) return;
     setTerminalPinGenerateSaving(true);
     try {
-      console.log("Saving PIN", terminalPinGenerateEmp.id);
       const data = await postTerminalPinAdmin({
         employeeId: terminalPinGenerateEmp.id,
         action: "generate",
@@ -753,7 +739,6 @@ export default function EmployeesPage() {
           ? normalizeTerminalPin(data.generatedPin)
           : null;
       setTerminalPinGeneratedDisplay(pin);
-      console.log("PIN saved");
       toast({
         title: "PIN vygenerován",
         description: pin
@@ -780,12 +765,10 @@ export default function EmployeesPage() {
     if (!terminalPinClearEmp?.id || !canManage) return;
     setTerminalPinClearSaving(true);
     try {
-      console.log("Saving PIN", terminalPinClearEmp.id);
       const data = await postTerminalPinAdmin({
         employeeId: terminalPinClearEmp.id,
         action: "clear",
       });
-      console.log("PIN saved");
       toast({
         title: "PIN zrušen",
         description: data.message || "Docházkový PIN byl odstraněn.",
@@ -812,6 +795,25 @@ export default function EmployeesPage() {
     } catch (error) {
       toast({ variant: "destructive", title: "Chyba při mazání" });
     }
+  };
+
+  const openOrgSettingsForEmployee = (emp: Record<string, unknown> & { id?: string }) => {
+    setOrgSettingsEmp(emp);
+    setOrgSettingsRole(parseEmployeeOrgRole(emp as { role?: unknown }));
+    setOrgSettingsTerminalVisible(
+      isVisibleInAttendanceTerminal(emp as { visibleInAttendanceTerminal?: boolean })
+    );
+    setOrgSettingsCanWarehouse(
+      (emp as { canAccessWarehouse?: boolean }).canAccessWarehouse === true
+    );
+    setOrgSettingsCanProduction(
+      (emp as { canAccessProduction?: boolean }).canAccessProduction === true
+    );
+    const pm = parseEmployeePortalModules(emp);
+    setPortalModZakazky(pm.zakazky);
+    setPortalModPenize(pm.penize);
+    setPortalModZpravy(pm.zpravy);
+    setPortalModDochazka(pm.dochazka);
   };
 
   const closePwdResetDialog = () => {
@@ -885,7 +887,7 @@ export default function EmployeesPage() {
   };
 
   const saveOrgSettings = async () => {
-    if (!canManage || !user || !orgSettingsEmp?.id) return;
+    if (!canManage || !user || !orgSettingsEmp?.id || orgSettingsSaving) return;
     setOrgSettingsSaving(true);
     try {
       const idToken = await user.getIdToken();
@@ -903,9 +905,6 @@ export default function EmployeesPage() {
         canAccessProduction: orgSettingsCanProduction,
         employeePortalModules,
       };
-      if (process.env.NODE_ENV === "development") {
-        console.log("SAVE payload", payload);
-      }
       const res = await fetch("/api/company/employees/update-org", {
         method: "PATCH",
         headers: {
@@ -920,15 +919,11 @@ export default function EmployeesPage() {
           typeof data.error === "string" ? data.error : "Uložení se nezdařilo."
         );
       }
-      if (process.env.NODE_ENV === "development") {
-        console.log("SAVE success");
-      }
       toast({
         title: "Uloženo",
         description:
           "Role, terminál, sklad / výroba a moduly zaměstnaneckého portálu byly aktualizovány.",
       });
-      setReloadDebugEmployeeId(orgSettingsEmp.id);
       setOrgSettingsEmp(null);
     } catch (error: unknown) {
       const msg =
@@ -936,7 +931,6 @@ export default function EmployeesPage() {
       toast({ variant: "destructive", title: "Chyba", description: msg });
     } finally {
       setOrgSettingsSaving(false);
-      releaseModalLocksAfterDismiss();
     }
   };
 
@@ -1216,14 +1210,7 @@ export default function EmployeesPage() {
               <Switch
                 id="org-settings-terminal"
                 checked={orgSettingsTerminalVisible}
-                onCheckedChange={(v) => {
-                  if (process.env.NODE_ENV === "development") {
-                    console.log("TOGGLE key", "visibleInAttendanceTerminal");
-                    console.log("TOGGLE before", orgSettingsTerminalVisible);
-                    console.log("TOGGLE after", v);
-                  }
-                  setOrgSettingsTerminalVisible(v);
-                }}
+                onCheckedChange={setOrgSettingsTerminalVisible}
               />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1239,14 +1226,7 @@ export default function EmployeesPage() {
               <Switch
                 id="org-settings-warehouse"
                 checked={orgSettingsCanWarehouse}
-                onCheckedChange={(v) => {
-                  if (process.env.NODE_ENV === "development") {
-                    console.log("TOGGLE key", "canAccessWarehouse");
-                    console.log("TOGGLE before", orgSettingsCanWarehouse);
-                    console.log("TOGGLE after", v);
-                  }
-                  setOrgSettingsCanWarehouse(v);
-                }}
+                onCheckedChange={setOrgSettingsCanWarehouse}
               />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1261,14 +1241,7 @@ export default function EmployeesPage() {
               <Switch
                 id="org-settings-production"
                 checked={orgSettingsCanProduction}
-                onCheckedChange={(v) => {
-                  if (process.env.NODE_ENV === "development") {
-                    console.log("TOGGLE key", "canAccessProduction");
-                    console.log("TOGGLE before", orgSettingsCanProduction);
-                    console.log("TOGGLE after", v);
-                  }
-                  setOrgSettingsCanProduction(v);
-                }}
+                onCheckedChange={setOrgSettingsCanProduction}
               />
             </div>
             <div className="space-y-2 border-t border-gray-200 pt-3">
@@ -1286,14 +1259,7 @@ export default function EmployeesPage() {
                 <Switch
                   id="portal-mod-zakazky"
                   checked={portalModZakazky}
-                  onCheckedChange={(v) => {
-                    if (process.env.NODE_ENV === "development") {
-                      console.log("TOGGLE key", "employeePortalModules.zakazky");
-                      console.log("TOGGLE before", portalModZakazky);
-                      console.log("TOGGLE after", v);
-                    }
-                    setPortalModZakazky(v);
-                  }}
+                  onCheckedChange={setPortalModZakazky}
                 />
               </div>
               <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1303,14 +1269,7 @@ export default function EmployeesPage() {
                 <Switch
                   id="portal-mod-penize"
                   checked={portalModPenize}
-                  onCheckedChange={(v) => {
-                    if (process.env.NODE_ENV === "development") {
-                      console.log("TOGGLE key", "employeePortalModules.penize");
-                      console.log("TOGGLE before", portalModPenize);
-                      console.log("TOGGLE after", v);
-                    }
-                    setPortalModPenize(v);
-                  }}
+                  onCheckedChange={setPortalModPenize}
                 />
               </div>
               <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1320,14 +1279,7 @@ export default function EmployeesPage() {
                 <Switch
                   id="portal-mod-zpravy"
                   checked={portalModZpravy}
-                  onCheckedChange={(v) => {
-                    if (process.env.NODE_ENV === "development") {
-                      console.log("TOGGLE key", "employeePortalModules.zpravy");
-                      console.log("TOGGLE before", portalModZpravy);
-                      console.log("TOGGLE after", v);
-                    }
-                    setPortalModZpravy(v);
-                  }}
+                  onCheckedChange={setPortalModZpravy}
                 />
               </div>
               <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
@@ -1337,14 +1289,7 @@ export default function EmployeesPage() {
                 <Switch
                   id="portal-mod-dochazka"
                   checked={portalModDochazka}
-                  onCheckedChange={(v) => {
-                    if (process.env.NODE_ENV === "development") {
-                      console.log("TOGGLE key", "employeePortalModules.dochazka");
-                      console.log("TOGGLE before", portalModDochazka);
-                      console.log("TOGGLE after", v);
-                    }
-                    setPortalModDochazka(v);
-                  }}
+                  onCheckedChange={setPortalModDochazka}
                 />
               </div>
             </div>
@@ -1489,25 +1434,33 @@ export default function EmployeesPage() {
                             {canManage ? (
                               <>
                                 <DropdownMenuLabel>Správa uživatele</DropdownMenuLabel>
-                                <DropdownMenuItem onClick={() => toggleEmployeeStatus(emp.id, emp.isActive)}>
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    void toggleEmployeeStatus(emp.id, emp.isActive);
+                                  }}
+                                >
                                   <UserX className="w-4 h-4 mr-2" /> {emp.isActive ? 'Deaktivovat' : 'Aktivovat'}
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">Identifikace</DropdownMenuLabel>
                                 <DropdownMenuItem
-                                  onClick={() => {
-                                    setTerminalPinManualEmp(emp);
-                                    setTerminalPinManualValue("");
-                                    setTerminalPinManualConfirm("");
-                                    setTerminalPinManualOpen(true);
+                                  onSelect={() => {
+                                    runAfterDropdownMenuCloses(() => {
+                                      setTerminalPinManualEmp(emp);
+                                      setTerminalPinManualValue("");
+                                      setTerminalPinManualConfirm("");
+                                      setTerminalPinManualOpen(true);
+                                    });
                                   }}
                                 >
                                   <KeyRound className="w-4 h-4 mr-2" /> Nastavit PIN ručně
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => {
-                                    setTerminalPinGenerateEmp(emp);
-                                    setTerminalPinGenerateOpen(true);
+                                  onSelect={() => {
+                                    runAfterDropdownMenuCloses(() => {
+                                      setTerminalPinGenerateEmp(emp);
+                                      setTerminalPinGenerateOpen(true);
+                                    });
                                   }}
                                 >
                                   <RefreshCw className="w-4 h-4 mr-2" />{" "}
@@ -1517,9 +1470,11 @@ export default function EmployeesPage() {
                                 </DropdownMenuItem>
                                 {employeeTerminalPinActive(emp as Record<string, unknown>) && (
                                   <DropdownMenuItem
-                                    onClick={() => {
-                                      setTerminalPinClearEmp(emp);
-                                      setTerminalPinClearOpen(true);
+                                    onSelect={() => {
+                                      runAfterDropdownMenuCloses(() => {
+                                        setTerminalPinClearEmp(emp);
+                                        setTerminalPinClearOpen(true);
+                                      });
                                     }}
                                     className="text-rose-600 focus:text-rose-600"
                                   >
@@ -1534,10 +1489,12 @@ export default function EmployeesPage() {
                             </DropdownMenuLabel>
                             {emp.authUserId ? (
                               <DropdownMenuItem
-                                onClick={() => {
-                                  setPwdResetEmployee(emp);
-                                  setPwdResetNew("");
-                                  setPwdResetConfirm("");
+                                onSelect={() => {
+                                  runAfterDropdownMenuCloses(() => {
+                                    setPwdResetEmployee(emp);
+                                    setPwdResetNew("");
+                                    setPwdResetConfirm("");
+                                  });
                                 }}
                               >
                                 <KeyRound className="w-4 h-4 mr-2" /> Nastavit nové heslo
@@ -1554,18 +1511,22 @@ export default function EmployeesPage() {
                                   Peníze
                                 </DropdownMenuLabel>
                                 <DropdownMenuItem
-                                  onClick={() =>
+                                  onSelect={() => {
                                     router.push(
                                       `/portal/labor/vyplaty?employee=${encodeURIComponent(emp.id)}`
-                                    )
-                                  }
+                                    );
+                                  }}
                                 >
                                   <DollarSign className="w-4 h-4 mr-2" /> Výplaty
                                   a výkazy
                                 </DropdownMenuItem>
                                 <DropdownMenuItem
-                                  onClick={() => {
-                                    openBankDialog(emp as Record<string, unknown> & { id?: string });
+                                  onSelect={() => {
+                                    runAfterDropdownMenuCloses(() => {
+                                      openBankDialog(
+                                        emp as Record<string, unknown> & { id?: string }
+                                      );
+                                    });
                                   }}
                                 >
                                   <Landmark className="w-4 h-4 mr-2" /> Bankovní údaje
@@ -1573,13 +1534,15 @@ export default function EmployeesPage() {
                                 </DropdownMenuItem>
                                 {canManage && (
                                   <DropdownMenuItem
-                                    onClick={() => {
-                                      setHourlyRateEmp(emp);
-                                      setHourlyRateInput(
-                                        emp.hourlyRate != null && emp.hourlyRate !== ""
-                                          ? String(emp.hourlyRate)
-                                          : ""
-                                      );
+                                    onSelect={() => {
+                                      runAfterDropdownMenuCloses(() => {
+                                        setHourlyRateEmp(emp);
+                                        setHourlyRateInput(
+                                          emp.hourlyRate != null && emp.hourlyRate !== ""
+                                            ? String(emp.hourlyRate)
+                                            : ""
+                                        );
+                                      });
                                     }}
                                   >
                                     <Edit2 className="w-4 h-4 mr-2" /> Hodinová sazba
@@ -1588,13 +1551,21 @@ export default function EmployeesPage() {
                                 {canManage && (
                                   <>
                                     <DropdownMenuItem
-                                      onClick={() => setAssignWorklogEmployee(emp)}
+                                      onSelect={() => {
+                                        runAfterDropdownMenuCloses(() =>
+                                          setAssignWorklogEmployee(emp)
+                                        );
+                                      }}
                                     >
                                       <Briefcase className="w-4 h-4 mr-2" /> Zakázky
                                       pro výkaz práce
                                     </DropdownMenuItem>
                                     <DropdownMenuItem
-                                      onClick={() => setAssignTerminalEmployee(emp)}
+                                      onSelect={() => {
+                                        runAfterDropdownMenuCloses(() =>
+                                          setAssignTerminalEmployee(emp)
+                                        );
+                                      }}
                                     >
                                       <Briefcase className="w-4 h-4 mr-2" /> Zakázky
                                       pro veřejné přihlášení docházky
@@ -1607,38 +1578,23 @@ export default function EmployeesPage() {
                               <>
                                 <DropdownMenuSeparator />
                                 <DropdownMenuItem
-                                  onClick={() => {
-                                    setOrgSettingsEmp(emp);
-                                    setOrgSettingsRole(parseEmployeeOrgRole(emp as { role?: unknown }));
-                                    setOrgSettingsTerminalVisible(
-                                      isVisibleInAttendanceTerminal(
-                                        emp as { visibleInAttendanceTerminal?: boolean }
+                                  onSelect={() => {
+                                    runAfterDropdownMenuCloses(() =>
+                                      openOrgSettingsForEmployee(
+                                        emp as Record<string, unknown> & { id?: string }
                                       )
                                     );
-                                    setOrgSettingsCanWarehouse(
-                                      (emp as { canAccessWarehouse?: boolean }).canAccessWarehouse ===
-                                        true
-                                    );
-                                    setOrgSettingsCanProduction(
-                                      (emp as { canAccessProduction?: boolean }).canAccessProduction ===
-                                        true
-                                    );
-                                    const empRow = emp as Record<string, unknown>;
-                                    const pm = parseEmployeePortalModules(empRow);
-                                    if (process.env.NODE_ENV === "development") {
-                                      console.log("OPEN employee data", empRow);
-                                      console.log("OPEN loaded employeePortalModules", { ...pm });
-                                    }
-                                    setPortalModZakazky(pm.zakazky);
-                                    setPortalModPenize(pm.penize);
-                                    setPortalModZpravy(pm.zpravy);
-                                    setPortalModDochazka(pm.dochazka);
                                   }}
                                 >
                                   <Edit2 className="w-4 h-4 mr-2" /> Role, terminál a portál
                                 </DropdownMenuItem>
                                 <DropdownMenuSeparator />
-                                <DropdownMenuItem className="text-destructive" onClick={() => deleteEmployee(emp.id)}>
+                                <DropdownMenuItem
+                                  className="text-destructive"
+                                  onSelect={() => {
+                                    void deleteEmployee(emp.id);
+                                  }}
+                                >
                                   <Trash2 className="w-4 h-4 mr-2" /> Odstranit
                                 </DropdownMenuItem>
                               </>
@@ -1672,6 +1628,7 @@ export default function EmployeesPage() {
           if (!open) {
             setHourlyRateEmp(null);
             setHourlyRateInput("");
+            releaseModalLocksAfterDismiss();
           }
         }}
       >
@@ -1721,6 +1678,7 @@ export default function EmployeesPage() {
           if (!open) {
             setBankDialogEmp(null);
             setBankForm({ ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
+            releaseModalLocksAfterDismiss();
           }
         }}
       >
@@ -1869,7 +1827,10 @@ export default function EmployeesPage() {
       <Dialog
         open={!!pwdResetEmployee}
         onOpenChange={(open) => {
-          if (!open) closePwdResetDialog();
+          if (!open) {
+            closePwdResetDialog();
+            releaseModalLocksAfterDismiss();
+          }
         }}
       >
         <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
@@ -1943,7 +1904,10 @@ export default function EmployeesPage() {
       <Dialog
         open={terminalPinManualOpen}
         onOpenChange={(open) => {
-          if (!open) closeTerminalPinManual();
+          if (!open) {
+            closeTerminalPinManual();
+            releaseModalLocksAfterDismiss();
+          }
         }}
       >
         <DialogContent className="max-w-md border border-gray-200 bg-white p-6 text-black shadow-lg [&>button.absolute]:text-gray-600 [&>button.absolute]:hover:bg-gray-100 [&>button.absolute]:hover:text-gray-900">
@@ -2017,6 +1981,7 @@ export default function EmployeesPage() {
         onOpenChange={(open) => {
           if (!open) {
             closeTerminalPinGenerateDialog();
+            releaseModalLocksAfterDismiss();
           }
         }}
       >
@@ -2089,6 +2054,7 @@ export default function EmployeesPage() {
           if (!open) {
             setTerminalPinClearOpen(false);
             setTerminalPinClearEmp(null);
+            releaseModalLocksAfterDismiss();
           }
         }}
       >
