@@ -220,6 +220,7 @@ export default function EmployeesPage() {
   const [orgSettingsTerminalVisible, setOrgSettingsTerminalVisible] = useState(true);
   const [orgSettingsCanWarehouse, setOrgSettingsCanWarehouse] = useState(false);
   const [orgSettingsCanProduction, setOrgSettingsCanProduction] = useState(false);
+  const [orgSettingsCanMeetingNotes, setOrgSettingsCanMeetingNotes] = useState(false);
   const [orgSettingsSaving, setOrgSettingsSaving] = useState(false);
   const [portalModZakazky, setPortalModZakazky] = useState(true);
   const [portalModPenize, setPortalModPenize] = useState(true);
@@ -991,6 +992,7 @@ export default function EmployeesPage() {
         visibleInAttendanceTerminal: orgSettingsTerminalVisible,
         canAccessWarehouse: orgSettingsCanWarehouse,
         canAccessProduction: orgSettingsCanProduction,
+        canAccessMeetingNotes: orgSettingsCanMeetingNotes,
         employeePortalModules,
       };
       const res = await fetch("/api/company/employees/update-org", {
@@ -1010,7 +1012,7 @@ export default function EmployeesPage() {
       toast({
         title: "Uloženo",
         description:
-          "Role, terminál, sklad / výroba a moduly zaměstnaneckého portálu byly aktualizovány.",
+          "Role, terminál, sklad, výroba, záznamy ze schůzek a moduly portálu byly aktualizovány.",
       });
       closeOrgSettingsDialog();
     } catch (error: unknown) {
@@ -1340,6 +1342,22 @@ export default function EmployeesPage() {
                 id="org-settings-production"
                 checked={orgSettingsCanProduction}
                 onCheckedChange={setOrgSettingsCanProduction}
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+              <div className="min-w-0 space-y-0.5">
+                <Label htmlFor="org-settings-meeting-notes" className={INVITE_LABEL_CLASS}>
+                  Záznamy ze schůzek u zakázek
+                </Label>
+                <p className="text-[10px] text-gray-600">
+                  Běžný zaměstnanec uvidí sekci u zakázky a může záznamy upravovat; interní poznámky
+                  zůstávají odděleně a zákazník je nevidí.
+                </p>
+              </div>
+              <Switch
+                id="org-settings-meeting-notes"
+                checked={orgSettingsCanMeetingNotes}
+                onCheckedChange={setOrgSettingsCanMeetingNotes}
               />
             </div>
             <div className="space-y-2 border-t border-gray-200 pt-3">

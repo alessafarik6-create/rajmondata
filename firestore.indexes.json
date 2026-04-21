@@ -239,6 +239,40 @@
         { "fieldPath": "assignmentType", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "meetingRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "jobId", "order": "ASCENDING" },
+        { "fieldPath": "meetingAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "meetingRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "jobId", "order": "ASCENDING" },
+        { "fieldPath": "sharedWithCustomer", "order": "ASCENDING" },
+        { "fieldPath": "meetingAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "meetingRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sharedWithCustomer", "order": "ASCENDING" },
+        { "fieldPath": "jobId", "order": "ASCENDING" },
+        { "fieldPath": "meetingAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "meetingRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "sharedWithCustomer", "order": "ASCENDING" },
+        { "fieldPath": "meetingAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

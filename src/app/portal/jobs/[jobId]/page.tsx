@@ -104,7 +104,8 @@ import {
 } from "@/lib/job-tags";
 import { cn } from "@/lib/utils";
 import { JD } from "@/lib/job-detail-page-styles";
-import { logActivitySafe } from "@/lib/activity-log";
+import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
+import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -611,6 +612,75 @@ function JobDetailPageContent() {
     profile?.role === "manager" ||
     profile?.role === "accountant" ||
     profile?.globalRoles?.includes("super_admin");
+
+  const employeeSelfRef = useMemoFirebase(
+    () =>
+      firestore && companyId && profile?.employeeId
+        ? doc(firestore, "companies", companyId, "employees", String(profile.employeeId))
+        : null,
+    [firestore, companyId, profile?.employeeId]
+  );
+  const { data: employeeSelf } = useDoc(employeeSelfRef);
+
+  const jobsListForMeetingRef = useMemoFirebase(
+    () =>
+      firestore && companyId ? collection(firestore, "companies", companyId, "jobs") : null,
+    [firestore, companyId]
+  );
+  const { data: allJobsRawForMeeting } = useCollection(jobsListForMeetingRef);
+  const jobOptionsForMeeting = useMemo(() => {
+    const list = Array.isArray(allJobsRawForMeeting) ? allJobsRawForMeeting : [];
+    return list
+      .map((j) => {
+        const r = j as { id?: string; name?: string };
+        if (!r?.id) return null;
+        const name =
+          typeof r.name === "string" && r.name.trim() ? r.name.trim() : r.id;
+        return { id: r.id, name };
+      })
+      .filter((x): x is { id: string; name: string } => x != null);
+  }, [allJobsRawForMeeting]);
+
+  const canSeeMeetingRecords = useMemo(() => {
+    const role = profile?.role;
+    if (
+      role === "owner" ||
+      role === "admin" ||
+      role === "manager" ||
+      role === "accountant" ||
+      profile?.globalRoles?.includes("super_admin")
+    ) {
+      return true;
+    }
+    if (
+      role === "employee" &&
+      (employeeSelf as { canAccessMeetingNotes?: boolean } | undefined)?.canAccessMeetingNotes ===
+        true
+    ) {
+      return true;
+    }
+    return false;
+  }, [profile, employeeSelf]);
+
+  const canEditMeetingRecords = useMemo(() => {
+    const role = profile?.role;
+    if (
+      role === "owner" ||
+      role === "admin" ||
+      role === "manager" ||
+      profile?.globalRoles?.includes("super_admin")
+    ) {
+      return true;
+    }
+    if (
+      role === "employee" &&
+      (employeeSelf as { canAccessMeetingNotes?: boolean } | undefined)?.canAccessMeetingNotes ===
+        true
+    ) {
+      return true;
+    }
+    return false;
+  }, [profile, employeeSelf]);
 
   const platformCatalog = useMergedPlatformModuleCatalog();
   const vyrobaModuleOn =
@@ -5499,6 +5569,21 @@ function JobDetailPageContent() {
           jobId={jobFirestoreId!}
           user={user}
           canEdit={canManageFolders}
+        />
+      ) : null}
+
+      {user && companyId && jobFirestoreId && canSeeMeetingRecords ? (
+        <JobMeetingRecordsSection
+          firestore={firestore}
+          companyId={companyId}
+          jobId={jobFirestoreId}
+          jobName={
+            typeof job?.name === "string" && job.name.trim() ? job.name.trim() : "Zakázka"
+          }
+          jobs={jobOptionsForMeeting}
+          user={user}
+          profile={profile as ActivityActorProfile | null | undefined}
+          canEdit={canEditMeetingRecords}
         />
       ) : null}
 

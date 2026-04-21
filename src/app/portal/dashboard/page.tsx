@@ -14,6 +14,7 @@ import {
   PieChart,
   Inbox,
   FileText,
+  CalendarClock,
 } from "lucide-react";
 import {
   Card,
@@ -72,6 +73,8 @@ import {
   type InquiryTypeOverlayFields,
 } from "@/lib/inquiry-type-badge";
 import { cn } from "@/lib/utils";
+import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-record-form-dialog";
+import type { ActivityActorProfile } from "@/lib/activity-log";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
@@ -122,6 +125,7 @@ type ProfileData = {
   companyId?: string;
   role?: string;
   employeeId?: string;
+  globalRoles?: string[];
 };
 
 type JobData = {
@@ -150,6 +154,7 @@ export default function CompanyDashboard() {
   const { user, isUserLoading } = useUser();
   const router = useRouter();
   const firestore = useFirestore();
+  const [meetingRecordOpen, setMeetingRecordOpen] = useState(false);
 
   const {
     userProfile: profile,
@@ -446,6 +451,12 @@ export default function CompanyDashboard() {
         .map((j) => ({ id: j.id, name: j.name?.trim() || j.id })),
     [typedJobs]
   );
+
+  const canOpenMeetingRecordForm =
+    showAdminDashboard &&
+    (isManagement ||
+      (Array.isArray(typedProfile?.globalRoles) &&
+        typedProfile.globalRoles.includes("super_admin")));
 
   const profileOrCompanyLoading =
     isProfileLoading || (Boolean(companyId) && companyContextLoading);
@@ -1520,9 +1531,33 @@ export default function CompanyDashboard() {
                     Zprávy týmu
                   </Button>
                 </Link>
+
+                {canOpenMeetingRecordForm && firestore && companyId && user ? (
+                  <Button
+                    type="button"
+                    variant="outlineLight"
+                    className="min-h-[44px] w-full justify-start gap-2"
+                    onClick={() => setMeetingRecordOpen(true)}
+                  >
+                    <CalendarClock className="h-4 w-4 shrink-0" aria-hidden />
+                    Záznam ze schůzky
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           )}
+
+          {canOpenMeetingRecordForm && firestore && companyId && user ? (
+            <MeetingRecordFormDialog
+              open={meetingRecordOpen}
+              onOpenChange={setMeetingRecordOpen}
+              firestore={firestore}
+              companyId={companyId}
+              user={user}
+              profile={typedProfile as ActivityActorProfile | null}
+              jobs={jobsForAssign}
+            />
+          ) : null}
 
           <Card>
             <CardHeader className="flex flex-row items-center gap-2">

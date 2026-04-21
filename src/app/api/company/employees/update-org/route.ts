@@ -15,6 +15,8 @@ type Body = {
   canAccessWarehouse?: boolean;
   /** Přístup k modulu Výroba. */
   canAccessProduction?: boolean;
+  /** Záznamy ze schůzek u zakázek — čtení a úpravy (běžný zaměstnanec). */
+  canAccessMeetingNotes?: boolean;
   /** Moduly zaměstnaneckého portálu — merge přes `set(..., { merge: true })`. */
   employeePortalModules?: {
     zakazky?: boolean;
@@ -105,15 +107,16 @@ export async function PATCH(request: NextRequest) {
   const hasVisible = typeof body.visibleInAttendanceTerminal === "boolean";
   const hasWh = typeof body.canAccessWarehouse === "boolean";
   const hasPr = typeof body.canAccessProduction === "boolean";
+  const hasMn = typeof body.canAccessMeetingNotes === "boolean";
   const hasPortalMods =
     body.employeePortalModules != null &&
     typeof body.employeePortalModules === "object";
 
-  if (!hasOrgRole && !hasVisible && !hasWh && !hasPr && !hasPortalMods) {
+  if (!hasOrgRole && !hasVisible && !hasWh && !hasPr && !hasMn && !hasPortalMods) {
     return NextResponse.json(
       {
         error:
-          "Pošlete role, visibleInAttendanceTerminal, canAccessWarehouse / canAccessProduction a/nebo employeePortalModules.",
+          "Pošlete role, visibleInAttendanceTerminal, canAccessWarehouse / canAccessProduction, canAccessMeetingNotes a/nebo employeePortalModules.",
       },
       { status: 400 }
     );
@@ -145,6 +148,9 @@ export async function PATCH(request: NextRequest) {
   }
   if (hasPr) {
     patch.canAccessProduction = body.canAccessProduction;
+  }
+  if (hasMn) {
+    patch.canAccessMeetingNotes = body.canAccessMeetingNotes;
   }
   if (hasPortalMods && body.employeePortalModules) {
     const pm = body.employeePortalModules;

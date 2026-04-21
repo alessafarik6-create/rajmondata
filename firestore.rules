@@ -72,6 +72,61 @@ service cloud.firestore {
         get(empRef).data.canAccessProduction == true;
     }
 
+    /** Záznamy ze schůzek — běžný zaměstnanec jen s canAccessMeetingNotes (vedení vždy). */
+    function employeeMeetingNotesFlag(companyId) {
+      let empRef = /databases/$(database)/documents/companies/$(companyId)/employees/$(ownEmployeeId());
+      return exists(empRef) &&
+        'canAccessMeetingNotes' in get(empRef).data &&
+        get(empRef).data.canAccessMeetingNotes == true;
+    }
+
+    function meetingRecordStaffRead(companyId) {
+      return signedIn() && sameCompany(companyId) && userRole() != 'customer' && (
+        isPrivileged() ||
+        isSuperAdminFirebase() ||
+        (userRole() == 'employee' && ownEmployeeId() != null && employeeMeetingNotesFlag(companyId))
+      );
+    }
+
+    function meetingRecordStaffWrite(companyId) {
+      return signedIn() && sameCompany(companyId) && userRole() != 'customer' && (
+        userRole() in ['owner', 'admin', 'manager'] ||
+        isSuperAdminFirebase() ||
+        (userRole() == 'employee' && ownEmployeeId() != null && employeeMeetingNotesFlag(companyId))
+      );
+    }
+
+    function meetingRecordCustomerReadOk(companyId) {
+      return userRole() == 'customer' &&
+        sameCompany(companyId) &&
+        resource.data.sharedWithCustomer == true &&
+        resource.data.jobId is string &&
+        resource.data.jobId.size() > 0 &&
+        customerPortalLinkedJob(companyId, resource.data.jobId);
+    }
+
+    function meetingRecordCreateValid(companyId) {
+      let d = request.resource.data;
+      return d.companyId == companyId &&
+        d.title is string && d.title.size() > 0 && d.title.size() <= 500 &&
+        d.meetingAt is timestamp &&
+        d.meetingNotes is string && d.meetingNotes.size() <= 120000 &&
+        d.sharedWithCustomer is bool &&
+        d.createdBy == request.auth.uid &&
+        (!('jobId' in d) || d.jobId == null || (d.jobId is string && d.jobId.size() > 0)) &&
+        (!('shareHistory' in d) || d.shareHistory is list);
+    }
+
+    function meetingRecordUpdateValid(companyId) {
+      let d = request.resource.data;
+      return d.companyId == companyId &&
+        d.title is string && d.title.size() > 0 && d.title.size() <= 500 &&
+        d.meetingNotes is string && d.meetingNotes.size() <= 120000 &&
+        d.sharedWithCustomer is bool &&
+        (!('jobId' in d) || d.jobId == null || (d.jobId is string && d.jobId.size() > 0)) &&
+        (!('shareHistory' in d) || d.shareHistory is list);
+    }
+
     function warehouseModuleUser(companyId) {
       return signedIn() && sameCompany(companyId) && (
         userRole() in ['owner', 'admin', 'manager'] ||
@@ -687,6 +742,22 @@ service cloud.firestore {
             (request.resource.data.paidBy is string &&
               request.resource.data.paidBy.size() > 0));
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /**
+       * Záznamy ze schůzek — veřejná část v dokumentu; interní poznámky v meetingRecords/{id}/internal/data.
+       */
+      match /meetingRecords/{meetingId} {
+        allow read: if meetingRecordStaffRead(companyId) || meetingRecordCustomerReadOk(companyId);
+        allow create: if meetingRecordStaffWrite(companyId) && meetingRecordCreateValid(companyId);
+        allow update: if meetingRecordStaffWrite(companyId) && meetingRecordUpdateValid(companyId);
+        allow delete: if meetingRecordStaffWrite(companyId);
+
+        match /internal/{docId} {
+          allow read: if meetingRecordStaffRead(companyId);
+          allow create, update: if meetingRecordStaffWrite(companyId) && docId == 'data';
+          allow delete: if meetingRecordStaffWrite(companyId) && docId == 'data';
+        }
       }
 
       match /jobs/{jobId} {

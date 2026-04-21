@@ -17,6 +17,7 @@ import { Label } from "@/components/ui/label";
 import { ChevronLeft, KeyRound, Loader2 } from "lucide-react";
 import { CustomerChatPanel } from "@/components/customer/customer-chat-panel";
 import { CustomerLinkedJobsProgress } from "@/components/customer/customer-linked-jobs-progress";
+import { CustomerProfileMeetingRecords } from "@/components/meeting-records/customer-profile-meeting-records";
 import { useToast } from "@/hooks/use-toast";
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
 import { mapFirebaseAuthPasswordChangeError } from "@/lib/firebase-auth-password-errors";
@@ -262,6 +263,14 @@ export default function CustomerProfilePage() {
           companyId={companyId}
           customerUid={user.uid}
           profile={profile}
+          linkedJobIds={linkedJobIds}
+        />
+      ) : null}
+
+      {firestore && companyId && linkedJobIds.length > 0 ? (
+        <CustomerProfileMeetingRecords
+          firestore={firestore}
+          companyId={companyId}
           linkedJobIds={linkedJobIds}
         />
       ) : null}

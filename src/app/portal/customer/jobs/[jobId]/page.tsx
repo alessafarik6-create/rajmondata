@@ -22,6 +22,7 @@ import { CustomerJobProgressCard } from "@/components/customer/customer-job-prog
 import { CustomerJobTasksSection } from "@/components/customer/customer-job-tasks-section";
 import { CustomerJobQuestionnaireSection } from "@/components/customer/customer-job-questionnaire-section";
 import { CustomerJobMediaApprovalsSection } from "@/components/customer/customer-job-media-approvals-section";
+import { CustomerJobMeetingRecordsSection } from "@/components/meeting-records/customer-job-meeting-records-section";
 
 function safeJobFields(job: Record<string, unknown> | null | undefined) {
   if (!job) return null;
@@ -161,6 +162,14 @@ export default function CustomerJobDetailPage() {
         jobName={overview?.name?.trim() || "Zakázka"}
         jobData={jobDoc as Record<string, unknown>}
       />
+
+      {firestore && companyId ? (
+        <CustomerJobMeetingRecordsSection
+          firestore={firestore}
+          companyId={companyId}
+          jobId={jobId}
+        />
+      ) : null}
 
       <CustomerJobMediaApprovalsSection
         companyId={companyId}
