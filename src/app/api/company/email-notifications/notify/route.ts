@@ -34,6 +34,7 @@ type Body = {
 };
 
 export async function POST(request: NextRequest) {
+  try {
   const db = getAdminFirestore();
   const auth = getAdminAuth();
   if (!db || !auth) {
@@ -106,4 +107,12 @@ export async function POST(request: NextRequest) {
     ok: true,
     skipped: result.skipped ?? null,
   });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[email-notifications/notify] unhandled", err);
+    return NextResponse.json(
+      { ok: false, error: msg || "Interní chyba serveru." },
+      { status: 500 }
+    );
+  }
 }

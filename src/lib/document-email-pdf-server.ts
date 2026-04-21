@@ -117,8 +117,9 @@ function resolveChromiumBinDir(): string {
   }
   try {
     const require = createRequire(import.meta.url);
-    const pkgJson = require.resolve("@sparticuz/chromium/package.json");
-    const dir = path.join(path.dirname(pkgJson), "bin");
+    /** Balíček neexportuje `./package.json` — resolve hlavního vstupu a jdi na `bin` v kořeni balíčku. */
+    const mainEntry = require.resolve("@sparticuz/chromium");
+    const dir = path.join(path.dirname(mainEntry), "..", "..", "bin");
     if (fs.existsSync(path.join(dir, "chromium.br"))) {
       logPdf("chromium.bin", `resolved via require=${dir}`);
       return dir;
@@ -328,6 +329,7 @@ export type GetDocumentPdfBufferResult =
 export async function getDocumentPdfBuffer(
   input: GetDocumentPdfBufferInput
 ): Promise<GetDocumentPdfBufferResult> {
+  try {
   const { db, companyId, jobId, type } = input;
 
   logPdf("input", `companyId=${companyId} jobId=${jobId} documentType=${type}`);
@@ -383,7 +385,9 @@ export async function getDocumentPdfBuffer(
       try {
         buffer = await renderStoredHtmlToPdfBuffer(raw);
       } catch (pdfErr: unknown) {
-        const stack = errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr);
+        const stack = String(
+          errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr) ?? ""
+        );
         logPdfError("contract.renderPdf", pdfErr);
         return {
           ok: false,
@@ -481,7 +485,9 @@ export async function getDocumentPdfBuffer(
       try {
         buffer = await renderStoredHtmlToPdfBuffer(html);
       } catch (pdfErr: unknown) {
-        const stack = errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr);
+        const stack = String(
+          errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr) ?? ""
+        );
         logPdfError("invoice.renderPdf", pdfErr);
         return {
           ok: false,
@@ -514,6 +520,17 @@ export async function getDocumentPdfBuffer(
     error: "Nepodporovaný typ dokumentu.",
     detail: `type=${type}`,
   };
+  } catch (err: unknown) {
+    logPdfError("getDocumentPdfBuffer.unhandled", err);
+    const detailRaw = errorStackFromUnknown(err) ?? serializeUnknownForLog(err);
+    const detail =
+      typeof detailRaw === "string" ? detailRaw : String(detailRaw ?? "");
+    return {
+      ok: false,
+      error: "Nepodařilo se připravit PDF přílohu.",
+      detail: detail.slice(0, 12_000),
+    };
+  }
 }
 
 export async function generateContractPdfBuffer(

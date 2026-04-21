@@ -10,17 +10,26 @@ export const dynamic = "force-dynamic";
  * GET /api/cron/process-email-queue?secret=...
  */
 export async function GET(request: NextRequest) {
-  const secret = String(process.env.CRON_SECRET ?? "").trim();
-  const q = request.nextUrl.searchParams.get("secret") ?? "";
-  if (!secret || q !== secret) {
-    return NextResponse.json({ ok: false, error: "Nepovolený přístup." }, { status: 401 });
-  }
+  try {
+    const secret = String(process.env.CRON_SECRET ?? "").trim();
+    const q = request.nextUrl.searchParams.get("secret") ?? "";
+    if (!secret || q !== secret) {
+      return NextResponse.json({ ok: false, error: "Nepovolený přístup." }, { status: 401 });
+    }
 
-  const db = getAdminFirestore();
-  if (!db) {
-    return NextResponse.json({ ok: false, error: "Firestore není k dispozici." }, { status: 503 });
-  }
+    const db = getAdminFirestore();
+    if (!db) {
+      return NextResponse.json({ ok: false, error: "Firestore není k dispozici." }, { status: 503 });
+    }
 
-  const result = await processDueMailDispatchQueue(db, 40);
-  return NextResponse.json({ ok: true, ...result });
+    const result = await processDueMailDispatchQueue(db, 40);
+    return NextResponse.json({ ok: true, ...result });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[cron/process-email-queue] unhandled", err);
+    return NextResponse.json(
+      { ok: false, error: msg || "Zpracování fronty selhalo." },
+      { status: 500 }
+    );
+  }
 }

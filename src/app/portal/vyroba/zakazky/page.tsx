@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
-import { isCompanyPrivileged } from "@/lib/api-company-auth";
+import { isCompanyPrivileged } from "@/lib/company-privilege";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 

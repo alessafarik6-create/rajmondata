@@ -1,6 +1,8 @@
 import type { DocumentSnapshot } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 
+export { isCompanyPrivileged } from "@/lib/company-privilege";
+
 export type VerifiedCompanyCaller = {
   uid: string;
   companyId: string;
@@ -54,11 +56,6 @@ export async function verifyCompanyBearer(
     db,
     caller: { uid, companyId, role, employeeId, globalRoles },
   };
-}
-
-export function isCompanyPrivileged(role: string, globalRoles: string[]): boolean {
-  if (globalRoles.includes("super_admin")) return true;
-  return ["owner", "admin", "manager"].includes(role);
 }
 
 export function jobSnapData(snap: DocumentSnapshot): Record<string, unknown> | null {
