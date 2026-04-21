@@ -282,6 +282,35 @@
         { "fieldPath": "sharedWithCustomer", "order": "ASCENDING" },
         { "fieldPath": "meetingAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "work_time_blocks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "daily_work_reports",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "date", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "product_catalog_selections",
+      "queryScope": "COLLECTION_GROUP",
+      "fields": [
+        { "fieldPath": "companyId", "order": "ASCENDING" },
+        { "fieldPath": "catalogId", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "materialConsumptions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

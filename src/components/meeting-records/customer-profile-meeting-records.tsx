@@ -138,7 +138,8 @@ export function CustomerProfileMeetingRecords(props: {
           (a, b) => meetingAtToMs(b.meetingAt) - meetingAtToMs(a.meetingAt)
         );
         setRows(merged.slice(0, 35));
-      } catch {
+      } catch (err) {
+        console.error("[CustomerProfileMeetingRecords] Firestore query failed", err);
         if (!cancelled) setRows([]);
       } finally {
         if (!cancelled) setIsLoading(false);
