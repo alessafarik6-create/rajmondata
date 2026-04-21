@@ -38,6 +38,7 @@ import {
 } from "@/lib/employee-portal-modules";
 import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
+import { ChatAssistant } from "@/components/portal/ChatAssistant";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -692,6 +693,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
           {children}
         </main>
       </div>
+      <ChatAssistant />
     </div>
   );
 }
