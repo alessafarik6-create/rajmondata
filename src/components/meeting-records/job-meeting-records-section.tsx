@@ -20,21 +20,28 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { CalendarClock, Pencil, Trash2, Plus } from "lucide-react";
+import Link from "next/link";
+import { CalendarClock, Pencil, Trash2, Plus, ExternalLink } from "lucide-react";
 import { formatDashboardActivityTime } from "@/components/portal/dashboard-activity-section";
 import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-record-form-dialog";
 import type { ActivityActorProfile } from "@/lib/activity-log";
 import { logActivitySafe } from "@/lib/activity-log";
-import { MEETING_RECORD_INTERNAL_DOC_ID } from "@/lib/meeting-records-types";
+import {
+  MEETING_RECORD_INTERNAL_DOC_ID,
+  resolveMeetingTitle,
+  resolveSentToCustomer,
+} from "@/lib/meeting-records-types";
 
 type JobOption = { id: string; name: string };
 
 type MeetingRow = {
   id: string;
   title?: string;
+  meetingTitle?: string | null;
   meetingNotes?: string;
   meetingAt?: unknown;
   sharedWithCustomer?: boolean;
+  sentToCustomer?: boolean;
   createdByName?: string;
   createdBy?: string;
 };
@@ -74,8 +81,8 @@ export function JobMeetingRecordsSection(props: {
   }, [raw]);
 
   const filtered = useMemo(() => {
-    if (filter === "internal") return rows.filter((r) => r.sharedWithCustomer !== true);
-    if (filter === "shared") return rows.filter((r) => r.sharedWithCustomer === true);
+    if (filter === "internal") return rows.filter((r) => !resolveSentToCustomer(r));
+    if (filter === "shared") return rows.filter((r) => resolveSentToCustomer(r));
     return rows;
   }, [rows, filter]);
 
@@ -176,7 +183,9 @@ export function JobMeetingRecordsSection(props: {
                   >
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="min-w-0 space-y-1">
-                        <p className="font-medium text-slate-900">{r.title || "Schůzka"}</p>
+                        <p className="font-medium text-slate-900">
+                          {resolveMeetingTitle(r) || "Schůzka"}
+                        </p>
                         <p className="text-xs text-slate-600">
                           {formatDashboardActivityTime(r.meetingAt)} ·{" "}
                           {r.createdByName || r.createdBy || "—"}
@@ -184,7 +193,7 @@ export function JobMeetingRecordsSection(props: {
                         <p className="text-sm text-slate-700 line-clamp-2">{short}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        {r.sharedWithCustomer ? (
+                        {resolveSentToCustomer(r) ? (
                           <Badge variant="outline" className="border-emerald-300 text-emerald-900">
                             U zákazníka
                           </Badge>
@@ -193,6 +202,11 @@ export function JobMeetingRecordsSection(props: {
                         )}
                         {canEdit ? (
                           <>
+                            <Button type="button" variant="outline" size="icon" className="h-8 w-8" asChild>
+                              <Link href={`/portal/meeting-records/${r.id}`} aria-label="Detail">
+                                <ExternalLink className="h-4 w-4" />
+                              </Link>
+                            </Button>
                             <Button
                               type="button"
                               variant="outline"

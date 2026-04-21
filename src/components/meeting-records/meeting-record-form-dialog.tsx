@@ -29,11 +29,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import {
   MEETING_RECORD_INTERNAL_DOC_ID,
+  resolveMeetingTitle,
+  resolveSentToCustomer,
   type MeetingRecordPublicRow,
 } from "@/lib/meeting-records-types";
 
@@ -42,6 +45,11 @@ type JobOption = { id: string; name: string };
 function toDatetimeLocalValue(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function activityRouteForRecord(jobId: string | null, recordId: string): string {
+  if (jobId) return `/portal/jobs/${jobId}`;
+  return `/portal/meeting-records/${recordId}`;
 }
 
 export function MeetingRecordFormDialog(props: {
@@ -81,6 +89,7 @@ export function MeetingRecordFormDialog(props: {
   const [meetingNotes, setMeetingNotes] = useState("");
   const [nextSteps, setNextSteps] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
+  const [syncCustomerFromJob, setSyncCustomerFromJob] = useState(true);
 
   const jobById = useMemo(() => {
     const m = new Map<string, JobOption>();
@@ -101,6 +110,7 @@ export function MeetingRecordFormDialog(props: {
     setMeetingNotes("");
     setNextSteps("");
     setInternalNotes("");
+    setSyncCustomerFromJob(true);
   }, [open, editRecordId, defaultJobId]);
 
   useEffect(() => {
@@ -126,7 +136,7 @@ export function MeetingRecordFormDialog(props: {
           return;
         }
         const d = ps.data() as MeetingRecordPublicRow;
-        setTitle(String(d.title || ""));
+        setTitle(resolveMeetingTitle(d));
         const ma = d.meetingAt as Timestamp | undefined;
         if (ma && typeof (ma as { toDate?: () => Date }).toDate === "function") {
           setMeetingAtLocal(toDatetimeLocalValue((ma as { toDate: () => Date }).toDate()));
@@ -135,7 +145,7 @@ export function MeetingRecordFormDialog(props: {
         }
         setPlace(String(d.place || ""));
         setParticipants(String(d.participants || ""));
-        setJobId(String(d.jobId || ""));
+        setJobId(typeof d.jobId === "string" && d.jobId.trim() ? d.jobId.trim() : "");
         setCustomerName(String(d.customerName || ""));
         setCustomerId(String(d.customerId || ""));
         setMeetingNotes(String(d.meetingNotes || ""));
@@ -181,6 +191,28 @@ export function MeetingRecordFormDialog(props: {
     })();
   }, [open, editRecordId, jobId, firestore, companyId]);
 
+  useEffect(() => {
+    if (!open || !editRecordId || !jobId || !syncCustomerFromJob) return;
+    (async () => {
+      try {
+        const jref = doc(firestore, "companies", companyId, "jobs", jobId);
+        const snap = await getDoc(jref);
+        if (!snap.exists()) return;
+        const j = snap.data() as Record<string, unknown>;
+        const cn =
+          typeof j.customerName === "string" && j.customerName.trim()
+            ? j.customerName.trim()
+            : null;
+        const cid =
+          typeof j.customerId === "string" && j.customerId.trim() ? j.customerId.trim() : null;
+        if (cn) setCustomerName(cn);
+        if (cid) setCustomerId(cid);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, [open, editRecordId, jobId, syncCustomerFromJob, firestore, companyId]);
+
   const actorName =
     profile?.displayName?.trim() ||
     user.displayName ||
@@ -188,9 +220,13 @@ export function MeetingRecordFormDialog(props: {
     "Uživatel";
 
   const save = async (mode: "internal" | "customer") => {
-    const t = title.trim();
-    if (!t) {
-      toast({ variant: "destructive", title: "Vyplňte název schůzky." });
+    const titleTrim = title.trim();
+    const notesTrim = meetingNotes.trim();
+    if (!titleTrim && !notesTrim) {
+      toast({
+        variant: "destructive",
+        title: "Vyplňte název schůzky nebo text poznámek.",
+      });
       return;
     }
     const at = new Date(meetingAtLocal);
@@ -200,16 +236,23 @@ export function MeetingRecordFormDialog(props: {
     }
     const share = mode === "customer";
     const jId = jobId.trim() || null;
-    const jName = jId ? jobById.get(jId)?.name ?? jId : null;
+    const jName = jId ? (jobById.get(jId)?.name ?? jId) : null;
 
-    if (share && !jId) {
+    if (share && !jId && !customerId.trim()) {
       toast({
         variant: "destructive",
-        title: "Vyberte zakázku",
-        description: "Zákazník vidí záznam v portálu u konkrétní zakázky.",
+        title: "Chybí vazba na zákazníka",
+        description:
+          "U záznamu bez zakázky vyplňte ID zákazníka (CRM), aby šel záznam ve zákaznickém portálu zobrazit.",
       });
       return;
     }
+
+    const meetingTitleVal = titleTrim || null;
+    const legacyTitleVal = titleTrim || (notesTrim ? notesTrim.slice(0, 240) : "");
+    const assignmentStatus = jId ? "assigned" : "unassigned";
+    const shared = share;
+    const sent = share;
 
     setLoading(true);
     try {
@@ -221,7 +264,11 @@ export function MeetingRecordFormDialog(props: {
         byUserId: user.uid,
         byDisplayName: actorName,
         action,
-        audienceNote: jId ? "Zákaznický portál — zakázka" : null,
+        audienceNote: jId
+          ? "Zákaznický portál — zakázka"
+          : customerId.trim()
+            ? "Zákaznický portál — obecný záznam (profil)"
+            : null,
       });
 
       if (editRecordId) {
@@ -237,14 +284,16 @@ export function MeetingRecordFormDialog(props: {
         );
         const prevSnap = await getDoc(pref);
         const prev = prevSnap.exists() ? (prevSnap.data() as MeetingRecordPublicRow) : null;
-        const prevShared = prev?.sharedWithCustomer === true;
+        const prevShared = prev ? resolveSentToCustomer(prev) : false;
         const nextHistory = Array.isArray(prev?.shareHistory) ? [...prev.shareHistory] : [];
         if (share) {
           if (!prevShared) nextHistory.push(makeShareEvent("shared_with_customer") as never);
           else nextHistory.push(makeShareEvent("resent_to_customer") as never);
         }
+        const nextSent = share || prevShared;
         batch.update(pref, {
-          title: t,
+          title: legacyTitleVal,
+          meetingTitle: meetingTitleVal,
           meetingAt: at,
           place: place.trim() || null,
           participants: participants.trim() || null,
@@ -252,9 +301,11 @@ export function MeetingRecordFormDialog(props: {
           jobName: jName,
           customerId: customerId.trim() || null,
           customerName: customerName.trim() || null,
-          meetingNotes: meetingNotes.trim(),
+          meetingNotes: notesTrim,
           nextSteps: nextSteps.trim() || null,
-          sharedWithCustomer: share || prevShared,
+          sharedWithCustomer: nextSent,
+          sentToCustomer: nextSent,
+          assignmentStatus,
           shareHistory: nextHistory.slice(-40),
           updatedAt: serverTimestamp(),
           updatedBy: user.uid,
@@ -271,13 +322,13 @@ export function MeetingRecordFormDialog(props: {
         await batch.commit();
         logActivitySafe(firestore, companyId, user, profile, {
           actionType: "meeting_record_updated",
-          actionLabel: `Upraven záznam ze schůzky: ${t}`,
+          actionLabel: `Upraven záznam ze schůzky: ${legacyTitleVal || notesTrim.slice(0, 80)}`,
           entityType: "meeting_record",
           entityId: editRecordId,
-          entityName: t,
+          entityName: legacyTitleVal || "Schůzka",
           details: share ? "Zpřístupněno / aktualizováno pro zákazníka." : "Uloženo interně.",
           sourceModule: "schuzky",
-          route: jId ? `/portal/jobs/${jId}` : "/portal/dashboard",
+          route: activityRouteForRecord(jId, editRecordId),
         });
       } else {
         const pref = doc(col);
@@ -293,7 +344,8 @@ export function MeetingRecordFormDialog(props: {
         );
         batch.set(pref, {
           companyId,
-          title: t,
+          title: legacyTitleVal,
+          meetingTitle: meetingTitleVal,
           meetingAt: at,
           place: place.trim() || null,
           participants: participants.trim() || null,
@@ -301,9 +353,11 @@ export function MeetingRecordFormDialog(props: {
           jobName: jName,
           customerId: customerId.trim() || null,
           customerName: customerName.trim() || null,
-          meetingNotes: meetingNotes.trim(),
+          meetingNotes: notesTrim,
           nextSteps: nextSteps.trim() || null,
-          sharedWithCustomer: share,
+          sharedWithCustomer: shared,
+          sentToCustomer: sent,
+          assignmentStatus,
           shareHistory: share ? [makeShareEvent("shared_with_customer")] : [],
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -319,20 +373,22 @@ export function MeetingRecordFormDialog(props: {
         await batch.commit();
         logActivitySafe(firestore, companyId, user, profile, {
           actionType: "meeting_record_created",
-          actionLabel: `Nový záznam ze schůzky: ${t}`,
+          actionLabel: `Nový záznam ze schůzky: ${legacyTitleVal || notesTrim.slice(0, 80)}`,
           entityType: "meeting_record",
           entityId: id,
-          entityName: t,
+          entityName: legacyTitleVal || "Schůzka",
           details: share ? "Vytvořeno a zpřístupněno zákazníkovi." : "Uloženo pouze interně.",
           sourceModule: "schuzky",
-          route: jId ? `/portal/jobs/${jId}` : "/portal/dashboard",
+          route: activityRouteForRecord(jId, id),
         });
       }
 
       toast({
         title: share ? "Uloženo a zákazníkovi zpřístupněno" : "Uloženo interně",
         description: share
-          ? "Veřejná část záznamu je v zákaznickém portálu u zakázky."
+          ? jId
+            ? "Veřejná část je u zakázky v zákaznickém portálu."
+            : "Veřejná část je u zákazníka v profilu portálu (bez vazby na konkrétní zakázku)."
           : "Interní poznámky zůstávají jen u týmu.",
       });
       onOpenChange(false);
@@ -364,7 +420,7 @@ export function MeetingRecordFormDialog(props: {
         ) : (
           <div className="space-y-4 text-sm">
             <div className="space-y-1.5">
-              <Label htmlFor="mr-title">Název schůzky</Label>
+              <Label htmlFor="mr-title">Název schůzky (volitelné, pokud máte poznámky)</Label>
               <Input
                 id="mr-title"
                 className="bg-white"
@@ -412,10 +468,10 @@ export function MeetingRecordFormDialog(props: {
                 onValueChange={(v) => setJobId(v === "__none__" ? "" : v)}
               >
                 <SelectTrigger className="bg-white">
-                  <SelectValue placeholder="Bez zakázky (firemní záznam)" />
+                  <SelectValue placeholder="Bez zakázky (obecný záznam)" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="__none__">Bez zakázky (firemní záznam)</SelectItem>
+                  <SelectItem value="__none__">Bez zakázky (obecný záznam)</SelectItem>
                   {jobs.map((j) => (
                     <SelectItem key={j.id} value={j.id}>
                       {j.name}
@@ -424,6 +480,23 @@ export function MeetingRecordFormDialog(props: {
                 </SelectContent>
               </Select>
             </div>
+            {jobId ? (
+              <div className="flex items-center justify-between gap-3 rounded-md border border-slate-200 bg-slate-50/80 px-3 py-2">
+                <div className="min-w-0 space-y-0.5">
+                  <Label htmlFor="mr-sync-cust" className="text-xs font-medium">
+                    Při změně zakázky převzít zákazníka z zakázky
+                  </Label>
+                  <p className="text-[10px] text-slate-600">
+                    Vypněte, pokud chcete ručně držet jiného zákazníka.
+                  </p>
+                </div>
+                <Switch
+                  id="mr-sync-cust"
+                  checked={syncCustomerFromJob}
+                  onCheckedChange={setSyncCustomerFromJob}
+                />
+              </div>
+            ) : null}
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="mr-cname">Zákazník (zobrazení)</Label>
@@ -442,7 +515,7 @@ export function MeetingRecordFormDialog(props: {
                   className="bg-white"
                   value={customerId}
                   onChange={(e) => setCustomerId(e.target.value)}
-                  placeholder="Volitelné"
+                  placeholder="Pro sdílení bez zakázky povinné"
                 />
               </div>
             </div>

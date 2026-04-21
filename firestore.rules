@@ -96,35 +96,66 @@ service cloud.firestore {
       );
     }
 
+    function meetingRecordIsSentToCustomerData(data) {
+      return (('sentToCustomer' in data) && data.sentToCustomer is bool && data.sentToCustomer == true) ||
+        (('sharedWithCustomer' in data) && data.sharedWithCustomer is bool && data.sharedWithCustomer == true);
+    }
+
+    function meetingRecordHasTitleOrNotesData(data) {
+      let mt = ('meetingTitle' in data) && data.meetingTitle is string && data.meetingTitle.size() > 0;
+      let ti = ('title' in data) && data.title is string && data.title.size() > 0;
+      let mn = ('meetingNotes' in data) && data.meetingNotes is string && data.meetingNotes.size() > 0;
+      return mt || ti || mn;
+    }
+
     function meetingRecordCustomerReadOk(companyId) {
-      return userRole() == 'customer' &&
-        sameCompany(companyId) &&
-        resource.data.sharedWithCustomer == true &&
+      if (!(userRole() == 'customer' && sameCompany(companyId) && meetingRecordIsSentToCustomerData(resource.data))) {
+        return false;
+      }
+      let hasJob = ('jobId' in resource.data) &&
         resource.data.jobId is string &&
-        resource.data.jobId.size() > 0 &&
-        customerPortalLinkedJob(companyId, resource.data.jobId);
+        resource.data.jobId.size() > 0;
+      if (hasJob) {
+        return customerPortalLinkedJob(companyId, resource.data.jobId);
+      }
+      /** Obecný záznam bez zakázky — shoda CRM customerId s users.customerRecordId. */
+      return 'customerRecordId' in userDoc() &&
+        userDoc().customerRecordId is string &&
+        userDoc().customerRecordId.size() > 0 &&
+        'customerId' in resource.data &&
+        resource.data.customerId is string &&
+        resource.data.customerId.size() > 0 &&
+        resource.data.customerId == userDoc().customerRecordId;
     }
 
     function meetingRecordCreateValid(companyId) {
       let d = request.resource.data;
       return d.companyId == companyId &&
-        d.title is string && d.title.size() > 0 && d.title.size() <= 500 &&
+        meetingRecordHasTitleOrNotesData(d) &&
+        (!('title' in d) || (d.title is string && d.title.size() <= 500)) &&
+        (!('meetingTitle' in d) || (d.meetingTitle is string && d.meetingTitle.size() <= 500)) &&
         d.meetingAt is timestamp &&
         d.meetingNotes is string && d.meetingNotes.size() <= 120000 &&
         d.sharedWithCustomer is bool &&
+        (!('sentToCustomer' in d) || (d.sentToCustomer is bool && d.sentToCustomer == d.sharedWithCustomer)) &&
         d.createdBy == request.auth.uid &&
         (!('jobId' in d) || d.jobId == null || (d.jobId is string && d.jobId.size() > 0)) &&
-        (!('shareHistory' in d) || d.shareHistory is list);
+        (!('shareHistory' in d) || d.shareHistory is list) &&
+        (!('assignmentStatus' in d) || (d.assignmentStatus is string && d.assignmentStatus in ['assigned', 'unassigned']));
     }
 
     function meetingRecordUpdateValid(companyId) {
       let d = request.resource.data;
       return d.companyId == companyId &&
-        d.title is string && d.title.size() > 0 && d.title.size() <= 500 &&
+        meetingRecordHasTitleOrNotesData(d) &&
+        (!('title' in d) || (d.title is string && d.title.size() <= 500)) &&
+        (!('meetingTitle' in d) || (d.meetingTitle is string && d.meetingTitle.size() <= 500)) &&
         d.meetingNotes is string && d.meetingNotes.size() <= 120000 &&
         d.sharedWithCustomer is bool &&
+        (!('sentToCustomer' in d) || (d.sentToCustomer is bool && d.sentToCustomer == d.sharedWithCustomer)) &&
         (!('jobId' in d) || d.jobId == null || (d.jobId is string && d.jobId.size() > 0)) &&
-        (!('shareHistory' in d) || d.shareHistory is list);
+        (!('shareHistory' in d) || d.shareHistory is list) &&
+        (!('assignmentStatus' in d) || (d.assignmentStatus is string && d.assignmentStatus in ['assigned', 'unassigned']));
     }
 
     function warehouseModuleUser(companyId) {

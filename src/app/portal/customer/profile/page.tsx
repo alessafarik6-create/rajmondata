@@ -40,6 +40,10 @@ export default function CustomerProfilePage() {
   const { data: profile, isLoading } = useDoc(userRef);
   const companyId = (profile as { companyId?: string })?.companyId;
   const linkedJobIds = ((profile as { linkedJobIds?: string[] })?.linkedJobIds ?? []).filter(Boolean);
+  const customerRecordId =
+    typeof (profile as { customerRecordId?: string })?.customerRecordId === "string"
+      ? (profile as { customerRecordId: string }).customerRecordId.trim()
+      : "";
   const defaultJobId = linkedJobIds[0] ?? null;
 
   const [pwdCurrent, setPwdCurrent] = useState("");
@@ -267,11 +271,12 @@ export default function CustomerProfilePage() {
         />
       ) : null}
 
-      {firestore && companyId && linkedJobIds.length > 0 ? (
+      {firestore && companyId && (linkedJobIds.length > 0 || customerRecordId) ? (
         <CustomerProfileMeetingRecords
           firestore={firestore}
           companyId={companyId}
           linkedJobIds={linkedJobIds}
+          customerRecordId={customerRecordId || null}
         />
       ) : null}
 

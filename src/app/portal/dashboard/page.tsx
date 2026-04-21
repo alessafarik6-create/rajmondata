@@ -1543,6 +1543,15 @@ export default function CompanyDashboard() {
                     Záznam ze schůzky
                   </Button>
                 ) : null}
+
+                {canOpenMeetingRecordForm ? (
+                  <Button variant="outlineLight" className="min-h-[44px] w-full justify-start gap-2" asChild>
+                    <Link href="/portal/meeting-records">
+                      <CalendarClock className="h-4 w-4 shrink-0" aria-hidden />
+                      Evidence schůzek
+                    </Link>
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           )}

@@ -25,6 +25,7 @@ import {
   Factory,
   Landmark,
   Receipt,
+  CalendarClock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -71,6 +72,7 @@ const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   leads: Inbox,
   productCatalogs: Package,
   customerChats: MessageSquare,
+  meetingRecords: CalendarClock,
   finance: Landmark,
   invoices: Receipt,
   documents: FileText,
@@ -106,6 +108,15 @@ function isPortalMenuItemVisible(
       role === 'admin' ||
       (Array.isArray(globalRoles) && globalRoles.includes('super_admin'));
     if (!elevated) return false;
+  }
+
+  if (def.id === 'meetingRecords') {
+    if (Array.isArray(globalRoles) && globalRoles.includes('super_admin')) {
+      // super admin vidí položku bez ohledu na příznak zaměstnance
+    } else if (role === 'employee') {
+      const row = employeeRow as { canAccessMeetingNotes?: boolean } | null;
+      if (row?.canAccessMeetingNotes !== true) return false;
+    }
   }
 
   if (def.type === 'system') return true;
@@ -305,6 +316,9 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     }
     if (href === "/portal/vyroba") {
       return pathname.startsWith("/portal/vyroba");
+    }
+    if (href === "/portal/meeting-records") {
+      return pathname === href || pathname.startsWith(`${href}/`);
     }
     return pathname.startsWith(`${href}/`);
   };

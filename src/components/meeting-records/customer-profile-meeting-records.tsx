@@ -16,7 +16,10 @@ import { Button } from "@/components/ui/button";
 import { CalendarClock } from "lucide-react";
 import { formatDashboardActivityTime } from "@/components/portal/dashboard-activity-section";
 import type { MeetingRecordPublicRow } from "@/lib/meeting-records-types";
-import { meetingRecordForCustomerView } from "@/lib/meeting-records-types";
+import {
+  meetingRecordForCustomerView,
+  resolveSentToCustomer,
+} from "@/lib/meeting-records-types";
 
 const JOB_ID_IN_CHUNK = 30;
 
@@ -53,19 +56,28 @@ export function CustomerProfileMeetingRecords(props: {
   firestore: Firestore;
   companyId: string;
   linkedJobIds: string[];
+  customerRecordId?: string | null;
 }) {
-  const { firestore, companyId, linkedJobIds } = props;
+  const { firestore, companyId, linkedJobIds, customerRecordId } = props;
 
   const jobIds = useMemo(
     () => Array.from(new Set(linkedJobIds.map((id) => String(id).trim()).filter(Boolean))),
     [linkedJobIds]
   );
 
+  const crmId = typeof customerRecordId === "string" ? customerRecordId.trim() : "";
+
   const [rows, setRows] = useState<(MeetingRecordPublicRow & { id: string })[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    if (!firestore || !companyId || jobIds.length === 0) {
+    if (!firestore || !companyId) {
+      setRows([]);
+      setIsLoading(false);
+      return;
+    }
+
+    if (jobIds.length === 0 && !crmId) {
       setRows([]);
       setIsLoading(false);
       return;
@@ -75,32 +87,57 @@ export function CustomerProfileMeetingRecords(props: {
     (async () => {
       setIsLoading(true);
       try {
-        const chunks = chunkIds(jobIds, JOB_ID_IN_CHUNK);
-        const snapshots = await Promise.all(
-          chunks.map((ids) =>
-            getDocs(
-              query(
-                collection(firestore, "companies", companyId, "meetingRecords"),
-                where("sharedWithCustomer", "==", true),
-                where("jobId", "in", ids),
-                orderBy("meetingAt", "desc"),
-                limit(40)
+        const map = new Map<string, MeetingRecordPublicRow & { id: string }>();
+
+        if (jobIds.length > 0) {
+          const chunks = chunkIds(jobIds, JOB_ID_IN_CHUNK);
+          const snapshots = await Promise.all(
+            chunks.map((ids) =>
+              getDocs(
+                query(
+                  collection(firestore, "companies", companyId, "meetingRecords"),
+                  where("sharedWithCustomer", "==", true),
+                  where("jobId", "in", ids),
+                  orderBy("meetingAt", "desc"),
+                  limit(40)
+                )
               )
             )
-          )
-        );
-        if (cancelled) return;
-        const map = new Map<string, MeetingRecordPublicRow & { id: string }>();
-        for (const snap of snapshots) {
-          snap.forEach((docSnap) => {
+          );
+          if (cancelled) return;
+          for (const snap of snapshots) {
+            snap.forEach((docSnap) => {
+              const d = docSnap.data() as MeetingRecordPublicRow;
+              if (!resolveSentToCustomer(d)) return;
+              map.set(docSnap.id, { ...d, id: docSnap.id });
+            });
+          }
+        }
+
+        if (crmId) {
+          const crmSnap = await getDocs(
+            query(
+              collection(firestore, "companies", companyId, "meetingRecords"),
+              where("customerId", "==", crmId),
+              where("sharedWithCustomer", "==", true),
+              orderBy("meetingAt", "desc"),
+              limit(40)
+            )
+          );
+          if (cancelled) return;
+          crmSnap.forEach((docSnap) => {
             const d = docSnap.data() as MeetingRecordPublicRow;
+            if (!resolveSentToCustomer(d)) return;
+            const jid = typeof d.jobId === "string" ? d.jobId.trim() : "";
+            /** Obecné záznamy bez zakázky + sdílené u zakázek zákazníka (deduplikace přes map). */
             map.set(docSnap.id, { ...d, id: docSnap.id });
           });
         }
+
         const merged = Array.from(map.values()).sort(
           (a, b) => meetingAtToMs(b.meetingAt) - meetingAtToMs(a.meetingAt)
         );
-        setRows(merged.slice(0, 30));
+        setRows(merged.slice(0, 35));
       } catch {
         if (!cancelled) setRows([]);
       } finally {
@@ -111,9 +148,9 @@ export function CustomerProfileMeetingRecords(props: {
     return () => {
       cancelled = true;
     };
-  }, [firestore, companyId, jobIds]);
+  }, [firestore, companyId, jobIds, crmId]);
 
-  if (jobIds.length === 0) return null;
+  if (jobIds.length === 0 && !crmId) return null;
 
   if (isLoading) {
     return (
@@ -156,6 +193,9 @@ export function CustomerProfileMeetingRecords(props: {
                 <p className="font-semibold text-slate-900">{v.title}</p>
                 <p className="text-xs text-slate-600">{formatDashboardActivityTime(v.meetingAt)}</p>
               </div>
+              {!jid ? (
+                <p className="text-xs text-slate-600">Obecný záznam (bez konkrétní zakázky)</p>
+              ) : null}
               {v.meetingNotes ? (
                 <p className="text-slate-700 line-clamp-2">{v.meetingNotes}</p>
               ) : null}

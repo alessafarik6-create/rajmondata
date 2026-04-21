@@ -8,7 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CalendarClock } from "lucide-react";
 import { formatDashboardActivityTime } from "@/components/portal/dashboard-activity-section";
 import type { MeetingRecordPublicRow } from "@/lib/meeting-records-types";
-import { meetingRecordForCustomerView } from "@/lib/meeting-records-types";
+import {
+  meetingRecordForCustomerView,
+  resolveSentToCustomer,
+} from "@/lib/meeting-records-types";
 
 export function CustomerJobMeetingRecordsSection(props: {
   firestore: Firestore;
@@ -31,7 +34,12 @@ export function CustomerJobMeetingRecordsSection(props: {
 
   const rows = useMemo(() => {
     const list = Array.isArray(raw) ? (raw as MeetingRecordPublicRow[]) : [];
-    return list.filter((r) => r && typeof (r as { id?: string }).id === "string");
+    return list.filter(
+      (r) =>
+        r &&
+        typeof (r as { id?: string }).id === "string" &&
+        resolveSentToCustomer(r as MeetingRecordPublicRow)
+    );
   }, [raw]);
 
   if (isLoading) {

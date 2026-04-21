@@ -106,6 +106,10 @@ import { cn } from "@/lib/utils";
 import { JD } from "@/lib/job-detail-page-styles";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
+import {
+  staffCanEditMeetingRecords,
+  staffCanViewMeetingRecords,
+} from "@/lib/meeting-records-access";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -641,46 +645,15 @@ function JobDetailPageContent() {
       .filter((x): x is { id: string; name: string } => x != null);
   }, [allJobsRawForMeeting]);
 
-  const canSeeMeetingRecords = useMemo(() => {
-    const role = profile?.role;
-    if (
-      role === "owner" ||
-      role === "admin" ||
-      role === "manager" ||
-      role === "accountant" ||
-      profile?.globalRoles?.includes("super_admin")
-    ) {
-      return true;
-    }
-    if (
-      role === "employee" &&
-      (employeeSelf as { canAccessMeetingNotes?: boolean } | undefined)?.canAccessMeetingNotes ===
-        true
-    ) {
-      return true;
-    }
-    return false;
-  }, [profile, employeeSelf]);
+  const canSeeMeetingRecords = useMemo(
+    () => staffCanViewMeetingRecords(profile, employeeSelf as { canAccessMeetingNotes?: boolean }),
+    [profile, employeeSelf]
+  );
 
-  const canEditMeetingRecords = useMemo(() => {
-    const role = profile?.role;
-    if (
-      role === "owner" ||
-      role === "admin" ||
-      role === "manager" ||
-      profile?.globalRoles?.includes("super_admin")
-    ) {
-      return true;
-    }
-    if (
-      role === "employee" &&
-      (employeeSelf as { canAccessMeetingNotes?: boolean } | undefined)?.canAccessMeetingNotes ===
-        true
-    ) {
-      return true;
-    }
-    return false;
-  }, [profile, employeeSelf]);
+  const canEditMeetingRecords = useMemo(
+    () => staffCanEditMeetingRecords(profile, employeeSelf as { canAccessMeetingNotes?: boolean }),
+    [profile, employeeSelf]
+  );
 
   const platformCatalog = useMergedPlatformModuleCatalog();
   const vyrobaModuleOn =

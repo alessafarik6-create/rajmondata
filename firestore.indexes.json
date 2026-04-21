@@ -273,6 +273,15 @@
         { "fieldPath": "sharedWithCustomer", "order": "ASCENDING" },
         { "fieldPath": "meetingAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "meetingRecords",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "customerId", "order": "ASCENDING" },
+        { "fieldPath": "sharedWithCustomer", "order": "ASCENDING" },
+        { "fieldPath": "meetingAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
