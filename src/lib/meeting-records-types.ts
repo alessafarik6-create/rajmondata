@@ -11,7 +11,8 @@ export const MEETING_RECORD_INTERNAL_DOC_ID = "data";
 export type MeetingRecordAssignmentStatus = "assigned" | "unassigned";
 
 export type MeetingShareEvent = {
-  at: Timestamp | unknown;
+  /** ISO 8601 — uvnitř pole `shareHistory` nelze použít `serverTimestamp()`. */
+  at: string | Timestamp | unknown;
   byUserId: string;
   byDisplayName?: string | null;
   action: "shared_with_customer" | "resent_to_customer";

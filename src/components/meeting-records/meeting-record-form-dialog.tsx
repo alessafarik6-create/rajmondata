@@ -38,6 +38,7 @@ import {
   resolveMeetingTitle,
   resolveSentToCustomer,
   type MeetingRecordPublicRow,
+  type MeetingShareEvent,
 } from "@/lib/meeting-records-types";
 
 type JobOption = { id: string; name: string };
@@ -238,7 +239,27 @@ export function MeetingRecordFormDialog(props: {
     const jId = jobId.trim() || null;
     const jName = jId ? (jobById.get(jId)?.name ?? jId) : null;
 
-    if (share && !jId && !customerId.trim()) {
+    let resolvedCustomerId = customerId.trim() || null;
+    let resolvedCustomerName = customerName.trim() || null;
+    if (jId && syncCustomerFromJob) {
+      try {
+        const jref = doc(firestore, "companies", companyId, "jobs", jId);
+        const jobSnap = await getDoc(jref);
+        if (jobSnap.exists()) {
+          const j = jobSnap.data() as Record<string, unknown>;
+          const cid =
+            typeof j.customerId === "string" && j.customerId.trim() ? j.customerId.trim() : null;
+          const cn =
+            typeof j.customerName === "string" && j.customerName.trim() ? j.customerName.trim() : null;
+          if (cid) resolvedCustomerId = cid;
+          if (cn) resolvedCustomerName = cn;
+        }
+      } catch (syncErr) {
+        console.error("[MeetingRecordFormDialog] syncCustomerFromJob on save failed", syncErr);
+      }
+    }
+
+    if (share && !jId && !resolvedCustomerId) {
       toast({
         variant: "destructive",
         title: "Chybí vazba na zákazníka",
@@ -259,14 +280,17 @@ export function MeetingRecordFormDialog(props: {
       const batch = writeBatch(firestore);
       const col = collection(firestore, "companies", companyId, "meetingRecords");
 
-      const makeShareEvent = (action: "shared_with_customer" | "resent_to_customer") => ({
-        at: serverTimestamp(),
+      const makeShareEvent = (
+        action: "shared_with_customer" | "resent_to_customer"
+      ): MeetingShareEvent => ({
+        /** Firestore: FieldValue.serverTimestamp() není povolen uvnitř prvků pole. */
+        at: new Date().toISOString(),
         byUserId: user.uid,
         byDisplayName: actorName,
         action,
         audienceNote: jId
           ? "Zákaznický portál — zakázka"
-          : customerId.trim()
+          : resolvedCustomerId
             ? "Zákaznický portál — obecný záznam (profil)"
             : null,
       });
@@ -285,13 +309,15 @@ export function MeetingRecordFormDialog(props: {
         const prevSnap = await getDoc(pref);
         const prev = prevSnap.exists() ? (prevSnap.data() as MeetingRecordPublicRow) : null;
         const prevShared = prev ? resolveSentToCustomer(prev) : false;
-        const nextHistory = Array.isArray(prev?.shareHistory) ? [...prev.shareHistory] : [];
+        const nextHistory: MeetingShareEvent[] = Array.isArray(prev?.shareHistory)
+          ? [...prev.shareHistory]
+          : [];
         if (share) {
-          if (!prevShared) nextHistory.push(makeShareEvent("shared_with_customer") as never);
-          else nextHistory.push(makeShareEvent("resent_to_customer") as never);
+          if (!prevShared) nextHistory.push(makeShareEvent("shared_with_customer"));
+          else nextHistory.push(makeShareEvent("resent_to_customer"));
         }
         const nextSent = share || prevShared;
-        batch.update(pref, {
+        const publicUpdate = {
           title: legacyTitleVal,
           meetingTitle: meetingTitleVal,
           meetingAt: at,
@@ -299,8 +325,8 @@ export function MeetingRecordFormDialog(props: {
           participants: participants.trim() || null,
           jobId: jId,
           jobName: jName,
-          customerId: customerId.trim() || null,
-          customerName: customerName.trim() || null,
+          customerId: resolvedCustomerId,
+          customerName: resolvedCustomerName || null,
           meetingNotes: notesTrim,
           nextSteps: nextSteps.trim() || null,
           sharedWithCustomer: nextSent,
@@ -309,7 +335,23 @@ export function MeetingRecordFormDialog(props: {
           shareHistory: nextHistory.slice(-40),
           updatedAt: serverTimestamp(),
           updatedBy: user.uid,
+        };
+        console.log("[MeetingRecordFormDialog] save → batch.update (public)", {
+          companyId,
+          recordId: editRecordId,
+          jobId: jId,
+          jobName: jName,
+          customerId: resolvedCustomerId,
+          customerName: resolvedCustomerName,
+          syncCustomerFromJob,
+          shareHistoryLength: publicUpdate.shareHistory.length,
+          lastShareAt:
+            publicUpdate.shareHistory.length > 0
+              ? publicUpdate.shareHistory[publicUpdate.shareHistory.length - 1]?.at
+              : null,
+          updatedAt: "serverTimestamp()",
         });
+        batch.update(pref, publicUpdate);
         batch.set(
           iref,
           {
@@ -320,6 +362,10 @@ export function MeetingRecordFormDialog(props: {
           { merge: true }
         );
         await batch.commit();
+        console.log("[MeetingRecordFormDialog] batch.commit OK (update)", {
+          companyId,
+          recordId: editRecordId,
+        });
         logActivitySafe(firestore, companyId, user, profile, {
           actionType: "meeting_record_updated",
           actionLabel: `Upraven záznam ze schůzky: ${legacyTitleVal || notesTrim.slice(0, 80)}`,
@@ -342,7 +388,7 @@ export function MeetingRecordFormDialog(props: {
           "internal",
           MEETING_RECORD_INTERNAL_DOC_ID
         );
-        batch.set(pref, {
+        const publicCreate = {
           companyId,
           title: legacyTitleVal,
           meetingTitle: meetingTitleVal,
@@ -351,8 +397,8 @@ export function MeetingRecordFormDialog(props: {
           participants: participants.trim() || null,
           jobId: jId,
           jobName: jName,
-          customerId: customerId.trim() || null,
-          customerName: customerName.trim() || null,
+          customerId: resolvedCustomerId,
+          customerName: resolvedCustomerName || null,
           meetingNotes: notesTrim,
           nextSteps: nextSteps.trim() || null,
           sharedWithCustomer: shared,
@@ -364,13 +410,30 @@ export function MeetingRecordFormDialog(props: {
           createdBy: user.uid,
           createdByName: actorName,
           updatedBy: user.uid,
+        };
+        console.log("[MeetingRecordFormDialog] save → batch.set (public, new)", {
+          companyId,
+          newRecordId: id,
+          jobId: jId,
+          jobName: jName,
+          customerId: resolvedCustomerId,
+          customerName: resolvedCustomerName,
+          syncCustomerFromJob,
+          shareHistory: publicCreate.shareHistory,
+          createdAt: "serverTimestamp()",
+          updatedAt: "serverTimestamp()",
         });
+        batch.set(pref, publicCreate);
         batch.set(iref, {
           internalNotes: internalNotes.trim(),
           updatedAt: serverTimestamp(),
           updatedBy: user.uid,
         });
         await batch.commit();
+        console.log("[MeetingRecordFormDialog] batch.commit OK (create)", {
+          companyId,
+          recordId: id,
+        });
         logActivitySafe(firestore, companyId, user, profile, {
           actionType: "meeting_record_created",
           actionLabel: `Nový záznam ze schůzky: ${legacyTitleVal || notesTrim.slice(0, 80)}`,
@@ -394,10 +457,12 @@ export function MeetingRecordFormDialog(props: {
       onOpenChange(false);
       onSaved?.();
     } catch (e) {
+      const msg = e instanceof Error ? e.message : "Uložení se nezdařilo.";
+      console.error("[MeetingRecordFormDialog] save failed", e);
       toast({
         variant: "destructive",
-        title: "Chyba",
-        description: e instanceof Error ? e.message : "Uložení se nezdařilo.",
+        title: "Chyba při ukládání záznamu",
+        description: msg,
       });
     } finally {
       setLoading(false);
