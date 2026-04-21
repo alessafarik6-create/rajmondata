@@ -88,19 +88,6 @@ export default function VyrobaZakazkaDetailPage() {
   );
   const { data: foldersRaw } = useCollection(foldersCol);
 
-  /** Firestore pravidla vrátí jen složky, které smí výrobní tým vidět. */
-  const visibleFolders = useMemo(() => {
-    const list = Array.isArray(foldersRaw) ? foldersRaw : [];
-    return list
-      .filter((f): f is { id: string; name?: string; type?: string } =>
-        !!f && typeof (f as { id?: string }).id === "string"
-      )
-      .filter((f) => f.type !== "documents")
-      .sort((a, b) =>
-        String(a.name || a.id).localeCompare(String(b.name || b.id), "cs")
-      );
-  }, [foldersRaw]);
-
   const invCol = useMemoFirebase(
     () =>
       firestore && companyId
@@ -124,6 +111,7 @@ export default function VyrobaZakazkaDetailPage() {
   }, [inventoryRaw]);
 
   const [jobView, setJobView] = useState<SafeJobView | null>(null);
+  const [visibleFolderPick, setVisibleFolderPick] = useState<Set<string>>(new Set());
   const [consumptions, setConsumptions] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
   const [issueItemId, setIssueItemId] = useState<string>("");
@@ -154,6 +142,12 @@ export default function VyrobaZakazkaDetailPage() {
         throw new Error(typeof cJson.error === "string" ? cJson.error : "Historii nelze načíst.");
       }
       setJobView((vJson.job as SafeJobView) || null);
+      const folderIdsRaw = (vJson.settings as { productionVisibleFolderIds?: unknown } | null | undefined)
+        ?.productionVisibleFolderIds;
+      const folderIds = Array.isArray(folderIdsRaw)
+        ? folderIdsRaw.map((x) => String(x)).filter(Boolean)
+        : [];
+      setVisibleFolderPick(new Set(folderIds));
       setConsumptions(Array.isArray(cJson.consumptions) ? cJson.consumptions : []);
     } catch (e) {
       toast({
@@ -162,6 +156,7 @@ export default function VyrobaZakazkaDetailPage() {
         description: e instanceof Error ? e.message : "Načtení se nezdařilo.",
       });
       setJobView(null);
+      setVisibleFolderPick(new Set());
     } finally {
       setLoading(false);
     }
@@ -170,6 +165,25 @@ export default function VyrobaZakazkaDetailPage() {
   useEffect(() => {
     if (accessOk && user && jobId) void loadApi();
   }, [accessOk, user, jobId, loadApi]);
+
+  /**
+   * Firestore pravidla by ideálně vracela jen složky, které smí výrobní tým vidět.
+   * Pro jistotu ale filtrujeme i na klientu podle `productionVisibleFolderIds` / `productionTeamVisible`.
+   */
+  const visibleFolders = useMemo(() => {
+    const list = Array.isArray(foldersRaw) ? foldersRaw : [];
+    return list
+      .filter(
+        (f): f is { id: string; name?: string; type?: string; productionTeamVisible?: boolean } =>
+          !!f && typeof (f as { id?: string }).id === "string"
+      )
+      .filter((f) => f.type !== "documents")
+      .filter((f) => {
+        if (visibleFolderPick.size > 0) return visibleFolderPick.has(f.id);
+        return f.productionTeamVisible === true;
+      })
+      .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), "cs"));
+  }, [foldersRaw, visibleFolderPick]);
 
   const selectedItem = useMemo(
     () => inventoryItems.find((i) => i.id === issueItemId) ?? null,

@@ -171,15 +171,73 @@ export async function POST(request: NextRequest) {
       const isPartialLength = mode === "length" && qtyRaw < available - 1e-9;
       const movType = isPartialLength ? "partial_out" : "out_to_job";
 
+      /**
+       * Délkové položky chápeme jako konkrétní „kus materiálu“ (např. tyč 6000mm).
+       * Při částečném výdeji nesmí zmizet celý kus — místo toho:
+       * - původní položku vynulujeme (kus byl „rozřezán / vydán“),
+       * - vytvoříme novou skladovou položku jako zbytek (remainder) se zbývající délkou,
+       * - zapíšeme dva pohyby: `partial_out` + `remainder_created`.
+       */
       const itemPatch: Record<string, unknown> = {
-        quantity: mode === "length" ? newAvailable : newAvailable,
         updatedAt: FieldValue.serverTimestamp(),
       };
+
+      let remainderItemId: string | null = null;
       if (mode === "length") {
-        itemPatch.currentLength = newAvailable;
+        // spotřebovaná část vyjde na zakázku; původní kus se tímto „uzavře“
+        itemPatch.quantity = 0;
+        itemPatch.currentLength = 0;
         if (item.originalLength == null && Number.isFinite(available)) {
           itemPatch.originalLength = available;
         }
+
+        if (isPartialLength) {
+          const remRef = db
+            .collection("companies")
+            .doc(caller.companyId)
+            .collection("inventoryItems")
+            .doc();
+          remainderItemId = remRef.id;
+          const loc =
+            typeof item.warehouseLocation === "string" ? item.warehouseLocation : null;
+          const sku = typeof item.sku === "string" ? item.sku : null;
+          const cat =
+            typeof item.materialCategory === "string" ? item.materialCategory : null;
+          const supplier = typeof item.supplier === "string" ? item.supplier : null;
+          const noteR =
+            typeof item.note === "string" ? item.note : null;
+          const img = typeof item.imageUrl === "string" ? item.imageUrl : null;
+
+          tx.set(remRef, {
+            companyId: caller.companyId,
+            name: itemName,
+            sku,
+            materialCategory: cat,
+            unit,
+            quantity: newAvailable,
+            stockTrackingMode: "length",
+            originalLength: newAvailable,
+            currentLength: newAvailable,
+            lengthStockUnit:
+              typeof item.lengthStockUnit === "string"
+                ? item.lengthStockUnit
+                : unit,
+            parentStockItemId: itemId,
+            isRemainder: true,
+            remainderOfItemId: itemId,
+            warehouseLocation: loc,
+            reservedForJobId: null,
+            supplier,
+            imageUrl: img,
+            note: noteR,
+            createdAt: FieldValue.serverTimestamp(),
+            createdBy: caller.uid,
+            updatedAt: FieldValue.serverTimestamp(),
+          });
+        }
+      } else {
+        // kusy / ostatní režimy: chování kompatibilní se stávajícím skladem
+        itemPatch.quantity = newAvailable;
       }
 
       tx.update(itemRef, itemPatch as UpdateData<DocumentData>);
@@ -197,12 +255,40 @@ export async function POST(request: NextRequest) {
         jobName,
         employeeId: caller.employeeId,
         quantityBefore: available,
-        quantityAfter: newAvailable,
+        quantityAfter: mode === "length" ? 0 : newAvailable,
+        remainderItemId,
         batchNumber: batchNumber || null,
         destination: `job:${jobId}`,
         createdAt: FieldValue.serverTimestamp(),
         createdBy: caller.uid,
       });
+
+      if (remainderItemId) {
+        const remMovRef = db
+          .collection("companies")
+          .doc(caller.companyId)
+          .collection("inventoryMovements")
+          .doc();
+        tx.set(remMovRef, {
+          companyId: caller.companyId,
+          type: "remainder_created",
+          itemId: remainderItemId,
+          itemName,
+          quantity: newAvailable,
+          unit,
+          date: today,
+          note: `Zbytek po výdeji na zakázku ${jobId}`,
+          jobId,
+          jobName,
+          employeeId: caller.employeeId,
+          quantityBefore: 0,
+          quantityAfter: newAvailable,
+          batchNumber: batchNumber || null,
+          destination: `remainder_of:${itemId}`,
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy: caller.uid,
+        });
+      }
 
       const consRef = db
         .collection("companies")
@@ -224,7 +310,8 @@ export async function POST(request: NextRequest) {
         authUserId: caller.uid,
         note: note || null,
         batchNumber: batchNumber || null,
-        quantityRemainingOnStock: newAvailable,
+        quantityRemainingOnStock: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
+        remainderItemId,
         stockTrackingMode: mode,
         createdAt: FieldValue.serverTimestamp(),
       });
@@ -232,7 +319,8 @@ export async function POST(request: NextRequest) {
       return {
         movementId,
         consumptionId: consRef.id,
-        quantityAfter: newAvailable,
+        quantityAfter: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
+        remainderItemId,
         unit,
       };
     });
