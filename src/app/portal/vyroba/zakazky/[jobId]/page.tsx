@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import {
   collection,
   doc,
+  getDocs,
   limit,
   orderBy,
   query,
@@ -18,7 +19,7 @@ import {
   useMemoFirebase,
   useCompany,
 } from "@/firebase";
-import { ArrowLeft, Factory, Loader2, Package } from "lucide-react";
+import { ArrowLeft, Factory, FileText, ImageIcon, Layers, Loader2, Package, Play } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -38,8 +39,66 @@ import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catal
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import type { InventoryItemRow } from "@/lib/inventory-types";
 import Image from "next/image";
+import {
+  lengthToMillimeters,
+  millimetersToUnit,
+} from "@/lib/job-production-settings";
+import {
+  canStartProductionWorkflow,
+  parseProductionWorkflowStatus,
+} from "@/lib/production-job-workflow";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
+
+type AttachmentKind = "drawing" | "pdf" | "photo" | "other";
+
+type JobAttachmentFile = {
+  id: string;
+  folderId: string;
+  folderName: string;
+  fileUrl: string;
+  fileName: string;
+  kind: AttachmentKind;
+};
+
+function attachmentKindFromName(name: string): AttachmentKind {
+  const n = String(name || "").toLowerCase();
+  if (/\.(pdf)(\?|$)/i.test(n)) return "pdf";
+  if (/\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(n)) return "photo";
+  if (/\.(dwg|dxf|step|stp|stl|iges|igs|plt)(\?|$)/i.test(n)) return "drawing";
+  return "other";
+}
+
+function defaultLengthInputUnit(item: InventoryItemRow | null): "mm" | "cm" | "m" {
+  if (!item) return "mm";
+  const u = String(item.lengthStockUnit || item.unit || "mm")
+    .trim()
+    .toLowerCase();
+  if (u === "cm" || u === "m" || u === "mm") return u;
+  return "mm";
+}
+
+function quantityInStockUnits(
+  item: InventoryItemRow,
+  qtyInput: number,
+  inputLengthUnit: "mm" | "cm" | "m" | null
+): number | null {
+  const mode = String(item.stockTrackingMode || "pieces");
+  if (mode !== "length" || !inputLengthUnit) return qtyInput;
+  const mm = lengthToMillimeters(qtyInput, inputLengthUnit);
+  if (mm == null) return null;
+  const stockU = String(item.lengthStockUnit || item.unit || "mm")
+    .trim()
+    .toLowerCase();
+  return millimetersToUnit(mm, stockU);
+}
+
+function formatIsoCs(iso: unknown): string {
+  if (typeof iso !== "string" || !iso.trim()) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString("cs-CZ");
+}
 
 type SafeJobView = Record<string, unknown> & { jobId?: string };
 
@@ -110,6 +169,22 @@ export default function VyrobaZakazkaDetailPage() {
       );
   }, [inventoryRaw]);
 
+  const issueableInventory = useMemo(() => {
+    return inventoryItems.filter((i) => {
+      const mode = String(i.stockTrackingMode || "pieces");
+      const av =
+        mode === "length"
+          ? i.currentLength != null && Number.isFinite(Number(i.currentLength))
+            ? Number(i.currentLength)
+            : Number(i.quantity ?? 0)
+          : Number(i.quantity ?? 0);
+      if (av <= 1e-9) return false;
+      if (i.remainderFullyConsumed === true) return false;
+      if (i.isRemainder === true && i.remainderAvailable === false) return false;
+      return true;
+    });
+  }, [inventoryItems]);
+
   const [jobView, setJobView] = useState<SafeJobView | null>(null);
   const [visibleFolderPick, setVisibleFolderPick] = useState<Set<string>>(new Set());
   const [consumptions, setConsumptions] = useState<Record<string, unknown>[]>([]);
@@ -119,6 +194,10 @@ export default function VyrobaZakazkaDetailPage() {
   const [issueNote, setIssueNote] = useState<string>("");
   const [issueBatch, setIssueBatch] = useState<string>("");
   const [issueSaving, setIssueSaving] = useState(false);
+  const [issueInputLengthUnit, setIssueInputLengthUnit] = useState<"mm" | "cm" | "m">("mm");
+  const [attachmentFiles, setAttachmentFiles] = useState<JobAttachmentFile[]>([]);
+  const [attachmentsLoading, setAttachmentsLoading] = useState(false);
+  const [startSaving, setStartSaving] = useState(false);
 
   const loadApi = useCallback(async () => {
     if (!user || !jobId) return;
@@ -185,9 +264,114 @@ export default function VyrobaZakazkaDetailPage() {
       .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), "cs"));
   }, [foldersRaw, visibleFolderPick]);
 
+  useEffect(() => {
+    if (!issueItemId) return;
+    if (!issueableInventory.some((i) => i.id === issueItemId)) {
+      setIssueItemId("");
+    }
+  }, [issueableInventory, issueItemId]);
+
   const selectedItem = useMemo(
-    () => inventoryItems.find((i) => i.id === issueItemId) ?? null,
-    [inventoryItems, issueItemId]
+    () =>
+      issueableInventory.find((i) => i.id === issueItemId) ??
+      inventoryItems.find((i) => i.id === issueItemId) ??
+      null,
+    [issueableInventory, inventoryItems, issueItemId]
+  );
+
+  useEffect(() => {
+    if (!selectedItem) return;
+    if (String(selectedItem.stockTrackingMode) === "length") {
+      setIssueInputLengthUnit(defaultLengthInputUnit(selectedItem));
+    }
+  }, [selectedItem?.id, selectedItem?.stockTrackingMode]);
+
+  const visibleFolderIdsKey = useMemo(
+    () => visibleFolders.map((f) => `${f.id}:${f.name || ""}`).join("|"),
+    [visibleFolders]
+  );
+
+  useEffect(() => {
+    if (!firestore || !companyId || !jobId || !accessOk) return;
+    if (visibleFolders.length === 0) {
+      setAttachmentFiles([]);
+      setAttachmentsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setAttachmentsLoading(true);
+    (async () => {
+      const all: JobAttachmentFile[] = [];
+      try {
+        for (const f of visibleFolders) {
+          const q = query(
+            collection(
+              firestore,
+              "companies",
+              companyId,
+              "jobs",
+              String(jobId),
+              "folders",
+              f.id,
+              "images"
+            ),
+            orderBy("createdAt", "desc"),
+            limit(40)
+          );
+          const snap = await getDocs(q);
+          snap.forEach((d) => {
+            const row = d.data() as Record<string, unknown>;
+            const url = String(row.fileUrl || "");
+            const name = String(row.fileName || "soubor");
+            if (!url) return;
+            all.push({
+              id: d.id,
+              folderId: f.id,
+              folderName: f.name || f.id,
+              fileUrl: url,
+              fileName: name,
+              kind: attachmentKindFromName(name),
+            });
+          });
+        }
+        if (!cancelled) setAttachmentFiles(all);
+      } finally {
+        if (!cancelled) setAttachmentsLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, companyId, jobId, accessOk, visibleFolderIdsKey]);
+
+  const workflowStatus = useMemo(
+    () => parseProductionWorkflowStatus(jobView as Record<string, unknown> | null),
+    [jobView]
+  );
+  const canShowStartButton = jobView != null && canStartProductionWorkflow(workflowStatus);
+
+  const consumptionSummary = useMemo(() => {
+    const m = new Map<string, { name: string; unit: string; qty: number }>();
+    consumptions.forEach((c, idx) => {
+      const key =
+        (typeof c.inventoryItemId === "string" && c.inventoryItemId.trim()) ||
+        `name:${String(c.itemName || "")}:${idx}`;
+      const name = String(c.itemName || "");
+      const unit = String(c.unit || "");
+      const qty = Number(c.quantity ?? 0);
+      const prev = m.get(key);
+      if (prev) prev.qty += qty;
+      else m.set(key, { name, unit, qty });
+    });
+    return Array.from(m.values());
+  }, [consumptions]);
+
+  const remainderRows = useMemo(
+    () =>
+      consumptions.filter(
+        (c) => typeof c.remainderItemId === "string" && String(c.remainderItemId).trim().length > 0
+      ),
+    [consumptions]
   );
 
   const availableQty = useMemo(() => {
@@ -200,20 +384,77 @@ export default function VyrobaZakazkaDetailPage() {
     return Number(selectedItem.quantity ?? 0);
   }, [selectedItem]);
 
+  const lengthUnitEditable = useMemo(() => {
+    if (!selectedItem || String(selectedItem.stockTrackingMode) !== "length") return false;
+    const stockU = String(selectedItem.lengthStockUnit || selectedItem.unit || "mm")
+      .trim()
+      .toLowerCase();
+    return stockU === "mm" || stockU === "cm" || stockU === "m";
+  }, [selectedItem]);
+
   const remainderPreview = useMemo(() => {
     const q = Number(String(issueQty).replace(",", "."));
     if (!selectedItem || !Number.isFinite(q) || q <= 0) return null;
-    return Math.max(0, availableQty - q);
-  }, [selectedItem, issueQty, availableQty]);
+    const inputUnit = lengthUnitEditable ? issueInputLengthUnit : null;
+    const conv = quantityInStockUnits(selectedItem, q, inputUnit);
+    if (conv == null || !Number.isFinite(conv)) return null;
+    return Math.max(0, availableQty - conv);
+  }, [selectedItem, issueQty, availableQty, issueInputLengthUnit, lengthUnitEditable]);
+
+  const startProduction = async () => {
+    if (!user || !jobId) return;
+    setStartSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/production/start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ jobId: String(jobId) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Zahájení se nezdařilo.");
+      }
+      toast({
+        title: "Výroba zahájena",
+        description: "Stav zakázky byl nastaven na Zahájeno a zapsal se čas zahájení.",
+      });
+      await loadApi();
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Zahájení se nezdařilo.",
+      });
+    } finally {
+      setStartSaving(false);
+    }
+  };
 
   const submitIssue = async () => {
-    if (!user || !jobId) return;
+    if (!user || !jobId || !selectedItem) return;
     const qty = Number(String(issueQty).replace(",", "."));
     if (!issueItemId || !Number.isFinite(qty) || qty <= 0) {
       toast({ variant: "destructive", title: "Vyberte položku a množství." });
       return;
     }
-    if (qty > availableQty + 1e-9) {
+    const inputUnitForApi =
+      String(selectedItem.stockTrackingMode) === "length" && lengthUnitEditable
+        ? issueInputLengthUnit
+        : null;
+    const conv = quantityInStockUnits(selectedItem, qty, inputUnitForApi);
+    if (conv == null || !Number.isFinite(conv)) {
+      toast({
+        variant: "destructive",
+        title: "Neplatná délka",
+        description: "Zkontrolujte jednotku a zadejte kladné množství.",
+      });
+      return;
+    }
+    if (conv > availableQty + 1e-9) {
       toast({ variant: "destructive", title: "Nelze vydat více než je skladem." });
       return;
     }
@@ -232,6 +473,7 @@ export default function VyrobaZakazkaDetailPage() {
           quantity: qty,
           note: issueNote.trim() || null,
           batchNumber: issueBatch.trim() || null,
+          inputLengthUnit: inputUnitForApi,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -278,7 +520,7 @@ export default function VyrobaZakazkaDetailPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6">
+    <div className="mx-auto w-full max-w-5xl space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="outline" size="sm" asChild>
           <Link href="/portal/vyroba/zakazky" className="gap-2">
@@ -304,7 +546,12 @@ export default function VyrobaZakazkaDetailPage() {
             <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl text-slate-900">
               {String(jobView.displayLabel || jobView.name || jobId)}
             </h1>
-            <div className="flex flex-wrap gap-2 mt-2">
+            <div className="flex flex-wrap gap-2 mt-2 items-center">
+              {jobView.productionWorkflowStatusLabel ? (
+                <Badge className="bg-slate-800 text-white hover:bg-slate-800">
+                  {String(jobView.productionWorkflowStatusLabel)}
+                </Badge>
+              ) : null}
               {jobView.status ? (
                 <Badge variant="outline" className="capitalize">
                   {String(jobView.status)}
@@ -316,17 +563,94 @@ export default function VyrobaZakazkaDetailPage() {
             </p>
           </div>
 
+          {canShowStartButton ? (
+            <div className="rounded-xl border-2 border-amber-400/90 bg-gradient-to-br from-amber-50 to-orange-50/80 p-4 sm:p-5 shadow-sm">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div className="space-y-1">
+                  <p className="text-lg font-semibold text-slate-900">Zahájit výrobu</p>
+                  <p className="text-sm text-slate-700 max-w-xl">
+                    Zakázka přejde do stavu <strong>Zahájeno</strong>, uloží se datum a čas, kdo výrobu spustil,
+                    a zakázka se objeví mezi aktivní výrobou v přehledech.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="lg"
+                  className="shrink-0 gap-2 h-12 px-6 text-base font-semibold bg-amber-600 hover:bg-amber-700 text-white"
+                  disabled={startSaving}
+                  onClick={() => void startProduction()}
+                >
+                  {startSaving ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                  ) : (
+                    <Play className="h-5 w-5 fill-current" />
+                  )}
+                  Zahájit výrobu
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
+          <Card className={CARD}>
+            <CardHeader className="border-b border-slate-100">
+              <CardTitle className="text-base text-slate-900 flex items-center gap-2">
+                <Factory className="h-4 w-4" />
+                Zahájení a stav výroby
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-3 text-sm text-slate-800">
+              <div className="flex flex-wrap gap-2">
+                <Badge variant="secondary">{String(jobView.productionWorkflowStatusLabel || "—")}</Badge>
+              </div>
+              {jobView.productionStartedAt ? (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">Zahájení výroby</p>
+                  <p>
+                    {formatIsoCs(jobView.productionStartedAt)}
+                    {jobView.productionStartedByName ? (
+                      <span className="text-slate-600">
+                        {" "}
+                        — <strong>{String(jobView.productionStartedByName)}</strong>
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+              ) : (
+                <p className="text-slate-600">Výroba dosud nebyla zahájena tlačítkem výše.</p>
+              )}
+              {jobView.productionStatusNote ? (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">Poznámka ke stavu (vedení)</p>
+                  <p>{String(jobView.productionStatusNote)}</p>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card className={CARD}>
+            <CardHeader className="border-b border-slate-100">
+              <CardTitle className="text-base text-slate-900 flex items-center gap-2">
+                <Layers className="h-4 w-4" />
+                Výrobní podklady
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-4">
+              {visibleFolders.length === 0 ? (
+                <p className="text-sm text-slate-600">
+                  Žádné složky označené pro výrobu. Požádejte administrátora o přiřazení složek nebo přepínač u
+                  složky zakázky.
+                </p>
+              ) : (
+                <ProductionAttachmentBlocks files={attachmentFiles} loading={attachmentsLoading} />
+              )}
+            </CardContent>
+          </Card>
+
           <Card className={CARD}>
             <CardHeader className="border-b border-slate-100">
               <CardTitle className="text-base text-slate-900">Údaje pro práci</CardTitle>
             </CardHeader>
             <CardContent className="pt-4 space-y-3 text-sm text-slate-800">
-              {jobView.productionStatusNote ? (
-                <div>
-                  <p className="text-xs font-semibold text-slate-500 uppercase">Stav výroby</p>
-                  <p>{String(jobView.productionStatusNote)}</p>
-                </div>
-              ) : null}
               {jobView.description ? (
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase">Popis</p>
@@ -356,128 +680,222 @@ export default function VyrobaZakazkaDetailPage() {
           <Card className={CARD}>
             <CardHeader className="border-b border-slate-100">
               <CardTitle className="text-base text-slate-900 flex items-center gap-2">
-                <Factory className="h-4 w-4" />
-                Fotodokumentace a podklady
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-4">
-              {visibleFolders.length === 0 ? (
-                <p className="text-sm text-slate-600">
-                  Žádné složky označené pro výrobu. Požádejte administrátora o přiřazení složek nebo přepínač
-                  u složky zakázky.
-                </p>
-              ) : (
-                visibleFolders.map((folder) => (
-                  <ProductionFolderStrip
-                    key={folder.id}
-                    companyId={companyId}
-                    jobId={String(jobId)}
-                    folderId={folder.id}
-                    folderName={folder.name || folder.id}
-                  />
-                ))
-              )}
-            </CardContent>
-          </Card>
-
-          <Card className={CARD}>
-            <CardHeader className="border-b border-slate-100">
-              <CardTitle className="text-base text-slate-900 flex items-center gap-2">
                 <Package className="h-4 w-4" />
-                Vzít materiál ze skladu
+                Materiál pro výrobu
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-4 space-y-3 text-sm">
-              <div className="space-y-2">
-                <Label>Skladová položka</Label>
-                <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
-                  <SelectTrigger className="bg-white border-slate-200">
-                    <SelectValue placeholder="Vyberte materiál" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-white border-slate-200 max-h-60">
-                    {inventoryItems.map((i) => (
-                      <SelectItem key={i.id} value={i.id}>
-                        {i.name} ({i.unit || "ks"})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {selectedItem ? (
-                <p className="text-xs text-slate-600">
-                  Dostupné:{" "}
-                  <strong>
-                    {availableQty} {selectedItem.unit || "ks"}
-                  </strong>
-                  {String(selectedItem.stockTrackingMode || "") === "length"
-                    ? " (délková evidence — lze odebrat jen část, zbytek zůstane na skladě)"
-                    : null}
+            <CardContent className="pt-4 space-y-6 text-sm">
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Materiál přiřazený k výrobě</p>
+                <p className="text-slate-700">
+                  Materiál nemusí být předem přiřazen — při každém výdeji ze skladu se automaticky zapíše spotřeba
+                  na tuto zakázku. Volitelné rezervace řeší administrace skladu.
                 </p>
-              ) : null}
-              <div className="space-y-2">
-                <Label>Odebrané množství</Label>
-                <Input
-                  className="bg-white border-slate-200"
-                  inputMode="decimal"
-                  value={issueQty}
-                  onChange={(e) => setIssueQty(e.target.value)}
-                  placeholder={selectedItem ? `max ${availableQty}` : ""}
-                />
-                {remainderPreview != null && selectedItem ? (
+              </div>
+
+              <div className="rounded-lg border border-slate-100 bg-slate-50/60 p-4 space-y-3">
+                <p className="text-sm font-semibold text-slate-900">Vzít ze skladu</p>
+                <div className="space-y-2">
+                  <Label>Skladová položka</Label>
+                  <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
+                    <SelectTrigger className="bg-white border-slate-200">
+                      <SelectValue placeholder="Vyberte materiál nebo zbytek" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-white border-slate-200 max-h-60">
+                      {issueableInventory.length === 0 ? (
+                        <div className="px-2 py-3 text-xs text-slate-500">Žádná dostupná položka se zásobou.</div>
+                      ) : (
+                        issueableInventory.map((i) => (
+                          <SelectItem key={i.id} value={i.id}>
+                            {i.name}
+                            {i.isRemainder ? " (zbytek)" : ""} — {i.unit || "ks"}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {selectedItem ? (
                   <p className="text-xs text-slate-600">
-                    Po výdeji zbude na skladě: <strong>{remainderPreview}</strong> {selectedItem.unit || ""}
+                    Dostupné:{" "}
+                    <strong>
+                      {availableQty} {selectedItem.unit || "ks"}
+                    </strong>
+                    {String(selectedItem.stockTrackingMode || "") === "length"
+                      ? " — u délek lze odebrat část; zbytek vznikne jako nová skladová řádka."
+                      : null}
                   </p>
                 ) : null}
-              </div>
-              <div className="space-y-2">
-                <Label>Šarže / poznámka (volitelné)</Label>
-                <Input
-                  className="bg-white border-slate-200"
-                  value={issueBatch}
-                  onChange={(e) => setIssueBatch(e.target.value)}
-                  placeholder="Šarže"
-                />
-                <Textarea
-                  className="bg-white border-slate-200 min-h-[64px]"
-                  value={issueNote}
-                  onChange={(e) => setIssueNote(e.target.value)}
-                  placeholder="Poznámka k výdeji"
-                />
-              </div>
-              <Button type="button" disabled={issueSaving} onClick={() => void submitIssue()}>
-                {issueSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Potvrdit výdej na zakázku"}
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card className={CARD}>
-            <CardHeader className="border-b border-slate-100">
-              <CardTitle className="text-base text-slate-900">Historie spotřeby materiálu</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-2 text-sm">
-              {consumptions.length === 0 ? (
-                <p className="text-slate-600">Zatím žádné výdeje.</p>
-              ) : (
-                consumptions.map((c) => (
-                  <div
-                    key={String(c.id ?? Math.random())}
-                    className="rounded border border-slate-100 p-3 text-slate-800"
-                  >
-                    <div className="flex flex-wrap justify-between gap-2">
-                      <span className="font-medium">{String(c.itemName ?? "")}</span>
-                      <span>
-                        {String(c.quantity ?? "")} {String(c.unit ?? "")}
-                      </span>
-                    </div>
-                    {c.quantityRemainingOnStock != null ? (
-                      <p className="text-xs text-slate-500 mt-1">
-                        Zůstatek na skladě po pohybu: {String(c.quantityRemainingOnStock)} {String(c.unit ?? "")}
-                      </p>
-                    ) : null}
-                    {c.note ? <p className="text-xs mt-1">{String(c.note)}</p> : null}
+                {selectedItem && String(selectedItem.stockTrackingMode) === "length" && lengthUnitEditable ? (
+                  <div className="space-y-2">
+                    <Label>Jednotka zadání délky</Label>
+                    <Select
+                      value={issueInputLengthUnit}
+                      onValueChange={(v) => setIssueInputLengthUnit(v as "mm" | "cm" | "m")}
+                    >
+                      <SelectTrigger className="bg-white border-slate-200 max-w-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="bg-white border-slate-200">
+                        <SelectItem value="mm">mm</SelectItem>
+                        <SelectItem value="cm">cm</SelectItem>
+                        <SelectItem value="m">m</SelectItem>
+                      </SelectContent>
+                    </Select>
                   </div>
-                ))
-              )}
+                ) : null}
+                {selectedItem &&
+                String(selectedItem.stockTrackingMode) === "length" &&
+                !lengthUnitEditable ? (
+                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
+                    Skladová jednotka není mm/cm/m — zadejte délku přímo ve stejné jednotce, v jaké je položka
+                    vedena na skladě.
+                  </p>
+                ) : null}
+                <div className="space-y-2">
+                  <Label>Odebrané množství</Label>
+                  <Input
+                    className="bg-white border-slate-200 max-w-md"
+                    inputMode="decimal"
+                    value={issueQty}
+                    onChange={(e) => setIssueQty(e.target.value)}
+                    placeholder={
+                      selectedItem
+                        ? lengthUnitEditable && String(selectedItem.stockTrackingMode) === "length"
+                          ? `např. 5000 (${issueInputLengthUnit})`
+                          : `max ${availableQty} ${selectedItem.unit || ""}`
+                        : ""
+                    }
+                  />
+                  {remainderPreview != null && selectedItem ? (
+                    <p className="text-xs text-slate-600">
+                      Po výdeji zbude na skladě (stejná jednotka jako zásoba):{" "}
+                      <strong>{remainderPreview.toFixed(4).replace(/\.?0+$/, "")}</strong>{" "}
+                      {selectedItem.unit || ""}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="space-y-2">
+                  <Label>Šarže / poznámka (volitelné)</Label>
+                  <Input
+                    className="bg-white border-slate-200"
+                    value={issueBatch}
+                    onChange={(e) => setIssueBatch(e.target.value)}
+                    placeholder="Šarže"
+                  />
+                  <Textarea
+                    className="bg-white border-slate-200 min-h-[64px]"
+                    value={issueNote}
+                    onChange={(e) => setIssueNote(e.target.value)}
+                    placeholder="Poznámka k výdeji"
+                  />
+                </div>
+                <Button type="button" disabled={issueSaving || !selectedItem} onClick={() => void submitIssue()}>
+                  {issueSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Potvrdit výdej na zakázku"}
+                </Button>
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-slate-900 mb-2">Spotřebovaný materiál (souhrn)</p>
+                {consumptionSummary.length === 0 ? (
+                  <p className="text-slate-600 text-xs">Zatím žádná spotřeba.</p>
+                ) : (
+                  <ul className="space-y-1 text-sm">
+                    {consumptionSummary.map((row) => (
+                      <li key={`${row.name}-${row.unit}`} className="flex justify-between gap-2 border-b border-slate-100 pb-1">
+                        <span>{row.name}</span>
+                        <span className="shrink-0">
+                          {row.qty} {row.unit}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-slate-900 mb-2">Zbytky materiálu (z řezů)</p>
+                {remainderRows.length === 0 ? (
+                  <p className="text-slate-600 text-xs">Zatím žádné zbytky z této zakázky.</p>
+                ) : (
+                  <ul className="space-y-2 text-sm">
+                    {remainderRows.map((c) => (
+                      <li
+                        key={String(c.id ?? c.remainderItemId)}
+                        className="rounded border border-slate-100 p-2 bg-white"
+                      >
+                        <span className="font-medium">{String(c.itemName)}</span>
+                        <span className="text-slate-600">
+                          {" "}
+                          — nová položka skladu: <code className="text-xs">{String(c.remainderItemId)}</code>
+                        </span>
+                        {c.quantityRemainingOnStock != null ? (
+                          <p className="text-xs text-slate-500 mt-1">
+                            Zůstalo: {String(c.quantityRemainingOnStock)} {String(c.unit)}
+                          </p>
+                        ) : null}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-slate-900 mb-2">Historie odběrů</p>
+                {consumptions.length === 0 ? (
+                  <p className="text-slate-600 text-xs">Zatím žádné výdeje.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {consumptions.map((c, idx) => (
+                      <div
+                        key={String(c.id ?? `c-${idx}`)}
+                        className="rounded border border-slate-100 p-3 text-slate-800 bg-white"
+                      >
+                        <div className="flex flex-wrap justify-between gap-2">
+                          <span className="font-medium">{String(c.itemName ?? "")}</span>
+                          <span>
+                            −{String(c.quantity ?? "")} {String(c.unit ?? "")}
+                            {c.inputLengthUnit ? (
+                              <span className="text-xs text-slate-500"> (zadáno v {String(c.inputLengthUnit)})</span>
+                            ) : null}
+                          </span>
+                        </div>
+                        {c.quantityBeforeOnHand != null ? (
+                          <p className="text-xs text-slate-500 mt-1">
+                            Před výdejem: {String(c.quantityBeforeOnHand)} → zůstatek na řádce / skladě po pohybu:{" "}
+                            {String(c.quantityRemainingOnStock ?? "—")} {String(c.unit ?? "")}
+                          </p>
+                        ) : c.quantityRemainingOnStock != null ? (
+                          <p className="text-xs text-slate-500 mt-1">
+                            Zůstatek na skladě po pohybu: {String(c.quantityRemainingOnStock)} {String(c.unit ?? "")}
+                          </p>
+                        ) : null}
+                        {c.remainderCreated === true || c.remainderItemId ? (
+                          <p className="text-xs text-amber-800 mt-1">
+                            Vznikl zbytek
+                            {typeof c.remainderItemId === "string" ? `: ${c.remainderItemId}` : ""}
+                          </p>
+                        ) : null}
+                        {c.createdAt ? (
+                          <p className="text-[10px] text-slate-400 mt-1">
+                            {formatIsoCs(
+                              typeof c.createdAt === "object" &&
+                                c.createdAt !== null &&
+                                "toDate" in c.createdAt &&
+                                typeof (c.createdAt as { toDate?: () => Date }).toDate === "function"
+                                ? (c.createdAt as { toDate: () => Date }).toDate().toISOString()
+                                : typeof c.createdAt === "string"
+                                  ? c.createdAt
+                                  : ""
+                            )}
+                          </p>
+                        ) : null}
+                        {c.note ? <p className="text-xs mt-1">{String(c.note)}</p> : null}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
         </>
@@ -486,72 +904,123 @@ export default function VyrobaZakazkaDetailPage() {
   );
 }
 
-function ProductionFolderStrip({
-  companyId,
-  jobId,
-  folderId,
-  folderName,
+function ProductionAttachmentBlocks({
+  files,
+  loading,
 }: {
-  companyId: string;
-  jobId: string;
-  folderId: string;
-  folderName: string;
+  files: JobAttachmentFile[];
+  loading: boolean;
 }) {
-  const firestore = useFirestore();
-  const imgCol = useMemoFirebase(
-    () =>
-      firestore
-        ? query(
-            collection(
-              firestore,
-              "companies",
-              companyId,
-              "jobs",
-              jobId,
-              "folders",
-              folderId,
-              "images"
-            ),
-            orderBy("createdAt", "desc"),
-            limit(24)
-          )
-        : null,
-    [firestore, companyId, jobId, folderId]
-  );
-  const { data: images, isLoading } = useCollection(imgCol);
+  const groups = useMemo(() => {
+    const g: Record<AttachmentKind, JobAttachmentFile[]> = {
+      drawing: [],
+      pdf: [],
+      photo: [],
+      other: [],
+    };
+    for (const f of files) {
+      g[f.kind].push(f);
+    }
+    return g;
+  }, [files]);
 
-  return (
-    <div>
-      <p className="text-sm font-semibold text-slate-900 mb-2">{folderName}</p>
-      {isLoading ? (
-        <Loader2 className="h-6 w-6 animate-spin text-primary" />
-      ) : !images || images.length === 0 ? (
-        <p className="text-xs text-slate-500">Žádné soubory.</p>
+  if (loading) {
+    return <Loader2 className="h-6 w-6 animate-spin text-primary" />;
+  }
+
+  const Section = ({
+    title,
+    icon,
+    items,
+    empty,
+  }: {
+    title: string;
+    icon: React.ReactNode;
+    items: JobAttachmentFile[];
+    empty: string;
+  }) => (
+    <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 space-y-2">
+      <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+        {icon}
+        {title}
+      </div>
+      {items.length === 0 ? (
+        <p className="text-xs text-slate-500">{empty}</p>
       ) : (
-        <div className="flex flex-wrap gap-2">
-          {images.map((im) => {
-            const url = String((im as { fileUrl?: string }).fileUrl || "");
-            const name = String((im as { fileName?: string }).fileName || "soubor");
-            if (!url) return null;
-            const isImg = /\.(jpe?g|png|gif|webp)$/i.test(name) || url.includes("image");
-            return (
-              <a
-                key={(im as { id?: string }).id || url}
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-                className="block w-24 h-24 rounded border border-slate-200 overflow-hidden bg-slate-50"
-              >
-                {isImg ? (
-                  <Image src={url} alt={name} width={96} height={96} className="object-cover w-full h-full" unoptimized />
-                ) : (
-                  <span className="text-[10px] p-1 block truncate">{name}</span>
-                )}
-              </a>
-            );
-          })}
+        <div className="flex flex-wrap gap-3">
+          {items.map((im) => (
+            <AttachmentTile key={`${im.folderId}-${im.id}`} file={im} />
+          ))}
         </div>
       )}
     </div>
+  );
+
+  return (
+    <div className="space-y-4">
+      <Section
+        title="Plánky / výkresy"
+        icon={<Layers className="h-4 w-4 text-slate-600" />}
+        items={groups.drawing}
+        empty="Žádné plánky ani výkresy v označených složkách."
+      />
+      <Section
+        title="PDF dokumenty"
+        icon={<FileText className="h-4 w-4 text-red-600" />}
+        items={groups.pdf}
+        empty="Žádná PDF."
+      />
+      <Section
+        title="Fotodokumentace"
+        icon={<ImageIcon className="h-4 w-4 text-sky-600" />}
+        items={groups.photo}
+        empty="Žádné fotografie."
+      />
+      <Section
+        title="Ostatní výrobní podklady"
+        icon={<Factory className="h-4 w-4 text-slate-500" />}
+        items={groups.other}
+        empty="Žádné další soubory."
+      />
+    </div>
+  );
+}
+
+function AttachmentTile({ file }: { file: JobAttachmentFile }) {
+  const isImg = file.kind === "photo";
+  return (
+    <a
+      href={file.fileUrl}
+      target="_blank"
+      rel="noreferrer"
+      className="block w-[132px] rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm hover:border-primary/40 transition-colors"
+    >
+      <div className="aspect-square flex items-center justify-center bg-slate-50">
+        {isImg ? (
+          <Image
+            src={file.fileUrl}
+            alt={file.fileName}
+            width={132}
+            height={132}
+            className="object-cover w-full h-full"
+            unoptimized
+          />
+        ) : file.kind === "pdf" ? (
+          <div className="p-2 text-center">
+            <FileText className="mx-auto h-10 w-10 text-red-500" />
+            <p className="text-[10px] mt-1 line-clamp-3 text-slate-800 leading-tight">{file.fileName}</p>
+            <p className="text-[9px] text-primary mt-1 font-medium">Otevřít</p>
+          </div>
+        ) : (
+          <div className="p-2 text-center">
+            <Package className="mx-auto h-8 w-8 text-slate-400" />
+            <p className="text-[10px] mt-1 line-clamp-3 text-slate-700">{file.fileName}</p>
+          </div>
+        )}
+      </div>
+      <p className="text-[9px] text-slate-500 px-1.5 py-1 truncate border-t border-slate-100" title={file.folderName}>
+        {file.folderName}
+      </p>
+    </a>
   );
 }

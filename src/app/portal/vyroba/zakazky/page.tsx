@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
+import { isCompanyPrivileged } from "@/lib/api-company-auth";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -24,6 +25,8 @@ type SafeJob = {
   status?: string;
   displayLabel?: string;
   productionStatusNote?: string | null;
+  productionWorkflowStatus?: string;
+  productionWorkflowStatusLabel?: string;
 };
 
 export default function VyrobaZakazkyListPage() {
@@ -62,8 +65,18 @@ export default function VyrobaZakazkyListPage() {
   const [jobs, setJobs] = useState<SafeJob[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const globalRoles = Array.isArray(profile?.globalRoles)
+    ? profile.globalRoles.map((x: unknown) => String(x))
+    : [];
+  const privileged = isCompanyPrivileged(role, globalRoles);
+
   useEffect(() => {
-    if (!user || !accessOk || role !== "employee") {
+    if (!user || !accessOk) {
+      setLoading(false);
+      return;
+    }
+    if (!privileged && role !== "employee") {
+      setJobs([]);
       setLoading(false);
       return;
     }
@@ -71,7 +84,10 @@ export default function VyrobaZakazkyListPage() {
     (async () => {
       try {
         const idToken = await user.getIdToken();
-        const res = await fetch("/api/company/production/my-jobs", {
+        const url = privileged
+          ? "/api/company/production/team-jobs"
+          : "/api/company/production/my-jobs";
+        const res = await fetch(url, {
           headers: { Authorization: `Bearer ${idToken}` },
         });
         const data = await res.json().catch(() => ({}));
@@ -95,7 +111,7 @@ export default function VyrobaZakazkyListPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, accessOk, role, toast]);
+  }, [user, accessOk, role, privileged, toast]);
 
   if (!user || !companyId) {
     return (
@@ -120,11 +136,11 @@ export default function VyrobaZakazkyListPage() {
     );
   }
 
-  if (role !== "employee") {
+  if (!privileged && role !== "employee") {
     return (
       <Card className={CARD}>
         <CardContent className="py-10 text-center text-slate-700 space-y-3">
-          <p>Seznam „Moje zakázky ve výrobě“ je určen pro zaměstnanecké účty.</p>
+          <p>Tento přehled je dostupný zaměstnancům s přístupem k výrobě nebo vedení organizace.</p>
           <Button type="button" variant="outline" asChild>
             <Link href="/portal/jobs">Správa zakázek</Link>
           </Button>
@@ -140,7 +156,9 @@ export default function VyrobaZakazkyListPage() {
           Zakázky ve výrobě
         </h1>
         <p className="portal-page-description text-slate-700 mt-1">
-          Zakázky přiřazené vám pro realizaci — bez obchodních cen a dokladů.
+          {privileged
+            ? "Přehled zakázek s výrobním týmem nebo aktivní výrobou — bez obchodních cen a dokladů."
+            : "Zakázky přiřazené vám pro realizaci — bez obchodních cen a dokladů."}
         </p>
       </div>
 
@@ -148,7 +166,7 @@ export default function VyrobaZakazkyListPage() {
         <CardHeader className="border-b border-slate-100">
           <CardTitle className="text-lg text-slate-900 flex items-center gap-2">
             <Factory className="h-5 w-5 text-primary" />
-            Moje přiřazení
+            {privileged ? "Výrobní zakázky" : "Moje přiřazení"}
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-4 space-y-3">
@@ -167,11 +185,16 @@ export default function VyrobaZakazkyListPage() {
                   <span className="font-medium text-slate-900">
                     {j.displayLabel || j.name || j.jobId}
                   </span>
-                  {j.status ? (
-                    <Badge variant="outline" className="capitalize">
-                      {j.status}
-                    </Badge>
-                  ) : null}
+                  <div className="flex flex-wrap gap-2">
+                    {j.productionWorkflowStatusLabel ? (
+                      <Badge variant="secondary">{j.productionWorkflowStatusLabel}</Badge>
+                    ) : null}
+                    {j.status ? (
+                      <Badge variant="outline" className="capitalize">
+                        {j.status}
+                      </Badge>
+                    ) : null}
+                  </div>
                 </div>
                 {j.productionStatusNote ? (
                   <p className="text-xs text-slate-600 mt-2">{j.productionStatusNote}</p>

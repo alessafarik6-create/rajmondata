@@ -2,6 +2,11 @@
  * Nastavení výrobního týmu u zakázky a bezpečný výřez dat pro zaměstnance.
  */
 
+import {
+  PRODUCTION_WORKFLOW_LABELS,
+  parseProductionWorkflowStatus,
+} from "@/lib/production-job-workflow";
+
 export type ProductionCustomerDisplayMode = "show_customer" | "internal_only";
 
 /** Režim evidence skladové položky (rozšíření oproti čistě kusovému skladu). */
@@ -91,6 +96,23 @@ export function employeeAssignedToJobProduction(
 }
 
 /** Bezpečný výřez zakázky pro výrobní tým (žádné finance / doklady). */
+function serializeFirestoreTime(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    "toDate" in raw &&
+    typeof (raw as { toDate: () => Date }).toDate === "function"
+  ) {
+    try {
+      return (raw as { toDate: () => Date }).toDate().toISOString();
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export function buildProductionSafeJobView(params: {
   jobId: string;
   job: Record<string, unknown>;
@@ -104,6 +126,7 @@ export function buildProductionSafeJobView(params: {
       ? settings.productionInternalLabel.trim()
       : null;
   const name = typeof job.name === "string" ? job.name : "";
+  const wf = parseProductionWorkflowStatus(job);
   return {
     jobId,
     name,
@@ -120,5 +143,11 @@ export function buildProductionSafeJobView(params: {
       ? customerDisplayName || name || jobId
       : internal || name || "Interní zakázka",
     showCustomerName: showCustomer,
+    productionWorkflowStatus: wf,
+    productionWorkflowStatusLabel: PRODUCTION_WORKFLOW_LABELS[wf],
+    productionStartedAt: serializeFirestoreTime(job.productionStartedAt),
+    productionStartedBy: typeof job.productionStartedBy === "string" ? job.productionStartedBy : null,
+    productionStartedByName:
+      typeof job.productionStartedByName === "string" ? job.productionStartedByName : null,
   };
 }

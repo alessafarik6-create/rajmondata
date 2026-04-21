@@ -44,6 +44,13 @@ export type InventoryItemRow = {
   parentStockItemId?: string | null;
   isRemainder?: boolean | null;
   remainderOfItemId?: string | null;
+  /** Výrobní zakázka, na kterou byl zbytek vytvořen při řezu. */
+  consumedByJobId?: string | null;
+  /** Volný zbytek k dalšímu použití. */
+  remainderAvailable?: boolean | null;
+  remainderFullyConsumed?: boolean | null;
+  /** Pohyb skladu, kterým vznikl zbytek (partial_out). */
+  sourceStockMovementId?: string | null;
   /** Umístění ve skladu (volitelné). */
   warehouseLocation?: string | null;
   /** Rezervace na zakázku (volitelné). */
@@ -91,6 +98,10 @@ export type InventoryMovementRow = {
   quantityAfter?: number | null;
   /** Nová skladová položka (zbytek) vzniklá řezem. */
   remainderItemId?: string | null;
+  /** Původní skladová řádka při vzniku zbytku. */
+  parentSourceItemId?: string | null;
+  /** Související pohyb (např. partial_out před vznikem zbytku). */
+  sourceMovementId?: string | null;
   batchNumber?: string | null;
   /** Změna množství při úpravě (kladná = přírůstek). */
   adjustmentDelta?: number | null;

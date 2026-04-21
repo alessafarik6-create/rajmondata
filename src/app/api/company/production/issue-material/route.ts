@@ -7,6 +7,8 @@ import {
 } from "@/lib/api-company-auth";
 import {
   employeeAssignedToJobProduction,
+  lengthToMillimeters,
+  millimetersToUnit,
   parseJobProductionSettings,
 } from "@/lib/job-production-settings";
 import type { InventoryStockTrackingMode } from "@/lib/inventory-types";
@@ -17,6 +19,8 @@ type Body = {
   quantity?: number;
   note?: string | null;
   batchNumber?: string | null;
+  /** U délkových materiálů: jednotka vstupu (převod na skladovou jednotku položky). */
+  inputLengthUnit?: "mm" | "cm" | "m" | null;
 };
 
 function trackingModeOf(
@@ -103,6 +107,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const inputLenRaw = body.inputLengthUnit;
+  const inputLengthUnit: "mm" | "cm" | "m" | null =
+    inputLenRaw === "mm" || inputLenRaw === "cm" || inputLenRaw === "m" ? inputLenRaw : null;
+
   const perm = await canIssueMaterial({ db, companyId: caller.companyId, caller, jobId });
   if (!perm.ok) {
     return NextResponse.json({ error: perm.error }, { status: perm.status });
@@ -138,6 +146,12 @@ export async function POST(request: NextRequest) {
       if (String(item.companyId || "") !== caller.companyId) {
         throw new Error("Položka nepatří do této organizace.");
       }
+      if (item.remainderFullyConsumed === true) {
+        throw new Error("Tento zbytek byl již plně spotřebován a nelze z něj znovu vydávat.");
+      }
+      if (item.isRemainder === true && item.remainderAvailable === false) {
+        throw new Error("Tento zbytek není označen jako volný k dalšímu výdeji.");
+      }
 
       const unit = String(item.unit || "ks").trim() || "ks";
       const mode = trackingModeOf(item.stockTrackingMode, unit);
@@ -148,17 +162,37 @@ export async function POST(request: NextRequest) {
         available = cur != null && Number.isFinite(Number(cur)) ? Number(cur) : stockQty;
       }
 
-      if (qtyRaw > available + 1e-9) {
+      let qtyInStockUnit = qtyRaw;
+      if (mode === "length" && inputLengthUnit) {
+        const mm = lengthToMillimeters(qtyRaw, inputLengthUnit);
+        if (mm == null) {
+          throw new Error("Neplatná délka nebo jednotka.");
+        }
+        const stockU = String(item.lengthStockUnit || unit || "mm").trim().toLowerCase();
+        const conv = millimetersToUnit(mm, stockU);
+        if (conv == null) {
+          throw new Error(
+            `Nelze převést na skladovou jednotku (${stockU}). Zadejte množství přímo ve stejné jednotce jako na skladě, nebo doplňte lengthStockUnit u položky.`
+          );
+        }
+        qtyInStockUnit = conv;
+      }
+
+      if (qtyInStockUnit > available + 1e-9) {
         throw new Error("Na skladě není dostatek materiálu.");
       }
 
       if (mode === "pieces") {
-        if (!Number.isInteger(qtyRaw)) {
+        if (!Number.isInteger(qtyInStockUnit)) {
           throw new Error("U kusové evidence odeberte celý počet kusů.");
         }
       }
 
-      const newAvailable = available - qtyRaw;
+      if (mode === "length" && qtyInStockUnit <= 0) {
+        throw new Error("U délkového materiálu zadejte kladnou délku.");
+      }
+
+      const newAvailable = available - qtyInStockUnit;
       const movRef = db
         .collection("companies")
         .doc(caller.companyId)
@@ -168,7 +202,7 @@ export async function POST(request: NextRequest) {
 
       const itemName = String(item.name || itemId);
       const today = new Date().toISOString().slice(0, 10);
-      const isPartialLength = mode === "length" && qtyRaw < available - 1e-9;
+      const isPartialLength = mode === "length" && qtyInStockUnit < available - 1e-9;
       const movType = isPartialLength ? "partial_out" : "out_to_job";
 
       /**
@@ -225,11 +259,15 @@ export async function POST(request: NextRequest) {
             parentStockItemId: itemId,
             isRemainder: true,
             remainderOfItemId: itemId,
+            consumedByJobId: jobId,
+            remainderAvailable: true,
+            remainderFullyConsumed: false,
             warehouseLocation: loc,
             reservedForJobId: null,
             supplier,
             imageUrl: img,
             note: noteR,
+            sourceStockMovementId: movementId,
             createdAt: FieldValue.serverTimestamp(),
             createdBy: caller.uid,
             updatedAt: FieldValue.serverTimestamp(),
@@ -240,6 +278,11 @@ export async function POST(request: NextRequest) {
         itemPatch.quantity = newAvailable;
       }
 
+      if (item.isRemainder === true && newAvailable <= 1e-9) {
+        itemPatch.remainderFullyConsumed = true;
+        itemPatch.remainderAvailable = false;
+      }
+
       tx.update(itemRef, itemPatch as UpdateData<DocumentData>);
 
       tx.set(movRef, {
@@ -247,7 +290,7 @@ export async function POST(request: NextRequest) {
         type: movType,
         itemId,
         itemName,
-        quantity: qtyRaw,
+        quantity: qtyInStockUnit,
         unit,
         date: today,
         note: note || null,
@@ -285,6 +328,8 @@ export async function POST(request: NextRequest) {
           quantityAfter: newAvailable,
           batchNumber: batchNumber || null,
           destination: `remainder_of:${itemId}`,
+          parentSourceItemId: itemId,
+          sourceMovementId: movementId,
           createdAt: FieldValue.serverTimestamp(),
           createdBy: caller.uid,
         });
@@ -297,20 +342,34 @@ export async function POST(request: NextRequest) {
         .doc(jobId)
         .collection("materialConsumptions")
         .doc();
+      const parentTrace =
+        typeof item.remainderOfItemId === "string" && String(item.remainderOfItemId).trim()
+          ? String(item.remainderOfItemId).trim()
+          : typeof item.parentStockItemId === "string" && String(item.parentStockItemId).trim()
+            ? String(item.parentStockItemId).trim()
+            : null;
+
       tx.set(consRef, {
         companyId: caller.companyId,
         jobId,
         jobName,
         inventoryItemId: itemId,
+        sourceStockItemId: itemId,
+        parentStockItemId: parentTrace,
         itemName,
-        quantity: qtyRaw,
+        quantity: qtyInStockUnit,
+        quantityIssued: qtyInStockUnit,
+        quantityBeforeOnHand: available,
         unit,
+        inputLengthUnit: inputLengthUnit || null,
         movementId,
+        sourceStockMovementId: movementId,
         employeeId: caller.employeeId,
         authUserId: caller.uid,
         note: note || null,
         batchNumber: batchNumber || null,
         quantityRemainingOnStock: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
+        remainderCreated: remainderItemId != null,
         remainderItemId,
         stockTrackingMode: mode,
         createdAt: FieldValue.serverTimestamp(),

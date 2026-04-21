@@ -5,6 +5,10 @@ import {
   verifyCompanyBearer,
 } from "@/lib/api-company-auth";
 import type { ProductionCustomerDisplayMode } from "@/lib/job-production-settings";
+import {
+  isProductionWorkflowStatus,
+  type ProductionWorkflowStatus,
+} from "@/lib/production-job-workflow";
 
 type Body = {
   jobId?: string;
@@ -14,6 +18,8 @@ type Body = {
   productionVisibleFolderIds?: string[];
   productionStatusNote?: string | null;
   productionTeamNotes?: string | null;
+  /** Workflow výroby u zakázky — mění jen vedení. */
+  productionWorkflowStatus?: ProductionWorkflowStatus;
 };
 
 /**
@@ -78,6 +84,13 @@ export async function PATCH(request: NextRequest) {
   if (body.productionTeamNotes !== undefined) {
     const s = body.productionTeamNotes == null ? "" : String(body.productionTeamNotes).trim();
     patch.productionTeamNotes = s || null;
+  }
+  if (body.productionWorkflowStatus !== undefined) {
+    const w = String(body.productionWorkflowStatus || "").trim();
+    if (!isProductionWorkflowStatus(w)) {
+      return NextResponse.json({ error: "Neplatný productionWorkflowStatus." }, { status: 400 });
+    }
+    patch.productionWorkflowStatus = w;
   }
 
   await jobRef.update(patch);
