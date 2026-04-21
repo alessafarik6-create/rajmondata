@@ -3,6 +3,7 @@ import {
   isCompanyPrivileged,
   verifyCompanyBearer,
 } from "@/lib/api-company-auth";
+import { isCompanyEmployeeRole } from "@/lib/company-privilege";
 import {
   buildProductionSafeJobView,
   parseJobProductionSettings,
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
   const settings = parseJobProductionSettings(data);
 
   const allowedForEmployee =
-    caller.role === "employee" &&
+    isCompanyEmployeeRole(caller.role) &&
     caller.employeeId &&
     employeeAssignedToJobProduction(settings, caller.employeeId);
 

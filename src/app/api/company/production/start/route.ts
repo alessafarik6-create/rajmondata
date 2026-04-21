@@ -4,6 +4,7 @@ import {
   isCompanyPrivileged,
   verifyCompanyBearer,
 } from "@/lib/api-company-auth";
+import { isCompanyEmployeeRole } from "@/lib/company-privilege";
 import {
   employeeAssignedToJobProduction,
   parseJobProductionSettings,
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
   const data = jobSnap.data() as Record<string, unknown>;
   const settings = parseJobProductionSettings(data);
   const assigned =
-    caller.role === "employee" &&
+    isCompanyEmployeeRole(caller.role) &&
     caller.employeeId &&
     employeeAssignedToJobProduction(settings, caller.employeeId);
   const privileged = isCompanyPrivileged(caller.role, caller.globalRoles);
@@ -76,6 +77,7 @@ export async function POST(request: NextRequest) {
 
   await jobRef.update({
     productionWorkflowStatus: "started",
+    productionStatus: "active",
     productionStartedAt: FieldValue.serverTimestamp(),
     productionStartedBy: caller.uid,
     productionStartedByName: displayName,

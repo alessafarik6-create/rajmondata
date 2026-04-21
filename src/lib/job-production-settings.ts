@@ -98,6 +98,12 @@ export function employeeAssignedToJobProduction(
 /** Bezpečný výřez zakázky pro výrobní tým (žádné finance / doklady). */
 function serializeFirestoreTime(raw: unknown): string | null {
   if (raw == null) return null;
+  if (typeof raw === "string") {
+    const s = raw.trim();
+    if (!s) return null;
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? s : d.toISOString();
+  }
   if (
     typeof raw === "object" &&
     raw !== null &&
@@ -127,6 +133,10 @@ export function buildProductionSafeJobView(params: {
       : null;
   const name = typeof job.name === "string" ? job.name : "";
   const wf = parseProductionWorkflowStatus(job);
+  const productionStatusRaw =
+    typeof job.productionStatus === "string" && job.productionStatus.trim()
+      ? job.productionStatus.trim()
+      : null;
   return {
     jobId,
     name,
@@ -139,6 +149,8 @@ export function buildProductionSafeJobView(params: {
     productionTeamNotes:
       typeof job.productionTeamNotes === "string" ? job.productionTeamNotes : "",
     productionStatusNote: settings.productionStatusNote || null,
+    /** Stav výroby pro přehledy (např. active po zahájení). */
+    productionStatus: productionStatusRaw,
     displayLabel: showCustomer
       ? customerDisplayName || name || jobId
       : internal || name || "Interní zakázka",

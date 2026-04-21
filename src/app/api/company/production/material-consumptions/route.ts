@@ -3,6 +3,7 @@ import {
   isCompanyPrivileged,
   verifyCompanyBearer,
 } from "@/lib/api-company-auth";
+import { isCompanyEmployeeRole } from "@/lib/company-privilege";
 import {
   employeeAssignedToJobProduction,
   parseJobProductionSettings,
@@ -29,7 +30,7 @@ export async function GET(request: NextRequest) {
 
   const settings = parseJobProductionSettings(jobSnap.data() as Record<string, unknown>);
   const assigned =
-    caller.role === "employee" &&
+    isCompanyEmployeeRole(caller.role) &&
     caller.employeeId &&
     employeeAssignedToJobProduction(settings, caller.employeeId);
   const privileged = isCompanyPrivileged(caller.role, caller.globalRoles);

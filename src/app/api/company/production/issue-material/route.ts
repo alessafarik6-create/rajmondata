@@ -5,6 +5,7 @@ import {
   isCompanyPrivileged,
   verifyCompanyBearer,
 } from "@/lib/api-company-auth";
+import { isCompanyEmployeeRole } from "@/lib/company-privilege";
 import {
   employeeAssignedToJobProduction,
   lengthToMillimeters,
@@ -45,7 +46,7 @@ async function canIssueMaterial(params: {
   if (isCompanyPrivileged(caller.role, caller.globalRoles)) {
     return { ok: true };
   }
-  if (caller.role !== "employee" || !caller.employeeId) {
+  if (!isCompanyEmployeeRole(caller.role) || !caller.employeeId) {
     return { ok: false, status: 403, error: "Nemáte oprávnění k výdeji materiálu." };
   }
   const empSnap = await db
@@ -115,6 +116,17 @@ export async function POST(request: NextRequest) {
   if (!perm.ok) {
     return NextResponse.json({ error: perm.error }, { status: perm.status });
   }
+
+  const userSnap = await db.collection("users").doc(caller.uid).get();
+  const u = userSnap.data() as Record<string, unknown> | undefined;
+  const createdByName =
+    (typeof u?.displayName === "string" && u.displayName.trim()
+      ? u.displayName.trim()
+      : null) ||
+    (typeof u?.email === "string" && u.email.includes("@")
+      ? String(u.email).split("@")[0]
+      : null) ||
+    caller.uid;
 
   const jobSnap = await db
     .collection("companies")
@@ -366,6 +378,7 @@ export async function POST(request: NextRequest) {
         sourceStockMovementId: movementId,
         employeeId: caller.employeeId,
         authUserId: caller.uid,
+        createdByName,
         note: note || null,
         batchNumber: batchNumber || null,
         quantityRemainingOnStock: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
