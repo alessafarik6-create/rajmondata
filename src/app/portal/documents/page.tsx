@@ -3433,6 +3433,7 @@ function DocumentsPageContent() {
               key={`dtr-all-rcv-${paymentTableMountKey}`}
               flashDomScope="all-received"
               paymentFlashRowKey={paymentFlashRowKey}
+              companyId={companyId}
               data={receivedDocsBase}
               jobNamesById={jobNamesById}
               isLoading={isLoading}
@@ -3486,6 +3487,7 @@ function DocumentsPageContent() {
             key={`dtr-received-${paymentTableMountKey}`}
             flashDomScope="received"
             paymentFlashRowKey={paymentFlashRowKey}
+            companyId={companyId}
             data={receivedDocsBase}
             jobNamesById={jobNamesById}
             isLoading={isLoading}
@@ -3546,6 +3548,7 @@ function DocumentsPageContent() {
             <DocumentTableReceived
               flashDomScope="trash-received"
               paymentFlashRowKey={null}
+              companyId={companyId}
               data={receivedDocsBase}
               jobNamesById={jobNamesById}
               isLoading={isLoading}
@@ -4520,6 +4523,7 @@ function DocumentsPageContent() {
 }
 
 function DocumentTableReceived({
+  companyId,
   data,
   jobNamesById,
   isLoading,
@@ -4538,6 +4542,7 @@ function DocumentTableReceived({
   flashDomScope,
   paymentFlashRowKey = null,
 }: {
+  companyId: string;
   data: CompanyDocumentRow[];
   jobNamesById: Map<string, string>;
   isLoading: boolean;
@@ -4559,6 +4564,7 @@ function DocumentTableReceived({
   flashDomScope: string;
   paymentFlashRowKey?: string | null;
 }) {
+  const { toast } = useToast();
   const [jobFilter, setJobFilter] = useState<string>("__all__");
   const [jobAssignmentFilter, setJobAssignmentFilter] = useState<
     "all" | "assigned" | "unassigned"
@@ -4567,6 +4573,134 @@ function DocumentTableReceived({
   const [typeFilter, setTypeFilter] = useState<string>("__all__");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
+
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailDoc, setEmailDoc] = useState<CompanyDocumentRow | null>(null);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailCc, setEmailCc] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBodyPlain, setEmailBodyPlain] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
+
+  const openReceivedEmailDialog = (row: CompanyDocumentRow) => {
+    const fmtCzk = (val: number) =>
+      new Intl.NumberFormat("cs-CZ", {
+        style: "currency",
+        currency: "CZK",
+        maximumFractionDigits: 0,
+      }).format(val);
+    const num =
+      String(row.number ?? "").trim() ||
+      String((row as { documentNumber?: unknown }).documentNumber ?? "").trim() ||
+      "Bez čísla dokladu";
+    const title = docDisplayTitle(row);
+    const supplier = String(row.entityName ?? "").trim();
+    const issueDate = String(row.date ?? "").trim();
+    const receivedDate = String((row as { receivedAt?: unknown }).receivedAt ?? "").trim();
+    const amts = docDisplayAmounts(row);
+    const amountLine =
+      amts.amountGross > 0
+        ? `Částka: ${fmtCzk(amts.amountGross)}`
+        : amts.amountNet > 0
+          ? `Částka: ${fmtCzk(amts.amountNet)}`
+          : "";
+    const jobId = documentJobLinkId(row);
+    const jobName = jobId ? jobNamesById.get(jobId) ?? row.jobName?.trim() ?? "" : "";
+
+    setEmailDoc(row);
+    setEmailTo("");
+    setEmailCc("");
+    setEmailSubject(`Přijatý doklad — ${num}`);
+    setEmailBodyPlain(
+      [
+        "Dobrý den,",
+        "",
+        "zasílám přijatý doklad:",
+        `- Číslo: ${num}`,
+        `- Název: ${title}`,
+        supplier ? `- Dodavatel: ${supplier}` : "",
+        issueDate ? `- Datum vystavení: ${issueDate}` : "",
+        receivedDate ? `- Datum přijetí: ${receivedDate}` : "",
+        amountLine,
+        jobId ? `- Zakázka: ${jobName || jobId}` : "",
+        row.note?.trim() ? `- Poznámka: ${row.note.trim()}` : "",
+        "",
+        row.fileUrl?.trim()
+          ? `Odkaz na soubor: ${row.fileUrl.trim()}`
+          : "Doklad nemá přiložený soubor (odešle se pouze text s údaji).",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    );
+    setEmailOpen(true);
+  };
+
+  const sendReceivedEmail = async () => {
+    if (!emailDoc) return;
+    const jobId = documentJobLinkId(emailDoc);
+    if (!jobId) {
+      toast({
+        variant: "destructive",
+        title: "Doklad není zařazen k zakázce",
+        description:
+          "Historie odeslání je vedená u zakázky. Nejdřív doklad přiřaďte k zakázce a pak ho odešlete.",
+      });
+      return;
+    }
+    const to = emailTo.trim();
+    if (!isValidEmailAddress(to)) {
+      toast({ variant: "destructive", title: "Neplatný e-mail příjemce" });
+      return;
+    }
+    const ccList = parseCommaSeparatedEmails(emailCc);
+    for (const addr of ccList) {
+      if (!isValidEmailAddress(addr)) {
+        toast({
+          variant: "destructive",
+          title: "Neplatná adresa v kopii (CC)",
+          description: addr,
+        });
+        return;
+      }
+    }
+    if (!hasNonEmptyTextSubjectAndBody({ subject: emailSubject, bodyPlain: emailBodyPlain })) {
+      toast({
+        variant: "destructive",
+        title: "Doplňte předmět a text e-mailu",
+      });
+      return;
+    }
+    setEmailSending(true);
+    try {
+      await sendJobDocumentEmailFromBrowser({
+        companyId,
+        jobId,
+        type: "received_document",
+        to,
+        cc: ccList.join(", "),
+        subject: emailSubject.trim(),
+        html: normalizeEmailBodyToHtml(emailBodyPlain),
+        documentUrl: emailDoc.fileUrl ?? null,
+        documentId: emailDoc.id,
+      });
+      toast({
+        title: "E-mail odeslán",
+        description: emailDoc.fileUrl?.trim()
+          ? "Doklad byl odeslán včetně přílohy."
+          : "Doklad byl odeslán bez přílohy (jen text).",
+      });
+      setEmailOpen(false);
+      setEmailDoc(null);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Odeslání e-mailu selhalo",
+        description: String((e as Error)?.message ?? e),
+      });
+    } finally {
+      setEmailSending(false);
+    }
+  };
 
   const jobOptions = useMemo(() => {
     const m = new Map<string, string>();
@@ -4833,6 +4967,102 @@ function DocumentTableReceived({
           </div>
         </div>
       </div>
+      <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
+        <DialogContent className="max-h-[90vh] w-[min(100%,34rem)] max-w-[34rem] overflow-y-auto border border-gray-200 bg-white p-0 text-gray-950 shadow-lg sm:rounded-xl">
+          <DialogHeader className="border-b border-gray-200 p-4">
+            <DialogTitle className="text-base">Odeslat e-mailem</DialogTitle>
+            <DialogDescription className="text-sm text-gray-600">
+              {emailDoc ? (
+                <>
+                  Přijatý doklad:{" "}
+                  <span className="font-medium text-gray-900">
+                    {docDisplayTitle(emailDoc)}
+                  </span>
+                </>
+              ) : (
+                "Přijatý doklad"
+              )}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 p-4">
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-800">Komu</Label>
+              <Input
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                placeholder="např. ucetni@firma.cz"
+                className="border-gray-300"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-800">Kopie (CC)</Label>
+              <Input
+                value={emailCc}
+                onChange={(e) => setEmailCc(e.target.value)}
+                placeholder="volitelné, více adres oddělte čárkou"
+                className="border-gray-300"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-800">Předmět</Label>
+              <Input
+                value={emailSubject}
+                onChange={(e) => setEmailSubject(e.target.value)}
+                className="border-gray-300"
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-gray-800">Text e-mailu</Label>
+              <Textarea
+                value={emailBodyPlain}
+                onChange={(e) => setEmailBodyPlain(e.target.value)}
+                rows={10}
+                className="border-gray-300"
+              />
+            </div>
+            <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
+              <div className="font-medium text-gray-900">Příloha</div>
+              <div className="mt-1">
+                {emailDoc?.fileUrl?.trim() ? (
+                  <>
+                    {emailDoc.fileName?.trim()
+                      ? emailDoc.fileName.trim()
+                      : "Soubor (název neznámý)"}
+                    {emailDoc.mimeType?.trim() ? (
+                      <span className="text-gray-500"> — {emailDoc.mimeType.trim()}</span>
+                    ) : null}
+                  </>
+                ) : (
+                  "Doklad nemá přiložený soubor (odešle se pouze text)."
+                )}
+              </div>
+            </div>
+          </div>
+          <DialogFooter className="border-t border-gray-200 p-4">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setEmailOpen(false)}
+              disabled={emailSending}
+            >
+              Zavřít
+            </Button>
+            <Button type="button" onClick={() => void sendReceivedEmail()} disabled={emailSending}>
+              {emailSending ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Odesílám…
+                </>
+              ) : (
+                <>
+                  <Send className="mr-2 h-4 w-4" />
+                  Odeslat
+                </>
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <CardContent className="p-0">
         {isLoading ? (
           <div className="flex justify-center p-8">
@@ -4953,6 +5183,16 @@ function DocumentTableReceived({
                         </a>
                       </Button>
                     ) : null}
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className={iconBtn}
+                      title="Odeslat e-mailem"
+                      onClick={() => openReceivedEmailDialog(row)}
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                    </Button>
                     {briefcaseJobId ? (
                       <Button
                         variant="outline"

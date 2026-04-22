@@ -6,6 +6,7 @@ export const DOCUMENT_EMAIL_TYPES = [
   "contract",
   "invoice",
   "advance_invoice",
+  "received_document",
 ] as const;
 
 export type DocumentEmailType = (typeof DOCUMENT_EMAIL_TYPES)[number];
@@ -14,6 +15,7 @@ export const DOCUMENT_EMAIL_TYPE_LABELS: Record<DocumentEmailType, string> = {
   contract: "Smlouva",
   invoice: "Faktura",
   advance_invoice: "Zálohová faktura",
+  received_document: "Přijatý doklad",
 };
 
 export type DocumentEmailOutboundSettings = {
@@ -77,6 +79,15 @@ export function defaultEmailTemplate(
           "S pozdravem\n{{nazev_firmy}}",
       };
     case "advance_invoice":
+    case "received_document":
+      return {
+        subject: "Přijatý doklad — {{cislo_dokladu}}",
+        body:
+          "Dobrý den,\n\n" +
+          "v příloze zasíláme přijatý doklad č. {{cislo_dokladu}}.\n\n" +
+          "Odkaz: {{odkaz_na_dokument}}\n\n" +
+          "S pozdravem\n{{nazev_firmy}}",
+      };
     default:
       return {
         subject: "Zálohová faktura — {{cislo_dokladu}}",

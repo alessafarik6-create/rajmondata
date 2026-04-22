@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
-import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { getAdminAuth, getAdminFirestore, getAdminStorageBucket } from "@/lib/firebase-admin";
 import {
   callerCanAccessCompany,
   callerCanTriggerOrgNotifications,
@@ -46,6 +46,23 @@ type Body = {
   invoiceId?: string | null;
   contractId?: string | null;
 };
+
+async function downloadStorageAttachment(params: {
+  storagePath: string;
+  filename: string;
+  contentType: string | null;
+}): Promise<{ filename: string; content: Buffer; contentType?: string }> {
+  const bucket = getAdminStorageBucket();
+  if (!bucket) {
+    throw new Error("Storage bucket není dostupný (Firebase Admin).");
+  }
+  const [buf] = await bucket.file(params.storagePath).download();
+  const ct =
+    params.contentType != null && params.contentType.trim()
+      ? params.contentType.trim()
+      : undefined;
+  return { filename: params.filename, content: buf, ...(ct ? { contentType: ct } : {}) };
+}
 
 function isDocEmailType(s: string): s is DocumentEmailType {
   return (DOCUMENT_EMAIL_TYPES as readonly string[]).includes(s);
@@ -173,6 +190,9 @@ export async function POST(request: NextRequest) {
     if ((type === "invoice" || type === "advance_invoice") && !invoiceId) {
       return jsonFail(400, "Chybí identifikátor dokladu.", null, { step: "invoiceId", requestId });
     }
+    if (type === "received_document" && !docId) {
+      return jsonFail(400, "Chybí identifikátor dokladu.", null, { step: "documentId", requestId });
+    }
 
     const jobRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("jobs").doc(jobId);
     const jobSnap = await jobRef.get();
@@ -224,70 +244,121 @@ export async function POST(request: NextRequest) {
       organizationId: companyId,
     });
 
-    let pdf: Awaited<ReturnType<typeof getDocumentPdfBuffer>>;
-    try {
-      pdf = await getDocumentPdfBuffer({
-        db,
-        companyId,
-        jobId,
-        type,
-        contractId,
-        invoiceId,
-      });
-    } catch (error) {
-      const msg = errorMessageFromUnknown(error);
-      const detail = errorStackFromUnknown(error) ?? serializeUnknownForLog(error);
-      console.error(ROUTE_LOG, "pdf generation threw", {
+    type Attachment = { filename: string; content: Buffer; contentType?: string };
+    let attachments: Attachment[] = [];
+
+    if (type === "received_document") {
+      const docRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("documents").doc(String(docId));
+      const docSnap = await docRef.get();
+      if (!docSnap.exists) {
+        return jsonFail(404, "Doklad nenalezen.", `Firestore path=${docRef.path} exists=false`, {
+          step: "companyDocumentLookup",
+          requestId,
+        });
+      }
+      const d = (docSnap.data() ?? {}) as Record<string, unknown>;
+      const storagePath = typeof d.storagePath === "string" ? d.storagePath.trim() : "";
+      const fileName =
+        (typeof d.fileName === "string" && d.fileName.trim()) ||
+        (typeof d.number === "string" && d.number.trim() ? d.number.trim() : "") ||
+        "doklad";
+      const mimeType = typeof d.mimeType === "string" ? d.mimeType.trim() : null;
+      if (storagePath) {
+        try {
+          attachments = [
+            await downloadStorageAttachment({
+              storagePath,
+              filename: fileName,
+              contentType: mimeType,
+            }),
+          ];
+        } catch (error) {
+          const msg = errorMessageFromUnknown(error);
+          const detail = errorStackFromUnknown(error) ?? serializeUnknownForLog(error);
+          console.error(ROUTE_LOG, "attachment download threw", {
+            requestId,
+            companyId,
+            jobId,
+            documentType: type,
+            documentId: docId,
+            storagePath,
+            message: msg,
+            serialized: serializeUnknownForLog(error),
+          });
+          return jsonFail(500, "Přílohu dokladu se nepodařilo načíst.", detail.slice(0, 12_000), {
+            step: "downloadAttachment.throw",
+            requestId,
+          });
+        }
+      } else {
+        attachments = [];
+      }
+    } else {
+      let pdf: Awaited<ReturnType<typeof getDocumentPdfBuffer>>;
+      try {
+        pdf = await getDocumentPdfBuffer({
+          db,
+          companyId,
+          jobId,
+          type,
+          contractId,
+          invoiceId,
+        });
+      } catch (error) {
+        const msg = errorMessageFromUnknown(error);
+        const detail = errorStackFromUnknown(error) ?? serializeUnknownForLog(error);
+        console.error(ROUTE_LOG, "pdf generation threw", {
+          requestId,
+          companyId,
+          jobId,
+          documentType: type,
+          contractId,
+          invoiceId,
+          message: msg,
+          serialized: serializeUnknownForLog(error),
+        });
+        return jsonFail(500, "Server nedokázal vygenerovat PDF.", detail.slice(0, 12_000), {
+          step: "getDocumentPdfBuffer.throw",
+          requestId,
+        });
+      }
+
+      if (!pdf.ok) {
+        console.error(ROUTE_LOG, "pdf generation failed (ok=false)", {
+          requestId,
+          companyId,
+          jobId,
+          documentType: type,
+          contractId,
+          invoiceId,
+          error: pdf.error,
+          detail: pdf.detail,
+        });
+        return jsonFail(400, pdf.error, pdf.detail, { step: "getDocumentPdfBuffer.okFalse", requestId });
+      }
+
+      console.info(ROUTE_LOG, "pdf ok", {
         requestId,
         companyId,
         jobId,
         documentType: type,
-        contractId,
-        invoiceId,
-        message: msg,
-        serialized: serializeUnknownForLog(error),
-      });
-      return jsonFail(500, "Server nedokázal vygenerovat PDF.", detail.slice(0, 12_000), {
-        step: "getDocumentPdfBuffer.throw",
-        requestId,
-      });
-    }
-
-    if (!pdf.ok) {
-      console.error(ROUTE_LOG, "pdf generation failed (ok=false)", {
-        requestId,
-        companyId,
-        jobId,
-        documentType: type,
-        contractId,
-        invoiceId,
-        error: pdf.error,
-        detail: pdf.detail,
-      });
-      return jsonFail(400, pdf.error, pdf.detail, { step: "getDocumentPdfBuffer.okFalse", requestId });
-    }
-
-    console.info(ROUTE_LOG, "pdf ok", {
-      requestId,
-      companyId,
-      jobId,
-      documentType: type,
-      filename: pdf.filename,
-      bufferBytes: pdf.buffer.length,
-    });
-
-    const attachments = [
-      {
         filename: pdf.filename,
-        content: pdf.buffer,
-        contentType: "application/pdf" as const,
-      },
-    ];
+        bufferBytes: pdf.buffer.length,
+      });
+
+      attachments = [
+        {
+          filename: pdf.filename,
+          content: pdf.buffer,
+          contentType: "application/pdf",
+        },
+      ];
+    }
 
     console.info(ROUTE_LOG, "email send start", {
       requestId,
-      attachmentFilename: pdf.filename,
-      attachmentBytes: pdf.buffer.length,
+      attachmentsCount: attachments.length,
+      attachmentFilenames: attachments.map((a) => a.filename),
     });
 
     let result: Awaited<ReturnType<typeof sendDocumentEmail>>;
@@ -305,6 +376,7 @@ export async function POST(request: NextRequest) {
         sentByEmail,
         invoiceId,
         contractId,
+        documentId: docId,
         attachments,
       });
     } catch (sendErr) {

@@ -68,6 +68,8 @@ export type SendDocumentEmailParams = {
   sentByEmail?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
+  /** Pro přijaté doklady (companies/{companyId}/documents/{documentId}). */
+  documentId?: string | null;
   /** PDF přílohy (povinné pro dokumenty ze zakázky). */
   attachments: SendTransactionalEmailAttachment[];
 };
@@ -89,6 +91,7 @@ export async function logDocumentSend(
     documentUrl?: string | null;
     invoiceId?: string | null;
     contractId?: string | null;
+    documentId?: string | null;
     /** Názvy PDF příloh odeslaných s e-mailem. */
     attachmentFilenames?: string[] | null;
   }
@@ -111,6 +114,7 @@ export async function logDocumentSend(
     documentUrl: input.documentUrl ?? null,
     invoiceId: input.invoiceId ?? null,
     contractId: input.contractId ?? null,
+    documentId: input.documentId ?? null,
     sentByUid: input.userId,
     sentByEmail: input.sentByEmail != null ? String(input.sentByEmail).trim() || null : null,
     attachmentFilenames: Array.isArray(input.attachmentFilenames)
@@ -151,20 +155,14 @@ export async function sendDocumentEmail(
   });
 
   const attachmentFilenames = (params.attachments ?? []).map((a) => a.filename).filter(Boolean);
-  if (!params.attachments || params.attachments.length === 0) {
-    return {
-      ok: false,
-      error: "Chybí PDF příloha.",
-      detail: "sendDocumentEmail: params.attachments prázdné",
-    };
-  }
+  const hasAttachments = Array.isArray(params.attachments) && params.attachments.length > 0;
 
   const send = await sendTransactionalEmail({
     to: [toNorm],
     cc: cc.length ? cc : undefined,
     subject: params.subject.trim(),
     html: params.html,
-    attachments: params.attachments,
+    ...(hasAttachments ? { attachments: params.attachments } : {}),
   });
 
   if (!send.ok) {
@@ -182,6 +180,7 @@ export async function sendDocumentEmail(
       documentUrl: params.documentUrl ?? null,
       invoiceId: params.invoiceId ?? null,
       contractId: params.contractId ?? null,
+      documentId: params.documentId ?? null,
       attachmentFilenames,
     });
     return send;
@@ -200,6 +199,7 @@ export async function sendDocumentEmail(
     documentUrl: params.documentUrl ?? null,
     invoiceId: params.invoiceId ?? null,
     contractId: params.contractId ?? null,
+    documentId: params.documentId ?? null,
     attachmentFilenames,
   });
 

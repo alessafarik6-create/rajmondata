@@ -17,6 +17,8 @@ export type SendJobDocumentEmailPayload = {
   subject: string;
   html: string;
   documentUrl?: string | null;
+  /** Pro typy, které posílají originální přílohu (např. přijatý doklad). */
+  documentId?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
 };
