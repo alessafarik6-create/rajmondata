@@ -56,7 +56,12 @@ export type JobFolderDoc = {
   employeeVisible?: boolean;
   /** Synonymum pro budoucí rozšíření (pravidla Firestore akceptují i employee_visible). */
   employeeVisibility?: JobFolderEmployeeVisibility;
-  /** Povolit nahrávání zaměstnanci s omezeným přístupem. */
+  /**
+   * Povolit nahrávání zaměstnanci (omezený přístup).
+   * Kanonické pole: `allowEmployeeUpload`.
+   */
+  allowEmployeeUpload?: boolean;
+  /** Legacy (zpětná kompatibilita) — nahrazeno `allowEmployeeUpload`. */
   employeeUploadAllowed?: boolean;
   /** Klientský portál — výslovně povolit zobrazení zákazníkovi (jinak interní). */
   customerVisible?: boolean;

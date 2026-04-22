@@ -179,7 +179,10 @@ export function isFolderEmployeeVisible(folder: Record<string, unknown>): boolea
 export function isFolderEmployeeUploadAllowed(
   folder: Record<string, unknown>
 ): boolean {
-  return folder.employeeUploadAllowed === true;
+  if ((folder as { allowEmployeeUpload?: unknown }).allowEmployeeUpload === true) return true;
+  /** Legacy (zpětná kompatibilita) */
+  if ((folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true) return true;
+  return false;
 }
 
 export function isImageEmployeeVisible(

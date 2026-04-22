@@ -9,10 +9,33 @@ service firebase.storage {
     function storageUserDocPath() {
       return /databases/(default)/documents/users/$(request.auth.uid);
     }
-    function storageJobMediaWriteOk() {
-      return request.auth != null && (
-        !firestore.exists(storageUserDocPath()) ||
-        firestore.get(storageUserDocPath()).data.role != 'customer'
+    function hasStorageUser() {
+      return request.auth != null && firestore.exists(storageUserDocPath());
+    }
+    function storageUserDoc() {
+      return hasStorageUser() ? firestore.get(storageUserDocPath()).data : null;
+    }
+    function storageUserRole() {
+      return hasStorageUser() ? storageUserDoc().role : null;
+    }
+    function storageSameCompany(companyId) {
+      return hasStorageUser() && storageUserDoc().companyId == companyId;
+    }
+    function storageIsSuperAdmin() {
+      return hasStorageUser() &&
+        ('globalRoles' in storageUserDoc()) &&
+        (storageUserDoc().globalRoles is list) &&
+        ('super_admin' in storageUserDoc().globalRoles);
+    }
+    function storageIsPrivileged() {
+      return storageIsSuperAdmin() || storageUserRole() in ['owner', 'admin', 'manager', 'accountant'];
+    }
+    function storageFolderAllowEmployeeUpload(companyId, jobId, folderId) {
+      let fp = /databases/(default)/documents/companies/$(companyId)/jobs/$(jobId)/folders/$(folderId);
+      return firestore.exists(fp) && (
+        firestore.get(fp).data.allowEmployeeUpload == true ||
+        /** Legacy (zpětná kompatibilita) */
+        firestore.get(fp).data.employeeUploadAllowed == true
       );
     }
 
@@ -29,19 +52,22 @@ service firebase.storage {
      */
     match /companies/{companyId}/jobs/{jobId}/photos/{allPaths=**} {
       allow read: if request.auth != null;
-      allow write: if storageJobMediaWriteOk();
+      allow write: if request.auth != null; // beze změny (nezpřísňujeme mimo požadavek)
     }
 
     /** Obrázky průběhu zakázky pro klientský portál (slider na profilu zákazníka). */
     match /companies/{companyId}/jobs/{jobId}/customer-progress/{allPaths=**} {
       allow read: if request.auth != null;
-      allow write: if storageJobMediaWriteOk();
+      allow write: if request.auth != null; // beze změny (nezpřísňujeme mimo požadavek)
     }
 
     /** Složky a obrázky v nich — stejná úroveň oprávnění jako fotky zakázky. */
-    match /companies/{companyId}/jobs/{jobId}/folders/{allPaths=**} {
+    match /companies/{companyId}/jobs/{jobId}/folders/{folderId}/images/{allPaths=**} {
       allow read: if request.auth != null;
-      allow write: if storageJobMediaWriteOk();
+      allow write: if request.auth != null && storageSameCompany(companyId) && (
+        storageIsPrivileged() ||
+        (storageUserRole() == 'employee' && storageFolderAllowEmployeeUpload(companyId, jobId, folderId))
+      );
     }
 
     /** Přílohy nákladů zakázky (foto / PDF). */

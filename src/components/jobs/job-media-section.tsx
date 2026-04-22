@@ -723,7 +723,7 @@ function UserFolderBlock({
 
   const persistFolderEmployeeFlags = async (patch: {
     employeeVisible: boolean;
-    employeeUploadAllowed: boolean;
+    allowEmployeeUpload: boolean;
   }) => {
     if (!firestore || folderPermBusy) return;
     setFolderPermBusy(true);
@@ -740,7 +740,9 @@ function UserFolderBlock({
         ),
         {
           employeeVisible: patch.employeeVisible,
-          employeeUploadAllowed: patch.employeeUploadAllowed,
+          allowEmployeeUpload: patch.allowEmployeeUpload,
+          /** Legacy (zpětná kompatibilita během přechodu) */
+          employeeUploadAllowed: patch.allowEmployeeUpload,
         }
       );
       if (patch.employeeVisible) {
@@ -864,19 +866,29 @@ function UserFolderBlock({
       }
     }
 
+    const actorRole =
+      typeof (actorProfile as { role?: unknown } | null | undefined)?.role === "string"
+        ? String((actorProfile as { role: string }).role)
+        : "employee";
+    const allowEmployeeUpload =
+      (folder as { allowEmployeeUpload?: unknown }).allowEmployeeUpload === true ||
+      (folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true;
+    console.log("UPLOAD CHECK", { role: actorRole, allowEmployeeUpload });
+
     const safeBaseName =
       file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
     const fileType = getJobMediaFileTypeFromFile(file);
 
-    const { resolvedFullPath, downloadURL } =
-      await uploadJobFolderImageFileViaFirebaseSdk(
-        file,
-        companyId,
-        jobId,
-        folder.id
-      );
+    try {
+      const { resolvedFullPath, downloadURL } =
+        await uploadJobFolderImageFileViaFirebaseSdk(
+          file,
+          companyId,
+          jobId,
+          folder.id
+        );
 
-    const refDoc = doc(imagesColRef);
+      const refDoc = doc(imagesColRef);
 
     if (isAccountingFolder && ledger) {
       const vatRate = normalizeVatRate(ledger.vatRate);
@@ -1047,10 +1059,28 @@ function UserFolderBlock({
       },
     });
 
-    toast({
-      title: isEmployeeLimited ? "Soubor byl nahrán" : "Soubor uložen",
-      description: safeBaseName,
-    });
+      toast({
+        title: isEmployeeLimited ? "Soubor byl nahrán" : "Soubor uložen",
+        description: safeBaseName,
+      });
+    } catch (err) {
+      const code =
+        typeof (err as { code?: unknown })?.code === "string"
+          ? String((err as { code: string }).code)
+          : "";
+      const msg = err instanceof Error ? err.message : "Nahrání se nezdařilo.";
+      const isDenied =
+        code.includes("permission") ||
+        code.includes("unauthorized") ||
+        code.includes("unauthenticated") ||
+        /permission denied/i.test(msg);
+      toast({
+        variant: "destructive",
+        title: "Nahrání selhalo",
+        description: isDenied ? `permission denied: ${msg}` : msg,
+      });
+      throw err;
+    }
   };
 
   const openAccountingForFiles = (files: File[]) => {
@@ -1548,8 +1578,9 @@ function UserFolderBlock({
                     onCheckedChange={(v) =>
                       void persistFolderEmployeeFlags({
                         employeeVisible: v,
-                        employeeUploadAllowed: v
-                          ? folder.employeeUploadAllowed === true
+                        allowEmployeeUpload: v
+                          ? ((folder as { allowEmployeeUpload?: unknown }).allowEmployeeUpload === true ||
+                              (folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true)
                           : false,
                       })
                     }
@@ -1564,14 +1595,17 @@ function UserFolderBlock({
                 <div className="flex items-center gap-2">
                   <Switch
                     id={`emp-up-${folder.id}`}
-                    checked={folder.employeeUploadAllowed === true}
+                    checked={
+                      (folder as { allowEmployeeUpload?: unknown }).allowEmployeeUpload === true ||
+                      (folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true
+                    }
                     disabled={
                       folderPermBusy || folder.employeeVisible !== true
                     }
                     onCheckedChange={(v) =>
                       void persistFolderEmployeeFlags({
                         employeeVisible: folder.employeeVisible === true,
-                        employeeUploadAllowed: v,
+                        allowEmployeeUpload: v,
                       })
                     }
                   />
@@ -2672,6 +2706,8 @@ export function JobMediaSection({
         companyId,
         jobId,
         employeeVisible: false,
+        allowEmployeeUpload: false,
+        /** Legacy (zpětná kompatibilita během přechodu) */
         employeeUploadAllowed: false,
         customerVisible: false,
         customerAnnotatable: false,

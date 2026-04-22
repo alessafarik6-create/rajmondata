@@ -343,7 +343,11 @@ service cloud.firestore {
 
     function folderDocEmployeeUploadAllowed(companyId, jobId, folderId) {
       let fp = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/folders/$(folderId);
-      return exists(fp) && get(fp).data.employeeUploadAllowed == true;
+      return exists(fp) && (
+        get(fp).data.allowEmployeeUpload == true ||
+        /** Legacy (zpětná kompatibilita) */
+        get(fp).data.employeeUploadAllowed == true
+      );
     }
 
     function legacyJobPhotosEmployeeAllowed(companyId, jobId) {
