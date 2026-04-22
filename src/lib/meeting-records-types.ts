@@ -40,6 +40,10 @@ export type MeetingRecordPublicRow = {
   /** Preferovaný příznak odeslání / sdílení (drží se synchronně se sharedWithCustomer). */
   sentToCustomer?: boolean;
   sharedWithCustomer: boolean;
+  /** Duplicita se `sharedWithCustomer` — pro dotazy a kompatibilitu s pravidly / indexy. */
+  isSharedWithCustomer?: boolean;
+  /** `customer` = viditelné v zákaznickém portálu; `internal` = pouze tým. */
+  visibility?: "customer" | "internal" | string | null;
   /** Odvozeno od jobId — usnadňuje dotazy a filtry. */
   assignmentStatus?: MeetingRecordAssignmentStatus | null;
   shareHistory?: MeetingShareEvent[];
@@ -48,6 +52,10 @@ export type MeetingRecordPublicRow = {
   createdBy: string;
   createdByName?: string | null;
   updatedBy?: string | null;
+  /** Poslední odeslání zápisu e-mailem (PDF v příloze). */
+  sentAt?: Timestamp | unknown;
+  sentToEmails?: string[];
+  lastSentBy?: string | null;
 };
 
 export type MeetingRecordInternalPayload = {
@@ -71,9 +79,38 @@ export function resolveMeetingTitle(row: {
 export function resolveSentToCustomer(row: {
   sentToCustomer?: boolean;
   sharedWithCustomer?: boolean;
+  isSharedWithCustomer?: boolean;
+  visibility?: string | null;
 }): boolean {
   if (row.sentToCustomer === true) return true;
-  return row.sharedWithCustomer === true;
+  if (row.sharedWithCustomer === true) return true;
+  if (row.isSharedWithCustomer === true) return true;
+  const v = String(row.visibility ?? "")
+    .trim()
+    .toLowerCase();
+  if (v === "customer") return true;
+  return false;
+}
+
+export function meetingRecordMeetingAtMs(raw: unknown): number {
+  if (raw == null) return 0;
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    "toMillis" in raw &&
+    typeof (raw as { toMillis: () => number }).toMillis === "function"
+  ) {
+    return (raw as { toMillis: () => number }).toMillis();
+  }
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    "toDate" in raw &&
+    typeof (raw as { toDate: () => Date }).toDate === "function"
+  ) {
+    return (raw as { toDate: () => Date }).toDate().getTime();
+  }
+  return 0;
 }
 
 export function resolveAssignmentStatus(row: {

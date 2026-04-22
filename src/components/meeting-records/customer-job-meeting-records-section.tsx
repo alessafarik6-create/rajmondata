@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useMemo } from "react";
-import { collection, orderBy, query, where } from "firebase/firestore";
+import { collection, limit, query, where } from "firebase/firestore";
 import type { Firestore } from "firebase/firestore";
 import { useCollection, useMemoFirebase } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -10,6 +10,7 @@ import { formatDashboardActivityTime } from "@/components/portal/dashboard-activ
 import type { MeetingRecordPublicRow } from "@/lib/meeting-records-types";
 import {
   meetingRecordForCustomerView,
+  meetingRecordMeetingAtMs,
   resolveSentToCustomer,
 } from "@/lib/meeting-records-types";
 
@@ -25,8 +26,7 @@ export function CustomerJobMeetingRecordsSection(props: {
     return query(
       collection(firestore, "companies", companyId, "meetingRecords"),
       where("jobId", "==", jobId),
-      where("sharedWithCustomer", "==", true),
-      orderBy("meetingAt", "desc")
+      limit(120)
     );
   }, [firestore, companyId, jobId]);
 
@@ -34,13 +34,20 @@ export function CustomerJobMeetingRecordsSection(props: {
 
   const rows = useMemo(() => {
     const list = Array.isArray(raw) ? (raw as MeetingRecordPublicRow[]) : [];
-    return list.filter(
-      (r) =>
-        r &&
-        typeof (r as { id?: string }).id === "string" &&
-        resolveSentToCustomer(r as MeetingRecordPublicRow)
-    );
-  }, [raw]);
+    const cid = String(companyId).trim();
+    return list
+      .filter(
+        (r) =>
+          r &&
+          typeof (r as { id?: string }).id === "string" &&
+          resolveSentToCustomer(r as MeetingRecordPublicRow)
+      )
+      .filter((r) => {
+        const docCid = String((r as { companyId?: string }).companyId ?? "").trim();
+        return !docCid || docCid === cid;
+      })
+      .sort((a, b) => meetingRecordMeetingAtMs(b.meetingAt) - meetingRecordMeetingAtMs(a.meetingAt));
+  }, [raw, companyId]);
 
   if (isLoading) {
     return (

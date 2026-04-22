@@ -43,6 +43,7 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
     invoice: { subject: "", body: "" },
     advance_invoice: { subject: "", body: "" },
     received_document: { subject: "", body: "" },
+    meeting_record: { subject: "", body: "" },
   });
   const [saving, setSaving] = useState(false);
 
@@ -80,6 +81,10 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
           subject: tpl.received_document.subject,
           body: tpl.received_document.body,
         },
+        meeting_record: {
+          subject: tpl.meeting_record.subject,
+          body: tpl.meeting_record.body,
+        },
       },
     };
     const payload = { documentEmailOutbound: outbound, updatedAt: serverTimestamp() };
@@ -106,7 +111,7 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
       <CardHeader>
         <CardTitle>E-mailové šablony</CardTitle>
         <CardDescription>
-          Odeslání smlouvy, faktury, zálohové faktury a přijatého dokladu — předmět a text zprávy.{" "}
+          Odeslání smlouvy, faktury, zálohové faktury, přijatého dokladu a zápisu ze schůzky — předmět a text zprávy.{" "}
           {VAR_HINT}
         </CardDescription>
       </CardHeader>

@@ -1,14 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import {
-  collection,
-  getDocs,
-  limit,
-  orderBy,
-  query,
-  where,
-} from "firebase/firestore";
+import { collection, getDocs, limit, query, where } from "firebase/firestore";
 import type { Firestore } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import Link from "next/link";
@@ -18,6 +11,7 @@ import { formatDashboardActivityTime } from "@/components/portal/dashboard-activ
 import type { MeetingRecordPublicRow } from "@/lib/meeting-records-types";
 import {
   meetingRecordForCustomerView,
+  meetingRecordMeetingAtMs,
   resolveSentToCustomer,
 } from "@/lib/meeting-records-types";
 
@@ -29,27 +23,6 @@ function chunkIds(ids: string[], size: number): string[][] {
     out.push(ids.slice(i, i + size));
   }
   return out;
-}
-
-function meetingAtToMs(raw: unknown): number {
-  if (raw == null) return 0;
-  if (
-    typeof raw === "object" &&
-    raw !== null &&
-    "toMillis" in raw &&
-    typeof (raw as { toMillis: () => number }).toMillis === "function"
-  ) {
-    return (raw as { toMillis: () => number }).toMillis();
-  }
-  if (
-    typeof raw === "object" &&
-    raw !== null &&
-    "toDate" in raw &&
-    typeof (raw as { toDate: () => Date }).toDate === "function"
-  ) {
-    return (raw as { toDate: () => Date }).toDate().getTime();
-  }
-  return 0;
 }
 
 export function CustomerProfileMeetingRecords(props: {
@@ -96,10 +69,8 @@ export function CustomerProfileMeetingRecords(props: {
               getDocs(
                 query(
                   collection(firestore, "companies", companyId, "meetingRecords"),
-                  where("sharedWithCustomer", "==", true),
                   where("jobId", "in", ids),
-                  orderBy("meetingAt", "desc"),
-                  limit(40)
+                  limit(120)
                 )
               )
             )
@@ -119,9 +90,7 @@ export function CustomerProfileMeetingRecords(props: {
             query(
               collection(firestore, "companies", companyId, "meetingRecords"),
               where("customerId", "==", crmId),
-              where("sharedWithCustomer", "==", true),
-              orderBy("meetingAt", "desc"),
-              limit(40)
+              limit(120)
             )
           );
           if (cancelled) return;
@@ -135,7 +104,7 @@ export function CustomerProfileMeetingRecords(props: {
         }
 
         const merged = Array.from(map.values()).sort(
-          (a, b) => meetingAtToMs(b.meetingAt) - meetingAtToMs(a.meetingAt)
+          (a, b) => meetingRecordMeetingAtMs(b.meetingAt) - meetingRecordMeetingAtMs(a.meetingAt)
         );
         setRows(merged.slice(0, 35));
       } catch (err) {

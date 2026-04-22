@@ -27,9 +27,11 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ArrowLeft, CalendarClock, Loader2, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, CalendarClock, FileDown, Loader2, Mail, Pencil, Trash2 } from "lucide-react";
 import { formatDashboardActivityTime } from "@/components/portal/dashboard-activity-section";
 import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-record-form-dialog";
+import { MeetingRecordEmailDialog } from "@/components/meeting-records/meeting-record-email-dialog";
+import { downloadMeetingRecordPdf } from "@/lib/meeting-records-client-api";
 import type { ActivityActorProfile } from "@/lib/activity-log";
 import { logActivitySafe } from "@/lib/activity-log";
 import {
@@ -140,8 +142,25 @@ export default function MeetingRecordDetailPage() {
   const [formOpen, setFormOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const row = record as MeetingRecordPublicRow | null | undefined;
+
+  const jobEmailRef = useMemoFirebase(
+    () =>
+      firestore && companyId && row?.jobId && String(row.jobId).trim()
+        ? doc(firestore, "companies", companyId, "jobs", String(row.jobId).trim())
+        : null,
+    [firestore, companyId, row?.jobId]
+  );
+  const { data: jobForEmail } = useDoc(jobEmailRef);
+
+  const defaultCustomerEmail = useMemo(() => {
+    const j = jobForEmail as { customerEmail?: string } | null | undefined;
+    return typeof j?.customerEmail === "string" ? j.customerEmail.trim() : "";
+  }, [jobForEmail]);
+
   const title = row ? resolveMeetingTitle(row) || "Schůzka" : "—";
   const sent = row ? resolveSentToCustomer(row) : false;
   const assigned = row ? resolveAssignmentStatus(row) === "assigned" : false;
@@ -286,6 +305,12 @@ export default function MeetingRecordDetailPage() {
             <p className="text-xs text-slate-500">
               Naposledy upraveno: {formatDashboardActivityTime(row.updatedAt)}
             </p>
+            {Array.isArray(row.sentToEmails) && row.sentToEmails.length > 0 ? (
+              <p className="text-xs text-slate-600">
+                Odesláno e-mailem: {formatDashboardActivityTime(row.sentAt)} — komu:{" "}
+                {row.sentToEmails.join(", ")}
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             {sent ? (
@@ -356,11 +381,45 @@ export default function MeetingRecordDetailPage() {
             </div>
           ) : null}
 
+          {canView ? (
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
+              <Button
+                type="button"
+                variant="outline"
+                className="gap-1"
+                disabled={pdfBusy || !user}
+                onClick={() => {
+                  if (!user || !companyId) return;
+                  setPdfBusy(true);
+                  void downloadMeetingRecordPdf(user, companyId, recordIdStr, title)
+                    .then(() => {
+                      toast({ title: "PDF je stažené" });
+                    })
+                    .catch((err: unknown) => {
+                      toast({
+                        variant: "destructive",
+                        title: "Export PDF se nezdařil",
+                        description: err instanceof Error ? err.message : "Zkuste to znovu.",
+                      });
+                    })
+                    .finally(() => setPdfBusy(false));
+                }}
+              >
+                <FileDown className="h-4 w-4" />
+                {pdfBusy ? "Generuji…" : "Export PDF"}
+              </Button>
+            </div>
+          ) : null}
+
           {canEdit ? (
             <div className="flex flex-wrap gap-2 pt-2">
               <Button type="button" className="gap-1" onClick={() => setFormOpen(true)}>
                 <Pencil className="h-4 w-4" />
                 Upravit / přiřadit zakázku
+              </Button>
+              <Button type="button" variant="outline" className="gap-1" onClick={() => setEmailOpen(true)}>
+                <Mail className="h-4 w-4" />
+                Odeslat e-mailem
               </Button>
               <Button type="button" variant="destructive" className="gap-1" onClick={() => setDeleteOpen(true)}>
                 <Trash2 className="h-4 w-4" />
@@ -382,6 +441,20 @@ export default function MeetingRecordDetailPage() {
           jobs={jobs}
           editRecordId={recordIdStr}
           onSaved={() => setFormOpen(false)}
+        />
+      ) : null}
+
+      {user && companyId && firestore ? (
+        <MeetingRecordEmailDialog
+          open={emailOpen}
+          onOpenChange={setEmailOpen}
+          firestore={firestore}
+          companyId={companyId}
+          recordId={recordIdStr}
+          recordTitle={title}
+          jobId={typeof row.jobId === "string" ? row.jobId : null}
+          user={user}
+          defaultTo={defaultCustomerEmail || undefined}
         />
       ) : null}
 

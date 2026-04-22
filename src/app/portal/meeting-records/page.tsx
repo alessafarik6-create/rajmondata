@@ -16,9 +16,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CalendarClock, ExternalLink, Pencil, Plus } from "lucide-react";
+import { CalendarClock, ExternalLink, FileDown, Mail, Pencil, Plus } from "lucide-react";
 import { formatDashboardActivityTime } from "@/components/portal/dashboard-activity-section";
 import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-record-form-dialog";
+import { MeetingRecordEmailDialog } from "@/components/meeting-records/meeting-record-email-dialog";
+import { useToast } from "@/hooks/use-toast";
+import { downloadMeetingRecordPdf } from "@/lib/meeting-records-client-api";
 import type { ActivityActorProfile } from "@/lib/activity-log";
 import {
   resolveAssignmentStatus,
@@ -43,6 +46,10 @@ type MeetingRow = {
   customerName?: string | null;
   sharedWithCustomer?: boolean;
   sentToCustomer?: boolean;
+  isSharedWithCustomer?: boolean;
+  visibility?: string | null;
+  sentAt?: unknown;
+  sentToEmails?: string[];
   createdByName?: string | null;
   createdBy?: string | null;
 };
@@ -59,6 +66,7 @@ function matchesRegistryFilter(row: MeetingRow, f: RegistryFilter): boolean {
 
 export default function MeetingRecordsRegistryPage() {
   const router = useRouter();
+  const { toast } = useToast();
   const { user } = useUser();
   const firestore = useFirestore();
   const {
@@ -108,6 +116,8 @@ export default function MeetingRecordsRegistryPage() {
   const [filter, setFilter] = useState<RegistryFilter>("all");
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const [emailRecordId, setEmailRecordId] = useState<string | null>(null);
+  const [pdfBusyId, setPdfBusyId] = useState<string | null>(null);
 
   const jobsCol = useMemoFirebase(
     () =>
@@ -145,6 +155,11 @@ export default function MeetingRecordsRegistryPage() {
   const filtered = useMemo(
     () => rows.filter((r) => matchesRegistryFilter(r, filter)),
     [rows, filter]
+  );
+
+  const emailRow = useMemo(
+    () => (emailRecordId ? rows.find((r) => r.id === emailRecordId) ?? null : null),
+    [rows, emailRecordId]
   );
 
   if (!user || profileLoading) {
@@ -273,7 +288,7 @@ export default function MeetingRecordsRegistryPage() {
                       <div className="flex flex-wrap items-center gap-2">
                         {sent ? (
                           <Badge variant="outline" className="border-emerald-300 text-emerald-900">
-                            U zákazníka
+                            Odesláno zákazníkovi
                           </Badge>
                         ) : (
                           <Badge variant="secondary">Interní</Badge>
@@ -299,8 +314,54 @@ export default function MeetingRecordsRegistryPage() {
                             Upravit
                           </Button>
                         ) : null}
+                        {canView ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            disabled={pdfBusyId === r.id}
+                            onClick={() => {
+                              if (!user || !companyId) return;
+                              setPdfBusyId(r.id);
+                              void downloadMeetingRecordPdf(user, companyId, r.id, title)
+                                .then(() => {
+                                  toast({ title: "PDF je stažené" });
+                                })
+                                .catch((err: unknown) => {
+                                  toast({
+                                    variant: "destructive",
+                                    title: "Export PDF se nezdařil",
+                                    description: err instanceof Error ? err.message : "Zkuste to znovu.",
+                                  });
+                                })
+                                .finally(() => setPdfBusyId(null));
+                            }}
+                          >
+                            <FileDown className="h-3.5 w-3.5" />
+                            Export PDF
+                          </Button>
+                        ) : null}
+                        {canEdit ? (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="gap-1"
+                            onClick={() => setEmailRecordId(r.id)}
+                          >
+                            <Mail className="h-3.5 w-3.5" />
+                            Odeslat e-mailem
+                          </Button>
+                        ) : null}
                       </div>
                     </div>
+                    {Array.isArray(r.sentToEmails) && r.sentToEmails.length > 0 ? (
+                      <p className="text-xs text-slate-600 border-t border-slate-100 pt-2 mt-1">
+                        Odesláno e-mailem: {formatDashboardActivityTime(r.sentAt)} — komu:{" "}
+                        {r.sentToEmails.join(", ")}
+                      </p>
+                    ) : null}
                   </li>
                 );
               })}
@@ -323,6 +384,22 @@ export default function MeetingRecordsRegistryPage() {
           jobs={jobs}
           editRecordId={editId}
           onSaved={() => {}}
+        />
+      ) : null}
+
+      {user && emailRecordId && emailRow && companyId ? (
+        <MeetingRecordEmailDialog
+          open={!!emailRecordId}
+          onOpenChange={(o) => {
+            if (!o) setEmailRecordId(null);
+          }}
+          firestore={firestore}
+          companyId={companyId}
+          recordId={emailRecordId}
+          recordTitle={resolveMeetingTitle(emailRow) || "Schůzka"}
+          jobId={typeof emailRow.jobId === "string" ? emailRow.jobId : null}
+          user={user}
+          onSent={() => {}}
         />
       ) : null}
     </div>

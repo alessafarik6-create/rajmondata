@@ -97,8 +97,16 @@ service cloud.firestore {
     }
 
     function meetingRecordIsSentToCustomerData(data) {
-      return (('sentToCustomer' in data) && data.sentToCustomer is bool && data.sentToCustomer == true) ||
+      return (('visibility' in data) && data.visibility is string && data.visibility == 'customer') ||
+        (('isSharedWithCustomer' in data) && data.isSharedWithCustomer is bool && data.isSharedWithCustomer == true) ||
+        (('sentToCustomer' in data) && data.sentToCustomer is bool && data.sentToCustomer == true) ||
         (('sharedWithCustomer' in data) && data.sharedWithCustomer is bool && data.sharedWithCustomer == true);
+    }
+
+    /** Při sdílení do portálu musí být CRM zákazník (i u zakázky). */
+    function meetingRecordSharedNeedsCustomerId(data) {
+      return !(('sharedWithCustomer' in data) && data.sharedWithCustomer is bool && data.sharedWithCustomer == true) ||
+        (('customerId' in data) && data.customerId is string && data.customerId.size() > 0);
     }
 
     function meetingRecordHasTitleOrNotesData(data) {
@@ -138,10 +146,18 @@ service cloud.firestore {
         d.meetingNotes is string && d.meetingNotes.size() <= 120000 &&
         d.sharedWithCustomer is bool &&
         (!('sentToCustomer' in d) || (d.sentToCustomer is bool && d.sentToCustomer == d.sharedWithCustomer)) &&
+        (!('isSharedWithCustomer' in d) || (d.isSharedWithCustomer is bool && d.isSharedWithCustomer == d.sharedWithCustomer)) &&
+        (!('visibility' in d) || (d.visibility is string && d.visibility in ['internal', 'customer'])) &&
+        (!(('visibility' in d) && d.visibility == 'customer') || d.sharedWithCustomer == true) &&
+        (!(('visibility' in d) && d.visibility == 'internal') || d.sharedWithCustomer == false) &&
+        meetingRecordSharedNeedsCustomerId(d) &&
         d.createdBy == request.auth.uid &&
         (!('jobId' in d) || d.jobId == null || (d.jobId is string && d.jobId.size() > 0)) &&
         (!('shareHistory' in d) || d.shareHistory is list) &&
-        (!('assignmentStatus' in d) || (d.assignmentStatus is string && d.assignmentStatus in ['assigned', 'unassigned']));
+        (!('assignmentStatus' in d) || (d.assignmentStatus is string && d.assignmentStatus in ['assigned', 'unassigned'])) &&
+        (!('sentToEmails' in d) || d.sentToEmails is list) &&
+        (!('lastSentBy' in d) || (d.lastSentBy is string && d.lastSentBy.size() <= 128)) &&
+        (!('sentAt' in d) || d.sentAt is timestamp);
     }
 
     function meetingRecordUpdateValid(companyId) {
@@ -153,9 +169,17 @@ service cloud.firestore {
         d.meetingNotes is string && d.meetingNotes.size() <= 120000 &&
         d.sharedWithCustomer is bool &&
         (!('sentToCustomer' in d) || (d.sentToCustomer is bool && d.sentToCustomer == d.sharedWithCustomer)) &&
+        (!('isSharedWithCustomer' in d) || (d.isSharedWithCustomer is bool && d.isSharedWithCustomer == d.sharedWithCustomer)) &&
+        (!('visibility' in d) || (d.visibility is string && d.visibility in ['internal', 'customer'])) &&
+        (!(('visibility' in d) && d.visibility == 'customer') || d.sharedWithCustomer == true) &&
+        (!(('visibility' in d) && d.visibility == 'internal') || d.sharedWithCustomer == false) &&
+        meetingRecordSharedNeedsCustomerId(d) &&
         (!('jobId' in d) || d.jobId == null || (d.jobId is string && d.jobId.size() > 0)) &&
         (!('shareHistory' in d) || d.shareHistory is list) &&
-        (!('assignmentStatus' in d) || (d.assignmentStatus is string && d.assignmentStatus in ['assigned', 'unassigned']));
+        (!('assignmentStatus' in d) || (d.assignmentStatus is string && d.assignmentStatus in ['assigned', 'unassigned'])) &&
+        (!('sentToEmails' in d) || d.sentToEmails is list) &&
+        (!('lastSentBy' in d) || (d.lastSentBy is string && d.lastSentBy.size() <= 128)) &&
+        (!('sentAt' in d) || d.sentAt is timestamp);
     }
 
     function warehouseModuleUser(companyId) {

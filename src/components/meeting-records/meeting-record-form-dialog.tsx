@@ -269,6 +269,16 @@ export function MeetingRecordFormDialog(props: {
       return;
     }
 
+    if (share && jId && !resolvedCustomerId) {
+      toast({
+        variant: "destructive",
+        title: "Chybí CRM zákazník u zakázky",
+        description:
+          "U zakázky není vyplněné ID zákazníka (CRM). Doplňte ho u zakázky nebo ručně v tomto formuláři, jinak zákazník záznam v portálu neuvidí.",
+      });
+      return;
+    }
+
     const meetingTitleVal = titleTrim || null;
     const legacyTitleVal = titleTrim || (notesTrim ? notesTrim.slice(0, 240) : "");
     const assignmentStatus = jId ? "assigned" : "unassigned";
@@ -333,6 +343,8 @@ export function MeetingRecordFormDialog(props: {
           nextSteps: nextSteps.trim() || null,
           sharedWithCustomer: nextSent,
           sentToCustomer: nextSent,
+          isSharedWithCustomer: nextSent,
+          visibility: nextSent ? "customer" : "internal",
           assignmentStatus,
           shareHistory: nextHistory.slice(-40),
           updatedAt: serverTimestamp(),
@@ -406,6 +418,8 @@ export function MeetingRecordFormDialog(props: {
           nextSteps: nextSteps.trim() || null,
           sharedWithCustomer: shared,
           sentToCustomer: sent,
+          isSharedWithCustomer: shared,
+          visibility: shared ? "customer" : "internal",
           assignmentStatus,
           shareHistory: share ? [makeShareEvent("shared_with_customer")] : [],
           createdAt: serverTimestamp(),
