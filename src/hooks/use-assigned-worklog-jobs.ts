@@ -138,9 +138,53 @@ export function useAssignedWorklogJobs(
                 typeof (snap.data() as { name?: string }).name === "string"
                   ? String((snap.data() as { name: string }).name).trim()
                   : "";
-              acc.push({ id: jid, name: nm || undefined });
+              if (nm) {
+                acc.push({ id: jid, name: nm });
+                continue;
+              }
+              /**
+               * Fallback: někdy employeeSummary existuje, ale bez `name` (nebo ještě není synchronizováno).
+               * Pokud má zaměstnanec přístup k otevření zakázky, obvykle smí přečíst alespoň základní job doc.
+               */
+              try {
+                const jref = doc(firestore, "companies", companyId, "jobs", jid);
+                const js = await getDoc(jref);
+                if (!js.exists()) {
+                  acc.push({ id: jid, name: "Zakázka nenalezena" });
+                } else {
+                  const d = js.data() as { name?: unknown; title?: unknown };
+                  const label =
+                    (typeof d.name === "string" && d.name.trim()) ||
+                    (typeof d.title === "string" && d.title.trim()) ||
+                    assignedNamesById.get(jid) ||
+                    "Zakázka";
+                  acc.push({ id: jid, name: String(label).trim() || "Zakázka" });
+                }
+              } catch {
+                // permission denied → nepovažovat za neexistující; použij mapu nebo bezpečný label
+                const safe = assignedNamesById.get(jid) || "Zakázka";
+                acc.push({ id: jid, name: safe });
+              }
             } catch {
-              acc.push({ id: jid, name: undefined });
+              // pokud selže summary, zkusíme ještě job doc (pokud je čitelný)
+              try {
+                const jref = doc(firestore, "companies", companyId, "jobs", jid);
+                const js = await getDoc(jref);
+                if (!js.exists()) {
+                  acc.push({ id: jid, name: "Zakázka nenalezena" });
+                } else {
+                  const d = js.data() as { name?: unknown; title?: unknown };
+                  const label =
+                    (typeof d.name === "string" && d.name.trim()) ||
+                    (typeof d.title === "string" && d.title.trim()) ||
+                    assignedNamesById.get(jid) ||
+                    "Zakázka";
+                  acc.push({ id: jid, name: String(label).trim() || "Zakázka" });
+                }
+              } catch {
+                const safe = assignedNamesById.get(jid) || "Zakázka";
+                acc.push({ id: jid, name: safe });
+              }
             }
           }
         } else {

@@ -768,7 +768,7 @@ export default function EmployeeProfilePage() {
                   className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
                 >
                   <span className="font-medium">
-                    {j.name?.trim() ? j.name.trim() : "Zakázka nenalezena"}
+                    {j.name?.trim() ? j.name.trim() : "Zakázka"}
                   </span>
                 </li>
               ))}

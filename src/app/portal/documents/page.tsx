@@ -34,8 +34,17 @@ import {
   Link2,
   ReceiptText,
   Printer,
+  Mail,
+  Send,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import {
+  hasNonEmptyTextSubjectAndBody,
+  isValidEmailAddress,
+  normalizeEmailBodyToHtml,
+  parseCommaSeparatedEmails,
+} from "@/lib/document-email-outbound";
+import { sendJobDocumentEmailFromBrowser } from "@/lib/document-email-send-client";
 import {
   useUser,
   useFirestore,
@@ -3453,6 +3462,7 @@ function DocumentsPageContent() {
               invoices={issuedInvoicesFiltered}
               isLoadingInvoices={isInvoicesLoading}
               jobs={jobs}
+              companyId={companyId}
               isLoading={isLoading}
               onDelete={requestDeleteDocument}
               onDeleteInvoice={requestDeleteInvoice}
@@ -3503,6 +3513,7 @@ function DocumentsPageContent() {
             invoices={issuedInvoicesFiltered}
             isLoadingInvoices={isInvoicesLoading}
             jobs={jobs}
+            companyId={companyId}
             isLoading={isLoading}
             onDelete={requestDeleteDocument}
             onDeleteInvoice={requestDeleteInvoice}
@@ -3563,6 +3574,7 @@ function DocumentsPageContent() {
               invoices={issuedInvoicesFiltered}
               isLoadingInvoices={isInvoicesLoading}
               jobs={jobs}
+              companyId={companyId}
               isLoading={isLoading}
               onDelete={requestDeleteDocument}
               onDeleteInvoice={requestDeleteInvoice}
@@ -5226,6 +5238,7 @@ function DocumentTableIssued({
   invoices = [],
   isLoadingInvoices = false,
   jobs,
+  companyId,
   isLoading,
   onDelete,
   onDeleteInvoice,
@@ -5247,6 +5260,7 @@ function DocumentTableIssued({
   invoices?: Array<Record<string, unknown> & { id: string }>;
   isLoadingInvoices?: boolean;
   jobs: Array<{ id: string; name: string }>;
+  companyId: string;
   isLoading: boolean;
   onDelete: (row: CompanyDocumentRow) => void;
   onDeleteInvoice: (inv: Record<string, unknown> & { id: string }) => void;
@@ -5266,6 +5280,13 @@ function DocumentTableIssued({
 }) {
   const { toast } = useToast();
   const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
+  const [emailOpen, setEmailOpen] = useState(false);
+  const [emailInv, setEmailInv] = useState<(Record<string, unknown> & { id: string }) | null>(null);
+  const [emailTo, setEmailTo] = useState("");
+  const [emailCc, setEmailCc] = useState("");
+  const [emailSubject, setEmailSubject] = useState("");
+  const [emailBodyPlain, setEmailBodyPlain] = useState("");
+  const [emailSending, setEmailSending] = useState(false);
   const issuedRow = cn(
     "grid w-full items-start border-b border-gray-200 [&>*]:min-w-0 break-words",
     "grid-cols-1 gap-3 px-3 py-3 text-[13px] leading-relaxed sm:text-xs sm:px-2 sm:py-2 sm:gap-2",
@@ -5315,6 +5336,77 @@ function DocumentTableIssued({
 
   const jobNameForId = (jid: string) =>
     jobs.find((j) => j.id === jid)?.name ?? null;
+
+  const openInvoiceEmailDialog = (inv: Record<string, unknown> & { id: string }) => {
+    const num = String(inv.invoiceNumber ?? inv.documentNumber ?? inv.id).trim() || inv.id;
+    const cust = String(inv.customerName ?? "").trim();
+    const toGuess = String((inv as { customerEmail?: unknown }).customerEmail ?? "").trim();
+    setEmailInv(inv);
+    setEmailTo(toGuess);
+    setEmailCc("");
+    setEmailSubject(`Doklad ${num}`);
+    setEmailBodyPlain(
+      `Dobrý den,\n\nv příloze zasíláme doklad ${num}${cust ? ` (${cust})` : ""}.\n\nS pozdravem`
+    );
+    setEmailOpen(true);
+  };
+
+  const sendInvoiceEmail = async () => {
+    if (!emailInv) return;
+    const jid = String(emailInv.jobId ?? "").trim();
+    if (!jid) {
+      toast({
+        variant: "destructive",
+        title: "Nelze odeslat",
+        description: "Doklad nemá přiřazenou zakázku (jobId).",
+      });
+      return;
+    }
+    const to = emailTo.trim();
+    const subject = emailSubject.trim();
+    const bodyPlain = emailBodyPlain.trim();
+    if (!isValidEmailAddress(to)) {
+      toast({ variant: "destructive", title: "Neplatný příjemce", description: "Zadejte platný e-mail." });
+      return;
+    }
+    if (!hasNonEmptyTextSubjectAndBody({ subject, bodyPlain })) {
+      toast({ variant: "destructive", title: "Doplňte předmět a text", description: "Předmět i text jsou povinné." });
+      return;
+    }
+    const ccNorm = parseCommaSeparatedEmails(emailCc);
+    for (const addr of ccNorm) {
+      if (!isValidEmailAddress(addr)) {
+        toast({ variant: "destructive", title: "Neplatná kopie (CC)", description: addr });
+        return;
+      }
+    }
+    setEmailSending(true);
+    try {
+      const typeRaw = String(emailInv.type ?? "").trim();
+      const type = typeRaw === "advance_invoice" ? "advance_invoice" : "invoice";
+      await sendJobDocumentEmailFromBrowser({
+        companyId,
+        jobId: jid,
+        type: type as "invoice" | "advance_invoice",
+        to,
+        cc: ccNorm.join(", "),
+        subject,
+        html: normalizeEmailBodyToHtml(bodyPlain),
+        invoiceId: String(emailInv.id),
+      });
+      toast({ title: "E-mail odeslán", description: `Doklad ${String(emailInv.invoiceNumber ?? emailInv.documentNumber ?? emailInv.id)}` });
+      setEmailOpen(false);
+      setEmailInv(null);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Odeslání se nezdařilo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setEmailSending(false);
+    }
+  };
 
   const invoiceStatusBadge = (status: string) => {
     switch (status) {
@@ -5403,6 +5495,60 @@ function DocumentTableIssued({
           </Button>
         </div>
       </div>
+      <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
+        <DialogContent className="max-h-[90vh] w-[min(100%,34rem)] max-w-[34rem] overflow-y-auto border border-gray-200 bg-white p-0 text-gray-950 shadow-lg sm:rounded-xl">
+          <DialogHeader className="space-y-1 border-b border-gray-100 px-4 pb-3 pt-4 sm:px-5">
+            <DialogTitle className="text-lg font-semibold text-gray-950">Odeslat e-mailem</DialogTitle>
+            <DialogDescription className="text-sm text-gray-800">
+              Odešle se PDF dokladu jako příloha. Historie odeslání se uloží k zakázce.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 px-4 py-3 sm:px-5">
+            <div className="space-y-1.5">
+              <Label>Komu</Label>
+              <Input
+                value={emailTo}
+                onChange={(e) => setEmailTo(e.target.value)}
+                placeholder="např. ucetni@firma.cz"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Kopie (CC)</Label>
+              <Input
+                value={emailCc}
+                onChange={(e) => setEmailCc(e.target.value)}
+                placeholder="volitelné, více adres oddělte čárkou"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Předmět</Label>
+              <Input
+                value={emailSubject}
+                onChange={(e) => setEmailSubject(e.target.value)}
+                placeholder="Předmět e-mailu"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Text e-mailu</Label>
+              <Textarea
+                value={emailBodyPlain}
+                onChange={(e) => setEmailBodyPlain(e.target.value)}
+                rows={6}
+                placeholder="Text zprávy"
+              />
+            </div>
+          </div>
+          <DialogFooter className="border-t border-gray-100 px-4 py-3 sm:px-5">
+            <Button type="button" variant="outline" disabled={emailSending} onClick={() => setEmailOpen(false)}>
+              Zavřít
+            </Button>
+            <Button type="button" disabled={emailSending} className="gap-2" onClick={() => void sendInvoiceEmail()}>
+              {emailSending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              Odeslat
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <CardContent className="p-0">
         {loading ? (
           <div className="flex justify-center p-8">
@@ -5681,6 +5827,16 @@ function DocumentTableIssued({
                     >
                       <Printer className="h-3.5 w-3.5" />
                     </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className={ib}
+                      title="Odeslat e-mailem"
+                      onClick={() => openInvoiceEmailDialog(inv)}
+                    >
+                      <Mail className="h-3.5 w-3.5" />
+                    </Button>
                     {showDeleteButton && !readOnlyTrash ? (
                       <Button
                         type="button"
@@ -5715,6 +5871,11 @@ function DocumentTableIssued({
                       title={invTitle}
                     >
                       {invTitle}
+                    </span>
+                    <span className="mt-0.5 block text-[10px] text-gray-700">
+                      Číslo:{" "}
+                      {String(inv.invoiceNumber ?? inv.documentNumber ?? "").trim() ||
+                        "Bez čísla dokladu"}
                     </span>
                     <span className="mt-0.5 block text-[10px] text-gray-700 line-clamp-2 break-words">
                       {cust}
