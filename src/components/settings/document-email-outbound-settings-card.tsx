@@ -15,12 +15,13 @@ import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-
 import {
   DOCUMENT_EMAIL_TYPE_LABELS,
   type DocumentEmailType,
+  DOCUMENT_EMAIL_TYPES,
   getEmailTemplate,
   readDocumentEmailOutbound,
   type DocumentEmailOutboundSettings,
 } from "@/lib/document-email-outbound";
 
-const TYPES: DocumentEmailType[] = ["contract", "invoice", "advance_invoice"];
+const TYPES: DocumentEmailType[] = [...DOCUMENT_EMAIL_TYPES];
 
 const VAR_HINT =
   "Proměnné: {{nazev_firmy}}, {{jmeno_zakaznika}}, {{cislo_dokladu}}, {{datum}}, {{castka}}, {{odkaz_na_dokument}}";
@@ -41,6 +42,7 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
     contract: { subject: "", body: "" },
     invoice: { subject: "", body: "" },
     advance_invoice: { subject: "", body: "" },
+    received_document: { subject: "", body: "" },
   });
   const [saving, setSaving] = useState(false);
 
@@ -74,6 +76,10 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
           subject: tpl.advance_invoice.subject,
           body: tpl.advance_invoice.body,
         },
+        received_document: {
+          subject: tpl.received_document.subject,
+          body: tpl.received_document.body,
+        },
       },
     };
     const payload = { documentEmailOutbound: outbound, updatedAt: serverTimestamp() };
@@ -100,7 +106,8 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
       <CardHeader>
         <CardTitle>E-mailové šablony</CardTitle>
         <CardDescription>
-          Odeslání smlouvy, faktury a zálohové faktury ze zakázky — předmět a text zprávy. {VAR_HINT}
+          Odeslání smlouvy, faktury, zálohové faktury a přijatého dokladu — předmět a text zprávy.{" "}
+          {VAR_HINT}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
