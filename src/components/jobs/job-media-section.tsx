@@ -721,6 +721,36 @@ function UserFolderBlock({
         )
       : true);
 
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (!isEmployeeLimited) return;
+    const actorRole =
+      typeof (actorProfile as { role?: unknown } | null | undefined)?.role === "string"
+        ? String((actorProfile as { role: string }).role)
+        : "employee";
+    const perms = folder as {
+      employeeVisible?: unknown;
+      employeeVisibility?: unknown;
+      allowEmployeeUpload?: unknown;
+      employeeUploadAllowed?: unknown;
+      id?: string;
+      name?: string;
+      type?: string;
+    };
+    const visible =
+      perms.employeeVisible === true || String(perms.employeeVisibility || "") === "employee_visible";
+    const allow =
+      perms.allowEmployeeUpload === true || perms.employeeUploadAllowed === true;
+    console.log("UPLOAD BUTTON CHECK", {
+      role: actorRole,
+      folderId: folder.id,
+      folderName: (folder as { name?: unknown }).name ?? null,
+      folderVisibleToEmployees: visible,
+      employeeCanUpload: allow,
+      resultShowUploadButton: showFolderUpload,
+    });
+  }, [isEmployeeLimited, actorProfile, folder, showFolderUpload]);
+
   const persistFolderEmployeeFlags = async (patch: {
     employeeVisible: boolean;
     allowEmployeeUpload: boolean;
