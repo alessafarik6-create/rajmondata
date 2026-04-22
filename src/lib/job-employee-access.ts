@@ -217,15 +217,7 @@ export function canEmployeeUploadToFolder(
   folder: Record<string, unknown> & { id: string },
   permissions: JobMemberPermissions | null | undefined
 ): boolean {
-  /**
-   * Upload zaměstnance řídíme primárně podle oprávnění složky (`allowEmployeeUpload`)
-   * + případného seznamu povolených složek (`uploadFolderIds`).
-   *
-   * `jobPermissions.canUploadFiles` necháváme jen jako volitelný legacy „kill switch“:
-   * - pokud je explicitně false → zakázat,
-   * - jinak neblokovat (aby „Zaměstnanec může nahrávat“ na složce fungovalo reálně).
-   */
-  if (permissions?.canUploadFiles === false) return false;
+  /** Upload zaměstnance řídíme primárně podle oprávnění složky + optional whitelistu uploadFolderIds. */
   if (!isFolderEmployeeVisible(folder)) return false;
   if (!isFolderEmployeeUploadAllowed(folder)) return false;
   const uploads = permissions?.uploadFolderIds;
