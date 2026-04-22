@@ -479,6 +479,17 @@ export function buildWorkContractPrintHtmlString(
   }
 
   const companyProfileBankAccountDisplay = resolveCompanyProfileBankAccountDisplay(ctx);
+  const organizationStampName =
+    ctx.companyNameFromDoc?.trim() ||
+    String(ctx.companyDoc?.companyName ?? "").trim() ||
+    String(ctx.companyDoc?.name ?? "").trim() ||
+    "Vaše organizace";
+  const electronicSignatureDateLabel =
+    form.contractDateLabel?.trim() || new Intl.DateTimeFormat("cs-CZ").format(new Date());
+  const electronicSignatureSignerName = String(
+    (ctx.companyDoc as { organizationSignature?: { signedByName?: string | null } } | null)
+      ?.organizationSignature?.signedByName ?? ""
+  ).trim();
 
   if (form.documentRole === "attachment") {
     const headerRaw = applyWorkContractTemplateVariables(form.contractHeader || "", form, ctx);
@@ -517,6 +528,9 @@ export function buildWorkContractPrintHtmlString(
       zhotovitelHtml: withLineBreaks(contractorRaw),
       objednatelHtml: withLineBreaks(clientRaw),
       organizationSignatureUrl: orgSigUrl,
+      organizationStampName,
+      electronicSignatureDateLabel,
+      electronicSignatureSignerName: electronicSignatureSignerName || null,
       jobTitle: jobTitleAtt,
       jobDescription: jobDescAtt,
       priceFormatted: priceFormattedAtt,
@@ -579,6 +593,9 @@ export function buildWorkContractPrintHtmlString(
     zhotovitelHtml: withLineBreaks(contractorRaw),
     objednatelHtml: withLineBreaks(clientRaw),
     organizationSignatureUrl: orgSigUrl,
+    organizationStampName,
+    electronicSignatureDateLabel,
+    electronicSignatureSignerName: electronicSignatureSignerName || null,
     jobTitle,
     jobDescription: jobDesc,
     priceFormatted,

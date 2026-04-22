@@ -1752,6 +1752,55 @@ service cloud.firestore {
       }
 
       /**
+       * Adresář e-mailů pro odesílání dokladů — companies/{companyId}/documentEmailContacts/{contactId}
+       */
+      match /documentEmailContacts/{contactId} {
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.email is string &&
+          request.resource.data.email.size() > 3 &&
+          request.resource.data.email.size() <= 254 &&
+          request.resource.data.label is string &&
+          request.resource.data.label.size() > 0 &&
+          request.resource.data.label.size() <= 200 &&
+          (!('contactType' in request.resource.data) ||
+            request.resource.data.contactType in ['accounting', 'customer', 'supplier', 'internal', 'other']);
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.email is string &&
+          request.resource.data.email.size() > 3 &&
+          request.resource.data.email.size() <= 254 &&
+          request.resource.data.label is string &&
+          request.resource.data.label.size() > 0 &&
+          request.resource.data.label.size() <= 200 &&
+          (!('contactType' in request.resource.data) ||
+            request.resource.data.contactType in ['accounting', 'customer', 'supplier', 'internal', 'other']) &&
+          (!('createdAt' in request.resource.data) || request.resource.data.createdAt == resource.data.createdAt);
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId;
+      }
+
+      /**
+       * Historie odeslání e-mailu u dokladu (zápis Admin SDK po úspěchu).
+       * companies/{companyId}/documents/{docId}/emailOutboundHistory/{entryId}
+       */
+      match /documents/{docId}/emailOutboundHistory/{entryId} {
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow create, update, delete: if false;
+      }
+
+      /**
+       * Historie odeslání e-mailu u faktury (zápis Admin SDK po úspěchu).
+       * companies/{companyId}/invoices/{invoiceId}/emailOutboundHistory/{entryId}
+       */
+      match /invoices/{invoiceId}/emailOutboundHistory/{entryId} {
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow create, update, delete: if false;
+      }
+
+      /**
        * Firemní doklady (sekce Doklady): přijaté/vydané + zrcadlení nákladů zakázky (source job-expense).
        * companies/{companyId}/documents/{docId}
        */

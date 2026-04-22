@@ -16,7 +16,7 @@ import {
   parseCommaSeparatedEmails,
   stripHtmlToPlain,
 } from "@/lib/document-email-outbound";
-import { sendDocumentEmail } from "@/lib/document-email-outbound-admin";
+import { recordEmailOutboundOnPrimaryDocs, sendDocumentEmail } from "@/lib/document-email-outbound-admin";
 import { getDocumentPdfBuffer } from "@/lib/document-email-pdf-server";
 import {
   errorMessageFromUnknown,
@@ -140,7 +140,7 @@ export async function POST(request: NextRequest) {
 
     const companyId =
       String(body.companyId ?? "").trim() || String(body.organizationId ?? "").trim();
-    const jobId = String(body.jobId ?? "").trim();
+    let resolvedJobId = String(body.jobId ?? "").trim();
     const type = String(body.type ?? "").trim();
     const to = String(body.to ?? "").trim();
     const subject = String(body.subject ?? "").trim();
@@ -153,15 +153,28 @@ export async function POST(request: NextRequest) {
     const invoiceId =
       invoiceIdRaw || (type === "invoice" || type === "advance_invoice" ? docId : null);
 
-    if (!companyId || !jobId || !type || !to) {
+    if (!companyId || !type || !to) {
       return jsonFail(400, "Chybí povinná pole.", null, {
         step: "validate",
         requestId,
         companyId: !!companyId,
-        jobId: !!jobId,
+        jobId: !!resolvedJobId,
         type: !!type,
         to: !!to,
       });
+    }
+
+    if ((type === "invoice" || type === "advance_invoice") && !resolvedJobId && invoiceId) {
+      try {
+        const iref = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("invoices").doc(invoiceId);
+        const isnap = await iref.get();
+        if (isnap.exists) {
+          const idata = (isnap.data() ?? {}) as Record<string, unknown>;
+          resolvedJobId = String(idata.jobId ?? "").trim();
+        }
+      } catch (e) {
+        console.warn(ROUTE_LOG, "invoice lookup for jobId failed", serializeUnknownForLog(e));
+      }
     }
     if (!callerCanAccessCompany(caller, companyId)) {
       return jsonFail(403, "Nemáte přístup k organizaci.", `companyId=${companyId}`, {
@@ -194,25 +207,27 @@ export async function POST(request: NextRequest) {
       return jsonFail(400, "Chybí identifikátor dokladu.", null, { step: "documentId", requestId });
     }
 
-    const jobRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("jobs").doc(jobId);
-    const jobSnap = await jobRef.get();
-    const jobData = jobSnap.exists ? (jobSnap.data() ?? {}) : null;
-    console.info(ROUTE_LOG, "job lookup", {
-      requestId,
-      companyId,
-      jobId,
-      documentType: type,
-      jobExists: jobSnap.exists,
-      jobName: jobSnap.exists ? String((jobData as { name?: string })?.name ?? "").slice(0, 80) : null,
-      jobHasData: jobData != null,
-    });
-    if (!jobSnap.exists) {
-      return jsonFail(404, "Zakázka nenalezena.", `Firestore path=${jobRef.path} exists=false`, {
-        step: "jobLookup",
-        requestId,
-        companyId,
-        jobId,
-      });
+    if (type === "contract") {
+      if (!resolvedJobId) {
+        return jsonFail(400, "Chybí zakázka ke smlouvě.", null, {
+          step: "jobRequiredContract",
+          requestId,
+        });
+      }
+      const jobRef = db
+        .collection(COMPANIES_COLLECTION)
+        .doc(companyId)
+        .collection("jobs")
+        .doc(resolvedJobId);
+      const jobSnap = await jobRef.get();
+      if (!jobSnap.exists) {
+        return jsonFail(404, "Zakázka nenalezena.", `Firestore path=${jobRef.path} exists=false`, {
+          step: "jobLookup",
+          requestId,
+          companyId,
+          jobId: resolvedJobId,
+        });
+      }
     }
 
     const ccExtra = parseCommaSeparatedEmails(String(body.cc ?? ""));
@@ -231,10 +246,12 @@ export async function POST(request: NextRequest) {
       sentByEmail = null;
     }
 
+    const pdfJobId = resolvedJobId || "";
+
     console.info(ROUTE_LOG, "pdf generation start", {
       requestId,
       companyId,
-      jobId,
+      jobId: resolvedJobId || null,
       documentType: type,
       documentId: docId,
       contractId,
@@ -278,7 +295,7 @@ export async function POST(request: NextRequest) {
           console.error(ROUTE_LOG, "attachment download threw", {
             requestId,
             companyId,
-            jobId,
+            jobId: resolvedJobId || null,
             documentType: type,
             documentId: docId,
             storagePath,
@@ -299,7 +316,7 @@ export async function POST(request: NextRequest) {
         pdf = await getDocumentPdfBuffer({
           db,
           companyId,
-          jobId,
+          jobId: pdfJobId,
           type,
           contractId,
           invoiceId,
@@ -310,7 +327,7 @@ export async function POST(request: NextRequest) {
         console.error(ROUTE_LOG, "pdf generation threw", {
           requestId,
           companyId,
-          jobId,
+          jobId: resolvedJobId || null,
           documentType: type,
           contractId,
           invoiceId,
@@ -327,7 +344,7 @@ export async function POST(request: NextRequest) {
         console.error(ROUTE_LOG, "pdf generation failed (ok=false)", {
           requestId,
           companyId,
-          jobId,
+          jobId: resolvedJobId || null,
           documentType: type,
           contractId,
           invoiceId,
@@ -340,7 +357,7 @@ export async function POST(request: NextRequest) {
       console.info(ROUTE_LOG, "pdf ok", {
         requestId,
         companyId,
-        jobId,
+        jobId: resolvedJobId || null,
         documentType: type,
         filename: pdf.filename,
         bufferBytes: pdf.buffer.length,
@@ -365,7 +382,7 @@ export async function POST(request: NextRequest) {
     try {
       result = await sendDocumentEmail(db, {
         companyId,
-        jobId,
+        jobId: resolvedJobId || null,
         type,
         to,
         ccExtra,
@@ -385,7 +402,7 @@ export async function POST(request: NextRequest) {
       console.error(ROUTE_LOG, "sendDocumentEmail threw", {
         requestId,
         companyId,
-        jobId,
+        jobId: resolvedJobId || null,
         documentType: type,
         message: msg,
         serialized: serializeUnknownForLog(sendErr),
@@ -397,14 +414,43 @@ export async function POST(request: NextRequest) {
       console.error(ROUTE_LOG, "Resend / outbound failed", {
         requestId,
         companyId,
-        jobId,
+        jobId: resolvedJobId || null,
         documentType: type,
         error: result.error,
         detail: result.detail,
       });
       return jsonFail(502, result.error, result.detail, { step: "sendDocumentEmail.result" });
     }
-    console.info(ROUTE_LOG, "email sent ok", { requestId, companyId, jobId, documentType: type });
+    console.info(ROUTE_LOG, "email sent ok", {
+      requestId,
+      companyId,
+      jobId: resolvedJobId || null,
+      documentType: type,
+    });
+
+    try {
+      const attNames = attachments.map((a) => a.filename).filter(Boolean);
+      await recordEmailOutboundOnPrimaryDocs(db, {
+        companyId,
+        jobId: resolvedJobId || null,
+        type,
+        documentId: type === "received_document" ? docId : null,
+        invoiceId: type === "invoice" || type === "advance_invoice" ? invoiceId : null,
+        to,
+        cc: ccExtra,
+        subject,
+        userId: caller.uid,
+        sentByEmail,
+        attachmentFilenames: attNames,
+      });
+    } catch (recErr) {
+      console.error(ROUTE_LOG, "recordEmailOutboundOnPrimaryDocs failed", {
+        requestId,
+        message: errorMessageFromUnknown(recErr),
+        serialized: serializeUnknownForLog(recErr),
+      });
+    }
+
     return NextResponse.json({ ok: true as const });
   } catch (error: unknown) {
     console.error(ROUTE_LOG, "unhandled failed", {

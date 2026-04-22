@@ -56,7 +56,8 @@ function resolveCcList(params: {
 
 export type SendDocumentEmailParams = {
   companyId: string;
-  jobId: string;
+  /** Zakázka pro historii u jobu; prázdné/null = historie na úrovni firmy. */
+  jobId?: string | null;
   type: DocumentEmailType;
   to: string;
   /** Ruční kopie z modalu (mimo nastavení organizace). */
@@ -74,11 +75,20 @@ export type SendDocumentEmailParams = {
   attachments: SendTransactionalEmailAttachment[];
 };
 
+function documentEmailLogsCollection(db: Firestore, companyId: string, jobId: string | null) {
+  const base = db.collection(COMPANIES_COLLECTION).doc(companyId);
+  const jid = jobId != null ? String(jobId).trim() : "";
+  if (jid) {
+    return base.collection("jobs").doc(jid).collection("documentEmailLogs");
+  }
+  return base.collection("documentEmailLogs");
+}
+
 export async function logDocumentSend(
   db: Firestore,
   input: {
     companyId: string;
-    jobId: string;
+    jobId: string | null;
     type: DocumentEmailType;
     to: string;
     cc: string[];
@@ -96,15 +106,10 @@ export async function logDocumentSend(
     attachmentFilenames?: string[] | null;
   }
 ): Promise<string> {
-  const col = db
-    .collection(COMPANIES_COLLECTION)
-    .doc(input.companyId)
-    .collection("jobs")
-    .doc(input.jobId)
-    .collection("documentEmailLogs");
+  const col = documentEmailLogsCollection(db, input.companyId, input.jobId);
   const ref = await col.add({
     companyId: input.companyId,
-    jobId: input.jobId,
+    jobId: input.jobId != null && String(input.jobId).trim() ? String(input.jobId).trim() : null,
     type: input.type,
     to: input.to.trim().toLowerCase(),
     cc: input.cc,
@@ -133,6 +138,7 @@ export async function sendDocumentEmail(
   db: Firestore,
   params: SendDocumentEmailParams
 ): Promise<SendDocumentEmailResult> {
+  const logJobId = params.jobId != null && String(params.jobId).trim() ? String(params.jobId).trim() : null;
   const companySnap = await db.collection(COMPANIES_COLLECTION).doc(params.companyId).get();
   if (!companySnap.exists) {
     return {
@@ -168,7 +174,7 @@ export async function sendDocumentEmail(
   if (!send.ok) {
     await logDocumentSend(db, {
       companyId: params.companyId,
-      jobId: params.jobId,
+      jobId: logJobId,
       type: params.type,
       to: params.to,
       cc,
@@ -188,7 +194,7 @@ export async function sendDocumentEmail(
 
   await logDocumentSend(db, {
     companyId: params.companyId,
-    jobId: params.jobId,
+    jobId: logJobId,
     type: params.type,
     to: params.to,
     cc,
@@ -204,4 +210,96 @@ export async function sendDocumentEmail(
   });
 
   return { ok: true };
+}
+
+/**
+ * Po úspěšném odeslání: denormalizace na doklad/fakturu + podrobná historie v podkolekci.
+ * Volá se jen po úspěchu (Resend ok).
+ */
+export async function recordEmailOutboundOnPrimaryDocs(
+  db: Firestore,
+  input: {
+    companyId: string;
+    jobId: string | null;
+    type: DocumentEmailType;
+    documentId: string | null;
+    invoiceId: string | null;
+    to: string;
+    cc: string[];
+    subject: string;
+    userId: string;
+    sentByEmail: string | null;
+    attachmentFilenames: string[];
+  }
+): Promise<void> {
+  const toNorm = input.to.trim().toLowerCase();
+  const histBase: Record<string, unknown> = {
+    companyId: input.companyId,
+    jobId: input.jobId,
+    type: input.type,
+    to: toNorm,
+    recipientsTo: toNorm,
+    recipientsCc: input.cc,
+    subject: input.subject,
+    sentByUid: input.userId,
+    sentByEmail: input.sentByEmail != null ? String(input.sentByEmail).trim() || null : null,
+    attachmentFilenames: Array.isArray(input.attachmentFilenames)
+      ? input.attachmentFilenames.filter(Boolean)
+      : [],
+    sentAt: FieldValue.serverTimestamp(),
+  };
+
+  const batch = db.batch();
+
+  if (input.documentId) {
+    const docRef = db
+      .collection(COMPANIES_COLLECTION)
+      .doc(input.companyId)
+      .collection("documents")
+      .doc(String(input.documentId));
+    batch.set(
+      docRef,
+      {
+        outboundEmailLastSentAt: FieldValue.serverTimestamp(),
+        outboundEmailLastSentTo: toNorm,
+        outboundEmailLastSubject: input.subject,
+        outboundEmailSendCount: FieldValue.increment(1),
+      },
+      { merge: true }
+    );
+    const hRef = docRef.collection("emailOutboundHistory").doc();
+    batch.set(hRef, {
+      ...histBase,
+      documentId: input.documentId,
+      invoiceId: null,
+    });
+  }
+
+  if (input.invoiceId) {
+    const invRef = db
+      .collection(COMPANIES_COLLECTION)
+      .doc(input.companyId)
+      .collection("invoices")
+      .doc(String(input.invoiceId));
+    batch.set(
+      invRef,
+      {
+        outboundEmailLastSentAt: FieldValue.serverTimestamp(),
+        outboundEmailLastSentTo: toNorm,
+        outboundEmailLastSubject: input.subject,
+        outboundEmailSendCount: FieldValue.increment(1),
+      },
+      { merge: true }
+    );
+    const hRef = invRef.collection("emailOutboundHistory").doc();
+    batch.set(hRef, {
+      ...histBase,
+      documentId: null,
+      invoiceId: input.invoiceId,
+    });
+  }
+
+  if (input.documentId || input.invoiceId) {
+    await batch.commit();
+  }
 }

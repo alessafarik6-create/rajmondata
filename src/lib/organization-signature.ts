@@ -3,6 +3,8 @@ export type OrganizationSignature = {
   storagePath: string;
   updatedAt: unknown;
   updatedBy: string;
+  /** Volitelné jméno osoby, která podpis uložila (zobrazí se v razítku). */
+  signedByName?: string | null;
   contentType: "image/png";
 };
 

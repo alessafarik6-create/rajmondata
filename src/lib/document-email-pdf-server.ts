@@ -440,12 +440,13 @@ export async function getDocumentPdfBuffer(
       }
 
       const jobIdOnDoc = String(data.jobId ?? "").trim();
-      if (jobIdOnDoc !== jobId) {
-        logPdf("firestore", `invoice jobId mismatch doc=${jobIdOnDoc} expected=${jobId}`);
+      const jobIdExpected = String(jobId ?? "").trim();
+      if (jobIdExpected && jobIdOnDoc !== jobIdExpected) {
+        logPdf("firestore", `invoice jobId mismatch doc=${jobIdOnDoc} expected=${jobIdExpected}`);
         return {
           ok: false,
           error: "Doklad nepatří k této zakázce.",
-          detail: `invoice.jobId=${jobIdOnDoc || "(empty)"} expected=${jobId}`,
+          detail: `invoice.jobId=${jobIdOnDoc || "(empty)"} expected=${jobIdExpected}`,
         };
       }
 

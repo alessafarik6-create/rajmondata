@@ -60,6 +60,12 @@ export type WorkContractPrintModel = {
   objednatelHtml: string;
   /** Elektronický podpis organizace (zhotovitel) — URL (ideálně PNG s průhledným pozadím). */
   organizationSignatureUrl?: string | null;
+  /** Název firmy v razítku (preferujte skutečný název organizace). */
+  organizationStampName?: string | null;
+  /** Datum zobrazené u elektronického razítka (např. datum smlouvy). */
+  electronicSignatureDateLabel?: string | null;
+  /** Jméno podepisující osoby (volitelné). */
+  electronicSignatureSignerName?: string | null;
   /** Job / summary (optional) */
   jobTitle?: string;
   jobDescription?: string;
@@ -77,6 +83,41 @@ export type WorkContractPrintModel = {
   /** Např. „Rezervační smlouva“, „Smlouva o dílo“ */
   parentContractKindLabel?: string;
 };
+
+/** Razítko s názvem firmy + datem + podpisovým obrázkem (čitelné v PDF / tisku). */
+export function buildOrganizationElectronicStampBlock(m: {
+  organizationSignatureUrl?: string | null;
+  organizationStampName?: string | null;
+  electronicSignatureDateLabel?: string | null;
+  electronicSignatureSignerName?: string | null;
+}): string {
+  const orgSigUrl = String(m.organizationSignatureUrl ?? "").trim();
+  if (!orgSigUrl) return "";
+  const orgSigImg = `<img class="org-signature" alt="Podpis organizace" src="${escapeHtml(orgSigUrl)}" />`;
+  const company = escapeHtml(
+    String(m.organizationStampName ?? "").trim() || "Organizace"
+  );
+  const when = escapeHtml(
+    String(m.electronicSignatureDateLabel ?? "").trim() || "—"
+  );
+  const signerRaw = String(m.electronicSignatureSignerName ?? "").trim();
+  const signerLine = signerRaw
+    ? `<div class="e-stamp-signer">${escapeHtml(signerRaw)}</div>`
+    : "";
+  return `<div class="e-signature-stamp" role="group" aria-label="Elektronické razítko organizace">
+    <div class="e-stamp-border">
+      <div class="e-stamp-header">${company}</div>
+      <div class="e-stamp-status">Elektronicky podepsáno</div>
+      <div class="e-stamp-row">
+        <div class="e-stamp-sig">${orgSigImg}</div>
+        <div class="e-stamp-meta">
+          <div class="e-stamp-date">Datum: ${when}</div>
+          ${signerLine}
+        </div>
+      </div>
+    </div>
+  </div>`;
+}
 
 const WORK_CONTRACT_PRINT_CSS = `
       :root {
@@ -264,20 +305,79 @@ const WORK_CONTRACT_PRINT_CSS = `
       }
       .sign-line {
         border-bottom: 1px solid var(--ink);
-        min-height: 44px;
+        min-height: 72px;
         margin-bottom: 8px;
         position: relative;
-        overflow: hidden;
+        overflow: visible;
       }
       .org-signature {
-        position: absolute;
+        position: relative;
         left: 0;
-        bottom: 2px;
+        bottom: 0;
         max-width: 100%;
-        max-height: 42px;
+        max-height: 48px;
         object-fit: contain;
         /* Snaha o ostřejší raster při tisku */
         image-rendering: -webkit-optimize-contrast;
+      }
+      .e-signature-stamp {
+        display: inline-block;
+        max-width: 100%;
+        margin: 2px 0 4px;
+      }
+      .e-stamp-border {
+        border: 2px double #7f1d1d;
+        border-radius: 10px;
+        padding: 8px 10px 9px;
+        background: linear-gradient(180deg, #fff7f7 0%, #ffffff 55%, #fffbfb 100%);
+        box-shadow: 0 1px 0 rgba(0,0,0,0.06);
+      }
+      .e-stamp-header {
+        font-size: 9.5pt;
+        font-weight: 900;
+        letter-spacing: 0.02em;
+        color: #7f1d1d;
+        text-transform: uppercase;
+        line-height: 1.2;
+        margin-bottom: 2px;
+      }
+      .e-stamp-status {
+        font-size: 8.2pt;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #991b1b;
+        margin-bottom: 6px;
+      }
+      .e-stamp-row {
+        display: flex;
+        align-items: flex-end;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .e-stamp-sig {
+        flex: 0 0 auto;
+        min-width: 120px;
+        border: 1px dashed rgba(127, 29, 29, 0.35);
+        border-radius: 6px;
+        padding: 4px 6px;
+        background: rgba(255,255,255,0.9);
+      }
+      .e-stamp-meta {
+        flex: 1 1 140px;
+        min-width: 120px;
+        font-size: 8.6pt;
+        color: var(--muted);
+        line-height: 1.35;
+      }
+      .e-stamp-date {
+        font-weight: 700;
+        color: var(--ink);
+      }
+      .e-stamp-signer {
+        margin-top: 2px;
+        font-size: 8.4pt;
+        color: var(--ink);
       }
       .sign-name {
         font-size: 10pt;
@@ -387,10 +487,13 @@ function buildWorkContractAttachmentPrintHtml(m: WorkContractPrintModel): string
 
   const zhot = firstSignatoryLine(m.zhotovitelHtml);
   const objed = firstSignatoryLine(m.objednatelHtml);
-  const orgSigUrl = String(m.organizationSignatureUrl ?? "").trim();
-  const orgSigImg = orgSigUrl
-    ? `<img class="org-signature" alt="Podpis organizace" src="${escapeHtml(orgSigUrl)}" />`
-    : "";
+  const orgStampHtml = buildOrganizationElectronicStampBlock({
+    organizationSignatureUrl: m.organizationSignatureUrl,
+    organizationStampName: m.organizationStampName,
+    electronicSignatureDateLabel:
+      m.electronicSignatureDateLabel ?? (m.documentDate.trim() || dateLine),
+    electronicSignatureSignerName: m.electronicSignatureSignerName,
+  });
 
   const subline = parentNum && parentNum !== "—"
     ? `Příloha ke smlouvě č. ${escapeHtml(parentNum)}`
@@ -498,7 +601,7 @@ function buildWorkContractAttachmentPrintHtml(m: WorkContractPrintModel): string
         <div class="signatures">
           <div class="sign-block">
             <h3>Zhotovitel</h3>
-            <div class="sign-line">${orgSigImg}</div>
+            <div class="sign-line">${orgStampHtml}</div>
             <div class="sign-name">${escapeHtml(zhot)}</div>
           </div>
           <div class="sign-block">
@@ -569,10 +672,13 @@ export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
 
   const zhot = firstSignatoryLine(m.zhotovitelHtml);
   const objed = firstSignatoryLine(m.objednatelHtml);
-  const orgSigUrl = String(m.organizationSignatureUrl ?? "").trim();
-  const orgSigImg = orgSigUrl
-    ? `<img class="org-signature" alt="Podpis organizace" src="${escapeHtml(orgSigUrl)}" />`
-    : "";
+  const orgStampHtml = buildOrganizationElectronicStampBlock({
+    organizationSignatureUrl: m.organizationSignatureUrl,
+    organizationStampName: m.organizationStampName,
+    electronicSignatureDateLabel:
+      m.electronicSignatureDateLabel ?? (m.documentDate.trim() || dateLine),
+    electronicSignatureSignerName: m.electronicSignatureSignerName,
+  });
 
   const pageTitle = escapeHtml(m.pageTitle || "Smlouva o dílo");
 
@@ -675,7 +781,7 @@ export function buildWorkContractPrintHtml(m: WorkContractPrintModel): string {
         <div class="signatures">
           <div class="sign-block">
             <h3>Zhotovitel</h3>
-            <div class="sign-line">${orgSigImg}</div>
+            <div class="sign-line">${orgStampHtml}</div>
             <div class="sign-name">${escapeHtml(zhot)}</div>
           </div>
           <div class="sign-block">

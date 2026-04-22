@@ -97,6 +97,8 @@ export type CompanyProfile = {
     storagePath?: string;
     updatedAt?: unknown;
     updatedBy?: string;
+    /** Jméno osoby, která podpis naposledy uložila (z API). */
+    signedByName?: string | null;
     contentType?: string;
   } | null;
 

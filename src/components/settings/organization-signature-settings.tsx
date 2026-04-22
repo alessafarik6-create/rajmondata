@@ -148,13 +148,21 @@ export function OrganizationSignatureSettingsCard(props: Props) {
       const token = await user.getIdToken();
 
       const pngDataUrl = canvas.toDataURL("image/png");
+      const displayName =
+        String((user as { displayName?: string }).displayName ?? "").trim() ||
+        String(user.email ?? "").trim() ||
+        "";
       const res = await fetch(companyApiUrl("/api/company/organization-signature"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ companyId, pngDataUrl }),
+        body: JSON.stringify({
+          companyId,
+          pngDataUrl,
+          ...(displayName ? { signedByName: displayName } : {}),
+        }),
       });
       const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
       if (!res.ok || !json.ok) {

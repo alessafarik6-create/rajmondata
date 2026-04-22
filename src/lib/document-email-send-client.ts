@@ -10,7 +10,8 @@ function apiUrl(path: string): string {
 
 export type SendJobDocumentEmailPayload = {
   companyId: string;
-  jobId: string;
+  /** Volitelné — u dokladů bez zakázky se neposílá (server zapisuje historii na firmu). */
+  jobId?: string | null;
   type: DocumentEmailType;
   to: string;
   cc?: string;
@@ -35,13 +36,18 @@ export async function sendJobDocumentEmailFromBrowser(
     throw new Error("Nejste přihlášeni.");
   }
   const token = await user.getIdToken();
+  const jid = payload.jobId != null ? String(payload.jobId).trim() : "";
+  const { jobId: _omit, ...rest } = payload;
   const response = await fetch(apiUrl("/api/company/document-email"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({
+      ...rest,
+      ...(jid ? { jobId: jid } : {}),
+    }),
   });
   const data = (await response.json().catch(() => null)) as {
     ok?: boolean;

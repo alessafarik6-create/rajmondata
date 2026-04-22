@@ -16,7 +16,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-type Body = { companyId?: string; pngDataUrl?: string };
+type Body = { companyId?: string; pngDataUrl?: string; signedByName?: string | null };
 
 function storageDownloadUrl(bucketName: string, storagePath: string, token: string): string {
   const enc = encodeURIComponent(storagePath);
@@ -87,6 +87,10 @@ export async function POST(request: NextRequest) {
 
   const companyId = String(body.companyId ?? "").trim();
   const pngDataUrl = String(body.pngDataUrl ?? "").trim();
+  const signedByNameRaw =
+    body.signedByName != null && typeof body.signedByName === "string"
+      ? body.signedByName.trim().slice(0, 120)
+      : "";
   if (!companyId || !callerCanAccessCompany(caller, companyId)) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 400 });
   }
@@ -136,6 +140,7 @@ export async function POST(request: NextRequest) {
     updatedAt: FieldValue.serverTimestamp(),
     updatedBy: caller.uid,
     contentType: "image/png",
+    ...(signedByNameRaw ? { signedByName: signedByNameRaw } : {}),
   };
 
   const payload = { organizationSignature: signature, updatedAt: FieldValue.serverTimestamp() };

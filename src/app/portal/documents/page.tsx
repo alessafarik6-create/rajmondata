@@ -45,6 +45,8 @@ import {
   parseCommaSeparatedEmails,
 } from "@/lib/document-email-outbound";
 import { sendJobDocumentEmailFromBrowser } from "@/lib/document-email-send-client";
+import { DocumentEmailRecipientPicker } from "@/components/documents/document-email-recipient-picker";
+import { DocumentEmailOutboundHistory } from "@/components/documents/document-email-outbound-history";
 import {
   useUser,
   useFirestore,
@@ -271,7 +273,40 @@ type CompanyDocumentRow = {
   /** Zjednodušené řádky { jobId, percent, amount, note } — zrcadlo k `jobCostAllocations`. */
   allocations?: unknown;
   allocationJobIds?: string[];
+  /** Po úspěšném odeslání e-mailem (server — denormalizace). */
+  outboundEmailSendCount?: number | null;
+  outboundEmailLastSentAt?: unknown;
+  outboundEmailLastSentTo?: string | null;
+  outboundEmailLastSubject?: string | null;
 };
+
+function outboundEmailStatusBadge(count: unknown, lastAt: unknown): React.ReactNode {
+  const n = typeof count === "number" ? count : Number(count ?? 0);
+  const ok = Number.isFinite(n) && n > 0;
+  let when = "";
+  try {
+    const t = lastAt as { toDate?: () => Date };
+    if (t && typeof t.toDate === "function") when = t.toDate().toLocaleString("cs-CZ");
+  } catch {
+    /* ignore */
+  }
+  if (!ok) {
+    return (
+      <Badge variant="outline" className="h-5 px-1.5 text-[10px] text-gray-700">
+        E-mail: neodesláno
+      </Badge>
+    );
+  }
+  const label = n > 1 ? `Odesláno (${n}×)` : "Odesláno";
+  return (
+    <Badge
+      className="h-5 bg-blue-700 px-1.5 text-[10px] text-white hover:bg-blue-700"
+      title={when || undefined}
+    >
+      {label}
+    </Badge>
+  );
+}
 
 type AssignmentType =
   | "job_cost"
@@ -903,6 +938,12 @@ function DocumentsPageContent() {
   );
   const { data: profile, isLoading: isProfileLoading } = useDoc(userRef);
   const companyId = profile?.companyId as string | undefined;
+
+  const companyDocRef = useMemoFirebase(
+    () => (firestore && companyId ? doc(firestore, "companies", companyId) : null),
+    [firestore, companyId]
+  );
+  const { data: companyDoc } = useDoc(companyDocRef);
 
   const documentsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -3433,6 +3474,7 @@ function DocumentsPageContent() {
               key={`dtr-all-rcv-${paymentTableMountKey}`}
               flashDomScope="all-received"
               paymentFlashRowKey={paymentFlashRowKey}
+              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
               companyId={companyId}
               data={receivedDocsBase}
               jobNamesById={jobNamesById}
@@ -3463,6 +3505,7 @@ function DocumentsPageContent() {
               invoices={issuedInvoicesFiltered}
               isLoadingInvoices={isInvoicesLoading}
               jobs={jobs}
+              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
               companyId={companyId}
               isLoading={isLoading}
               onDelete={requestDeleteDocument}
@@ -3487,6 +3530,7 @@ function DocumentsPageContent() {
             key={`dtr-received-${paymentTableMountKey}`}
             flashDomScope="received"
             paymentFlashRowKey={paymentFlashRowKey}
+            companyDoc={companyDoc as Record<string, unknown> | null | undefined}
             companyId={companyId}
             data={receivedDocsBase}
             jobNamesById={jobNamesById}
@@ -3515,6 +3559,7 @@ function DocumentsPageContent() {
             invoices={issuedInvoicesFiltered}
             isLoadingInvoices={isInvoicesLoading}
             jobs={jobs}
+            companyDoc={companyDoc as Record<string, unknown> | null | undefined}
             companyId={companyId}
             isLoading={isLoading}
             onDelete={requestDeleteDocument}
@@ -3548,6 +3593,7 @@ function DocumentsPageContent() {
             <DocumentTableReceived
               flashDomScope="trash-received"
               paymentFlashRowKey={null}
+              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
               companyId={companyId}
               data={receivedDocsBase}
               jobNamesById={jobNamesById}
@@ -3577,6 +3623,7 @@ function DocumentsPageContent() {
               invoices={issuedInvoicesFiltered}
               isLoadingInvoices={isInvoicesLoading}
               jobs={jobs}
+              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
               companyId={companyId}
               isLoading={isLoading}
               onDelete={requestDeleteDocument}
@@ -4523,6 +4570,7 @@ function DocumentsPageContent() {
 }
 
 function DocumentTableReceived({
+  companyDoc,
   companyId,
   data,
   jobNamesById,
@@ -4542,6 +4590,7 @@ function DocumentTableReceived({
   flashDomScope,
   paymentFlashRowKey = null,
 }: {
+  companyDoc?: Record<string, unknown> | null;
   companyId: string;
   data: CompanyDocumentRow[];
   jobNamesById: Map<string, string>;
@@ -4564,6 +4613,7 @@ function DocumentTableReceived({
   flashDomScope: string;
   paymentFlashRowKey?: string | null;
 }) {
+  const firestore = useFirestore();
   const { toast } = useToast();
   const [jobFilter, setJobFilter] = useState<string>("__all__");
   const [jobAssignmentFilter, setJobAssignmentFilter] = useState<
@@ -4637,16 +4687,7 @@ function DocumentTableReceived({
 
   const sendReceivedEmail = async () => {
     if (!emailDoc) return;
-    const jobId = documentJobLinkId(emailDoc);
-    if (!jobId) {
-      toast({
-        variant: "destructive",
-        title: "Doklad není zařazen k zakázce",
-        description:
-          "Historie odeslání je vedená u zakázky. Nejdřív doklad přiřaďte k zakázce a pak ho odešlete.",
-      });
-      return;
-    }
+    const jobIdOpt = documentJobLinkId(emailDoc)?.trim() || null;
     const to = emailTo.trim();
     if (!isValidEmailAddress(to)) {
       toast({ variant: "destructive", title: "Neplatný e-mail příjemce" });
@@ -4674,7 +4715,7 @@ function DocumentTableReceived({
     try {
       await sendJobDocumentEmailFromBrowser({
         companyId,
-        jobId,
+        ...(jobIdOpt ? { jobId: jobIdOpt } : {}),
         type: "received_document",
         to,
         cc: ccList.join(", "),
@@ -4994,6 +5035,22 @@ function DocumentTableReceived({
                 className="border-gray-300"
               />
             </div>
+            {emailDoc ? (
+              <DocumentEmailRecipientPicker
+                firestore={firestore}
+                companyId={companyId}
+                toValue={emailTo}
+                onToChange={setEmailTo}
+                suggestionEmails={(() => {
+                  const org = String(companyDoc?.email ?? "").trim();
+                  const out: Array<{ email: string; label: string }> = [];
+                  if (org && isValidEmailAddress(org)) {
+                    out.push({ email: org, label: "Organizace" });
+                  }
+                  return out;
+                })()}
+              />
+            ) : null}
             <div className="space-y-1">
               <Label className="text-xs text-gray-800">Kopie (CC)</Label>
               <Input
@@ -5020,6 +5077,14 @@ function DocumentTableReceived({
                 className="border-gray-300"
               />
             </div>
+            {emailDoc ? (
+              <DocumentEmailOutboundHistory
+                firestore={firestore}
+                companyId={companyId}
+                kind="document"
+                entityId={emailDoc.id}
+              />
+            ) : null}
             <div className="rounded-md border border-gray-200 bg-gray-50 p-3 text-xs text-gray-700">
               <div className="font-medium text-gray-900">Příloha</div>
               <div className="mt-1">
@@ -5314,6 +5379,7 @@ function DocumentTableReceived({
                           {row.invoiceId ? "Faktura přiřazena" : "Není přiřazeno k faktuře"}
                         </Badge>
                       ) : null}
+                      {outboundEmailStatusBadge(row.outboundEmailSendCount, row.outboundEmailLastSentAt)}
                     </div>
                   </div>
 
@@ -5478,6 +5544,7 @@ function DocumentTableIssued({
   invoices = [],
   isLoadingInvoices = false,
   jobs,
+  companyDoc,
   companyId,
   isLoading,
   onDelete,
@@ -5500,6 +5567,7 @@ function DocumentTableIssued({
   invoices?: Array<Record<string, unknown> & { id: string }>;
   isLoadingInvoices?: boolean;
   jobs: Array<{ id: string; name: string }>;
+  companyDoc?: Record<string, unknown> | null;
   companyId: string;
   isLoading: boolean;
   onDelete: (row: CompanyDocumentRow) => void;
@@ -5518,6 +5586,7 @@ function DocumentTableIssued({
   flashDomScope: string;
   paymentFlashRowKey?: string | null;
 }) {
+  const firestore = useFirestore();
   const { toast } = useToast();
   const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
   const [emailOpen, setEmailOpen] = useState(false);
@@ -5593,15 +5662,7 @@ function DocumentTableIssued({
 
   const sendInvoiceEmail = async () => {
     if (!emailInv) return;
-    const jid = String(emailInv.jobId ?? "").trim();
-    if (!jid) {
-      toast({
-        variant: "destructive",
-        title: "Nelze odeslat",
-        description: "Doklad nemá přiřazenou zakázku (jobId).",
-      });
-      return;
-    }
+    const jid = String(emailInv.jobId ?? "").trim() || null;
     const to = emailTo.trim();
     const subject = emailSubject.trim();
     const bodyPlain = emailBodyPlain.trim();
@@ -5626,7 +5687,7 @@ function DocumentTableIssued({
       const type = typeRaw === "advance_invoice" ? "advance_invoice" : "invoice";
       await sendJobDocumentEmailFromBrowser({
         companyId,
-        jobId: jid,
+        ...(jid ? { jobId: jid } : {}),
         type: type as "invoice" | "advance_invoice",
         to,
         cc: ccNorm.join(", "),
@@ -5740,7 +5801,8 @@ function DocumentTableIssued({
           <DialogHeader className="space-y-1 border-b border-gray-100 px-4 pb-3 pt-4 sm:px-5">
             <DialogTitle className="text-lg font-semibold text-gray-950">Odeslat e-mailem</DialogTitle>
             <DialogDescription className="text-sm text-gray-800">
-              Odešle se PDF dokladu jako příloha. Historie odeslání se uloží k zakázce.
+              Odešle se PDF dokladu jako příloha. Historie odeslání se uloží u dokladu a u zakázky (pokud je
+              k dispozici).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 px-4 py-3 sm:px-5">
@@ -5752,6 +5814,26 @@ function DocumentTableIssued({
                 placeholder="např. ucetni@firma.cz"
               />
             </div>
+            {emailInv ? (
+              <DocumentEmailRecipientPicker
+                firestore={firestore}
+                companyId={companyId}
+                toValue={emailTo}
+                onToChange={setEmailTo}
+                suggestionEmails={(() => {
+                  const out: Array<{ email: string; label: string }> = [];
+                  const cust = String((emailInv as { customerEmail?: unknown }).customerEmail ?? "").trim();
+                  if (cust && isValidEmailAddress(cust)) {
+                    out.push({ email: cust, label: "Zákazník" });
+                  }
+                  const org = String(companyDoc?.email ?? "").trim();
+                  if (org && isValidEmailAddress(org)) {
+                    out.push({ email: org, label: "Organizace" });
+                  }
+                  return out;
+                })()}
+              />
+            ) : null}
             <div className="space-y-1.5">
               <Label>Kopie (CC)</Label>
               <Input
@@ -5777,6 +5859,14 @@ function DocumentTableIssued({
                 placeholder="Text zprávy"
               />
             </div>
+            {emailInv ? (
+              <DocumentEmailOutboundHistory
+                firestore={firestore}
+                companyId={companyId}
+                kind="invoice"
+                entityId={emailInv.id}
+              />
+            ) : null}
           </div>
           <DialogFooter className="border-t border-gray-100 px-4 py-3 sm:px-5">
             <Button type="button" variant="outline" disabled={emailSending} onClick={() => setEmailOpen(false)}>
@@ -5901,6 +5991,10 @@ function DocumentTableIssued({
                           Smazáno
                         </Badge>
                       ) : null}
+                      {outboundEmailStatusBadge(
+                        docRow.outboundEmailSendCount,
+                        docRow.outboundEmailLastSentAt
+                      )}
                       <div className="flex items-start gap-1">
                         <FileDown className="mt-0.5 h-3.5 w-3.5 shrink-0 text-gray-500" />
                         <span
@@ -6105,6 +6199,10 @@ function DocumentTableIssued({
                           Smazáno
                         </Badge>
                       ) : null}
+                      {outboundEmailStatusBadge(
+                        (inv as { outboundEmailSendCount?: unknown }).outboundEmailSendCount,
+                        (inv as { outboundEmailLastSentAt?: unknown }).outboundEmailLastSentAt
+                      )}
                     </div>
                     <span
                       className="line-clamp-2 break-words text-gray-950"
