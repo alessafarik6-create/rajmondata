@@ -12,7 +12,7 @@ import {
   query,
   serverTimestamp,
 } from "firebase/firestore";
-import { Factory, Loader2, Plus } from "lucide-react";
+import { ClipboardList, Factory, Loader2, Plus } from "lucide-react";
 import {
   useUser,
   useFirebase,
@@ -213,11 +213,32 @@ export default function VyrobaListPage() {
         </Button>
       </div>
 
+      <Card className={`${CARD} border-primary/25 bg-gradient-to-br from-primary/5 to-white`}>
+        <CardHeader className="border-b border-slate-100">
+          <CardTitle className="text-lg text-slate-900 flex items-center gap-2">
+            <ClipboardList className="h-5 w-5 text-primary" />
+            Výrobní dílna u zakázek
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-4 space-y-3 text-sm text-slate-700">
+          <p>
+            Materiál ze skladu, metráž a zbytky, spotřeba, velké náhledy podkladů a stav výroby jsou v detailu{" "}
+            <strong>zakázky ve výrobě</strong> — nikoli v interním záznamu „Výroba“ níže.
+          </p>
+          <Button type="button" asChild className="gap-2">
+            <Link href="/portal/vyroba/zakazky">
+              <ClipboardList className="h-4 w-4" />
+              Otevřít zakázky ve výrobě
+            </Link>
+          </Button>
+        </CardContent>
+      </Card>
+
       <Card className={CARD}>
         <CardHeader className="border-b border-slate-100">
           <CardTitle className="text-lg text-slate-900 flex items-center gap-2">
             <Factory className="h-5 w-5 text-primary" />
-            Seznam výrob
+            Interní záznamy výroby (legacy)
           </CardTitle>
         </CardHeader>
         <CardContent className="pt-4 space-y-3">
@@ -245,6 +266,15 @@ export default function VyrobaListPage() {
                 ) : (
                   <p className="text-sm text-slate-500 mt-1">Bez přiřazené zakázky</p>
                 )}
+                {p.jobId ? (
+                  <div className="mt-3">
+                    <Button type="button" variant="secondary" size="sm" asChild className="text-xs">
+                      <Link href={`/portal/vyroba/zakazky/${String(p.jobId)}`}>
+                        Otevřít výrobní dílnu této zakázky
+                      </Link>
+                    </Button>
+                  </div>
+                ) : null}
               </Link>
             ))
           )}

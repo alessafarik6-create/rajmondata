@@ -21,6 +21,8 @@ import {
 } from "@/firebase";
 import {
   ArrowLeft,
+  CirclePause,
+  CirclePlay,
   ExternalLink,
   Factory,
   FileText,
@@ -30,6 +32,7 @@ import {
   Package,
   Play,
   ZoomIn,
+  CheckCircle2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -51,6 +54,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
@@ -231,18 +244,18 @@ export default function VyrobaZakazkaDetailPage() {
   );
 
   /**
-   * Modul výroba + buď klasický přístup (příznak zaměstnance / vedení),
-   * nebo jakýkoli přihlášený účet s rolí employee — konkrétní zakázku stejně povolí API (přiřazení týmu).
+   * Modul výroba + vedení / super_admin, nebo zaměstnanec s canAccessProduction.
+   * Konkrétní zakázku navíc povoluje API (přiřazení k výrobnímu týmu).
    */
   const accessOk =
     company &&
     canAccessCompanyModule(company, "vyroba", platformCatalog) &&
-    (userCanAccessProductionPortal({
-      role,
-      globalRoles: profile?.globalRoles,
-      employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
-    }) ||
-      normalizeCompanyRole(role) === "employee");
+    (isPrivilegedViewer ||
+      userCanAccessProductionPortal({
+        role,
+        globalRoles: profile?.globalRoles,
+        employeeRow: employeeRow as { canAccessProduction?: boolean } | null,
+      }));
 
   const foldersCol = useMemoFirebase(
     () =>
@@ -256,7 +269,7 @@ export default function VyrobaZakazkaDetailPage() {
   const invCol = useMemoFirebase(
     () =>
       firestore && companyId
-        ? query(collection(firestore, "companies", companyId, "inventoryItems"), limit(500))
+        ? query(collection(firestore, "companies", companyId, "inventoryItems"), limit(2500))
         : null,
     [firestore, companyId]
   );
@@ -292,6 +305,7 @@ export default function VyrobaZakazkaDetailPage() {
   }, [inventoryItems]);
 
   const [jobView, setJobView] = useState<SafeJobView | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [visibleFolderPick, setVisibleFolderPick] = useState<Set<string>>(new Set());
   const [consumptions, setConsumptions] = useState<Record<string, unknown>[]>([]);
   const [loading, setLoading] = useState(true);
@@ -304,10 +318,13 @@ export default function VyrobaZakazkaDetailPage() {
   const [attachmentFiles, setAttachmentFiles] = useState<JobAttachmentFile[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
   const [startSaving, setStartSaving] = useState(false);
+  const [workflowSaving, setWorkflowSaving] = useState(false);
+  const [completeOpen, setCompleteOpen] = useState(false);
 
   const loadApi = useCallback(async () => {
     if (!user || !jobId) return;
     setLoading(true);
+    setLoadError(null);
     try {
       const idToken = await user.getIdToken();
       const [vRes, cRes] = await Promise.all([
@@ -321,10 +338,18 @@ export default function VyrobaZakazkaDetailPage() {
       const vJson = await vRes.json().catch(() => ({}));
       const cJson = await cRes.json().catch(() => ({}));
       if (!vRes.ok) {
-        throw new Error(typeof vJson.error === "string" ? vJson.error : "Zakázku nelze zobrazit.");
-      }
-      if (!cRes.ok) {
-        throw new Error(typeof cJson.error === "string" ? cJson.error : "Historii nelze načíst.");
+        const msg =
+          typeof vJson.error === "string"
+            ? vJson.error
+            : vRes.status === 403
+              ? "Nemáte přístup k této zakázce ve výrobě (nejste přiřazeni k výrobnímu týmu nebo nemáte oprávnění)."
+              : "Zakázku nelze zobrazit.";
+        setLoadError(msg);
+        setJobView(null);
+        setVisibleFolderPick(new Set());
+        setConsumptions([]);
+        toast({ variant: "destructive", title: "Chyba", description: msg });
+        return;
       }
       setJobView((vJson.job as SafeJobView) || null);
       const folderIdsRaw = (vJson.settings as { productionVisibleFolderIds?: unknown } | null | undefined)
@@ -333,12 +358,26 @@ export default function VyrobaZakazkaDetailPage() {
         ? folderIdsRaw.map((x) => String(x)).filter(Boolean)
         : [];
       setVisibleFolderPick(new Set(folderIds));
-      setConsumptions(Array.isArray(cJson.consumptions) ? cJson.consumptions : []);
+      if (!cRes.ok) {
+        const msg =
+          typeof cJson.error === "string" ? cJson.error : "Historii spotřeby nelze načíst.";
+        setConsumptions([]);
+        toast({
+          variant: "destructive",
+          title: "Částečné načtení",
+          description: `${msg} Zbytek stránky je k dispozici.`,
+        });
+      } else {
+        setConsumptions(Array.isArray(cJson.consumptions) ? cJson.consumptions : []);
+      }
+      setLoadError(null);
     } catch (e) {
+      const desc = e instanceof Error ? e.message : "Načtení se nezdařilo.";
+      setLoadError(desc);
       toast({
         variant: "destructive",
         title: "Chyba",
-        description: e instanceof Error ? e.message : "Načtení se nezdařilo.",
+        description: desc,
       });
       setJobView(null);
       setVisibleFolderPick(new Set());
@@ -472,6 +511,8 @@ export default function VyrobaZakazkaDetailPage() {
     [jobView]
   );
   const canShowStartButton = jobView != null && canStartProductionWorkflow(workflowStatus);
+  const productionRunning =
+    workflowStatus === "started" || workflowStatus === "in_progress" || workflowStatus === "paused";
 
   const consumptionSummary = useMemo(() => {
     const m = new Map<string, { name: string; unit: string; qty: number }>();
@@ -560,7 +601,7 @@ export default function VyrobaZakazkaDetailPage() {
       }
       toast({
         title: "Výroba zahájena",
-        description: "Stav zakázky byl nastaven na Zahájeno a zapsal se čas zahájení.",
+        description: "Stav zakázky je nyní aktivní (ve výrobě), zapsal se čas a autor zahájení.",
       });
       await loadApi();
     } catch (e) {
@@ -571,6 +612,42 @@ export default function VyrobaZakazkaDetailPage() {
       });
     } finally {
       setStartSaving(false);
+    }
+  };
+
+  const runWorkflow = async (action: "pause" | "resume" | "complete") => {
+    if (!user || !jobId) return;
+    setWorkflowSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/production/workflow", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ jobId: String(jobId), action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Akci se nepodařilo provést.");
+      }
+      const labels: Record<string, string> = {
+        pause: "Výroba byla pozastavena.",
+        resume: "Výroba byla obnovena.",
+        complete: "Výroba byla označena jako dokončená.",
+      };
+      toast({ title: "Uloženo", description: labels[action] || "Stav byl aktualizován." });
+      setCompleteOpen(false);
+      await loadApi();
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Akci se nepodařilo provést.",
+      });
+    } finally {
+      setWorkflowSaving(false);
     }
   };
 
@@ -686,7 +763,18 @@ export default function VyrobaZakazkaDetailPage() {
         </div>
       ) : !jobView ? (
         <Card className={CARD}>
-          <CardContent className="py-10 text-center">Zakázka není k dispozici.</CardContent>
+          <CardContent className="py-10 space-y-4 text-center">
+            <p className="text-slate-800 font-medium">
+              {loadError || "Zakázka není k dispozici nebo k ní nemáte přístup ve výrobě."}
+            </p>
+            <p className="text-sm text-slate-600 max-w-lg mx-auto">
+              Ujistěte se, že jste v nastavení zakázky zařazeni mezi členy výrobního týmu, a že máte u profilu
+              zaměstnance zapnutý přístup k modulu Výroba. Vedení organizace vidí všechny zakázky.
+            </p>
+            <Button type="button" variant="outline" asChild>
+              <Link href="/portal/vyroba/zakazky">Zpět na zakázky ve výrobě</Link>
+            </Button>
+          </CardContent>
         </Card>
       ) : (
         <>
@@ -722,8 +810,8 @@ export default function VyrobaZakazkaDetailPage() {
                 <div className="space-y-1">
                   <p className="text-lg font-semibold text-slate-900">Zahájit výrobu</p>
                   <p className="text-sm text-slate-700 max-w-xl">
-                    Zakázka přejde do stavu <strong>Zahájeno</strong>, uloží se datum a čas, kdo výrobu spustil,
-                    a zakázka se objeví mezi aktivní výrobou v přehledech.
+                    Zakázka přejde do aktivního stavu výroby (<strong>ve výrobě</strong>), uloží se datum a čas a
+                    kdo výrobu spustil; poté můžete vydávat materiál a sledovat spotřebu v sekcích níže.
                   </p>
                 </div>
                 <Button
@@ -742,6 +830,58 @@ export default function VyrobaZakazkaDetailPage() {
                 </Button>
               </div>
             </div>
+          ) : null}
+
+          {productionRunning ? (
+            <Card className={`${CARD} border-blue-200/80 bg-gradient-to-br from-slate-50 to-blue-50/40`}>
+              <CardHeader className="border-b border-slate-100 pb-3">
+                <CardTitle className="text-base text-slate-900">Stav výroby — akce</CardTitle>
+              </CardHeader>
+              <CardContent className="pt-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+                <Badge variant="secondary" className="w-fit text-sm py-1">
+                  {String(jobView.productionWorkflowStatusLabel || workflowStatus)}
+                </Badge>
+                <div className="flex flex-wrap gap-2">
+                  {(workflowStatus === "started" || workflowStatus === "in_progress") && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      disabled={workflowSaving}
+                      onClick={() => void runWorkflow("pause")}
+                    >
+                      {workflowSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CirclePause className="h-4 w-4" />}
+                      Pozastavit
+                    </Button>
+                  )}
+                  {workflowStatus === "paused" && (
+                    <Button
+                      type="button"
+                      variant="default"
+                      size="sm"
+                      className="gap-1"
+                      disabled={workflowSaving}
+                      onClick={() => void runWorkflow("resume")}
+                    >
+                      {workflowSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <CirclePlay className="h-4 w-4" />}
+                      Obnovit výrobu
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="gap-1"
+                    disabled={workflowSaving}
+                    onClick={() => setCompleteOpen(true)}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Dokončit výrobu…
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           ) : null}
 
           <Card className={CARD}>
@@ -771,6 +911,20 @@ export default function VyrobaZakazkaDetailPage() {
               ) : (
                 <p className="text-slate-600">Výroba dosud nebyla zahájena tlačítkem výše.</p>
               )}
+              {jobView.productionCompletedAt ? (
+                <div>
+                  <p className="text-xs font-semibold text-slate-500 uppercase">Dokončení výroby</p>
+                  <p>
+                    {formatIsoCs(jobView.productionCompletedAt)}
+                    {jobView.productionCompletedByName ? (
+                      <span className="text-slate-600">
+                        {" "}
+                        — <strong>{String(jobView.productionCompletedByName)}</strong>
+                      </span>
+                    ) : null}
+                  </p>
+                </div>
+              ) : null}
               {jobView.productionStatusNote ? (
                 <div>
                   <p className="text-xs font-semibold text-slate-500 uppercase">Poznámka ke stavu (vedení)</p>
@@ -955,7 +1109,11 @@ export default function VyrobaZakazkaDetailPage() {
                   />
                 </div>
                 <Button type="button" disabled={issueSaving || !selectedItem} onClick={() => void submitIssue()}>
-                  {issueSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Potvrdit výdej na zakázku"}
+                  {issueSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Odebrat ze skladu a zapsat na zakázku"
+                  )}
                 </Button>
               </div>
             </CardContent>
@@ -1195,6 +1353,24 @@ export default function VyrobaZakazkaDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          <AlertDialog open={completeOpen} onOpenChange={setCompleteOpen}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Dokončit výrobu?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Zakázka se označí jako dokončená ve výrobě. Tuto akci obvykle provádí vedení po kontrole hotové
+                  práce; stav lze později změnit jen úpravou zakázky ve správě.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel disabled={workflowSaving}>Zrušit</AlertDialogCancel>
+                <AlertDialogAction onClick={() => void runWorkflow("complete")} disabled={workflowSaving}>
+                  {workflowSaving ? "Ukládám…" : "Ano, dokončit"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </>
       )}
     </div>
@@ -1253,7 +1429,7 @@ function ProductionMediaGallery({
     empty: string;
     denseGrid?: boolean;
   }) => (
-    <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 sm:p-5 space-y-4">
+    <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 sm:p-6 space-y-5">
       <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
         {icon}
         {title}
@@ -1264,8 +1440,8 @@ function ProductionMediaGallery({
         <div
           className={
             denseGrid
-              ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4"
-              : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+              ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-5"
+              : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5"
           }
         >
           {items.map((im) => (
@@ -1342,10 +1518,10 @@ function MediaTile({
     return (
       <button
         type="button"
-        className="group flex flex-col overflow-hidden rounded-xl border-2 border-slate-200 bg-white text-left shadow-sm transition hover:border-sky-400 hover:shadow-md"
+        className="group flex flex-col overflow-hidden rounded-xl border-2 border-slate-200 bg-white text-left shadow-md transition hover:border-sky-400 hover:shadow-lg"
         onClick={() => onPhotoClick({ url: file.fileUrl, name: file.fileName })}
       >
-        <div className="relative aspect-[4/3] w-full bg-slate-100">
+        <div className="relative aspect-[4/3] min-h-[200px] w-full bg-slate-100">
           <Image
             src={file.fileUrl}
             alt={file.fileName}
@@ -1371,9 +1547,9 @@ function MediaTile({
 
   if (file.kind === "pdf") {
     return (
-      <div className="flex min-h-[200px] flex-col justify-between rounded-xl border-2 border-red-100 bg-gradient-to-br from-red-50/90 to-white p-4 shadow-sm">
+      <div className="flex min-h-[260px] flex-col justify-between rounded-xl border-2 border-red-100 bg-gradient-to-br from-red-50/90 to-white p-5 shadow-md">
         <div>
-          <FileText className="h-12 w-12 text-red-600" />
+          <FileText className="h-14 w-14 text-red-600" />
           <p className="mt-3 line-clamp-3 text-sm font-semibold text-slate-900" title={file.fileName}>
             {file.fileName}
           </p>
@@ -1397,7 +1573,7 @@ function MediaTile({
       href={file.fileUrl}
       target="_blank"
       rel="noreferrer"
-      className="flex min-h-[160px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-primary/40"
+      className="flex min-h-[200px] flex-col justify-between rounded-xl border-2 border-slate-200 bg-white p-5 shadow-md transition hover:border-primary/40"
     >
       <div>
         <Package className="h-10 w-10 text-slate-400" />

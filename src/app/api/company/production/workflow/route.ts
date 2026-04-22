@@ -10,11 +10,11 @@ import {
   parseJobProductionSettings,
 } from "@/lib/job-production-settings";
 import {
-  canStartProductionWorkflow,
   parseProductionWorkflowStatus,
+  type ProductionWorkflowStatus,
 } from "@/lib/production-job-workflow";
 
-type Body = { jobId?: string };
+type Body = { jobId?: string; action?: string };
 
 export async function POST(request: NextRequest) {
   const v = await verifyCompanyBearer(request.headers.get("authorization"));
@@ -29,8 +29,12 @@ export async function POST(request: NextRequest) {
   }
 
   const jobId = String(body.jobId || "").trim();
-  if (!jobId) {
-    return NextResponse.json({ error: "Chybí jobId." }, { status: 400 });
+  const action = String(body.action || "").trim().toLowerCase();
+  if (!jobId || !action) {
+    return NextResponse.json({ error: "Chybí jobId nebo action." }, { status: 400 });
+  }
+  if (!["pause", "resume", "complete"].includes(action)) {
+    return NextResponse.json({ error: "Neplatná akce (pause, resume, complete)." }, { status: 400 });
   }
 
   const jobRef = db.collection("companies").doc(caller.companyId).collection("jobs").doc(jobId);
@@ -51,19 +55,6 @@ export async function POST(request: NextRequest) {
   }
 
   const wf = parseProductionWorkflowStatus(data);
-  if (wf === "completed") {
-    return NextResponse.json(
-      { error: "Výroba je dokončená — nelze ji znovu zahájit bez změny stavu vedením." },
-      { status: 400 }
-    );
-  }
-  if (wf === "started" || wf === "in_progress") {
-    return NextResponse.json({ error: "Výroba u této zakázky již byla zahájena." }, { status: 409 });
-  }
-  if (!canStartProductionWorkflow(wf)) {
-    return NextResponse.json({ error: "Aktuální stav neumožňuje zahájení výroby." }, { status: 400 });
-  }
-
   const userSnap = await db.collection("users").doc(caller.uid).get();
   const u = userSnap.data() as Record<string, unknown> | undefined;
   const displayName =
@@ -75,15 +66,43 @@ export async function POST(request: NextRequest) {
       : null) ||
     caller.uid;
 
-  await jobRef.update({
-    /** Po zahájení je zakázka rovnou „ve výrobě“ (aktivní stav pro výdej materiálu a přehledy). */
-    productionWorkflowStatus: "in_progress",
-    productionStatus: "active",
-    productionStartedAt: FieldValue.serverTimestamp(),
-    productionStartedBy: caller.uid,
-    productionStartedByName: displayName,
+  let next: ProductionWorkflowStatus | null = null;
+  const patch: Record<string, unknown> = {
     updatedAt: FieldValue.serverTimestamp(),
-  });
+  };
 
-  return NextResponse.json({ ok: true, productionWorkflowStatus: "in_progress" });
+  if (action === "pause") {
+    if (wf !== "started" && wf !== "in_progress") {
+      return NextResponse.json(
+        { error: "Výrobu lze pozastavit jen ve stavu Zahájeno nebo Ve výrobě." },
+        { status: 400 }
+      );
+    }
+    next = "paused";
+    patch.productionWorkflowStatus = next;
+    patch.productionStatus = "paused";
+  } else if (action === "resume") {
+    if (wf !== "paused") {
+      return NextResponse.json({ error: "Obnovit lze jen pozastavenou výrobu." }, { status: 400 });
+    }
+    next = "in_progress";
+    patch.productionWorkflowStatus = next;
+    patch.productionStatus = "active";
+  } else if (action === "complete") {
+    if (wf === "not_started" || wf === "completed") {
+      return NextResponse.json(
+        { error: "Dokončit nelze — výroba ještě nebyla zahájena, nebo je již dokončená." },
+        { status: 400 }
+      );
+    }
+    next = "completed";
+    patch.productionWorkflowStatus = next;
+    patch.productionStatus = "completed";
+    patch.productionCompletedAt = FieldValue.serverTimestamp();
+    patch.productionCompletedBy = caller.uid;
+    patch.productionCompletedByName = displayName;
+  }
+
+  await jobRef.update(patch);
+  return NextResponse.json({ ok: true, productionWorkflowStatus: next });
 }

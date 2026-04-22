@@ -44,6 +44,8 @@ import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-
 import { JobProductionTeamSection } from "@/components/jobs/job-production-team-section";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { canAccessCompanyModule } from "@/lib/platform-access";
+import { isCompanyPrivileged } from "@/lib/company-privilege";
+import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
 import {
   doc,
@@ -76,6 +78,7 @@ import {
   Camera,
   ImagePlus,
   FolderInput,
+  Factory,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -663,6 +666,25 @@ function JobDetailPageContent() {
       "vyroba",
       platformCatalog
     );
+
+  const globalRolesForVyroba = useMemo(
+    () => (Array.isArray(profile?.globalRoles) ? profile.globalRoles.map(String) : []),
+    [profile?.globalRoles]
+  );
+
+  const showVyrobaWorkshopEntry = useMemo(() => {
+    if (!vyrobaModuleOn || !jobFirestoreId || !profile) return false;
+    const r = String(profile.role || "").trim();
+    if (r === "customer") return false;
+    return (
+      isCompanyPrivileged(r, globalRolesForVyroba) ||
+      userCanAccessProductionPortal({
+        role: r,
+        globalRoles: profile.globalRoles,
+        employeeRow: employeeSelf as { canAccessProduction?: boolean } | null,
+      })
+    );
+  }, [vyrobaModuleOn, jobFirestoreId, profile, employeeSelf, globalRolesForVyroba]);
 
   const photosColRef = useMemoFirebase(
     () =>
@@ -6377,6 +6399,28 @@ function JobDetailPageContent() {
               userId={user.uid}
               canManage={canManageFolders}
             />
+          ) : null}
+
+          {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
+            <Card className={cn(JD.card, "border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
+              <CardHeader className="pb-2">
+                <CardTitle className={cn(JD.cardTitlePlain, "flex items-center gap-2")}>
+                  <Factory className="h-5 w-5 text-primary" />
+                  Výrobní dílna (zakázka ve výrobě)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3 text-sm text-gray-800">
+                <p>
+                  Otevře se bezpečný přehled bez cen a faktur: stav výroby, výdej materiálu včetně metráže a
+                  zbytků, spotřeba a velké náhledy podkladů.
+                </p>
+                <Button type="button" asChild>
+                  <Link href={`/portal/vyroba/zakazky/${String(jobFirestoreId)}`}>
+                    Otevřít výrobní dílnu této zakázky
+                  </Link>
+                </Button>
+              </CardContent>
+            </Card>
           ) : null}
 
           {companyId && jobFirestoreId && user && vyrobaModuleOn && firestore ? (

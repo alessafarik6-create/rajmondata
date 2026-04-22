@@ -264,6 +264,21 @@ export default function VyrobaDetailPage() {
         </Button>
       </div>
 
+      {prod.jobId ? (
+        <Card className="border-amber-300 bg-amber-50/90 text-slate-900">
+          <CardContent className="py-4 text-sm space-y-2">
+            <p className="font-medium">Skutečná výroba u zakázky (materiál, řezy, zbytky, podklady)</p>
+            <p className="text-slate-700">
+              Tato stránka je interní záznam výroby. Pro výdej ze skladu, metráž, zbytky a velké náhledy souborů
+              použijte výrobní dílnu u zakázky.
+            </p>
+            <Button type="button" size="sm" variant="default" asChild>
+              <Link href={`/portal/vyroba/zakazky/${String(prod.jobId)}`}>Otevřít výrobní dílnu zakázky</Link>
+            </Button>
+          </CardContent>
+        </Card>
+      ) : null}
+
       <div>
         <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl text-slate-900">
           {prod.title}

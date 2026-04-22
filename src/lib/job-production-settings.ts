@@ -161,5 +161,10 @@ export function buildProductionSafeJobView(params: {
     productionStartedBy: typeof job.productionStartedBy === "string" ? job.productionStartedBy : null,
     productionStartedByName:
       typeof job.productionStartedByName === "string" ? job.productionStartedByName : null,
+    productionCompletedAt: serializeFirestoreTime(job.productionCompletedAt),
+    productionCompletedBy:
+      typeof job.productionCompletedBy === "string" ? job.productionCompletedBy : null,
+    productionCompletedByName:
+      typeof job.productionCompletedByName === "string" ? job.productionCompletedByName : null,
   };
 }
