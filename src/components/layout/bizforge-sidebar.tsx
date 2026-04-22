@@ -26,6 +26,7 @@ import {
   Landmark,
   Receipt,
   CalendarClock,
+  CircleHelp,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -61,6 +62,7 @@ const adminLinksStatic = [
   { label: 'Nastavení platformy', href: '/admin/platform-settings', icon: Settings },
   { label: 'Licence', href: '/admin/licenses', icon: ShieldCheck },
   { label: 'Fakturace', href: '/admin/billing', icon: CreditCard },
+  { label: 'Nápověda portálu', href: '/admin/help-content', icon: CircleHelp },
 ];
 
 const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {

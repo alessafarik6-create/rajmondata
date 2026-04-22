@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore";
 import { MessageCircle, Send, Sparkles, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,11 +15,17 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
+import { useCompany, useFirestore } from "@/firebase";
+import { HELP_CONTENT_COLLECTION } from "@/lib/firestore-collections";
 import {
-  getPortalAssistantReply,
-  PORTAL_QUICK_QUESTIONS,
-  type PortalAssistantReply,
-} from "@/lib/portal-assistant-knowledge";
+  bestHelpReplyFromRows,
+  HELP_CONTENT_FALLBACK,
+  mergeHelpRowsForPortal,
+  parseHelpContentDoc,
+  pathnameToHelpModule,
+  type HelpContentRow,
+} from "@/lib/help-content";
+import { getPortalAssistantReply, type PortalAssistantReply } from "@/lib/portal-assistant-knowledge";
 
 type ChatRole = "user" | "assistant";
 
@@ -39,17 +46,70 @@ const WELCOME: ChatMessage = {
   id: "welcome",
   role: "assistant",
   text:
-    "Dobrý den, jsem nápověda k portálu. Zeptejte se na ovládání modulů, nebo zvolte rychlou otázku. Odpovědi jsou stručné návody — nejsou náhradou za podporu u složitých chyb.",
+    "Dobrý den, jsem nápověda k portálu. Zeptejte se na ovládání modulů, nebo zvolte rychlou otázku. Odpovědi vycházejí z nastavení nápovědy pro vaši organizaci — nejsou náhradou za podporu u složitých chyb.",
 };
+
+const quickChipClass =
+  "inline-flex min-h-8 max-w-full items-center rounded-md border border-slate-300 bg-[#f3f4f6] px-2.5 py-1.5 text-left text-xs font-medium text-[#111827] shadow-sm transition-colors hover:bg-[#e5e7eb] hover:border-slate-400 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50";
 
 export function ChatAssistant() {
   const pathname = usePathname() || "";
   const router = useRouter();
+  const firestore = useFirestore();
+  const { companyId } = useCompany();
+
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([WELCOME]);
   const [draft, setDraft] = useState("");
   const [typing, setTyping] = useState(false);
+  const [helpRows, setHelpRows] = useState<HelpContentRow[]>([]);
+  const [helpLoading, setHelpLoading] = useState(true);
   const endRef = useRef<HTMLDivElement | null>(null);
+
+  const helpModule = pathnameToHelpModule(pathname);
+
+  useEffect(() => {
+    if (!firestore) {
+      setHelpRows([]);
+      setHelpLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setHelpLoading(true);
+    const companyIn = companyId && String(companyId).trim() ? [String(companyId).trim(), "global"] : ["global"];
+
+    (async () => {
+      try {
+        const ref = collection(firestore, HELP_CONTENT_COLLECTION);
+        const qy = query(
+          ref,
+          where("module", "==", helpModule),
+          where("isActive", "==", true),
+          where("companyId", "in", companyIn),
+          orderBy("order", "asc"),
+          limit(48)
+        );
+        const snap = await getDocs(qy);
+        const rows: HelpContentRow[] = [];
+        snap.forEach((d) => {
+          const r = parseHelpContentDoc(d.id, d.data() as Record<string, unknown>);
+          if (r) rows.push(r);
+        });
+        const merged = mergeHelpRowsForPortal(rows, companyId);
+        if (!cancelled) setHelpRows(merged);
+      } catch (e) {
+        console.error("[ChatAssistant] helpContent", e);
+        if (!cancelled) setHelpRows([]);
+      } finally {
+        if (!cancelled) setHelpLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, companyId, helpModule]);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
@@ -80,12 +140,18 @@ export function ChatAssistant() {
       if (!q) return;
       setTyping(true);
       window.setTimeout(() => {
-        const reply = getPortalAssistantReply(q, pathname);
-        pushAssistantFromReply(reply);
+        const fromDb = bestHelpReplyFromRows(q, helpRows);
+        if (fromDb) {
+          pushAssistantFromReply(fromDb);
+        } else if (helpRows.length === 0) {
+          pushAssistantFromReply({ text: HELP_CONTENT_FALLBACK });
+        } else {
+          pushAssistantFromReply(getPortalAssistantReply(q, pathname));
+        }
         setTyping(false);
-      }, 650);
+      }, 420);
     },
-    [pathname, pushAssistantFromReply]
+    [pathname, helpRows, pushAssistantFromReply]
   );
 
   const sendUserMessage = useCallback(
@@ -103,6 +169,8 @@ export function ChatAssistant() {
     e.preventDefault();
     sendUserMessage(draft);
   };
+
+  const quickTop = helpRows.slice(0, 6);
 
   return (
     <>
@@ -135,8 +203,10 @@ export function ChatAssistant() {
               Nápověda k portálu
             </SheetTitle>
             <SheetDescription className="text-xs text-slate-600 leading-snug">
-              Rychlé odpovědi podle modulu. Aktuální stránka:{" "}
-              <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">{pathname || "/"}</code>
+              Modul: <span className="font-medium text-slate-800">{helpModule}</span>
+              {" · "}
+              Stránka:{" "}
+              <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px] text-slate-800">{pathname || "/"}</code>
             </SheetDescription>
           </SheetHeader>
 
@@ -144,30 +214,34 @@ export function ChatAssistant() {
             <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500 px-0.5">
               Rychlé otázky
             </p>
-            <div className="flex flex-wrap gap-1.5">
-              {PORTAL_QUICK_QUESTIONS.map((q) => (
-                <Button
-                  key={q.id}
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-auto min-h-8 whitespace-normal text-left text-xs py-1.5 px-2 border-slate-200 bg-white hover:bg-slate-50"
-                  disabled={typing}
-                  onClick={() => sendUserMessage(q.label)}
-                >
-                  {q.label}
-                </Button>
-              ))}
-            </div>
+            {helpLoading ? (
+              <p className="text-xs text-slate-500 px-0.5">Načítám nápovědu…</p>
+            ) : quickTop.length === 0 ? (
+              <p className="text-xs text-slate-700 px-0.5 leading-relaxed">{HELP_CONTENT_FALLBACK}</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {quickTop.map((row) => (
+                  <button
+                    key={row.id}
+                    type="button"
+                    className={quickChipClass}
+                    disabled={typing}
+                    onClick={() => sendUserMessage(row.question)}
+                  >
+                    {row.question}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <ScrollArea className="min-h-0 flex-1 px-3 overflow-hidden">
-            <div className="flex flex-col gap-3 py-3 pr-2">
+            <div className="flex flex-col gap-4 py-4 pr-2">
               {messages.map((m) => (
                 <div
                   key={m.id}
                   className={cn(
-                    "flex gap-2",
+                    "flex gap-3",
                     m.role === "user" ? "flex-row-reverse" : "flex-row"
                   )}
                 >
@@ -187,15 +261,15 @@ export function ChatAssistant() {
                   </div>
                   <div
                     className={cn(
-                      "max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm",
+                      "max-w-[88%] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed shadow-sm",
                       m.role === "user"
                         ? "bg-primary text-primary-foreground rounded-br-md"
-                        : "bg-slate-100 text-slate-900 border border-slate-100 rounded-bl-md"
+                        : "bg-slate-100 text-slate-900 border border-slate-200/90 rounded-bl-md"
                     )}
                   >
                     <p className="whitespace-pre-wrap">{m.text}</p>
                     {m.role === "assistant" && m.openHref ? (
-                      <div className="mt-2 pt-2 border-t border-slate-200/80">
+                      <div className="mt-3 pt-2 border-t border-slate-200/80">
                         <Button
                           type="button"
                           variant="secondary"
@@ -214,7 +288,7 @@ export function ChatAssistant() {
                 </div>
               ))}
               {typing ? (
-                <div className="flex gap-2 items-center text-xs text-slate-500 pl-10">
+                <div className="flex gap-2 items-center text-xs text-slate-500 pl-11">
                   <span className="inline-flex gap-1">
                     <span className="animate-pulse">Píšu</span>
                     <span className="inline-flex gap-0.5">
@@ -237,7 +311,7 @@ export function ChatAssistant() {
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="Napište otázku…"
-              className="min-h-10 bg-slate-50 border-slate-200"
+              className="min-h-10 bg-slate-50 border-slate-200 text-slate-900 placeholder:text-slate-500"
               disabled={typing}
               aria-label="Text otázky"
             />

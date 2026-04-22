@@ -1894,6 +1894,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    /**
+     * Nápověda portálu — čtení jen aktivních řádků pro vlastní firmu nebo globál.
+     * Zápis pouze přes Admin API (superadmin).
+     */
+    match /helpContent/{docId} {
+      allow read: if signedIn() &&
+        resource.data.isActive == true &&
+        (resource.data.companyId == 'global' ||
+          (hasUser() && userDoc().companyId != null && resource.data.companyId == userDoc().companyId));
+      allow create, update, delete: if false;
+    }
+
     match /organizations/{orgId} {
       allow read, update: if signedIn();
     }

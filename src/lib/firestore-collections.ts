@@ -12,3 +12,6 @@ export const PLATFORM_SETTINGS_COLLECTION = "platform_settings";
 export const PLATFORM_MODULES_COLLECTION = "platform_modules";
 export const PLATFORM_SEO_COLLECTION = "platform_seo";
 export const COMPANY_LICENSES_COLLECTION = "company_licenses";
+
+/** Položky nápovědy portálu (globální nebo per firma). */
+export const HELP_CONTENT_COLLECTION = "helpContent";
