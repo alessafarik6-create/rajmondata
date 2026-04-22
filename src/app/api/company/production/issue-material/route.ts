@@ -262,7 +262,11 @@ export async function POST(request: NextRequest) {
             unit,
             quantity: newAvailable,
             stockTrackingMode: "length",
+            measurementType: "length",
+            /** Délka řádku po řezu (stejné významy jako currentLength u length režimu). */
             originalLength: newAvailable,
+            originalQuantity: available,
+            remainingQuantity: newAvailable,
             currentLength: newAvailable,
             lengthStockUnit:
               typeof item.lengthStockUnit === "string"
@@ -274,6 +278,7 @@ export async function POST(request: NextRequest) {
             consumedByJobId: jobId,
             remainderAvailable: true,
             remainderFullyConsumed: false,
+            remainderStatus: "free",
             warehouseLocation: loc,
             reservedForJobId: null,
             supplier,
@@ -293,6 +298,10 @@ export async function POST(request: NextRequest) {
       if (item.isRemainder === true && newAvailable <= 1e-9) {
         itemPatch.remainderFullyConsumed = true;
         itemPatch.remainderAvailable = false;
+        itemPatch.remainderStatus = "used";
+        itemPatch.remainingQuantity = 0;
+        itemPatch.currentLength = 0;
+        itemPatch.quantity = 0;
       }
 
       tx.update(itemRef, itemPatch as UpdateData<DocumentData>);
@@ -365,13 +374,18 @@ export async function POST(request: NextRequest) {
         companyId: caller.companyId,
         jobId,
         jobName,
+        productionJobId: jobId,
         inventoryItemId: itemId,
+        stockItemId: itemId,
         sourceStockItemId: itemId,
         parentStockItemId: parentTrace,
         itemName,
         quantity: qtyInStockUnit,
+        quantityUsed: qtyInStockUnit,
         quantityIssued: qtyInStockUnit,
         quantityBeforeOnHand: available,
+        originalQuantity: available,
+        remainingQuantityAfterCut: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
         unit,
         inputLengthUnit: inputLengthUnit || null,
         movementId,
@@ -384,6 +398,7 @@ export async function POST(request: NextRequest) {
         quantityRemainingOnStock: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
         remainderCreated: remainderItemId != null,
         remainderItemId,
+        remainderId: remainderItemId,
         stockTrackingMode: mode,
         createdAt: FieldValue.serverTimestamp(),
       });

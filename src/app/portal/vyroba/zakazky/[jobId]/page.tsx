@@ -19,7 +19,18 @@ import {
   useMemoFirebase,
   useCompany,
 } from "@/firebase";
-import { ArrowLeft, Factory, FileText, ImageIcon, Layers, Loader2, Package, Play } from "lucide-react";
+import {
+  ArrowLeft,
+  ExternalLink,
+  Factory,
+  FileText,
+  ImageIcon,
+  Layers,
+  Loader2,
+  Package,
+  Play,
+  ZoomIn,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +45,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
@@ -60,6 +77,9 @@ type JobAttachmentFile = {
   fileUrl: string;
   fileName: string;
   kind: AttachmentKind;
+  createdAt?: unknown;
+  uploadedBy?: string;
+  uploadedByName?: string;
 };
 
 function attachmentKindFromName(name: string): AttachmentKind {
@@ -121,6 +141,54 @@ function formatConsumptionCreatedAt(raw: unknown): string {
     typeof o.seconds === "number" ? o.seconds : typeof o._seconds === "number" ? o._seconds : null;
   if (sec != null) return formatIsoCs(new Date(sec * 1000).toISOString());
   return "";
+}
+
+function LengthCutSummary({
+  item,
+  issueQtyStr,
+  inputUnit,
+  availableInStockUnit,
+}: {
+  item: InventoryItemRow;
+  issueQtyStr: string;
+  inputUnit: "mm" | "cm" | "m" | null;
+  availableInStockUnit: number;
+}) {
+  const u = String(item.unit || "").trim() || "—";
+  const q = Number(String(issueQtyStr).replace(",", "."));
+  if (!Number.isFinite(q) || q <= 0) {
+    return (
+      <div className="rounded-md border border-blue-100 bg-blue-50/70 p-3 text-xs text-slate-800 space-y-1">
+        <p className="font-semibold text-blue-950">Metráž — přehled řezu</p>
+        <p>
+          Zásoba na řádce: <strong>{availableInStockUnit}</strong> {u}
+        </p>
+        <p className="text-slate-600">Zadejte odebírané množství pro výpočet zbytku po řezu.</p>
+      </div>
+    );
+  }
+  const conv = quantityInStockUnits(item, q, inputUnit);
+  const rem =
+    conv != null && Number.isFinite(conv) ? Math.max(0, availableInStockUnit - conv) : null;
+  return (
+    <div className="rounded-md border border-blue-100 bg-blue-50/70 p-3 text-xs text-slate-800 space-y-1.5">
+      <p className="font-semibold text-blue-950">Metráž — řez</p>
+      <p>
+        Zásoba před výdejem: <strong>{availableInStockUnit}</strong> {u}
+      </p>
+      <p>
+        Odebírá se na zakázku:{" "}
+        <strong>
+          {conv != null && Number.isFinite(conv) ? conv.toFixed(4).replace(/\.?0+$/, "") : "—"}
+        </strong>{" "}
+        {u}
+      </p>
+      <p>
+        Zůstane na skladě (zbytek):{" "}
+        <strong>{rem != null ? rem.toFixed(4).replace(/\.?0+$/, "") : "—"}</strong> {u}
+      </p>
+    </div>
+  );
 }
 
 type SafeJobView = Record<string, unknown> & { jobId?: string };
@@ -364,6 +432,18 @@ export default function VyrobaZakazkaDetailPage() {
             const url = String(row.fileUrl || "");
             const name = String(row.fileName || "soubor");
             if (!url) return;
+            const rowCreatedBy =
+              typeof row.createdBy === "string" && row.createdBy.trim()
+                ? row.createdBy.trim()
+                : typeof row.uploadedBy === "string" && row.uploadedBy.trim()
+                  ? row.uploadedBy.trim()
+                  : undefined;
+            const rowCreatedByName =
+              typeof row.createdByName === "string" && row.createdByName.trim()
+                ? row.createdByName.trim()
+                : typeof row.uploadedByName === "string" && row.uploadedByName.trim()
+                  ? row.uploadedByName.trim()
+                  : undefined;
             all.push({
               id: d.id,
               folderId: f.id,
@@ -371,6 +451,9 @@ export default function VyrobaZakazkaDetailPage() {
               fileUrl: url,
               fileName: name,
               kind: attachmentKindFromName(name),
+              createdAt: row.createdAt,
+              uploadedBy: rowCreatedBy,
+              uploadedByName: rowCreatedByName,
             });
           });
         }
@@ -585,7 +668,7 @@ export default function VyrobaZakazkaDetailPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="outline" size="sm" asChild>
           <Link href="/portal/vyroba/zakazky" className="gap-2">
@@ -632,26 +715,6 @@ export default function VyrobaZakazkaDetailPage() {
               Zobrazení bez cen, faktur a obchodních dokladů.
             </p>
           </div>
-
-          <Card className={CARD}>
-            <CardHeader className="border-b border-slate-100">
-              <CardTitle className="text-base text-slate-900 flex items-center gap-2">
-                <Layers className="h-4 w-4" />
-                Výrobní podklady
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="pt-4 space-y-4">
-              {visibleFolders.length === 0 ? (
-                <p className="text-sm text-slate-600">
-                  {isPrivilegedViewer
-                    ? "U této zakázky zatím nejsou žádné složky s podklady (kromě typu „dokumenty“). Nahrajte plánky nebo fotky do složky zakázky."
-                    : "Žádné složky označené pro výrobní tým. Administrátor může u složky zapnout „viditelné pro výrobu“ nebo vybrat složky v nastavení zakázky."}
-                </p>
-              ) : (
-                <ProductionAttachmentBlocks files={attachmentFiles} loading={attachmentsLoading} />
-              )}
-            </CardContent>
-          </Card>
 
           {canShowStartButton ? (
             <div className="rounded-xl border-2 border-amber-400/90 bg-gradient-to-br from-amber-50 to-orange-50/80 p-4 sm:p-5 shadow-sm">
@@ -752,10 +815,10 @@ export default function VyrobaZakazkaDetailPage() {
             <CardHeader className="border-b border-slate-100">
               <CardTitle className="text-base text-slate-900 flex items-center gap-2">
                 <Package className="h-4 w-4" />
-                Materiál pro výrobu
+                Vzít materiál ze skladu
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-4 space-y-6 text-sm">
+            <CardContent className="pt-4 space-y-4 text-sm">
               <div>
                 <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Materiál přiřazený k výrobě</p>
                 <p className="text-slate-700">
@@ -764,8 +827,8 @@ export default function VyrobaZakazkaDetailPage() {
                 </p>
               </div>
 
-              <div className="rounded-lg border border-slate-100 bg-slate-50/60 p-4 space-y-3">
-                <p className="text-sm font-semibold text-slate-900">Vzít ze skladu</p>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-4 sm:p-5 space-y-3 shadow-sm">
+                <p className="text-sm font-semibold text-slate-900">Formulář výdeje</p>
                 <div className="space-y-2">
                   <Label>Skladová položka</Label>
                   <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
@@ -867,6 +930,14 @@ export default function VyrobaZakazkaDetailPage() {
                       {selectedItem.unit || ""}
                     </p>
                   ) : null}
+                  {selectedItem && String(selectedItem.stockTrackingMode) === "length" ? (
+                    <LengthCutSummary
+                      item={selectedItem}
+                      issueQtyStr={issueQty}
+                      inputUnit={lengthUnitEditable ? issueInputLengthUnit : null}
+                      availableInStockUnit={availableQty}
+                    />
+                  ) : null}
                 </div>
                 <div className="space-y-2">
                   <Label>Šarže / poznámka (volitelné)</Label>
@@ -887,9 +958,19 @@ export default function VyrobaZakazkaDetailPage() {
                   {issueSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Potvrdit výdej na zakázku"}
                 </Button>
               </div>
+            </CardContent>
+          </Card>
 
+          <Card className={CARD}>
+            <CardHeader className="border-b border-slate-100">
+              <CardTitle className="text-base text-slate-900 flex items-center gap-2">
+                <Layers className="h-4 w-4" />
+                Spotřebovaný materiál
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4 space-y-5 text-sm">
               <div>
-                <p className="text-sm font-semibold text-slate-900 mb-2">Spotřebovaný materiál (souhrn)</p>
+                <p className="text-sm font-semibold text-slate-900 mb-2">Souhrn podle položek</p>
                 {consumptionSummary.length === 0 ? (
                   <p className="text-slate-600 text-xs">Zatím žádná spotřeba.</p>
                 ) : (
@@ -955,24 +1036,49 @@ export default function VyrobaZakazkaDetailPage() {
                               </>
                             ) : null}
                           </p>
-                          {c.quantityBeforeOnHand != null ? (
-                            <p className="text-xs text-slate-500 mt-1">
-                              Před výdejem na řádce: {String(c.quantityBeforeOnHand)} → po pohybu na skladě
-                              zůstalo: <strong>{String(c.quantityRemainingOnStock ?? "—")}</strong>{" "}
+                          {typeof c.originalQuantity === "number" ||
+                          typeof c.quantityBeforeOnHand === "number" ||
+                          c.quantityRemainingOnStock != null ? (
+                            <p className="text-xs text-slate-600 mt-1">
+                              Před výdejem na řádce:{" "}
+                              <strong>
+                                {String(
+                                  typeof c.originalQuantity === "number"
+                                    ? c.originalQuantity
+                                    : c.quantityBeforeOnHand ?? "—"
+                                )}
+                              </strong>{" "}
                               {String(c.unit ?? "")}
-                            </p>
-                          ) : c.quantityRemainingOnStock != null ? (
-                            <p className="text-xs text-slate-500 mt-1">
-                              Na skladě po výdeji zůstalo:{" "}
-                              <strong>{String(c.quantityRemainingOnStock)}</strong> {String(c.unit ?? "")}
+                              {typeof c.remainingQuantityAfterCut === "number" ? (
+                                <>
+                                  {" "}
+                                  · zůstalo po řezu / na skladě:{" "}
+                                  <strong>{String(c.remainingQuantityAfterCut)}</strong> {String(c.unit ?? "")}
+                                </>
+                              ) : c.quantityRemainingOnStock != null ? (
+                                <>
+                                  {" "}
+                                  → na skladě zůstalo:{" "}
+                                  <strong>{String(c.quantityRemainingOnStock)}</strong> {String(c.unit ?? "")}
+                                </>
+                              ) : null}
                             </p>
                           ) : null}
-                          {c.remainderCreated === true || c.remainderItemId ? (
+                          {typeof c.quantityUsed === "number" ? (
+                            <p className="text-xs text-slate-700 mt-0.5">
+                              Spotřeba (quantityUsed): <strong>{String(c.quantityUsed)}</strong>{" "}
+                              {String(c.unit ?? "")}
+                            </p>
+                          ) : null}
+                          {c.remainderCreated === true || c.remainderItemId || c.remainderId ? (
                             <p className="text-xs text-amber-800 mt-1">
                               Vznikl zbytek (nová skladová položka)
-                              {typeof c.remainderItemId === "string" ? (
+                              {typeof (c.remainderId || c.remainderItemId) === "string" ? (
                                 <>
-                                  : <code className="text-[11px]">{c.remainderItemId}</code>
+                                  :{" "}
+                                  <code className="text-[11px]">
+                                    {String(c.remainderId || c.remainderItemId)}
+                                  </code>
                                 </>
                               ) : null}
                             </p>
@@ -1044,7 +1150,15 @@ export default function VyrobaZakazkaDetailPage() {
                             : Number(row.quantity ?? 0);
                         const used = row.remainderFullyConsumed === true;
                         const free = !used && row.remainderAvailable !== false;
-                        const statusLabel = used ? "Použitý / uzavřený" : free ? "Volný" : "Blokováno / ne k výdeji";
+                        const rs = String(row.remainderStatus || "").toLowerCase();
+                        const statusLabel =
+                          rs === "used" || used
+                            ? "Použitý / uzavřený"
+                            : rs === "reserved"
+                              ? "Rezervovaný"
+                              : free
+                                ? "Volný"
+                                : "Blokováno / ne k výdeji";
                         return (
                           <tr key={row.id} className="border-t border-slate-100 align-top">
                             <td className="p-2 font-medium">{row.name}</td>
@@ -1061,19 +1175,50 @@ export default function VyrobaZakazkaDetailPage() {
               )}
             </CardContent>
           </Card>
+
+          <Card className={CARD}>
+            <CardHeader className="border-b border-slate-100">
+              <CardTitle className="text-base text-slate-900 flex items-center gap-2">
+                <ImageIcon className="h-4 w-4 text-sky-600" />
+                Výrobní podklady
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-4">
+              {visibleFolders.length === 0 ? (
+                <p className="text-sm text-slate-600">
+                  {isPrivilegedViewer
+                    ? "U této zakázky zatím nejsou žádné složky s podklady (kromě typu „dokumenty“). Nahrajte plánky nebo fotky do složky zakázky."
+                    : "Žádné složky označené pro výrobní tým. Administrátor může u složky zapnout „viditelné pro výrobu“ nebo vybrat složky v nastavení zakázky."}
+                </p>
+              ) : (
+                <ProductionMediaGallery files={attachmentFiles} loading={attachmentsLoading} />
+              )}
+            </CardContent>
+          </Card>
         </>
       )}
     </div>
   );
 }
 
-function ProductionAttachmentBlocks({
+function fileMetaLine(file: JobAttachmentFile): string {
+  const parts: string[] = [];
+  if (file.folderName) parts.push(`Složka: ${file.folderName}`);
+  const when = formatConsumptionCreatedAt(file.createdAt);
+  if (when) parts.push(when);
+  if (file.uploadedByName) parts.push(`Nahrál: ${file.uploadedByName}`);
+  else if (file.uploadedBy) parts.push(`Nahrál: ${file.uploadedBy}`);
+  return parts.join(" · ");
+}
+
+function ProductionMediaGallery({
   files,
   loading,
 }: {
   files: JobAttachmentFile[];
   loading: boolean;
 }) {
+  const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
   const groups = useMemo(() => {
     const g: Record<AttachmentKind, JobAttachmentFile[]> = {
       drawing: [],
@@ -1088,7 +1233,11 @@ function ProductionAttachmentBlocks({
   }, [files]);
 
   if (loading) {
-    return <Loader2 className="h-6 w-6 animate-spin text-primary" />;
+    return (
+      <div className="flex justify-center py-10">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
   }
 
   const Section = ({
@@ -1096,23 +1245,31 @@ function ProductionAttachmentBlocks({
     icon,
     items,
     empty,
+    denseGrid,
   }: {
     title: string;
     icon: React.ReactNode;
     items: JobAttachmentFile[];
     empty: string;
+    denseGrid?: boolean;
   }) => (
-    <div className="rounded-lg border border-slate-100 bg-slate-50/50 p-3 space-y-2">
-      <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
+    <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-4 sm:p-5 space-y-4">
+      <div className="flex items-center gap-2 text-base font-semibold text-slate-900">
         {icon}
         {title}
       </div>
       {items.length === 0 ? (
-        <p className="text-xs text-slate-500">{empty}</p>
+        <p className="text-sm text-slate-500">{empty}</p>
       ) : (
-        <div className="flex flex-wrap gap-3">
+        <div
+          className={
+            denseGrid
+              ? "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4"
+              : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4"
+          }
+        >
           {items.map((im) => (
-            <AttachmentTile key={`${im.folderId}-${im.id}`} file={im} />
+            <MediaTile key={`${im.folderId}-${im.id}`} file={im} onPhotoClick={setLightbox} />
           ))}
         </div>
       )}
@@ -1120,28 +1277,50 @@ function ProductionAttachmentBlocks({
   );
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      <Dialog open={lightbox != null} onOpenChange={(o) => !o && setLightbox(null)}>
+        <DialogContent className="max-w-[min(96vw,1100px)] border-slate-200 bg-white p-0 overflow-hidden">
+          <DialogHeader className="sr-only">
+            <DialogTitle>{lightbox?.name || "Náhled"}</DialogTitle>
+          </DialogHeader>
+          {lightbox ? (
+            <div className="relative max-h-[85vh] w-full bg-black/90">
+              {/* eslint-disable-next-line @next/next/no-img-element -- lightbox origin URL z Storage */}
+              <img
+                src={lightbox.url}
+                alt={lightbox.name}
+                className="mx-auto max-h-[85vh] w-auto max-w-full object-contain"
+              />
+              <p className="absolute bottom-0 left-0 right-0 bg-black/70 px-3 py-2 text-sm text-white truncate">
+                {lightbox.name}
+              </p>
+            </div>
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       <Section
-        title="Plánky / výkresy"
-        icon={<Layers className="h-4 w-4 text-slate-600" />}
-        items={groups.drawing}
-        empty="Žádné plánky ani výkresy v označených složkách."
+        title="Fotky a obrázky"
+        icon={<ImageIcon className="h-5 w-5 text-sky-600" />}
+        items={groups.photo}
+        empty="Žádné fotografie v označených složkách."
+        denseGrid
       />
       <Section
         title="PDF dokumenty"
-        icon={<FileText className="h-4 w-4 text-red-600" />}
+        icon={<FileText className="h-5 w-5 text-red-600" />}
         items={groups.pdf}
         empty="Žádná PDF."
       />
       <Section
-        title="Fotodokumentace"
-        icon={<ImageIcon className="h-4 w-4 text-sky-600" />}
-        items={groups.photo}
-        empty="Žádné fotografie."
+        title="Plánky / výkresy"
+        icon={<Layers className="h-5 w-5 text-slate-600" />}
+        items={groups.drawing}
+        empty="Žádné plánky ani výkresy."
       />
       <Section
-        title="Ostatní výrobní podklady"
-        icon={<Factory className="h-4 w-4 text-slate-500" />}
+        title="Ostatní soubory"
+        icon={<Factory className="h-5 w-5 text-slate-500" />}
         items={groups.other}
         empty="Žádné další soubory."
       />
@@ -1149,41 +1328,86 @@ function ProductionAttachmentBlocks({
   );
 }
 
-function AttachmentTile({ file }: { file: JobAttachmentFile }) {
+function MediaTile({
+  file,
+  onPhotoClick,
+}: {
+  file: JobAttachmentFile;
+  onPhotoClick: (p: { url: string; name: string }) => void;
+}) {
   const isImg = file.kind === "photo";
+  const meta = fileMetaLine(file);
+
+  if (isImg) {
+    return (
+      <button
+        type="button"
+        className="group flex flex-col overflow-hidden rounded-xl border-2 border-slate-200 bg-white text-left shadow-sm transition hover:border-sky-400 hover:shadow-md"
+        onClick={() => onPhotoClick({ url: file.fileUrl, name: file.fileName })}
+      >
+        <div className="relative aspect-[4/3] w-full bg-slate-100">
+          <Image
+            src={file.fileUrl}
+            alt={file.fileName}
+            fill
+            className="object-cover"
+            sizes="(max-width: 768px) 100vw, 280px"
+            unoptimized
+          />
+          <span className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-medium text-white opacity-0 transition group-hover:opacity-100">
+            <ZoomIn className="h-3 w-3" />
+            Zvětšit
+          </span>
+        </div>
+        <div className="space-y-1 p-3">
+          <p className="line-clamp-2 text-sm font-medium text-slate-900" title={file.fileName}>
+            {file.fileName}
+          </p>
+          <p className="line-clamp-2 text-[11px] text-slate-500">{meta}</p>
+        </div>
+      </button>
+    );
+  }
+
+  if (file.kind === "pdf") {
+    return (
+      <div className="flex min-h-[200px] flex-col justify-between rounded-xl border-2 border-red-100 bg-gradient-to-br from-red-50/90 to-white p-4 shadow-sm">
+        <div>
+          <FileText className="h-12 w-12 text-red-600" />
+          <p className="mt-3 line-clamp-3 text-sm font-semibold text-slate-900" title={file.fileName}>
+            {file.fileName}
+          </p>
+          <p className="mt-2 line-clamp-3 text-[11px] text-slate-600">{meta}</p>
+        </div>
+        <a
+          href={file.fileUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-4 inline-flex items-center gap-2 text-sm font-medium text-red-700 hover:underline"
+        >
+          <ExternalLink className="h-4 w-4" />
+          Otevřít PDF
+        </a>
+      </div>
+    );
+  }
+
   return (
     <a
       href={file.fileUrl}
       target="_blank"
       rel="noreferrer"
-      className="block w-[132px] rounded-lg border border-slate-200 bg-white overflow-hidden shadow-sm hover:border-primary/40 transition-colors"
+      className="flex min-h-[160px] flex-col justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-primary/40"
     >
-      <div className="aspect-square flex items-center justify-center bg-slate-50">
-        {isImg ? (
-          <Image
-            src={file.fileUrl}
-            alt={file.fileName}
-            width={132}
-            height={132}
-            className="object-cover w-full h-full"
-            unoptimized
-          />
-        ) : file.kind === "pdf" ? (
-          <div className="p-2 text-center">
-            <FileText className="mx-auto h-10 w-10 text-red-500" />
-            <p className="text-[10px] mt-1 line-clamp-3 text-slate-800 leading-tight">{file.fileName}</p>
-            <p className="text-[9px] text-primary mt-1 font-medium">Otevřít</p>
-          </div>
-        ) : (
-          <div className="p-2 text-center">
-            <Package className="mx-auto h-8 w-8 text-slate-400" />
-            <p className="text-[10px] mt-1 line-clamp-3 text-slate-700">{file.fileName}</p>
-          </div>
-        )}
+      <div>
+        <Package className="h-10 w-10 text-slate-400" />
+        <p className="mt-2 line-clamp-3 text-sm font-medium text-slate-900">{file.fileName}</p>
+        <p className="mt-2 line-clamp-3 text-[11px] text-slate-500">{meta}</p>
       </div>
-      <p className="text-[9px] text-slate-500 px-1.5 py-1 truncate border-t border-slate-100" title={file.folderName}>
-        {file.folderName}
-      </p>
+      <span className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-primary">
+        <ExternalLink className="h-3.5 w-3.5" />
+        Otevřít
+      </span>
     </a>
   );
 }

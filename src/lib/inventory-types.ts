@@ -49,6 +49,13 @@ export type InventoryItemRow = {
   /** Volný zbytek k dalšímu použití. */
   remainderAvailable?: boolean | null;
   remainderFullyConsumed?: boolean | null;
+  /** Volný / použitý / rezervovaný — doplněno u zbytků po řezu (text pro UI i pravidla). */
+  remainderStatus?: "free" | "used" | "reserved" | string | null;
+  /** U zbytku: zbývající množství (u length shodné s currentLength). */
+  remainingQuantity?: number | null;
+  /** U zbytku: množství na původní řádce před řezem, který zbytek vytvořil. */
+  originalQuantity?: number | null;
+  measurementType?: "length" | "pieces" | string | null;
   /** Pohyb skladu, kterým vznikl zbytek (partial_out). */
   sourceStockMovementId?: string | null;
   /** Umístění ve skladu (volitelné). */
