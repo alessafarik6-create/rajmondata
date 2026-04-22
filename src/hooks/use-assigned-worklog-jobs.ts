@@ -40,6 +40,18 @@ export function useAssignedWorklogJobs(
   jobs: { id: string; name?: string }[];
   jobsLoading: boolean;
 } {
+  const assignedNamesById = useMemo(() => {
+    const raw = (employeeData as { assignedWorklogJobsById?: unknown } | null | undefined)
+      ?.assignedWorklogJobsById;
+    if (!raw || typeof raw !== "object") return new Map<string, string>();
+    const m = new Map<string, string>();
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (typeof k === "string" && k.trim() && typeof v === "string" && v.trim()) {
+        m.set(k.trim(), v.trim());
+      }
+    }
+    return m;
+  }, [employeeData]);
   const depsKey = useMemo(() => {
     if (employeeDocLoading) return "__loading__";
     return [
@@ -105,25 +117,31 @@ export function useAssignedWorklogJobs(
 
         if (jobLabelSource === "employeeSummary") {
           for (const jid of allIds) {
-            const sref = doc(
-              firestore,
-              "companies",
-              companyId,
-              "jobs",
-              jid,
-              "employeeSummary",
-              "summary"
-            );
-            const snap = await getDoc(sref);
-            const nm =
-              snap.exists() &&
-              typeof (snap.data() as { name?: string }).name === "string"
-                ? String((snap.data() as { name: string }).name).trim()
-                : "";
-            acc.push({
-              id: jid,
-              name: nm || undefined,
-            });
+            const direct = assignedNamesById.get(jid);
+            if (direct) {
+              acc.push({ id: jid, name: direct });
+              continue;
+            }
+            try {
+              const sref = doc(
+                firestore,
+                "companies",
+                companyId,
+                "jobs",
+                jid,
+                "employeeSummary",
+                "summary"
+              );
+              const snap = await getDoc(sref);
+              const nm =
+                snap.exists() &&
+                typeof (snap.data() as { name?: string }).name === "string"
+                  ? String((snap.data() as { name: string }).name).trim()
+                  : "";
+              acc.push({ id: jid, name: nm || undefined });
+            } catch {
+              acc.push({ id: jid, name: undefined });
+            }
           }
         } else {
           const chunks = chunkArray(allIds, 10);
@@ -141,6 +159,15 @@ export function useAssignedWorklogJobs(
           }
         }
         if (!cancelled) {
+          // pokud už je jobId v mapě u zaměstnance, upřednostni ho (stabilní label i při omezených právech)
+          for (let i = 0; i < acc.length; i++) {
+            const r = acc[i];
+            if (!r) continue;
+            if (!r.name) {
+              const direct = assignedNamesById.get(r.id);
+              if (direct) acc[i] = { ...r, name: direct };
+            }
+          }
           acc.sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id, "cs"));
           setJobs(acc);
         }
@@ -178,6 +205,7 @@ export function useAssignedWorklogJobs(
     userUid,
     employeeId,
     jobLabelSource,
+    assignedNamesById,
   ]);
 
   const assignedJobIds = useMemo(() => {

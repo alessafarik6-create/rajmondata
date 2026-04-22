@@ -302,6 +302,10 @@ export default function EmployeeWorklogsPage() {
       setJobsLoading(false);
       return;
     }
+    const byId =
+      employeeDoc && typeof employeeDoc.assignedWorklogJobsById === "object" && employeeDoc.assignedWorklogJobsById
+        ? (employeeDoc.assignedWorklogJobsById as Record<string, unknown>)
+        : null;
     let cancelled = false;
     setJobsLoading(true);
     void (async () => {
@@ -319,6 +323,24 @@ export default function EmployeeWorklogsPage() {
             acc.push({ id: d.id, name: data.name });
           });
         }
+        // fallback: pokud zaměstnanec nemá právo na jobs/{id}, použij mapu uloženou na employee doc
+        if (byId) {
+          for (const jid of assignedJobIds) {
+            if (acc.some((x) => x.id === jid)) continue;
+            const nm = byId[jid];
+            if (typeof nm === "string" && nm.trim()) {
+              acc.push({ id: jid, name: nm.trim() });
+            } else {
+              acc.push({ id: jid, name: undefined });
+            }
+          }
+          for (let i = 0; i < acc.length; i++) {
+            const r = acc[i];
+            if (!r?.name && byId && typeof byId[r.id] === "string" && String(byId[r.id]).trim()) {
+              acc[i] = { ...r, name: String(byId[r.id]).trim() };
+            }
+          }
+        }
         if (!cancelled) {
           acc.sort((a, b) =>
             (a.name || a.id).localeCompare(b.name || b.id, "cs")
@@ -327,7 +349,18 @@ export default function EmployeeWorklogsPage() {
         }
       } catch (e) {
         console.error("[worklogs] load jobs", e);
-        if (!cancelled) setAssignedJobs([]);
+        if (!cancelled) {
+          // i při chybě dotazu se pokusíme zobrazit stabilní názvy z uložené mapy
+          const fallback: { id: string; name?: string }[] = [];
+          if (byId) {
+            for (const jid of assignedJobIds) {
+              const nm = byId[jid];
+              if (typeof nm === "string" && nm.trim()) fallback.push({ id: jid, name: nm.trim() });
+              else fallback.push({ id: jid, name: undefined });
+            }
+          }
+          setAssignedJobs(fallback);
+        }
       } finally {
         if (!cancelled) setJobsLoading(false);
       }
@@ -335,7 +368,7 @@ export default function EmployeeWorklogsPage() {
     return () => {
       cancelled = true;
     };
-  }, [firestore, companyId, assignedJobIds, assignedJobIdsKey]);
+  }, [firestore, companyId, assignedJobIds, assignedJobIdsKey, employeeDoc]);
 
   const blocksQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId || !user?.uid) return null;
@@ -1281,7 +1314,11 @@ export default function EmployeeWorklogsPage() {
                           </TableCell>
                           <TableCell className="max-w-[160px] align-top text-sm text-black">
                             <span className="break-words">
-                              {b.jobName?.trim() || b.jobId || "—"}
+                              {b.jobName?.trim()
+                                ? b.jobName.trim()
+                                : b.jobId
+                                  ? "Zakázka nenalezena"
+                                  : "—"}
                             </span>
                           </TableCell>
                           <TableCell className="max-w-[320px] align-top text-sm text-black">
@@ -1475,7 +1512,11 @@ export default function EmployeeWorklogsPage() {
                                   Zakázka
                                 </dt>
                                 <dd className="break-words text-black">
-                                  {b.jobName?.trim() || b.jobId || "—"}
+                                  {b.jobName?.trim()
+                                    ? b.jobName.trim()
+                                    : b.jobId
+                                      ? "Zakázka nenalezena"
+                                      : "—"}
                                 </dd>
                               </div>
                               <div className="col-span-2">
@@ -1577,7 +1618,11 @@ export default function EmployeeWorklogsPage() {
                                   </div>
                                 </TableCell>
                                 <TableCell className="max-w-[140px] truncate text-sm text-black">
-                                  {b.jobName?.trim() || b.jobId || "—"}
+                                  {b.jobName?.trim()
+                                    ? b.jobName.trim()
+                                    : b.jobId
+                                      ? "Zakázka nenalezena"
+                                      : "—"}
                                 </TableCell>
                                 <TableCell className="max-w-[200px] truncate text-black">
                                   {getWorklogDescriptionOriginal(b) || "—"}
@@ -1711,7 +1756,7 @@ export default function EmployeeWorklogsPage() {
                       </option>
                       {assignedJobs.map((j) => (
                         <option key={j.id} value={j.id}>
-                          {j.name?.trim() || j.id}
+                          {j.name?.trim() ? j.name.trim() : "Zakázka nenalezena"}
                         </option>
                       ))}
                     </select>
@@ -1857,7 +1902,7 @@ export default function EmployeeWorklogsPage() {
                 <option value="">— vyberte zakázku —</option>
                 {assignedJobs.map((j) => (
                   <option key={j.id} value={j.id}>
-                    {j.name?.trim() || j.id}
+                    {j.name?.trim() ? j.name.trim() : "Zakázka nenalezena"}
                   </option>
                 ))}
               </select>

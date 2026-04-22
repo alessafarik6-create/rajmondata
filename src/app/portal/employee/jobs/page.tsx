@@ -114,7 +114,7 @@ export default function EmployeeJobsListPage() {
                     className="flex min-h-[52px] items-center justify-between gap-3 px-4 py-3 transition-colors hover:bg-muted/50"
                   >
                     <span className="font-medium text-foreground">
-                      {j.name?.trim() || j.id}
+                      {j.name?.trim() ? j.name.trim() : "Zakázka nenalezena"}
                     </span>
                     <span className="text-xs text-muted-foreground">Otevřít</span>
                   </Link>

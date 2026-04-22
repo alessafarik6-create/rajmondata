@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   serverTimestamp,
@@ -168,6 +169,14 @@ export function JobEmployeeAssignmentsSection({
         doc(firestore, "companies", companyId, "employees", emp.id),
         {
           assignedJobIds: arrayUnion(jobId),
+          assignedWorklogJobIds: arrayUnion(jobId),
+          [`assignedWorklogJobsById.${jobId}`]:
+            (typeof jobRecord?.name === "string" && jobRecord.name.trim()
+              ? jobRecord.name.trim()
+              : typeof (jobRecord as { title?: unknown } | null | undefined)?.title === "string" &&
+                  String((jobRecord as { title: string }).title).trim()
+                ? String((jobRecord as { title: string }).title).trim()
+                : jobId),
           updatedAt: serverTimestamp(),
         }
       );
@@ -227,6 +236,8 @@ export function JobEmployeeAssignmentsSection({
         doc(firestore, "companies", companyId, "employees", m.id),
         {
           assignedJobIds: arrayRemove(jobId),
+          assignedWorklogJobIds: arrayRemove(jobId),
+          [`assignedWorklogJobsById.${jobId}`]: deleteField(),
           updatedAt: serverTimestamp(),
         }
       );

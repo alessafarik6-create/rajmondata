@@ -428,6 +428,14 @@ export default function EmployeesPage() {
       return;
     setSavingAssignedWorklogJobs(true);
     try {
+      const byId: Record<string, string> = {};
+      for (const j of companyJobs) {
+        if (!j?.id) continue;
+        if (assignWorklogJobIds.has(j.id)) {
+          const nm = String(j.name || "").trim();
+          byId[j.id] = nm || j.id;
+        }
+      }
       await updateDoc(
         doc(
           firestore,
@@ -438,6 +446,7 @@ export default function EmployeesPage() {
         ),
         {
           assignedWorklogJobIds: Array.from(assignWorklogJobIds),
+          assignedWorklogJobsById: byId,
           enableDailyWorkLog: Boolean(enableUnifiedWorkReportToggle),
           enableWorkLog: Boolean(enableUnifiedWorkReportToggle),
           updatedAt: serverTimestamp(),
@@ -465,6 +474,14 @@ export default function EmployeesPage() {
       return;
     setSavingAssignedTerminalJobs(true);
     try {
+      const byId: Record<string, string> = {};
+      for (const j of companyJobs) {
+        if (!j?.id) continue;
+        if (assignTerminalJobIds.has(j.id)) {
+          const nm = String(j.name || "").trim();
+          byId[j.id] = nm || j.id;
+        }
+      }
       await updateDoc(
         doc(
           firestore,
@@ -475,6 +492,7 @@ export default function EmployeesPage() {
         ),
         {
           assignedTerminalJobIds: Array.from(assignTerminalJobIds),
+          assignedTerminalJobsById: byId,
           autoApproveJobEarnings: Boolean(autoApproveJobEarningsTerminal),
           updatedAt: serverTimestamp(),
         }
