@@ -317,7 +317,9 @@ export function MeetingRecordFormDialog(props: {
           else nextHistory.push(makeShareEvent("resent_to_customer"));
         }
         const nextSent = share || prevShared;
+        const legacyMissingCreatedAt = !prev?.createdAt;
         const publicUpdate = {
+          companyId,
           title: legacyTitleVal,
           meetingTitle: meetingTitleVal,
           meetingAt: at,
@@ -335,6 +337,7 @@ export function MeetingRecordFormDialog(props: {
           shareHistory: nextHistory.slice(-40),
           updatedAt: serverTimestamp(),
           updatedBy: user.uid,
+          ...(legacyMissingCreatedAt ? { createdAt: serverTimestamp() } : {}),
         };
         console.log("[MeetingRecordFormDialog] save → batch.update (public)", {
           companyId,
@@ -530,7 +533,7 @@ export function MeetingRecordFormDialog(props: {
               <Label>Zakázka</Label>
               <Select
                 value={jobId || "__none__"}
-                onValueChange={(v) => setJobId(v === "__none__" ? "" : v)}
+                onValueChange={(v) => setJobId(v === "__none__" ? "" : v.trim())}
               >
                 <SelectTrigger className="bg-white">
                   <SelectValue placeholder="Bez zakázky (obecný záznam)" />
@@ -538,7 +541,7 @@ export function MeetingRecordFormDialog(props: {
                 <SelectContent>
                   <SelectItem value="__none__">Bez zakázky (obecný záznam)</SelectItem>
                   {jobs.map((j) => (
-                    <SelectItem key={j.id} value={j.id}>
+                    <SelectItem key={j.id} value={j.id.trim()}>
                       {j.name}
                     </SelectItem>
                   ))}
