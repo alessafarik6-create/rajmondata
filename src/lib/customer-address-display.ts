@@ -4,7 +4,8 @@
 
 import { deriveCustomerDisplayNameFromJob } from "@/lib/job-customer-client";
 
-function deriveCustomerDisplayNameFromCustomerDoc(c: unknown): string {
+/** Zobrazené jméno z dokumentu `companies/.../customers/{id}` (firma nebo jméno + příjmení). */
+export function deriveCustomerDisplayNameFromCustomerDoc(c: unknown): string {
   if (!c || typeof c !== "object") return "";
   const o = c as Record<string, unknown>;
   const company = String(o.companyName ?? "").trim();
