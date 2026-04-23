@@ -70,6 +70,8 @@ import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catal
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import { isCompanyPrivileged, normalizeCompanyRole } from "@/lib/company-privilege";
 import type { InventoryItemRow } from "@/lib/inventory-types";
+import { resolveInventoryItemImageUrl } from "@/lib/inventory-item-image";
+import { InventoryItemThumbnail } from "@/components/warehouse/inventory-item-thumbnail";
 import Image from "next/image";
 import {
   lengthToMillimeters,
@@ -121,6 +123,35 @@ function attachmentKindFromName(name: string): AttachmentKind {
   if (/\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(n)) return "photo";
   if (/\.(dwg|dxf|step|stp|stl|iges|igs|plt)(\?|$)/i.test(n)) return "drawing";
   return "other";
+}
+
+/** Náhled zbytku: vlastní obrázek řádky, jinak původní skladová položka. */
+function remainderRowHeroThumb(
+  row: InventoryItemRow,
+  parent: InventoryItemRow | undefined
+): Record<string, unknown> | undefined {
+  const r = row as unknown as Record<string, unknown>;
+  if (resolveInventoryItemImageUrl(r)) return r;
+  if (parent) return parent as unknown as Record<string, unknown>;
+  return r;
+}
+
+function stockModeShortLabel(mode: string | null | undefined): string {
+  const m = String(mode || "pieces").toLowerCase();
+  if (m === "length") return "Metráž";
+  if (m === "area") return "Plocha";
+  if (m === "mass") return "Hmotnost";
+  if (m === "generic") return "Obecná evidence";
+  return "Kusy";
+}
+
+function availableStockQtyForIssueForm(i: InventoryItemRow): number {
+  const mode = String(i.stockTrackingMode || "pieces");
+  if (mode === "length") {
+    const cur = i.currentLength;
+    if (cur != null && Number.isFinite(Number(cur))) return Number(cur);
+  }
+  return Number(i.quantity ?? 0);
 }
 
 function defaultLengthInputUnit(item: InventoryItemRow | null): "mm" | "cm" | "m" {
@@ -660,19 +691,30 @@ export default function VyrobaZakazkaDetailPage() {
     workflowStatus === "started" || workflowStatus === "in_progress" || workflowStatus === "paused";
 
   const consumptionSummary = useMemo(() => {
-    const m = new Map<string, { name: string; unit: string; qty: number }>();
-    consumptions.forEach((c, idx) => {
-      const key =
-        (typeof c.inventoryItemId === "string" && c.inventoryItemId.trim()) ||
-        `name:${String(c.itemName || "")}:${idx}`;
+    const map = new Map<
+      string,
+      { name: string; unit: string; qty: number; itemId: string | null }
+    >();
+    consumptions.forEach((c) => {
+      const itemIdRaw =
+        typeof c.inventoryItemId === "string" && c.inventoryItemId.trim()
+          ? c.inventoryItemId.trim()
+          : typeof c.sourceStockItemId === "string" && c.sourceStockItemId.trim()
+            ? c.sourceStockItemId.trim()
+            : null;
       const name = String(c.itemName || "");
       const unit = String(c.unit || "");
+      const key = itemIdRaw ?? `name:${name}`;
       const qty = Number(c.quantity ?? 0);
-      const prev = m.get(key);
-      if (prev) prev.qty += qty;
-      else m.set(key, { name, unit, qty });
+      const prev = map.get(key);
+      if (prev) {
+        prev.qty += qty;
+        if (!prev.itemId && itemIdRaw) prev.itemId = itemIdRaw;
+      } else {
+        map.set(key, { name, unit, qty, itemId: itemIdRaw });
+      }
     });
-    return Array.from(m.values());
+    return Array.from(map.values());
   }, [consumptions]);
 
   const remainderRows = useMemo(
@@ -1131,19 +1173,69 @@ export default function VyrobaZakazkaDetailPage() {
                 <div className="space-y-2">
                   <Label>Skladová položka</Label>
                   <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
-                    <SelectTrigger className="bg-white border-slate-200">
-                      <SelectValue placeholder="Vyberte materiál nebo zbytek" />
+                    <SelectTrigger
+                      className="bg-white border-slate-200 min-h-[56px] h-auto py-2 px-3"
+                      aria-label={
+                        selectedItem
+                          ? `Vybraná položka: ${selectedItem.name}, dostupné ${availableQty} ${selectedItem.unit || "ks"}`
+                          : "Vyberte skladovou položku nebo zbytek"
+                      }
+                    >
+                      <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
+                        {selectedItem ? (
+                          <>
+                            <InventoryItemThumbnail item={selectedItem} size={48} />
+                            <div className="min-w-0 flex-1 pr-1">
+                              <p className="truncate text-sm font-medium text-slate-900">
+                                {selectedItem.name}
+                                {selectedItem.isRemainder ? (
+                                  <span className="font-normal text-slate-600"> · zbytek</span>
+                                ) : null}
+                              </p>
+                              <p className="truncate text-[11px] text-slate-500">
+                                {selectedItem.sku ? `SKU ${selectedItem.sku} · ` : ""}
+                                {availableQty} {selectedItem.unit || "ks"} ·{" "}
+                                {stockModeShortLabel(selectedItem.stockTrackingMode)}
+                              </p>
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-sm text-slate-500">Vyberte materiál nebo zbytek</span>
+                        )}
+                      </div>
                     </SelectTrigger>
-                    <SelectContent className="bg-white border-slate-200 max-h-60">
+                    <SelectContent className="bg-white border-slate-200 max-h-[min(24rem,70vh)] min-w-[min(calc(100vw-1.5rem),28rem)] w-[var(--radix-select-trigger-width)] max-w-[min(calc(100vw-1.5rem),28rem)] sm:w-auto sm:min-w-[var(--radix-select-trigger-width)]">
                       {issueableInventory.length === 0 ? (
                         <div className="px-2 py-3 text-xs text-slate-500">Žádná dostupná položka se zásobou.</div>
                       ) : (
-                        issueableInventory.map((i) => (
-                          <SelectItem key={i.id} value={i.id}>
-                            {i.name}
-                            {i.isRemainder ? " (zbytek)" : ""} — {i.unit || "ks"}
-                          </SelectItem>
-                        ))
+                        issueableInventory.map((i) => {
+                          const q = availableStockQtyForIssueForm(i);
+                          return (
+                            <SelectItem
+                              key={i.id}
+                              value={i.id}
+                              textValue={`${i.name} ${i.sku || ""} ${i.unit || ""}`}
+                              className="cursor-pointer py-2.5 pr-3"
+                            >
+                              <div className="flex items-center gap-2.5">
+                                <InventoryItemThumbnail item={i} size={48} />
+                                <div className="min-w-0 flex-1 text-left">
+                                  <p className="text-sm font-medium leading-snug text-slate-900">
+                                    {i.name}
+                                    {i.isRemainder ? (
+                                      <span className="font-normal text-slate-600"> (zbytek)</span>
+                                    ) : null}
+                                  </p>
+                                  <p className="mt-0.5 text-[11px] text-slate-500">
+                                    {i.sku ? `SKU: ${i.sku} · ` : ""}
+                                    Dostupné: <strong>{q}</strong> {i.unit || "ks"} ·{" "}
+                                    {stockModeShortLabel(i.stockTrackingMode)}
+                                  </p>
+                                </div>
+                              </div>
+                            </SelectItem>
+                          );
+                        })
                       )}
                     </SelectContent>
                   </Select>
@@ -1151,35 +1243,48 @@ export default function VyrobaZakazkaDetailPage() {
                 {issueableInventory.length > 0 ? (
                   <div className="space-y-2">
                     <Label className="text-xs text-slate-600">Rychlý výběr — klikněte na skladovou položku</Label>
-                    <div className="flex flex-wrap gap-2 max-h-44 overflow-y-auto p-0.5">
-                      {issueableInventory.slice(0, 48).map((i) => (
-                        <Button
-                          key={i.id}
-                          type="button"
-                          variant={issueItemId === i.id ? "default" : "outline"}
-                          size="sm"
-                          className="text-xs h-auto py-1.5 px-2 whitespace-normal text-left max-w-[240px] justify-start"
-                          onClick={() => setIssueItemId(i.id)}
-                        >
-                          <span className="line-clamp-2 text-left">
-                            {i.name}
-                            {i.isRemainder ? " · zbytek" : ""}
-                          </span>
-                        </Button>
-                      ))}
+                    <div className="flex flex-wrap gap-2 max-h-[min(18rem,50vh)] overflow-y-auto p-0.5">
+                      {issueableInventory.slice(0, 48).map((i) => {
+                        const q = availableStockQtyForIssueForm(i);
+                        return (
+                          <Button
+                            key={i.id}
+                            type="button"
+                            variant={issueItemId === i.id ? "default" : "outline"}
+                            size="sm"
+                            className="h-auto min-h-[4.5rem] w-full max-w-[min(100%,20rem)] flex-shrink-0 flex items-stretch gap-2 py-2 px-2 text-left justify-start sm:max-w-[18rem]"
+                            onClick={() => setIssueItemId(i.id)}
+                          >
+                            <InventoryItemThumbnail item={i} size={48} />
+                            <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
+                              <span className="line-clamp-2 text-xs font-medium leading-snug">
+                                {i.name}
+                                {i.isRemainder ? " · zbytek" : ""}
+                              </span>
+                              <span className="text-[10px] font-normal opacity-90 line-clamp-1">
+                                {i.sku ? `SKU ${i.sku} · ` : ""}
+                                {q} {i.unit || "ks"} · {stockModeShortLabel(i.stockTrackingMode)}
+                              </span>
+                            </span>
+                          </Button>
+                        );
+                      })}
                     </div>
                   </div>
                 ) : null}
                 {selectedItem ? (
-                  <p className="text-xs text-slate-600">
-                    Dostupné:{" "}
-                    <strong>
-                      {availableQty} {selectedItem.unit || "ks"}
-                    </strong>
-                    {String(selectedItem.stockTrackingMode || "") === "length"
-                      ? " — u délek lze odebrat část; zbytek vznikne jako nová skladová řádka."
-                      : null}
-                  </p>
+                  <div className="flex items-start gap-3 rounded-md border border-slate-100 bg-white p-2">
+                    <InventoryItemThumbnail item={selectedItem} size={48} />
+                    <p className="text-xs text-slate-600 pt-1">
+                      Dostupné:{" "}
+                      <strong>
+                        {availableQty} {selectedItem.unit || "ks"}
+                      </strong>
+                      {String(selectedItem.stockTrackingMode || "") === "length"
+                        ? " — u délek lze odebrat část; zbytek vznikne jako nová skladová řádka."
+                        : null}
+                    </p>
+                  </div>
                 ) : null}
                 {selectedItem && String(selectedItem.stockTrackingMode) === "length" && lengthUnitEditable ? (
                   <div className="space-y-2">
@@ -1277,15 +1382,32 @@ export default function VyrobaZakazkaDetailPage() {
                 {consumptionSummary.length === 0 ? (
                   <p className="text-slate-600 text-xs">Zatím žádná spotřeba.</p>
                 ) : (
-                  <ul className="space-y-1 text-sm">
-                    {consumptionSummary.map((row) => (
-                      <li key={`${row.name}-${row.unit}`} className="flex justify-between gap-2 border-b border-slate-100 pb-1">
-                        <span>{row.name}</span>
-                        <span className="shrink-0">
-                          {row.qty} {row.unit}
-                        </span>
-                      </li>
-                    ))}
+                  <ul className="space-y-2 text-sm">
+                    {consumptionSummary.map((row) => {
+                      const inv = row.itemId ? inventoryById.get(row.itemId) : undefined;
+                      return (
+                        <li
+                          key={`${row.name}-${row.unit}-${row.itemId || ""}`}
+                          className="flex items-center gap-2 border-b border-slate-100 pb-2"
+                        >
+                          <InventoryItemThumbnail item={inv} size={48} />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-medium text-slate-900">{row.name}</p>
+                            {inv?.sku ? (
+                              <p className="text-[11px] text-slate-500">SKU: {inv.sku}</p>
+                            ) : null}
+                            {inv ? (
+                              <p className="text-[11px] text-slate-500">
+                                {stockModeShortLabel(inv.stockTrackingMode)}
+                              </p>
+                            ) : null}
+                          </div>
+                          <span className="shrink-0 tabular-nums">
+                            {row.qty} {row.unit}
+                          </span>
+                        </li>
+                      );
+                    })}
                   </ul>
                 )}
               </div>
@@ -1303,6 +1425,16 @@ export default function VyrobaZakazkaDetailPage() {
                           : typeof c.inventoryItemId === "string"
                             ? c.inventoryItemId
                             : "";
+                      const invForThumb =
+                        (typeof c.inventoryItemId === "string" && c.inventoryItemId.trim()
+                          ? inventoryById.get(c.inventoryItemId.trim())
+                          : undefined) ||
+                        (typeof c.sourceStockItemId === "string" && c.sourceStockItemId.trim()
+                          ? inventoryById.get(c.sourceStockItemId.trim())
+                          : undefined) ||
+                        (typeof c.parentStockItemId === "string" && c.parentStockItemId.trim()
+                          ? inventoryById.get(c.parentStockItemId.trim())
+                          : undefined);
                       const who =
                         typeof c.createdByName === "string" && c.createdByName.trim()
                           ? c.createdByName.trim()
@@ -1317,9 +1449,14 @@ export default function VyrobaZakazkaDetailPage() {
                           key={String(c.id ?? `c-${idx}`)}
                           className="rounded border border-slate-100 p-3 text-slate-800 bg-white"
                         >
-                          <div className="flex flex-wrap justify-between gap-2">
-                            <span className="font-medium">{String(c.itemName ?? "")}</span>
-                            <span>
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div className="flex min-w-0 flex-1 items-start gap-2">
+                              <InventoryItemThumbnail item={invForThumb} size={48} />
+                              <span className="min-w-0 font-medium leading-snug">
+                                {String(c.itemName ?? "")}
+                              </span>
+                            </div>
+                            <span className="shrink-0 text-right text-sm">
                               Odebráno: <strong>−{String(c.quantity ?? "")}</strong> {String(c.unit ?? "")}
                               {c.inputLengthUnit ? (
                                 <span className="text-xs text-slate-500"> (zadáno v {String(c.inputLengthUnit)})</span>
@@ -1432,6 +1569,7 @@ export default function VyrobaZakazkaDetailPage() {
                   <table className="w-full text-sm">
                     <thead>
                       <tr className="bg-slate-50 text-left text-xs uppercase text-slate-600">
+                        <th className="w-14 p-2 font-semibold" aria-label="Náhled" />
                         <th className="p-2 font-semibold">Materiál</th>
                         <th className="p-2 font-semibold">Původní položka</th>
                         <th className="p-2 font-semibold">Zbývá</th>
@@ -1464,8 +1602,25 @@ export default function VyrobaZakazkaDetailPage() {
                                 : "Blokováno / ne k výdeji";
                         return (
                           <tr key={row.id} className="border-t border-slate-100 align-top">
-                            <td className="p-2 font-medium">{row.name}</td>
-                            <td className="p-2 text-xs text-slate-700 break-all">{parentLabel}</td>
+                            <td className="p-2 align-middle">
+                              <InventoryItemThumbnail item={remainderRowHeroThumb(row, parent)} size={48} />
+                            </td>
+                            <td className="p-2 font-medium">
+                              <div className="flex items-center gap-2">
+                                <span>{row.name}</span>
+                              </div>
+                              <p className="mt-0.5 text-[11px] font-normal text-slate-500">
+                                {stockModeShortLabel(row.stockTrackingMode)}
+                              </p>
+                            </td>
+                            <td className="p-2 text-xs text-slate-700 break-all">
+                              <div className="flex items-start gap-2">
+                                {parent ? (
+                                  <InventoryItemThumbnail item={parent} size={40} className="mt-0.5" />
+                                ) : null}
+                                <span className="min-w-0 flex-1">{parentLabel}</span>
+                              </div>
+                            </td>
                             <td className="p-2 tabular-nums">{qtyLeft}</td>
                             <td className="p-2">{row.unit || "—"}</td>
                             <td className="p-2 text-xs">{statusLabel}</td>

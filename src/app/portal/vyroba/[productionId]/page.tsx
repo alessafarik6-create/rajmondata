@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import type { InventoryItemRow } from "@/lib/inventory-types";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
@@ -47,6 +48,7 @@ import {
 } from "@/components/ui/select";
 import { buildProductionAttachmentStorageObjectPath } from "@/lib/job-photo-upload";
 import { getJobMediaFileTypeFromFile } from "@/lib/job-media-types";
+import { InventoryItemThumbnail } from "@/components/warehouse/inventory-item-thumbnail";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -113,6 +115,26 @@ export default function VyrobaDetailPage() {
   }, [areServicesAvailable, firestore, companyId, productionId]);
 
   const { data: attachments, isLoading: attLoading } = useCollection(attQuery);
+
+  const invCol = useMemoFirebase(
+    () =>
+      areServicesAvailable && firestore && companyId
+        ? query(collection(firestore, "companies", companyId, "inventoryItems"), limit(2500))
+        : null,
+    [areServicesAvailable, firestore, companyId]
+  );
+  const { data: inventoryRaw } = useCollection(invCol);
+  const inventoryById = useMemo(() => {
+    const m = new Map<string, InventoryItemRow>();
+    const list = Array.isArray(inventoryRaw) ? inventoryRaw : [];
+    for (const r of list) {
+      if (!r || typeof (r as { id?: unknown }).id !== "string") continue;
+      const row = r as InventoryItemRow;
+      if (row.isDeleted === true) continue;
+      m.set(row.id, row);
+    }
+    return m;
+  }, [inventoryRaw]);
 
   const [noteDraft, setNoteDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -367,11 +389,14 @@ export default function VyrobaDetailPage() {
                 typeof m.addedBy === "string" && m.addedBy.trim()
                   ? m.addedBy.trim()
                   : null;
+              const inv = typeof m.itemId === "string" && m.itemId.trim() ? inventoryById.get(m.itemId.trim()) : undefined;
               return (
                 <div
                   key={`${m.movementId || idx}-${m.itemId}`}
-                  className="rounded-md border border-slate-200 p-3 text-sm text-slate-800"
+                  className="flex gap-3 rounded-md border border-slate-200 p-3 text-sm text-slate-800"
                 >
+                  <InventoryItemThumbnail item={inv} size={48} className="shrink-0" />
+                  <div className="min-w-0 flex-1">
                   <span className="font-medium">{m.itemName}</span> — {m.quantity} {m.unit}
                   {m.itemId ? (
                     <span className="text-xs text-slate-500 block mt-1">
@@ -391,6 +416,7 @@ export default function VyrobaDetailPage() {
                       Pohyb skladu: {m.movementId}
                     </span>
                   ) : null}
+                  </div>
                 </div>
               );
             })
