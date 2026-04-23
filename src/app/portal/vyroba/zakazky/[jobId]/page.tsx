@@ -1156,215 +1156,335 @@ export default function VyrobaZakazkaDetailPage() {
             <CardHeader className="border-b border-slate-100">
               <CardTitle className="text-base text-slate-900 flex items-center gap-2">
                 <Package className="h-4 w-4" />
-                Vzít materiál ze skladu
+                Výdej ve výrobě
               </CardTitle>
             </CardHeader>
-            <CardContent className="pt-4 space-y-4 text-sm">
-              <div>
-                <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Materiál přiřazený k výrobě</p>
-                <p className="text-slate-700">
+            <CardContent className="px-4 pb-10 pt-6 text-sm sm:px-6">
+              <div className="mb-8 max-w-3xl space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  Materiál přiřazený k výrobě
+                </p>
+                <p className="text-sm leading-relaxed text-slate-700">
                   Materiál nemusí být předem přiřazen — při každém výdeji ze skladu se automaticky zapíše spotřeba
                   na tuto zakázku. Volitelné rezervace řeší administrace skladu.
                 </p>
               </div>
 
-              <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-4 sm:p-5 space-y-3 shadow-sm">
-                <p className="text-sm font-semibold text-slate-900">Formulář výdeje</p>
-                <div className="space-y-2">
-                  <Label>Skladová položka</Label>
-                  <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
-                    <SelectTrigger
-                      className="bg-white border-slate-200 min-h-[56px] h-auto py-2 px-3"
-                      aria-label={
-                        selectedItem
-                          ? `Vybraná položka: ${selectedItem.name}, dostupné ${availableQty} ${selectedItem.unit || "ks"}`
-                          : "Vyberte skladovou položku nebo zbytek"
-                      }
-                    >
-                      <div className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                        {selectedItem ? (
-                          <>
-                            <InventoryItemThumbnail item={selectedItem} size={48} />
-                            <div className="min-w-0 flex-1 pr-1">
-                              <p className="truncate text-sm font-medium text-slate-900">
-                                {selectedItem.name}
-                                {selectedItem.isRemainder ? (
-                                  <span className="font-normal text-slate-600"> · zbytek</span>
-                                ) : null}
-                              </p>
-                              <p className="truncate text-[11px] text-slate-500">
-                                {selectedItem.sku ? `SKU ${selectedItem.sku} · ` : ""}
-                                {availableQty} {selectedItem.unit || "ks"} ·{" "}
-                                {stockModeShortLabel(selectedItem.stockTrackingMode)}
-                              </p>
-                            </div>
-                          </>
-                        ) : (
-                          <span className="text-sm text-slate-500">Vyberte materiál nebo zbytek</span>
-                        )}
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent className="bg-white border-slate-200 max-h-[min(24rem,70vh)] min-w-[min(calc(100vw-1.5rem),28rem)] w-[var(--radix-select-trigger-width)] max-w-[min(calc(100vw-1.5rem),28rem)] sm:w-auto sm:min-w-[var(--radix-select-trigger-width)]">
-                      {issueableInventory.length === 0 ? (
-                        <div className="px-2 py-3 text-xs text-slate-500">Žádná dostupná položka se zásobou.</div>
-                      ) : (
-                        issueableInventory.map((i) => {
-                          const q = availableStockQtyForIssueForm(i);
-                          return (
-                            <SelectItem
-                              key={i.id}
-                              value={i.id}
-                              textValue={`${i.name} ${i.sku || ""} ${i.unit || ""}`}
-                              className="cursor-pointer py-2.5 pr-3"
-                            >
-                              <div className="flex items-center gap-2.5">
-                                <InventoryItemThumbnail item={i} size={48} />
-                                <div className="min-w-0 flex-1 text-left">
-                                  <p className="text-sm font-medium leading-snug text-slate-900">
-                                    {i.name}
-                                    {i.isRemainder ? (
-                                      <span className="font-normal text-slate-600"> (zbytek)</span>
-                                    ) : null}
-                                  </p>
-                                  <p className="mt-0.5 text-[11px] text-slate-500">
-                                    {i.sku ? `SKU: ${i.sku} · ` : ""}
-                                    Dostupné: <strong>{q}</strong> {i.unit || "ks"} ·{" "}
-                                    {stockModeShortLabel(i.stockTrackingMode)}
-                                  </p>
-                                </div>
+              <div className="space-y-10 rounded-xl border border-slate-200 bg-slate-50/80 p-5 shadow-sm sm:p-8 sm:pb-10">
+                {/* — Výběr materiálu — */}
+                <section aria-labelledby="issue-form-material" className="space-y-6">
+                  <h3
+                    id="issue-form-material"
+                    className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+                  >
+                    Výběr materiálu
+                  </h3>
+
+                  <div className="space-y-3">
+                    <Label htmlFor="issue-item-select" className="text-sm font-semibold text-slate-800">
+                      Skladová položka
+                    </Label>
+                    <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
+                      <SelectTrigger
+                        id="issue-item-select"
+                        className="min-h-[3.25rem] border-slate-300 bg-white py-3 pl-4 pr-3 text-base shadow-sm"
+                        aria-label={
+                          selectedItem
+                            ? `Vybraná položka: ${selectedItem.name}, dostupné ${availableQty} ${selectedItem.unit || "ks"}`
+                            : "Vyberte skladovou položku nebo zbytek"
+                        }
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-4 text-left">
+                          {selectedItem ? (
+                            <>
+                              <InventoryItemThumbnail item={selectedItem} size={48} />
+                              <div className="min-w-0 flex-1 pr-1">
+                                <p className="truncate text-sm font-medium text-slate-900 sm:text-base">
+                                  {selectedItem.name}
+                                  {selectedItem.isRemainder ? (
+                                    <span className="font-normal text-slate-600"> · zbytek</span>
+                                  ) : null}
+                                </p>
+                                <p className="mt-1 truncate text-xs text-slate-600 sm:text-sm">
+                                  {selectedItem.sku ? `SKU ${selectedItem.sku} · ` : ""}
+                                  {availableQty} {selectedItem.unit || "ks"} ·{" "}
+                                  {stockModeShortLabel(selectedItem.stockTrackingMode)}
+                                </p>
                               </div>
-                            </SelectItem>
-                          );
-                        })
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-                {issueableInventory.length > 0 ? (
-                  <div className="space-y-2">
-                    <Label className="text-xs text-slate-600">Rychlý výběr — klikněte na skladovou položku</Label>
-                    <div className="flex flex-wrap gap-2 max-h-[min(18rem,50vh)] overflow-y-auto p-0.5">
-                      {issueableInventory.slice(0, 48).map((i) => {
-                        const q = availableStockQtyForIssueForm(i);
-                        return (
-                          <Button
-                            key={i.id}
-                            type="button"
-                            variant={issueItemId === i.id ? "default" : "outline"}
-                            size="sm"
-                            className="h-auto min-h-[4.5rem] w-full max-w-[min(100%,20rem)] flex-shrink-0 flex items-stretch gap-2 py-2 px-2 text-left justify-start sm:max-w-[18rem]"
-                            onClick={() => setIssueItemId(i.id)}
-                          >
-                            <InventoryItemThumbnail item={i} size={48} />
-                            <span className="flex min-w-0 flex-1 flex-col gap-0.5 text-left">
-                              <span className="line-clamp-2 text-xs font-medium leading-snug">
-                                {i.name}
-                                {i.isRemainder ? " · zbytek" : ""}
-                              </span>
-                              <span className="text-[10px] font-normal opacity-90 line-clamp-1">
-                                {i.sku ? `SKU ${i.sku} · ` : ""}
-                                {q} {i.unit || "ks"} · {stockModeShortLabel(i.stockTrackingMode)}
-                              </span>
-                            </span>
-                          </Button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ) : null}
-                {selectedItem ? (
-                  <div className="flex items-start gap-3 rounded-md border border-slate-100 bg-white p-2">
-                    <InventoryItemThumbnail item={selectedItem} size={48} />
-                    <p className="text-xs text-slate-600 pt-1">
-                      Dostupné:{" "}
-                      <strong>
-                        {availableQty} {selectedItem.unit || "ks"}
-                      </strong>
-                      {String(selectedItem.stockTrackingMode || "") === "length"
-                        ? " — u délek lze odebrat část; zbytek vznikne jako nová skladová řádka."
-                        : null}
-                    </p>
-                  </div>
-                ) : null}
-                {selectedItem && String(selectedItem.stockTrackingMode) === "length" && lengthUnitEditable ? (
-                  <div className="space-y-2">
-                    <Label>Jednotka zadání délky</Label>
-                    <Select
-                      value={issueInputLengthUnit}
-                      onValueChange={(v) => setIssueInputLengthUnit(v as "mm" | "cm" | "m")}
-                    >
-                      <SelectTrigger className="bg-white border-slate-200 max-w-xs">
-                        <SelectValue />
+                            </>
+                          ) : (
+                            <span className="text-base text-slate-500">Vyberte materiál nebo zbytek</span>
+                          )}
+                        </div>
                       </SelectTrigger>
-                      <SelectContent className="bg-white border-slate-200">
-                        <SelectItem value="mm">mm</SelectItem>
-                        <SelectItem value="cm">cm</SelectItem>
-                        <SelectItem value="m">m</SelectItem>
+                      <SelectContent className="bg-white border-slate-200 max-h-[min(24rem,70vh)] min-w-[min(calc(100vw-1.5rem),28rem)] w-[var(--radix-select-trigger-width)] max-w-[min(calc(100vw-1.5rem),28rem)] sm:w-auto sm:min-w-[var(--radix-select-trigger-width)]">
+                        {issueableInventory.length === 0 ? (
+                          <div className="px-3 py-4 text-sm text-slate-500">
+                            Žádná dostupná položka se zásobou.
+                          </div>
+                        ) : (
+                          issueableInventory.map((i) => {
+                            const q = availableStockQtyForIssueForm(i);
+                            return (
+                              <SelectItem
+                                key={i.id}
+                                value={i.id}
+                                textValue={`${i.name} ${i.sku || ""} ${i.unit || ""}`}
+                                className="cursor-pointer py-3.5 pl-9 pr-4"
+                              >
+                                <div className="flex items-center gap-4">
+                                  <InventoryItemThumbnail item={i} size={48} />
+                                  <div className="min-w-0 flex-1 text-left">
+                                    <p className="text-sm font-medium leading-snug text-slate-900 sm:text-base">
+                                      {i.name}
+                                      {i.isRemainder ? (
+                                        <span className="font-normal text-slate-600"> (zbytek)</span>
+                                      ) : null}
+                                    </p>
+                                    <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
+                                      {i.sku ? `SKU: ${i.sku} · ` : ""}
+                                      Dostupné: <strong className="text-slate-800">{q}</strong> {i.unit || "ks"} ·{" "}
+                                      {stockModeShortLabel(i.stockTrackingMode)}
+                                    </p>
+                                  </div>
+                                </div>
+                              </SelectItem>
+                            );
+                          })
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
-                ) : null}
-                {selectedItem &&
-                String(selectedItem.stockTrackingMode) === "length" &&
-                !lengthUnitEditable ? (
-                  <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded px-2 py-1.5">
-                    Skladová jednotka není mm/cm/m — zadejte délku přímo ve stejné jednotce, v jaké je položka
-                    vedena na skladě.
-                  </p>
-                ) : null}
-                <div className="space-y-2">
-                  <Label>Odebrané množství</Label>
-                  <Input
-                    className="bg-white border-slate-200 max-w-md"
-                    inputMode="decimal"
-                    value={issueQty}
-                    onChange={(e) => setIssueQty(e.target.value)}
-                    placeholder={
-                      selectedItem
-                        ? lengthUnitEditable && String(selectedItem.stockTrackingMode) === "length"
-                          ? `např. 5000 (${issueInputLengthUnit})`
-                          : `max ${availableQty} ${selectedItem.unit || ""}`
+
+                  {issueableInventory.length > 0 ? (
+                    <div className="space-y-4">
+                      <Label className="text-sm font-semibold text-slate-800">
+                        Rychlý výběr — klikněte na skladovou položku
+                      </Label>
+                      <div className="grid max-h-[min(22rem,55vh)] grid-cols-1 gap-4 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+                        {issueableInventory.slice(0, 48).map((i) => {
+                          const q = availableStockQtyForIssueForm(i);
+                          return (
+                            <Button
+                              key={i.id}
+                              type="button"
+                              variant={issueItemId === i.id ? "default" : "outline"}
+                              className="h-auto min-h-[5.75rem] w-full items-stretch justify-start gap-4 border-slate-300 px-4 py-4 text-left shadow-sm"
+                              onClick={() => setIssueItemId(i.id)}
+                            >
+                              <InventoryItemThumbnail item={i} size={48} className="shrink-0" />
+                              <span className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 text-left">
+                                <span className="line-clamp-2 text-sm font-medium leading-snug">
+                                  {i.name}
+                                  {i.isRemainder ? " · zbytek" : ""}
+                                </span>
+                                <span className="text-xs leading-relaxed text-slate-600 opacity-95">
+                                  {i.sku ? `SKU ${i.sku} · ` : ""}
+                                  <span className="font-semibold text-slate-800">{q}</span> {i.unit || "ks"} ·{" "}
+                                  {stockModeShortLabel(i.stockTrackingMode)}
+                                </span>
+                              </span>
+                            </Button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {selectedItem ? (
+                    <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-4 sm:p-5">
+                      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/90">
+                        Dostupné množství
+                      </p>
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                        <InventoryItemThumbnail item={selectedItem} size={56} className="shrink-0" />
+                        <div className="min-w-0 flex-1 space-y-2 text-sm leading-relaxed text-slate-800">
+                          <p>
+                            Na skladě je k dispozici:{" "}
+                            <strong className="text-base text-slate-900">
+                              {availableQty} {selectedItem.unit || "ks"}
+                            </strong>
+                          </p>
+                          {String(selectedItem.stockTrackingMode || "") === "length" ? (
+                            <p className="text-sm text-slate-700">
+                              U metráže lze odebrat jen část — zbytek vznikne jako nová skladová řádka.
+                            </p>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
+
+                {/* — Množství a řez — */}
+                <section aria-labelledby="issue-form-qty" className="space-y-6 border-t border-slate-200 pt-10">
+                  <h3
+                    id="issue-form-qty"
+                    className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+                  >
+                    Množství a řez
+                  </h3>
+
+                  {selectedItem &&
+                  String(selectedItem.stockTrackingMode) === "length" &&
+                  !lengthUnitEditable ? (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm leading-relaxed text-amber-950">
+                      Skladová jednotka není mm/cm/m — zadejte odebrané množství přímo ve stejné jednotce, v jaké je
+                      položka vedena na skladě.
+                    </div>
+                  ) : null}
+
+                  <div
+                    className={`grid grid-cols-1 gap-8 lg:gap-10 ${
+                      selectedItem &&
+                      String(selectedItem.stockTrackingMode) === "length" &&
+                      lengthUnitEditable
+                        ? "lg:grid-cols-2"
                         : ""
-                    }
-                  />
-                  {remainderPreview != null && selectedItem ? (
-                    <p className="text-xs text-slate-600">
-                      Po výdeji zbude na skladě (stejná jednotka jako zásoba):{" "}
-                      <strong>{remainderPreview.toFixed(4).replace(/\.?0+$/, "")}</strong>{" "}
-                      {selectedItem.unit || ""}
-                    </p>
+                    }`}
+                  >
+                    {selectedItem &&
+                    String(selectedItem.stockTrackingMode) === "length" &&
+                    lengthUnitEditable ? (
+                      <div className="space-y-3">
+                        <Label htmlFor="issue-length-unit" className="text-sm font-semibold text-slate-800">
+                          Jednotka zadání délky
+                        </Label>
+                        <Select
+                          value={issueInputLengthUnit}
+                          onValueChange={(v) => setIssueInputLengthUnit(v as "mm" | "cm" | "m")}
+                        >
+                          <SelectTrigger
+                            id="issue-length-unit"
+                            className="min-h-12 border-slate-300 bg-white px-4 text-base shadow-sm lg:max-w-md"
+                          >
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent className="bg-white border-slate-200">
+                            <SelectItem value="mm" className="py-2.5 text-base">
+                              mm
+                            </SelectItem>
+                            <SelectItem value="cm" className="py-2.5 text-base">
+                              cm
+                            </SelectItem>
+                            <SelectItem value="m" className="py-2.5 text-base">
+                              m
+                            </SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+
+                    <div
+                      className={`space-y-3 ${
+                        !(
+                          selectedItem &&
+                          String(selectedItem.stockTrackingMode) === "length" &&
+                          lengthUnitEditable
+                        )
+                          ? "lg:col-span-2"
+                          : ""
+                      }`}
+                    >
+                      <Label htmlFor="issue-qty-input" className="text-sm font-semibold text-slate-800">
+                        Odebrané množství
+                      </Label>
+                      <Input
+                        id="issue-qty-input"
+                        className="min-h-12 max-w-full border-slate-300 bg-white px-4 py-3 text-base shadow-sm sm:max-w-md lg:max-w-lg"
+                        inputMode="decimal"
+                        value={issueQty}
+                        onChange={(e) => setIssueQty(e.target.value)}
+                        placeholder={
+                          selectedItem
+                            ? lengthUnitEditable && String(selectedItem.stockTrackingMode) === "length"
+                              ? `např. 5000 (${issueInputLengthUnit})`
+                              : `max ${availableQty} ${selectedItem.unit || ""}`
+                            : ""
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  {selectedItem &&
+                  (remainderPreview != null || String(selectedItem.stockTrackingMode) === "length") ? (
+                    <div className="space-y-4 rounded-lg border border-sky-200/90 bg-sky-50/60 p-4 sm:p-5">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-sky-950/80">
+                        Přehled zbytku po výdeji
+                      </p>
+                      {remainderPreview != null ? (
+                        <p className="text-sm leading-relaxed text-slate-800">
+                          Po výdeji zbude na skladě (stejná jednotka jako zásoba):{" "}
+                          <strong className="text-base text-slate-900">
+                            {remainderPreview.toFixed(4).replace(/\.?0+$/, "")}
+                          </strong>{" "}
+                          {selectedItem.unit || ""}
+                        </p>
+                      ) : null}
+                      {String(selectedItem.stockTrackingMode) === "length" ? (
+                        <LengthCutSummary
+                          item={selectedItem}
+                          issueQtyStr={issueQty}
+                          inputUnit={lengthUnitEditable ? issueInputLengthUnit : null}
+                          availableInStockUnit={availableQty}
+                        />
+                      ) : null}
+                    </div>
                   ) : null}
-                  {selectedItem && String(selectedItem.stockTrackingMode) === "length" ? (
-                    <LengthCutSummary
-                      item={selectedItem}
-                      issueQtyStr={issueQty}
-                      inputUnit={lengthUnitEditable ? issueInputLengthUnit : null}
-                      availableInStockUnit={availableQty}
-                    />
-                  ) : null}
-                </div>
-                <div className="space-y-2">
-                  <Label>Šarže / poznámka (volitelné)</Label>
-                  <Input
-                    className="bg-white border-slate-200"
-                    value={issueBatch}
-                    onChange={(e) => setIssueBatch(e.target.value)}
-                    placeholder="Šarže"
-                  />
-                  <Textarea
-                    className="bg-white border-slate-200 min-h-[64px]"
-                    value={issueNote}
-                    onChange={(e) => setIssueNote(e.target.value)}
-                    placeholder="Poznámka k výdeji"
-                  />
-                </div>
-                <Button type="button" disabled={issueSaving || !selectedItem} onClick={() => void submitIssue()}>
-                  {issueSaving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    "Odebrat ze skladu a zapsat na zakázku"
-                  )}
-                </Button>
+                </section>
+
+                {/* — Poznámka a potvrzení — */}
+                <section aria-labelledby="issue-form-note" className="space-y-6 border-t border-slate-200 pt-10">
+                  <h3
+                    id="issue-form-note"
+                    className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+                  >
+                    Poznámka a potvrzení
+                  </h3>
+
+                  <div className="max-w-4xl space-y-8">
+                    <div className="max-w-md space-y-3">
+                      <Label htmlFor="issue-batch" className="text-sm font-semibold text-slate-800">
+                        Šarže <span className="font-normal text-slate-500">(volitelné)</span>
+                      </Label>
+                      <Input
+                        id="issue-batch"
+                        className="min-h-12 border-slate-300 bg-white px-4 py-3 text-base shadow-sm"
+                        value={issueBatch}
+                        onChange={(e) => setIssueBatch(e.target.value)}
+                        placeholder="Číslo šarže"
+                      />
+                    </div>
+                    <div className="space-y-3">
+                      <Label htmlFor="issue-note" className="text-sm font-semibold text-slate-800">
+                        Poznámka k výdeji <span className="font-normal text-slate-500">(volitelné)</span>
+                      </Label>
+                      <Textarea
+                        id="issue-note"
+                        className="min-h-[120px] resize-y border-slate-300 bg-white px-4 py-3 text-base leading-relaxed shadow-sm"
+                        value={issueNote}
+                        onChange={(e) => setIssueNote(e.target.value)}
+                        placeholder="Doplňující informace k výdeji…"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="border-t border-slate-200/80 pt-8">
+                    <Button
+                      type="button"
+                      size="lg"
+                      className="min-h-12 w-full px-8 text-base sm:w-auto"
+                      disabled={issueSaving || !selectedItem}
+                      onClick={() => void submitIssue()}
+                    >
+                      {issueSaving ? (
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                      ) : (
+                        "Odebrat ze skladu a zapsat na zakázku"
+                      )}
+                    </Button>
+                  </div>
+                </section>
               </div>
             </CardContent>
           </Card>
