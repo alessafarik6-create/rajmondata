@@ -59,6 +59,25 @@ export type MeasurementPhotoDoc = {
  * nebo je explicitně označená jako nezařazená bez jobId.
  * Pokud existuje jobId, považujeme záznam za zařazený (fallback pro stará pole unassigned / classificationStatus).
  */
+/**
+ * Ve výrobě: zaměstnanec uvidí fotku zaměření, pokud není interní / účetní a nemá výslovný zákaz.
+ * Stará data bez polí viditelnosti považujeme za určená pro realizaci (zpětná kompatibilita oproti složkám).
+ */
+export function isMeasurementPhotoVisibleInProduction(
+  data: Record<string, unknown>,
+  isPrivilegedViewer: boolean
+): boolean {
+  if (isPrivilegedViewer) return true;
+  if (data.internalOnly === true || data.internal_only === true) return false;
+  const lk = String(data.ledgerKind ?? "").toLowerCase();
+  if (lk === "income" || lk === "expense") return false;
+  if (data.employeeVisible === false || data.visibleToEmployees === false) return false;
+  if (data.visible_to_employees === false) return false;
+  if (data.employeeVisible === true || data.visibleToEmployees === true) return true;
+  if (data.visible_to_employees === true) return true;
+  return true;
+}
+
 export function isMeasurementPhotoUnassignedForJob(data: Record<string, unknown>): boolean {
   const jobId = data.jobId;
   if (typeof jobId === "string" && jobId.trim()) {

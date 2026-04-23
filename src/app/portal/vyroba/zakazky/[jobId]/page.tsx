@@ -81,12 +81,23 @@ import {
 } from "@/lib/production-job-workflow";
 import {
   filterFoldersForProductionView,
+  isJobImageVisibleInProductionView,
   resolveJobFolderImageDownloadUrl,
   type ProductionFolderRow,
 } from "@/lib/job-production-media";
-import { isMeasurementPhotoUnassignedForJob } from "@/lib/measurement-photos";
+import {
+  isMeasurementPhotoUnassignedForJob,
+  isMeasurementPhotoVisibleInProduction,
+} from "@/lib/measurement-photos";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
+
+/** Legacy jobs/.../photos — bez nadřazené složky; po job-level legacyPhotosEmployeeVisible řídí viditelnost souboru. */
+const LEGACY_JOB_PHOTOS_FOLDER_STUB: ProductionFolderRow = {
+  id: "job-photos",
+  employeeVisible: true,
+  name: "Fotodokumentace u zakázky",
+};
 
 type AttachmentKind = "drawing" | "pdf" | "photo" | "other";
 
@@ -403,12 +414,18 @@ export default function VyrobaZakazkaDetailPage() {
    * Složky podle příznaku „Výroba“, výběru ve vedení, případně viditelnosti pro zaměstnance (fotky/soubory).
    * Typ „dokumenty“ je vyloučen (smlouvy / účetní).
    */
+  const productionFolderDebug =
+    typeof process !== "undefined" && process.env.NODE_ENV === "development";
+
   const visibleFolders = useMemo((): ProductionFolderRow[] => {
     return filterFoldersForProductionView(foldersRaw ?? [], {
       visibleFolderPick,
       isPrivilegedViewer,
+      jobId: jobId ? String(jobId) : undefined,
+      roleLabel: role,
+      debugLog: productionFolderDebug,
     });
-  }, [foldersRaw, visibleFolderPick, isPrivilegedViewer]);
+  }, [foldersRaw, visibleFolderPick, isPrivilegedViewer, jobId, role, productionFolderDebug]);
 
   useEffect(() => {
     if (!issueItemId) return;
@@ -463,7 +480,7 @@ export default function VyrobaZakazkaDetailPage() {
           const snap = await getDocs(q);
           snap.forEach((d) => {
             const row = d.data() as Record<string, unknown>;
-            if (row.internalOnly === true && !isPrivilegedViewer) return;
+            if (!isJobImageVisibleInProductionView(f, row, isPrivilegedViewer)) return;
             const url = resolveJobFolderImageDownloadUrl(row);
             const name = String(row.fileName || row.name || "soubor");
             if (!url) return;
@@ -494,35 +511,19 @@ export default function VyrobaZakazkaDetailPage() {
           });
         }
 
-        const photosCol = collection(firestore, "companies", companyId, "jobs", jid, "photos");
-        try {
-          const pq = query(photosCol, orderBy("createdAt", "desc"), limit(120));
-          const psnap = await getDocs(pq);
-          psnap.forEach((d) => {
-            const row = d.data() as Record<string, unknown>;
-            if (row.internalOnly === true && !isPrivilegedViewer) return;
-            const url = resolveJobFolderImageDownloadUrl(row);
-            const name = String(row.fileName || row.name || `Foto-${d.id}`).trim() || d.id;
-            if (!url) return;
-            all.push({
-              id: `legacy:${d.id}`,
-              folderId: "job-photos",
-              folderName: "Fotodokumentace u zakázky",
-              fileUrl: url,
-              fileName: name,
-              kind: attachmentKindFromName(name),
-              createdAt: row.createdAt,
-              uploadedBy: typeof row.uploadedBy === "string" ? row.uploadedBy : undefined,
-              uploadedByName: typeof row.uploadedByName === "string" ? row.uploadedByName : undefined,
-              mediaSource: "job_legacy",
-            });
-          });
-        } catch {
+        const legacyPhotosAllowed =
+          isPrivilegedViewer || jobView?.legacyPhotosEmployeeVisible === true;
+
+        if (legacyPhotosAllowed) {
+          const photosCol = collection(firestore, "companies", companyId, "jobs", jid, "photos");
           try {
-            const psnap = await getDocs(query(photosCol, limit(120)));
+            const pq = query(photosCol, orderBy("createdAt", "desc"), limit(120));
+            const psnap = await getDocs(pq);
             psnap.forEach((d) => {
               const row = d.data() as Record<string, unknown>;
-              if (row.internalOnly === true && !isPrivilegedViewer) return;
+              if (!isJobImageVisibleInProductionView(LEGACY_JOB_PHOTOS_FOLDER_STUB, row, isPrivilegedViewer)) {
+                return;
+              }
               const url = resolveJobFolderImageDownloadUrl(row);
               const name = String(row.fileName || row.name || `Foto-${d.id}`).trim() || d.id;
               if (!url) return;
@@ -540,7 +541,32 @@ export default function VyrobaZakazkaDetailPage() {
               });
             });
           } catch {
-            /* ignore */
+            try {
+              const psnap = await getDocs(query(photosCol, limit(120)));
+              psnap.forEach((d) => {
+                const row = d.data() as Record<string, unknown>;
+                if (!isJobImageVisibleInProductionView(LEGACY_JOB_PHOTOS_FOLDER_STUB, row, isPrivilegedViewer)) {
+                  return;
+                }
+                const url = resolveJobFolderImageDownloadUrl(row);
+                const name = String(row.fileName || row.name || `Foto-${d.id}`).trim() || d.id;
+                if (!url) return;
+                all.push({
+                  id: `legacy:${d.id}`,
+                  folderId: "job-photos",
+                  folderName: "Fotodokumentace u zakázky",
+                  fileUrl: url,
+                  fileName: name,
+                  kind: attachmentKindFromName(name),
+                  createdAt: row.createdAt,
+                  uploadedBy: typeof row.uploadedBy === "string" ? row.uploadedBy : undefined,
+                  uploadedByName: typeof row.uploadedByName === "string" ? row.uploadedByName : undefined,
+                  mediaSource: "job_legacy",
+                });
+              });
+            } catch {
+              /* ignore */
+            }
           }
         }
 
@@ -553,6 +579,7 @@ export default function VyrobaZakazkaDetailPage() {
         msnap.forEach((d) => {
           const row = d.data() as Record<string, unknown>;
           if (isMeasurementPhotoUnassignedForJob(row)) return;
+          if (!isMeasurementPhotoVisibleInProduction(row, isPrivilegedViewer)) return;
           const url = resolveJobFolderImageDownloadUrl(row);
           if (!url) return;
           const name =
@@ -613,7 +640,16 @@ export default function VyrobaZakazkaDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [firestore, companyId, jobId, accessOk, visibleFolderIdsKey, isPrivilegedViewer]);
+  }, [
+    firestore,
+    companyId,
+    jobId,
+    accessOk,
+    visibleFolderIdsKey,
+    isPrivilegedViewer,
+    jobView?.legacyPhotosEmployeeVisible,
+    role,
+  ]);
 
   const workflowStatus = useMemo(
     () => parseProductionWorkflowStatus(jobView as Record<string, unknown> | null),

@@ -169,10 +169,25 @@ export async function syncJobEmployeeSummary(
   });
 }
 
-/** Složka je pro zaměstnance viditelná jen při explicitním příznaku. */
+function normEmployeeVisibilityString(raw: unknown): string {
+  return typeof raw === "string" ? raw.trim().toLowerCase() : "";
+}
+
+/** Složka je pro zaměstnance viditelná jen při explicitním příznaku (bezpečný výchozí stav = skryto). */
 export function isFolderEmployeeVisible(folder: Record<string, unknown>): boolean {
+  if (folder.visibleToEmployees === true) return true;
+  if (folder.visible_to_employees === true) return true;
   if (folder.employeeVisible === true) return true;
   if (folder.employeeVisibility === "employee_visible") return true;
+  const ev = normEmployeeVisibilityString(folder.employee_visibility);
+  if (
+    ev === "employee_visible" ||
+    ev === "employees" ||
+    ev === "employee" ||
+    ev === "both"
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -192,7 +207,15 @@ export function isImageEmployeeVisible(
   if ("employeeVisible" in image && image.employeeVisible === false) {
     return false;
   }
+  if ("visibleToEmployees" in image && image.visibleToEmployees === false) {
+    return false;
+  }
+  if ("visible_to_employees" in image && image.visible_to_employees === false) {
+    return false;
+  }
   if (image.employeeVisible === true) return true;
+  if (image.visibleToEmployees === true) return true;
+  if (image.visible_to_employees === true) return true;
   return folder ? isFolderEmployeeVisible(folder) : false;
 }
 
@@ -205,7 +228,10 @@ export function filterFoldersForLimitedEmployee(
     : null;
   return folders.filter((f) => {
     /** Účetní / dokladové složky nikdy neukazujeme v portálu zaměstnance. */
-    if (f.type === "documents") return false;
+    const t = String(f.type ?? f.folderType ?? f.category ?? "")
+      .trim()
+      .toLowerCase();
+    if (t === "documents" || t === "document" || t === "faktury" || t === "invoices") return false;
     if (!isFolderEmployeeVisible(f)) return false;
     if (allowed && allowed.size > 0 && !allowed.has(f.id)) return false;
     if (permissions?.canViewPhotoFolders === false) return false;

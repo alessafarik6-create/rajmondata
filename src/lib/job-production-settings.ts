@@ -166,5 +166,7 @@ export function buildProductionSafeJobView(params: {
       typeof job.productionCompletedBy === "string" ? job.productionCompletedBy : null,
     productionCompletedByName:
       typeof job.productionCompletedByName === "string" ? job.productionCompletedByName : null,
+    /** Legacy kolekce jobs/.../photos — zaměstnanec jen při true na zakázce. */
+    legacyPhotosEmployeeVisible: job.legacyPhotosEmployeeVisible === true,
   };
 }
