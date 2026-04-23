@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -1172,7 +1173,7 @@ export default function VyrobaZakazkaDetailPage() {
 
               <div className="space-y-10 rounded-xl border border-slate-200 bg-slate-50/80 p-5 shadow-sm sm:p-8 sm:pb-10">
                 {/* — Výběr materiálu — */}
-                <section aria-labelledby="issue-form-material" className="space-y-6">
+                <section aria-labelledby="issue-form-material" className="space-y-8 pb-4">
                   <h3
                     id="issue-form-material"
                     className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
@@ -1187,37 +1188,45 @@ export default function VyrobaZakazkaDetailPage() {
                     <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
                       <SelectTrigger
                         id="issue-item-select"
-                        className="min-h-[3.25rem] border-slate-300 bg-white py-3 pl-4 pr-3 text-base shadow-sm"
+                        className="min-h-[4.5rem] border-slate-300 bg-white py-3 pl-4 pr-3 text-base shadow-sm h-auto !items-start"
                         aria-label={
                           selectedItem
                             ? `Vybraná položka: ${selectedItem.name}, dostupné ${availableQty} ${selectedItem.unit || "ks"}`
                             : "Vyberte skladovou položku nebo zbytek"
                         }
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-4 text-left">
+                        <div className="flex min-w-0 flex-1 items-start gap-4 py-0.5 text-left">
                           {selectedItem ? (
                             <>
-                              <InventoryItemThumbnail item={selectedItem} size={48} />
-                              <div className="min-w-0 flex-1 pr-1">
-                                <p className="truncate text-sm font-medium text-slate-900 sm:text-base">
+                              <div className="shrink-0 self-start">
+                                <InventoryItemThumbnail item={selectedItem} size={52} />
+                              </div>
+                              <div className="min-w-0 flex-1 overflow-hidden pr-1">
+                                <p className="line-clamp-2 text-left text-sm font-semibold leading-snug text-slate-900 sm:text-base">
                                   {selectedItem.name}
                                   {selectedItem.isRemainder ? (
-                                    <span className="font-normal text-slate-600"> · zbytek</span>
+                                    <span className="font-medium text-slate-600"> · zbytek</span>
                                   ) : null}
                                 </p>
-                                <p className="mt-1 truncate text-xs text-slate-600 sm:text-sm">
-                                  {selectedItem.sku ? `SKU ${selectedItem.sku} · ` : ""}
-                                  {availableQty} {selectedItem.unit || "ks"} ·{" "}
-                                  {stockModeShortLabel(selectedItem.stockTrackingMode)}
+                                <p className="mt-2 block text-left text-xs leading-relaxed text-slate-500 sm:text-sm">
+                                  {selectedItem.sku ? (
+                                    <span className="block truncate">SKU {selectedItem.sku}</span>
+                                  ) : null}
+                                  <span className="mt-0.5 block text-slate-600">
+                                    Dostupné: <strong className="text-slate-800">{availableQty}</strong>{" "}
+                                    {selectedItem.unit || "ks"}
+                                    <span className="text-slate-400"> · </span>
+                                    {stockModeShortLabel(selectedItem.stockTrackingMode)}
+                                  </span>
                                 </p>
                               </div>
                             </>
                           ) : (
-                            <span className="text-base text-slate-500">Vyberte materiál nebo zbytek</span>
+                            <span className="py-2 text-base text-slate-500">Vyberte materiál nebo zbytek</span>
                           )}
                         </div>
                       </SelectTrigger>
-                      <SelectContent className="bg-white border-slate-200 max-h-[min(24rem,70vh)] min-w-[min(calc(100vw-1.5rem),28rem)] w-[var(--radix-select-trigger-width)] max-w-[min(calc(100vw-1.5rem),28rem)] sm:w-auto sm:min-w-[var(--radix-select-trigger-width)]">
+                      <SelectContent className="bg-white border-slate-200 max-h-[min(26rem,72vh)] min-w-[min(calc(100vw-1.5rem),28rem)] w-[var(--radix-select-trigger-width)] max-w-[min(calc(100vw-1.5rem),28rem)] sm:w-auto sm:min-w-[var(--radix-select-trigger-width)]">
                         {issueableInventory.length === 0 ? (
                           <div className="px-3 py-4 text-sm text-slate-500">
                             Žádná dostupná položka se zásobou.
@@ -1230,22 +1239,27 @@ export default function VyrobaZakazkaDetailPage() {
                                 key={i.id}
                                 value={i.id}
                                 textValue={`${i.name} ${i.sku || ""} ${i.unit || ""}`}
-                                className="cursor-pointer py-3.5 pl-9 pr-4"
+                                className="cursor-pointer items-start py-4 pl-9 pr-4"
                               >
-                                <div className="flex items-center gap-4">
-                                  <InventoryItemThumbnail item={i} size={48} />
-                                  <div className="min-w-0 flex-1 text-left">
-                                    <p className="text-sm font-medium leading-snug text-slate-900 sm:text-base">
+                                <div className="flex w-full min-w-0 items-start gap-4 overflow-hidden">
+                                  <div className="shrink-0 pt-0.5">
+                                    <InventoryItemThumbnail item={i} size={52} />
+                                  </div>
+                                  <div className="min-w-0 flex-1 overflow-hidden text-left">
+                                    <p className="line-clamp-2 text-left text-sm font-semibold leading-snug text-slate-900 sm:text-base">
                                       {i.name}
                                       {i.isRemainder ? (
-                                        <span className="font-normal text-slate-600"> (zbytek)</span>
+                                        <span className="font-medium text-slate-600"> (zbytek)</span>
                                       ) : null}
                                     </p>
-                                    <p className="mt-1.5 text-xs leading-relaxed text-slate-600">
-                                      {i.sku ? `SKU: ${i.sku} · ` : ""}
-                                      Dostupné: <strong className="text-slate-800">{q}</strong> {i.unit || "ks"} ·{" "}
-                                      {stockModeShortLabel(i.stockTrackingMode)}
-                                    </p>
+                                    <div className="mt-2 space-y-1 text-xs leading-relaxed text-slate-500 sm:text-sm">
+                                      {i.sku ? <p className="truncate">SKU: {i.sku}</p> : null}
+                                      <p className="text-slate-600">
+                                        Dostupné: <strong className="text-slate-800">{q}</strong> {i.unit || "ks"}
+                                        <span className="text-slate-400"> · </span>
+                                        {stockModeShortLabel(i.stockTrackingMode)}
+                                      </p>
+                                    </div>
                                   </div>
                                 </div>
                               </SelectItem>
@@ -1257,34 +1271,78 @@ export default function VyrobaZakazkaDetailPage() {
                   </div>
 
                   {issueableInventory.length > 0 ? (
-                    <div className="space-y-4">
+                    <div className="space-y-5">
                       <Label className="text-sm font-semibold text-slate-800">
                         Rychlý výběr — klikněte na skladovou položku
                       </Label>
-                      <div className="grid max-h-[min(22rem,55vh)] grid-cols-1 gap-4 overflow-y-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
+                      <div className="grid max-h-[min(30rem,65vh)] auto-rows-min grid-cols-1 gap-5 overflow-x-hidden overflow-y-auto px-0.5 pb-2 sm:grid-cols-2 sm:gap-6">
                         {issueableInventory.slice(0, 48).map((i) => {
                           const q = availableStockQtyForIssueForm(i);
+                          const active = issueItemId === i.id;
                           return (
-                            <Button
+                            <button
                               key={i.id}
                               type="button"
-                              variant={issueItemId === i.id ? "default" : "outline"}
-                              className="h-auto min-h-[5.75rem] w-full items-stretch justify-start gap-4 border-slate-300 px-4 py-4 text-left shadow-sm"
                               onClick={() => setIssueItemId(i.id)}
+                              className={cn(
+                                "flex w-full min-w-0 min-h-[7.75rem] shrink-0 items-start gap-4 overflow-hidden rounded-xl border-2 px-4 py-4 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 sm:min-h-[8.25rem] sm:px-5 sm:py-5",
+                                active
+                                  ? "border-emerald-600 bg-emerald-600 text-white ring-1 ring-emerald-700/30"
+                                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/90 active:bg-slate-100"
+                              )}
                             >
-                              <InventoryItemThumbnail item={i} size={48} className="shrink-0" />
-                              <span className="flex min-w-0 flex-1 flex-col justify-center gap-1.5 text-left">
-                                <span className="line-clamp-2 text-sm font-medium leading-snug">
+                              <div className="shrink-0 self-start">
+                                <InventoryItemThumbnail
+                                  item={i}
+                                  size={52}
+                                  className={cn(active && "border-white/40 ring-1 ring-white/20")}
+                                />
+                              </div>
+                              <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch justify-start gap-0 overflow-hidden text-left">
+                                <p
+                                  className={cn(
+                                    "line-clamp-2 min-h-[2.5rem] text-base font-semibold leading-snug tracking-tight sm:min-h-[2.75rem]",
+                                    active ? "text-white" : "text-slate-900"
+                                  )}
+                                >
                                   {i.name}
-                                  {i.isRemainder ? " · zbytek" : ""}
-                                </span>
-                                <span className="text-xs leading-relaxed text-slate-600 opacity-95">
-                                  {i.sku ? `SKU ${i.sku} · ` : ""}
-                                  <span className="font-semibold text-slate-800">{q}</span> {i.unit || "ks"} ·{" "}
-                                  {stockModeShortLabel(i.stockTrackingMode)}
-                                </span>
-                              </span>
-                            </Button>
+                                  {i.isRemainder ? (
+                                    <span
+                                      className={cn(
+                                        "font-medium",
+                                        active ? "text-emerald-100" : "text-slate-600"
+                                      )}
+                                    >
+                                      {" "}
+                                      · zbytek
+                                    </span>
+                                  ) : null}
+                                </p>
+                                <div
+                                  className={cn(
+                                    "mt-auto space-y-1 border-t pt-2 text-xs leading-relaxed sm:text-sm",
+                                    active ? "border-white/25 text-emerald-50" : "border-slate-100 text-slate-500"
+                                  )}
+                                >
+                                  {i.sku ? (
+                                    <p className={cn("truncate", active ? "text-emerald-100/95" : "")}>
+                                      SKU {i.sku}
+                                    </p>
+                                  ) : null}
+                                  <p className={active ? "text-emerald-50" : "text-slate-600"}>
+                                    <span className={active ? "text-emerald-100" : "text-slate-500"}>
+                                      Zásoba:{" "}
+                                    </span>
+                                    <strong className={active ? "text-white" : "text-slate-800"}>{q}</strong>{" "}
+                                    {i.unit || "ks"}
+                                    <span className={active ? "text-emerald-200/90" : "text-slate-400"}>
+                                      {" "}
+                                      · {stockModeShortLabel(i.stockTrackingMode)}
+                                    </span>
+                                  </p>
+                                </div>
+                              </div>
+                            </button>
                           );
                         })}
                       </div>
@@ -1317,7 +1375,10 @@ export default function VyrobaZakazkaDetailPage() {
                 </section>
 
                 {/* — Množství a řez — */}
-                <section aria-labelledby="issue-form-qty" className="space-y-6 border-t border-slate-200 pt-10">
+                <section
+                  aria-labelledby="issue-form-qty"
+                  className="space-y-8 border-t-2 border-slate-200/90 pt-12 sm:pt-14"
+                >
                   <h3
                     id="issue-form-qty"
                     className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
