@@ -3,9 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { HELP_CONTENT_COLLECTION } from "@/lib/firestore-collections";
-import { HELP_PORTAL_MODULES } from "@/lib/help-content";
-
-const MODULE_SET = new Set<string>(HELP_PORTAL_MODULES.map((m) => m.value));
+import { coerceHelpModuleToCanonical } from "@/lib/help-content";
 
 function parseBody(body: unknown): {
   companyId: string;
@@ -19,8 +17,8 @@ function parseBody(body: unknown): {
   if (!body || typeof body !== "object") return null;
   const o = body as Record<string, unknown>;
   const companyId = String(o.companyId ?? "global").trim() || "global";
-  const module = String(o.module ?? "").trim();
-  if (!MODULE_SET.has(module)) return null;
+  const moduleCanon = coerceHelpModuleToCanonical(String(o.module ?? ""));
+  if (!moduleCanon) return null;
   const question = String(o.question ?? "").trim();
   const answer = String(o.answer ?? "").trim();
   if (!question || !answer) return null;
@@ -31,7 +29,7 @@ function parseBody(body: unknown): {
   const isActive = o.isActive !== false;
   return {
     companyId,
-    module,
+    module: moduleCanon,
     question,
     answer,
     keywords,
@@ -52,12 +50,14 @@ export async function GET(request: NextRequest) {
   }
 
   const moduleFilter = request.nextUrl.searchParams.get("module")?.trim();
+  const filterCanon = moduleFilter ? coerceHelpModuleToCanonical(moduleFilter) : null;
+
   try {
     const snap = await db.collection(HELP_CONTENT_COLLECTION).get();
     type Row = { id: string } & Record<string, unknown>;
     let items: Row[] = snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }));
-    if (moduleFilter && MODULE_SET.has(moduleFilter)) {
-      items = items.filter((row) => String(row.module ?? "") === moduleFilter);
+    if (filterCanon) {
+      items = items.filter((row) => coerceHelpModuleToCanonical(String(row.module ?? "")) === filterCanon);
     }
     items.sort((a, b) => (Number(a.order) || 0) - (Number(b.order) || 0));
     return NextResponse.json({ items });
@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const parsed = parseBody(body);
     if (!parsed) {
-      return NextResponse.json({ error: "Neplatná data." }, { status: 400 });
+      return NextResponse.json({ error: "Neplatná data (modul musí být platná hodnota z administrace)." }, { status: 400 });
     }
 
     const docRef = db.collection(HELP_CONTENT_COLLECTION).doc();

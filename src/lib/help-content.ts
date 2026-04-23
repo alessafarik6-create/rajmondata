@@ -1,28 +1,81 @@
 /**
  * Nápověda portálu — dynamický obsah z kolekce `helpContent` ve Firestore.
+ * Modul v DB je stabilní `value` (např. jobs, dashboard); staré záznamy (obecne, label) se normalizují.
  */
 
 import type { PortalAssistantReply } from "@/lib/portal-assistant-knowledge";
 
 export const HELP_CONTENT_FALLBACK = "Nápověda zatím není nastavena";
 
-/** Hodnoty pole `module` (shodné s administrací). */
+/** Select: value do Firestore, label pro uživatele. */
 export const HELP_PORTAL_MODULES = [
-  { value: "obecne", label: "Obecné / přehled" },
-  { value: "zakazky", label: "Zakázky" },
-  { value: "doklady", label: "Dokumenty" },
-  { value: "vyroba", label: "Výroba" },
-  { value: "sklad", label: "Sklad" },
-  { value: "faktury", label: "Faktury" },
-  { value: "schuzky", label: "Schůzky / zápisy" },
-  { value: "zaměstnanci", label: "Zaměstnanci" },
-  { value: "dochazka", label: "Docházka / labor" },
-  { value: "potencialni", label: "Potenciální zákazníci" },
+  { value: "dashboard", label: "Obecné / přehled" },
+  { value: "jobs", label: "Zakázky" },
+  { value: "documents", label: "Doklady" },
+  { value: "production", label: "Výroba" },
+  { value: "stock", label: "Sklad" },
+  { value: "invoices", label: "Fakturace" },
+  { value: "meetings", label: "Schůzky" },
+  { value: "customer_chats", label: "Zákaznické chaty" },
+  { value: "employees", label: "Zaměstnanci" },
+  { value: "labor", label: "Docházka / labor" },
+  { value: "leads", label: "Potenciální zákazníci" },
   { value: "finance", label: "Finance" },
-  { value: "nastaveni", label: "Nastavení" },
+  { value: "settings", label: "Nastavení" },
 ] as const;
 
-export type HelpPortalModule = (typeof HELP_PORTAL_MODULES)[number]["value"];
+export type HelpPortalModuleValue = (typeof HELP_PORTAL_MODULES)[number]["value"];
+
+const CANONICAL_VALUES = new Set<string>(HELP_PORTAL_MODULES.map((m) => m.value));
+
+function normalizeCs(s: string): string {
+  return String(s || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Staré kódy modulů (před sjednocení) → kanonická hodnota. */
+const LEGACY_CODE_TO_CANON: Record<string, HelpPortalModuleValue> = {
+  obecne: "dashboard",
+  zakazky: "jobs",
+  doklady: "documents",
+  vyroba: "production",
+  sklad: "stock",
+  faktury: "invoices",
+  fakturace: "invoices",
+  schuzky: "meetings",
+  zamestnanci: "employees",
+  dochazka: "labor",
+  potencialni: "leads",
+  nastaveni: "settings",
+};
+
+/**
+ * Převede uložené pole `module` (kanonické value, starý kód, nebo omylem uložený label) na kanonickou value.
+ */
+export function normalizeHelpModuleStored(raw: string): HelpPortalModuleValue | string {
+  const t = String(raw ?? "").trim();
+  if (!t) return "dashboard";
+  if (CANONICAL_VALUES.has(t)) return t as HelpPortalModuleValue;
+
+  const byCode = LEGACY_CODE_TO_CANON[normalizeCs(t)];
+  if (byCode) return byCode;
+
+  const n = normalizeCs(t);
+  for (const m of HELP_PORTAL_MODULES) {
+    if (normalizeCs(m.label) === n) return m.value;
+  }
+  return t;
+}
+
+/** Pro zápis z API / migraci: jen známé kanonické moduly. */
+export function coerceHelpModuleToCanonical(input: string): HelpPortalModuleValue | null {
+  const v = normalizeHelpModuleStored(input);
+  return CANONICAL_VALUES.has(v) ? (v as HelpPortalModuleValue) : null;
+}
 
 export type HelpContentDoc = {
   companyId: string;
@@ -36,71 +89,139 @@ export type HelpContentDoc = {
 
 export type HelpContentRow = HelpContentDoc & { id: string };
 
-function normalizeCs(s: string): string {
-  return String(s || "")
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** Odvození modulu nápovědy z cesty v portálu. */
-export function pathnameToHelpModule(pathname: string): HelpPortalModule {
-  const p = pathname || "";
-  if (p.startsWith("/portal/jobs")) return "zakazky";
-  if (p.startsWith("/portal/documents")) return "doklady";
-  if (p.startsWith("/portal/vyroba")) return "vyroba";
-  if (p.startsWith("/portal/sklad")) return "sklad";
-  if (p.startsWith("/portal/invoices")) return "faktury";
-  if (p.startsWith("/portal/meeting-records")) return "schuzky";
-  if (p.startsWith("/portal/employees") || p.startsWith("/portal/employee")) return "zaměstnanci";
-  if (p.startsWith("/portal/labor")) return "dochazka";
-  if (p.startsWith("/portal/leads")) return "potencialni";
-  if (p.startsWith("/portal/finance")) return "finance";
-  if (p.startsWith("/portal/settings")) return "nastaveni";
-  if (p.startsWith("/portal/dashboard") || p.startsWith("/portal")) return "obecne";
-  return "obecne";
-}
-
 function parseKeywords(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return raw.map((k) => String(k ?? "").trim()).filter(Boolean);
 }
 
+function parseOrder(raw: unknown): number {
+  if (typeof raw === "number" && !Number.isNaN(raw)) return raw;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export function parseHelpContentDoc(id: string, data: Record<string, unknown> | undefined): HelpContentRow | null {
   if (!data) return null;
   const companyId = String(data.companyId ?? "").trim();
-  const module = String(data.module ?? "").trim();
+  const moduleRaw = String(data.module ?? "").trim();
   const question = String(data.question ?? "").trim();
   const answer = String(data.answer ?? "").trim();
-  if (!companyId || !module || !question || !answer) return null;
+  if (!companyId || !question || !answer) return null;
   return {
     id,
     companyId,
-    module,
+    module: moduleRaw || "dashboard",
     question,
     answer,
     keywords: parseKeywords(data.keywords),
-    order: typeof data.order === "number" && !Number.isNaN(data.order) ? data.order : 0,
+    order: parseOrder(data.order),
     isActive: data.isActive !== false,
   };
 }
 
-export function mergeHelpRowsForPortal(
+/**
+ * Přesné řetězce v poli `module` ve Firestore, které mají patřit k danému kanonickému modulu (kvůli `where('module','in', …)`).
+ */
+export function firestoreModuleVariantsForCanonical(canonical: HelpPortalModuleValue | string): string[] {
+  const c = String(canonical).trim() as HelpPortalModuleValue;
+  const out = new Set<string>();
+  if (CANONICAL_VALUES.has(c)) {
+    out.add(c);
+    const def = HELP_PORTAL_MODULES.find((m) => m.value === c);
+    if (def) out.add(def.label);
+  }
+  for (const [legacy, canon] of Object.entries(LEGACY_CODE_TO_CANON)) {
+    if (canon === c) {
+      out.add(legacy);
+      out.add(legacy.toUpperCase());
+    }
+  }
+  return [...out].filter(Boolean);
+}
+
+/** Rozdělí seznam variant na chunky po max. 10 (limit Firestore `in`). */
+export function chunkFirestoreIn<T>(items: T[], size = 10): T[][] {
+  if (items.length === 0) return [];
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
+  return out;
+}
+
+/**
+ * Sjednotí načtené řádky v pořadí:
+ * 1) firma + aktuální modul, 2) global + aktuální modul,
+ * 3) firma + dashboard, 4) global + dashboard (jen pokud aktuální modul není už jen dashboard v krocích 1–2).
+ */
+export function mergeHelpRowsByFallbackTiers(
   rows: HelpContentRow[],
+  currentModuleCanon: HelpPortalModuleValue | string,
   companyId: string | null | undefined
 ): HelpContentRow[] {
   const cid = String(companyId ?? "").trim();
-  const filtered = rows.filter(
-    (r) => r.isActive && (r.companyId === "global" || (cid && r.companyId === cid))
-  );
-  filtered.sort((a, b) => {
-    if (a.order !== b.order) return a.order - b.order;
-    if (a.companyId !== b.companyId) return a.companyId === cid ? -1 : b.companyId === cid ? 1 : 0;
-    return a.question.localeCompare(b.question, "cs");
-  });
-  return filtered;
+  const current = String(normalizeHelpModuleStored(String(currentModuleCanon))).trim() as HelpPortalModuleValue;
+  const seen = new Set<string>();
+  const out: HelpContentRow[] = [];
+
+  const pushTier = (modCanon: HelpPortalModuleValue | string, companyScope: string) => {
+    const m = normalizeHelpModuleStored(String(modCanon)) as HelpPortalModuleValue;
+    rows
+      .filter(
+        (r) =>
+          !seen.has(r.id) &&
+          r.isActive !== false &&
+          String(r.companyId ?? "").trim() === companyScope &&
+          normalizeHelpModuleStored(r.module) === m
+      )
+      .sort((a, b) =>
+        a.order !== b.order ? a.order - b.order : a.question.localeCompare(b.question, "cs")
+      )
+      .forEach((r) => {
+        seen.add(r.id);
+        out.push(r);
+      });
+  };
+
+  if (current === "dashboard") {
+    if (cid) pushTier("dashboard", cid);
+    pushTier("dashboard", "global");
+    return out;
+  }
+
+  if (cid) pushTier(current, cid);
+  pushTier(current, "global");
+  if (cid) pushTier("dashboard", cid);
+  pushTier("dashboard", "global");
+  return out;
+}
+
+/** Sloučení podle tierů (firma → global → dashboard). */
+export function mergeHelpRowsForPortal(
+  rows: HelpContentRow[],
+  companyId: string | null | undefined,
+  currentModule?: string
+): HelpContentRow[] {
+  const mod = coerceHelpModuleToCanonical(String(currentModule ?? "dashboard")) ?? "dashboard";
+  return mergeHelpRowsByFallbackTiers(rows, mod, companyId);
+}
+
+/** Odvození kanonického modulu z cesty v portálu. */
+export function pathnameToHelpModule(pathname: string): HelpPortalModuleValue {
+  const p = pathname || "";
+  if (p.startsWith("/portal/jobs")) return "jobs";
+  if (p.startsWith("/portal/documents")) return "documents";
+  if (p.startsWith("/portal/vyroba")) return "production";
+  if (p.startsWith("/portal/sklad")) return "stock";
+  if (p.startsWith("/portal/invoices")) return "invoices";
+  if (p.startsWith("/portal/meeting-records")) return "meetings";
+  if (p.startsWith("/portal/customer-chats")) return "customer_chats";
+  if (p.startsWith("/portal/employees") || p.startsWith("/portal/employee")) return "employees";
+  if (p.startsWith("/portal/labor")) return "labor";
+  if (p.startsWith("/portal/leads")) return "leads";
+  if (p.startsWith("/portal/finance")) return "finance";
+  if (p.startsWith("/portal/settings")) return "settings";
+  if (p.startsWith("/portal/dashboard")) return "dashboard";
+  if (p.startsWith("/portal")) return "dashboard";
+  return "dashboard";
 }
 
 /** Skóre relevance dotazu k řádku nápovědy (vyšší = lepší). */

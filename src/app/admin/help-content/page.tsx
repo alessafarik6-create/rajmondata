@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/select";
 import { Loader2, Pencil, Plus, Trash2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { HELP_PORTAL_MODULES } from "@/lib/help-content";
+import { coerceHelpModuleToCanonical, HELP_PORTAL_MODULES } from "@/lib/help-content";
 
 type Row = {
   id: string;
@@ -38,7 +38,7 @@ type Row = {
 
 const emptyForm = {
   companyId: "global",
-  module: "obecne",
+  module: "dashboard",
   question: "",
   answer: "",
   keywordsText: "",
@@ -88,7 +88,7 @@ export default function AdminHelpContentPage() {
     setEditingId(row.id);
     setForm({
       companyId: String(row.companyId ?? "global"),
-      module: String(row.module ?? "obecne"),
+      module: coerceHelpModuleToCanonical(String(row.module ?? "")) ?? "dashboard",
       question: String(row.question ?? ""),
       answer: String(row.answer ?? ""),
       keywordsText: Array.isArray(row.keywords) ? row.keywords.join(", ") : "",

@@ -3,9 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
 import { HELP_CONTENT_COLLECTION } from "@/lib/firestore-collections";
-import { HELP_PORTAL_MODULES } from "@/lib/help-content";
-
-const MODULE_SET = new Set<string>(HELP_PORTAL_MODULES.map((m) => m.value));
+import { coerceHelpModuleToCanonical } from "@/lib/help-content";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -34,11 +32,11 @@ export async function PATCH(request: NextRequest, context: Ctx) {
       patch.companyId = v;
     }
     if ("module" in body) {
-      const m = String(body.module ?? "").trim();
-      if (!MODULE_SET.has(m)) {
+      const canon = coerceHelpModuleToCanonical(String(body.module ?? ""));
+      if (!canon) {
         return NextResponse.json({ error: "Neplatný modul." }, { status: 400 });
       }
-      patch.module = m;
+      patch.module = canon;
     }
     if ("question" in body) {
       const q = String(body.question ?? "").trim();

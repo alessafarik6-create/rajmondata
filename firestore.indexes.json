@@ -335,10 +335,8 @@
       "collectionGroup": "helpContent",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "module", "order": "ASCENDING" },
         { "fieldPath": "isActive", "order": "ASCENDING" },
-        { "fieldPath": "companyId", "order": "ASCENDING" },
-        { "fieldPath": "order", "order": "ASCENDING" }
+        { "fieldPath": "module", "order": "ASCENDING" }
       ]
     }
   ],

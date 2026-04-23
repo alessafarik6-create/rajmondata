@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { collection, getDocs, limit, orderBy, query, where } from "firebase/firestore";
+import { collection, getDocs, limit, query, where } from "firebase/firestore";
 import { MessageCircle, Send, Sparkles, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,8 +19,10 @@ import { useCompany, useFirestore } from "@/firebase";
 import { HELP_CONTENT_COLLECTION } from "@/lib/firestore-collections";
 import {
   bestHelpReplyFromRows,
+  chunkFirestoreIn,
+  firestoreModuleVariantsForCanonical,
   HELP_CONTENT_FALLBACK,
-  mergeHelpRowsForPortal,
+  mergeHelpRowsByFallbackTiers,
   parseHelpContentDoc,
   pathnameToHelpModule,
   type HelpContentRow,
@@ -77,29 +79,61 @@ export function ChatAssistant() {
 
     let cancelled = false;
     setHelpLoading(true);
-    const companyIn = companyId && String(companyId).trim() ? [String(companyId).trim(), "global"] : ["global"];
+
+    const helpDebug = (msg: string, data: Record<string, unknown>) => {
+      if (process.env.NODE_ENV !== "development") return;
+      console.debug(`[ChatAssistant/help] ${msg}`, data);
+    };
 
     (async () => {
+      const ref = collection(firestore, HELP_CONTENT_COLLECTION);
+      const variantSet = new Set<string>([
+        ...firestoreModuleVariantsForCanonical(helpModule),
+        ...(helpModule !== "dashboard" ? firestoreModuleVariantsForCanonical("dashboard") : []),
+      ]);
+      const chunks = chunkFirestoreIn([...variantSet], 10);
+      const rows: HelpContentRow[] = [];
+
       try {
-        const ref = collection(firestore, HELP_CONTENT_COLLECTION);
-        const qy = query(
-          ref,
-          where("module", "==", helpModule),
-          where("isActive", "==", true),
-          where("companyId", "in", companyIn),
-          orderBy("order", "asc"),
-          limit(48)
-        );
-        const snap = await getDocs(qy);
-        const rows: HelpContentRow[] = [];
-        snap.forEach((d) => {
-          const r = parseHelpContentDoc(d.id, d.data() as Record<string, unknown>);
-          if (r) rows.push(r);
+        for (const modChunk of chunks) {
+          if (modChunk.length === 0) continue;
+          const qy = query(ref, where("isActive", "==", true), where("module", "in", modChunk), limit(200));
+          const snap = await getDocs(qy);
+          snap.forEach((d) => {
+            const r = parseHelpContentDoc(d.id, d.data() as Record<string, unknown>);
+            if (r) rows.push(r);
+          });
+        }
+
+        const byId = new Map<string, HelpContentRow>();
+        for (const r of rows) {
+          if (!byId.has(r.id)) byId.set(r.id, r);
+        }
+        const deduped = [...byId.values()];
+        const merged = mergeHelpRowsByFallbackTiers(deduped, helpModule, companyId);
+
+        helpDebug("helpContent loaded", {
+          companyId: companyId ?? null,
+          pathname,
+          helpModule,
+          moduleVariants: [...variantSet],
+          queryChunks: chunks.length,
+          rawDocs: rows.length,
+          mergedCount: merged.length,
         });
-        const merged = mergeHelpRowsForPortal(rows, companyId);
+
         if (!cancelled) setHelpRows(merged);
       } catch (e) {
-        console.error("[ChatAssistant] helpContent", e);
+        const err = e as { message?: string; code?: string };
+        console.warn("[ChatAssistant/helpContent] Firestore dotaz selhal", {
+          message: err?.message,
+          code: err?.code,
+          companyId: companyId ?? null,
+          helpModule,
+          hint:
+            "Potřebný index (kolekce helpContent): isActive ASC, module ASC — viz firestore.indexes.json; po deployi vytvoř index ve Firebase Console.",
+        });
+        helpDebug("query error detail", { error: String(e) });
         if (!cancelled) setHelpRows([]);
       } finally {
         if (!cancelled) setHelpLoading(false);
@@ -109,7 +143,7 @@ export function ChatAssistant() {
     return () => {
       cancelled = true;
     };
-  }, [firestore, companyId, helpModule]);
+  }, [firestore, companyId, helpModule, pathname]);
 
   const scrollToBottom = useCallback(() => {
     requestAnimationFrame(() => {
