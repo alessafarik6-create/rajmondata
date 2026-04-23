@@ -10,6 +10,7 @@ import {
   limit,
   orderBy,
   query,
+  where,
 } from "firebase/firestore";
 import {
   useUser,
@@ -78,6 +79,12 @@ import {
   canStartProductionWorkflow,
   parseProductionWorkflowStatus,
 } from "@/lib/production-job-workflow";
+import {
+  filterFoldersForProductionView,
+  resolveJobFolderImageDownloadUrl,
+  type ProductionFolderRow,
+} from "@/lib/job-production-media";
+import { isMeasurementPhotoUnassignedForJob } from "@/lib/measurement-photos";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -93,6 +100,8 @@ type JobAttachmentFile = {
   createdAt?: unknown;
   uploadedBy?: string;
   uploadedByName?: string;
+  /** Složka zakázky / legacy fotky u zakázky / měření */
+  mediaSource?: "folder" | "job_legacy" | "measurement";
 };
 
 function attachmentKindFromName(name: string): AttachmentKind {
@@ -391,24 +400,14 @@ export default function VyrobaZakazkaDetailPage() {
   }, [accessOk, user, jobId, loadApi]);
 
   /**
-   * Firestore pravidla by ideálně vracela jen složky, které smí výrobní tým vidět.
-   * Pro jistotu ale filtrujeme i na klientu podle `productionVisibleFolderIds` / `productionTeamVisible`.
+   * Složky podle příznaku „Výroba“, výběru ve vedení, případně viditelnosti pro zaměstnance (fotky/soubory).
+   * Typ „dokumenty“ je vyloučen (smlouvy / účetní).
    */
-  const visibleFolders = useMemo(() => {
-    const list = Array.isArray(foldersRaw) ? foldersRaw : [];
-    return list
-      .filter(
-        (f): f is { id: string; name?: string; type?: string; productionTeamVisible?: boolean } =>
-          !!f && typeof (f as { id?: string }).id === "string"
-      )
-      .filter((f) => f.type !== "documents")
-      .filter((f) => {
-        if (visibleFolderPick.size > 0) return visibleFolderPick.has(f.id);
-        if (f.productionTeamVisible === true) return true;
-        if (isPrivilegedViewer) return true;
-        return false;
-      })
-      .sort((a, b) => String(a.name || a.id).localeCompare(String(b.name || b.id), "cs"));
+  const visibleFolders = useMemo((): ProductionFolderRow[] => {
+    return filterFoldersForProductionView(foldersRaw ?? [], {
+      visibleFolderPick,
+      isPrivilegedViewer,
+    });
   }, [foldersRaw, visibleFolderPick, isPrivilegedViewer]);
 
   useEffect(() => {
@@ -440,15 +439,11 @@ export default function VyrobaZakazkaDetailPage() {
 
   useEffect(() => {
     if (!firestore || !companyId || !jobId || !accessOk) return;
-    if (visibleFolders.length === 0) {
-      setAttachmentFiles([]);
-      setAttachmentsLoading(false);
-      return;
-    }
     let cancelled = false;
     setAttachmentsLoading(true);
     (async () => {
       const all: JobAttachmentFile[] = [];
+      const jid = String(jobId);
       try {
         for (const f of visibleFolders) {
           const q = query(
@@ -457,19 +452,20 @@ export default function VyrobaZakazkaDetailPage() {
               "companies",
               companyId,
               "jobs",
-              String(jobId),
+              jid,
               "folders",
               f.id,
               "images"
             ),
             orderBy("createdAt", "desc"),
-            limit(40)
+            limit(120)
           );
           const snap = await getDocs(q);
           snap.forEach((d) => {
             const row = d.data() as Record<string, unknown>;
-            const url = String(row.fileUrl || "");
-            const name = String(row.fileName || "soubor");
+            if (row.internalOnly === true && !isPrivilegedViewer) return;
+            const url = resolveJobFolderImageDownloadUrl(row);
+            const name = String(row.fileName || row.name || "soubor");
             if (!url) return;
             const rowCreatedBy =
               typeof row.createdBy === "string" && row.createdBy.trim()
@@ -484,18 +480,131 @@ export default function VyrobaZakazkaDetailPage() {
                   ? row.uploadedByName.trim()
                   : undefined;
             all.push({
-              id: d.id,
+              id: `folder:${f.id}:${d.id}`,
               folderId: f.id,
-              folderName: f.name || f.id,
+              folderName: String(f.name || f.id),
               fileUrl: url,
               fileName: name,
               kind: attachmentKindFromName(name),
               createdAt: row.createdAt,
               uploadedBy: rowCreatedBy,
               uploadedByName: rowCreatedByName,
+              mediaSource: "folder",
             });
           });
         }
+
+        const photosCol = collection(firestore, "companies", companyId, "jobs", jid, "photos");
+        try {
+          const pq = query(photosCol, orderBy("createdAt", "desc"), limit(120));
+          const psnap = await getDocs(pq);
+          psnap.forEach((d) => {
+            const row = d.data() as Record<string, unknown>;
+            if (row.internalOnly === true && !isPrivilegedViewer) return;
+            const url = resolveJobFolderImageDownloadUrl(row);
+            const name = String(row.fileName || row.name || `Foto-${d.id}`).trim() || d.id;
+            if (!url) return;
+            all.push({
+              id: `legacy:${d.id}`,
+              folderId: "job-photos",
+              folderName: "Fotodokumentace u zakázky",
+              fileUrl: url,
+              fileName: name,
+              kind: attachmentKindFromName(name),
+              createdAt: row.createdAt,
+              uploadedBy: typeof row.uploadedBy === "string" ? row.uploadedBy : undefined,
+              uploadedByName: typeof row.uploadedByName === "string" ? row.uploadedByName : undefined,
+              mediaSource: "job_legacy",
+            });
+          });
+        } catch {
+          try {
+            const psnap = await getDocs(query(photosCol, limit(120)));
+            psnap.forEach((d) => {
+              const row = d.data() as Record<string, unknown>;
+              if (row.internalOnly === true && !isPrivilegedViewer) return;
+              const url = resolveJobFolderImageDownloadUrl(row);
+              const name = String(row.fileName || row.name || `Foto-${d.id}`).trim() || d.id;
+              if (!url) return;
+              all.push({
+                id: `legacy:${d.id}`,
+                folderId: "job-photos",
+                folderName: "Fotodokumentace u zakázky",
+                fileUrl: url,
+                fileName: name,
+                kind: attachmentKindFromName(name),
+                createdAt: row.createdAt,
+                uploadedBy: typeof row.uploadedBy === "string" ? row.uploadedBy : undefined,
+                uploadedByName: typeof row.uploadedByName === "string" ? row.uploadedByName : undefined,
+                mediaSource: "job_legacy",
+              });
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+
+        const mq = query(
+          collection(firestore, "companies", companyId, "measurement_photos"),
+          where("jobId", "==", jid),
+          limit(120)
+        );
+        const msnap = await getDocs(mq);
+        msnap.forEach((d) => {
+          const row = d.data() as Record<string, unknown>;
+          if (isMeasurementPhotoUnassignedForJob(row)) return;
+          const url = resolveJobFolderImageDownloadUrl(row);
+          if (!url) return;
+          const name =
+            String(row.title || row.fileName || row.name || `Zaměření-${d.id}`).trim() || d.id;
+          all.push({
+            id: `meas:${d.id}`,
+            folderId: "measurement",
+            folderName: "Zaměření",
+            fileUrl: url,
+            fileName: name,
+            kind: "photo",
+            createdAt: row.createdAt ?? row.updatedAt,
+            uploadedBy: typeof row.createdBy === "string" ? row.createdBy : undefined,
+            uploadedByName: undefined,
+            mediaSource: "measurement",
+          });
+        });
+
+        const ts = (x: JobAttachmentFile) => {
+          const raw = x.createdAt;
+          if (raw && typeof raw === "object" && "toDate" in raw && typeof (raw as { toDate: () => Date }).toDate === "function") {
+            try {
+              return (raw as { toDate: () => Date }).toDate().getTime();
+            } catch {
+              return 0;
+            }
+          }
+          if (typeof raw === "string") {
+            const t = new Date(raw).getTime();
+            return Number.isFinite(t) ? t : 0;
+          }
+          const o = raw as { seconds?: number } | undefined;
+          if (o && typeof o.seconds === "number") return o.seconds * 1000;
+          return 0;
+        };
+        all.sort((a, b) => ts(b) - ts(a));
+
+        if (process.env.NODE_ENV === "development") {
+          const byKind = { photo: 0, pdf: 0, drawing: 0, other: 0 };
+          for (const x of all) byKind[x.kind]++;
+          console.debug("[Vyroba zakázka] podklady", {
+            jobId: jid,
+            visibleFolders: visibleFolders.length,
+            totalFiles: all.length,
+            measurement: all.filter((x) => x.mediaSource === "measurement").length,
+            legacyJobPhotos: all.filter((x) => x.mediaSource === "job_legacy").length,
+            fromFolders: all.filter((x) => x.mediaSource === "folder").length,
+            byKind,
+            privileged: isPrivilegedViewer,
+          });
+        }
+
         if (!cancelled) setAttachmentFiles(all);
       } finally {
         if (!cancelled) setAttachmentsLoading(false);
@@ -504,7 +613,7 @@ export default function VyrobaZakazkaDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [firestore, companyId, jobId, accessOk, visibleFolderIdsKey]);
+  }, [firestore, companyId, jobId, accessOk, visibleFolderIdsKey, isPrivilegedViewer]);
 
   const workflowStatus = useMemo(
     () => parseProductionWorkflowStatus(jobView as Record<string, unknown> | null),
@@ -1342,15 +1451,12 @@ export default function VyrobaZakazkaDetailPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-4">
-              {visibleFolders.length === 0 ? (
-                <p className="text-sm text-slate-600">
-                  {isPrivilegedViewer
-                    ? "U této zakázky zatím nejsou žádné složky s podklady (kromě typu „dokumenty“). Nahrajte plánky nebo fotky do složky zakázky."
-                    : "Žádné složky označené pro výrobní tým. Administrátor může u složky zapnout „viditelné pro výrobu“ nebo vybrat složky v nastavení zakázky."}
-                </p>
-              ) : (
-                <ProductionMediaGallery files={attachmentFiles} loading={attachmentsLoading} />
-              )}
+              <ProductionMediaGallery
+                files={attachmentFiles}
+                loading={attachmentsLoading}
+                noVisibleFolders={visibleFolders.length === 0}
+                isPrivilegedViewer={isPrivilegedViewer}
+              />
             </CardContent>
           </Card>
 
@@ -1390,11 +1496,25 @@ function fileMetaLine(file: JobAttachmentFile): string {
 function ProductionMediaGallery({
   files,
   loading,
+  noVisibleFolders,
+  isPrivilegedViewer,
 }: {
   files: JobAttachmentFile[];
   loading: boolean;
+  noVisibleFolders: boolean;
+  isPrivilegedViewer: boolean;
 }) {
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
+
+  const measurementFiles = useMemo(
+    () => files.filter((f) => f.mediaSource === "measurement"),
+    [files]
+  );
+  const filesWithoutMeasurement = useMemo(
+    () => files.filter((f) => f.mediaSource !== "measurement"),
+    [files]
+  );
+
   const groups = useMemo(() => {
     const g: Record<AttachmentKind, JobAttachmentFile[]> = {
       drawing: [],
@@ -1402,16 +1522,35 @@ function ProductionMediaGallery({
       photo: [],
       other: [],
     };
-    for (const f of files) {
+    for (const f of filesWithoutMeasurement) {
       g[f.kind].push(f);
     }
     return g;
-  }, [files]);
+  }, [filesWithoutMeasurement]);
 
   if (loading) {
     return (
       <div className="flex justify-center py-10">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
+
+  if (files.length === 0) {
+    return (
+      <div className="space-y-2 rounded-lg border border-dashed border-slate-200 bg-slate-50/60 p-4">
+        <p className="text-sm font-medium text-slate-800">Zatím žádné podklady pro výrobu</p>
+        <p className="text-xs text-slate-600">
+          Nebyly nalezeny soubory ve viditelných složkách, ani fotky u zakázky ani fotodokumentace zaměření pro
+          tuto zakázku.
+        </p>
+        {noVisibleFolders ? (
+          <p className="text-xs text-slate-500">
+            {isPrivilegedViewer
+              ? "Jako vedení můžete u zakázky přidat složky (fotky / soubory), zapnout u nich „Výroba“ nebo viditelnost pro zaměstnance, a v sekci výrobního týmu vybrat složky pro výrobu."
+              : "Požádejte administrátora, aby u příslušných složek zapnul viditelnost pro výrobu nebo pro zaměstnance, případně vás zařadil k zakázce ve výrobě."}
+          </p>
+        ) : null}
       </div>
     );
   }
@@ -1454,6 +1593,12 @@ function ProductionMediaGallery({
 
   return (
     <div className="space-y-6">
+      {noVisibleFolders && files.length > 0 ? (
+        <p className="text-xs text-amber-900 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
+          K této zakázce nejsou vybrané žádné složky pro výrobu — zobrazují se ale fotky u zakázky, zaměření a
+          případné soubory ze složek označených příznakem „Výroba“ / viditelností pro zaměstnance.
+        </p>
+      ) : null}
       <Dialog open={lightbox != null} onOpenChange={(o) => !o && setLightbox(null)}>
         <DialogContent className="max-w-[min(96vw,1100px)] border-slate-200 bg-white p-0 overflow-hidden">
           <DialogHeader className="sr-only">
@@ -1476,10 +1621,17 @@ function ProductionMediaGallery({
       </Dialog>
 
       <Section
+        title="Fotodokumentace zaměření"
+        icon={<ImageIcon className="h-5 w-5 text-emerald-600" />}
+        items={measurementFiles}
+        empty="Žádné fotky zaměření vázané na tuto zakázku."
+        denseGrid
+      />
+      <Section
         title="Fotky a obrázky"
         icon={<ImageIcon className="h-5 w-5 text-sky-600" />}
         items={groups.photo}
-        empty="Žádné fotografie v označených složkách."
+        empty="Žádné další fotografie ani obrázky v podkladech."
         denseGrid
       />
       <Section
