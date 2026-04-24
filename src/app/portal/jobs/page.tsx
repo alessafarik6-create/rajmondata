@@ -723,10 +723,14 @@ function JobsPageContent() {
         const raw = job as unknown as Record<string, unknown>;
         const bd = resolveJobBudgetFromFirestore(raw);
         const costs = await sumJobExpensesFromFirestore(firestore, companyId, jid);
-        const budgetGross = bd?.budgetGross ?? null;
-        const costsGross = costs.gross;
+        const budgetRaw = bd?.budgetGross;
+        const budgetGross =
+          budgetRaw != null && Number.isFinite(Number(budgetRaw)) ? Number(budgetRaw) : 0;
+        const costsGross = Number.isFinite(costs.gross) ? costs.gross : 0;
         const remainingGross =
-          budgetGross != null ? roundMoney2(budgetGross - costsGross) : null;
+          bd != null && budgetRaw != null && Number.isFinite(Number(budgetRaw))
+            ? roundMoney2(Number(budgetRaw) - costsGross)
+            : 0;
 
         const periodParts = [
           job?.startDate ? `Zahájení: ${job.startDate}` : "",
@@ -739,7 +743,7 @@ function JobsPageContent() {
           budgetGross,
           costsGross,
           remainingGross,
-          vatPercentLabel: bd ? `${bd.vatRate} %` : "—",
+          vatPercentLabel: bd ? `${bd.vatRate} %` : "0 %",
           periodLabel: periodParts.length ? periodParts.join(" · ") : "—",
         });
       }

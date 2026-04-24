@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "postinstall": "node scripts/copy-pdf-fonts.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
     "seed-superadmin": "node scripts/seed-superadmin.js"
   },
@@ -67,7 +68,8 @@
     "tailwind-merge": "^3.0.1",
     "tailwindcss-animate": "^1.0.7",
     "web-push": "^3.6.7",
-    "zod": "^3.24.2"
+    "zod": "^3.24.2",
+    "dejavu-fonts-ttf": "^2.37.3"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

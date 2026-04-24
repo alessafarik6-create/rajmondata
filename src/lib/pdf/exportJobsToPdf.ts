@@ -1,37 +1,48 @@
 /**
- * Export přehledu zakázek do PDF (jsPDF + autoTable).
+ * Export přehledu zakázek do PDF (jsPDF + autoTable + DejaVu Sans / Identity-H).
  */
 
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
+import { PDF_FONT_FAMILY, registerDejaVuFontsForPdf } from "@/lib/pdf/register-dejavu-font";
 
-export function formatCurrency(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(Number(value))) return "—";
-  return `${Math.round(Number(value)).toLocaleString("cs-CZ")} Kč`;
+/** Bezpečně převede vstup na částku v Kč (chybějící → 0 Kč). */
+export function formatCurrency(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) {
+    return "0 Kč";
+  }
+  if (typeof value === "string") {
+    const t = value.replace(/\s/g, "").replace(/Kč/gi, "").replace(/\u00a0/g, "").trim();
+    if (t === "" || t === "—") return "0 Kč";
+    const normalized = t.includes(",") && !t.includes(".") ? t.replace(",", ".") : t.replace(/,(?=\d{3}(\D|$))/g, "").replace(",", ".");
+    const n = Number(normalized);
+    if (!Number.isFinite(n)) return "0 Kč";
+    return `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
+  }
+  const n = Number(value);
+  if (!Number.isFinite(n)) return "0 Kč";
+  return `${Math.round(n).toLocaleString("cs-CZ")} Kč`;
 }
 
 export type JobPdfExportRow = {
   jobName: string;
   customer: string;
   statusLabel: string;
-  /** Rozpočet včetně DPH (pro srovnání s náklady). */
-  budgetGross: number | null;
-  /** Náklady včetně DPH (součet expenses). */
-  costsGross: number | null;
-  /** Zbývá z rozpočtu po nákladech (hrubá částka). */
-  remainingGross: number | null;
-  /** Např. "21 %" nebo "—". */
+  /** Hrubý rozpočet (Kč); chybí-li ve zdroji → 0. */
+  budgetGross: number;
+  costsGross: number;
+  remainingGross: number;
   vatPercentLabel: string;
-  /** Text do sloupce období (např. zahájení / dokončení). */
   periodLabel: string;
 };
 
 export type ExportJobsToPdfOptions = {
   jobs: JobPdfExportRow[];
   companyName: string;
-  /** Data URL obrázku (PNG/JPEG), pokud se podařilo načíst. */
   logoDataUrl?: string | null;
   fileName?: string;
+  /** Kořen pro /fonts/DejaVu*.ttf (výchozí /fonts). */
+  fontBasePath?: string;
 };
 
 function detectImageFormat(dataUrl: string): "PNG" | "JPEG" {
@@ -55,12 +66,20 @@ export async function fetchImageAsDataUrl(url: string): Promise<string | null> {
   }
 }
 
+function safeCellText(s: string | null | undefined): string {
+  if (s == null) return "—";
+  const t = String(s).trim();
+  return t.length ? t : "—";
+}
+
 /**
  * Vygeneruje PDF a spustí stažení v prohlížeči.
  */
 export async function exportJobsToPdf(options: ExportJobsToPdfOptions): Promise<void> {
   const { jobs, companyName } = options;
   const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+  await registerDejaVuFontsForPdf(doc, options.fontBasePath ?? "/fonts");
+
   const pageW = doc.internal.pageSize.getWidth();
   const margin = 14;
   let cursorY = 14;
@@ -79,14 +98,14 @@ export async function exportJobsToPdf(options: ExportJobsToPdfOptions): Promise<
   }
 
   const titleX = options.logoDataUrl ? margin + 22 : margin;
+  doc.setFont(PDF_FONT_FAMILY, "bold");
   doc.setFontSize(15);
   doc.setTextColor(24, 24, 27);
-  doc.setFont("helvetica", "bold");
   doc.text(companyName || "Organizace", titleX, cursorY + 7);
 
-  doc.setFont("helvetica", "normal");
+  doc.setFont(PDF_FONT_FAMILY, "normal");
   doc.setFontSize(9);
-  doc.setTextColor(82, 82, 91);
+  doc.setTextColor(55, 55, 65);
   doc.text(
     `Datum exportu: ${new Date().toLocaleString("cs-CZ")}`,
     pageW - margin,
@@ -96,10 +115,10 @@ export async function exportJobsToPdf(options: ExportJobsToPdfOptions): Promise<
 
   cursorY += 22;
   doc.setFontSize(12);
-  doc.setTextColor(24, 24, 27);
-  doc.setFont("helvetica", "bold");
+  doc.setTextColor(15, 15, 20);
+  doc.setFont(PDF_FONT_FAMILY, "bold");
   doc.text("Přehled zakázek", margin, cursorY);
-  doc.setFont("helvetica", "normal");
+  doc.setFont(PDF_FONT_FAMILY, "normal");
   cursorY += 6;
 
   const head = [
@@ -116,47 +135,61 @@ export async function exportJobsToPdf(options: ExportJobsToPdfOptions): Promise<
   ];
 
   const body = jobs.map((j) => [
-    j.jobName,
-    j.customer,
-    j.statusLabel,
+    safeCellText(j.jobName),
+    safeCellText(j.customer),
+    safeCellText(j.statusLabel),
     formatCurrency(j.budgetGross),
     formatCurrency(j.costsGross),
     formatCurrency(j.remainingGross),
-    j.vatPercentLabel,
-    j.periodLabel,
+    safeCellText(j.vatPercentLabel || "0 %"),
+    safeCellText(j.periodLabel),
   ]);
 
-  const totalBudget = jobs.reduce((s, j) => s + (j.budgetGross ?? 0), 0);
-  const totalCosts = jobs.reduce((s, j) => s + (j.costsGross ?? 0), 0);
-  const totalRemaining = jobs.reduce((s, j) => s + (j.remainingGross ?? 0), 0);
-  const withBudget = jobs.filter((j) => j.budgetGross != null).length;
+  const totalBudget = jobs.reduce((s, j) => s + (Number(j.budgetGross) || 0), 0);
+  const totalCosts = jobs.reduce((s, j) => s + (Number(j.costsGross) || 0), 0);
+  const totalRemaining = jobs.reduce((s, j) => s + (Number(j.remainingGross) || 0), 0);
+  const withBudget = jobs.filter((j) => (Number(j.budgetGross) || 0) > 0).length;
 
   autoTable(doc, {
     startY: cursorY,
     head,
     body,
     styles: {
+      font: PDF_FONT_FAMILY,
+      fontStyle: "normal",
       fontSize: 8,
-      cellPadding: 1.8,
+      cellPadding: 2,
       overflow: "linebreak",
       valign: "top",
-      textColor: [24, 24, 27],
+      textColor: [20, 20, 28],
+      lineColor: [200, 200, 210],
+      lineWidth: 0.1,
     },
     headStyles: {
-      fillColor: [234, 88, 12],
-      textColor: 255,
+      font: PDF_FONT_FAMILY,
       fontStyle: "bold",
+      fillColor: [220, 95, 20],
+      textColor: [255, 255, 255],
       halign: "left",
+      fontSize: 8,
+    },
+    bodyStyles: {
+      font: PDF_FONT_FAMILY,
+      fontStyle: "normal",
+      textColor: [20, 20, 28],
+    },
+    alternateRowStyles: {
+      fillColor: [252, 252, 254],
     },
     columnStyles: {
-      0: { cellWidth: 46 },
-      1: { cellWidth: 38 },
-      2: { cellWidth: 24 },
-      3: { halign: "right", cellWidth: 26 },
-      4: { halign: "right", cellWidth: 26 },
-      5: { halign: "right", cellWidth: 26 },
-      6: { halign: "center", cellWidth: 14 },
-      7: { cellWidth: 32 },
+      0: { cellWidth: 44 },
+      1: { cellWidth: 36 },
+      2: { cellWidth: 22 },
+      3: { halign: "right", cellWidth: 30 },
+      4: { halign: "right", cellWidth: 30 },
+      5: { halign: "right", cellWidth: 30 },
+      6: { halign: "center", cellWidth: 16 },
+      7: { cellWidth: 34 },
     },
     margin: { left: margin, right: margin },
     tableWidth: pageW - 2 * margin,
@@ -168,13 +201,14 @@ export async function exportJobsToPdf(options: ExportJobsToPdfOptions): Promise<
   if (footY > doc.internal.pageSize.getHeight() - 40) {
     doc.addPage();
     footY = 20;
+    doc.setFont(PDF_FONT_FAMILY, "normal");
   }
 
+  doc.setFont(PDF_FONT_FAMILY, "bold");
   doc.setFontSize(10);
-  doc.setTextColor(24, 24, 27);
-  doc.setFont("helvetica", "bold");
+  doc.setTextColor(15, 15, 20);
   doc.text("Souhrn", margin, footY);
-  doc.setFont("helvetica", "normal");
+  doc.setFont(PDF_FONT_FAMILY, "normal");
   footY += 6;
   doc.setFontSize(9);
   doc.text(
@@ -188,7 +222,7 @@ export async function exportJobsToPdf(options: ExportJobsToPdfOptions): Promise<
   footY += 5;
   doc.text(`Celkové náklady (hrubé): ${formatCurrency(totalCosts)}`, margin, footY);
   footY += 5;
-  doc.setFont("helvetica", "bold");
+  doc.setFont(PDF_FONT_FAMILY, "bold");
   doc.text(`Celkem zbývá (součet řádků): ${formatCurrency(totalRemaining)}`, margin, footY);
 
   const safeName = (options.fileName || `prehled-zakazek-${new Date().toISOString().slice(0, 10)}`)
