@@ -33,6 +33,7 @@ import {
   Search,
   Tag,
   Camera,
+  FileDown,
 } from "lucide-react";
 import {
   useFirestore,
@@ -40,6 +41,7 @@ import {
   useMemoFirebase,
   useUser,
   useDoc,
+  useCompany,
 } from "@/firebase";
 import {
   collection,
@@ -89,9 +91,17 @@ import {
   buildJobBudgetFirestorePayload,
   normalizeBudgetType,
   normalizeVatRate,
+  resolveJobBudgetFromFirestore,
+  roundMoney2,
   VAT_RATE_OPTIONS,
   type JobBudgetType,
 } from "@/lib/vat-calculations";
+import {
+  exportJobsToPdf,
+  fetchImageAsDataUrl,
+  type JobPdfExportRow,
+} from "@/lib/pdf/exportJobsToPdf";
+import { sumJobExpensesFromFirestore } from "@/lib/pdf/sum-job-expenses-client";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
 
@@ -182,6 +192,7 @@ function normalizeJobsList(
 function JobsPageContent() {
   const { user } = useUser();
   const firestore = useFirestore();
+  const { company, companyName: tenantCompanyName } = useCompany();
   const { toast } = useToast();
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -301,6 +312,7 @@ function JobsPageContent() {
   const [tasksDialogOpen, setTasksDialogOpen] = useState(false);
   const [measurementPhotoDialogOpen, setMeasurementPhotoDialogOpen] =
     useState(false);
+  const [exportPdfLoading, setExportPdfLoading] = useState(false);
   useEffect(() => {
     if (!isAdmin && workContractTemplatesManagerOpen) {
       setWorkContractTemplatesManagerOpen(false);
@@ -667,6 +679,93 @@ function JobsPageContent() {
     );
   };
 
+  const jobStatusLabel = (status: string | undefined | null) => {
+    const key = typeof status === "string" ? status : "";
+    const map: Record<string, string> = {
+      nová: "Nová",
+      rozpracovaná: "Rozpracovaná",
+      čeká: "Čeká",
+      dokončená: "Dokončená",
+      fakturována: "Fakturována",
+    };
+    return map[key] || (key ? key : "—");
+  };
+
+  const handleExportJobsPdf = async () => {
+    if (!isAdmin || !firestore || !companyId) {
+      toast({
+        variant: "destructive",
+        title: "Export",
+        description: "Tuto akci mohou provést jen administrátoři.",
+      });
+      return;
+    }
+    if (filteredJobs.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Export",
+        description: "Nejsou žádné zakázky k exportu (zkontrolujte filtry).",
+      });
+      return;
+    }
+    setExportPdfLoading(true);
+    try {
+      let logoDataUrl: string | null = null;
+      const logoUrl = company?.organizationLogoUrl;
+      if (typeof logoUrl === "string" && logoUrl.trim()) {
+        logoDataUrl = await fetchImageAsDataUrl(logoUrl.trim());
+      }
+
+      const rows: JobPdfExportRow[] = [];
+      for (const job of filteredJobs) {
+        const jid = job?.id;
+        if (!jid) continue;
+        const raw = job as unknown as Record<string, unknown>;
+        const bd = resolveJobBudgetFromFirestore(raw);
+        const costs = await sumJobExpensesFromFirestore(firestore, companyId, jid);
+        const budgetGross = bd?.budgetGross ?? null;
+        const costsGross = costs.gross;
+        const remainingGross =
+          budgetGross != null ? roundMoney2(budgetGross - costsGross) : null;
+
+        const periodParts = [
+          job?.startDate ? `Zahájení: ${job.startDate}` : "",
+          job?.endDate ? `Dokončení: ${job.endDate}` : "",
+        ].filter(Boolean);
+        rows.push({
+          jobName: String(job?.name ?? "—"),
+          customer: getCustomerName(job?.customerId),
+          statusLabel: jobStatusLabel(job?.status),
+          budgetGross,
+          costsGross,
+          remainingGross,
+          vatPercentLabel: bd ? `${bd.vatRate} %` : "—",
+          periodLabel: periodParts.length ? periodParts.join(" · ") : "—",
+        });
+      }
+
+      await exportJobsToPdf({
+        jobs: rows,
+        companyName: tenantCompanyName || "Organizace",
+        logoDataUrl,
+        fileName: `prehled-zakazek-${new Date().toISOString().slice(0, 10)}`,
+      });
+
+      toast({
+        title: "PDF bylo vygenerováno",
+        description: "Soubor byl stažen do vašeho zařízení.",
+      });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Export PDF",
+        description: e instanceof Error ? e.message : "Generování se nezdařilo.",
+      });
+    } finally {
+      setExportPdfLoading(false);
+    }
+  };
+
   if (isProfileLoading) {
     return (
       <div className="flex justify-center p-12">
@@ -734,6 +833,19 @@ function JobsPageContent() {
           ) : null}
           {isAdmin && (
             <>
+              <Button
+                type="button"
+                className="gap-2 min-h-[44px] bg-orange-600 text-white hover:bg-orange-700 border-0 shadow-md shadow-orange-600/25"
+                disabled={exportPdfLoading || filteredJobs.length === 0}
+                onClick={() => void handleExportJobsPdf()}
+              >
+                {exportPdfLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                ) : (
+                  <FileDown className="w-4 h-4 shrink-0" />
+                )}
+                Export PDF
+              </Button>
               <Link href="/portal/jobs/templates">
                 <Button variant="outlineLight" className="gap-2 min-h-[44px]">
                   <FileStack className="w-4 h-4" /> Šablony
