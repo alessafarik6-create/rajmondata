@@ -534,7 +534,16 @@ export default function VyrobaZakazkaDetailPage() {
         toast({ variant: "destructive", title: "Chyba", description: msg });
         return;
       }
+      const editWarnings = Array.isArray(j?.warnings)
+        ? (j.warnings as unknown[]).filter((w): w is string => typeof w === "string" && w.trim().length > 0)
+        : [];
       toast({ title: "Spotřeba upravena" });
+      if (editWarnings.length) {
+        toast({
+          title: "Upozornění",
+          description: editWarnings.join(" "),
+        });
+      }
       setEditConsumptionOpen(false);
       setEditConsumptionRow(null);
       await loadApi();
@@ -568,7 +577,16 @@ export default function VyrobaZakazkaDetailPage() {
         toast({ variant: "destructive", title: "Chyba", description: msg });
         return;
       }
+      const delWarnings = Array.isArray(j?.warnings)
+        ? (j.warnings as unknown[]).filter((w): w is string => typeof w === "string" && w.trim().length > 0)
+        : [];
       toast({ title: "Spotřeba smazána", description: "Materiál byl vrácen na sklad." });
+      if (delWarnings.length) {
+        toast({
+          title: "Upozornění",
+          description: delWarnings.join(" "),
+        });
+      }
       setDeleteConsumptionTarget(null);
       await loadApi();
     } catch (e) {
