@@ -9,6 +9,8 @@ export type LogoProps = {
   variant?: "full" | "small" | "icon";
   /** Zkrácená varianta (stejné jako variant="small") */
   small?: boolean;
+  /** Menší wordmark / ikona — vhodné pro mobilní hero a úzké hlavičky */
+  compact?: boolean;
   /**
    * sidebar — tmavý postranní panel portálu/adminu
    * page — přihlášení / registrace (tmavé theme pozadí)
@@ -55,6 +57,7 @@ function wordmarkClass(context: LogoProps["context"], part: "brand" | "suffix") 
 export function Logo({
   variant = "full",
   small = false,
+  compact = false,
   context = "sidebar",
   className,
 }: LogoProps) {
@@ -66,7 +69,7 @@ export function Logo({
         className={cn("inline-flex items-center justify-center", className)}
         aria-label={PLATFORM_NAME}
       >
-        <LogoMark className="h-9 w-9" />
+        <LogoMark className={compact ? "h-8 w-8" : "h-9 w-9"} />
       </div>
     );
   }
@@ -95,13 +98,16 @@ export function Logo({
 
   return (
     <div
-      className={cn("inline-flex items-center gap-2.5 min-w-0", className)}
+      className={cn("inline-flex items-center gap-2 min-w-0 sm:gap-2.5", className)}
       aria-label={PLATFORM_NAME}
     >
-      <LogoMark className="h-9 w-9 sm:h-10 sm:w-10" />
+      <LogoMark className={compact ? "h-8 w-8 sm:h-9 sm:w-9" : "h-9 w-9 sm:h-10 sm:w-10"} />
       <span
         className={cn(
-          "font-extrabold tracking-tight text-lg sm:text-xl truncate",
+          "font-extrabold tracking-tight truncate",
+          compact
+            ? "text-sm sm:text-base md:text-lg"
+            : "text-lg sm:text-xl",
           wordmarkClass(context, "brand")
         )}
       >

@@ -9,6 +9,15 @@ const MAX_PROMO = 80 * 1024 * 1024;
 const HERO_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const PROMO_MIME = new Set(["video/mp4", "video/webm"]);
 
+const KIND_CONFIG: Record<string, { folder: string; isVideo: boolean }> = {
+  hero: { folder: "platform/landing/hero", isVideo: false },
+  promo: { folder: "platform/landing/promo", isVideo: true },
+  register_hero: { folder: "platform/landing/register/hero", isVideo: false },
+  register_promo: { folder: "platform/landing/register/promo", isVideo: true },
+  login_hero: { folder: "platform/landing/login/hero", isVideo: false },
+  login_promo: { folder: "platform/landing/login/promo", isVideo: true },
+};
+
 function extFromName(name: string): string {
   const n = name.toLowerCase();
   if (n.endsWith(".png")) return "png";
@@ -39,13 +48,14 @@ export async function POST(request: NextRequest) {
     if (!(file instanceof Blob) || file.size === 0) {
       return NextResponse.json({ error: "Chybí soubor." }, { status: 400 });
     }
-    if (kind !== "hero" && kind !== "promo") {
+    const conf = KIND_CONFIG[kind];
+    if (!conf) {
       return NextResponse.json({ error: "Neplatný typ (kind)." }, { status: 400 });
     }
 
     const mime = (file as { type?: string }).type || "application/octet-stream";
     const name = (file as File).name || "upload";
-    if (kind === "hero") {
+    if (!conf.isVideo) {
       if (!HERO_MIME.has(mime)) {
         return NextResponse.json({ error: "Povolené obrázky: JPG, PNG, WebP." }, { status: 400 });
       }
@@ -63,7 +73,7 @@ export async function POST(request: NextRequest) {
 
     const buf = Buffer.from(await file.arrayBuffer());
     const ext = extFromName(name);
-    const objectPath = `platform/landing/${kind}/${Date.now()}_${randomBytes(6).toString("hex")}.${ext}`;
+    const objectPath = `${conf.folder}/${Date.now()}_${randomBytes(6).toString("hex")}.${ext}`;
     const f = bucket.file(objectPath);
 
     await f.save(buf, {

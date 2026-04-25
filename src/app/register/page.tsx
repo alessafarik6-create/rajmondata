@@ -1,7 +1,7 @@
 
 "use client";
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from "react";
 import { useFirebase } from '@/firebase';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
@@ -9,10 +9,12 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, ArrowLeft } from 'lucide-react';
-import { Logo } from '@/components/ui/logo';
-import { PLATFORM_NAME } from '@/lib/platform-brand';
-import Image from 'next/image';
-import Link from 'next/link';
+import { Logo } from "@/components/ui/logo";
+import { PLATFORM_NAME } from "@/lib/platform-brand";
+import Link from "next/link";
+import { PublicAuthMediaPanel } from "@/components/marketing/public-auth-media-panel";
+import { usePublicLandingConfig } from "@/lib/use-public-landing-config";
+import type { PlatformSeoHeroImage, PlatformSeoPromoVideo } from "@/lib/platform-seo-sanitize";
 import {
   createUserWithEmailAndPassword,
   updateProfile,
@@ -49,6 +51,28 @@ export default function RegisterPage() {
     useFirebase();
   const router = useRouter();
   const { toast } = useToast();
+  const { data: landingCfg } = usePublicLandingConfig();
+  const seo = landingCfg?.seo;
+
+  const registerImages = useMemo((): PlatformSeoHeroImage[] => {
+    const raw = seo?.registerImages;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((x) => x && typeof (x as PlatformSeoHeroImage).url === "string") as PlatformSeoHeroImage[];
+  }, [seo?.registerImages]);
+  const registerVideo = (seo?.registerVideo as PlatformSeoPromoVideo | null) ?? null;
+
+  const regTitle =
+    (typeof seo?.registerPageTitle === "string" && seo.registerPageTitle.trim()) || "Registrace nové firmy";
+  const regSubtitle =
+    (typeof seo?.registerPageSubtitle === "string" && seo.registerPageSubtitle.trim()) ||
+    "Vytvořte si firemní účet. Licence čeká na aktivaci administrátorem.";
+  const regHelper =
+    (typeof seo?.registerPageHelperText === "string" && seo.registerPageHelperText.trim()) || "";
+  const regMediaTitle = PLATFORM_NAME;
+  const regMediaSubtitle =
+    "Jedno místo pro tým, zakázky a provoz. Vyplňte firemní údaje a založte si účet správce.";
+  const loginCta =
+    (typeof seo?.loginButtonText === "string" && seo.loginButtonText.trim()) || "Zpět na přihlášení";
   
   const [loading, setLoading] = useState(false);
   // Prevent hydration mismatches for props like `disabled` that depend on client-only Firebase availability.
@@ -331,42 +355,52 @@ export default function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-2 bg-background">
-      <div className="hidden lg:block relative bg-black overflow-hidden">
-        <Image 
-          src="https://picsum.photos/seed/rajmondata-register/1200/1200"
-          alt="Registrace pozadí"
-          fill
-          className="object-cover opacity-40 scale-105"
-          data-ai-hint="dark construction workspace"
-        />
-        <div className="absolute inset-0 bg-gradient-to-r from-black/80 to-transparent" />
-        <div className="absolute top-12 left-12">
-          <Link href="/login" className="flex items-center gap-2 text-primary hover:text-white transition-colors group">
-            <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform" />
-            Zpět na přihlášení
-          </Link>
+    <div className="min-h-screen bg-slate-100 text-slate-900">
+      <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-2">
+        <div className="order-2 min-h-0 w-full min-w-0 shrink-0 lg:order-1">
+          <PublicAuthMediaPanel
+            images={registerImages}
+            video={registerVideo}
+            title={regMediaTitle}
+            subtitle={regMediaSubtitle}
+            backLink="/login"
+            backLabel={
+              <span className="inline-flex items-center gap-2">
+                <ArrowLeft className="h-4 w-4" />
+                {loginCta}
+              </span>
+            }
+          />
         </div>
-        <div className="absolute bottom-12 left-12 right-12">
-          <h1 className="text-5xl font-bold text-white mb-6 leading-tight">Začněte budovat svou <span className="text-primary">digitální kovárnu</span>.</h1>
-          <p className="text-xl text-muted-foreground max-w-lg">Všechny nástroje pro správu vaší firmy, zaměstnanců a zakázek na jednom bezpečném místě.</p>
-        </div>
-      </div>
 
-      <div className="flex items-center justify-center p-8 overflow-y-auto">
-        <Card className="w-full max-w-xl bg-surface border-border shadow-2xl">
-          <CardHeader className="space-y-2">
-            <div className="mb-2 flex justify-start">
-              <Logo context="page" />
+        <div className="order-1 flex w-full min-w-0 items-start justify-center px-3 py-6 sm:px-5 sm:py-8 lg:order-2 lg:items-center lg:px-8">
+        <Card className="w-full max-w-xl border-slate-200 bg-white text-slate-900 shadow-2xl [&_input]:border-slate-300 [&_input]:bg-white [&_input]:text-slate-900 [&_label]:text-slate-800">
+          <CardHeader className="space-y-2 px-4 sm:px-6">
+            <div className="mb-1 flex justify-start lg:hidden">
+              <Link
+                href="/login"
+                className="mb-2 inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-slate-900"
+              >
+                <ArrowLeft className="h-4 w-4" />
+                {loginCta}
+              </Link>
             </div>
-            <CardTitle className="text-3xl font-bold tracking-tight">Registrace nové firmy</CardTitle>
-            <CardDescription>Vytvořte si vlastní workspace a začněte spravovat svůj podnik.</CardDescription>
+            <div className="mb-1 flex justify-start">
+              <Logo context="page" compact />
+            </div>
+            <CardTitle className="text-2xl font-bold tracking-tight sm:text-3xl">{regTitle}</CardTitle>
+            <CardDescription className="text-slate-600 text-sm sm:text-base">{regSubtitle}</CardDescription>
           </CardHeader>
           <form onSubmit={handleRegister}>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-5 px-4 sm:space-y-6 sm:px-6">
               {firebaseConfigError ? (
                 <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   {firebaseConfigError}
+                </div>
+              ) : null}
+              {regHelper ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm leading-relaxed text-slate-700">
+                  {regHelper}
                 </div>
               ) : null}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -602,15 +636,16 @@ export default function RegisterPage() {
               </Button>
             </CardContent>
           </form>
-          <CardFooter className="justify-center border-t border-border mt-4 pt-6">
-            <p className="text-sm text-muted-foreground">
+          <CardFooter className="mt-4 justify-center border-t border-slate-200 pt-5">
+            <p className="text-sm text-slate-600">
               Již máte firemní účet?{" "}
-              <Link href="/login" className="text-primary font-bold hover:underline underline-offset-4">
-                Přihlaste se zde
+              <Link href="/login" className="font-semibold text-orange-600 hover:underline">
+                {loginCta}
               </Link>
             </p>
           </CardFooter>
         </Card>
+        </div>
       </div>
     </div>
   );

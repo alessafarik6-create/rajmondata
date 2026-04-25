@@ -16,8 +16,10 @@ import {
 import { Loader2, UserPlus, ShieldCheck } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
-import Image from "next/image";
 import Link from "next/link";
+import { PublicAuthMediaPanel } from "@/components/marketing/public-auth-media-panel";
+import { usePublicLandingConfig } from "@/lib/use-public-landing-config";
+import type { PlatformSeoHeroImage, PlatformSeoPromoVideo } from "@/lib/platform-seo-sanitize";
 import {
   AuthError,
   browserLocalPersistence,
@@ -40,6 +42,31 @@ function isValidEmail(email: string): boolean {
 export default function LoginPage() {
   const { auth, firestore, areServicesAvailable, firebaseConfigError } = useFirebase();
   const { toast } = useToast();
+  const { data: landingCfg } = usePublicLandingConfig();
+  const seo = landingCfg?.seo;
+
+  const loginImages = useMemo((): PlatformSeoHeroImage[] => {
+    const raw = seo?.loginImages;
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((x) => x && typeof (x as PlatformSeoHeroImage).url === "string") as PlatformSeoHeroImage[];
+  }, [seo?.loginImages]);
+
+  const loginVideo = (seo?.loginVideo as PlatformSeoPromoVideo | null) ?? null;
+
+  const mediaTitle =
+    (typeof seo?.loginPageTitle === "string" && seo.loginPageTitle.trim()) || PLATFORM_NAME;
+  const mediaSubtitle =
+    "Cloudová platforma pro týmy, zakázky a finance. Bezpečné přihlášení k portálu.";
+
+  const cardWelcome =
+    (typeof seo?.loginWelcomeText === "string" && seo.loginWelcomeText.trim()) || "Vítejte zpět";
+  const cardDesc =
+    (typeof seo?.loginPageSubtitle === "string" && seo.loginPageSubtitle.trim()) ||
+    "Zadejte své údaje pro přístup k portálu";
+  const labelEmail = (typeof seo?.loginEmailLabel === "string" && seo.loginEmailLabel.trim()) || "Emailová adresa";
+  const labelPassword = (typeof seo?.loginPasswordLabel === "string" && seo.loginPasswordLabel.trim()) || "Heslo";
+  const regButtonLabel =
+    (typeof seo?.registerButtonText === "string" && seo.registerButtonText.trim()) || "Registrovat firmu";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -226,65 +253,58 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-2">
-      <div className="relative hidden bg-black lg:block">
-        <Image
-          src="https://picsum.photos/seed/rajmondata-login/1200/1200"
-          alt="Login pozadí"
-          fill
-          className="object-cover opacity-50"
-          data-ai-hint="dark abstract orange"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent" />
-        <div className="absolute bottom-12 left-12 right-12">
-          <h1 className="mb-4 text-4xl font-bold text-white">
-            Posílení podnikání s {PLATFORM_NAME}.
-          </h1>
-          <p className="text-xl text-muted-foreground">
-            Komplexní platforma pro správu firem a provozní dokonalost v
-            multi-tenant prostředí.
-          </p>
+    <div className="min-h-screen bg-slate-100 text-slate-900">
+      <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-2">
+        <div className="order-2 min-h-0 w-full min-w-0 shrink-0 lg:order-1">
+          <PublicAuthMediaPanel
+            images={loginImages}
+            video={loginVideo}
+            title={mediaTitle}
+            subtitle={mediaSubtitle}
+          />
         </div>
-      </div>
 
-      <div className="flex items-center justify-center bg-background p-8 text-foreground">
-        <Card className="w-full max-w-md border-border bg-surface shadow-2xl">
-          <CardHeader className="space-y-4 text-center">
+        <div className="order-1 flex w-full min-w-0 items-center justify-center px-3 py-6 sm:px-5 sm:py-8 lg:order-2 lg:px-8">
+        <Card className="w-full max-w-md border-slate-200 bg-white text-slate-900 shadow-xl">
+          <CardHeader className="space-y-3 text-center sm:space-y-4">
             <div className="mx-auto flex justify-center">
-              <Logo context="page" />
+              <Logo context="page" compact />
             </div>
-            <div className="space-y-1">
-              <CardTitle className="text-3xl font-bold tracking-tight text-foreground">
-                Vítejte zpět
+            <div className="space-y-1.5 text-center">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Přihlášení</p>
+              <CardTitle className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+                {cardWelcome}
               </CardTitle>
-              <CardDescription className="text-muted-foreground">
-                Zadejte své údaje pro přístup k portálu
+              <CardDescription className="text-slate-600 text-sm sm:text-base">
+                {cardDesc}
               </CardDescription>
             </div>
           </CardHeader>
 
           <form onSubmit={handleLogin}>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 px-4 sm:px-6">
               {firebaseConfigError ? (
                 <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                   {firebaseConfigError}
                 </div>
               ) : !areServicesAvailable ? (
-                <div className="rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-sm text-orange-600">
+                <div className="rounded-md border border-orange-500/30 bg-orange-100 px-3 py-2 text-sm text-orange-800">
                   Přihlašování se ještě načítá. Pokud stav trvá déle, obnovte
                   stránku.
                 </div>
               ) : null}
 
               <div className="space-y-2">
-                <Label htmlFor="email">Emailová adresa</Label>
+                <Label htmlFor="email" className="text-slate-800 font-medium">
+                  {labelEmail}
+                </Label>
                 <Input
                   id="email"
                   type="email"
                   placeholder="jmeno@firma.cz"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="border-border bg-background text-foreground"
+                  className="min-h-11 border-slate-300 bg-white text-slate-900 placeholder:text-slate-500"
                   autoComplete="email"
                   inputMode="email"
                   required
@@ -292,13 +312,15 @@ export default function LoginPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password">Heslo</Label>
+                <Label htmlFor="password" className="text-slate-800 font-medium">
+                  {labelPassword}
+                </Label>
                 <Input
                   id="password"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="border-border bg-background text-foreground"
+                  className="min-h-11 border-slate-300 bg-white text-slate-900 placeholder:text-slate-400"
                   autoComplete="current-password"
                   required
                 />
@@ -309,7 +331,7 @@ export default function LoginPage() {
                   type="button"
                   onClick={handleForgotPassword}
                   disabled={resetLoading}
-                  className="text-sm text-primary hover:underline disabled:opacity-60"
+                  className="text-sm text-orange-600 hover:underline disabled:opacity-60"
                 >
                   {resetLoading ? "Odesílám reset..." : "Zapomenuté heslo?"}
                 </button>
@@ -317,7 +339,7 @@ export default function LoginPage() {
 
               <Button
                 type="submit"
-                className="h-11 w-full bg-primary text-lg font-semibold text-white hover:bg-primary/90"
+                className="h-11 w-full text-base font-semibold"
                 disabled={!canSubmit}
               >
                 {loading ? (
@@ -332,37 +354,33 @@ export default function LoginPage() {
             </CardContent>
           </form>
 
-          <CardFooter className="flex flex-col gap-4">
+          <CardFooter className="flex flex-col gap-3 px-4 pb-6 sm:px-6 sm:pb-8">
             <div className="relative w-full">
               <div className="absolute inset-0 flex items-center">
-                <span className="w-full border-t border-border" />
+                <span className="w-full border-t border-slate-200" />
               </div>
               <div className="relative flex justify-center text-xs uppercase">
-                <span className="bg-card px-2 text-muted-foreground">
-                  Nová firma?
-                </span>
+                <span className="bg-white px-2 text-slate-500">Nová firma?</span>
               </div>
             </div>
 
             <Link href="/register" className="w-full">
               <Button
                 variant="outline"
-                className="h-11 w-full gap-2 border-primary text-primary transition-all hover:bg-primary hover:text-white"
+                className="h-11 w-full gap-2 border-slate-300 text-slate-900 hover:bg-slate-50"
               >
-                <UserPlus className="h-4 w-4" /> Registrovat firmu
+                <UserPlus className="h-4 w-4" /> {regButtonLabel}
               </Button>
             </Link>
 
             <Link href="/admin/login" className="w-full">
-              <Button
-                variant="ghost"
-                className="h-10 w-full gap-2 text-muted-foreground hover:text-foreground"
-              >
+              <Button variant="ghost" className="h-10 w-full gap-2 text-slate-600 hover:text-slate-900">
                 <ShieldCheck className="h-4 w-4" /> Globální administrace
               </Button>
             </Link>
           </CardFooter>
         </Card>
+        </div>
       </div>
     </div>
   );
