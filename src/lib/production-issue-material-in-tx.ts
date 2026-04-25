@@ -122,55 +122,21 @@ export async function executeMaterialIssueInAdminTransaction(
     updatedAt: FieldValue.serverTimestamp(),
   };
 
+  /** Částečný řez délkového materiálu: zůstatek zůstává na stejné skladové řádce (žádná nová „zbytek“ položka). */
   let remainderItemId: string | null = null;
   if (mode === "length") {
-    itemPatch.quantity = 0;
-    itemPatch.currentLength = 0;
     if (item.originalLength == null && Number.isFinite(available)) {
       itemPatch.originalLength = available;
     }
-
     if (isPartialLength) {
-      const remRef = db.collection("companies").doc(companyId).collection("inventoryItems").doc();
-      remainderItemId = remRef.id;
-      const loc = typeof item.warehouseLocation === "string" ? item.warehouseLocation : null;
-      const sku = typeof item.sku === "string" ? item.sku : null;
-      const cat = typeof item.materialCategory === "string" ? item.materialCategory : null;
-      const supplier = typeof item.supplier === "string" ? item.supplier : null;
-      const noteR = typeof item.note === "string" ? item.note : null;
-      const img = typeof item.imageUrl === "string" ? item.imageUrl : null;
-
-      tx.set(remRef, {
-        companyId,
-        name: itemName,
-        sku,
-        materialCategory: cat,
-        unit,
-        quantity: newAvailable,
-        stockTrackingMode: "length",
-        measurementType: "length",
-        originalLength: newAvailable,
-        originalQuantity: available,
-        remainingQuantity: newAvailable,
-        currentLength: newAvailable,
-        lengthStockUnit: typeof item.lengthStockUnit === "string" ? item.lengthStockUnit : unit,
-        parentStockItemId: itemId,
-        isRemainder: true,
-        remainderOfItemId: itemId,
-        consumedByJobId: jobId,
-        remainderAvailable: true,
-        remainderFullyConsumed: false,
-        remainderStatus: "free",
-        warehouseLocation: loc,
-        reservedForJobId: null,
-        supplier,
-        imageUrl: img,
-        note: noteR,
-        sourceStockMovementId: movementId,
-        createdAt: FieldValue.serverTimestamp(),
-        createdBy: callerUid,
-        updatedAt: FieldValue.serverTimestamp(),
-      });
+      itemPatch.quantity = newAvailable;
+      itemPatch.currentLength = newAvailable;
+      itemPatch.remainingQuantity = newAvailable;
+      remainderItemId = null;
+    } else {
+      itemPatch.quantity = 0;
+      itemPatch.currentLength = 0;
+      itemPatch.remainingQuantity = 0;
     }
   } else {
     itemPatch.quantity = newAvailable;
@@ -200,7 +166,7 @@ export async function executeMaterialIssueInAdminTransaction(
     jobName,
     employeeId: callerEmployeeId,
     quantityBefore: available,
-    quantityAfter: mode === "length" ? 0 : newAvailable,
+    quantityAfter: mode === "length" ? (isPartialLength ? newAvailable : 0) : newAvailable,
     remainderItemId,
     batchNumber: batchNumber || null,
     destination: `job:${jobId}`,
@@ -262,7 +228,7 @@ export async function executeMaterialIssueInAdminTransaction(
     quantityIssued: qtyInStockUnit,
     quantityBeforeOnHand: available,
     originalQuantity: available,
-    remainingQuantityAfterCut: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
+    remainingQuantityAfterCut: newAvailable,
     unit,
     inputLengthUnit: inputLengthUnit || null,
     movementId,
@@ -272,7 +238,7 @@ export async function executeMaterialIssueInAdminTransaction(
     createdByName,
     note: note || null,
     batchNumber: batchNumber || null,
-    quantityRemainingOnStock: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
+    quantityRemainingOnStock: newAvailable,
     remainderCreated: remainderItemId != null,
     remainderItemId,
     remainderId: remainderItemId,
@@ -289,7 +255,7 @@ export async function executeMaterialIssueInAdminTransaction(
   return {
     movementId,
     consumptionId: consRef.id,
-    quantityAfter: remainderItemId ? newAvailable : mode === "length" ? 0 : newAvailable,
+    quantityAfter: newAvailable,
     remainderItemId,
     unit,
   };

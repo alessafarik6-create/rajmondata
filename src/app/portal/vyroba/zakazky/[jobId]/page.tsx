@@ -31,6 +31,7 @@ import {
   Layers,
   Loader2,
   Package,
+  Plus,
   Play,
   ZoomIn,
   CheckCircle2,
@@ -190,6 +191,44 @@ function quantityInStockUnits(
     .trim()
     .toLowerCase();
   return millimetersToUnit(mm, stockU);
+}
+
+function lengthUnitEditableForItem(item: InventoryItemRow | null | undefined): boolean {
+  if (!item || String(item.stockTrackingMode) !== "length") return false;
+  const stockU = String(item.lengthStockUnit || item.unit || "mm")
+    .trim()
+    .toLowerCase();
+  return stockU === "mm" || stockU === "cm" || stockU === "m";
+}
+
+type IssueQueueLine = {
+  key: string;
+  itemId: string;
+  qtyStr: string;
+  note: string;
+  batchNumber: string;
+  inputLengthUnit: "mm" | "cm" | "m" | null;
+};
+
+function newIssueQueueLineKey(): string {
+  if (typeof globalThis !== "undefined" && globalThis.crypto && "randomUUID" in globalThis.crypto) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+}
+
+/** Zůstatek na řádce po odečtení řádků ve frontě (stejná položka může být vícekrát). */
+function projectedAvailableForItem(item: InventoryItemRow, priorQueue: IssueQueueLine[]): number {
+  let avail = availableStockQtyForIssueForm(item);
+  for (const ln of priorQueue) {
+    if (ln.itemId !== item.id) continue;
+    const q = Number(String(ln.qtyStr).replace(",", "."));
+    if (!Number.isFinite(q) || q <= 0) continue;
+    const inputLen = lengthUnitEditableForItem(item) ? ln.inputLengthUnit : null;
+    const c = quantityInStockUnits(item, q, inputLen);
+    if (c != null && Number.isFinite(c)) avail -= c;
+  }
+  return avail;
 }
 
 function formatIsoCs(iso: unknown): string {
@@ -410,6 +449,11 @@ export default function VyrobaZakazkaDetailPage() {
   const [issueNote, setIssueNote] = useState<string>("");
   const [issueBatch, setIssueBatch] = useState<string>("");
   const [issueSaving, setIssueSaving] = useState(false);
+  const [issueQueue, setIssueQueue] = useState<IssueQueueLine[]>([]);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [queueEditOpen, setQueueEditOpen] = useState(false);
+  const [queueEditLine, setQueueEditLine] = useState<IssueQueueLine | null>(null);
+  const [queueEditQtyStr, setQueueEditQtyStr] = useState("");
   const [issueInputLengthUnit, setIssueInputLengthUnit] = useState<"mm" | "cm" | "m">("mm");
   const [attachmentFiles, setAttachmentFiles] = useState<JobAttachmentFile[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
@@ -604,11 +648,18 @@ export default function VyrobaZakazkaDetailPage() {
       const delWarnings = Array.isArray(j?.warnings)
         ? (j.warnings as unknown[]).filter((w): w is string => typeof w === "string" && w.trim().length > 0)
         : [];
-      toast({ title: "Spotřeba smazána", description: "Materiál byl vrácen na sklad." });
+      const missingStockMsg =
+        "Původní skladová položka už neexistuje, záznam spotřeby byl smazán bez vrácení na sklad.";
+      const noRestock = delWarnings.some((w) => w.includes("neexistuje") && w.includes("bez vrácení"));
       if (delWarnings.length) {
         toast({
-          title: "Upozornění",
+          title: "Spotřeba smazána",
           description: delWarnings.join(" "),
+        });
+      } else {
+        toast({
+          title: "Spotřeba smazána",
+          description: noRestock ? missingStockMsg : "Materiál byl vrácen na sklad.",
         });
       }
       setDeleteConsumptionTarget(null);
@@ -910,7 +961,7 @@ export default function VyrobaZakazkaDetailPage() {
     });
   }, [inventoryItems, jobId, consumptions]);
 
-  const availableQty = useMemo(() => {
+  const shelfAvailableQty = useMemo(() => {
     if (!selectedItem) return 0;
     const mode = String(selectedItem.stockTrackingMode || "pieces");
     if (mode === "length") {
@@ -920,13 +971,13 @@ export default function VyrobaZakazkaDetailPage() {
     return Number(selectedItem.quantity ?? 0);
   }, [selectedItem]);
 
-  const lengthUnitEditable = useMemo(() => {
-    if (!selectedItem || String(selectedItem.stockTrackingMode) !== "length") return false;
-    const stockU = String(selectedItem.lengthStockUnit || selectedItem.unit || "mm")
-      .trim()
-      .toLowerCase();
-    return stockU === "mm" || stockU === "cm" || stockU === "m";
-  }, [selectedItem]);
+  /** Dostupné pro další řádek výdeje včetně odečtu fronty „Materiál k výdeji“. */
+  const availableQty = useMemo(
+    () => (selectedItem ? projectedAvailableForItem(selectedItem, issueQueue) : 0),
+    [selectedItem, issueQueue]
+  );
+
+  const lengthUnitEditable = useMemo(() => lengthUnitEditableForItem(selectedItem), [selectedItem]);
 
   const remainderPreview = useMemo(() => {
     const q = Number(String(issueQty).replace(",", "."));
@@ -936,6 +987,19 @@ export default function VyrobaZakazkaDetailPage() {
     if (conv == null || !Number.isFinite(conv)) return null;
     return Math.max(0, availableQty - conv);
   }, [selectedItem, issueQty, availableQty, issueInputLengthUnit, lengthUnitEditable]);
+
+  const bulkRepresentativeIdx = useMemo(() => {
+    const pos = new Map<string, number>();
+    consumptions.forEach((c, i) => {
+      const g =
+        typeof (c as { bulkIssueGroupId?: unknown }).bulkIssueGroupId === "string"
+          ? String((c as { bulkIssueGroupId: string }).bulkIssueGroupId).trim()
+          : "";
+      if (!g) return;
+      if (!pos.has(g)) pos.set(g, i);
+    });
+    return pos;
+  }, [consumptions]);
 
   const startProduction = async () => {
     if (!user || !jobId) return;
@@ -1067,6 +1131,189 @@ export default function VyrobaZakazkaDetailPage() {
       setIssueSaving(false);
     }
   };
+
+  const validateIssueQueueAgainstInventory = useCallback((): { ok: true } | { ok: false; message: string } => {
+    if (issueQueue.length === 0) return { ok: false, message: "Seznam výdeje je prázdný." };
+    const sim = new Map<string, number>();
+    for (const ln of issueQueue) {
+      const item = inventoryById.get(ln.itemId);
+      if (!item) return { ok: false, message: `Neznámá položka (${ln.itemId}).` };
+      if (!sim.has(ln.itemId)) sim.set(ln.itemId, availableStockQtyForIssueForm(item));
+      const avail = sim.get(ln.itemId)!;
+      const q = Number(String(ln.qtyStr).replace(",", "."));
+      if (!Number.isFinite(q) || q <= 0) {
+        return { ok: false, message: "U každého řádku zadejte kladné množství." };
+      }
+      const inputLen = lengthUnitEditableForItem(item) ? ln.inputLengthUnit : null;
+      const conv = quantityInStockUnits(item, q, inputLen);
+      if (conv == null || !Number.isFinite(conv)) {
+        return { ok: false, message: `Neplatná délka nebo jednotka u „${item.name}“.` };
+      }
+      if (String(item.stockTrackingMode) === "pieces" && !Number.isInteger(conv)) {
+        return { ok: false, message: `U kusové evidence musí být u „${item.name}“ celé číslo.` };
+      }
+      if (conv > avail + 1e-9) {
+        return {
+          ok: false,
+          message: `Nedostatek skladu u „${item.name}“: požadováno ${conv}, dostupné ${avail} ${item.unit || "ks"} (včetně řádků ve frontě výše).`,
+        };
+      }
+      sim.set(ln.itemId, avail - conv);
+    }
+    return { ok: true };
+  }, [issueQueue, inventoryById]);
+
+  const addCurrentFormToIssueQueue = useCallback(() => {
+    if (!selectedItem) {
+      toast({ variant: "destructive", title: "Vyberte skladovou položku." });
+      return;
+    }
+    const qty = Number(String(issueQty).replace(",", "."));
+    if (!issueItemId || !Number.isFinite(qty) || qty <= 0) {
+      toast({ variant: "destructive", title: "Zadejte kladné množství." });
+      return;
+    }
+    const inputUnitForLine = lengthUnitEditableForItem(selectedItem) ? issueInputLengthUnit : null;
+    const conv = quantityInStockUnits(selectedItem, qty, inputUnitForLine);
+    if (conv == null || !Number.isFinite(conv)) {
+      toast({ variant: "destructive", title: "Neplatná délka", description: "Zkontrolujte jednotku." });
+      return;
+    }
+    const left = projectedAvailableForItem(selectedItem, issueQueue);
+    if (conv > left + 1e-9) {
+      toast({
+        variant: "destructive",
+        title: "Nedostatek skladu",
+        description: "Po odečtení fronty už na skladě tolik není.",
+      });
+      return;
+    }
+    setIssueQueue((q) => [
+      ...q,
+      {
+        key: newIssueQueueLineKey(),
+        itemId: selectedItem.id,
+        qtyStr: issueQty.trim(),
+        note: issueNote.trim(),
+        batchNumber: issueBatch.trim(),
+        inputLengthUnit: inputUnitForLine,
+      },
+    ]);
+    setIssueQty("");
+    toast({ title: "Přidáno do výdeje", description: String(selectedItem.name) });
+  }, [
+    selectedItem,
+    issueItemId,
+    issueQty,
+    issueNote,
+    issueBatch,
+    issueInputLengthUnit,
+    issueQueue,
+    toast,
+  ]);
+
+  const addSameStockLineAgain = useCallback(() => {
+    const last = [...issueQueue].reverse().find((l) => l.itemId === issueItemId);
+    if (last) {
+      setIssueQueue((q) => [...q, { ...last, key: newIssueQueueLineKey() }]);
+      toast({
+        title: "Řádek zkopírován",
+        description: "Upravte množství u nového řádku v seznamu (nebo ponechte stejné).",
+      });
+      return;
+    }
+    toast({
+      variant: "destructive",
+      title: "Nelze zkopírovat",
+      description:
+        "Nejdříve přidejte položku do výdeje, nebo vyplňte údaje výše a použijte „Přidat do výdeje“.",
+    });
+  }, [issueQueue, issueItemId, toast]);
+
+  const removeIssueQueueLine = useCallback((key: string) => {
+    setIssueQueue((q) => q.filter((l) => l.key !== key));
+  }, []);
+
+  const openEditIssueQueueLine = useCallback((ln: IssueQueueLine) => {
+    setQueueEditLine(ln);
+    setQueueEditQtyStr(ln.qtyStr);
+    setQueueEditOpen(true);
+  }, []);
+
+  const saveIssueQueueLineQty = useCallback(() => {
+    if (!queueEditLine) return;
+    const item = inventoryById.get(queueEditLine.itemId);
+    if (!item) {
+      toast({ variant: "destructive", title: "Položka už není ve skladu." });
+      return;
+    }
+    const trimmed = queueEditQtyStr.trim();
+    const next = Number(String(trimmed).replace(",", "."));
+    if (!Number.isFinite(next) || next <= 0) {
+      toast({ variant: "destructive", title: "Zadejte kladné množství." });
+      return;
+    }
+    const inputLen = lengthUnitEditableForItem(item) ? queueEditLine.inputLengthUnit : null;
+    const conv = quantityInStockUnits(item, next, inputLen);
+    if (conv == null || !Number.isFinite(conv)) {
+      toast({ variant: "destructive", title: "Neplatná délka nebo jednotka." });
+      return;
+    }
+    const others = issueQueue.filter((l) => l.key !== queueEditLine.key);
+    const left = projectedAvailableForItem(item, others);
+    if (conv > left + 1e-9) {
+      toast({ variant: "destructive", title: "Nedostatek skladu", description: "Zadejte menší množství." });
+      return;
+    }
+    setIssueQueue((q) => q.map((l) => (l.key === queueEditLine.key ? { ...l, qtyStr: trimmed } : l)));
+    setQueueEditOpen(false);
+    setQueueEditLine(null);
+  }, [queueEditLine, queueEditQtyStr, issueQueue, inventoryById, toast]);
+
+  const submitBulkIssue = useCallback(async () => {
+    if (!user || !jobId) return;
+    const v = validateIssueQueueAgainstInventory();
+    if (!v.ok) {
+      toast({ variant: "destructive", title: "Nelze potvrdit výdej", description: v.message });
+      return;
+    }
+    setBulkSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/production/issue-material-bulk", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({
+          jobId: String(jobId),
+          lines: issueQueue.map((ln) => ({
+            itemId: ln.itemId,
+            quantity: Number(String(ln.qtyStr).replace(",", ".")),
+            note: ln.note || null,
+            batchNumber: ln.batchNumber || null,
+            inputLengthUnit: ln.inputLengthUnit,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Hromadný výdej se nezdařil.");
+      }
+      toast({
+        title: "Hromadný výdej uložen",
+        description: `Zapsáno ${issueQueue.length} řádků na zakázku a do skladu.`,
+      });
+      setIssueQueue([]);
+      await loadApi();
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Hromadný výdej se nezdařil.",
+      });
+    } finally {
+      setBulkSaving(false);
+    }
+  }, [user, jobId, issueQueue, validateIssueQueueAgainstInventory, toast, loadApi]);
 
   if (!user || !companyId || !jobId) {
     return (
@@ -1567,7 +1814,15 @@ export default function VyrobaZakazkaDetailPage() {
                           </p>
                           {String(selectedItem.stockTrackingMode || "") === "length" ? (
                             <p className="text-sm text-slate-700">
-                              U metráže lze odebrat jen část — zbytek vznikne jako nová skladová řádka.
+                              U metráže lze odebrat část — zůstatek zůstane na stejné skladové řádce (u starších
+                              výdejů můžete vidět i samostatné řádky „zbytek“).
+                            </p>
+                          ) : null}
+                          {issueQueue.some((l) => l.itemId === selectedItem.id) ? (
+                            <p className="text-xs text-slate-600 mt-2">
+                              Sklad celkem: <strong>{shelfAvailableQty}</strong> {selectedItem.unit || "ks"} — po
+                              odečtení seznamu „Materiál k výdeji“ zbývá pro další řádek:{" "}
+                              <strong>{availableQty}</strong> {selectedItem.unit || "ks"}.
                             </p>
                           ) : null}
                         </div>
@@ -1701,6 +1956,130 @@ export default function VyrobaZakazkaDetailPage() {
                   ) : null}
                 </section>
 
+                {/* — Materiál k výdeji (fronta + hromadné potvrzení) — */}
+                <section
+                  aria-labelledby="issue-queue-heading"
+                  className="space-y-6 border-t-2 border-slate-200/90 pt-12 sm:pt-14"
+                >
+                  <h3
+                    id="issue-queue-heading"
+                    className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+                  >
+                    Materiál k výdeji
+                  </h3>
+                  <p className="text-sm text-slate-600 max-w-3xl">
+                    Přidejte více řádků (i stejnou skladovou položku s různými délkami) a potvrďte jedním tlačítkem.
+                    Celý výdej proběhne v jedné transakci; při nedostatku skladu se nic neuloží.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="gap-1"
+                      disabled={!selectedItem}
+                      onClick={() => addCurrentFormToIssueQueue()}
+                    >
+                      <Plus className="h-4 w-4" />
+                      Přidat do výdeje
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      disabled={!issueItemId}
+                      onClick={() => addSameStockLineAgain()}
+                    >
+                      Přidat stejnou položku znovu
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="gap-1 bg-emerald-700 text-white hover:bg-emerald-800"
+                      disabled={bulkSaving || issueQueue.length === 0}
+                      onClick={() => void submitBulkIssue()}
+                    >
+                      {bulkSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                      Potvrdit výdej všeho materiálu
+                    </Button>
+                  </div>
+                  {issueQueue.length === 0 ? (
+                    <p className="text-sm text-slate-500">Seznam je prázdný — použijte „Přidat do výdeje“.</p>
+                  ) : (
+                    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
+                      <table className="w-full min-w-[42rem] text-sm">
+                        <thead>
+                          <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase text-slate-600">
+                            <th className="w-14 p-2 font-semibold" aria-label="Náhled" />
+                            <th className="p-2 font-semibold">Položka</th>
+                            <th className="p-2 font-semibold">Dostupné</th>
+                            <th className="p-2 font-semibold">Množství</th>
+                            <th className="p-2 font-semibold">Jednotka zadání</th>
+                            <th className="p-2 font-semibold">Poznámka</th>
+                            <th className="p-2 font-semibold w-40">Akce</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {issueQueue.map((ln, rowIdx) => {
+                            const inv = inventoryById.get(ln.itemId);
+                            const prior = issueQueue.slice(0, rowIdx);
+                            const rowAvail = inv ? projectedAvailableForItem(inv, prior) : 0;
+                            const unitLabel = inv?.unit || "ks";
+                            const lenEd = inv ? lengthUnitEditableForItem(inv) : false;
+                            return (
+                              <tr key={ln.key} className="border-t border-slate-100 align-top">
+                                <td className="p-2">
+                                  <InventoryItemThumbnail item={inv} size={48} />
+                                </td>
+                                <td className="p-2">
+                                  <p className="font-medium text-slate-900">{inv?.name ?? ln.itemId}</p>
+                                  <p className="text-[11px] text-slate-500 font-mono break-all">{ln.itemId}</p>
+                                </td>
+                                <td className="p-2 tabular-nums text-slate-800">
+                                  {inv ? rowAvail : "—"} {unitLabel}
+                                </td>
+                                <td className="p-2 tabular-nums font-medium">{ln.qtyStr}</td>
+                                <td className="p-2 text-xs text-slate-600">
+                                  {lenEd ? (ln.inputLengthUnit || "—") : "—"}
+                                </td>
+                                <td className="p-2 text-xs text-slate-700 max-w-[14rem]">
+                                  {ln.note || "—"}
+                                  {ln.batchNumber ? (
+                                    <span className="block text-slate-500 mt-0.5">Šarže: {ln.batchNumber}</span>
+                                  ) : null}
+                                </td>
+                                <td className="p-2">
+                                  <div className="flex flex-wrap gap-1">
+                                    <Button
+                                      type="button"
+                                      variant="outline"
+                                      size="sm"
+                                      className="h-8"
+                                      onClick={() => openEditIssueQueueLine(ln)}
+                                    >
+                                      Upravit množství
+                                    </Button>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-8 text-red-700 hover:text-red-800"
+                                      onClick={() => removeIssueQueueLine(ln.key)}
+                                    >
+                                      Odebrat
+                                    </Button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </section>
+
                 {/* — Poznámka a potvrzení — */}
                 <section aria-labelledby="issue-form-note" className="space-y-6 border-t border-slate-200 pt-10">
                   <h3
@@ -1807,6 +2186,137 @@ export default function VyrobaZakazkaDetailPage() {
                 ) : (
                   <div className="space-y-2">
                     {consumptions.map((c, idx) => {
+                      const bulkIdRaw = (c as { bulkIssueGroupId?: unknown }).bulkIssueGroupId;
+                      const bulkId =
+                        typeof bulkIdRaw === "string" && bulkIdRaw.trim() ? bulkIdRaw.trim() : "";
+                      if (bulkId) {
+                        if (bulkRepresentativeIdx.get(bulkId) !== idx) return null;
+                        const lines = consumptions
+                          .filter(
+                            (x) =>
+                              typeof (x as { bulkIssueGroupId?: unknown }).bulkIssueGroupId === "string" &&
+                              String((x as { bulkIssueGroupId: string }).bulkIssueGroupId).trim() === bulkId
+                          )
+                          .sort(
+                            (a, b) =>
+                              Number((a as { bulkIssueLineIndex?: unknown }).bulkIssueLineIndex ?? 0) -
+                              Number((b as { bulkIssueLineIndex?: unknown }).bulkIssueLineIndex ?? 0)
+                          );
+                        const head = lines[0] ?? c;
+                        const whoHead =
+                          typeof head.createdByName === "string" && head.createdByName.trim()
+                            ? head.createdByName.trim()
+                            : typeof head.authUserId === "string"
+                              ? head.authUserId
+                              : typeof head.employeeId === "string"
+                                ? `zaměstnanec ${head.employeeId}`
+                                : "—";
+                        const whenHead = formatConsumptionCreatedAt(head.createdAt);
+                        return (
+                          <div
+                            key={`bulk-${bulkId}`}
+                            className="rounded border-2 border-emerald-200/90 bg-emerald-50/30 p-3 text-slate-800"
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                              <Badge className="bg-emerald-800 text-white hover:bg-emerald-800">
+                                Hromadný výdej
+                              </Badge>
+                              <span className="text-[11px] text-slate-600">
+                                {lines.length} položek
+                                {whenHead ? <> · {whenHead}</> : null}
+                              </span>
+                            </div>
+                            <p className="text-[11px] text-slate-600 mb-2">
+                              Vydal: <strong>{whoHead}</strong>
+                            </p>
+                            <ul className="space-y-3 border-t border-emerald-100/80 pt-2">
+                              {lines.map((line) => {
+                                const row = line as Record<string, unknown>;
+                                const lid = String(row.id ?? "");
+                                const srcIdL =
+                                  typeof row.sourceStockItemId === "string" && row.sourceStockItemId.trim()
+                                    ? row.sourceStockItemId
+                                    : typeof row.inventoryItemId === "string"
+                                      ? row.inventoryItemId
+                                      : "";
+                                const invL =
+                                  (typeof row.inventoryItemId === "string" && row.inventoryItemId.trim()
+                                    ? inventoryById.get(row.inventoryItemId.trim())
+                                    : undefined) ||
+                                  (typeof row.sourceStockItemId === "string" && row.sourceStockItemId.trim()
+                                    ? inventoryById.get(row.sourceStockItemId.trim())
+                                    : undefined);
+                                const whoLine =
+                                  typeof row.createdByName === "string" && row.createdByName.trim()
+                                    ? row.createdByName.trim()
+                                    : typeof row.authUserId === "string"
+                                      ? row.authUserId
+                                      : typeof row.employeeId === "string"
+                                        ? `zaměstnanec ${row.employeeId}`
+                                        : "—";
+                                const whenLine = formatConsumptionCreatedAt(row.createdAt);
+                                return (
+                                  <li
+                                    key={lid || `ln-${bulkId}-${String(row.bulkIssueLineIndex ?? "")}`}
+                                    className="rounded border border-white/80 bg-white/90 p-2 text-sm"
+                                  >
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                      <div className="flex min-w-0 flex-1 items-start gap-2">
+                                        <InventoryItemThumbnail item={invL} size={40} />
+                                        <span className="min-w-0 font-medium leading-snug">
+                                          {String(row.itemName ?? "")}
+                                        </span>
+                                      </div>
+                                      <span className="shrink-0 text-right text-sm">
+                                        −<strong>{String(row.quantity ?? "")}</strong> {String(row.unit ?? "")}
+                                        {row.inputLengthUnit ? (
+                                          <span className="text-xs text-slate-500">
+                                            {" "}
+                                            (zadáno v {String(row.inputLengthUnit)})
+                                          </span>
+                                        ) : null}
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 mt-1 font-mono break-all">
+                                      {srcIdL || "—"}
+                                    </p>
+                                    {row.note ? <p className="text-xs mt-1">{String(row.note)}</p> : null}
+                                    <p className="text-[11px] text-slate-500 mt-1">
+                                      {whoLine}
+                                      {whenLine ? <> · {whenLine}</> : null}
+                                    </p>
+                                    {isPrivilegedViewer ? (
+                                      <div className="mt-2 flex flex-wrap gap-2">
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-8 gap-2 border-slate-300 bg-white text-slate-900"
+                                          onClick={() => openEditConsumption(row)}
+                                        >
+                                          <Pencil className="h-3.5 w-3.5" />
+                                          Upravit
+                                        </Button>
+                                        <Button
+                                          type="button"
+                                          variant="outline"
+                                          size="sm"
+                                          className="h-8 gap-2 border-red-200 bg-white text-red-700 hover:bg-red-50 hover:text-red-800"
+                                          onClick={() => setDeleteConsumptionTarget(row)}
+                                        >
+                                          <Trash2 className="h-3.5 w-3.5" />
+                                          Smazat
+                                        </Button>
+                                      </div>
+                                    ) : null}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        );
+                      }
+
                       const srcId =
                         typeof c.sourceStockItemId === "string" && c.sourceStockItemId.trim()
                           ? c.sourceStockItemId
@@ -1963,8 +2473,8 @@ export default function VyrobaZakazkaDetailPage() {
             </CardHeader>
             <CardContent className="pt-4 space-y-3 text-sm text-slate-800">
               <p className="text-xs text-slate-600">
-                Zbytky po částečném výdeji délkového materiálu jsou nové skladové řádky; znovu je vyberete ve
-                výběru materiálu výše.
+                U nových výdejů zůstává zbytek metráže na stejné řádce. Starší záznamy mohly vytvořit samostatný
+                řádek „zbytek“ — ty znovu vyberete ve výběru materiálu výše.
               </p>
               {remainderInventoryRows.length === 0 ? (
                 <div className="space-y-2">
@@ -2123,6 +2633,51 @@ export default function VyrobaZakazkaDetailPage() {
             </DialogContent>
           </Dialog>
 
+          <Dialog
+            open={queueEditOpen}
+            onOpenChange={(o) => {
+              if (!o) {
+                setQueueEditOpen(false);
+                setQueueEditLine(null);
+              }
+            }}
+          >
+            <DialogContent className="bg-white border-slate-200 text-slate-900 sm:max-w-md">
+              <DialogHeader>
+                <DialogTitle>Upravit množství ve výdeji</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 py-2">
+                <Label htmlFor="queue-edit-qty">Množství</Label>
+                <Input
+                  id="queue-edit-qty"
+                  className="bg-white"
+                  value={queueEditQtyStr}
+                  onChange={(e) => setQueueEditQtyStr(e.target.value)}
+                  inputMode="decimal"
+                />
+                <p className="text-xs text-slate-500">
+                  Jednotka zadání odpovídá řádku ve frontě (mm/cm/m u metráže, jinak přímo ve skladové jednotce).
+                </p>
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-slate-300 bg-white"
+                  onClick={() => {
+                    setQueueEditOpen(false);
+                    setQueueEditLine(null);
+                  }}
+                >
+                  Zrušit
+                </Button>
+                <Button type="button" onClick={() => saveIssueQueueLineQty()}>
+                  Uložit
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
           <AlertDialog
             open={!!deleteConsumptionTarget}
             onOpenChange={(o) => {
@@ -2133,7 +2688,8 @@ export default function VyrobaZakazkaDetailPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Smazat záznam spotřeby?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Opravdu chcete smazat tento záznam? Materiál se vrátí zpět na sklad.
+                  Opravdu chcete smazat tento záznam? Materiál se obvykle vrátí na sklad; pokud už původní
+                  skladová položka neexistuje, záznam se smaže bez vrácení a zobrazí se upozornění.
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>

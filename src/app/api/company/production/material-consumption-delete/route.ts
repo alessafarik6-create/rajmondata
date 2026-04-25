@@ -101,18 +101,80 @@ export async function POST(request: NextRequest) {
       const itemCol = db.collection("companies").doc(caller.companyId).collection("inventoryItems");
       const primaryRef = itemCol.doc(primaryId);
       const primarySnap = await tx.get(primaryRef);
-      if (!primarySnap.exists) throw new Error("Skladová položka neexistuje.");
-      const primary = primarySnap.data() as Record<string, unknown>;
-      if (primary.isDeleted === true) throw new Error("Skladová položka byla odstraněna.");
+      const primaryMissing =
+        !primarySnap.exists || (primarySnap.data() as Record<string, unknown> | undefined)?.isDeleted === true;
 
       const unit =
-        typeof cons.unit === "string" && cons.unit.trim() ? cons.unit.trim() : String(primary.unit || "ks");
+        typeof cons.unit === "string" && cons.unit.trim()
+          ? cons.unit.trim()
+          : primarySnap.exists
+            ? String((primarySnap.data() as Record<string, unknown>).unit || "ks")
+            : "ks";
       const itemName =
         typeof cons.itemName === "string" && cons.itemName.trim()
           ? cons.itemName.trim()
-          : String(primary.name || primaryId);
+          : primarySnap.exists
+            ? String((primarySnap.data() as Record<string, unknown>).name || primaryId)
+            : primaryId;
 
       let warnings: string[] = [];
+
+      if (primaryMissing) {
+        warnings.push(
+          "Původní skladová položka už neexistuje, záznam spotřeby byl smazán bez vrácení na sklad."
+        );
+
+        const movRef = db
+          .collection("companies")
+          .doc(caller.companyId)
+          .collection("inventoryMovements")
+          .doc();
+        const today = new Date().toISOString().slice(0, 10);
+        tx.set(movRef, {
+          companyId: caller.companyId,
+          type: "production_consumption_delete_no_restock",
+          itemId: primaryId,
+          itemName,
+          quantity: qty,
+          unit,
+          date: today,
+          note: warnings[0],
+          adjustmentDelta: 0,
+          destination: `job:${jobId}`,
+          jobId,
+          jobName: typeof cons.jobName === "string" ? cons.jobName : null,
+          employeeId: typeof cons.employeeId === "string" ? cons.employeeId : null,
+          consumptionId,
+          deletedWithoutStockRestore: true,
+          sourceMovementId: typeof cons.movementId === "string" ? cons.movementId : null,
+          createdAt: FieldValue.serverTimestamp(),
+          createdBy: caller.uid,
+        });
+
+        const auditRef = db
+          .collection("companies")
+          .doc(caller.companyId)
+          .collection("productionConsumptionDeleteAudits")
+          .doc();
+        tx.set(auditRef, {
+          companyId: caller.companyId,
+          jobId,
+          consumptionId,
+          stockItemId: primaryId,
+          itemName,
+          quantity: qty,
+          unit,
+          deletedByUid: caller.uid,
+          stockItemMissing: true,
+          inventoryMovementId: movRef.id,
+          createdAt: FieldValue.serverTimestamp(),
+        });
+
+        tx.delete(consRef);
+        return { ok: true, warnings };
+      }
+
+      const primary = primarySnap.data() as Record<string, unknown>;
 
       if (mode === "length" && remainderCreated && remainderId) {
         const remRef = itemCol.doc(remainderId);
