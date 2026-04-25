@@ -27,7 +27,7 @@ async function loadPdfJs() {
   pdfjs.GlobalWorkerOptions.workerSrc =
     major === 3
       ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
-      : `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`;
+      : `//unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.js`;
   return pdfjs;
 }
 
@@ -42,18 +42,20 @@ export function JobProductionPdfDocumentationPanel({
   attachmentsLoading: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const pageFrameRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pdfRef = useRef<PDFDocumentProxy | null>(null);
 
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [page, setPage] = useState(1);
   const [numPages, setNumPages] = useState(0);
-  /** Násobek škálování „vejde se na šířku“ (1 = přizpůsobit šířce). */
-  const [zoomMul, setZoomMul] = useState(1);
+  /** Fit = přizpůsobit šířce (A4) + pevné zoom kroky. */
+  const [zoomPreset, setZoomPreset] = useState<"fit" | "100" | "125" | "150">("fit");
   const [containerWidth, setContainerWidth] = useState(0);
   const [docLoading, setDocLoading] = useState(false);
   const [pageRendering, setPageRendering] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [renderFailed, setRenderFailed] = useState(false);
 
   const safeIndex = pdfFiles.length > 0 ? Math.min(Math.max(0, selectedIndex), pdfFiles.length - 1) : 0;
   const current = pdfFiles.length > 0 ? pdfFiles[safeIndex] : null;
@@ -82,6 +84,7 @@ export function JobProductionPdfDocumentationPanel({
       setNumPages(0);
       setPage(1);
       setLoadError(null);
+      setRenderFailed(false);
       return;
     }
 
@@ -89,6 +92,7 @@ export function JobProductionPdfDocumentationPanel({
     (async () => {
       setDocLoading(true);
       setLoadError(null);
+      setRenderFailed(false);
       setNumPages(0);
       try {
         try {
@@ -132,6 +136,7 @@ export function JobProductionPdfDocumentationPanel({
         pdfRef.current = pdf;
         setNumPages(pdf.numPages || 0);
         setPage(1);
+        setZoomPreset("fit");
       } catch (e) {
         console.error("[JobProductionPdfDocumentationPanel] load PDF", e);
         if (!cancelled) {
@@ -164,32 +169,50 @@ export function JobProductionPdfDocumentationPanel({
     try {
       const p = await pdf.getPage(page);
       const base = p.getViewport({ scale: 1 });
-      const maxCssH = Math.min(1000, typeof window !== "undefined" ? window.innerHeight * 0.85 : 900);
-      const fitW = (cw - 16) / base.width;
-      const fitH = maxCssH / base.height;
-      const fit = Math.min(fitW, fitH, 3);
-      const scale = Math.max(0.15, Math.min(4, fit * zoomMul));
+
+      const pad = 16; // wrapper padding
+      const maxW = Math.max(320, cw - pad * 2);
+      const isDesktop = typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
+      const targetCssW = isDesktop ? Math.min(maxW, 1100) : maxW;
+      const pageCssW = isDesktop ? Math.max(950, targetCssW) : targetCssW;
+      const pageCssWClamped = Math.min(pageCssW, maxW);
+
+      const a4Ratio = 210 / 297;
+      const pageCssH = Math.round(pageCssWClamped / a4Ratio);
+
+      const frame = pageFrameRef.current;
+      if (frame) {
+        frame.style.width = `${pageCssWClamped}px`;
+        frame.style.height = `${pageCssH}px`;
+      }
+
+      const presetMul = zoomPreset === "fit" ? 1 : zoomPreset === "125" ? 1.25 : zoomPreset === "150" ? 1.5 : 1;
+      const dpr = typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1;
+      const scale = ((pageCssWClamped * dpr) / base.width) * presetMul;
+
       const vp = p.getViewport({ scale });
-      const w = Math.round(vp.width);
-      const h = Math.round(vp.height);
+      const w = Math.max(1, Math.round(vp.width));
+      const h = Math.max(1, Math.round(vp.height));
+
       canvas.width = w;
       canvas.height = h;
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
-      ctx.fillStyle = "#f8fafc";
+      ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, w, h);
       await p.render({ canvasContext: ctx, viewport: vp }).promise;
       canvas.style.width = "100%";
-      canvas.style.height = "auto";
-      canvas.style.maxHeight = `${maxCssH}px`;
+      canvas.style.height = "100%";
       setLoadError(null);
+      setRenderFailed(false);
     } catch (e) {
       console.error("[JobProductionPdfDocumentationPanel] render page", e);
       setLoadError(e instanceof Error ? e.message : "Chyba vykreslení stránky.");
+      setRenderFailed(true);
     } finally {
       setPageRendering(false);
     }
-  }, [containerWidth, numPages, page, zoomMul]);
+  }, [containerWidth, numPages, page, zoomPreset]);
 
   useEffect(() => {
     void renderPage();
@@ -264,8 +287,9 @@ export function JobProductionPdfDocumentationPanel({
             onValueChange={(v) => {
               setSelectedIndex(Number(v));
               setPage(1);
-              setZoomMul(1);
+              setZoomPreset("fit");
               setLoadError(null);
+              setRenderFailed(false);
             }}
           >
             <SelectTrigger className="border-slate-300 bg-white text-left">
@@ -329,8 +353,8 @@ export function JobProductionPdfDocumentationPanel({
                 size="sm"
                 className="h-9 px-2"
                 disabled={busy}
-                onClick={() => setZoomMul((z) => Math.max(0.25, z / 1.2))}
-                aria-label="Zmenšit"
+                onClick={() => setZoomPreset("100")}
+                aria-label="Zoom 100 %"
               >
                 <ZoomOut className="h-4 w-4" />
               </Button>
@@ -340,8 +364,8 @@ export function JobProductionPdfDocumentationPanel({
                 size="sm"
                 className="h-9 px-2"
                 disabled={busy}
-                onClick={() => setZoomMul((z) => Math.min(4, z * 1.2))}
-                aria-label="Zvětšit"
+                onClick={() => setZoomPreset("125")}
+                aria-label="Zoom 125 %"
               >
                 <ZoomIn className="h-4 w-4" />
               </Button>
@@ -351,43 +375,80 @@ export function JobProductionPdfDocumentationPanel({
                 size="sm"
                 className="h-9 gap-1 px-2"
                 disabled={busy}
-                onClick={() => setZoomMul(1)}
+                onClick={() => setZoomPreset("150")}
+                aria-label="Zoom 150 %"
+              >
+                <span className="hidden sm:inline text-xs">150%</span>
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="h-9 gap-1 px-2"
+                disabled={busy}
+                onClick={() => setZoomPreset("fit")}
                 aria-label="Přizpůsobit šířce"
               >
                 <Maximize2 className="h-4 w-4" />
                 <span className="hidden sm:inline text-xs">Šířka</span>
               </Button>
             </div>
+            {openUrl ? (
+              <Button type="button" variant="outline" className="h-9 gap-2 bg-white" asChild>
+                <a href={openUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4" />
+                  Otevřít PDF
+                </a>
+              </Button>
+            ) : null}
           </div>
         </div>
       </div>
 
       <div
         ref={containerRef}
-        className="relative w-full max-h-[min(1000px,90vh)] overflow-auto rounded-xl border-2 border-slate-200 bg-slate-100/90 shadow-inner"
+        className="relative w-full overflow-auto rounded-xl border-2 border-slate-200 bg-slate-100 shadow-inner p-4"
       >
         {(busy || pageRendering) && !loadError ? (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-[1px]">
-            <Loader2 className="h-10 w-10 animate-spin text-slate-600" aria-label="Načítání PDF" />
+            <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 shadow">
+              <Loader2 className="h-6 w-6 animate-spin text-slate-700" aria-label="Načítání PDF" />
+              <span className="text-sm text-slate-700">Načítám PDF…</span>
+            </div>
           </div>
         ) : null}
-        <div className="flex min-h-[min(420px,50vh)] w-full justify-center p-2 sm:p-3">
-          {loadError ? (
-            <div className="flex max-w-lg flex-col items-center justify-center gap-4 px-4 py-12 text-center">
-              <p className="text-sm text-slate-700">V prohlížeči se PDF nepodařilo zobrazit ({loadError}).</p>
-              {openUrl ? (
-                <Button type="button" variant="outline" className="gap-2 bg-white" asChild>
-                  <a href={openUrl} target="_blank" rel="noopener noreferrer">
-                    <ExternalLink className="h-4 w-4" />
-                    Otevřít PDF v nové záložce
-                  </a>
-                </Button>
-              ) : null}
+
+        {loadError || renderFailed ? (
+          <div className="space-y-4">
+            <p className="text-sm text-slate-700">
+              PDF se nepodařilo vykreslit, otevřete ho v nové záložce.
+              {loadError ? <span className="text-slate-500"> ({loadError})</span> : null}
+            </p>
+            {openUrl ? (
+              <>
+                <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                  <iframe
+                    src={openUrl}
+                    title={current?.fileName || "PDF"}
+                    className="block w-full"
+                    style={{ height: "min(1000px, 90vh)" }}
+                    loading="lazy"
+                  />
+                </div>
+              </>
+            ) : null}
+          </div>
+        ) : (
+          <div className="flex w-full justify-center">
+            <div
+              ref={pageFrameRef}
+              className="mx-auto bg-white shadow-lg ring-1 ring-slate-200"
+              style={{ aspectRatio: "210 / 297" }}
+            >
+              <canvas ref={canvasRef} className="block h-full w-full bg-white" />
             </div>
-          ) : (
-            <canvas ref={canvasRef} className="block w-full max-w-full bg-white shadow-md" />
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </section>
   );
