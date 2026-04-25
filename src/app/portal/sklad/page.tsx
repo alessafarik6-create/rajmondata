@@ -4,12 +4,14 @@ import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import {
   collection,
+  deleteDoc,
   doc,
   limit,
   orderBy,
   query,
   runTransaction,
   serverTimestamp,
+  setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
@@ -87,6 +89,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { WarehouseImportDialog } from "@/components/warehouse/warehouse-import-dialog";
+import { DEFAULT_STOCK_CATEGORIES } from "@/lib/stock-categories";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -160,6 +163,16 @@ export default function SkladPage() {
     );
   }, [areServicesAvailable, firestore, companyId]);
 
+  const categoriesQuery = useMemoFirebase(() => {
+    if (!areServicesAvailable || !firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "stockCategories"),
+      orderBy("order"),
+      orderBy("name"),
+      limit(200)
+    );
+  }, [areServicesAvailable, firestore, companyId]);
+
   const movementsQuery = useMemoFirebase(() => {
     if (!areServicesAvailable || !firestore || !companyId) return null;
     return query(
@@ -190,6 +203,9 @@ export default function SkladPage() {
   }, [areServicesAvailable, firestore, companyId]);
 
   const { data: items, isLoading: itemsLoading } = useCollection(itemsQuery);
+  const { data: stockCategoriesRaw = [] } = useCollection(categoriesQuery, {
+    suppressGlobalPermissionError: true as const,
+  });
   const { data: movements, isLoading: movLoading } = useCollection(movementsQuery);
   const { data: productions } = useCollection(productionQuery);
   const { data: deliveryNotes } = useCollection(deliveryNotesQuery);
@@ -224,6 +240,22 @@ export default function SkladPage() {
     () => (Array.isArray(items) ? (items as InventoryItemRow[]) : []),
     [items]
   );
+  const stockCategories = useMemo(() => {
+    const raw = Array.isArray(stockCategoriesRaw) ? stockCategoriesRaw : [];
+    return raw
+      .map((c: any) => ({
+        id: String(c?.id ?? ""),
+        name: String(c?.name ?? ""),
+        order: Number(c?.order) || 0,
+      }))
+      .filter((c) => c.id && c.name)
+      .sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name, "cs"));
+  }, [stockCategoriesRaw]);
+  const stockCategoryById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of stockCategories) m.set(c.id, c.name);
+    return m;
+  }, [stockCategories]);
   const movList = useMemo(
     () => (Array.isArray(movements) ? (movements as InventoryMovementRow[]) : []),
     [movements]
@@ -240,15 +272,6 @@ export default function SkladPage() {
     [itemList]
   );
 
-  const categoryFilterOptions = useMemo(() => {
-    const s = new Set<string>();
-    for (const row of activeItemList) {
-      const c = String(row.materialCategory ?? "").trim();
-      if (c) s.add(c);
-    }
-    return Array.from(s).sort((a, b) => a.localeCompare(b, "cs"));
-  }, [activeItemList]);
-
   const [categoryFilter, setCategoryFilter] = useState<string>("__all__");
   const [searchQuery, setSearchQuery] = useState("");
   const [editOpen, setEditOpen] = useState(false);
@@ -261,7 +284,11 @@ export default function SkladPage() {
   const filteredItems = useMemo(() => {
     let rows = activeItemList;
     if (categoryFilter !== "__all__") {
-      rows = rows.filter((r) => String(r.materialCategory ?? "").trim() === categoryFilter);
+      if (categoryFilter === "__none__") {
+        rows = rows.filter((r) => !String(r.categoryId ?? "").trim());
+      } else {
+        rows = rows.filter((r) => String(r.categoryId ?? "").trim() === categoryFilter);
+      }
     }
     const q = searchQuery.trim().toLowerCase();
     if (q) {
@@ -273,6 +300,10 @@ export default function SkladPage() {
     }
     return rows;
   }, [activeItemList, categoryFilter, searchQuery]);
+
+  const [catManageOpen, setCatManageOpen] = useState(false);
+  const [catBusy, setCatBusy] = useState(false);
+  const [newCatName, setNewCatName] = useState("");
 
   const warehouseStats = useMemo(() => {
     let totalQty = 0;
@@ -370,6 +401,8 @@ export default function SkladPage() {
             name,
             sku: inNewSku.trim() || null,
             materialCategory: null,
+            categoryId: null,
+            categoryName: null,
             unit,
             quantity: qty,
             unitPrice: Number.isFinite(unitPrice as number) ? unitPrice : null,
@@ -441,6 +474,127 @@ export default function SkladPage() {
       });
     } finally {
       setSaving(false);
+    }
+  };
+
+  const createCategory = async () => {
+    if (!user || !firestore || !companyId) return;
+    const name = newCatName.trim();
+    if (!name) {
+      toast({ variant: "destructive", title: "Vyplňte název kategorie." });
+      return;
+    }
+    setCatBusy(true);
+    try {
+      const nextOrder = stockCategories.length
+        ? Math.max(...stockCategories.map((c) => Number(c.order) || 0)) + 10
+        : 10;
+      const ref = doc(collection(firestore, "companies", companyId, "stockCategories"));
+      await setDoc(ref, {
+        id: ref.id,
+        companyId,
+        name,
+        order: nextOrder,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        createdBy: user.uid,
+      });
+      setNewCatName("");
+      toast({ title: "Kategorie vytvořena" });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Vytvoření kategorie se nezdařilo.",
+      });
+    } finally {
+      setCatBusy(false);
+    }
+  };
+
+  const renameCategory = async (id: string, name: string) => {
+    if (!user || !firestore || !companyId) return;
+    const next = name.trim();
+    if (!next) return;
+    setCatBusy(true);
+    try {
+      await updateDoc(doc(firestore, "companies", companyId, "stockCategories", id), {
+        name: next,
+        updatedAt: serverTimestamp(),
+      });
+      toast({ title: "Kategorie upravena" });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Uložení se nezdařilo.",
+      });
+    } finally {
+      setCatBusy(false);
+    }
+  };
+
+  const updateCategoryOrder = async (id: string, order: number) => {
+    if (!user || !firestore || !companyId) return;
+    if (!Number.isFinite(order)) return;
+    setCatBusy(true);
+    try {
+      await updateDoc(doc(firestore, "companies", companyId, "stockCategories", id), {
+        order,
+        updatedAt: serverTimestamp(),
+      });
+    } finally {
+      setCatBusy(false);
+    }
+  };
+
+  const deleteCategory = async (id: string) => {
+    if (!user || !firestore || !companyId) return;
+    setCatBusy(true);
+    try {
+      await deleteDoc(doc(firestore, "companies", companyId, "stockCategories", id));
+      toast({
+        title: "Kategorie odstraněna",
+        description: "Kategorie byla smazána (položky zůstávají beze změny).",
+      });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Odstranění se nezdařilo.",
+      });
+    } finally {
+      setCatBusy(false);
+    }
+  };
+
+  const seedDefaults = async () => {
+    if (!user || !firestore || !companyId) return;
+    setCatBusy(true);
+    try {
+      const existing = new Set(stockCategories.map((c) => c.name.toLowerCase()));
+      const toCreate = DEFAULT_STOCK_CATEGORIES.filter((c) => !existing.has(c.name.toLowerCase()));
+      for (const c of toCreate) {
+        const ref = doc(collection(firestore, "companies", companyId, "stockCategories"));
+        await setDoc(ref, {
+          id: ref.id,
+          companyId,
+          name: c.name,
+          order: c.order,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          createdBy: user.uid,
+        });
+      }
+      toast({ title: "Výchozí kategorie vytvořeny" });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Vytvoření se nezdařilo.",
+      });
+    } finally {
+      setCatBusy(false);
     }
   };
 
@@ -710,18 +864,29 @@ export default function SkladPage() {
                 />
               </div>
               <Select value={categoryFilter} onValueChange={setCategoryFilter}>
-                <SelectTrigger className="bg-white border-slate-200 h-9 w-full sm:w-[220px]">
-                  <SelectValue placeholder="Zařazení materiálu" />
+                <SelectTrigger className="bg-white border-slate-200 h-9 w-full sm:w-[240px]">
+                  <SelectValue placeholder="Kategorie" />
                 </SelectTrigger>
                 <SelectContent className="bg-white border-slate-200">
-                  <SelectItem value="__all__">Všechna zařazení</SelectItem>
-                  {categoryFilterOptions.map((c) => (
-                    <SelectItem key={c} value={c}>
-                      {c}
+                  <SelectItem value="__all__">Všechny kategorie</SelectItem>
+                  <SelectItem value="__none__">Bez kategorie</SelectItem>
+                  {stockCategories.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+              {canManageInventory ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-9 border-slate-300 bg-white text-slate-900"
+                  onClick={() => setCatManageOpen(true)}
+                >
+                  Správa kategorií
+                </Button>
+              ) : null}
             </div>
           </div>
         </CardHeader>
@@ -744,7 +909,7 @@ export default function SkladPage() {
                     <TableHead className="w-14 text-slate-700">Foto</TableHead>
                     <TableHead className="text-slate-700 min-w-[140px]">Název</TableHead>
                     <TableHead className="text-slate-700">SKU</TableHead>
-                    <TableHead className="text-slate-700 min-w-[120px]">Zařazení</TableHead>
+                    <TableHead className="text-slate-700 min-w-[140px]">Kategorie</TableHead>
                     <TableHead className="text-right text-slate-700">Množství</TableHead>
                     <TableHead className="text-slate-700">MJ</TableHead>
                     <TableHead className="text-right text-slate-700">Cena / MJ</TableHead>
@@ -795,7 +960,11 @@ export default function SkladPage() {
                           {row.sku?.trim() ? row.sku : "—"}
                         </TableCell>
                         <TableCell className="text-slate-600 align-middle">
-                          {String(row.materialCategory ?? "").trim() || "—"}
+                          {String(
+                            row.categoryName ??
+                              (row.categoryId ? stockCategoryById.get(String(row.categoryId)) : "") ??
+                              ""
+                          ).trim() || "Bez kategorie"}
                         </TableCell>
                         <TableCell className="text-right tabular-nums align-middle">
                           {Number(row.quantity ?? 0)}
@@ -1140,6 +1309,7 @@ export default function SkladPage() {
           userId={user.uid}
           item={editItem}
           onSaved={() => {}}
+          stockCategories={stockCategories}
         />
       ) : null}
 
@@ -1189,6 +1359,102 @@ export default function SkladPage() {
               <img src={imagePreviewSrc} alt="" className="max-h-[65vh] max-w-full object-contain" />
             ) : null}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={catManageOpen} onOpenChange={setCatManageOpen}>
+        <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-xl" data-portal-dialog>
+          <DialogHeader>
+            <DialogTitle>Kategorie skladu</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="flex-1 space-y-1">
+                <Label>Nová kategorie</Label>
+                <Input
+                  className="bg-white"
+                  value={newCatName}
+                  onChange={(e) => setNewCatName(e.target.value)}
+                  placeholder="Např. Pergoly"
+                />
+              </div>
+              <Button type="button" disabled={catBusy} onClick={() => void createCategory()}>
+                {catBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Vytvořit"}
+              </Button>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={catBusy}
+                className="border-slate-300 bg-white text-slate-900"
+                onClick={() => void seedDefaults()}
+              >
+                Vytvořit výchozí kategorie
+              </Button>
+              <p className="text-xs text-slate-500 self-center">
+                Výchozí: pergoly, zasklení, příslušenství, materiál, spojovací materiál, ostatní.
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              {stockCategories.length === 0 ? (
+                <p className="text-sm text-slate-600">Zatím žádné kategorie.</p>
+              ) : (
+                stockCategories.map((c) => (
+                  <div
+                    key={c.id}
+                    className="flex flex-col gap-2 rounded border border-slate-200 p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <Input
+                        className="bg-white"
+                        defaultValue={c.name}
+                        onBlur={(e) => {
+                          const next = e.target.value;
+                          if (next.trim() && next.trim() !== c.name.trim()) {
+                            void renameCategory(c.id, next);
+                          }
+                        }}
+                      />
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs text-slate-600">Pořadí</Label>
+                        <Input
+                          className="h-8 w-24 bg-white text-sm"
+                          defaultValue={String(c.order)}
+                          inputMode="numeric"
+                          onBlur={(e) => {
+                            const n = Number(String(e.target.value).replace(",", "."));
+                            if (Number.isFinite(n) && n !== c.order) {
+                              void updateCategoryOrder(c.id, n);
+                            }
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex gap-2 sm:justify-end">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="border-slate-300 bg-white text-slate-900"
+                        disabled={catBusy}
+                        onClick={() => void deleteCategory(c.id)}
+                      >
+                        Smazat
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setCatManageOpen(false)} className="border-slate-300">
+              Zavřít
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 

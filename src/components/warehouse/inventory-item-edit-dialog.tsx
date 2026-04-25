@@ -31,7 +31,6 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { getFirebaseStorage } from "@/firebase";
 import type { InventoryItemRow, InventoryStockTrackingMode } from "@/lib/inventory-types";
-import { INVENTORY_MATERIAL_CATEGORY_SUGGESTIONS } from "@/lib/inventory-helpers";
 
 function safeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120) || "image";
@@ -45,6 +44,7 @@ type Props = {
   userId: string;
   item: InventoryItemRow | null;
   onSaved: () => void;
+  stockCategories?: { id: string; name: string }[];
 };
 
 export function InventoryItemEditDialog({
@@ -55,14 +55,14 @@ export function InventoryItemEditDialog({
   userId,
   item,
   onSaved,
+  stockCategories = [],
 }: Props) {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [saving, setSaving] = useState(false);
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
-  const [category, setCategory] = useState("");
-  const [categoryCustom, setCategoryCustom] = useState("");
+  const [categoryId, setCategoryId] = useState<string>("");
   const [unit, setUnit] = useState("ks");
   const [quantity, setQuantity] = useState("0");
   const [unitPrice, setUnitPrice] = useState("");
@@ -78,18 +78,7 @@ export function InventoryItemEditDialog({
     if (!open || !item) return;
     setName(item.name ?? "");
     setSku(String(item.sku ?? ""));
-    const cat = String(item.materialCategory ?? "").trim();
-    const isPreset = (INVENTORY_MATERIAL_CATEGORY_SUGGESTIONS as readonly string[]).includes(cat);
-    if (isPreset) {
-      setCategory(cat);
-      setCategoryCustom("");
-    } else if (cat) {
-      setCategory("__custom__");
-      setCategoryCustom(cat);
-    } else {
-      setCategory("");
-      setCategoryCustom("");
-    }
+    setCategoryId(String(item.categoryId ?? "").trim());
     setUnit(item.unit || "ks");
     setQuantity(String(item.quantity ?? 0));
     setUnitPrice(
@@ -141,9 +130,10 @@ export function InventoryItemEditDialog({
       priceRaw != null && Number.isFinite(priceRaw) && priceRaw >= 0 ? priceRaw : null;
 
     const catResolved =
-      category === "__custom__"
-        ? categoryCustom.trim() || null
-        : category.trim() || null;
+      categoryId.trim() || null;
+    const catNameResolved = catResolved
+      ? (stockCategories.find((c) => c.id === catResolved)?.name ?? null)
+      : null;
 
     setSaving(true);
     try {
@@ -168,7 +158,7 @@ export function InventoryItemEditDialog({
         const oldQty = Number(prev.quantity ?? 0);
         const oldName = String(prev.name ?? "");
         const oldSku = String(prev.sku ?? "");
-        const oldCat = String(prev.materialCategory ?? "");
+        const oldCat = String(prev.categoryId ?? "");
         const oldUnit = String(prev.unit ?? "ks");
         const oldSup = String(prev.supplier ?? "");
         const oldNote = String(prev.note ?? "");
@@ -191,7 +181,10 @@ export function InventoryItemEditDialog({
         const basePatch: Record<string, unknown> = {
           name: n,
           sku: sku.trim() || null,
-          materialCategory: catResolved,
+          categoryId: catResolved,
+          categoryName: catNameResolved,
+          /** Legacy fallback pro staré UI (zařazení materiálu) */
+          materialCategory: catNameResolved,
           unit: u,
           quantity: q,
           stockTrackingMode: stockTrackingMode,
@@ -349,42 +342,26 @@ export function InventoryItemEditDialog({
           </div>
 
           <div className="space-y-1">
-            <Label>Zařazení materiálu</Label>
+            <Label>Kategorie</Label>
             <Select
-              value={category || "__none__"}
-              onValueChange={(v) => {
-                if (v === "__none__") {
-                  setCategory("");
-                  setCategoryCustom("");
-                } else if (v === "__custom__") {
-                  setCategory("__custom__");
-                } else {
-                  setCategory(v);
-                  setCategoryCustom("");
-                }
-              }}
+              value={categoryId || "__none__"}
+              onValueChange={(v) => setCategoryId(v === "__none__" ? "" : v)}
             >
               <SelectTrigger className="bg-white">
-                <SelectValue placeholder="Vyberte nebo vlastní text…" />
+                <SelectValue placeholder="Vyberte kategorii…" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="__none__">— bez výběru —</SelectItem>
-                {INVENTORY_MATERIAL_CATEGORY_SUGGESTIONS.map((c) => (
-                  <SelectItem key={c} value={c}>
-                    {c}
+                <SelectItem value="__none__">Bez kategorie</SelectItem>
+                {stockCategories.map((c) => (
+                  <SelectItem key={c.id} value={c.id}>
+                    {c.name}
                   </SelectItem>
                 ))}
-                <SelectItem value="__custom__">Vlastní text…</SelectItem>
               </SelectContent>
             </Select>
-            {category === "__custom__" ? (
-              <Input
-                className="bg-white mt-2"
-                placeholder="Název kategorie"
-                value={categoryCustom}
-                onChange={(e) => setCategoryCustom(e.target.value)}
-              />
-            ) : null}
+            <p className="text-xs text-slate-500">
+              Kategorie se spravují v modulu Sklad (kategorie lze řadit a filtrovat).
+            </p>
           </div>
 
           <div className="space-y-1">

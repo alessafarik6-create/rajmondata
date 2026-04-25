@@ -30,6 +30,10 @@ export type InventoryItemRow = {
   sku?: string | null;
   /** Zařazení / kategorie materiálu (volitelné). */
   materialCategory?: string | null;
+  /** Nové kategorie skladu (companies/{companyId}/stockCategories/{categoryId}). */
+  categoryId?: string | null;
+  /** Volitelný denormalizovaný název kategorie pro rychlé zobrazení. */
+  categoryName?: string | null;
   unit: string;
   quantity: number;
   /** Režim evidence (výchozí pieces = kompatibilní se stávajícími záznamy). */

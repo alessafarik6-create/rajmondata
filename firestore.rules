@@ -671,6 +671,12 @@ service cloud.firestore {
         allow write: if warehouseModuleUser(companyId);
       }
 
+      /** Kategorie skladových položek (správa ve skladu). */
+      match /stockCategories/{categoryId} {
+        allow read: if inventoryReadForProductionOrWarehouse(companyId);
+        allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
       /**
        * Produktové katalogy pro zákazníky.
        * companies/{companyId}/product_catalogs/{catalogId}

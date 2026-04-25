@@ -326,6 +326,28 @@ export default function VyrobaZakazkaDetailPage() {
     [firestore, companyId]
   );
   const { data: inventoryRaw } = useCollection(invCol);
+
+  const stockCategoriesCol = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? query(
+            collection(firestore, "companies", companyId, "stockCategories"),
+            orderBy("order"),
+            orderBy("name"),
+            limit(200)
+          )
+        : null,
+    [firestore, companyId]
+  );
+  const { data: stockCategoriesRaw = [] } = useCollection(stockCategoriesCol, {
+    suppressGlobalPermissionError: true as const,
+  });
+  const stockCategories = useMemo(() => {
+    const raw = Array.isArray(stockCategoriesRaw) ? stockCategoriesRaw : [];
+    return raw
+      .map((c: any) => ({ id: String(c?.id ?? ""), name: String(c?.name ?? "") }))
+      .filter((c) => c.id && c.name);
+  }, [stockCategoriesRaw]);
   const inventoryItems = useMemo(() => {
     const list = Array.isArray(inventoryRaw) ? inventoryRaw : [];
     return list
@@ -355,6 +377,15 @@ export default function VyrobaZakazkaDetailPage() {
       return true;
     });
   }, [inventoryItems]);
+
+  const [issueCategoryFilter, setIssueCategoryFilter] = useState<string>("__all__");
+  const issueableInventoryFiltered = useMemo(() => {
+    if (issueCategoryFilter === "__all__") return issueableInventory;
+    if (issueCategoryFilter === "__none__") {
+      return issueableInventory.filter((i) => !String(i.categoryId ?? "").trim());
+    }
+    return issueableInventory.filter((i) => String(i.categoryId ?? "").trim() === issueCategoryFilter);
+  }, [issueableInventory, issueCategoryFilter]);
 
   const [jobView, setJobView] = useState<SafeJobView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -461,17 +492,17 @@ export default function VyrobaZakazkaDetailPage() {
 
   useEffect(() => {
     if (!issueItemId) return;
-    if (!issueableInventory.some((i) => i.id === issueItemId)) {
+    if (!issueableInventoryFiltered.some((i) => i.id === issueItemId)) {
       setIssueItemId("");
     }
-  }, [issueableInventory, issueItemId]);
+  }, [issueableInventoryFiltered, issueItemId]);
 
   const selectedItem = useMemo(
     () =>
-      issueableInventory.find((i) => i.id === issueItemId) ??
+      issueableInventoryFiltered.find((i) => i.id === issueItemId) ??
       inventoryItems.find((i) => i.id === issueItemId) ??
       null,
-    [issueableInventory, inventoryItems, issueItemId]
+    [issueableInventoryFiltered, inventoryItems, issueItemId]
   );
 
   useEffect(() => {
@@ -1182,6 +1213,23 @@ export default function VyrobaZakazkaDetailPage() {
                   </h3>
 
                   <div className="space-y-3">
+                    <div className="space-y-2">
+                      <Label className="text-sm font-semibold text-slate-800">Kategorie</Label>
+                      <Select value={issueCategoryFilter} onValueChange={setIssueCategoryFilter}>
+                        <SelectTrigger className="border-slate-300 bg-white">
+                          <SelectValue placeholder="Všechny kategorie" />
+                        </SelectTrigger>
+                        <SelectContent className="bg-white border-slate-200">
+                          <SelectItem value="__all__">Všechny kategorie</SelectItem>
+                          <SelectItem value="__none__">Bez kategorie</SelectItem>
+                          {stockCategories.map((c) => (
+                            <SelectItem key={c.id} value={c.id}>
+                              {c.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                     <Label htmlFor="issue-item-select" className="text-sm font-semibold text-slate-800">
                       Skladová položka
                     </Label>
@@ -1232,12 +1280,12 @@ export default function VyrobaZakazkaDetailPage() {
                         </div>
                       </SelectTrigger>
                       <SelectContent className="bg-white border-slate-200 max-h-[min(26rem,72vh)] min-w-[min(calc(100vw-1.5rem),28rem)] w-[var(--radix-select-trigger-width)] max-w-[min(calc(100vw-1.5rem),28rem)] sm:w-auto sm:min-w-[var(--radix-select-trigger-width)]">
-                        {issueableInventory.length === 0 ? (
+                        {issueableInventoryFiltered.length === 0 ? (
                           <div className="px-3 py-4 text-sm text-slate-500">
                             Žádná dostupná položka se zásobou.
                           </div>
                         ) : (
-                          issueableInventory.map((i) => {
+                          issueableInventoryFiltered.map((i) => {
                             const q = availableStockQtyForIssueForm(i);
                             return (
                               <SelectItem
@@ -1280,13 +1328,13 @@ export default function VyrobaZakazkaDetailPage() {
                     </Select>
                   </div>
 
-                  {issueableInventory.length > 0 ? (
+                  {issueableInventoryFiltered.length > 0 ? (
                     <div className="space-y-5">
                       <Label className="text-sm font-semibold text-slate-800">
                         Rychlý výběr — klikněte na skladovou položku
                       </Label>
                       <div className="grid max-h-[min(30rem,65vh)] auto-rows-min grid-cols-1 gap-6 overflow-x-hidden overflow-y-auto px-0.5 pb-2 sm:grid-cols-2 sm:gap-6">
-                        {issueableInventory.slice(0, 48).map((i) => {
+                        {issueableInventoryFiltered.slice(0, 48).map((i) => {
                           const q = availableStockQtyForIssueForm(i);
                           const active = issueItemId === i.id;
                           return (
