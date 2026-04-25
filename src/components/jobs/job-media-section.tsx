@@ -365,6 +365,19 @@ function JobMediaOfficePreview() {
   );
 }
 
+function JobMediaCsvPreview() {
+  return (
+    <div
+      className="flex aspect-[4/3] min-h-[240px] w-full flex-col items-center justify-center gap-2 bg-emerald-500/[0.08]"
+      aria-hidden
+    >
+      <span className="text-3xl leading-none">📊</span>
+      <FileText className="h-11 w-11 text-emerald-700 dark:text-emerald-400" strokeWidth={1.5} />
+      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">CSV</span>
+    </div>
+  );
+}
+
 function JobMediaApprovalAdminSummary({ a }: { a: ParsedJobMediaApproval }) {
   if (!a.requiresCustomerApproval) return null;
   const st = a.approvalStatus;
@@ -644,7 +657,7 @@ function UserFolderBlock({
     () =>
       visibleFolderImages.filter((img) => {
         const k = inferJobMediaItemType(img);
-        return k === "pdf" || k === "office";
+        return k === "pdf" || k === "office" || k === "csv";
       }),
     [visibleFolderImages]
   );
@@ -852,7 +865,7 @@ function UserFolderBlock({
       toast({
         variant: "destructive",
         title: "Nepodporovaný formát",
-        description: "Pouze JPG, PNG, WEBP, PDF nebo Office (DOC, XLS, PPT…).",
+        description: "Pouze JPG, PNG, WEBP, PDF, CSV nebo Office (DOC, XLS, PPT…).",
       });
       return;
     }
@@ -908,6 +921,14 @@ function UserFolderBlock({
     const safeBaseName =
       file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
     const fileType = getJobMediaFileTypeFromFile(file);
+    if (isAccountingFolder && fileType === "csv") {
+      toast({
+        variant: "destructive",
+        title: "CSV do účetní složky nelze",
+        description: "Soubory CSV ukládejte do složky Dokumenty nebo Soubory. Účetní složka slouží k fakturám a dokladům.",
+      });
+      return;
+    }
 
     try {
       const { resolvedFullPath, downloadURL } =
@@ -966,7 +987,7 @@ function UserFolderBlock({
           ledgerFinanceId: financeId,
         });
       } else {
-        const expenseFt: JobExpenseFileType = fileType;
+        const expenseFt: JobExpenseFileType = fileType === "csv" ? "office" : fileType;
         const { expenseId, financeId } = await commitFolderAccountingExpense({
           firestore,
           companyId,
@@ -1839,29 +1860,35 @@ function UserFolderBlock({
                   ? `PDF · ${formatMediaDate(img.createdAt)}`
                   : kind === "office"
                     ? `Office · ${formatMediaDate(img.createdAt)}`
-                    : formatMediaDate(img.createdAt);
+                    : kind === "csv"
+                      ? `CSV · ${formatMediaDate(img.createdAt)}`
+                      : formatMediaDate(img.createdAt);
               const hasNote = !!img.note?.trim();
               const mediaApprovalSummary =
                 !isCustomerScope
                   ? parseJobMediaApproval(img as unknown as Record<string, unknown>)
                   : null;
 
-                  if (!isCustomerScope && isFolderWide && (kind === "pdf" || kind === "office")) {
+                  if (!isCustomerScope && isFolderWide && (kind === "pdf" || kind === "office" || kind === "csv")) {
                 return null;
               }
 
-              if (kind === "pdf" || kind === "office") {
+              if (kind === "pdf" || kind === "office" || kind === "csv") {
                 return (
                   <JobMediaFileCard
                     key={img.id}
                     borderClassName={
                       kind === "office"
                         ? "border-dashed border-blue-500/30"
-                        : "border-dashed border-red-500/30"
+                        : kind === "csv"
+                          ? "border-dashed border-emerald-600/35"
+                          : "border-dashed border-red-500/30"
                     }
                     preview={
                       kind === "office" ? (
                         <JobMediaOfficePreview />
+                      ) : kind === "csv" ? (
+                        <JobMediaCsvPreview />
                       ) : (
                         <JobMediaPdfPreview />
                       )
@@ -2815,7 +2842,7 @@ export function JobMediaSection({
     () =>
       visibleLegacyPhotos.filter((p) => {
         const k = inferJobMediaItemType(p);
-        return k === "pdf" || k === "office";
+        return k === "pdf" || k === "office" || k === "csv";
       }),
     [visibleLegacyPhotos]
   );
@@ -3065,29 +3092,35 @@ export function JobMediaSection({
                       ? `PDF · ${formatMediaDate(p.createdAt)}`
                       : kind === "office"
                         ? `Office · ${formatMediaDate(p.createdAt)}`
-                        : formatMediaDate(p.createdAt);
+                        : kind === "csv"
+                          ? `CSV · ${formatMediaDate(p.createdAt)}`
+                          : formatMediaDate(p.createdAt);
                   const hasNote = !!p.note?.trim();
                   const legacyMediaApprovalSummary =
                     mediaScope !== "customer"
                       ? parseJobMediaApproval(p as unknown as Record<string, unknown>)
                       : null;
 
-                  if (mediaScope !== "customer" && isJobDetailWide && (kind === "pdf" || kind === "office")) {
+                  if (mediaScope !== "customer" && isJobDetailWide && (kind === "pdf" || kind === "office" || kind === "csv")) {
                     return null;
                   }
 
-                  if (kind === "pdf" || kind === "office") {
+                  if (kind === "pdf" || kind === "office" || kind === "csv") {
                     return (
                       <JobMediaFileCard
                         key={p.id}
                         borderClassName={
                           kind === "office"
                             ? "border-dashed border-blue-500/30"
-                            : "border-dashed border-red-500/30"
+                            : kind === "csv"
+                              ? "border-dashed border-emerald-600/35"
+                              : "border-dashed border-red-500/30"
                         }
                         preview={
                           kind === "office" ? (
                             <JobMediaOfficePreview />
+                          ) : kind === "csv" ? (
+                            <JobMediaCsvPreview />
                           ) : (
                             <JobMediaPdfPreview />
                           )

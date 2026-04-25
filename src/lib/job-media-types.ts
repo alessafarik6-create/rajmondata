@@ -71,7 +71,7 @@ export type JobFolderDoc = {
   internalOnly?: boolean;
 };
 
-export type JobMediaFileType = "image" | "pdf" | "office";
+export type JobMediaFileType = "image" | "pdf" | "office" | "csv";
 
 export type JobFolderImageDoc = {
   id: string;
@@ -127,8 +127,8 @@ export type JobFolderImageDoc = {
   customerCommentBy?: string | null;
 };
 
-/** Výběr z galerie / souborů: obrázky i PDF. */
-export const JOB_MEDIA_ACCEPT_ATTR = "image/*,application/pdf";
+/** Výběr z galerie / souborů: obrázky, PDF, Office, CSV. */
+export const JOB_MEDIA_ACCEPT_ATTR = "image/*,application/pdf,text/csv,.csv";
 
 /** Pouze obrázky (fotoaparát / Vyfotit). */
 export const JOB_IMAGE_ACCEPT_ATTR =
@@ -235,16 +235,27 @@ export function isAllowedJobOfficeFile(file: File): boolean {
   return isOfficeFileName(file.name);
 }
 
+export function isAllowedJobCsvFile(file: File): boolean {
+  const n = file.name.toLowerCase();
+  if (!n.endsWith(".csv")) return false;
+  const t = (file.type || "").toLowerCase();
+  if (t === "text/csv" || t === "application/csv") return true;
+  if (t === "text/plain" || t === "application/octet-stream" || t === "") return true;
+  return false;
+}
+
 export function isAllowedJobMediaFile(file: File): boolean {
   if (isAllowedJobImageFile(file)) return true;
   const t = (file.type || "").toLowerCase();
   if (t === "application/pdf") return true;
   if (file.name.toLowerCase().endsWith(".pdf")) return true;
+  if (isAllowedJobCsvFile(file)) return true;
   return isAllowedJobOfficeFile(file);
 }
 
 export function getJobMediaFileTypeFromFile(file: File): JobMediaFileType {
   if (isAllowedJobImageFile(file)) return "image";
+  if (isAllowedJobCsvFile(file)) return "csv";
   if (isAllowedJobOfficeFile(file)) return "office";
   return "pdf";
 }
@@ -258,7 +269,9 @@ export function inferJobMediaItemType(row: {
   if (row.fileType === "pdf") return "pdf";
   if (row.fileType === "image") return "image";
   if (row.fileType === "office") return "office";
+  if (row.fileType === "csv") return "csv";
   const base = String(row.fileName || row.name || "").toLowerCase();
+  if (base.endsWith(".csv")) return "csv";
   if (base.endsWith(".pdf")) return "pdf";
   if (isOfficeFileName(base)) return "office";
   return "image";

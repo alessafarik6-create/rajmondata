@@ -95,6 +95,10 @@ import {
   isMeasurementPhotoUnassignedForJob,
   isMeasurementPhotoVisibleInProduction,
 } from "@/lib/measurement-photos";
+import {
+  CsvMaterialProposalDialog,
+  type CsvMaterialDialogSource,
+} from "@/components/production/csv-material-proposal-dialog";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -105,7 +109,7 @@ const LEGACY_JOB_PHOTOS_FOLDER_STUB: ProductionFolderRow = {
   name: "Fotodokumentace u zakázky",
 };
 
-type AttachmentKind = "drawing" | "pdf" | "photo" | "other";
+type AttachmentKind = "drawing" | "pdf" | "photo" | "other" | "csv";
 
 type JobAttachmentFile = {
   id: string;
@@ -119,10 +123,15 @@ type JobAttachmentFile = {
   uploadedByName?: string;
   /** Složka zakázky / legacy fotky u zakázky / měření */
   mediaSource?: "folder" | "job_legacy" | "measurement";
+  /** ID dokumentu ve složce (images/{id}) — pro CSV návrh ve výrobě */
+  folderImageDocId?: string;
 };
 
-function attachmentKindFromName(name: string): AttachmentKind {
+function attachmentKindFromName(name: string, fileTypeHint?: string): AttachmentKind {
+  const ft = String(fileTypeHint || "").toLowerCase();
+  if (ft === "csv") return "csv";
   const n = String(name || "").toLowerCase();
+  if (/\.(csv)(\?|$)/i.test(n)) return "csv";
   if (/\.(pdf)(\?|$)/i.test(n)) return "pdf";
   if (/\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(n)) return "photo";
   if (/\.(dwg|dxf|step|stp|stl|iges|igs|plt)(\?|$)/i.test(n)) return "drawing";
@@ -414,6 +423,7 @@ export default function VyrobaZakazkaDetailPage() {
   const [editConsumptionNote, setEditConsumptionNote] = useState("");
 
   const [deleteConsumptionTarget, setDeleteConsumptionTarget] = useState<Record<string, unknown> | null>(null);
+  const [csvMaterialDialog, setCsvMaterialDialog] = useState<CsvMaterialDialogSource | null>(null);
 
   const loadApi = useCallback(async () => {
     if (!user || !jobId) return;
@@ -657,6 +667,7 @@ export default function VyrobaZakazkaDetailPage() {
             const url = resolveJobFolderImageDownloadUrl(row);
             const name = String(row.fileName || row.name || "soubor");
             if (!url) return;
+            const fileTypeHint = String(row.fileType || "").toLowerCase();
             const rowCreatedBy =
               typeof row.createdBy === "string" && row.createdBy.trim()
                 ? row.createdBy.trim()
@@ -675,11 +686,12 @@ export default function VyrobaZakazkaDetailPage() {
               folderName: String(f.name || f.id),
               fileUrl: url,
               fileName: name,
-              kind: attachmentKindFromName(name),
+              kind: attachmentKindFromName(name, fileTypeHint),
               createdAt: row.createdAt,
               uploadedBy: rowCreatedBy,
               uploadedByName: rowCreatedByName,
               mediaSource: "folder",
+              folderImageDocId: d.id,
             });
           });
         }
@@ -791,7 +803,7 @@ export default function VyrobaZakazkaDetailPage() {
         all.sort((a, b) => ts(b) - ts(a));
 
         if (process.env.NODE_ENV === "development") {
-          const byKind = { photo: 0, pdf: 0, drawing: 0, other: 0 };
+          const byKind = { photo: 0, pdf: 0, drawing: 0, other: 0, csv: 0 };
           for (const x of all) byKind[x.kind]++;
           console.debug("[Vyroba zakázka] podklady", {
             jobId: jid,
@@ -2024,10 +2036,12 @@ export default function VyrobaZakazkaDetailPage() {
             </CardHeader>
             <CardContent className="pt-4">
               <ProductionMediaGallery
+                jobId={String(jobId)}
                 files={attachmentFiles}
                 loading={attachmentsLoading}
                 noVisibleFolders={visibleFolders.length === 0}
                 isPrivilegedViewer={isPrivilegedViewer}
+                onOpenCsvMaterial={(src) => setCsvMaterialDialog(src)}
               />
             </CardContent>
           </Card>
@@ -2058,8 +2072,8 @@ export default function VyrobaZakazkaDetailPage() {
                     disabled={editConsumptionBusy}
                   />
                   <p className="text-xs text-slate-500">
-                    Při navýšení se odečte rozdíl ze skladu, při snížení se rozdíl vrátí na sklad. U délkových výdejů
-                    se zbytkem je úprava zablokována.
+                    Při navýšení se odečte rozdíl ze skladu, při snížení se rozdíl vrátí na sklad. U výdejů se
+                    zbytkem se upravuje množství na řádce zbytku (admin).
                   </p>
                 </div>
                 <div className="space-y-1">
@@ -2118,6 +2132,16 @@ export default function VyrobaZakazkaDetailPage() {
             </AlertDialogContent>
           </AlertDialog>
 
+          <CsvMaterialProposalDialog
+            open={csvMaterialDialog != null}
+            onOpenChange={(o) => {
+              if (!o) setCsvMaterialDialog(null);
+            }}
+            source={csvMaterialDialog}
+            inventoryItems={issueableInventoryFiltered}
+            onIssued={() => void loadApi()}
+          />
+
           <AlertDialog open={completeOpen} onOpenChange={setCompleteOpen}>
             <AlertDialogContent>
               <AlertDialogHeader>
@@ -2152,15 +2176,19 @@ function fileMetaLine(file: JobAttachmentFile): string {
 }
 
 function ProductionMediaGallery({
+  jobId,
   files,
   loading,
   noVisibleFolders,
   isPrivilegedViewer,
+  onOpenCsvMaterial,
 }: {
+  jobId: string;
   files: JobAttachmentFile[];
   loading: boolean;
   noVisibleFolders: boolean;
   isPrivilegedViewer: boolean;
+  onOpenCsvMaterial: (src: CsvMaterialDialogSource) => void;
 }) {
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
 
@@ -2179,6 +2207,7 @@ function ProductionMediaGallery({
       pdf: [],
       photo: [],
       other: [],
+      csv: [],
     };
     for (const f of filesWithoutMeasurement) {
       g[f.kind].push(f);
@@ -2242,7 +2271,13 @@ function ProductionMediaGallery({
           }
         >
           {items.map((im) => (
-            <MediaTile key={`${im.folderId}-${im.id}`} file={im} onPhotoClick={setLightbox} />
+            <MediaTile
+              key={`${im.folderId}-${im.id}`}
+              jobId={jobId}
+              file={im}
+              onPhotoClick={setLightbox}
+              onOpenCsvMaterial={onOpenCsvMaterial}
+            />
           ))}
         </div>
       )}
@@ -2293,6 +2328,12 @@ function ProductionMediaGallery({
         denseGrid
       />
       <Section
+        title="CSV soubory"
+        icon={<FileText className="h-5 w-5 text-emerald-600" />}
+        items={groups.csv}
+        empty="Žádné CSV — nahrajte soubor .csv do složky zakázky (Dokumenty / Soubory)."
+      />
+      <Section
         title="PDF dokumenty"
         icon={<FileText className="h-5 w-5 text-red-600" />}
         items={groups.pdf}
@@ -2315,11 +2356,15 @@ function ProductionMediaGallery({
 }
 
 function MediaTile({
+  jobId,
   file,
   onPhotoClick,
+  onOpenCsvMaterial,
 }: {
+  jobId: string;
   file: JobAttachmentFile;
   onPhotoClick: (p: { url: string; name: string }) => void;
+  onOpenCsvMaterial: (src: CsvMaterialDialogSource) => void;
 }) {
   const isImg = file.kind === "photo";
   const meta = fileMetaLine(file);
@@ -2374,6 +2419,61 @@ function MediaTile({
           <ExternalLink className="h-4 w-4" />
           Otevřít PDF
         </a>
+      </div>
+    );
+  }
+
+  if (file.kind === "csv") {
+    const canCsv =
+      file.mediaSource === "folder" && file.folderImageDocId && file.folderId && file.folderId !== "job-photos";
+    return (
+      <div className="flex min-h-[280px] flex-col justify-between gap-4 rounded-xl border-2 border-emerald-200 bg-gradient-to-br from-emerald-50/90 to-white p-5 shadow-md">
+        <div>
+          <div className="inline-flex items-center gap-2 rounded-full bg-emerald-600 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">
+            CSV
+          </div>
+          <p className="mt-3 line-clamp-3 text-sm font-semibold text-slate-900" title={file.fileName}>
+            {file.fileName}
+          </p>
+          <p className="mt-2 line-clamp-3 text-[11px] text-slate-600">{meta}</p>
+        </div>
+        <div className="flex flex-col gap-2">
+          <a
+            href={file.fileUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center justify-center gap-2 rounded-md border border-emerald-300 bg-white px-3 py-2.5 text-sm font-medium text-emerald-800 hover:bg-emerald-50"
+          >
+            <ExternalLink className="h-4 w-4" />
+            Stáhnout / otevřít CSV
+          </a>
+          <Button
+            type="button"
+            className="w-full bg-emerald-700 text-white hover:bg-emerald-800 min-h-[44px]"
+            disabled={!canCsv}
+            onClick={() => {
+              if (!canCsv || !file.folderImageDocId) return;
+              onOpenCsvMaterial({
+                jobId,
+                folderId: file.folderId,
+                jobFolderImageId: file.folderImageDocId,
+                fileUrl: file.fileUrl,
+                fileName: file.fileName,
+              });
+            }}
+          >
+            Otevřít CSV / Generovat materiál
+          </Button>
+          {!canCsv ? (
+            <p className="text-[11px] text-amber-800">
+              Návrh z CSV je k dispozici jen pro soubory ve složce zakázky (ne z legacy fotek).
+            </p>
+          ) : (
+            <p className="text-[11px] text-slate-600">
+              Materiál se odečte až po potvrzení v dialogu — nejdřív vznikne návrh.
+            </p>
+          )}
+        </div>
       </div>
     );
   }

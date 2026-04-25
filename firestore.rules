@@ -950,6 +950,18 @@ service cloud.firestore {
           allow write: if false;
         }
 
+        /**
+         * Návrh materiálu z CSV (draft) — zápis přes API; čtení výroba / vedení.
+         * companies/{companyId}/jobs/{jobId}/csvMaterialDrafts/{draftId}
+         */
+        match /csvMaterialDrafts/{draftId} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          );
+          allow write: if false;
+        }
+
         /** Bezpečný náhled zakázky pro zaměstnance (bez rozpočtu). */
         match /employeeSummary/summary {
           allow read: if signedIn() && sameCompany(companyId) && (

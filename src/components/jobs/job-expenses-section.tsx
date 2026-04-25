@@ -375,7 +375,10 @@ export function JobExpensesSection({
           );
           fileUrl = up.downloadURL;
           storagePath = up.storagePath;
-          fileType = getJobMediaFileTypeFromFile(pendingFile);
+          {
+            const ft = getJobMediaFileTypeFromFile(pendingFile);
+            fileType = ft === "csv" ? "office" : ft;
+          }
           fileName =
             pendingFile.name.replace(/^.*[\\/]/, "").trim() || "soubor";
         } catch (uploadErr) {

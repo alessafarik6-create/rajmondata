@@ -4869,6 +4869,7 @@ function DocumentTableReceived({
   const fileKindLabel = (k: JobMediaFileType | "none") => {
     if (k === "pdf") return "PDF";
     if (k === "office") return "Office";
+    if (k === "csv") return "CSV";
     if (k === "image") return "Obrázek";
     return "—";
   };
