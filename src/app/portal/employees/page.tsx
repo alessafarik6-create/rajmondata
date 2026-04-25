@@ -33,6 +33,7 @@ import {
   parseAssignedWorklogJobIds,
   parseAssignedTerminalJobIds,
 } from "@/lib/assigned-jobs";
+import { employeeDebtSelfViewAllowed } from "@/lib/employee-debt-visibility";
 import {
   Dialog,
   DialogContent,
@@ -196,7 +197,10 @@ export default function EmployeesPage() {
       (companyDoc.settings as Record<string, unknown>)
         .allowEmployeeBankAccountSelfEdit === true);
 
+  const allowEmployeeDebtSelfView = employeeDebtSelfViewAllowed(companyDoc);
+
   const [companySelfBankSaving, setCompanySelfBankSaving] = useState(false);
+  const [companySelfDebtSaving, setCompanySelfDebtSaving] = useState(false);
 
   /** Řízené menu „tři tečky“ — zabrání rozporu stavu s Dialogem po zavření. */
   const [employeeActionMenuOpenId, setEmployeeActionMenuOpenId] = useState<
@@ -697,6 +701,29 @@ export default function EmployeesPage() {
     }
   };
 
+  const setAllowEmployeeDebtSelfView = async (next: boolean) => {
+    if (!canManage || !firestore || !companyId) return;
+    setCompanySelfDebtSaving(true);
+    try {
+      await updateDoc(doc(firestore, "companies", companyId), {
+        allowEmployeeDebtSelfView: next,
+        updatedAt: serverTimestamp(),
+      });
+      toast({
+        title: next
+          ? "Zaměstnanci uvidí vlastní dluhy v profilu a v přehledu peněz"
+          : "Dluhy v portálu zaměstnance jsou skryté",
+      });
+    } catch {
+      toast({
+        variant: "destructive",
+        title: "Nepodařilo se uložit nastavení organizace.",
+      });
+    } finally {
+      setCompanySelfDebtSaving(false);
+    }
+  };
+
   const toggleEmployeeStatus = async (employeeId: string, currentStatus: boolean) => {
     if (!canManage || !companyId) return;
     try {
@@ -1053,26 +1080,48 @@ export default function EmployeesPage() {
           </h1>
           <p className="portal-page-description">Pracovníci organizace {companyId}.</p>
           {canManage ? (
-            <div className="mt-3 flex max-w-xl flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0 space-y-0.5">
-                <Label
-                  htmlFor="allow-emp-bank-self"
-                  className="text-sm font-medium text-foreground"
-                >
-                  Vlastní bankovní údaje v profilu zaměstnance
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Pokud zapnete, zaměstnanec si může číslo účtu vyplnit nebo změnit v sekci Profil
-                  (přístup přes API, data zůstávají v záznamu zaměstnance).
-                </p>
+            <>
+              <div className="mt-3 flex max-w-xl flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 space-y-0.5">
+                  <Label
+                    htmlFor="allow-emp-bank-self"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Vlastní bankovní údaje v profilu zaměstnance
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Pokud zapnete, zaměstnanec si může číslo účtu vyplnit nebo změnit v sekci Profil
+                    (přístup přes API, data zůstávají v záznamu zaměstnance).
+                  </p>
+                </div>
+                <Switch
+                  id="allow-emp-bank-self"
+                  checked={allowEmployeeBankAccountSelfEdit}
+                  disabled={companySelfBankSaving}
+                  onCheckedChange={(v) => void setAllowEmployeeBankSelfEdit(v)}
+                />
               </div>
-              <Switch
-                id="allow-emp-bank-self"
-                checked={allowEmployeeBankAccountSelfEdit}
-                disabled={companySelfBankSaving}
-                onCheckedChange={(v) => void setAllowEmployeeBankSelfEdit(v)}
-              />
-            </div>
+              <div className="mt-3 flex max-w-xl flex-col gap-2 rounded-lg border border-border bg-muted/20 p-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0 space-y-0.5">
+                  <Label
+                    htmlFor="allow-emp-debt-self"
+                    className="text-sm font-medium text-foreground"
+                  >
+                    Zobrazení vlastních dluhů v portálu zaměstnance
+                  </Label>
+                  <p className="text-xs text-muted-foreground">
+                    Vypnutím skryjete sekci dluhů na profilu a souhrn dluhů na stránce Peníze. Evidence
+                    dluhů u administrátora zůstane beze změny.
+                  </p>
+                </div>
+                <Switch
+                  id="allow-emp-debt-self"
+                  checked={allowEmployeeDebtSelfView}
+                  disabled={companySelfDebtSaving}
+                  onCheckedChange={(v) => void setAllowEmployeeDebtSelfView(v)}
+                />
+              </div>
+            </>
           ) : null}
         </div>
         <div className="flex gap-2 sm:gap-3">

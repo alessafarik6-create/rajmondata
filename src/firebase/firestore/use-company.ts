@@ -112,6 +112,11 @@ export type CompanyProfile = {
    * Povolit zaměstnancům úpravu vlastního bankovního účtu v profilu (API employee/bank-account).
    */
   allowEmployeeBankAccountSelfEdit?: boolean;
+
+  /**
+   * `false` = v profilu / peněžním přehledu se zaměstnanci nezobrazí vlastní dluhy.
+   */
+  allowEmployeeDebtSelfView?: boolean;
 };
 
 function resolveTenantCompanyId(userProfile: unknown): string | undefined {

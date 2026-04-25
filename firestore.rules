@@ -1530,7 +1530,9 @@ service cloud.firestore {
           request.resource.data.amount > 0 &&
           request.resource.data.remainingAmount is number &&
           request.resource.data.status in ['active', 'paid', 'overpaid'];
-        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        /** Doplacený dluh nesmí zmizet — mazání jen u aktivního záznamu. */
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.status == 'active';
       }
 
       /** Splátky dluhů: admin zapisuje/upravuje/mazání, zaměstnanec čte své. */
@@ -1542,7 +1544,13 @@ service cloud.firestore {
           request.resource.data.employeeId is string &&
           request.resource.data.debtId is string &&
           request.resource.data.amount is number &&
-          request.resource.data.amount > 0;
+          request.resource.data.amount > 0 &&
+          (!('paymentMethod' in request.resource.data) ||
+            (request.resource.data.paymentMethod is string &&
+              request.resource.data.paymentMethod.size() <= 120)) &&
+          (!('paidBy' in request.resource.data) ||
+            (request.resource.data.paidBy is string &&
+              request.resource.data.paidBy.size() <= 200));
         allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
           resource.data.companyId == companyId &&
           resource.data.employeeId == request.resource.data.employeeId &&
@@ -1551,8 +1559,50 @@ service cloud.firestore {
           request.resource.data.employeeId is string &&
           request.resource.data.debtId is string &&
           request.resource.data.amount is number &&
-          request.resource.data.amount > 0;
+          request.resource.data.amount > 0 &&
+          (!('paymentMethod' in request.resource.data) ||
+            (request.resource.data.paymentMethod is string &&
+              request.resource.data.paymentMethod.size() <= 120)) &&
+          (!('paidBy' in request.resource.data) ||
+            (request.resource.data.paidBy is string &&
+              request.resource.data.paidBy.size() <= 200));
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /**
+       * Auditní historie uzavření dluhu (append-only na klientovi admina).
+       * companies/{companyId}/employee_debt_history/{id}
+       */
+      match /employee_debt_history/{historyId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          (isPrivileged() || resource.data.employeeId == ownEmployeeId());
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.employeeId is string &&
+          request.resource.data.debtId is string &&
+          request.resource.data.originalAmount is number &&
+          request.resource.data.originalAmount > 0 &&
+          request.resource.data.debtDate is string &&
+          request.resource.data.debtDate.size() <= 40 &&
+          request.resource.data.paidBy is string &&
+          request.resource.data.status in ['paid', 'overpaid'] &&
+          (!('paidByName' in request.resource.data) ||
+            request.resource.data.paidByName == null ||
+            (request.resource.data.paidByName is string &&
+              request.resource.data.paidByName.size() <= 200)) &&
+          (!('settlementMethod' in request.resource.data) ||
+            request.resource.data.settlementMethod == null ||
+            (request.resource.data.settlementMethod is string &&
+              request.resource.data.settlementMethod.size() <= 120)) &&
+          (!('closureNote' in request.resource.data) ||
+            (request.resource.data.closureNote is string &&
+              request.resource.data.closureNote.size() <= 4000)) &&
+          (!('debtNote' in request.resource.data) ||
+            (request.resource.data.debtNote is string &&
+              request.resource.data.debtNote.size() <= 4000)) &&
+          (!('remainingAfterClose' in request.resource.data) ||
+            (request.resource.data.remainingAfterClose is number));
+        allow update, delete: if false;
       }
 
       match /attendance/{documentId} {

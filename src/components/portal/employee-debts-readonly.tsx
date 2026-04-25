@@ -3,6 +3,8 @@
 import React, { useMemo, useState } from "react";
 import { collection, query, where, limit } from "firebase/firestore";
 import { useFirestore, useCollection, useMemoFirebase } from "@/firebase";
+import { format } from "date-fns";
+import { cs } from "date-fns/locale";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -26,6 +28,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 const FETCH_LIMIT_DEBTS = 300;
 const FETCH_LIMIT_PAYMENTS = 500;
+const FETCH_LIMIT_HISTORY = 200;
 const NOTE_PREVIEW_LEN = 100;
 
 const silentListen = { suppressGlobalPermissionError: true as const };
@@ -43,12 +46,16 @@ export type EmployeeDebtReadRow = {
   id: string;
   employeeId: string;
   amount: number;
+  originalAmount?: number;
   remainingAmount: number;
   date: string;
   note: string;
   reason: DebtReason;
   status: "active" | "paid" | "overpaid";
   createdAt?: unknown;
+  paidAt?: unknown;
+  paidBy?: string;
+  paidByName?: string;
 };
 
 export type EmployeeDebtPaymentReadRow = {
@@ -58,6 +65,25 @@ export type EmployeeDebtPaymentReadRow = {
   amount: number;
   date: string;
   note: string;
+  paidAt?: unknown;
+  paidBy?: string;
+  paymentMethod?: string;
+};
+
+export type EmployeeDebtHistoryReadRow = {
+  id: string;
+  debtId: string;
+  employeeId: string;
+  companyId: string;
+  originalAmount: number;
+  debtDate: string;
+  debtNote: string;
+  closureNote: string;
+  settlementMethod: string | null;
+  paidAt?: unknown;
+  paidBy: string;
+  paidByName: string | null;
+  status: "paid" | "overpaid";
 };
 
 function parseDebtReason(raw: unknown): DebtReason {
@@ -96,6 +122,24 @@ function createdSortMs(d: EmployeeDebtReadRow): number {
     return new Date(y, m - 1, day, 12, 0, 0, 0).getTime();
   }
   return 0;
+}
+
+function formatTs(v: unknown): string {
+  if (!v) return "—";
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return format(v, "d. M. yyyy HH:mm", { locale: cs });
+  }
+  if (v && typeof (v as { toDate?: () => Date }).toDate === "function") {
+    try {
+      const t = (v as { toDate: () => Date }).toDate();
+      if (t instanceof Date && !Number.isNaN(t.getTime())) {
+        return format(t, "d. M. yyyy HH:mm", { locale: cs });
+      }
+    } catch {
+      return "—";
+    }
+  }
+  return "—";
 }
 
 function notePreview(note: string): string | null {
@@ -137,6 +181,15 @@ export function EmployeeDebtsReadonlySection({
     );
   }, [firestore, companyId, employeeId]);
 
+  const historyQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !employeeId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "employee_debt_history"),
+      where("employeeId", "==", employeeId),
+      limit(FETCH_LIMIT_HISTORY)
+    );
+  }, [firestore, companyId, employeeId]);
+
   const { data: debtsRaw = [], isLoading: debtsLoading, error: debtsError } =
     useCollection(debtsQuery, silentListen);
   const {
@@ -144,6 +197,11 @@ export function EmployeeDebtsReadonlySection({
     isLoading: paymentsLoading,
     error: paymentsError,
   } = useCollection(paymentsQuery, silentListen);
+  const {
+    data: historyRaw = [],
+    isLoading: historyLoading,
+    error: historyError,
+  } = useCollection(historyQuery, silentListen);
 
   const debts = useMemo((): EmployeeDebtReadRow[] => {
     const raw = Array.isArray(debtsRaw) ? debtsRaw : [];
@@ -152,6 +210,10 @@ export function EmployeeDebtsReadonlySection({
         id: String(d?.id ?? ""),
         employeeId: String(d?.employeeId ?? ""),
         amount: Number(d?.amount) || 0,
+        originalAmount:
+          typeof d?.originalAmount === "number" && Number.isFinite(d.originalAmount)
+            ? Number(d.originalAmount)
+            : undefined,
         remainingAmount: Number(d?.remainingAmount) || 0,
         date: String(d?.date ?? ""),
         note: d?.note != null ? String(d.note) : "",
@@ -161,6 +223,9 @@ export function EmployeeDebtsReadonlySection({
           status: d?.status,
         }),
         createdAt: d?.createdAt,
+        paidAt: d?.paidAt,
+        paidBy: d?.paidBy != null ? String(d.paidBy) : undefined,
+        paidByName: d?.paidByName != null ? String(d.paidByName) : undefined,
       }))
       .filter((d) => d.id)
       .sort((a, b) => createdSortMs(b) - createdSortMs(a));
@@ -176,9 +241,50 @@ export function EmployeeDebtsReadonlySection({
         amount: Number(p?.amount) || 0,
         date: String(p?.date ?? ""),
         note: p?.note != null ? String(p.note) : "",
+        paidAt: p?.paidAt,
+        paidBy: p?.paidBy != null ? String(p.paidBy) : undefined,
+        paymentMethod:
+          p?.paymentMethod != null && String(p.paymentMethod).trim()
+            ? String(p.paymentMethod).trim()
+            : undefined,
       }))
       .filter((p) => p.id && p.debtId);
   }, [paymentsRaw]);
+
+  const debtHistory = useMemo((): EmployeeDebtHistoryReadRow[] => {
+    const raw = Array.isArray(historyRaw) ? historyRaw : [];
+    return raw
+      .map((h: Record<string, unknown>) => ({
+        id: String(h?.id ?? ""),
+        debtId: String(h?.debtId ?? ""),
+        employeeId: String(h?.employeeId ?? ""),
+        companyId: String(h?.companyId ?? ""),
+        originalAmount: Number(h?.originalAmount) || 0,
+        debtDate: String(h?.debtDate ?? ""),
+        debtNote: h?.debtNote != null ? String(h.debtNote) : "",
+        closureNote: h?.closureNote != null ? String(h.closureNote) : "",
+        settlementMethod:
+          h?.settlementMethod != null && String(h.settlementMethod).trim()
+            ? String(h.settlementMethod).trim()
+            : null,
+        paidAt: h?.paidAt,
+        paidBy: String(h?.paidBy ?? ""),
+        paidByName: h?.paidByName != null ? String(h.paidByName) : null,
+        status: (String(h?.status) === "overpaid" ? "overpaid" : "paid") as "paid" | "overpaid",
+      }))
+      .filter((h) => h.id && h.debtId)
+      .sort((a, b) => {
+        const ta = createdSortMs({
+          createdAt: a.paidAt,
+          date: a.debtDate,
+        } as EmployeeDebtReadRow);
+        const tb = createdSortMs({
+          createdAt: b.paidAt,
+          date: b.debtDate,
+        } as EmployeeDebtReadRow);
+        return tb - ta;
+      });
+  }, [historyRaw]);
 
   const paymentsByDebtId = useMemo(() => {
     const m = new Map<string, EmployeeDebtPaymentReadRow[]>();
@@ -211,12 +317,21 @@ export function EmployeeDebtsReadonlySection({
     };
   }, [debts]);
 
+  const activeDebts = useMemo(
+    () => debts.filter((d) => d.status === "active"),
+    [debts]
+  );
+  const settledDebts = useMemo(
+    () => debts.filter((d) => d.status === "paid" || d.status === "overpaid"),
+    [debts]
+  );
+
   const [detailDebt, setDetailDebt] = useState<EmployeeDebtReadRow | null>(
     null
   );
 
-  const loading = debtsLoading || paymentsLoading;
-  const error = debtsError || paymentsError;
+  const loading = debtsLoading || paymentsLoading || historyLoading;
+  const error = debtsError || paymentsError || historyError;
 
   const statusBadge = (d: EmployeeDebtReadRow) => {
     if (d.status === "overpaid") {
@@ -254,9 +369,11 @@ export function EmployeeDebtsReadonlySection({
       className="scroll-mt-4 border-slate-200 bg-white shadow-sm"
     >
       <CardHeader>
-        <CardTitle className="text-lg text-black">Dluhy</CardTitle>
+        <CardTitle className="text-lg text-black">Dluhy a historie</CardTitle>
         <p className="text-sm text-slate-700">
-          Každý dluh je samostatný záznam. Úpravy provádí pouze administrátor.
+          Aktivní a doplacené dluhy jsou oddělené. Po úplném doplatění zůstává
+          záznam v evidenci a v auditní historii. Úpravy provádí pouze
+          administrátor.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -309,134 +426,293 @@ export function EmployeeDebtsReadonlySection({
               </div>
             </div>
 
-            <p className="text-xs text-slate-600">
-              Jednotlivé položky — každý řádek je samostatný dluh se svými
-              splátkami.
-            </p>
-
-            <ul className="flex flex-col gap-3 md:hidden">
-              {debts.map((d) => {
-                const repaid = Math.max(
-                  0,
-                  Math.round((d.amount - d.remainingAmount) * 100) / 100
-                );
-                const prev = notePreview(d.note);
-                return (
-                  <li
-                    key={d.id}
-                    className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
-                  >
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <p className="font-semibold text-black">
-                          {DEBT_REASON_LABEL[d.reason] ?? d.reason}
-                        </p>
-                        <p className="text-xs text-slate-600">
-                          Datum: {d.date || "—"}
-                        </p>
-                      </div>
-                      {statusBadge(d)}
-                    </div>
-                    <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                      <div>
-                        <span className="text-slate-600">Jistina</span>
-                        <p className="font-medium tabular-nums">
-                          {formatKc(d.amount)}
-                        </p>
-                      </div>
-                      <div>
-                        <span className="text-slate-600">Zbývá</span>
-                        <p className="font-medium tabular-nums text-rose-800">
-                          {formatKc(d.remainingAmount)}
-                        </p>
-                      </div>
-                      <div className="col-span-2">
-                        <span className="text-slate-600">Splaceno</span>
-                        <p className="font-medium tabular-nums">
-                          {formatKc(repaid)}
-                        </p>
-                      </div>
-                    </div>
-                    {prev ? (
-                      <p className="mt-2 line-clamp-2 text-xs text-slate-700">
-                        <span className="font-medium">Poznámka: </span>
-                        {prev}
-                      </p>
-                    ) : null}
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="mt-3 w-full border-slate-300"
-                      onClick={() => setDetailDebt(d)}
-                    >
-                      Detail
-                    </Button>
-                  </li>
-                );
-              })}
-            </ul>
-
-            <div className="hidden overflow-x-auto rounded-md border border-slate-200 md:block">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="text-black">Důvod</TableHead>
-                    <TableHead className="text-black">Datum</TableHead>
-                    <TableHead className="text-right text-black">Jistina</TableHead>
-                    <TableHead className="text-right text-black">Splaceno</TableHead>
-                    <TableHead className="text-right text-black">Zbývá</TableHead>
-                    <TableHead className="text-black">Stav</TableHead>
-                    <TableHead className="text-black max-w-[180px]">
-                      Poznámka
-                    </TableHead>
-                    <TableHead className="text-black w-[100px]"> </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {debts.map((d) => {
-                    const repaid = Math.max(
-                      0,
-                      Math.round((d.amount - d.remainingAmount) * 100) / 100
-                    );
-                    const prev = notePreview(d.note);
-                    return (
-                      <TableRow key={d.id}>
-                        <TableCell className="font-medium text-black">
-                          {DEBT_REASON_LABEL[d.reason] ?? d.reason}
-                        </TableCell>
-                        <TableCell className="text-black">
-                          {d.date || "—"}
-                        </TableCell>
-                        <TableCell className="text-right font-medium tabular-nums">
-                          {formatKc(d.amount)}
-                        </TableCell>
-                        <TableCell className="text-right tabular-nums">
-                          {formatKc(repaid)}
-                        </TableCell>
-                        <TableCell className="text-right font-medium tabular-nums text-rose-800">
-                          {formatKc(d.remainingAmount)}
-                        </TableCell>
-                        <TableCell>{statusBadge(d)}</TableCell>
-                        <TableCell className="max-w-[200px] text-xs text-slate-700">
-                          {prev ?? "—"}
-                        </TableCell>
-                        <TableCell>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            className="border-slate-300"
-                            onClick={() => setDetailDebt(d)}
+            <div className="space-y-8">
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-black">Aktivní dluhy</h3>
+                {activeDebts.length === 0 ? (
+                  <p className="text-sm text-slate-700">Nemáte žádný aktivní dluh.</p>
+                ) : (
+                  <>
+                    <ul className="flex flex-col gap-3 md:hidden">
+                      {activeDebts.map((d) => {
+                        const repaid = Math.max(
+                          0,
+                          Math.round((d.amount - d.remainingAmount) * 100) / 100
+                        );
+                        const prev = notePreview(d.note);
+                        const jistina = d.originalAmount ?? d.amount;
+                        return (
+                          <li
+                            key={d.id}
+                            className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm"
                           >
-                            Detail
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <p className="font-semibold text-black">
+                                  {DEBT_REASON_LABEL[d.reason] ?? d.reason}
+                                </p>
+                                <p className="text-xs text-slate-600">
+                                  Datum vzniku: {d.date || "—"}
+                                </p>
+                              </div>
+                              {statusBadge(d)}
+                            </div>
+                            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+                              <div>
+                                <span className="text-slate-600">Jistina</span>
+                                <p className="font-medium tabular-nums">{formatKc(jistina)}</p>
+                              </div>
+                              <div>
+                                <span className="text-slate-600">Zbývá</span>
+                                <p className="font-medium tabular-nums text-rose-800">
+                                  {formatKc(d.remainingAmount)}
+                                </p>
+                              </div>
+                              <div className="col-span-2">
+                                <span className="text-slate-600">Splaceno</span>
+                                <p className="font-medium tabular-nums">{formatKc(repaid)}</p>
+                              </div>
+                            </div>
+                            {prev ? (
+                              <p className="mt-2 line-clamp-2 text-xs text-slate-700">
+                                <span className="font-medium">Poznámka: </span>
+                                {prev}
+                              </p>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="mt-3 w-full border-slate-300"
+                              onClick={() => setDetailDebt(d)}
+                            >
+                              Detail
+                            </Button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <div className="hidden overflow-x-auto rounded-md border border-slate-200 md:block">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-black">Důvod</TableHead>
+                            <TableHead className="text-black">Datum vzniku</TableHead>
+                            <TableHead className="text-right text-black">Jistina</TableHead>
+                            <TableHead className="text-right text-black">Splaceno</TableHead>
+                            <TableHead className="text-right text-black">Zbývá</TableHead>
+                            <TableHead className="text-black">Stav</TableHead>
+                            <TableHead className="text-black max-w-[180px]">Poznámka</TableHead>
+                            <TableHead className="text-black w-[100px]"> </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {activeDebts.map((d) => {
+                            const repaid = Math.max(
+                              0,
+                              Math.round((d.amount - d.remainingAmount) * 100) / 100
+                            );
+                            const prev = notePreview(d.note);
+                            const jistina = d.originalAmount ?? d.amount;
+                            return (
+                              <TableRow key={d.id}>
+                                <TableCell className="font-medium text-black">
+                                  {DEBT_REASON_LABEL[d.reason] ?? d.reason}
+                                </TableCell>
+                                <TableCell className="text-black">{d.date || "—"}</TableCell>
+                                <TableCell className="text-right font-medium tabular-nums">
+                                  {formatKc(jistina)}
+                                </TableCell>
+                                <TableCell className="text-right tabular-nums">
+                                  {formatKc(repaid)}
+                                </TableCell>
+                                <TableCell className="text-right font-medium tabular-nums text-rose-800">
+                                  {formatKc(d.remainingAmount)}
+                                </TableCell>
+                                <TableCell>{statusBadge(d)}</TableCell>
+                                <TableCell className="max-w-[200px] text-xs text-slate-700">
+                                  {prev ?? "—"}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-slate-300"
+                                    onClick={() => setDetailDebt(d)}
+                                  >
+                                    Detail
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              <div className="space-y-3 border-t border-slate-200 pt-6">
+                <h3 className="text-sm font-semibold text-black">Doplacené dluhy</h3>
+                {settledDebts.length === 0 ? (
+                  <p className="text-sm text-slate-700">Zatím žádný uzavřený dluh.</p>
+                ) : (
+                  <>
+                    <ul className="flex flex-col gap-3 md:hidden">
+                      {settledDebts.map((d) => {
+                        const jistina = d.originalAmount ?? d.amount;
+                        const prev = notePreview(d.note);
+                        return (
+                          <li
+                            key={d.id}
+                            className="rounded-lg border border-emerald-100 bg-emerald-50/40 p-4 shadow-sm"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <p className="font-semibold text-black">
+                                  {DEBT_REASON_LABEL[d.reason] ?? d.reason}
+                                </p>
+                                <p className="text-xs text-slate-600">
+                                  Vznik: {d.date || "—"} · Doplaceno: {formatTs(d.paidAt)}
+                                </p>
+                              </div>
+                              {statusBadge(d)}
+                            </div>
+                            <div className="mt-2 text-sm">
+                              <span className="text-slate-600">Jistina </span>
+                              <span className="font-semibold tabular-nums">{formatKc(jistina)}</span>
+                            </div>
+                            <p className="mt-1 text-xs text-slate-700">
+                              Uzavřel: {d.paidByName?.trim() || d.paidBy || "—"}
+                            </p>
+                            {prev ? (
+                              <p className="mt-2 line-clamp-2 text-xs text-slate-700">
+                                <span className="font-medium">Poznámka: </span>
+                                {prev}
+                              </p>
+                            ) : null}
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="mt-3 w-full border-slate-300"
+                              onClick={() => setDetailDebt(d)}
+                            >
+                              Detail
+                            </Button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <div className="hidden overflow-x-auto rounded-md border border-slate-200 md:block">
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="text-black">Důvod</TableHead>
+                            <TableHead className="text-black">Datum vzniku</TableHead>
+                            <TableHead className="text-right text-black">Částka</TableHead>
+                            <TableHead className="text-black">Datum doplatění</TableHead>
+                            <TableHead className="text-black max-w-[200px]">Poznámka</TableHead>
+                            <TableHead className="text-black">Uzavřel</TableHead>
+                            <TableHead className="text-black w-[100px]"> </TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {settledDebts.map((d) => {
+                            const jistina = d.originalAmount ?? d.amount;
+                            const prev = notePreview(d.note);
+                            return (
+                              <TableRow key={d.id}>
+                                <TableCell className="font-medium text-black">
+                                  {DEBT_REASON_LABEL[d.reason] ?? d.reason}
+                                </TableCell>
+                                <TableCell className="text-black">{d.date || "—"}</TableCell>
+                                <TableCell className="text-right font-medium tabular-nums">
+                                  {formatKc(jistina)}
+                                </TableCell>
+                                <TableCell className="text-sm">{formatTs(d.paidAt)}</TableCell>
+                                <TableCell className="max-w-[220px] text-xs text-slate-700">
+                                  {prev ?? "—"}
+                                </TableCell>
+                                <TableCell className="text-xs">
+                                  {d.paidByName?.trim() || d.paidBy || "—"}
+                                </TableCell>
+                                <TableCell>
+                                  <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="border-slate-300"
+                                    onClick={() => setDetailDebt(d)}
+                                  >
+                                    Detail
+                                  </Button>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {debtHistory.length > 0 ? (
+                <div className="space-y-2 border-t border-slate-200 pt-6">
+                  <h3 className="text-sm font-semibold text-black">
+                    Historie uzavření (audit)
+                  </h3>
+                  <p className="text-xs text-slate-600">
+                    Každé úplné doplatění vytvoří trvalý řádek — stejný dluh může
+                    mít více záznamů při opětovném otevření a znovu uzavření.
+                  </p>
+                  <div className="overflow-x-auto rounded-md border border-slate-200">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead className="text-black">Jistina</TableHead>
+                          <TableHead className="text-black">Vznik dluhu</TableHead>
+                          <TableHead className="text-black">Uzavřeno</TableHead>
+                          <TableHead className="text-black">Stav</TableHead>
+                          <TableHead className="text-black">Způsob</TableHead>
+                          <TableHead className="text-black max-w-[200px]">Poznámka ke splátce</TableHead>
+                          <TableHead className="text-black">Uzavřel</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {debtHistory.map((h) => (
+                          <TableRow key={h.id}>
+                            <TableCell className="font-medium tabular-nums">
+                              {formatKc(h.originalAmount)}
+                            </TableCell>
+                            <TableCell className="text-sm">{h.debtDate || "—"}</TableCell>
+                            <TableCell className="text-sm">{formatTs(h.paidAt)}</TableCell>
+                            <TableCell>
+                              {h.status === "overpaid" ? (
+                                <Badge variant="secondary">Přeplaceno</Badge>
+                              ) : (
+                                <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">
+                                  Doplaceno
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-xs">{h.settlementMethod || "—"}</TableCell>
+                            <TableCell className="max-w-[240px] text-xs text-slate-700">
+                              {h.closureNote.trim() ? h.closureNote : "—"}
+                            </TableCell>
+                            <TableCell className="text-xs">
+                              {h.paidByName?.trim() || h.paidBy || "—"}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              ) : null}
             </div>
           </>
         )}
@@ -467,6 +743,20 @@ export function EmployeeDebtsReadonlySection({
                   <div className="mt-0.5">{statusBadge(detailDebt)}</div>
                 </div>
               </div>
+              {detailDebt.status !== "active" ? (
+                <div className="grid grid-cols-2 gap-3 rounded-md border border-emerald-100 bg-emerald-50/50 p-3">
+                  <div>
+                    <p className="text-xs font-medium text-slate-600">Datum doplatění</p>
+                    <p className="font-medium">{formatTs(detailDebt.paidAt)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-slate-600">Uzavřel</p>
+                    <p className="font-medium">
+                      {detailDebt.paidByName?.trim() || detailDebt.paidBy || "—"}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
               <div>
                 <p className="text-xs font-medium text-slate-600">
                   Poznámka administrátora
@@ -479,7 +769,7 @@ export function EmployeeDebtsReadonlySection({
                 <div>
                   <p className="text-xs text-slate-600">Jistina</p>
                   <p className="font-bold tabular-nums">
-                    {formatKc(detailDebt.amount)}
+                    {formatKc(detailDebt.originalAmount ?? detailDebt.amount)}
                   </p>
                 </div>
                 <div>
@@ -516,6 +806,11 @@ export function EmployeeDebtsReadonlySection({
                             {p.date || "—"}
                           </span>
                         </div>
+                        <p className="mt-1 text-xs text-slate-600">
+                          Zaznamenáno: {formatTs(p.paidAt)}
+                          {p.paidBy ? ` · ${p.paidBy}` : ""}
+                          {p.paymentMethod ? ` · ${p.paymentMethod}` : ""}
+                        </p>
                         {p.note.trim() ? (
                           <p className="mt-1 text-xs text-slate-700">{p.note}</p>
                         ) : null}

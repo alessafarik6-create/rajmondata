@@ -47,6 +47,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { JOB_TERMINAL_AUTO_APPROVAL_SOURCE } from "@/lib/job-terminal-auto-shared";
+import { employeeDebtSelfViewAllowed } from "@/lib/employee-debt-visibility";
 import Link from "next/link";
 
 const MONEY_FETCH_LIMIT = 3000;
@@ -110,7 +111,11 @@ function rowInDateRange(
 export default function EmployeeMoneyPage() {
   const { user, isUserLoading } = useUser();
   const firestore = useFirestore();
-  const { companyName } = useCompany();
+  const { companyName, company } = useCompany();
+  const showDebtSummary = useMemo(
+    () => employeeDebtSelfViewAllowed(company),
+    [company]
+  );
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -236,21 +241,21 @@ export default function EmployeeMoneyPage() {
   const { data: advancesRaw, isLoading: advancesLoading, error: advancesError } =
     useCollection(advancesQuery, silentListen);
   const debtsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !employeeId) return null;
+    if (!firestore || !companyId || !employeeId || !showDebtSummary) return null;
     return query(
       collection(firestore, "companies", companyId, "employee_debts"),
       where("employeeId", "==", employeeId),
       limit(300)
     );
-  }, [firestore, companyId, employeeId]);
+  }, [firestore, companyId, employeeId, showDebtSummary]);
   const debtPaymentsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !employeeId) return null;
+    if (!firestore || !companyId || !employeeId || !showDebtSummary) return null;
     return query(
       collection(firestore, "companies", companyId, "employee_debt_payments"),
       where("employeeId", "==", employeeId),
       limit(500)
     );
-  }, [firestore, companyId, employeeId]);
+  }, [firestore, companyId, employeeId, showDebtSummary]);
   const { data: debtsRaw = [] } = useCollection(debtsQuery, silentListen);
   const { data: debtPaymentsRaw = [] } = useCollection(debtPaymentsQuery, silentListen);
 
@@ -660,21 +665,23 @@ export default function EmployeeMoneyPage() {
               vyděláno − vyplacené zálohy
             </p>
           </div>
-          <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
-            <p className="text-sm font-semibold text-rose-900">Dluhy (souhrn)</p>
-            <p className="mt-1 text-xl font-bold text-black">{formatKc(debtTotal)}</p>
-            <p className="text-xs text-rose-900">
-              Splaceno {formatKc(debtRepaid)} · zbývá {formatKc(debtRemaining)}
-            </p>
-            <p className="mt-3 text-xs text-rose-950">
-              <Link
-                href="/portal/employee/profile#employee-debts"
-                className="font-medium underline underline-offset-2 hover:text-rose-900"
-              >
-                Jednotlivé dluhy, poznámky a splátky — zobrazit na profilu
-              </Link>
-            </p>
-          </div>
+          {showDebtSummary ? (
+            <div className="rounded-lg border border-rose-200 bg-rose-50 p-4">
+              <p className="text-sm font-semibold text-rose-900">Dluhy (souhrn)</p>
+              <p className="mt-1 text-xl font-bold text-black">{formatKc(debtTotal)}</p>
+              <p className="text-xs text-rose-900">
+                Splaceno {formatKc(debtRepaid)} · zbývá {formatKc(debtRemaining)}
+              </p>
+              <p className="mt-3 text-xs text-rose-950">
+                <Link
+                  href="/portal/employee/profile#employee-debts"
+                  className="font-medium underline underline-offset-2 hover:text-rose-900"
+                >
+                  Jednotlivé dluhy, poznámky a splátky — zobrazit na profilu
+                </Link>
+              </p>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 

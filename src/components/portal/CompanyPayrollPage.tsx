@@ -31,6 +31,7 @@ import {
   writeBatch,
   serverTimestamp,
   deleteField,
+  type DocumentData,
   type Firestore,
 } from "firebase/firestore";
 import { Badge } from "@/components/ui/badge";
@@ -200,6 +201,7 @@ type EmployeeDebtDoc = {
   employeeId: string;
   companyId: string;
   amount: number;
+  originalAmount?: number;
   remainingAmount: number;
   date: string;
   note?: string;
@@ -207,6 +209,9 @@ type EmployeeDebtDoc = {
   status: EmployeeDebtStatus;
   createdBy?: string;
   createdAt?: unknown;
+  paidAt?: unknown;
+  paidBy?: string;
+  paidByName?: string;
 };
 
 type EmployeeDebtPaymentDoc = {
@@ -218,7 +223,28 @@ type EmployeeDebtPaymentDoc = {
   date: string;
   note?: string;
   createdBy?: string;
+  paidAt?: unknown;
+  paidBy?: string;
+  paymentMethod?: string;
 };
+
+function formatDebtAuditDateTime(v: unknown): string {
+  if (!v) return "—";
+  if (v instanceof Date && !Number.isNaN(v.getTime())) {
+    return format(v, "d. M. yyyy HH:mm", { locale: cs });
+  }
+  if (v && typeof (v as { toDate?: () => Date }).toDate === "function") {
+    try {
+      const t = (v as { toDate: () => Date }).toDate();
+      if (t instanceof Date && !Number.isNaN(t.getTime())) {
+        return format(t, "d. M. yyyy HH:mm", { locale: cs });
+      }
+    } catch {
+      return "—";
+    }
+  }
+  return "—";
+}
 
 function PayrollWorklogDescriptionCell({
   block,
@@ -1611,6 +1637,10 @@ function PayrollAdminPageInner() {
         employeeId: String(d?.employeeId ?? ""),
         companyId: String(d?.companyId ?? ""),
         amount: Number(d?.amount) || 0,
+        originalAmount:
+          typeof d?.originalAmount === "number" && Number.isFinite(d.originalAmount)
+            ? Number(d.originalAmount)
+            : undefined,
         remainingAmount: Number(d?.remainingAmount) || 0,
         date: String(d?.date ?? ""),
         note: d?.note != null ? String(d.note) : "",
@@ -1627,6 +1657,9 @@ function PayrollAdminPageInner() {
         })(),
         createdBy: d?.createdBy != null ? String(d.createdBy) : undefined,
         createdAt: d?.createdAt,
+        paidAt: d?.paidAt,
+        paidBy: d?.paidBy != null ? String(d.paidBy) : undefined,
+        paidByName: d?.paidByName != null ? String(d.paidByName) : undefined,
       }))
       .sort((a, b) => {
         const ma = debtCreatedSortMs(a);
@@ -1647,6 +1680,12 @@ function PayrollAdminPageInner() {
         date: String(p?.date ?? ""),
         note: p?.note != null ? String(p.note) : "",
         createdBy: p?.createdBy != null ? String(p.createdBy) : undefined,
+        paidAt: p?.paidAt,
+        paidBy: p?.paidBy != null ? String(p.paidBy) : undefined,
+        paymentMethod:
+          p?.paymentMethod != null && String(p.paymentMethod).trim()
+            ? String(p.paymentMethod).trim()
+            : undefined,
       }))
       .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   }, [debtPaymentsRaw]);
@@ -1660,6 +1699,7 @@ function PayrollAdminPageInner() {
   const [paymentAmount, setPaymentAmount] = useState("");
   const [paymentDate, setPaymentDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [paymentNote, setPaymentNote] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("");
   const [editingPayment, setEditingPayment] = useState<EmployeeDebtPaymentDoc | null>(null);
   const [savingPayment, setSavingPayment] = useState(false);
 
@@ -1712,11 +1752,22 @@ function PayrollAdminPageInner() {
       setSavingDebt(false);
     }
   };
+  const debtRecalcOptions = useCallback(
+    () => ({
+      paidByDisplayName:
+        (user?.displayName && String(user.displayName).trim()) ||
+        (user?.email && String(user.email).trim()) ||
+        null,
+    }),
+    [user?.displayName, user?.email]
+  );
+
   const openDebtPayment = (debtId: string) => {
     setEditingPayment(null);
     setPaymentDebtId(debtId);
     setPaymentAmount("");
     setPaymentNote("");
+    setPaymentMethod("");
     setPaymentDate(new Date().toISOString().split("T")[0]);
     setPaymentOpen(true);
   };
@@ -1727,6 +1778,7 @@ function PayrollAdminPageInner() {
     setPaymentAmount(String(p.amount));
     setPaymentDate(p.date || new Date().toISOString().split("T")[0]);
     setPaymentNote(p.note || "");
+    setPaymentMethod(p.paymentMethod ?? "");
     setPaymentOpen(true);
   };
 
@@ -1739,34 +1791,46 @@ function PayrollAdminPageInner() {
     }
     setSavingPayment(true);
     try {
+      const pm = paymentMethod.trim().slice(0, 120);
+      const basePay: Record<string, unknown> = {
+        amount,
+        date: paymentDate,
+        note: paymentNote.trim() || "",
+        paidAt: serverTimestamp(),
+        paidBy: user.uid,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+      };
+
       if (editingPayment?.id) {
+        const payPatch = { ...basePay };
+        if (pm) payPatch.paymentMethod = pm;
+        else payPatch.paymentMethod = deleteField();
         await updateDoc(
           doc(firestore, "companies", companyId, "employee_debt_payments", editingPayment.id),
-          {
-            amount,
-            date: paymentDate,
-            note: paymentNote.trim() || "",
-            updatedAt: serverTimestamp(),
-            updatedBy: user.uid,
-          }
+          payPatch as DocumentData
         );
         toast({ title: "Splátka byla uložena" });
       } else {
-        await addDoc(collection(firestore, "companies", companyId, "employee_debt_payments"), {
+        const newPay: Record<string, unknown> = {
           companyId,
           employeeId: selectedEmployeeId,
           debtId: paymentDebtId,
-          amount,
-          date: paymentDate,
-          note: paymentNote.trim() || "",
+          ...basePay,
           createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
           createdBy: user.uid,
-          updatedBy: user.uid,
-        });
+        };
+        if (pm) newPay.paymentMethod = pm;
+        await addDoc(collection(firestore, "companies", companyId, "employee_debt_payments"), newPay);
         toast({ title: "Splátka byla přidána" });
       }
-      await recalculateDebtAfterPaymentsChange(firestore, companyId, paymentDebtId, user.uid);
+      await recalculateDebtAfterPaymentsChange(
+        firestore,
+        companyId,
+        paymentDebtId,
+        user.uid,
+        debtRecalcOptions()
+      );
       setPaymentOpen(false);
       setPaymentDebtId("");
       setEditingPayment(null);
@@ -1789,7 +1853,8 @@ function PayrollAdminPageInner() {
         firestore,
         companyId,
         paymentToDelete.debtId,
-        user.uid
+        user.uid,
+        debtRecalcOptions()
       );
       toast({ title: "Splátka byla smazána" });
       setPaymentDeleteOpen(false);
@@ -1822,13 +1887,20 @@ function PayrollAdminPageInner() {
     try {
       await updateDoc(doc(firestore, "companies", companyId, "employee_debts", editingDebt.id), {
         amount,
+        originalAmount: amount,
         date: editDebtDate,
         reason: editDebtReason,
         note: editDebtNote.trim() || "",
         updatedAt: serverTimestamp(),
         updatedBy: user.uid,
       });
-      await recalculateDebtAfterPaymentsChange(firestore, companyId, editingDebt.id, user.uid);
+      await recalculateDebtAfterPaymentsChange(
+        firestore,
+        companyId,
+        editingDebt.id,
+        user.uid,
+        debtRecalcOptions()
+      );
       toast({ title: "Dluh byl uložen" });
       setDebtEditOpen(false);
       setEditingDebt(null);
@@ -1842,6 +1914,14 @@ function PayrollAdminPageInner() {
 
   const confirmDeleteDebt = async () => {
     if (!firestore || !companyId || !debtToDelete?.id) return;
+    if (debtToDelete.status !== "active") {
+      toast({
+        variant: "destructive",
+        title: "Nelze smazat",
+        description: "Uzavřený dluh musí zůstat v evidenci.",
+      });
+      return;
+    }
     setDeletingDebt(true);
     try {
       await deleteDebtAndAllPayments(firestore, companyId, debtToDelete.id);
@@ -1865,6 +1945,159 @@ function PayrollAdminPageInner() {
       repaidDebt,
     };
   }, [debts]);
+
+  const activeDebtsForUi = useMemo(
+    () => debts.filter((d) => d.status === "active"),
+    [debts]
+  );
+  const settledDebtsForUi = useMemo(
+    () => debts.filter((d) => d.status === "paid" || d.status === "overpaid"),
+    [debts]
+  );
+
+  const renderAdminDebtBlock = (d: EmployeeDebtDoc) => {
+    const payments = debtPayments.filter((p) => p.debtId === d.id);
+    const repaid = Math.max(0, Math.round((d.amount - d.remainingAmount) * 100) / 100);
+    const principalShow = d.originalAmount ?? d.amount;
+    const reasonLabel =
+      d.reason === "tool_damage"
+        ? "Poškození nářadí"
+        : d.reason === "loan"
+          ? "Půjčka"
+          : d.reason === "deduction"
+            ? "Srážka"
+            : "Jiný důvod";
+    const statusBadge =
+      d.status === "overpaid" ? (
+        <Badge className="bg-violet-600 text-white hover:bg-violet-600">Přeplaceno</Badge>
+      ) : d.status === "active" ? (
+        <Badge className="bg-amber-600 text-white hover:bg-amber-600">Aktivní</Badge>
+      ) : (
+        <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Splaceno</Badge>
+      );
+    const canDeleteDebt = d.status === "active";
+    return (
+      <div key={d.id} className="rounded-lg border border-slate-200 p-3">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="min-w-0 space-y-1">
+            <p className="font-semibold text-black">
+              Jistina: {formatKc(principalShow)} · vznik: {d.date}
+            </p>
+            <p className="text-xs text-neutral-700">
+              Důvod: {reasonLabel}
+              {d.note ? ` · ${d.note}` : ""}
+            </p>
+            <p className="text-xs text-neutral-800">
+              Splaceno: {formatKc(repaid)} ·{" "}
+              {d.remainingAmount < 0 ? (
+                <>Přeplaceno o {formatKc(Math.abs(d.remainingAmount))}</>
+              ) : (
+                <>Zbývá: {formatKc(d.remainingAmount)}</>
+              )}
+            </p>
+            {d.status !== "active" ? (
+              <p className="text-xs text-emerald-900">
+                Uzavřeno: {formatDebtAuditDateTime(d.paidAt)}
+                {d.paidByName ? ` · ${d.paidByName}` : d.paidBy ? ` · ${d.paidBy}` : ""}
+              </p>
+            ) : null}
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-1">
+            {statusBadge}
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-9 w-9 text-black"
+              aria-label="Upravit dluh"
+              onClick={() => openDebtEdit(d)}
+            >
+              <Pencil className="h-4 w-4" />
+            </Button>
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-9 w-9 text-destructive disabled:opacity-40"
+              aria-label="Smazat dluh"
+              title={
+                canDeleteDebt
+                  ? "Smazat jen aktivní dluh (doplacený nelze smazat)"
+                  : "Doplacený dluh nelze smazat — zůstává v evidenci."
+              }
+              disabled={!canDeleteDebt}
+              onClick={() => {
+                if (!canDeleteDebt) return;
+                setDebtToDelete(d);
+                setDebtDeleteOpen(true);
+              }}
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+            <Button type="button" size="sm" onClick={() => openDebtPayment(d.id)}>
+              Přidat splátku
+            </Button>
+          </div>
+        </div>
+        {payments.length > 0 ? (
+          <div className="mt-2 rounded border border-slate-200">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Datum</TableHead>
+                  <TableHead>Částka</TableHead>
+                  <TableHead>Způsob</TableHead>
+                  <TableHead>Poznámka</TableHead>
+                  <TableHead>Zapsal</TableHead>
+                  <TableHead>Zaznamenáno</TableHead>
+                  <TableHead className="w-[100px] text-right">Akce</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {payments.map((p) => (
+                  <TableRow key={p.id}>
+                    <TableCell>{p.date}</TableCell>
+                    <TableCell>{formatKc(p.amount)}</TableCell>
+                    <TableCell>{p.paymentMethod || "—"}</TableCell>
+                    <TableCell>{p.note || "—"}</TableCell>
+                    <TableCell>{p.paidBy || p.createdBy || "—"}</TableCell>
+                    <TableCell className="text-xs">{formatDebtAuditDateTime(p.paidAt)}</TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          aria-label="Upravit splátku"
+                          onClick={() => openPaymentEdit(p)}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8 text-destructive"
+                          aria-label="Smazat splátku"
+                          onClick={() => {
+                            setPaymentToDelete(p);
+                            setPaymentDeleteOpen(true);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   if (isUserLoading || !user) {
     return (
@@ -3279,127 +3512,36 @@ function PayrollAdminPageInner() {
               <Card className="border-slate-200 bg-white"><CardContent className="pt-4"><p className="text-xs text-neutral-700">Zbývá doplatit</p><p className="text-lg font-bold">{formatKc(debtTotals.remainingDebt)}</p></CardContent></Card>
             </div>
             <Card className="border-slate-200 bg-white">
-              <CardHeader><CardTitle className="text-lg text-black">Seznam dluhů a splátek</CardTitle></CardHeader>
-              <CardContent className="space-y-3">
-                {debts.length === 0 ? <p className="text-sm text-neutral-700">Žádné dluhy.</p> : debts.map((d) => {
-                  const payments = debtPayments.filter((p) => p.debtId === d.id);
-                  const repaid = Math.max(0, Math.round((d.amount - d.remainingAmount) * 100) / 100);
-                  const reasonLabel =
-                    d.reason === "tool_damage"
-                      ? "Poškození nářadí"
-                      : d.reason === "loan"
-                        ? "Půjčka"
-                        : d.reason === "deduction"
-                          ? "Srážka"
-                          : "Jiný důvod";
-                  const statusBadge =
-                    d.status === "overpaid" ? (
-                      <Badge className="bg-violet-600 text-white hover:bg-violet-600">Přeplaceno</Badge>
-                    ) : d.status === "active" ? (
-                      <Badge className="bg-amber-600 text-white hover:bg-amber-600">Aktivní</Badge>
-                    ) : (
-                      <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">Splaceno</Badge>
-                    );
-                  return (
-                    <div key={d.id} className="rounded-lg border border-slate-200 p-3">
-                      <div className="flex flex-wrap items-start justify-between gap-2">
-                        <div className="min-w-0 space-y-1">
-                          <p className="font-semibold text-black">
-                            Částka dluhu: {formatKc(d.amount)} · {d.date}
-                          </p>
-                          <p className="text-xs text-neutral-700">
-                            Důvod: {reasonLabel}
-                            {d.note ? ` · ${d.note}` : ""}
-                          </p>
-                          <p className="text-xs text-neutral-800">
-                            Splaceno: {formatKc(repaid)} ·{" "}
-                            {d.remainingAmount < 0 ? (
-                              <>
-                                Přeplaceno o {formatKc(Math.abs(d.remainingAmount))}
-                              </>
-                            ) : (
-                              <>Zbývá: {formatKc(d.remainingAmount)}</>
-                            )}
-                          </p>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap items-center gap-1">
-                          {statusBadge}
-                          <Button type="button" size="icon" variant="ghost" className="h-9 w-9 text-black" aria-label="Upravit dluh" onClick={() => openDebtEdit(d)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button
-                            type="button"
-                            size="icon"
-                            variant="ghost"
-                            className="h-9 w-9 text-destructive"
-                            aria-label="Smazat dluh"
-                            onClick={() => {
-                              setDebtToDelete(d);
-                              setDebtDeleteOpen(true);
-                            }}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                          <Button type="button" size="sm" onClick={() => openDebtPayment(d.id)}>
-                            Přidat splátku
-                          </Button>
-                        </div>
-                      </div>
-                      {payments.length > 0 ? (
-                        <div className="mt-2 rounded border border-slate-200">
-                          <Table>
-                            <TableHeader>
-                              <TableRow>
-                                <TableHead>Datum</TableHead>
-                                <TableHead>Částka</TableHead>
-                                <TableHead>Poznámka</TableHead>
-                                <TableHead>Zapsal</TableHead>
-                                <TableHead className="w-[100px] text-right">Akce</TableHead>
-                              </TableRow>
-                            </TableHeader>
-                            <TableBody>
-                              {payments.map((p) => (
-                                <TableRow key={p.id}>
-                                  <TableCell>{p.date}</TableCell>
-                                  <TableCell>{formatKc(p.amount)}</TableCell>
-                                  <TableCell>{p.note || "—"}</TableCell>
-                                  <TableCell>{p.createdBy || "—"}</TableCell>
-                                  <TableCell className="text-right">
-                                    <div className="flex justify-end gap-1">
-                                      <Button
-                                        type="button"
-                                        size="icon"
-                                        variant="ghost"
-                                        className="h-8 w-8"
-                                        aria-label="Upravit splátku"
-                                        onClick={() => openPaymentEdit(p)}
-                                      >
-                                        <Pencil className="h-4 w-4" />
-                                      </Button>
-                                      <Button
-                                        type="button"
-                                        size="icon"
-                                        variant="ghost"
-                                        className="h-8 w-8 text-destructive"
-                                        aria-label="Smazat splátku"
-                                        onClick={() => {
-                                          setPaymentToDelete(p);
-                                          setPaymentDeleteOpen(true);
-                                        }}
-                                      >
-                                        <Trash2 className="h-4 w-4" />
-                                      </Button>
-                                    </div>
-                                  </TableCell>
-                                </TableRow>
-                              ))}
-                            </TableBody>
-                          </Table>
-                        </div>
-                      ) : null}
+              <CardHeader>
+                <CardTitle className="text-lg text-black">Seznam dluhů a splátek</CardTitle>
+                <p className="text-sm text-neutral-700">
+                  Doplacené dluhy zůstávají v databázi; u každého uzavření vznikne záznam v historii
+                  zaměstnance.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {debts.length === 0 ? (
+                  <p className="text-sm text-neutral-700">Žádné dluhy.</p>
+                ) : (
+                  <>
+                    <div className="space-y-2">
+                      <p className="text-sm font-semibold text-black">Aktivní dluhy</p>
+                      {activeDebtsForUi.length === 0 ? (
+                        <p className="text-sm text-neutral-600">Žádné aktivní dluhy.</p>
+                      ) : (
+                        <div className="space-y-3">{activeDebtsForUi.map(renderAdminDebtBlock)}</div>
+                      )}
                     </div>
-                  );
-                })}
+                    <div className="space-y-2 border-t border-slate-200 pt-4">
+                      <p className="text-sm font-semibold text-black">Doplacené dluhy</p>
+                      {settledDebtsForUi.length === 0 ? (
+                        <p className="text-sm text-neutral-600">Zatím žádný uzavřený dluh.</p>
+                      ) : (
+                        <div className="space-y-3">{settledDebtsForUi.map(renderAdminDebtBlock)}</div>
+                      )}
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -3509,6 +3651,16 @@ function PayrollAdminPageInner() {
               <Label className="text-black">Poznámka</Label>
               <Textarea value={paymentNote} onChange={(e) => setPaymentNote(e.target.value)} rows={3} />
             </div>
+            <div className="space-y-2">
+              <Label className="text-black">Způsob platby (volitelné)</Label>
+              <Input
+                className="border-slate-300"
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value)}
+                placeholder="např. hotovost, mzda, převod"
+                maxLength={120}
+              />
+            </div>
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => setPaymentOpen(false)}>
@@ -3570,7 +3722,9 @@ function PayrollAdminPageInner() {
             <AlertDialogTitle>Smazat dluh?</AlertDialogTitle>
             <AlertDialogDescription className="text-neutral-700">
               {debtToDelete
-                ? `Trvale smažete dluh ${formatKc(debtToDelete.amount)} (${debtToDelete.date}) a všechny navázané splátky. Tuto akci nelze vrátit.`
+                ? debtToDelete.status !== "active"
+                  ? "Doplacený nebo uzavřený dluh nelze smazat — zůstává v evidenci a v historii zaměstnance."
+                  : `Trvale smažete aktivní dluh ${formatKc(debtToDelete.amount)} (${debtToDelete.date}) a všechny navázané splátky. Tuto akci nelze vrátit.`
                 : ""}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -3579,7 +3733,7 @@ function PayrollAdminPageInner() {
             <Button
               type="button"
               variant="destructive"
-              disabled={deletingDebt}
+              disabled={deletingDebt || debtToDelete?.status !== "active"}
               onClick={() => void confirmDeleteDebt()}
             >
               {deletingDebt ? <Loader2 className="h-4 w-4 animate-spin" /> : "Smazat"}

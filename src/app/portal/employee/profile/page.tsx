@@ -28,6 +28,7 @@ import { useToast } from "@/hooks/use-toast";
 import { Loader2, Upload, Trash2, AlertCircle, KeyRound, Briefcase } from "lucide-react";
 import Link from "next/link";
 import { EmployeeDebtsReadonlySection } from "@/components/portal/employee-debts-readonly";
+import { employeeDebtSelfViewAllowed } from "@/lib/employee-debt-visibility";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
 
@@ -81,6 +82,11 @@ export default function EmployeeProfilePage() {
     }
     return false;
   }, [company]);
+
+  const allowEmployeeDebtSelfView = useMemo(
+    () => employeeDebtSelfViewAllowed(company),
+    [company]
+  );
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -732,7 +738,7 @@ export default function EmployeeProfilePage() {
         </Card>
       ) : null}
 
-      {companyId && employeeId ? (
+      {companyId && employeeId && allowEmployeeDebtSelfView ? (
         <EmployeeDebtsReadonlySection companyId={companyId} employeeId={employeeId} />
       ) : null}
 
