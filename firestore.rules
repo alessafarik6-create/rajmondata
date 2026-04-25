@@ -30,6 +30,28 @@ service cloud.firestore {
       return userRole() in ['owner', 'admin', 'manager', 'accountant'];
     }
 
+    /**
+     * Zaměstnanec smí na dokumentu změnit pouze podpisová pole + status.
+     * (Nesmí měnit title/type/fileUrl/storagePath/employeeId/companyId ani mazat.)
+     */
+    function employeeDocumentEmployeeUpdateAllowed() {
+      return
+        resource.data.companyId == request.resource.data.companyId &&
+        resource.data.employeeId == request.resource.data.employeeId &&
+        resource.data.title == request.resource.data.title &&
+        resource.data.type == request.resource.data.type &&
+        resource.data.fileUrl == request.resource.data.fileUrl &&
+        resource.data.storagePath == request.resource.data.storagePath &&
+        request.resource.data.status in [
+          'draft','waiting_employee_signature','waiting_company_signature','signed_both'
+        ] &&
+        (!('employeeSignatureUrl' in request.resource.data) || request.resource.data.employeeSignatureUrl is string) &&
+        (!('employeeSignedAt' in request.resource.data) || request.resource.data.employeeSignedAt is timestamp) &&
+        (!('employeeSignedBy' in request.resource.data) || request.resource.data.employeeSignedBy is string) &&
+        (!('finalSignedPdfUrl' in request.resource.data) || request.resource.data.finalSignedPdfUrl is string) &&
+        (!('finalSignedStoragePath' in request.resource.data) || request.resource.data.finalSignedStoragePath is string);
+    }
+
     /** Zákazník nesmí přepnout customer_activities na vyřízené; vedení může. */
     function customerActivityResolvedUnchanged() {
       let was = 'resolved' in resource.data && resource.data.resolved == true;
@@ -587,6 +609,60 @@ service cloud.firestore {
         match /private/{docId} {
           allow read, write: if false;
         }
+
+        /**
+         * Dokumenty zaměstnance:
+         * companies/{companyId}/employees/{employeeId}/documents/{documentId}
+         */
+        match /documents/{documentId} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() || empId == ownEmployeeId()
+          );
+          allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.employeeId == empId &&
+            request.resource.data.title is string &&
+            request.resource.data.title.size() > 0 &&
+            request.resource.data.title.size() <= 200 &&
+            request.resource.data.type in [
+              'employment_contract','dpp','dpc','agreement_other','addendum','personal_id','photo','other'
+            ] &&
+            request.resource.data.fileUrl is string &&
+            request.resource.data.storagePath is string &&
+            request.resource.data.status in [
+              'draft','waiting_employee_signature','waiting_company_signature','signed_both'
+            ];
+          allow update: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            /** zaměstnanec smí podepsat pouze svůj dokument */
+            (empId == ownEmployeeId() && employeeDocumentEmployeeUpdateAllowed())
+          );
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        }
+      }
+
+      /**
+       * Šablony zaměstnaneckých dokumentů:
+       * companies/{companyId}/employeeDocumentTemplates/{templateId}
+       */
+      match /employeeDocumentTemplates/{templateId} {
+        allow read: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.title is string &&
+          request.resource.data.title.size() > 0 &&
+          request.resource.data.title.size() <= 200 &&
+          request.resource.data.type in ['employment_contract','dpp','dpc','agreement_other'] &&
+          request.resource.data.content is string &&
+          request.resource.data.content.size() > 0 &&
+          request.resource.data.content.size() <= 200000;
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.title is string &&
+          request.resource.data.type in ['employment_contract','dpp','dpc','agreement_other'] &&
+          request.resource.data.content is string;
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
       /** Sklad — položky a pohyby */

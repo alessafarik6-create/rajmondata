@@ -27,6 +27,7 @@ import {
   Link2,
   Landmark,
 } from 'lucide-react';
+import Link from "next/link";
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import {
@@ -1536,7 +1537,12 @@ export default function EmployeesPage() {
                   <TableRow key={emp.id} className="border-border hover:bg-muted/30">
                     <TableCell className="pl-6 font-medium">
                       <div className="flex flex-col">
-                        <span>{emp.firstName} {emp.lastName}</span>
+                        <Link
+                          href={`/portal/employees/${encodeURIComponent(emp.id)}`}
+                          className="hover:underline underline-offset-2"
+                        >
+                          {emp.firstName} {emp.lastName}
+                        </Link>
                         <span className="text-xs text-muted-foreground font-normal">{emp.email}</span>
                       </div>
                     </TableCell>

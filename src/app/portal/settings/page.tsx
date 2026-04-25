@@ -20,10 +20,11 @@ import {
   collection,
 } from 'firebase/firestore';
 import Link from 'next/link';
-import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail } from 'lucide-react';
+import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail, FileText } from 'lucide-react';
 import { EmailNotificationsSettings } from '@/components/settings/email-notifications-settings';
 import { OrganizationSignatureSettingsCard } from "@/components/settings/organization-signature-settings";
 import { DocumentEmailOutboundSettingsCard } from "@/components/settings/document-email-outbound-settings-card";
+import { EmployeeDocumentTemplatesSettingsCard } from "@/components/settings/EmployeeDocumentTemplatesSettingsCard";
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
 import { getFirebaseStorage } from '@/firebase/storage';
@@ -463,6 +464,11 @@ export default function SettingsPage() {
           {isAdmin && (
             <TabsTrigger value="email-notifications" className="gap-2 min-h-[44px] sm:min-h-0">
               <Mail className="w-4 h-4 shrink-0" /> E-mailové notifikace
+            </TabsTrigger>
+          )}
+          {isAdmin && (
+            <TabsTrigger value="employee-doc-templates" className="gap-2 min-h-[44px] sm:min-h-0">
+              <FileText className="w-4 h-4 shrink-0" /> Šablony zaměstnanců
             </TabsTrigger>
           )}
           <TabsTrigger value="notifications" className="gap-2 min-h-[44px] sm:min-h-0"><Bell className="w-4 h-4 shrink-0" /> Oznámení</TabsTrigger>
@@ -1189,6 +1195,14 @@ export default function SettingsPage() {
         {isAdmin && (
           <TabsContent value="email-notifications" className="mt-6">
             <EmailNotificationsSettings companyId={companyId} company={company as Record<string, unknown> | null | undefined} />
+          </TabsContent>
+        )}
+
+        {isAdmin && (
+          <TabsContent value="employee-doc-templates" className="mt-6">
+            {companyId ? (
+              <EmployeeDocumentTemplatesSettingsCard companyId={companyId} canManage={isAdmin} />
+            ) : null}
           </TabsContent>
         )}
 

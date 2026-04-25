@@ -102,6 +102,23 @@ service firebase.storage {
       allow write: if request.auth != null;
     }
 
+    /**
+     * Dokumenty zaměstnanců (PDF, fotky, Word…):
+     * companies/{companyId}/employees/{employeeId}/documents/{documentId}/...
+     *
+     * - Admin/privilegované role: read/write
+     * - Zaměstnanec: read/write jen do své složky (typicky podpisy / doplňující soubory),
+     *   mazání na úložišti se řeší přes Firestore delete (admin-only) nebo API.
+     */
+    match /companies/{companyId}/employees/{employeeId}/documents/{documentId}/{allPaths=**} {
+      allow read: if request.auth != null && storageSameCompany(companyId) && (
+        storageIsPrivileged() || storageUserDoc().employeeId == employeeId
+      );
+      allow write: if request.auth != null && storageSameCompany(companyId) && (
+        storageIsPrivileged() || storageUserDoc().employeeId == employeeId
+      );
+    }
+
     /** Foto zaměření (anotované i originál) — pod ID dokumentu v Firestore. */
     match /companies/{companyId}/measurement_photos/{photoDocId}/{allPaths=**} {
       allow read: if request.auth != null;
