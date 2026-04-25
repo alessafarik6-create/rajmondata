@@ -30,6 +30,7 @@ import {
 import Link from "next/link";
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   parseAssignedWorklogJobIds,
   parseAssignedTerminalJobIds,
@@ -1536,14 +1537,31 @@ export default function EmployeesPage() {
                 {employees.map((emp) => (
                   <TableRow key={emp.id} className="border-border hover:bg-muted/30">
                     <TableCell className="pl-6 font-medium">
-                      <div className="flex flex-col">
-                        <Link
-                          href={`/portal/employees/${encodeURIComponent(emp.id)}`}
-                          className="hover:underline underline-offset-2"
-                        >
-                          {emp.firstName} {emp.lastName}
-                        </Link>
-                        <span className="text-xs text-muted-foreground font-normal">{emp.email}</span>
+                      <div className="flex items-center gap-3">
+                        <Avatar className="h-8 w-8 border border-slate-200">
+                          <AvatarImage
+                            src={
+                              (emp as any).photoURL ||
+                              (emp as any).profileImage ||
+                              (emp as any).photoUrl ||
+                              undefined
+                            }
+                            className="object-cover"
+                            alt=""
+                          />
+                          <AvatarFallback className="bg-slate-100 text-slate-900 text-xs">
+                            {`${String(emp.firstName || "").trim()[0] || ""}${String(emp.lastName || "").trim()[0] || ""}`.toUpperCase() || "—"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="flex flex-col">
+                          <Link
+                            href={`/portal/employees/${encodeURIComponent(emp.id)}`}
+                            className="hover:underline underline-offset-2"
+                          >
+                            {emp.firstName} {emp.lastName}
+                          </Link>
+                          <span className="text-xs text-muted-foreground font-normal">{emp.email}</span>
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell>
