@@ -393,11 +393,24 @@ export default function VyrobaDetailPage() {
               return (
                 <div
                   key={`${m.movementId || idx}-${m.itemId}`}
-                  className="flex gap-3 rounded-md border border-slate-200 p-3 text-sm text-slate-800"
+                  className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 text-sm text-slate-800 shadow-sm sm:flex-row sm:items-start"
                 >
-                  <InventoryItemThumbnail item={inv} size={48} className="shrink-0" />
+                  <div className="flex justify-center sm:block">
+                    <InventoryItemThumbnail
+                      item={inv}
+                      size={120}
+                      enableLightbox
+                      lightboxTitle={String(m.itemName ?? "Skladová položka")}
+                      className="sm:shrink-0"
+                    />
+                  </div>
                   <div className="min-w-0 flex-1">
-                  <span className="font-medium">{m.itemName}</span> — {m.quantity} {m.unit}
+                    <span className="block font-medium text-slate-900">
+                      {m.itemName}
+                    </span>
+                    <span className="mt-1 block text-slate-700">
+                      Množství: <strong>{m.quantity}</strong> {m.unit}
+                    </span>
                   {m.itemId ? (
                     <span className="text-xs text-slate-500 block mt-1">
                       Skladová položka (ID): {m.itemId}

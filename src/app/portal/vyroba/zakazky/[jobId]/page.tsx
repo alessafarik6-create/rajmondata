@@ -1199,7 +1199,12 @@ export default function VyrobaZakazkaDetailPage() {
                           {selectedItem ? (
                             <>
                               <div className="shrink-0 self-start">
-                                <InventoryItemThumbnail item={selectedItem} size={52} />
+                                <InventoryItemThumbnail
+                                  item={selectedItem}
+                                  size={110}
+                                  enableLightbox
+                                  lightboxTitle={String(selectedItem.name ?? "Skladová položka")}
+                                />
                               </div>
                               <div className="min-w-0 flex-1 overflow-hidden pr-1">
                                 <p className="line-clamp-2 text-left text-sm font-semibold leading-snug text-slate-900 sm:text-base">
@@ -1243,7 +1248,12 @@ export default function VyrobaZakazkaDetailPage() {
                               >
                                 <div className="flex w-full min-w-0 items-start gap-4 overflow-hidden">
                                   <div className="shrink-0 pt-0.5">
-                                    <InventoryItemThumbnail item={i} size={52} />
+                                    <InventoryItemThumbnail
+                                      item={i}
+                                      size={100}
+                                      enableLightbox
+                                      lightboxTitle={String(i.name ?? "Skladová položka")}
+                                    />
                                   </div>
                                   <div className="min-w-0 flex-1 overflow-hidden text-left">
                                     <p className="line-clamp-2 text-left text-sm font-semibold leading-snug text-slate-900 sm:text-base">
@@ -1275,7 +1285,7 @@ export default function VyrobaZakazkaDetailPage() {
                       <Label className="text-sm font-semibold text-slate-800">
                         Rychlý výběr — klikněte na skladovou položku
                       </Label>
-                      <div className="grid max-h-[min(30rem,65vh)] auto-rows-min grid-cols-1 gap-5 overflow-x-hidden overflow-y-auto px-0.5 pb-2 sm:grid-cols-2 sm:gap-6">
+                      <div className="grid max-h-[min(30rem,65vh)] auto-rows-min grid-cols-1 gap-6 overflow-x-hidden overflow-y-auto px-0.5 pb-2 sm:grid-cols-2 sm:gap-6">
                         {issueableInventory.slice(0, 48).map((i) => {
                           const q = availableStockQtyForIssueForm(i);
                           const active = issueItemId === i.id;
@@ -1285,23 +1295,25 @@ export default function VyrobaZakazkaDetailPage() {
                               type="button"
                               onClick={() => setIssueItemId(i.id)}
                               className={cn(
-                                "flex w-full min-w-0 min-h-[7.75rem] shrink-0 items-start gap-4 overflow-hidden rounded-xl border-2 px-4 py-4 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 sm:min-h-[8.25rem] sm:px-5 sm:py-5",
+                                "flex w-full min-w-0 shrink-0 flex-col items-stretch gap-4 overflow-hidden rounded-xl border-2 p-4 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 sm:flex-row sm:items-start sm:p-5",
                                 active
                                   ? "border-emerald-600 bg-emerald-600 text-white ring-1 ring-emerald-700/30"
                                   : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/90 active:bg-slate-100"
                               )}
                             >
-                              <div className="shrink-0 self-start">
+                              <div className="flex justify-center sm:block">
                                 <InventoryItemThumbnail
                                   item={i}
-                                  size={52}
+                                  size={140}
+                                  enableLightbox
+                                  lightboxTitle={String(i.name ?? "Skladová položka")}
                                   className={cn(active && "border-white/40 ring-1 ring-white/20")}
                                 />
                               </div>
                               <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch justify-start gap-0 overflow-hidden text-left">
                                 <p
                                   className={cn(
-                                    "line-clamp-2 min-h-[2.5rem] text-base font-semibold leading-snug tracking-tight sm:min-h-[2.75rem]",
+                                    "line-clamp-2 text-base font-semibold leading-snug tracking-tight",
                                     active ? "text-white" : "text-slate-900"
                                   )}
                                 >
@@ -1355,7 +1367,13 @@ export default function VyrobaZakazkaDetailPage() {
                         Dostupné množství
                       </p>
                       <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
-                        <InventoryItemThumbnail item={selectedItem} size={56} className="shrink-0" />
+                        <InventoryItemThumbnail
+                          item={selectedItem}
+                          size={140}
+                          enableLightbox
+                          lightboxTitle={String(selectedItem.name ?? "Skladová položka")}
+                          className="shrink-0"
+                        />
                         <div className="min-w-0 flex-1 space-y-2 text-sm leading-relaxed text-slate-800">
                           <p>
                             Na skladě je k dispozici:{" "}
