@@ -34,6 +34,8 @@ import {
   Play,
   ZoomIn,
   CheckCircle2,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -53,6 +55,7 @@ import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -404,6 +407,14 @@ export default function VyrobaZakazkaDetailPage() {
   const [workflowSaving, setWorkflowSaving] = useState(false);
   const [completeOpen, setCompleteOpen] = useState(false);
 
+  const [editConsumptionOpen, setEditConsumptionOpen] = useState(false);
+  const [editConsumptionBusy, setEditConsumptionBusy] = useState(false);
+  const [editConsumptionRow, setEditConsumptionRow] = useState<Record<string, unknown> | null>(null);
+  const [editConsumptionQty, setEditConsumptionQty] = useState("");
+  const [editConsumptionNote, setEditConsumptionNote] = useState("");
+
+  const [deleteConsumptionTarget, setDeleteConsumptionTarget] = useState<Record<string, unknown> | null>(null);
+
   const loadApi = useCallback(async () => {
     if (!user || !jobId) return;
     setLoading(true);
@@ -489,6 +500,87 @@ export default function VyrobaZakazkaDetailPage() {
       debugLog: productionFolderDebug,
     });
   }, [foldersRaw, visibleFolderPick, isPrivilegedViewer, jobId, role, productionFolderDebug]);
+
+  const openEditConsumption = useCallback((row: Record<string, unknown>) => {
+    setEditConsumptionRow(row);
+    setEditConsumptionQty(String(row.quantity ?? row.quantityUsed ?? ""));
+    setEditConsumptionNote(String(row.note ?? ""));
+    setEditConsumptionOpen(true);
+  }, []);
+
+  const saveEditedConsumption = useCallback(async () => {
+    if (!user || !jobId || !editConsumptionRow) return;
+    const qty = Number(String(editConsumptionQty).replace(",", "."));
+    if (!Number.isFinite(qty) || qty <= 0) {
+      toast({ variant: "destructive", title: "Zadejte kladné množství." });
+      return;
+    }
+    setEditConsumptionBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/production/material-consumption-update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({
+          jobId: String(jobId),
+          consumptionId: String(editConsumptionRow.id ?? ""),
+          quantity: qty,
+          note: editConsumptionNote,
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = typeof j?.error === "string" ? j.error : "Uložení se nezdařilo.";
+        toast({ variant: "destructive", title: "Chyba", description: msg });
+        return;
+      }
+      toast({ title: "Spotřeba upravena" });
+      setEditConsumptionOpen(false);
+      setEditConsumptionRow(null);
+      await loadApi();
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Uložení se nezdařilo.",
+      });
+    } finally {
+      setEditConsumptionBusy(false);
+    }
+  }, [user, jobId, editConsumptionRow, editConsumptionQty, editConsumptionNote, toast, loadApi]);
+
+  const confirmDeleteConsumption = useCallback(async () => {
+    if (!user || !jobId || !deleteConsumptionTarget) return;
+    setEditConsumptionBusy(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/production/material-consumption-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+        body: JSON.stringify({
+          jobId: String(jobId),
+          consumptionId: String(deleteConsumptionTarget.id ?? ""),
+        }),
+      });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = typeof j?.error === "string" ? j.error : "Smazání se nezdařilo.";
+        toast({ variant: "destructive", title: "Chyba", description: msg });
+        return;
+      }
+      toast({ title: "Spotřeba smazána", description: "Materiál byl vrácen na sklad." });
+      setDeleteConsumptionTarget(null);
+      await loadApi();
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: e instanceof Error ? e.message : "Smazání se nezdařilo.",
+      });
+    } finally {
+      setEditConsumptionBusy(false);
+    }
+  }, [user, jobId, deleteConsumptionTarget, toast, loadApi]);
 
   useEffect(() => {
     if (!issueItemId) return;
@@ -1780,6 +1872,30 @@ export default function VyrobaZakazkaDetailPage() {
                             ) : null}
                           </p>
                           {c.note ? <p className="text-xs mt-1">{String(c.note)}</p> : null}
+                          {isPrivilegedViewer ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-2 border-slate-300 bg-white text-slate-900"
+                                onClick={() => openEditConsumption(c)}
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                                Upravit
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                className="h-8 gap-2 border-red-200 bg-white text-red-700 hover:bg-red-50 hover:text-red-800"
+                                onClick={() => setDeleteConsumptionTarget(c)}
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                                Smazat
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
                       );
                     })}
@@ -1897,6 +2013,92 @@ export default function VyrobaZakazkaDetailPage() {
               />
             </CardContent>
           </Card>
+
+          <Dialog
+            open={editConsumptionOpen}
+            onOpenChange={(o) => {
+              setEditConsumptionOpen(o);
+              if (!o) {
+                setEditConsumptionRow(null);
+                setEditConsumptionQty("");
+                setEditConsumptionNote("");
+              }
+            }}
+          >
+            <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-lg" data-portal-dialog>
+              <DialogHeader>
+                <DialogTitle>Upravit spotřebu materiálu</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3 py-2">
+                <div className="space-y-1">
+                  <Label>Množství</Label>
+                  <Input
+                    className="bg-white"
+                    value={editConsumptionQty}
+                    onChange={(e) => setEditConsumptionQty(e.target.value)}
+                    inputMode="decimal"
+                    disabled={editConsumptionBusy}
+                  />
+                  <p className="text-xs text-slate-500">
+                    Při navýšení se odečte rozdíl ze skladu, při snížení se rozdíl vrátí na sklad. U délkových výdejů
+                    se zbytkem je úprava zablokována.
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label>Poznámka</Label>
+                  <Textarea
+                    className="bg-white"
+                    value={editConsumptionNote}
+                    onChange={(e) => setEditConsumptionNote(e.target.value)}
+                    disabled={editConsumptionBusy}
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-slate-300 bg-white"
+                  disabled={editConsumptionBusy}
+                  onClick={() => setEditConsumptionOpen(false)}
+                >
+                  Zrušit
+                </Button>
+                <Button type="button" disabled={editConsumptionBusy} onClick={() => void saveEditedConsumption()}>
+                  {editConsumptionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          <AlertDialog
+            open={!!deleteConsumptionTarget}
+            onOpenChange={(o) => {
+              if (!o) setDeleteConsumptionTarget(null);
+            }}
+          >
+            <AlertDialogContent className="bg-white border-slate-200 text-slate-900">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Smazat záznam spotřeby?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Opravdu chcete smazat tento záznam? Materiál se vrátí zpět na sklad.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel className="border-slate-300 bg-white" disabled={editConsumptionBusy}>
+                  Zrušit
+                </AlertDialogCancel>
+                <Button
+                  type="button"
+                  className="bg-red-600 text-white hover:bg-red-700"
+                  disabled={editConsumptionBusy}
+                  onClick={() => void confirmDeleteConsumption()}
+                >
+                  {editConsumptionBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Smazat"}
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
 
           <AlertDialog open={completeOpen} onOpenChange={setCompleteOpen}>
             <AlertDialogContent>
