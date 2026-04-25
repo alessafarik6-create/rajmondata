@@ -15,22 +15,33 @@ export default function AdminPricingPage() {
   const [defaultEmployeePriceCzk, setDefaultEmployeePriceCzk] = useState(49);
   const [promoNote, setPromoNote] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const res = await fetch("/api/superadmin/platform-settings", { cache: "no-store" });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) {
-          if (typeof data.defaultEmployeePriceCzk === "number") {
-            setDefaultEmployeePriceCzk(data.defaultEmployeePriceCzk);
-          }
-          if (typeof data.promoNote === "string") setPromoNote(data.promoNote);
-        }
-      } finally {
-        setLoading(false);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/superadmin/platform-settings", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: typeof data?.error === "string" ? data.error : "Načtení se nezdařilo.",
+        });
+        return;
       }
-    })();
+      if (typeof data.defaultEmployeePriceCzk === "number") {
+        setDefaultEmployeePriceCzk(data.defaultEmployeePriceCzk);
+      }
+      if (typeof data.promoNote === "string") setPromoNote(data.promoNote);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
   }, []);
 
   const save = async () => {
@@ -39,15 +50,25 @@ export default function AdminPricingPage() {
       const res = await fetch("/api/superadmin/platform-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           defaultEmployeePriceCzk,
           promoNote,
         }),
       });
-      if (!res.ok) throw new Error();
-      toast({ title: "Ceník uložen", description: "Nastavení bylo uloženo." });
-    } catch {
-      toast({ variant: "destructive", title: "Chyba při ukládání" });
+      const errJson = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof errJson?.error === "string" ? errJson.error : "Uložení se nezdařilo.");
+      }
+      toast({ title: "Sazby uloženy", description: "Nastavení bylo uloženo." });
+      await load();
+    } catch (e) {
+      console.error("[admin pricing save]", e);
+      toast({
+        variant: "destructive",
+        title: "Chyba při ukládání",
+        description: e instanceof Error ? e.message : "Uložení se nezdařilo.",
+      });
     } finally {
       setSaving(false);
     }

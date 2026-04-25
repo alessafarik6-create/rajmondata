@@ -38,7 +38,10 @@ export default function AdminModulesPage() {
   const load = async () => {
     setLoading(true);
     try {
-      const res = await fetch("/api/superadmin/platform-modules", { cache: "no-store" });
+      const res = await fetch("/api/superadmin/platform-modules", {
+        cache: "no-store",
+        credentials: "include",
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast({
@@ -75,6 +78,20 @@ export default function AdminModulesPage() {
         const code = String(rest.code ?? "");
         const priceMonthly = Number(rest.priceMonthly ?? rest.basePriceCzk) || 0;
         const isAtt = code === "attendance_payroll";
+        const billingType =
+          rest.billingType === "per_employee" ||
+          rest.billingType === "per_company" ||
+          rest.billingType === "flat"
+            ? rest.billingType
+            : isAtt
+              ? "per_employee"
+              : "per_company";
+        const rawEp = Number(rest.employeePriceCzk);
+        const employeePriceCzk = isAtt
+          ? Number.isFinite(rawEp)
+            ? Math.max(0, rawEp)
+            : 49
+          : undefined;
         return {
           ...rest,
           code,
@@ -83,21 +100,32 @@ export default function AdminModulesPage() {
           priceMonthly,
           currency: String(rest.currency ?? "CZK").trim() || "CZK",
           billingPeriod: rest.billingPeriod === "yearly" ? "yearly" : "monthly",
+          billingType,
           isPaid: Boolean(rest.isPaid),
           activeGlobally: Boolean(rest.activeGlobally),
           defaultEnabled: Boolean(rest.defaultEnabled),
+          ...(isAtt ? { employeePriceCzk } : {}),
         };
       });
       const res = await fetch("/api/superadmin/platform-modules", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ modules: payload }),
       });
-      if (!res.ok) throw new Error();
-      toast({ title: "Uloženo", description: "Moduly a ceny byly aktualizovány." });
+      const errJson = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof errJson?.error === "string" ? errJson.error : "Uložení se nezdařilo.");
+      }
+      toast({ title: "Sazby uloženy", description: "Moduly a ceny byly aktualizovány." });
       await load();
-    } catch {
-      toast({ variant: "destructive", title: "Chyba při ukládání" });
+    } catch (e) {
+      console.error("[admin modules save]", e);
+      toast({
+        variant: "destructive",
+        title: "Chyba při ukládání",
+        description: e instanceof Error ? e.message : "Uložení se nezdařilo.",
+      });
     } finally {
       setSaving(false);
     }

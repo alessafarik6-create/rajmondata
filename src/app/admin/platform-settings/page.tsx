@@ -15,20 +15,31 @@ export default function AdminPlatformSettingsPage() {
   const [landingHeadline, setLandingHeadline] = useState("");
   const [landingSubline, setLandingSubline] = useState("");
 
-  useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const res = await fetch("/api/superadmin/platform-settings", { cache: "no-store" });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok) {
-          if (typeof data.landingHeadline === "string") setLandingHeadline(data.landingHeadline);
-          if (typeof data.landingSubline === "string") setLandingSubline(data.landingSubline);
-        }
-      } finally {
-        setLoading(false);
+  const load = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/superadmin/platform-settings", {
+        cache: "no-store",
+        credentials: "include",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: typeof data?.error === "string" ? data.error : "Načtení se nezdařilo.",
+        });
+        return;
       }
-    })();
+      if (typeof data.landingHeadline === "string") setLandingHeadline(data.landingHeadline);
+      if (typeof data.landingSubline === "string") setLandingSubline(data.landingSubline);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void load();
   }, []);
 
   const save = async () => {
@@ -37,15 +48,25 @@ export default function AdminPlatformSettingsPage() {
       const res = await fetch("/api/superadmin/platform-settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           landingHeadline,
           landingSubline,
         }),
       });
-      if (!res.ok) throw new Error();
+      const errJson = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof errJson?.error === "string" ? errJson.error : "Uložení se nezdařilo.");
+      }
       toast({ title: "Uloženo", description: "Nastavení platformy bylo uloženo." });
-    } catch {
-      toast({ variant: "destructive", title: "Chyba při ukládání" });
+      await load();
+    } catch (e) {
+      console.error("[admin platform-settings save]", e);
+      toast({
+        variant: "destructive",
+        title: "Chyba při ukládání",
+        description: e instanceof Error ? e.message : "Uložení se nezdařilo.",
+      });
     } finally {
       setSaving(false);
     }

@@ -39,22 +39,34 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
-    const body = await request.json();
+    const body = (await request.json()) as Record<string, unknown>;
     await ensureAllPlatformData(db);
-    await db
-      .collection(PLATFORM_SETTINGS_COLLECTION)
-      .doc(PLATFORM_SETTINGS_DOC)
-      .set(
-        {
-          ...body,
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
+
+    const num = (v: unknown): number | undefined => {
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+      if (typeof v === "string" && v.trim()) {
+        const n = Number(v.replace(",", ".").replace(/\s/g, ""));
+        return Number.isFinite(n) ? n : undefined;
+      }
+      return undefined;
+    };
+
+    const patch: Record<string, unknown> = {
+      updatedAt: FieldValue.serverTimestamp(),
+      updatedBy: session.username,
+    };
+    const dep = num(body.defaultEmployeePriceCzk);
+    if (dep !== undefined) patch.defaultEmployeePriceCzk = Math.max(0, Math.round(dep * 100) / 100);
+    if (typeof body.promoNote === "string") patch.promoNote = body.promoNote.trim().slice(0, 2000);
+    if (typeof body.landingHeadline === "string") patch.landingHeadline = body.landingHeadline.trim().slice(0, 300);
+    if (typeof body.landingSubline === "string") patch.landingSubline = body.landingSubline.trim().slice(0, 500);
+
+    await db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_SETTINGS_DOC).set(patch, { merge: true });
     console.info("[Platform]", "Platform settings updated", { by: session.username });
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[superadmin platform-settings PUT]", e);
-    return NextResponse.json({ error: "Chyba uložení." }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "Chyba uložení.";
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

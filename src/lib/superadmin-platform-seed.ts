@@ -54,6 +54,8 @@ export async function ensurePlatformSeoSeeded(db: Firestore): Promise<void> {
     ogDescription: "Docházka, práce a mzdy od 49 Kč. Moduly dle potřeby.",
     canonicalUrl: "",
     landingLead: "Spojte tým, zakázky a finance v jednom přehledném systému.",
+    heroImages: [],
+    promoVideo: null,
     updatedAt: FieldValue.serverTimestamp(),
   });
 }
