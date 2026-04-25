@@ -212,6 +212,33 @@ service cloud.firestore {
       );
     }
 
+    /**
+     * Správa kategorií skladu — zarovnáno na portál (vlastník / admin / manažer; ne běžný zaměstnanec jen se skladem).
+     * Dříve jen isPrivileged() — účetní apod. nepotřebuje kategorie; důležité je shodit s `warehouseModuleUser` pro vedení.
+     */
+    function warehouseInventoryManager(companyId) {
+      return signedIn() && sameCompany(companyId) && (
+        userRole() in ['owner', 'admin', 'manager'] ||
+        isSuperAdminFirebase()
+      );
+    }
+
+    function stockCategoryCreateValid(companyId) {
+      let d = request.resource.data;
+      return d.companyId == companyId &&
+        d.name is string && d.name.size() > 0 && d.name.size() <= 200 &&
+        d.order is int &&
+        d.createdBy == request.auth.uid;
+    }
+
+    function stockCategoryUpdateValid(companyId) {
+      let d = request.resource.data;
+      let r = resource.data;
+      return d.companyId == companyId &&
+        r.companyId == companyId &&
+        d.name is string && d.name.size() > 0 && d.name.size() <= 200;
+    }
+
     function productionModuleUser(companyId) {
       return signedIn() && sameCompany(companyId) && (
         userRole() in ['owner', 'admin', 'manager'] ||
@@ -674,7 +701,9 @@ service cloud.firestore {
       /** Kategorie skladových položek (správa ve skladu). */
       match /stockCategories/{categoryId} {
         allow read: if inventoryReadForProductionOrWarehouse(companyId);
-        allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        allow create: if warehouseInventoryManager(companyId) && stockCategoryCreateValid(companyId);
+        allow update: if warehouseInventoryManager(companyId) && stockCategoryUpdateValid(companyId);
+        allow delete: if warehouseInventoryManager(companyId);
       }
 
       /**

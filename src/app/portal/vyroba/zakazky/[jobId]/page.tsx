@@ -330,12 +330,7 @@ export default function VyrobaZakazkaDetailPage() {
   const stockCategoriesCol = useMemoFirebase(
     () =>
       firestore && companyId
-        ? query(
-            collection(firestore, "companies", companyId, "stockCategories"),
-            orderBy("order"),
-            orderBy("name"),
-            limit(200)
-          )
+        ? query(collection(firestore, "companies", companyId, "stockCategories"), limit(200))
         : null,
     [firestore, companyId]
   );
@@ -345,8 +340,13 @@ export default function VyrobaZakazkaDetailPage() {
   const stockCategories = useMemo(() => {
     const raw = Array.isArray(stockCategoriesRaw) ? stockCategoriesRaw : [];
     return raw
-      .map((c: any) => ({ id: String(c?.id ?? ""), name: String(c?.name ?? "") }))
-      .filter((c) => c.id && c.name);
+      .map((c: any) => ({
+        id: String(c?.id ?? ""),
+        name: String(c?.name ?? ""),
+        order: Number(c?.order) || 0,
+      }))
+      .filter((c) => c.id && c.name)
+      .sort((a, b) => (a.order - b.order) || a.name.localeCompare(b.name, "cs"));
   }, [stockCategoriesRaw]);
   const inventoryItems = useMemo(() => {
     const list = Array.isArray(inventoryRaw) ? inventoryRaw : [];

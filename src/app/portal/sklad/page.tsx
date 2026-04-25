@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import {
+  addDoc,
   collection,
   deleteDoc,
   doc,
@@ -11,7 +12,6 @@ import {
   query,
   runTransaction,
   serverTimestamp,
-  setDoc,
   updateDoc,
   where,
 } from "firebase/firestore";
@@ -93,6 +93,18 @@ import { DEFAULT_STOCK_CATEGORIES } from "@/lib/stock-categories";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
+function isStockCategoryNameTaken(
+  categories: { id: string; name: string }[],
+  name: string,
+  excludeId?: string | null
+) {
+  const n = name.trim().toLowerCase();
+  if (!n) return false;
+  return categories.some(
+    (c) => c.name.trim().toLowerCase() === n && (!excludeId || c.id !== excludeId)
+  );
+}
+
 function movementLabel(t: string) {
   if (t === "in") return "Naskladnění";
   if (t === "out") return "Vyskladnění";
@@ -163,14 +175,10 @@ export default function SkladPage() {
     );
   }, [areServicesAvailable, firestore, companyId]);
 
+  /** Bez složeného orderBy — jinak Firestore často vyžaduje index a listener spadne (prázdný seznam). */
   const categoriesQuery = useMemoFirebase(() => {
     if (!areServicesAvailable || !firestore || !companyId) return null;
-    return query(
-      collection(firestore, "companies", companyId, "stockCategories"),
-      orderBy("order"),
-      orderBy("name"),
-      limit(200)
-    );
+    return query(collection(firestore, "companies", companyId, "stockCategories"), limit(200));
   }, [areServicesAvailable, firestore, companyId]);
 
   const movementsQuery = useMemoFirebase(() => {
@@ -304,6 +312,8 @@ export default function SkladPage() {
   const [catManageOpen, setCatManageOpen] = useState(false);
   const [catBusy, setCatBusy] = useState(false);
   const [newCatName, setNewCatName] = useState("");
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
 
   const warehouseStats = useMemo(() => {
     let totalQty = 0;
@@ -484,14 +494,18 @@ export default function SkladPage() {
       toast({ variant: "destructive", title: "Vyplňte název kategorie." });
       return;
     }
+    if (isStockCategoryNameTaken(stockCategories, name)) {
+      toast({ variant: "destructive", title: "Kategorie s tímto názvem už existuje." });
+      return;
+    }
     setCatBusy(true);
     try {
-      const nextOrder = stockCategories.length
-        ? Math.max(...stockCategories.map((c) => Number(c.order) || 0)) + 10
-        : 10;
-      const ref = doc(collection(firestore, "companies", companyId, "stockCategories"));
-      await setDoc(ref, {
-        id: ref.id,
+      const nextOrder =
+        stockCategories.length === 0
+          ? 0
+          : Math.max(...stockCategories.map((c) => Number(c.order) || 0)) + 10;
+      const col = collection(firestore, "companies", companyId, "stockCategories");
+      await addDoc(col, {
         companyId,
         name,
         order: nextOrder,
@@ -502,6 +516,7 @@ export default function SkladPage() {
       setNewCatName("");
       toast({ title: "Kategorie vytvořena" });
     } catch (e) {
+      console.error("[stockCategories] create failed", { companyId, error: e });
       toast({
         variant: "destructive",
         title: "Chyba",
@@ -512,18 +527,34 @@ export default function SkladPage() {
     }
   };
 
-  const renameCategory = async (id: string, name: string) => {
-    if (!user || !firestore || !companyId) return;
-    const next = name.trim();
-    if (!next) return;
+  const saveEditedCategory = async () => {
+    if (!user || !firestore || !companyId || !editingCategoryId) return;
+    const next = editingName.trim();
+    if (!next) {
+      toast({ variant: "destructive", title: "Název kategorie nesmí být prázdný." });
+      return;
+    }
+    if (isStockCategoryNameTaken(stockCategories, next, editingCategoryId)) {
+      toast({ variant: "destructive", title: "Kategorie s tímto názvem už existuje." });
+      return;
+    }
+    const current = stockCategories.find((c) => c.id === editingCategoryId);
+    if (current && next === current.name.trim()) {
+      setEditingCategoryId(null);
+      setEditingName("");
+      return;
+    }
     setCatBusy(true);
     try {
-      await updateDoc(doc(firestore, "companies", companyId, "stockCategories", id), {
+      await updateDoc(doc(firestore, "companies", companyId, "stockCategories", editingCategoryId), {
         name: next,
         updatedAt: serverTimestamp(),
       });
+      setEditingCategoryId(null);
+      setEditingName("");
       toast({ title: "Kategorie upravena" });
     } catch (e) {
+      console.error("[stockCategories] update failed", { companyId, editingCategoryId, error: e });
       toast({
         variant: "destructive",
         title: "Chyba",
@@ -543,6 +574,13 @@ export default function SkladPage() {
         order,
         updatedAt: serverTimestamp(),
       });
+    } catch (e) {
+      console.error("[stockCategories] order update failed", { companyId, id, error: e });
+      toast({
+        variant: "destructive",
+        title: "Pořadí se nepodařilo uložit.",
+        description: e instanceof Error ? e.message : undefined,
+      });
     } finally {
       setCatBusy(false);
     }
@@ -558,6 +596,7 @@ export default function SkladPage() {
         description: "Kategorie byla smazána (položky zůstávají beze změny).",
       });
     } catch (e) {
+      console.error("[stockCategories] delete failed", { companyId, error: e });
       toast({
         variant: "destructive",
         title: "Chyba",
@@ -574,10 +613,9 @@ export default function SkladPage() {
     try {
       const existing = new Set(stockCategories.map((c) => c.name.toLowerCase()));
       const toCreate = DEFAULT_STOCK_CATEGORIES.filter((c) => !existing.has(c.name.toLowerCase()));
+      const col = collection(firestore, "companies", companyId, "stockCategories");
       for (const c of toCreate) {
-        const ref = doc(collection(firestore, "companies", companyId, "stockCategories"));
-        await setDoc(ref, {
-          id: ref.id,
+        await addDoc(col, {
           companyId,
           name: c.name,
           order: c.order,
@@ -588,6 +626,7 @@ export default function SkladPage() {
       }
       toast({ title: "Výchozí kategorie vytvořeny" });
     } catch (e) {
+      console.error("[stockCategories] seed failed", { companyId, error: e });
       toast({
         variant: "destructive",
         title: "Chyba",
@@ -767,6 +806,7 @@ export default function SkladPage() {
       });
       setDeleteTarget(null);
     } catch (e) {
+      console.error("[stockCategories] delete failed", { companyId, error: e });
       toast({
         variant: "destructive",
         title: "Chyba",
@@ -1362,26 +1402,47 @@ export default function SkladPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={catManageOpen} onOpenChange={setCatManageOpen}>
+      <Dialog
+        open={catManageOpen}
+        onOpenChange={(o) => {
+          setCatManageOpen(o);
+          if (!o) {
+            setEditingCategoryId(null);
+            setEditingName("");
+          }
+        }}
+      >
         <DialogContent className="bg-white border-slate-200 text-slate-900 max-w-xl" data-portal-dialog>
           <DialogHeader>
             <DialogTitle>Kategorie skladu</DialogTitle>
           </DialogHeader>
+          <p className="text-xs text-slate-500">
+            Ukládá se do <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">companies/&lt;firma&gt;/stockCategories/&lt;id&gt;</code>{" "}
+            (logicky odpovídá <code className="rounded bg-slate-100 px-1 py-0.5 text-[11px]">organizations/&lt;orgId&gt;/…</code> — v aplikaci je orgId stejné jako ID firmy).
+          </p>
           <div className="space-y-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <form
+              className="flex flex-col gap-2 sm:flex-row sm:items-end"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void createCategory();
+              }}
+            >
               <div className="flex-1 space-y-1">
-                <Label>Nová kategorie</Label>
+                <Label htmlFor="new-stock-category-name">Nová kategorie</Label>
                 <Input
+                  id="new-stock-category-name"
                   className="bg-white"
                   value={newCatName}
                   onChange={(e) => setNewCatName(e.target.value)}
                   placeholder="Např. Pergoly"
+                  disabled={catBusy}
                 />
               </div>
-              <Button type="button" disabled={catBusy} onClick={() => void createCategory()}>
-                {catBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Vytvořit"}
+              <Button type="submit" disabled={catBusy} className="shrink-0">
+                {catBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Přidat kategorii"}
               </Button>
-            </div>
+            </form>
 
             <div className="flex flex-wrap gap-2">
               <Button
@@ -1405,25 +1466,69 @@ export default function SkladPage() {
                 stockCategories.map((c) => (
                   <div
                     key={c.id}
-                    className="flex flex-col gap-2 rounded border border-slate-200 p-3 sm:flex-row sm:items-center sm:justify-between"
+                    className="flex flex-col gap-2 rounded border border-slate-200 p-3 sm:flex-row sm:items-start sm:justify-between"
                   >
                     <div className="flex-1 min-w-0 space-y-2">
-                      <Input
-                        className="bg-white"
-                        defaultValue={c.name}
-                        onBlur={(e) => {
-                          const next = e.target.value;
-                          if (next.trim() && next.trim() !== c.name.trim()) {
-                            void renameCategory(c.id, next);
-                          }
-                        }}
-                      />
+                      {editingCategoryId === c.id ? (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                          <Input
+                            className="bg-white"
+                            value={editingName}
+                            onChange={(e) => setEditingName(e.target.value)}
+                            disabled={catBusy}
+                            autoFocus
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                void saveEditedCategory();
+                              }
+                            }}
+                          />
+                          <div className="flex shrink-0 gap-2">
+                            <Button type="button" size="sm" disabled={catBusy} onClick={() => void saveEditedCategory()}>
+                              {catBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              className="border-slate-300 bg-white"
+                              disabled={catBusy}
+                              onClick={() => {
+                                setEditingCategoryId(null);
+                                setEditingName("");
+                              }}
+                            >
+                              Zrušit
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                          <p className="text-sm font-medium text-slate-900">{c.name}</p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="w-fit border-slate-300 bg-white text-slate-900"
+                            disabled={catBusy}
+                            onClick={() => {
+                              setEditingCategoryId(c.id);
+                              setEditingName(c.name);
+                            }}
+                          >
+                            Upravit
+                          </Button>
+                        </div>
+                      )}
                       <div className="flex items-center gap-2">
                         <Label className="text-xs text-slate-600">Pořadí</Label>
                         <Input
+                          key={`ord-${c.id}-${c.order}`}
                           className="h-8 w-24 bg-white text-sm"
                           defaultValue={String(c.order)}
                           inputMode="numeric"
+                          disabled={catBusy}
                           onBlur={(e) => {
                             const n = Number(String(e.target.value).replace(",", "."));
                             if (Number.isFinite(n) && n !== c.order) {
@@ -1451,7 +1556,12 @@ export default function SkladPage() {
             </div>
           </div>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setCatManageOpen(false)} className="border-slate-300">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setCatManageOpen(false)}
+              className="border-slate-300"
+            >
               Zavřít
             </Button>
           </DialogFooter>

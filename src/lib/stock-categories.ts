@@ -1,3 +1,7 @@
+/**
+ * Kategorie skladu — v této aplikaci pod `companies/{companyId}/stockCategories`
+ * (logicky odpovídá `organizations/{orgId}/stockCategories` při orgId === companyId).
+ */
 export type StockCategoryDoc = {
   id: string;
   companyId: string;
