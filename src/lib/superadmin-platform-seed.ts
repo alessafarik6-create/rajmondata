@@ -2,6 +2,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { FieldValue } from "firebase-admin/firestore";
 import {
   DEFAULT_PLATFORM_MODULES,
+  PLATFORM_BILLING_PROVIDER_DOC,
   PLATFORM_SETTINGS_DOC,
   PLATFORM_SEO_DOC,
 } from "@/lib/platform-config";
@@ -31,12 +32,43 @@ export async function ensurePlatformModulesSeeded(db: Firestore): Promise<void> 
 export async function ensurePlatformSettingsSeeded(db: Firestore): Promise<void> {
   const ref = db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_SETTINGS_DOC);
   const snap = await ref.get();
+  if (!snap.exists) {
+    await ref.set({
+      defaultEmployeePriceCzk: 49,
+      landingHeadline: "Moderní provoz firmy na jedné platformě",
+      landingSubline: "Docházka, zakázky, fakturace a další — od 49 Kč za zaměstnance.",
+      promoNote: "Ceny bez DPH. Aktivace modulů po schválení.",
+      platformInvoiceSeq: 0,
+      updatedAt: FieldValue.serverTimestamp(),
+    });
+    return;
+  }
+  const d = snap.data() as Record<string, unknown> | undefined;
+  if (d && typeof d.platformInvoiceSeq !== "number") {
+    await ref.set(
+      { platformInvoiceSeq: 0, updatedAt: FieldValue.serverTimestamp() },
+      { merge: true }
+    );
+  }
+}
+
+export async function ensureBillingProviderDoc(db: Firestore): Promise<void> {
+  const ref = db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_BILLING_PROVIDER_DOC);
+  const snap = await ref.get();
   if (snap.exists) return;
   await ref.set({
-    defaultEmployeePriceCzk: 49,
-    landingHeadline: "Moderní provoz firmy na jedné platformě",
-    landingSubline: "Docházka, zakázky, fakturace a další — od 49 Kč za zaměstnance.",
-    promoNote: "Ceny bez DPH. Aktivace modulů po schválení.",
+    companyName: "",
+    address: "",
+    ico: "",
+    dic: "",
+    email: "",
+    phone: "",
+    accountNumber: "",
+    iban: "",
+    swift: "",
+    logoUrl: null,
+    stampUrl: null,
+    invoiceFooterText: "",
     updatedAt: FieldValue.serverTimestamp(),
   });
 }
@@ -63,5 +95,6 @@ export async function ensurePlatformSeoSeeded(db: Firestore): Promise<void> {
 export async function ensureAllPlatformData(db: Firestore): Promise<void> {
   await ensurePlatformModulesSeeded(db);
   await ensurePlatformSettingsSeeded(db);
+  await ensureBillingProviderDoc(db);
   await ensurePlatformSeoSeeded(db);
 }

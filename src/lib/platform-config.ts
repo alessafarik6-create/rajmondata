@@ -4,6 +4,8 @@
 
 export const PLATFORM_SEO_DOC = "home";
 export const PLATFORM_SETTINGS_DOC = "default";
+/** Fakturační údaje provozovatele platformy (superadmin). */
+export const PLATFORM_BILLING_PROVIDER_DOC = "billingProvider";
 
 /**
  * Stabilní ID dokumentů v `platform_modules/{code}` a v licenci (`enabledModules`).

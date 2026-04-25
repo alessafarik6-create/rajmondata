@@ -2057,6 +2057,11 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    /** Faktury provozovatele platformy — pouze Admin SDK / API. */
+    match /platform_invoices/{invoiceId} {
+      allow read, write: if false;
+    }
+
     /** Katalog modulů — čtení pro přihlášené (výchozí pro menu / fallback u firmy); zápis jen Admin SDK. */
     match /platform_modules/{docId} {
       allow read: if signedIn();

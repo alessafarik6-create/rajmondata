@@ -24,6 +24,7 @@ import {
   Package,
   Factory,
   Landmark,
+  Banknote,
   Receipt,
   CalendarClock,
   CircleHelp,
@@ -60,6 +61,7 @@ const adminLinksStatic = [
   { label: 'Ceník', href: '/admin/pricing', icon: Tags },
   { label: 'SEO', href: '/admin/seo', icon: FileText },
   { label: 'Nastavení platformy', href: '/admin/platform-settings', icon: Settings },
+  { label: 'Provozovatel / fakturace', href: '/admin/billing-provider', icon: Landmark },
   { label: 'Licence', href: '/admin/licenses', icon: ShieldCheck },
   { label: 'Fakturace', href: '/admin/billing', icon: CreditCard },
   { label: 'Nápověda portálu', href: '/admin/help-content', icon: CircleHelp },
@@ -83,6 +85,7 @@ const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   reports: BarChart3,
   activity: Activity,
   billing: PaymentIcon,
+  vyuctovani: Banknote,
   chat: MessageSquare,
   settings: Settings,
 };

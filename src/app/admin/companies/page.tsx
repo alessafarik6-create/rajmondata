@@ -16,6 +16,8 @@ import {
   ShieldCheck,
   TabletSmartphone,
   Copy,
+  Receipt,
+  Trash2,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -35,6 +37,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -80,6 +83,40 @@ export default function AdminCompaniesPage() {
 
   const [terminalFor, setTerminalFor] = useState<Company | null>(null);
   const [terminalPublicUrl, setTerminalPublicUrl] = useState("");
+
+  type PlatformInvoiceLineForm = {
+    kind: string;
+    description: string;
+    quantity: number;
+    unit: string;
+    unitPriceNet: number;
+    vatRate: number;
+  };
+
+  const defaultBillingPeriod = () => {
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const to = new Date(now.getFullYear(), now.getMonth(), 0);
+    return {
+      periodFrom: from.toISOString().slice(0, 10),
+      periodTo: to.toISOString().slice(0, 10),
+    };
+  };
+
+  const defaultDueDate = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 14);
+    return d.toISOString().slice(0, 10);
+  };
+
+  const [invoiceFor, setInvoiceFor] = useState<Company | null>(null);
+  const [invoicePeriodFrom, setInvoicePeriodFrom] = useState("");
+  const [invoicePeriodTo, setInvoicePeriodTo] = useState("");
+  const [invoiceDueDate, setInvoiceDueDate] = useState("");
+  const [invoiceIssueDate, setInvoiceIssueDate] = useState("");
+  const [invoiceNote, setInvoiceNote] = useState("");
+  const [invoiceLines, setInvoiceLines] = useState<PlatformInvoiceLineForm[]>([]);
+  const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
 
   const loadCompanies = async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
@@ -321,6 +358,145 @@ export default function AdminCompaniesPage() {
     window.open(terminalPublicUrl, "_blank", "noopener,noreferrer");
   };
 
+  const openPlatformInvoiceDialog = (company: Company) => {
+    const p = defaultBillingPeriod();
+    setInvoiceFor(company);
+    setInvoicePeriodFrom(p.periodFrom);
+    setInvoicePeriodTo(p.periodTo);
+    setInvoiceDueDate(defaultDueDate());
+    setInvoiceIssueDate(new Date().toISOString().slice(0, 10));
+    setInvoiceNote("");
+    setInvoiceLines([
+      {
+        kind: "platform_license",
+        description: "Licence platformy",
+        quantity: 1,
+        unit: "měs.",
+        unitPriceNet: 0,
+        vatRate: 21,
+      },
+    ]);
+  };
+
+  const addInvoicePreset = (kind: PlatformInvoiceLineForm["kind"]) => {
+    const presets: Record<string, Omit<PlatformInvoiceLineForm, "kind"> & { kind: string }> = {
+      platform_license: {
+        kind: "platform_license",
+        description: "Licence platformy",
+        quantity: 1,
+        unit: "měs.",
+        unitPriceNet: 0,
+        vatRate: 21,
+      },
+      modules: {
+        kind: "modules",
+        description: "Moduly platformy",
+        quantity: 1,
+        unit: "měs.",
+        unitPriceNet: 0,
+        vatRate: 21,
+      },
+      employees: {
+        kind: "employees",
+        description: "Uživatelské účty / zaměstnanci",
+        quantity: 1,
+        unit: "ks",
+        unitPriceNet: 0,
+        vatRate: 21,
+      },
+      custom: {
+        kind: "custom",
+        description: "Vlastní položka",
+        quantity: 1,
+        unit: "ks",
+        unitPriceNet: 0,
+        vatRate: 21,
+      },
+    };
+    const row = presets[kind];
+    if (row) setInvoiceLines((prev) => [...prev, { ...row }]);
+  };
+
+  const updateInvoiceLine = (index: number, patch: Partial<PlatformInvoiceLineForm>) => {
+    setInvoiceLines((prev) => {
+      const next = [...prev];
+      const cur = next[index];
+      if (!cur) return prev;
+      next[index] = { ...cur, ...patch };
+      return next;
+    });
+  };
+
+  const removeInvoiceLine = (index: number) => {
+    setInvoiceLines((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const submitPlatformInvoice = async () => {
+    if (!invoiceFor) return;
+    if (!invoicePeriodFrom || !invoicePeriodTo || !invoiceDueDate) {
+      toast({ variant: "destructive", title: "Vyplňte období a splatnost" });
+      return;
+    }
+    if (invoiceLines.length === 0) {
+      toast({ variant: "destructive", title: "Přidejte alespoň jednu položku" });
+      return;
+    }
+    for (const ln of invoiceLines) {
+      if (!String(ln.description || "").trim()) {
+        toast({ variant: "destructive", title: "Každá položka musí mít popis" });
+        return;
+      }
+      if (!(ln.quantity > 0) || ln.unitPriceNet < 0 || !(ln.vatRate >= 0)) {
+        toast({ variant: "destructive", title: "Zkontrolujte množství, cenu a DPH u položek" });
+        return;
+      }
+    }
+    setInvoiceSubmitting(true);
+    try {
+      const res = await fetch("/api/superadmin/platform-invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId: invoiceFor.id,
+          periodFrom: invoicePeriodFrom,
+          periodTo: invoicePeriodTo,
+          dueDate: invoiceDueDate,
+          issueDate: invoiceIssueDate.trim() || undefined,
+          note: invoiceNote.trim() || undefined,
+          items: invoiceLines.map((ln) => ({
+            kind: ln.kind,
+            description: ln.description.trim(),
+            quantity: ln.quantity,
+            unit: ln.unit.trim() || "ks",
+            unitPriceNet: ln.unitPriceNet,
+            vatRate: ln.vatRate,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Fakturu se nepodařilo vystavit",
+          description: typeof data?.error === "string" ? data.error : undefined,
+        });
+        return;
+      }
+      toast({
+        title: "Faktura vystavena",
+        description: data?.invoiceNumber ? `Číslo: ${data.invoiceNumber}` : undefined,
+      });
+      if (typeof data?.pdfUrl === "string" && data.pdfUrl) {
+        window.open(data.pdfUrl, "_blank", "noopener,noreferrer");
+      }
+      setInvoiceFor(null);
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při vystavení faktury" });
+    } finally {
+      setInvoiceSubmitting(false);
+    }
+  };
+
   const filtered = companies.filter(
     (c) =>
       c.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -423,6 +599,9 @@ export default function AdminCompaniesPage() {
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => void openTerminalDialog(company)}>
                             <TabletSmartphone className="w-4 h-4 mr-2" /> Docházkový terminál
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openPlatformInvoiceDialog(company)}>
+                            <Receipt className="w-4 h-4 mr-2" /> Vystavit fakturu
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => window.open(`/portal/dashboard`, "_blank")}
@@ -571,6 +750,193 @@ export default function AdminCompaniesPage() {
             </Button>
             <Button onClick={saveLicense} disabled={saving}>
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Uložit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!invoiceFor}
+        onOpenChange={(open) => {
+          if (!open) setInvoiceFor(null);
+        }}
+      >
+        <DialogContent
+          className="max-w-3xl max-h-[min(90vh,880px)] overflow-y-auto bg-white border-slate-200 text-slate-900"
+          data-portal-dialog
+        >
+          <DialogHeader>
+            <DialogTitle>Vystavit fakturu — {invoiceFor?.name}</DialogTitle>
+            <DialogDescription>
+              Faktura za použití platformy. Dodavatelem je provozovatel z nastavení superadministrace; odběratelem je
+              tato organizace (údaje z profilu firmy).
+            </DialogDescription>
+          </DialogHeader>
+          {invoiceFor ? (
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Období od</Label>
+                  <Input
+                    type="date"
+                    value={invoicePeriodFrom}
+                    onChange={(e) => setInvoicePeriodFrom(e.target.value)}
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Období do</Label>
+                  <Input
+                    type="date"
+                    value={invoicePeriodTo}
+                    onChange={(e) => setInvoicePeriodTo(e.target.value)}
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Datum vystavení</Label>
+                  <Input
+                    type="date"
+                    value={invoiceIssueDate}
+                    onChange={(e) => setInvoiceIssueDate(e.target.value)}
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Splatnost</Label>
+                  <Input
+                    type="date"
+                    value={invoiceDueDate}
+                    onChange={(e) => setInvoiceDueDate(e.target.value)}
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Poznámka na faktuře (volitelně)</Label>
+                <Textarea
+                  value={invoiceNote}
+                  onChange={(e) => setInvoiceNote(e.target.value)}
+                  rows={2}
+                  className="bg-white border-slate-200 resize-none"
+                  placeholder="Text se zobrazí na PDF…"
+                />
+              </div>
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-2">
+                  <span className="text-sm text-slate-600 w-full sm:w-auto sm:mr-2 self-center">Přidat řádek:</span>
+                  <Button type="button" size="sm" variant="outline" onClick={() => addInvoicePreset("platform_license")}>
+                    Licence
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => addInvoicePreset("modules")}>
+                    Moduly
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => addInvoicePreset("employees")}>
+                    Zaměstnanci
+                  </Button>
+                  <Button type="button" size="sm" variant="outline" onClick={() => addInvoicePreset("custom")}>
+                    Vlastní
+                  </Button>
+                </div>
+                <div className="rounded-lg border border-slate-200 overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="min-w-[200px]">Popis</TableHead>
+                        <TableHead className="w-20">Množ.</TableHead>
+                        <TableHead className="w-24">Jedn.</TableHead>
+                        <TableHead className="w-28">Cena bez DPH</TableHead>
+                        <TableHead className="w-20">DPH %</TableHead>
+                        <TableHead className="w-12 pr-2" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {invoiceLines.map((ln, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell>
+                            <Input
+                              value={ln.description}
+                              onChange={(e) => updateInvoiceLine(idx, { description: e.target.value })}
+                              className="bg-white border-slate-200 h-9"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0.01}
+                              step={0.01}
+                              value={ln.quantity}
+                              onChange={(e) =>
+                                updateInvoiceLine(idx, { quantity: parseFloat(e.target.value) || 0 })
+                              }
+                              className="bg-white border-slate-200 h-9"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              value={ln.unit}
+                              onChange={(e) => updateInvoiceLine(idx, { unit: e.target.value })}
+                              className="bg-white border-slate-200 h-9"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              step={0.01}
+                              value={ln.unitPriceNet}
+                              onChange={(e) =>
+                                updateInvoiceLine(idx, { unitPriceNet: parseFloat(e.target.value) || 0 })
+                              }
+                              className="bg-white border-slate-200 h-9"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={ln.vatRate}
+                              onChange={(e) =>
+                                updateInvoiceLine(idx, { vatRate: parseFloat(e.target.value) || 0 })
+                              }
+                              className="bg-white border-slate-200 h-9"
+                            />
+                          </TableCell>
+                          <TableCell className="pr-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-slate-500"
+                              onClick={() => removeInvoiceLine(idx)}
+                              disabled={invoiceLines.length <= 1}
+                              aria-label="Odstranit řádek"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setInvoiceFor(null)} disabled={invoiceSubmitting}>
+              Zrušit
+            </Button>
+            <Button type="button" onClick={() => void submitPlatformInvoice()} disabled={invoiceSubmitting}>
+              {invoiceSubmitting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                  Generuji PDF…
+                </>
+              ) : (
+                "Vystavit fakturu"
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

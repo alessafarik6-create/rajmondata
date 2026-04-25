@@ -234,6 +234,14 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     platformModuleCode: null,
   },
   {
+    id: "vyuctovani",
+    type: "system",
+    label: "Vyúčtování",
+    href: "/portal/vyuctovani",
+    roles: ["owner", "admin", "accountant"],
+    platformModuleCode: null,
+  },
+  {
     id: "chat",
     type: "system",
     label: "Zprávy",

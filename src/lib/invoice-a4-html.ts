@@ -128,6 +128,8 @@ export function buildAdvanceInvoiceHtml(params: {
   /** Pro jednoduchý zápis jedné sazby v patičce součtu */
   primaryVatRateLabel?: string;
   note?: string;
+  supplierStampUrl?: string | null;
+  supplierFooterText?: string | null;
 }): string {
   const supplierLines = brJoinEscaped(params.supplierAddressText || params.supplierName);
   const customerLines = brJoinEscaped(params.customerAddressText || params.customerName);
@@ -225,6 +227,18 @@ export function buildAdvanceInvoiceHtml(params: {
       <tr class="grand"><td><strong>Celkem k úhradě</strong></td><td>${fmtKc(params.amountGross)}</td></tr>
     </table>
     <p class="note">${escapeHtml(params.note ?? "Doklad slouží jako zálohová faktura dle smlouvy o dílo.")}</p>
+    ${
+      params.supplierStampUrl && String(params.supplierStampUrl).trim()
+        ? `<div style="margin-top:14px;text-align:right"><img src="${escapeHtml(
+            String(params.supplierStampUrl).trim()
+          )}" alt="Razítko / podpis" style="max-height:78px;max-width:240px;object-fit:contain"/></div>`
+        : ""
+    }
+    ${
+      params.supplierFooterText && String(params.supplierFooterText).trim()
+        ? `<p class="note" style="margin-top:10px">${brJoinEscaped(String(params.supplierFooterText).trim())}</p>`
+        : ""
+    }
   </div>
 </div>
 </body>

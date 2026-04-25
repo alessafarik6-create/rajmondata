@@ -11,6 +11,8 @@ export const USERS_COLLECTION = "users";
 export const PLATFORM_SETTINGS_COLLECTION = "platform_settings";
 export const PLATFORM_MODULES_COLLECTION = "platform_modules";
 export const PLATFORM_SEO_COLLECTION = "platform_seo";
+/** Faktury provozovatele platformy vůči organizacím (zápis jen Admin SDK). */
+export const PLATFORM_INVOICES_COLLECTION = "platform_invoices";
 export const COMPANY_LICENSES_COLLECTION = "company_licenses";
 
 /** Položky nápovědy portálu (globální nebo per firma). */

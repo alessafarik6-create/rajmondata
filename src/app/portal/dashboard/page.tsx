@@ -577,6 +577,11 @@ export default function CompanyDashboard() {
     null
   );
 
+  const canSeePlatformOperatorInvoices =
+    role === "owner" || role === "admin" || role === "accountant";
+  const [platformInvoiceUnpaid, setPlatformInvoiceUnpaid] = useState(0);
+  const [platformInvoiceOverdue, setPlatformInvoiceOverdue] = useState(0);
+
   const loadImportLeadsForDashboard = useCallback(async () => {
     if (!companyId || !user) return;
     setImportLeadsLoading(true);
@@ -638,6 +643,40 @@ export default function CompanyDashboard() {
     );
     return () => window.clearInterval(t);
   }, [showAdminDashboard, companyId, user, loadImportLeadsForDashboard]);
+
+  useEffect(() => {
+    if (!companyId || !user || !canSeePlatformOperatorInvoices) {
+      setPlatformInvoiceUnpaid(0);
+      setPlatformInvoiceOverdue(0);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch("/api/company/platform-invoices", {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json().catch(() => ({}))) as {
+          unpaidCount?: number;
+          overdueCount?: number;
+        };
+        if (cancelled) return;
+        setPlatformInvoiceUnpaid(Number(data.unpaidCount) || 0);
+        setPlatformInvoiceOverdue(Number(data.overdueCount) || 0);
+      } catch {
+        if (!cancelled) {
+          setPlatformInvoiceUnpaid(0);
+          setPlatformInvoiceOverdue(0);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [companyId, user, canSeePlatformOperatorInvoices]);
 
   const importLeadOverlayByKey = useMemo(() => {
     const m = new Map<string, { receivedAt?: unknown }>();
@@ -849,6 +888,42 @@ export default function CompanyDashboard() {
           )}
         </div>
       </div>
+
+      {!isCustomer && canSeePlatformOperatorInvoices && companyId ? (
+        platformInvoiceOverdue > 0 ? (
+          <Link
+            href="/portal/vyuctovani"
+            className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-600"
+          >
+            <Alert className="border-2 border-rose-600 bg-rose-50 text-rose-950 shadow-md dark:border-rose-500 dark:bg-rose-950/40 dark:text-rose-50">
+              <FileText className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+              <AlertTitle className="text-base font-semibold">Faktury po splatnosti</AlertTitle>
+              <AlertDescription className="text-sm font-medium text-rose-900 dark:text-rose-100">
+                Máte {platformInvoiceOverdue}{" "}
+                {platformInvoiceOverdue === 1
+                  ? "fakturu po splatnosti"
+                  : platformInvoiceOverdue < 5
+                    ? "faktury po splatnosti"
+                    : "faktur po splatnosti"}{" "}
+                od provozovatele platformy. Otevřete sekci Vyúčtování a uhraďte je prosím co nejdříve.
+              </AlertDescription>
+            </Alert>
+          </Link>
+        ) : platformInvoiceUnpaid > 0 ? (
+          <Link
+            href="/portal/vyuctovani"
+            className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+          >
+            <Alert className="border-2 border-amber-500 bg-amber-50 text-amber-950 shadow-md dark:border-amber-600 dark:bg-amber-950/35 dark:text-amber-50">
+              <FileText className="h-5 w-5 text-amber-700 dark:text-amber-300" />
+              <AlertTitle className="text-base font-semibold">Máte vystavenou fakturu k úhradě</AlertTitle>
+              <AlertDescription className="text-sm font-medium text-amber-900 dark:text-amber-100">
+                Počet neuhrazených faktur: {platformInvoiceUnpaid}. Přejděte do sekce Vyúčtování, kde najdete PDF a platební údaje.
+              </AlertDescription>
+            </Alert>
+          </Link>
+        ) : null
+      ) : null}
 
       {!isCustomer && companyId && !showAdminDashboard ? (
         <DashboardOpenTasks
