@@ -99,6 +99,7 @@ import {
   CsvMaterialProposalDialog,
   type CsvMaterialDialogSource,
 } from "@/components/production/csv-material-proposal-dialog";
+import { JobProductionPdfDocumentationPanel } from "@/components/production/job-production-pdf-documentation";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -424,6 +425,19 @@ export default function VyrobaZakazkaDetailPage() {
 
   const [deleteConsumptionTarget, setDeleteConsumptionTarget] = useState<Record<string, unknown> | null>(null);
   const [csvMaterialDialog, setCsvMaterialDialog] = useState<CsvMaterialDialogSource | null>(null);
+
+  const productionPdfRows = useMemo(
+    () =>
+      attachmentFiles
+        .filter((f) => f.kind === "pdf")
+        .map((f) => ({
+          id: `${f.folderId}-${f.id}`,
+          fileUrl: f.fileUrl,
+          fileName: f.fileName,
+          folderName: f.folderName,
+        })),
+    [attachmentFiles]
+  );
 
   const loadApi = useCallback(async () => {
     if (!user || !jobId) return;
@@ -1562,6 +1576,11 @@ export default function VyrobaZakazkaDetailPage() {
                   ) : null}
                 </section>
 
+                <JobProductionPdfDocumentationPanel
+                  pdfFiles={productionPdfRows}
+                  attachmentsLoading={attachmentsLoading}
+                />
+
                 {/* — Množství a řez — */}
                 <section
                   aria-labelledby="issue-form-qty"
@@ -2042,6 +2061,7 @@ export default function VyrobaZakazkaDetailPage() {
                 noVisibleFolders={visibleFolders.length === 0}
                 isPrivilegedViewer={isPrivilegedViewer}
                 onOpenCsvMaterial={(src) => setCsvMaterialDialog(src)}
+                omitPdfSection
               />
             </CardContent>
           </Card>
@@ -2182,6 +2202,7 @@ function ProductionMediaGallery({
   noVisibleFolders,
   isPrivilegedViewer,
   onOpenCsvMaterial,
+  omitPdfSection,
 }: {
   jobId: string;
   files: JobAttachmentFile[];
@@ -2189,6 +2210,8 @@ function ProductionMediaGallery({
   noVisibleFolders: boolean;
   isPrivilegedViewer: boolean;
   onOpenCsvMaterial: (src: CsvMaterialDialogSource) => void;
+  /** PDF se zobrazuje velkým náhledem u výdeje materiálu — zde jen ostatní podklady. */
+  omitPdfSection?: boolean;
 }) {
   const [lightbox, setLightbox] = useState<{ url: string; name: string } | null>(null);
 
@@ -2333,12 +2356,19 @@ function ProductionMediaGallery({
         items={groups.csv}
         empty="Žádné CSV — nahrajte soubor .csv do složky zakázky (Dokumenty / Soubory)."
       />
-      <Section
-        title="PDF dokumenty"
-        icon={<FileText className="h-5 w-5 text-red-600" />}
-        items={groups.pdf}
-        empty="Žádná PDF."
-      />
+      {!omitPdfSection ? (
+        <Section
+          title="PDF dokumenty"
+          icon={<FileText className="h-5 w-5 text-red-600" />}
+          items={groups.pdf}
+          empty="Žádná PDF."
+        />
+      ) : groups.pdf.length > 0 ? (
+        <p className="text-xs text-slate-600 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2">
+          PDF dokumenty ({groups.pdf.length}) jsou zobrazeny výše u výdeje materiálu — velký náhled a listování
+          stránek.
+        </p>
+      ) : null}
       <Section
         title="Plánky / výkresy"
         icon={<Layers className="h-5 w-5 text-slate-600" />}
