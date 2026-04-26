@@ -840,7 +840,7 @@ export default function AdminCompaniesPage() {
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => toggleStatus(company)}>
                             <Power className="w-4 h-4 mr-2" />{" "}
-                            {company.isActive ? "Deaktivovat" : "Aktivovat"}
+                            {company.isActive ? "Deaktivovat účet" : "Aktivovat účet"}
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -1366,7 +1366,8 @@ export default function AdminCompaniesPage() {
             <DialogDescription>
               Cron volá <code className="text-xs bg-slate-100 px-1 rounded">GET /api/cron/platform-billing-automation?secret=…</code>{" "}
               (proměnná CRON_SECRET). Při dosažení data vystavení se vytvoří faktura z licence; duplicita za stejné období
-              není povolena.
+              není povolena. Pro vypršení 48hodinové lhůty po „Zaplatil jsem“ nastavte také{" "}
+              <code className="text-xs bg-slate-100 px-1 rounded">GET /api/cron/platform-payment-grace?secret=…</code>.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">

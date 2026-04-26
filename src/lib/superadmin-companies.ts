@@ -2,7 +2,7 @@
  * Superadmin organization/company service.
  * Reads from Firestore "společnosti" (organizations) + `company_licenses` + denormalizace do `companies`.
  */
-import type { Firestore } from "firebase-admin/firestore";
+import { FieldValue, type Firestore } from "firebase-admin/firestore";
 import {
   DEFAULT_LICENSE,
   MODULE_KEYS,
@@ -35,6 +35,7 @@ import {
   writeCompanyLicenseAndDenorm,
   type CompanyLicenseUpdatePayload,
 } from "./company-license-admin";
+import { countBillableCompanyEmployees } from "./platform-invoice-auto";
 
 /** @deprecated Use ORGANIZATIONS_COLLECTION from firestore-collections */
 export const COMPANIES_COLLECTION_LEGACY = ORGANIZATIONS_COLLECTION;
@@ -168,18 +169,7 @@ export async function getCompanies(db: Firestore, options?: { light?: boolean })
 
   const employeeCounts = light
     ? docs.map(() => 0)
-    : await Promise.all(
-        docs.map((d) =>
-          db
-            .collection(COMPANIES_COLLECTION)
-            .doc(d.id)
-            .collection("employees")
-            .count()
-            .get()
-            .then((c) => c.data().count)
-            .catch(() => 0)
-        )
-      );
+    : await Promise.all(docs.map((d) => countBillableCompanyEmployees(db, d.id)));
 
   return docs.map((doc, i) => {
     const data = doc.data() as Record<string, unknown>;
@@ -271,6 +261,9 @@ export async function updateCompany(
   if (typeof payload.isActive === "boolean") {
     updates.isActive = payload.isActive;
     updates.active = payload.isActive;
+    if (payload.isActive === true) {
+      updates.platformBillingSuspension = FieldValue.delete();
+    }
   }
 
   if (payload.license && typeof payload.license === "object") {

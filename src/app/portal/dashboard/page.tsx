@@ -78,6 +78,16 @@ import type { ActivityActorProfile } from "@/lib/activity-log";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
+function formatPlatformGraceRemaining(iso: string | null | undefined, _tick = 0): string {
+  if (!iso) return "—";
+  const end = Date.parse(iso);
+  if (!Number.isFinite(end)) return "—";
+  const ms = Math.max(0, end - Date.now());
+  const h = Math.floor(ms / 3_600_000);
+  const m = Math.floor((ms % 3_600_000) / 60_000);
+  return `${h} h ${m} min`;
+}
+
 function receivedAtToMs(raw: unknown): number | null {
   if (raw == null) return null;
   if (
@@ -581,6 +591,19 @@ export default function CompanyDashboard() {
     role === "owner" || role === "admin" || role === "accountant";
   const [platformInvoiceUnpaid, setPlatformInvoiceUnpaid] = useState(0);
   const [platformInvoiceOverdue, setPlatformInvoiceOverdue] = useState(0);
+  const [platformBilling, setPlatformBilling] = useState<{
+    hasUnpaidEffective?: boolean;
+    paymentClaimActive?: boolean;
+    gracePeriodUntilIso?: string | null;
+    graceMsRemaining?: number;
+    accountSuspendedForPayment?: boolean;
+  } | null>(null);
+  const [platformGraceTick, setPlatformGraceTick] = useState(0);
+  useEffect(() => {
+    if (!platformBilling?.paymentClaimActive) return;
+    const t = window.setInterval(() => setPlatformGraceTick((n) => n + 1), 15_000);
+    return () => window.clearInterval(t);
+  }, [platformBilling?.paymentClaimActive]);
 
   const loadImportLeadsForDashboard = useCallback(async () => {
     if (!companyId || !user) return;
@@ -648,10 +671,11 @@ export default function CompanyDashboard() {
     if (!companyId || !user || !canSeePlatformOperatorInvoices) {
       setPlatformInvoiceUnpaid(0);
       setPlatformInvoiceOverdue(0);
+      setPlatformBilling(null);
       return;
     }
     let cancelled = false;
-    (async () => {
+    const load = async () => {
       try {
         const token = await user.getIdToken();
         const res = await fetch("/api/company/platform-invoices", {
@@ -662,19 +686,37 @@ export default function CompanyDashboard() {
         const data = (await res.json().catch(() => ({}))) as {
           unpaidCount?: number;
           overdueCount?: number;
+          billing?: Record<string, unknown>;
         };
         if (cancelled) return;
         setPlatformInvoiceUnpaid(Number(data.unpaidCount) || 0);
         setPlatformInvoiceOverdue(Number(data.overdueCount) || 0);
+        const b = data.billing;
+        setPlatformBilling(
+          b && typeof b === "object"
+            ? {
+                hasUnpaidEffective: Boolean(b.hasUnpaidEffective),
+                paymentClaimActive: Boolean(b.paymentClaimActive),
+                gracePeriodUntilIso:
+                  typeof b.gracePeriodUntilIso === "string" ? b.gracePeriodUntilIso : null,
+                graceMsRemaining: Number(b.graceMsRemaining) || 0,
+                accountSuspendedForPayment: Boolean(b.accountSuspendedForPayment),
+              }
+            : null
+        );
       } catch {
         if (!cancelled) {
           setPlatformInvoiceUnpaid(0);
           setPlatformInvoiceOverdue(0);
+          setPlatformBilling(null);
         }
       }
-    })();
+    };
+    void load();
+    const iv = window.setInterval(() => void load(), 60_000);
     return () => {
       cancelled = true;
+      window.clearInterval(iv);
     };
   }, [companyId, user, canSeePlatformOperatorInvoices]);
 
@@ -890,7 +932,34 @@ export default function CompanyDashboard() {
       </div>
 
       {!isCustomer && canSeePlatformOperatorInvoices && companyId ? (
-        platformInvoiceOverdue > 0 ? (
+        platformBilling?.accountSuspendedForPayment ? (
+          <Link
+            href="/portal/vyuctovani"
+            className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive"
+          >
+            <Alert className="border-2 border-red-700 bg-red-50 text-red-950 shadow-md dark:border-red-500 dark:bg-red-950/45 dark:text-red-50">
+              <AlertCircle className="h-5 w-5 text-red-700 dark:text-red-400" />
+              <AlertTitle className="text-base font-semibold">Účet byl deaktivován</AlertTitle>
+              <AlertDescription className="text-sm font-medium text-red-900 dark:text-red-100">
+                Účet byl deaktivován kvůli nepotvrzené úhradě faktury. Kontaktujte provozovatele platformy nebo počkejte na ruční aktivaci.
+              </AlertDescription>
+            </Alert>
+          </Link>
+        ) : platformBilling?.paymentClaimActive ? (
+          <Link
+            href="/portal/vyuctovani"
+            className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-600"
+          >
+            <Alert className="border-2 border-sky-600 bg-sky-50 text-sky-950 shadow-md dark:border-sky-500 dark:bg-sky-950/40 dark:text-sky-50">
+              <CalendarClock className="h-5 w-5 text-sky-700 dark:text-sky-300" />
+              <AlertTitle className="text-base font-semibold">Platba čeká na potvrzení</AlertTitle>
+              <AlertDescription className="text-sm font-medium text-sky-900 dark:text-sky-100">
+                Platba čeká na potvrzení superadministrátorem. Účet zůstává aktivní ještě 48 hodin od oznámení. Zbývá:{" "}
+                {formatPlatformGraceRemaining(platformBilling.gracePeriodUntilIso, platformGraceTick)}.
+              </AlertDescription>
+            </Alert>
+          </Link>
+        ) : platformInvoiceOverdue > 0 ? (
           <Link
             href="/portal/vyuctovani"
             className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-600"
@@ -905,20 +974,20 @@ export default function CompanyDashboard() {
                   : platformInvoiceOverdue < 5
                     ? "faktury po splatnosti"
                     : "faktur po splatnosti"}{" "}
-                od provozovatele platformy. Otevřete sekci Vyúčtování a uhraďte je prosím co nejdříve.
+                od provozovatele platformy. Otevřete sekci Vyúčtování služeb a uhraďte je prosím co nejdříve.
               </AlertDescription>
             </Alert>
           </Link>
         ) : platformInvoiceUnpaid > 0 ? (
           <Link
             href="/portal/vyuctovani"
-            className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-600"
+            className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-600"
           >
-            <Alert className="border-2 border-amber-500 bg-amber-50 text-amber-950 shadow-md dark:border-amber-600 dark:bg-amber-950/35 dark:text-amber-50">
-              <FileText className="h-5 w-5 text-amber-700 dark:text-amber-300" />
-              <AlertTitle className="text-base font-semibold">Máte novou fakturu k úhradě</AlertTitle>
-              <AlertDescription className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                Počet neuhrazených faktur: {platformInvoiceUnpaid}. V sekci Vyúčtování najdete PDF, QR platbu a platební údaje.
+            <Alert className="border-2 border-rose-600 bg-rose-50 text-rose-950 shadow-md dark:border-rose-500 dark:bg-rose-950/40 dark:text-rose-50">
+              <FileText className="h-5 w-5 text-rose-600 dark:text-rose-400" />
+              <AlertTitle className="text-base font-semibold">Máte neuhrazenou fakturu za služby platformy</AlertTitle>
+              <AlertDescription className="text-sm font-medium text-rose-900 dark:text-rose-100">
+                Počet neuhrazených faktur: {platformInvoiceUnpaid}. V sekci Vyúčtování služeb najdete PDF, QR platbu a platební údaje.
               </AlertDescription>
             </Alert>
           </Link>

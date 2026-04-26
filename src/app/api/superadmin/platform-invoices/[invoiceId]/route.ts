@@ -42,6 +42,11 @@ export async function PATCH(
     };
     if (st === "paid") {
       patch.paidAt = FieldValue.serverTimestamp();
+      patch.paymentClaimed = false;
+      patch.paymentClaimedAt = null;
+      patch.gracePeriodUntil = null;
+      patch.paymentClaimedByUid = null;
+      patch.graceDeactivationApplied = false;
     } else {
       patch.paidAt = null;
     }

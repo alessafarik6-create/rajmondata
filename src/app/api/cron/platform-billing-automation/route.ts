@@ -128,7 +128,7 @@ export async function GET(request: NextRequest) {
           const email = String((doc.data() as Record<string, unknown>).email ?? "").trim();
           if (email) {
             const subj = `Nová faktura ${inv.invoiceNumber} — ${periodFrom} až ${periodTo}`;
-            const html = `<p>Dobrý den,</p><p>byla vám vystavena faktura <strong>${inv.invoiceNumber}</strong> za období ${periodFrom} – ${periodTo}.</p><p>Splatnost: <strong>${dueDate}</strong>, celkem k úhradě: <strong>${inv.amountGross.toFixed(2)} Kč</strong> (VS ${inv.variableSymbol}).</p><p>PDF faktury najdete v portálu v sekci Vyúčtování.</p>`;
+            const html = `<p>Dobrý den,</p><p>byla vám vystavena faktura <strong>${inv.invoiceNumber}</strong> za období ${periodFrom} – ${periodTo}.</p><p>Splatnost: <strong>${dueDate}</strong>, celkem k úhradě: <strong>${inv.amountGross.toFixed(2)} Kč</strong> (VS ${inv.variableSymbol}).</p><p>PDF faktury najdete v portálu v sekci Vyúčtování služeb.</p>`;
             await sendTransactionalEmail({ to: [email], subject: subj, html });
           }
         }

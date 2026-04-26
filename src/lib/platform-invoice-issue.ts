@@ -156,6 +156,11 @@ export async function issuePlatformInvoiceAdmin(
     createdAt: FieldValue.serverTimestamp(),
     createdBy,
     paidAt: null,
+    paymentClaimed: false,
+    paymentClaimedAt: null,
+    gracePeriodUntil: null,
+    paymentClaimedByUid: null,
+    graceDeactivationApplied: false,
     issueSource,
     issuedByAutomation: issueSource === "automation",
   });

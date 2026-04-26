@@ -4,13 +4,15 @@ import {
   listPlatformInvoicesForOrganization,
   computeEffectivePlatformInvoiceStatus,
 } from "@/lib/platform-billing";
-import { PLATFORM_SETTINGS_COLLECTION } from "@/lib/firestore-collections";
+import { COMPANIES_COLLECTION, PLATFORM_SETTINGS_COLLECTION } from "@/lib/firestore-collections";
 import { PLATFORM_BILLING_PROVIDER_DOC } from "@/lib/platform-config";
 import {
   buildInvoicePaymentQr,
   convertToIban,
   parsePaymentAccountString,
 } from "@/lib/invoice-billing-meta";
+import { computePlatformBillingClientSummary } from "@/lib/platform-invoice-payment-server";
+import { serializePlatformInvoiceRowForApi } from "@/lib/platform-invoice-serialize";
 
 function canReadPlatformBilling(role: string): boolean {
   return role === "owner" || role === "admin" || role === "accountant";
@@ -36,6 +38,15 @@ export async function GET(request: Request) {
     }).length;
     const overdueCount = rows.filter((r) => eff(r) === "overdue").length;
 
+    const compSnap = await db.collection(COMPANIES_COLLECTION).doc(caller.companyId).get();
+    const compData = (compSnap.data() ?? {}) as Record<string, unknown>;
+    const companyIsActive = compData.isActive !== false && compData.active !== false;
+    const billing = computePlatformBillingClientSummary({
+      rows,
+      companyIsActive,
+      platformBillingSuspension: compData.platformBillingSuspension,
+    });
+
     let provider: Record<string, unknown> | null = null;
     try {
       const ps = await db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_BILLING_PROVIDER_DOC).get();
@@ -46,7 +57,7 @@ export async function GET(request: Request) {
 
     const enriched = rows.map((r) => {
       const e = eff(r);
-      const out = { ...r } as Record<string, unknown>;
+      const out = serializePlatformInvoiceRowForApi({ ...r } as Record<string, unknown>);
       if (e === "paid" || e === "cancelled") {
         out.paymentQr = null;
         return out;
@@ -76,7 +87,7 @@ export async function GET(request: Request) {
       return out;
     });
 
-    return NextResponse.json({ invoices: enriched, unpaidCount, overdueCount });
+    return NextResponse.json({ invoices: enriched, unpaidCount, overdueCount, billing });
   } catch (e) {
     console.error("[company platform-invoices GET]", e);
     const msg = e instanceof Error ? e.message : "Načtení se nezdařilo.";

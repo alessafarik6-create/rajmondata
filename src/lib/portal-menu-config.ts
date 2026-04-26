@@ -236,7 +236,7 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
   {
     id: "vyuctovani",
     type: "system",
-    label: "Vyúčtování",
+    label: "Vyúčtování služeb",
     href: "/portal/vyuctovani",
     roles: ["owner", "admin", "accountant"],
     platformModuleCode: null,

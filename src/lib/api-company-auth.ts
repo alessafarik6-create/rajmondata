@@ -5,6 +5,7 @@ export { isCompanyPrivileged } from "@/lib/company-privilege";
 
 export type VerifiedCompanyCaller = {
   uid: string;
+  /** ID organizace (`users.companyId` nebo `users.organizationId`). */
   companyId: string;
   role: string;
   employeeId: string | null;
@@ -39,7 +40,7 @@ export async function verifyCompanyBearer(
   if (!caller) {
     return { ok: false, status: 403, error: "Profil uživatele neexistuje." };
   }
-  const companyId = String(caller.companyId || "").trim();
+  const companyId = String(caller.companyId || caller.organizationId || "").trim();
   const role = String(caller.role || "employee");
   const employeeId =
     caller.employeeId != null && String(caller.employeeId).trim() !== ""

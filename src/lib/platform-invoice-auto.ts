@@ -71,13 +71,25 @@ export async function loadMergedCatalogFromFirestore(db: Firestore) {
   return buildMergedPlatformCatalogMap(docs);
 }
 
-export async function countCompanyEmployees(db: Firestore, companyId: string): Promise<number> {
+/** Zaměstnanci s `isActive === false` se nezapočítávají; chybějící pole považujeme za aktivní. */
+export async function countBillableCompanyEmployees(db: Firestore, companyId: string): Promise<number> {
+  const coll = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("employees");
   try {
-    const c = await db.collection(COMPANIES_COLLECTION).doc(companyId).collection("employees").count().get();
-    return c.data().count ?? 0;
+    const [totalAgg, inactiveAgg] = await Promise.all([
+      coll.count().get(),
+      coll.where("isActive", "==", false).count().get(),
+    ]);
+    const total = totalAgg.data().count ?? 0;
+    const inactive = inactiveAgg.data().count ?? 0;
+    return Math.max(0, total - inactive);
   } catch {
     return 0;
   }
+}
+
+/** @deprecated Prefer `countBillableCompanyEmployees` (bez neaktivních profilů). */
+export async function countCompanyEmployees(db: Firestore, companyId: string): Promise<number> {
+  return countBillableCompanyEmployees(db, companyId);
 }
 
 export function mergeCompanyWithLicenseDenorm(
@@ -183,7 +195,7 @@ export async function loadLicenseAndCompanyForAutoInvoice(
   const companyRow = companySnap.data() as Record<string, unknown>;
   let license = await ensureCompanyLicenseDoc(db, organizationId);
   license = applyExpiredLicenseStatus(normalizeLegacyWarehouseModule(license));
-  const employeeCount = await countCompanyEmployees(db, organizationId);
+  const employeeCount = await countBillableCompanyEmployees(db, organizationId);
   const platformCompany = mergeCompanyWithLicenseDenorm(companyRow, license);
   return { companyRow, license, platformCompany, employeeCount };
 }
