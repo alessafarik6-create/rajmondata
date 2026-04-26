@@ -658,10 +658,10 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
 
     if (shouldShowLicensePendingNotice(company)) {
       return (
-        <Alert className="mb-4 border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-50">
-          <AlertCircle className="h-4 w-4" />
-          <AlertTitle>Licence čeká na schválení</AlertTitle>
-          <AlertDescription>
+        <Alert className="mb-4 border-amber-300 bg-amber-50 text-slate-900 shadow-sm dark:border-amber-400 dark:bg-amber-950/40 dark:text-amber-50">
+          <AlertCircle className="h-4 w-4 text-amber-700 dark:text-amber-300" />
+          <AlertTitle className="text-slate-900 dark:text-amber-50">Licence čeká na schválení</AlertTitle>
+          <AlertDescription className="text-slate-800 dark:text-amber-50/90">
             Účet firmy zatím nebyl aktivován superadministrátorem. Placené moduly jsou vypnuté, dokud neproběhne
             aktivace licence.
           </AlertDescription>

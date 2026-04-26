@@ -126,6 +126,15 @@ export type ModuleEntitlement = {
   activatedAt: string | null;
   expiresAt: string | null;
   customPriceCzk: number | null;
+  /**
+   * Stav aktivace modulu u tenantů (self‑serve přes `moduleActivation` fakturu).
+   * Legacy záznamy nemusí mít vyplněno — chová se jako dřív podle `active` + `expiresAt`.
+   */
+  tenantModuleStatus?: "inactive" | "pendingConfirmation" | "active" | "suspended";
+  /** ISO čas konce 48h grace po „Zaplatil jsem“ (čeká na potvrzení superadminem). */
+  gracePeriodUntilIso?: string | null;
+  /** ISO čas potvrzení platby superadminem. */
+  confirmedAtIso?: string | null;
 };
 
 export type CompanyLicenseDoc = {
@@ -188,7 +197,16 @@ export function portalPathsForModule(code: PlatformModuleCode): string[] {
 }
 
 export function isModuleEntitlementActiveNow(m: ModuleEntitlement | undefined): boolean {
-  if (!m || !m.active) return false;
+  if (!m) return false;
+  if (m.tenantModuleStatus === "suspended") return false;
+  if (!m.active) return false;
+  if (m.tenantModuleStatus === "pendingConfirmation") {
+    if (m.gracePeriodUntilIso) {
+      const g = Date.parse(m.gracePeriodUntilIso);
+      if (Number.isFinite(g)) return g > Date.now();
+    }
+    return true;
+  }
   if (!m.expiresAt) return true;
   const t = Date.parse(m.expiresAt);
   if (Number.isNaN(t)) return true;

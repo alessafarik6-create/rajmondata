@@ -82,6 +82,9 @@ export function companyDocPlatformFields(license: CompanyLicenseDoc) {
       active: v.active,
       expiresAt: v.expiresAt,
       activatedAt: v.activatedAt,
+      ...(v.tenantModuleStatus ? { tenantModuleStatus: v.tenantModuleStatus } : {}),
+      ...(v.gracePeriodUntilIso !== undefined ? { gracePeriodUntilIso: v.gracePeriodUntilIso } : {}),
+      ...(v.confirmedAtIso !== undefined ? { confirmedAtIso: v.confirmedAtIso } : {}),
     };
   }
   const canonicalEnabled = platformCodesToCanonicalModuleKeys(license.enabledModules);

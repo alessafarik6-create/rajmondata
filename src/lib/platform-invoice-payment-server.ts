@@ -11,6 +11,10 @@ import {
   computeEffectivePlatformInvoiceStatus,
   listPlatformInvoicesForOrganization,
 } from "@/lib/platform-billing";
+import {
+  applyModuleActivationGraceAdmin,
+  deactivateModuleAfterExpiredActivationGraceAdmin,
+} from "@/lib/platform-module-activation-admin";
 
 export const PLATFORM_PAYMENT_GRACE_MS = 48 * 60 * 60 * 1000;
 
@@ -62,16 +66,6 @@ export async function claimPlatformInvoicePaymentAdmin(input: {
     return { ok: false, status: 400, error: "Chybí organizationId nebo invoiceId." };
   }
 
-  const rows = await listPlatformInvoicesForOrganization(db, orgId);
-  const latestUnpaid = pickLatestUnpaidPlatformInvoiceId(rows);
-  if (!latestUnpaid || latestUnpaid !== invId) {
-    return {
-      ok: false,
-      status: 400,
-      error: "Platbu lze oznámit jen u poslední neuhrazené faktury.",
-    };
-  }
-
   const ref = db.collection(PLATFORM_INVOICES_COLLECTION).doc(invId);
   const snap = await ref.get();
   if (!snap.exists) {
@@ -80,6 +74,18 @@ export async function claimPlatformInvoicePaymentAdmin(input: {
   const data = (snap.data() ?? {}) as Record<string, unknown>;
   if (String(data.organizationId || "").trim() !== orgId) {
     return { ok: false, status: 403, error: "Faktura nepatří této organizaci." };
+  }
+  const isModuleActivation = String(data.source || "") === "moduleActivation";
+  if (!isModuleActivation) {
+    const rows = await listPlatformInvoicesForOrganization(db, orgId);
+    const latestUnpaid = pickLatestUnpaidPlatformInvoiceId(rows);
+    if (!latestUnpaid || latestUnpaid !== invId) {
+      return {
+        ok: false,
+        status: 400,
+        error: "Platbu lze oznámit jen u poslední neuhrazené faktury.",
+      };
+    }
   }
   const st = String(data.status || "unpaid");
   if (st === "paid" || st === "cancelled" || st === "canceled") {
@@ -109,6 +115,19 @@ export async function claimPlatformInvoicePaymentAdmin(input: {
     },
     { merge: true }
   );
+  if (isModuleActivation) {
+    try {
+      const graceMs = gracePeriodUntil.toMillis();
+      await applyModuleActivationGraceAdmin({
+        db,
+        organizationId: orgId,
+        moduleId: String(data.moduleId || ""),
+        graceUntilMs: graceMs,
+      });
+    } catch (e) {
+      console.error("[claimPlatformInvoicePaymentAdmin] module activation grace", e);
+    }
+  }
   return {
     ok: true,
     alreadyClaimed: false,
@@ -141,6 +160,12 @@ export async function processExpiredPlatformPaymentGraceAdmin(db: Firestore): Pr
 
       const orgId = String(data.organizationId || "").trim();
       if (!orgId) continue;
+
+      const didModule = await deactivateModuleAfterExpiredActivationGraceAdmin(db, doc.id, data);
+      if (didModule) {
+        deactivated += 1;
+        continue;
+      }
 
       const suspension = {
         reason: "payment_grace_expired" as const,

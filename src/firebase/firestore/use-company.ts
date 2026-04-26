@@ -53,7 +53,14 @@ export type CompanyProfile = {
   };
   moduleEntitlements?: Record<
     string,
-    { active?: boolean; expiresAt?: string | null; activatedAt?: string | null }
+    {
+      active?: boolean;
+      expiresAt?: string | null;
+      activatedAt?: string | null;
+      tenantModuleStatus?: 'inactive' | 'pendingConfirmation' | 'active' | 'suspended';
+      gracePeriodUntilIso?: string | null;
+      confirmedAtIso?: string | null;
+    }
   >;
   /**
    * Top-level `modules` na `companies` / `společnosti` — stejné klíče jako v superadminu (MODULE_KEYS).

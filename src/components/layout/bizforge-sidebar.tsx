@@ -29,6 +29,7 @@ import {
   CalendarClock,
   CircleHelp,
   LifeBuoy,
+  Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -69,6 +70,7 @@ const adminLinksStatic: PortalNavLink[] = [
   { label: 'Fakturace', href: '/admin/billing', icon: CreditCard },
   { label: 'Podpora / dotazy', href: '/admin/support-tickets', icon: LifeBuoy },
   { label: 'Nápověda portálu', href: '/admin/help-content', icon: CircleHelp },
+  { label: 'Průvodce portálem', href: '/admin/onboarding', icon: Sparkles },
 ];
 
 const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {

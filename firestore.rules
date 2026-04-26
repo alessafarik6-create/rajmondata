@@ -2082,6 +2082,14 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    /**
+     * Kroky onboarding průvodce portálu — veřejné čtení pro přihlášené uživatele; zápis jen přes Admin API (superadmin).
+     */
+    match /onboardingSteps/{docId} {
+      allow read: if signedIn();
+      allow write: if false;
+    }
+
     match /platform_seo/{docId} {
       allow read, write: if false;
     }

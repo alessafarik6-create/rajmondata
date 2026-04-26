@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCompany } from "@/firebase";
 import { doc } from "firebase/firestore";
 import {
   Loader2,
@@ -25,12 +25,23 @@ import {
   CalendarClock,
   AlertCircle,
   FileStack,
+  Briefcase,
+  Landmark,
+  Wallet,
+  Package,
+  Factory,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { computeEffectivePlatformInvoiceStatus } from "@/lib/platform-invoice-status";
+import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
+import { PLATFORM_MODULE_CODES, type PlatformModuleCode, isModuleEntitlementActiveNow } from "@/lib/platform-config";
+import { canAccessCompanyModule } from "@/lib/platform-access";
 
 type PlatformInvoiceRow = {
   id: string;
+  source?: string;
+  moduleId?: string;
+  moduleName?: string;
   invoiceNumber?: string;
   issueDate?: string;
   dueDate?: string;
@@ -170,10 +181,29 @@ function statusLabel(eff: ReturnType<typeof computeEffectivePlatformInvoiceStatu
   }
 }
 
+function moduleIcon(code: PlatformModuleCode) {
+  switch (code) {
+    case "jobs":
+      return Briefcase;
+    case "invoicing":
+      return Landmark;
+    case "attendance_payroll":
+      return Wallet;
+    case "sklad":
+      return Package;
+    case "vyroba":
+      return Factory;
+    default:
+      return Package;
+  }
+}
+
 export default function VyuctovaniPage() {
   const { user } = useUser();
   const { toast } = useToast();
   const firestore = useFirestore();
+  const { company } = useCompany();
+  const platformCatalog = useMergedPlatformModuleCatalog();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -193,6 +223,7 @@ export default function VyuctovaniPage() {
   const [claimBusyId, setClaimBusyId] = useState<string | null>(null);
   const [transferBusyId, setTransferBusyId] = useState<string | null>(null);
   const [graceTick, setGraceTick] = useState(0);
+  const [moduleBusyCode, setModuleBusyCode] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!user || !companyId || !canRead) {
@@ -331,6 +362,74 @@ export default function VyuctovaniPage() {
     }
   };
 
+  const activateModule = async (code: PlatformModuleCode) => {
+    if (!user) return;
+    setModuleBusyCode(code);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/platform-invoices/module-activation", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ moduleId: code }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Aktivaci se nepodařilo zahájit",
+          description: typeof data?.error === "string" ? data.error : `HTTP ${res.status}`,
+        });
+        return;
+      }
+      toast({
+        title: "Faktura vystavena",
+        description: "Níže u modulu uvidíte QR platbu. Po úhradě můžete kliknout „Zaplatil jsem“.",
+      });
+      await load();
+    } catch {
+      toast({ variant: "destructive", title: "Chyba sítě." });
+    } finally {
+      setModuleBusyCode(null);
+    }
+  };
+
+  const requestModuleDeactivation = async (code: PlatformModuleCode, moduleLabel: string) => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/support-tickets", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          type: "dotaz",
+          subject: `Žádost o deaktivaci modulu: ${moduleLabel}`,
+          message: `Prosíme o deaktivaci modulu „${moduleLabel}“ (kód: ${code}) pro naši organizaci.`,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Žádost se nepodařila odeslat",
+          description: typeof data?.error === "string" ? data.error : `HTTP ${res.status}`,
+        });
+        return;
+      }
+      toast({
+        title: "Žádost odeslána",
+        description: "Provozovatel platformy modul po vyřízení vypne.",
+      });
+    } catch {
+      toast({ variant: "destructive", title: "Chyba sítě." });
+    }
+  };
+
   const claimPaid = async (inv: PlatformInvoiceRow) => {
     if (!user) return;
     setClaimBusyId(inv.id);
@@ -352,10 +451,12 @@ export default function VyuctovaniPage() {
         });
         return;
       }
+      const isMod = String(inv.source || "") === "moduleActivation";
       toast({
         title: data?.alreadyClaimed ? "Lhůta již běží" : "Oznámení uloženo",
-        description:
-          "Platba čeká na potvrzení superadministrátorem. Účet zůstává aktivní ještě 48 hodin.",
+        description: isMod
+          ? "Modul je dočasně aktivní. Platba čeká na potvrzení superadministrátorem. Zbývá 48 hodin."
+          : "Platba čeká na potvrzení superadministrátorem. Účet zůstává aktivní ještě 48 hodin.",
       });
       await load();
     } catch {
@@ -441,6 +542,189 @@ export default function VyuctovaniPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Balíčky služeb a moduly</CardTitle>
+          <CardDescription>
+            Moduly si můžete aktivovat sami — po aktivaci se vystaví faktura provozovatele platformy a zobrazí se QR platba.
+            „Zaplatil jsem“ pouze oznámí platbu — potvrzení úhrady provede superadministrátor.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {PLATFORM_MODULE_CODES.map((code) => {
+              const row = platformCatalog[code];
+              const Icon = moduleIcon(code);
+              const ent = company?.moduleEntitlements?.[code];
+              const licEnt = {
+                moduleCode: code,
+                active: Boolean(ent?.active),
+                activatedAt: ent?.activatedAt ?? null,
+                expiresAt: ent?.expiresAt ?? null,
+                customPriceCzk: null,
+                tenantModuleStatus: ent?.tenantModuleStatus,
+                gracePeriodUntilIso: ent?.gracePeriodUntilIso ?? null,
+                confirmedAtIso: ent?.confirmedAtIso ?? null,
+              };
+              const activeNow = isModuleEntitlementActiveNow(licEnt);
+              const access = company ? canAccessCompanyModule(company, code, platformCatalog) : false;
+              const effectiveActive = activeNow || access;
+
+              const moduleInvoice = invoices.find((inv) => {
+                if (String(inv.source || "") !== "moduleActivation") return false;
+                if (String(inv.moduleId || "") !== code) return false;
+                const eff = computeEffectivePlatformInvoiceStatus(String(inv.status || "unpaid"), inv.dueDate);
+                return eff === "unpaid" || eff === "overdue";
+              });
+              const effInv = moduleInvoice
+                ? computeEffectivePlatformInvoiceStatus(
+                    String(moduleInvoice.status || "unpaid"),
+                    moduleInvoice.dueDate
+                  )
+                : null;
+              const graceEnd = moduleInvoice?.gracePeriodUntil ? Date.parse(String(moduleInvoice.gracePeriodUntil)) : NaN;
+              const claimGraceActive =
+                moduleInvoice?.paymentClaimed === true && Number.isFinite(graceEnd) && graceEnd > Date.now();
+              const qr = moduleInvoice ? qrForInvoice(moduleInvoice) : null;
+
+              const pendingConfirmation = ent?.tenantModuleStatus === "pendingConfirmation";
+              const suspended = ent?.tenantModuleStatus === "suspended";
+
+              const priceLabel = row.billingType === "per_employee" && code === "attendance_payroll"
+                ? `${formatMoney(row.employeePriceCzk ?? 0, row.currency || "CZK")} / osoba / měsíc`
+                : `${formatMoney(row.priceMonthly ?? row.basePriceCzk ?? 0, row.currency || "CZK")} / měsíc`;
+
+              return (
+                <Card
+                  key={code}
+                  className="border-border/80 shadow-sm overflow-hidden flex flex-col"
+                >
+                  <CardHeader className="space-y-2 pb-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-background">
+                          <Icon className="h-5 w-5 text-primary" />
+                        </div>
+                        <div className="min-w-0">
+                          <CardTitle className="text-base leading-snug">{row.name}</CardTitle>
+                          <CardDescription className="mt-1">{row.description}</CardDescription>
+                        </div>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <div className="text-lg font-bold tabular-nums text-foreground">{priceLabel}</div>
+                        {!row.isPaid ? (
+                          <Badge variant="secondary" className="mt-2">
+                            Zdarma
+                          </Badge>
+                        ) : effectiveActive ? (
+                          <Badge className="mt-2 bg-emerald-600">Aktivní</Badge>
+                        ) : moduleInvoice && effInv !== "paid" ? (
+                          <Badge variant="destructive" className="mt-2">
+                            Čeká na úhradu
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="mt-2">
+                            Neaktivní
+                          </Badge>
+                        )}
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="space-y-3 pt-0 flex-1 flex flex-col">
+                    {suspended ? (
+                      <Alert variant="destructive" className="border-destructive/60">
+                        <AlertTitle>Modul byl deaktivován</AlertTitle>
+                        <AlertDescription>
+                          Modul byl deaktivován, protože platba nebyla potvrzena superadministrátorem.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+
+                    {pendingConfirmation && claimGraceActive ? (
+                      <Alert className="border-sky-600 bg-sky-50 text-sky-950 dark:border-sky-500 dark:bg-sky-950/35 dark:text-sky-50">
+                        <CalendarClock className="h-4 w-4" />
+                        <AlertTitle>Modul je dočasně aktivní</AlertTitle>
+                        <AlertDescription>
+                          Platba čeká na potvrzení superadministrátorem. Zbývá:{" "}
+                          {formatGraceRemaining(String(moduleInvoice?.gracePeriodUntil), graceTick)}.
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+
+                    {moduleInvoice && effInv !== "paid" && effInv !== "cancelled" ? (
+                      <div className="rounded-lg border border-border bg-muted/20 p-3">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">QR platba</p>
+                        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:items-start">
+                          {qr?.qrUrl ? (
+                            <img
+                              src={qr.qrUrl}
+                              alt="QR platba"
+                              width={132}
+                              height={132}
+                              className="rounded-md border border-border bg-white p-1 shadow-sm"
+                            />
+                          ) : (
+                            <p className="text-sm text-muted-foreground">{qr?.warning || "QR nelze zobrazit"}</p>
+                          )}
+                          <div className="flex flex-1 flex-col gap-2">
+                            {claimGraceActive ? (
+                              <p className="text-sm text-sky-900 dark:text-sky-100">
+                                Čekáme na potvrzení platby. Modul je dočasně zapnutý po dobu lhůty.
+                              </p>
+                            ) : (
+                              <Button
+                                type="button"
+                                className="w-full sm:w-auto bg-rose-700 hover:bg-rose-800"
+                                disabled={claimBusyId === moduleInvoice.id}
+                                onClick={() => void claimPaid(moduleInvoice)}
+                              >
+                                {claimBusyId === moduleInvoice.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  "Zaplatil jsem"
+                                )}
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="mt-auto flex flex-col gap-2">
+                      {row.isPaid && !effectiveActive && !moduleInvoice ? (
+                        <Button
+                          type="button"
+                          disabled={moduleBusyCode === code}
+                          onClick={() => void activateModule(code)}
+                        >
+                          {moduleBusyCode === code ? <Loader2 className="h-4 w-4 animate-spin" /> : "Aktivovat"}
+                        </Button>
+                      ) : null}
+
+                      {row.isPaid && effectiveActive && ent?.tenantModuleStatus === "active" ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => void requestModuleDeactivation(code, row.name)}
+                        >
+                          Požádat o deaktivaci
+                        </Button>
+                      ) : null}
+
+                      {row.isPaid && effectiveActive && pendingConfirmation ? (
+                        <p className="text-xs text-muted-foreground">
+                          Po potvrzení platby superadministrátorem zůstane modul aktivní bez časové lhůty.
+                        </p>
+                      ) : null}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Seznam faktur</CardTitle>
           <CardDescription>
             Každá faktura je v samostatné kartě — číslo, stav, datumy, částka, výpočet, QR a akce.
@@ -462,10 +746,11 @@ export default function VyuctovaniPage() {
               const graceEnd = inv.gracePeriodUntil ? Date.parse(String(inv.gracePeriodUntil)) : NaN;
               const claimGraceActive =
                 inv.paymentClaimed === true && Number.isFinite(graceEnd) && graceEnd > Date.now();
+              const isModuleActivation = String(inv.source || "") === "moduleActivation";
               const showClaimBtn =
                 (eff === "unpaid" || eff === "overdue") &&
-                inv.id === latestUnpaidInvoiceId &&
-                !claimGraceActive;
+                !claimGraceActive &&
+                (isModuleActivation || inv.id === latestUnpaidInvoiceId);
               const unpaidHighlight = eff === "overdue" || eff === "unpaid";
               const transferredId = String(inv.transferredToDocumentId || "").trim();
               const hasPdf =

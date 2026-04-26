@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { collection, onSnapshot, orderBy, query, where, limit } from "firebase/firestore";
+import { collection, onSnapshot, query, where, limit } from "firebase/firestore";
 import { useFirestore, useUser, useMemoFirebase, useDoc } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { SUPPORT_TICKETS_COLLECTION } from "@/lib/firestore-collections";
@@ -28,6 +28,7 @@ type TicketRow = {
   status?: string;
   lastMessageText?: string | null;
   updatedAt?: Date | null;
+  createdAt?: Date | null;
 };
 
 function parseTs(raw: unknown): Date | null {
@@ -93,8 +94,7 @@ export function SupportPage() {
     return query(
       collection(firestore, SUPPORT_TICKETS_COLLECTION),
       where("organizationId", "==", companyId),
-      orderBy("updatedAt", "desc"),
-      limit(40)
+      limit(80)
     );
   }, [firestore, companyId, canUse]);
 
@@ -106,19 +106,24 @@ export function SupportPage() {
     const unsub = onSnapshot(
       ticketsQuery,
       (snap) => {
-        setTickets(
-          snap.docs.map((d) => {
-            const x = d.data() as Record<string, unknown>;
-            return {
-              id: d.id,
-              subject: String(x.subject || ""),
-              type: String(x.type || ""),
-              status: String(x.status || ""),
-              lastMessageText: x.lastMessageText != null ? String(x.lastMessageText) : null,
-              updatedAt: parseTs(x.updatedAt),
-            };
-          })
-        );
+        const rows = snap.docs.map((d) => {
+          const x = d.data() as Record<string, unknown>;
+          return {
+            id: d.id,
+            subject: String(x.subject || ""),
+            type: String(x.type || ""),
+            status: String(x.status || ""),
+            lastMessageText: x.lastMessageText != null ? String(x.lastMessageText) : null,
+            updatedAt: parseTs(x.updatedAt),
+            createdAt: parseTs(x.createdAt),
+          };
+        });
+        rows.sort((a, b) => {
+          const au = a.updatedAt?.getTime() ?? a.createdAt?.getTime() ?? 0;
+          const bu = b.updatedAt?.getTime() ?? b.createdAt?.getTime() ?? 0;
+          return bu - au;
+        });
+        setTickets(rows);
       },
       (err) => {
         console.error("[SupportPage] tickets snapshot", err);

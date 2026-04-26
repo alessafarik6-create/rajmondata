@@ -28,7 +28,14 @@ export type CompanyPlatformFields = {
   };
   moduleEntitlements?: Record<
     string,
-    { active?: boolean; expiresAt?: string | null; activatedAt?: string | null }
+    {
+      active?: boolean;
+      expiresAt?: string | null;
+      activatedAt?: string | null;
+      tenantModuleStatus?: 'inactive' | 'pendingConfirmation' | 'active' | 'suspended';
+      gracePeriodUntilIso?: string | null;
+      confirmedAtIso?: string | null;
+    }
   >;
 };
 
@@ -191,7 +198,14 @@ function getOrgModuleEntitlementRecord(
   company: CompanyPlatformFields,
   moduleCode: PlatformModuleCode
 ):
-  | { active?: boolean; expiresAt?: string | null; activatedAt?: string | null }
+  | {
+      active?: boolean;
+      expiresAt?: string | null;
+      activatedAt?: string | null;
+      tenantModuleStatus?: 'inactive' | 'pendingConfirmation' | 'active' | 'suspended';
+      gracePeriodUntilIso?: string | null;
+      confirmedAtIso?: string | null;
+    }
   | undefined {
   const m = company.moduleEntitlements;
   if (!m) return undefined;
@@ -210,6 +224,23 @@ export function hasActiveModuleAccess(
   globalCatalog?: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null
 ): boolean {
   if (!company) return false;
+
+  const entEarly = getOrgModuleEntitlementRecord(company, moduleCode);
+  if (
+    entEarly &&
+    isModuleEntitlementActiveNow({
+      moduleCode,
+      active: Boolean(entEarly.active),
+      activatedAt: entEarly.activatedAt ?? null,
+      expiresAt: entEarly.expiresAt ?? null,
+      customPriceCzk: null,
+      tenantModuleStatus: entEarly.tenantModuleStatus,
+      gracePeriodUntilIso: entEarly.gracePeriodUntilIso ?? null,
+      confirmedAtIso: entEarly.confirmedAtIso ?? null,
+    })
+  ) {
+    return !isLicenseExplicitlyRevokedForPortal(company);
+  }
 
   const effective = getEffectiveModulesMerged(company);
   if (isPlatformModuleEnabledFromModuleMap(effective, moduleCode)) {
@@ -245,6 +276,9 @@ export function hasActiveModuleAccess(
       activatedAt: entRaw.activatedAt ?? null,
       expiresAt: entRaw.expiresAt ?? null,
       customPriceCzk: null,
+      tenantModuleStatus: entRaw.tenantModuleStatus,
+      gracePeriodUntilIso: entRaw.gracePeriodUntilIso ?? null,
+      confirmedAtIso: entRaw.confirmedAtIso ?? null,
     });
   } else if (explicit) {
     result = false;

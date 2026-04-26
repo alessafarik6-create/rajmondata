@@ -42,6 +42,10 @@ export type IssuePlatformInvoiceParams = {
   createdBy: string;
   issueSource?: IssuePlatformInvoiceSource;
   skipDuplicateCheck?: boolean;
+  /** Biz logika zdroje (např. aktivace modulu). */
+  platformInvoiceSource?: "moduleActivation";
+  moduleId?: string;
+  moduleName?: string | null;
 };
 
 export type IssuePlatformInvoiceResult = {
@@ -69,6 +73,9 @@ export async function issuePlatformInvoiceAdmin(
     createdBy,
     issueSource = "manual",
     skipDuplicateCheck,
+    platformInvoiceSource,
+    moduleId,
+    moduleName,
   } = params;
 
   if (!skipDuplicateCheck) {
@@ -223,6 +230,9 @@ export async function issuePlatformInvoiceAdmin(
     graceDeactivationApplied: false,
     issueSource,
     issuedByAutomation: issueSource === "automation",
+    ...(platformInvoiceSource ? { source: platformInvoiceSource } : {}),
+    ...(moduleId ? { moduleId: String(moduleId) } : {}),
+    ...(moduleName ? { moduleName: String(moduleName) } : {}),
   });
   return {
     invoiceId,

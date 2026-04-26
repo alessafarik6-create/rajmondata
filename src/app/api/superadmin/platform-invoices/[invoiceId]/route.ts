@@ -5,6 +5,7 @@ import { getAdminFirestore } from "@/lib/firebase-admin";
 import { PLATFORM_INVOICES_COLLECTION } from "@/lib/firestore-collections";
 import { ensureAllPlatformData } from "@/lib/superadmin-platform-seed";
 import { deletePlatformInvoiceAdmin } from "@/lib/platform-invoice-delete-admin";
+import { confirmModuleActivationPaidAdmin } from "@/lib/platform-module-activation-admin";
 
 type PatchBody = {
   status?: "paid" | "unpaid" | "cancelled";
@@ -43,6 +44,9 @@ export async function PATCH(
 ) {
   const session = await getSessionFromCookie();
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (session.role !== "superadmin") {
+    return NextResponse.json({ error: "Úpravy faktur jsou povoleny jen superadministrátorovi." }, { status: 403 });
+  }
   const db = getAdminFirestore();
   if (!db) return NextResponse.json({ error: "Firebase Admin není nakonfigurován." }, { status: 503 });
   const { invoiceId } = await ctx.params;
@@ -63,6 +67,7 @@ export async function PATCH(
     const ref = db.collection(PLATFORM_INVOICES_COLLECTION).doc(id);
     const snap = await ref.get();
     if (!snap.exists) return NextResponse.json({ error: "Faktura neexistuje." }, { status: 404 });
+    const before = (snap.data() ?? {}) as Record<string, unknown>;
     const patch: Record<string, unknown> = {
       status: st,
       updatedAt: FieldValue.serverTimestamp(),
@@ -79,6 +84,17 @@ export async function PATCH(
       patch.paidAt = null;
     }
     await ref.set(patch, { merge: true });
+    if (st === "paid" && String(before.source || "") === "moduleActivation") {
+      const orgId = String(before.organizationId || "").trim();
+      const moduleId = String(before.moduleId || "").trim();
+      if (orgId && moduleId) {
+        try {
+          await confirmModuleActivationPaidAdmin(db, orgId, moduleId);
+        } catch (e) {
+          console.error("[superadmin platform-invoices PATCH] module activation confirm", e);
+        }
+      }
+    }
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[superadmin platform-invoices PATCH]", e);

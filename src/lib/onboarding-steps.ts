@@ -3,6 +3,9 @@ export type OnboardingStepDef = {
   title: string;
   description: string;
   route: string;
+  targetSelector?: string | null;
+  order?: number;
+  enabled?: boolean;
 };
 
 /** Kroky průvodce pro nové organizace (cesty odpovídají portálu). */
@@ -42,4 +45,21 @@ export function onboardingStepToNavId(stepId: string): string {
     "create-invoice": "invoices",
   };
   return m[stepId] || "overview";
+}
+
+/** Fallback pro dynamické kroky: podle route odhadne navId. */
+export function onboardingNavIdFromRoute(route: string | undefined | null): string {
+  const r = String(route || "").trim();
+  if (!r) return "overview";
+  if (r.startsWith("/portal/jobs")) return "jobs";
+  if (r.startsWith("/portal/employees")) return "employees";
+  if (r.startsWith("/portal/labor")) return "labor";
+  if (r.startsWith("/portal/invoices")) return "invoices";
+  if (r.startsWith("/portal/finance")) return "finance";
+  if (r.startsWith("/portal/documents")) return "documents";
+  if (r.startsWith("/portal/vyuctovani")) return "vyuctovani";
+  if (r.startsWith("/portal/billing")) return "billing";
+  if (r.startsWith("/portal/settings")) return "settings";
+  if (r.startsWith("/portal/help")) return "help";
+  return "overview";
 }
