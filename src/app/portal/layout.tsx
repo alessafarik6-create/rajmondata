@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import { signOut } from "firebase/auth";
 import { useUser, useCompany, useFirebase, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
 import { BizForgeSidebar } from "@/components/layout/bizforge-sidebar";
@@ -55,7 +56,7 @@ export default function PortalLayout({ children }: { children: React.ReactNode }
 
 function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   const { user, isUserLoading, userError } = useUser();
-  const { firestore, areServicesAvailable, firebaseConfigError } = useFirebase();
+  const { firestore, areServicesAvailable, firebaseConfigError, auth } = useFirebase();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -129,6 +130,14 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
       profile.globalRoles.includes("super_admin"));
 
   const isPortalCustomerOnly = profile?.role === "customer";
+
+  const isFirebaseSuperAdmin =
+    Array.isArray(profile?.globalRoles) && profile.globalRoles.includes("super_admin");
+
+  const tenantOrganizationIsDeleted =
+    company &&
+    (company.isDeleted === true ||
+      String(company.tenantStatus ?? "").toLowerCase() === "deleted");
 
   /** Zákazník smí jen `/portal/customer/*` a sdílená oznámení — žádné firemní doklady, finance, interní zakázky. */
   const isCustomerAllowedBranchPath =
@@ -556,6 +565,28 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
             . Účet odkazuje na neexistující organizaci. Kontaktujte administrátora nebo podporu.
           </AlertDescription>
         </Alert>
+      </div>
+    );
+  }
+
+  if (tenantOrganizationIsDeleted && !isFirebaseSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-background flex flex-col items-center justify-center gap-4 p-4">
+        <Alert className="max-w-xl border-amber-500/50 bg-amber-500/10 text-amber-950 dark:text-amber-100 dark:border-amber-500/40 dark:bg-amber-500/10">
+          <AlertCircle className="h-4 w-4 text-amber-700 dark:text-amber-400" />
+          <AlertTitle>Organizace není dostupná</AlertTitle>
+          <AlertDescription className="text-amber-950/90 dark:text-amber-50/90">
+            Organizace je smazaná a čeká na trvalé odstranění. Kontaktujte podporu.
+          </AlertDescription>
+        </Alert>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-11"
+          onClick={() => void signOut(auth)}
+        >
+          Odhlásit se
+        </Button>
       </div>
     );
   }

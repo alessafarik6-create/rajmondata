@@ -155,10 +155,9 @@ export default function AdminBillingPage() {
     if (!deleteTarget) return;
     setDeletingId(deleteTarget.id);
     try {
-      const res = await fetch(
-        `/api/superadmin/platform-invoices/${encodeURIComponent(deleteTarget.id)}`,
-        { method: "DELETE" }
-      );
+      const res = await fetch(`/api/admin/platform-invoices/${encodeURIComponent(deleteTarget.id)}`, {
+        method: "DELETE",
+      });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         toast({
@@ -403,7 +402,7 @@ export default function AdminBillingPage() {
                             title="Smazat platformní fakturu"
                           >
                             <Trash2 className="w-4 h-4 mr-1" />
-                            Smazat
+                            Smazat fakturu
                           </Button>
                         </div>
                       </TableCell>
@@ -424,6 +423,37 @@ export default function AdminBillingPage() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deletingId) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Smazat platformní fakturu?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tato akce trvale odstraní fakturu z evidence platformy
+              {deleteTarget?.invoiceNumber ? ` (${deleteTarget.invoiceNumber})` : ""}. Běžné faktury organizací zůstanou
+              nedotčeny.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!deletingId}>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!!deletingId}
+              onClick={(e) => {
+                e.preventDefault();
+                void deleteInvoice();
+              }}
+            >
+              {deletingId ? <Loader2 className="w-4 h-4 animate-spin" /> : "Smazat"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

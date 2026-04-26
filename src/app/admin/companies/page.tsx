@@ -38,6 +38,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -67,7 +77,16 @@ type Company = {
   enabledModuleIds?: string[];
   billingAutomation?: Record<string, unknown> | null;
   employeeCount?: number;
+  deletedAt?: string | null;
+  deletionScheduledAt?: string | null;
 };
+
+function daysUntilIsoDate(iso: string | null | undefined): number | null {
+  if (!iso) return null;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return null;
+  return Math.ceil((t - Date.now()) / 86400000);
+}
 
 export default function AdminCompaniesPage() {
   const { toast } = useToast();
@@ -84,6 +103,17 @@ export default function AdminCompaniesPage() {
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const lastSavedCompanyIdRef = useRef<string | null>(null);
+
+  const [deletedCompanies, setDeletedCompanies] = useState<Company[]>([]);
+  const [deletedLoading, setDeletedLoading] = useState(true);
+  const [deletedLoadError, setDeletedLoadError] = useState<string | null>(null);
+  const [softDeleteTarget, setSoftDeleteTarget] = useState<Company | null>(null);
+  const [softDeletingId, setSoftDeletingId] = useState<string | null>(null);
+  const [restoreTarget, setRestoreTarget] = useState<Company | null>(null);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [hardDeleteTarget, setHardDeleteTarget] = useState<Company | null>(null);
+  const [hardDeletingId, setHardDeletingId] = useState<string | null>(null);
+  const [cleanupRunning, setCleanupRunning] = useState(false);
 
   const [terminalFor, setTerminalFor] = useState<Company | null>(null);
   const [terminalPublicUrl, setTerminalPublicUrl] = useState("");
@@ -208,9 +238,142 @@ export default function AdminCompaniesPage() {
     }
   };
 
+  const loadDeletedCompanies = async () => {
+    setDeletedLoading(true);
+    setDeletedLoadError(null);
+    try {
+      const res = await fetch(`/api/superadmin/companies?deleted=1`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg =
+          typeof data?.error === "string" ? data.error : "Nepodařilo se načíst smazané organizace.";
+        setDeletedLoadError(msg);
+        setDeletedCompanies([]);
+        return;
+      }
+      setDeletedCompanies((Array.isArray(data) ? data : []) as Company[]);
+    } catch {
+      setDeletedLoadError("Nepodařilo se načíst smazané organizace.");
+      setDeletedCompanies([]);
+    } finally {
+      setDeletedLoading(false);
+    }
+  };
+
+  const refreshOrganizationLists = async () => {
+    await Promise.all([loadCompanies({ silent: true }), loadDeletedCompanies()]);
+  };
+
   useEffect(() => {
-    loadCompanies();
+    void loadCompanies();
+    void loadDeletedCompanies();
   }, []);
+
+  const runSoftDeleteOrganization = async () => {
+    if (!softDeleteTarget) return;
+    setSoftDeletingId(softDeleteTarget.id);
+    try {
+      const res = await fetch(
+        `/api/admin/organizations/${encodeURIComponent(softDeleteTarget.id)}/soft-delete`,
+        { method: "POST" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Organizaci se nepodařilo smazat",
+          description: typeof data?.error === "string" ? data.error : undefined,
+        });
+        return;
+      }
+      toast({ title: "Organizace byla označena jako smazaná", description: "Lze ji do 30 dní obnovit." });
+      setSoftDeleteTarget(null);
+      await refreshOrganizationLists();
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při mazání organizace" });
+    } finally {
+      setSoftDeletingId(null);
+    }
+  };
+
+  const runRestoreOrganization = async () => {
+    if (!restoreTarget) return;
+    setRestoringId(restoreTarget.id);
+    try {
+      const res = await fetch(`/api/admin/organizations/${encodeURIComponent(restoreTarget.id)}/restore`, {
+        method: "POST",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Obnova se nezdařila",
+          description: typeof data?.error === "string" ? data.error : undefined,
+        });
+        return;
+      }
+      toast({ title: "Organizace byla obnovena" });
+      setRestoreTarget(null);
+      await refreshOrganizationLists();
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při obnově" });
+    } finally {
+      setRestoringId(null);
+    }
+  };
+
+  const runHardDeleteOrganization = async () => {
+    if (!hardDeleteTarget) return;
+    setHardDeletingId(hardDeleteTarget.id);
+    try {
+      const res = await fetch(
+        `/api/admin/organizations/${encodeURIComponent(hardDeleteTarget.id)}/hard-delete?force=1`,
+        { method: "DELETE" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Trvalé smazání se nezdařilo",
+          description: typeof data?.error === "string" ? data.error : undefined,
+        });
+        return;
+      }
+      toast({ title: "Organizace byla trvale odstraněna" });
+      setHardDeleteTarget(null);
+      await refreshOrganizationLists();
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při trvalém mazání" });
+    } finally {
+      setHardDeletingId(null);
+    }
+  };
+
+  const runCleanupDeleted = async () => {
+    setCleanupRunning(true);
+    try {
+      const res = await fetch("/api/admin/organizations/cleanup-deleted", { method: "POST" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Úklid se nezdařil",
+          description: typeof data?.error === "string" ? data.error : undefined,
+        });
+        return;
+      }
+      const n = Array.isArray(data?.purgedIds) ? data.purgedIds.length : 0;
+      toast({
+        title: "Úklid dokončen",
+        description: n > 0 ? `Trvale odstraněno organizací: ${n}` : "Žádná organizace po lhůtě k odstranění.",
+      });
+      await refreshOrganizationLists();
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při úklidu" });
+    } finally {
+      setCleanupRunning(false);
+    }
+  };
 
   const toggleStatus = async (company: Company) => {
     try {
@@ -842,6 +1005,12 @@ export default function AdminCompaniesPage() {
                             <Power className="w-4 h-4 mr-2" />{" "}
                             {company.isActive ? "Deaktivovat účet" : "Aktivovat účet"}
                           </DropdownMenuItem>
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setSoftDeleteTarget(company)}
+                          >
+                            <Trash2 className="w-4 h-4 mr-2" /> Smazat organizaci
+                          </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -857,6 +1026,106 @@ export default function AdminCompaniesPage() {
           )}
         </CardContent>
       </Card>
+
+      <div className="space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-semibold text-slate-900">Smazané organizace</h2>
+            <p className="text-sm text-slate-600 mt-0.5">
+              Soft delete s lhůtou 30 dní před trvalým odstraněním. Účty se nemohou přihlásit do portálu.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="shrink-0"
+            disabled={cleanupRunning || deletedLoading}
+            onClick={() => void runCleanupDeleted()}
+          >
+            {cleanupRunning ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+            Spustit úklid (po lhůtě)
+          </Button>
+        </div>
+        {deletedLoadError ? (
+          <div className="p-3 rounded-md bg-amber-50 border border-amber-200 text-amber-900 text-sm">
+            {deletedLoadError}
+          </div>
+        ) : null}
+        <Card className="border-slate-200 overflow-hidden">
+          <CardContent className="p-0">
+            {deletedLoading ? (
+              <div className="flex justify-center p-10">
+                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              </div>
+            ) : deletedCompanies.length > 0 ? (
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-slate-200 hover:bg-transparent">
+                    <TableHead className="pl-4 sm:pl-6">Organizace</TableHead>
+                    <TableHead className="hidden md:table-cell">Smazáno</TableHead>
+                    <TableHead className="hidden md:table-cell">Trvalé smazání</TableHead>
+                    <TableHead>Zbývá dní</TableHead>
+                    <TableHead className="pr-4 sm:pr-6 text-right">Akce</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {deletedCompanies.map((row) => {
+                    const left = daysUntilIsoDate(row.deletionScheduledAt);
+                    const leftLabel =
+                      left == null ? "—" : left <= 0 ? "po lhůtě" : `${left} dní`;
+                    return (
+                      <TableRow key={row.id} className="border-slate-200">
+                        <TableCell className="pl-4 sm:pl-6 font-medium text-slate-900">
+                          <div className="flex flex-col min-w-0">
+                            <span>{row.name}</span>
+                            <span className="text-xs font-mono text-slate-600 truncate">{row.id}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-sm text-slate-800">
+                          {row.deletedAt
+                            ? new Date(row.deletedAt).toLocaleString("cs-CZ")
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="hidden md:table-cell text-sm text-slate-800">
+                          {row.deletionScheduledAt
+                            ? new Date(row.deletionScheduledAt).toLocaleString("cs-CZ")
+                            : "—"}
+                        </TableCell>
+                        <TableCell className="text-sm">{leftLabel}</TableCell>
+                        <TableCell className="pr-4 sm:pr-6 text-right">
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              disabled={!!restoringId || !!hardDeletingId}
+                              onClick={() => setRestoreTarget(row)}
+                            >
+                              Obnovit
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="destructive"
+                              disabled={!!restoringId || !!hardDeletingId}
+                              onClick={() => setHardDeleteTarget(row)}
+                            >
+                              Smazat trvale
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            ) : (
+              <div className="text-center py-12 text-slate-600 text-sm">Žádné smazané organizace.</div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       <Dialog open={!!editing} onOpenChange={(open) => !open && setEditing(null)}>
         <DialogContent className="max-w-lg bg-white border-slate-200 text-slate-900" data-portal-dialog>
@@ -1478,6 +1747,95 @@ export default function AdminCompaniesPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={!!softDeleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !softDeletingId) setSoftDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Smazat organizaci?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Organizace <strong>{softDeleteTarget?.name}</strong> bude označena jako smazaná. Uživatelé se nebudou moci
+              přihlásit do portálu. Po 30 dnech proběhne trvalé odstranění (nebo je můžete obnovit).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!softDeletingId}>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!!softDeletingId}
+              onClick={(e) => {
+                e.preventDefault();
+                void runSoftDeleteOrganization();
+              }}
+            >
+              {softDeletingId ? <Loader2 className="w-4 h-4 animate-spin" /> : "Smazat organizaci"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!restoreTarget}
+        onOpenChange={(open) => {
+          if (!open && !restoringId) setRestoreTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Obnovit organizaci?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Obnovíte přístup k portálu pro <strong>{restoreTarget?.name}</strong> a aktivujete licenci podle stavu v
+              databázi.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!restoringId}>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={!!restoringId}
+              onClick={(e) => {
+                e.preventDefault();
+                void runRestoreOrganization();
+              }}
+            >
+              {restoringId ? <Loader2 className="w-4 h-4 animate-spin" /> : "Obnovit"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={!!hardDeleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !hardDeletingId) setHardDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Trvale smazat organizaci?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tato akce nelze vrátit. Kořenové záznamy organizace, firmy a licence budou odstraněny z databáze (bez
+              rekurzivního mazání podkolekcí). Organizace: <strong>{hardDeleteTarget?.name}</strong>.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={!!hardDeletingId}>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={!!hardDeletingId}
+              onClick={(e) => {
+                e.preventDefault();
+                void runHardDeleteOrganization();
+              }}
+            >
+              {hardDeletingId ? <Loader2 className="w-4 h-4 animate-spin" /> : "Trvale smazat"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

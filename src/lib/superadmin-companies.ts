@@ -158,10 +158,41 @@ function buildLicenseForFirestore(update: LicenseUpdate): Record<string, unknown
   };
 }
 
-export async function getCompanies(db: Firestore, options?: { light?: boolean }) {
+function isOrganizationSoftDeleted(data: Record<string, unknown>): boolean {
+  return data.isDeleted === true || String(data.status ?? "").toLowerCase() === "deleted";
+}
+
+function timestampToIso(value: unknown): string | null {
+  if (value == null) return null;
+  if (typeof value === "object" && value !== null && "toDate" in value) {
+    const fn = (value as { toDate?: () => Date }).toDate;
+    if (typeof fn === "function") {
+      try {
+        const d = fn.call(value);
+        return d instanceof Date && !Number.isNaN(d.getTime()) ? d.toISOString() : null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  return null;
+}
+
+export async function getCompanies(
+  db: Firestore,
+  options?: { light?: boolean; deletedOnly?: boolean }
+) {
   const light = options?.light === true;
+  const deletedOnly = options?.deletedOnly === true;
   const snapshot = await db.collection(ORGANIZATIONS_COLLECTION).get();
-  const docs = snapshot.docs;
+  const docs = snapshot.docs.filter((doc) => {
+    const data = doc.data() as Record<string, unknown>;
+    const soft = isOrganizationSoftDeleted(data);
+    const tomb = data.permanentlyDeleted === true;
+    if (deletedOnly) return soft && !tomb;
+    return !soft && !tomb;
+  });
 
   const licenseSnaps = await Promise.all(
     docs.map((d) => db.collection(COMPANY_LICENSES_COLLECTION).doc(d.id).get())
@@ -213,6 +244,8 @@ export async function getCompanies(db: Firestore, options?: { light?: boolean })
       companyLicense,
       employeeCount: ec,
       estimatedMonthlyCzk,
+      deletedAt: timestampToIso(data.deletedAt),
+      deletionScheduledAt: timestampToIso(data.deletionScheduledAt),
     };
   });
 }

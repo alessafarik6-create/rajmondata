@@ -105,6 +105,15 @@ export type CompanyProfile = {
   /** Centrální nastavení modulových e-mailových notifikací (viz email-notifications/schema). */
   emailNotifications?: unknown;
 
+  /** Životní cyklus tenantu (`společnosti` / superadmin soft delete). */
+  isDeleted?: boolean;
+  licenseActive?: boolean;
+  deletedAt?: unknown;
+  deletionScheduledAt?: unknown;
+  permanentlyDeleted?: boolean;
+  /** Top-level `status` na dokumentu organizace (ne vnořená licence). */
+  tenantStatus?: string;
+
   /** Šablony a CC pro odesílání dokumentů ze zakázky e-mailem. */
   documentEmailOutbound?: DocumentEmailOutboundSettings | null;
 
@@ -315,6 +324,17 @@ function mergeCompanyWithOrganizationRecord(
   }
   if (o && 'active' in o && o.active !== undefined) {
     merged.active = o.active;
+  }
+
+  if (o) {
+    if (typeof o.isDeleted === 'boolean') merged.isDeleted = o.isDeleted;
+    if (typeof o.licenseActive === 'boolean') merged.licenseActive = o.licenseActive;
+    if (o.deletedAt !== undefined) merged.deletedAt = o.deletedAt;
+    if (o.deletionScheduledAt !== undefined) merged.deletionScheduledAt = o.deletionScheduledAt;
+    if (typeof o.permanentlyDeleted === 'boolean') merged.permanentlyDeleted = o.permanentlyDeleted;
+    if (typeof o.status === 'string' && o.status.trim() !== '') {
+      merged.tenantStatus = o.status;
+    }
   }
 
   const mergedEmailNotifications = mergeEmailNotificationsField(c, o);

@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { FieldValue } from "firebase-admin/firestore";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
-import { getAdminFirestore, getAdminStorageBucket } from "@/lib/firebase-admin";
+import { getAdminFirestore } from "@/lib/firebase-admin";
 import { PLATFORM_INVOICES_COLLECTION } from "@/lib/firestore-collections";
 import { ensureAllPlatformData } from "@/lib/superadmin-platform-seed";
+import { deletePlatformInvoiceAdmin } from "@/lib/platform-invoice-delete-admin";
 
 type PatchBody = {
   status?: "paid" | "unpaid" | "cancelled";
@@ -24,25 +25,14 @@ export async function DELETE(
   const id = String(invoiceId || "").trim();
   if (!id) return NextResponse.json({ error: "Chybí invoiceId." }, { status: 400 });
   try {
-    await ensureAllPlatformData(db);
-    const ref = db.collection(PLATFORM_INVOICES_COLLECTION).doc(id);
-    const snap = await ref.get();
-    if (!snap.exists) return NextResponse.json({ error: "Faktura neexistuje." }, { status: 404 });
-    const data = (snap.data() ?? {}) as Record<string, unknown>;
-    const storagePath = typeof data.storagePath === "string" ? data.storagePath.trim() : "";
-    if (storagePath) {
-      try {
-        const bucket = getAdminStorageBucket();
-        if (bucket) await bucket.file(storagePath).delete({ ignoreNotFound: true });
-      } catch (e) {
-        console.warn("[superadmin platform-invoices DELETE] storage", e);
-      }
-    }
-    await ref.delete();
-    return NextResponse.json({ ok: true });
+    await deletePlatformInvoiceAdmin(db, id);
+    return NextResponse.json({ ok: true, success: true });
   } catch (e) {
     console.error("[superadmin platform-invoices DELETE]", e);
     const msg = e instanceof Error ? e.message : "Smazání se nezdařilo.";
+    if (msg === "Faktura neexistuje.") {
+      return NextResponse.json({ error: msg }, { status: 404 });
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

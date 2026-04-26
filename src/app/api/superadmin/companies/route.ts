@@ -22,7 +22,8 @@ export async function GET(request: NextRequest) {
 
   try {
     const light = request.nextUrl.searchParams.get("light") === "1";
-    const companies = await getCompanies(db, { light });
+    const deletedOnly = request.nextUrl.searchParams.get("deleted") === "1";
+    const companies = await getCompanies(db, { light, deletedOnly });
     return NextResponse.json(companies);
   } catch (e) {
     console.error("[superadmin companies]", e);
