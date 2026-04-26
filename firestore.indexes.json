@@ -346,6 +346,23 @@
         { "fieldPath": "organizationId", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "platform_invoices",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "organizationId", "order": "ASCENDING" },
+        { "fieldPath": "periodFrom", "order": "ASCENDING" },
+        { "fieldPath": "periodTo", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "companies",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "billingAutomationEnabled", "order": "ASCENDING" },
+        { "fieldPath": "billingAutomationNextIssueDate", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

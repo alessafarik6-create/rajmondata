@@ -18,6 +18,8 @@ import {
   Copy,
   Receipt,
   Trash2,
+  Sparkles,
+  Repeat,
 } from "lucide-react";
 import {
   DropdownMenu,
@@ -63,6 +65,8 @@ type Company = {
   license: LicenseConfig & { modules?: Record<string, boolean> };
   modules?: Record<string, boolean>;
   enabledModuleIds?: string[];
+  billingAutomation?: Record<string, unknown> | null;
+  employeeCount?: number;
 };
 
 export default function AdminCompaniesPage() {
@@ -117,6 +121,33 @@ export default function AdminCompaniesPage() {
   const [invoiceNote, setInvoiceNote] = useState("");
   const [invoiceLines, setInvoiceLines] = useState<PlatformInvoiceLineForm[]>([]);
   const [invoiceSubmitting, setInvoiceSubmitting] = useState(false);
+
+  const [licenseFromFor, setLicenseFromFor] = useState<Company | null>(null);
+  const [licenseFromPeriodFrom, setLicenseFromPeriodFrom] = useState("");
+  const [licenseFromPeriodTo, setLicenseFromPeriodTo] = useState("");
+  const [licenseFromDueDate, setLicenseFromDueDate] = useState("");
+  const [licenseFromIssueDate, setLicenseFromIssueDate] = useState("");
+  const [licenseFromNote, setLicenseFromNote] = useState("");
+  const [licenseFromPreview, setLicenseFromPreview] = useState<{
+    employeeCount: number;
+    items: Array<Record<string, unknown>>;
+    amountNet: number;
+    vatAmount: number;
+    amountGross: number;
+  } | null>(null);
+  const [licenseFromLoading, setLicenseFromLoading] = useState(false);
+  const [licenseFromSubmitting, setLicenseFromSubmitting] = useState(false);
+  const [licenseFromExtraLines, setLicenseFromExtraLines] = useState<PlatformInvoiceLineForm[]>([]);
+
+  const [automationFor, setAutomationFor] = useState<Company | null>(null);
+  const [automationSaving, setAutomationSaving] = useState(false);
+  const [automationForm, setAutomationForm] = useState({
+    enabled: false,
+    intervalDays: 30,
+    nextIssueDate: "",
+    dueDays: 14,
+    sendEmail: false,
+  });
 
   const loadCompanies = async (opts?: { silent?: boolean }) => {
     const silent = opts?.silent === true;
@@ -497,6 +528,198 @@ export default function AdminCompaniesPage() {
     }
   };
 
+  const openLicenseFromDialog = (company: Company) => {
+    const p = defaultBillingPeriod();
+    setLicenseFromFor(company);
+    setLicenseFromPeriodFrom(p.periodFrom);
+    setLicenseFromPeriodTo(p.periodTo);
+    setLicenseFromDueDate(defaultDueDate());
+    setLicenseFromIssueDate(new Date().toISOString().slice(0, 10));
+    setLicenseFromNote("");
+    setLicenseFromPreview(null);
+    setLicenseFromExtraLines([]);
+  };
+
+  const runLicensePreview = async () => {
+    if (!licenseFromFor) return;
+    if (!licenseFromPeriodFrom || !licenseFromPeriodTo) {
+      toast({ variant: "destructive", title: "Vyplňte fakturační období" });
+      return;
+    }
+    setLicenseFromLoading(true);
+    try {
+      const res = await fetch("/api/superadmin/platform-invoices/preview-from-license", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId: licenseFromFor.id,
+          periodFrom: licenseFromPeriodFrom,
+          periodTo: licenseFromPeriodTo,
+          extraItems: licenseFromExtraLines.map((ln) => ({
+            kind: ln.kind,
+            description: ln.description.trim(),
+            quantity: ln.quantity,
+            unit: ln.unit.trim() || "ks",
+            unitPriceNet: ln.unitPriceNet,
+            vatRate: ln.vatRate,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Náhled se nepodařil",
+          description: typeof data?.error === "string" ? data.error : undefined,
+        });
+        setLicenseFromPreview(null);
+        return;
+      }
+      setLicenseFromPreview({
+        employeeCount: Number(data.employeeCount) || 0,
+        items: Array.isArray(data.items) ? data.items : [],
+        amountNet: Number(data.amountNet) || 0,
+        vatAmount: Number(data.vatAmount) || 0,
+        amountGross: Number(data.amountGross) || 0,
+      });
+    } finally {
+      setLicenseFromLoading(false);
+    }
+  };
+
+  const submitLicenseFromInvoice = async () => {
+    if (!licenseFromFor) return;
+    if (!licenseFromPreview) {
+      toast({ variant: "destructive", title: "Nejdříve načtěte náhled z licence" });
+      return;
+    }
+    if (!licenseFromDueDate) {
+      toast({ variant: "destructive", title: "Vyplňte splatnost" });
+      return;
+    }
+    setLicenseFromSubmitting(true);
+    try {
+      const res = await fetch("/api/superadmin/platform-invoices", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          organizationId: licenseFromFor.id,
+          periodFrom: licenseFromPeriodFrom,
+          periodTo: licenseFromPeriodTo,
+          dueDate: licenseFromDueDate,
+          issueDate: licenseFromIssueDate.trim() || undefined,
+          note: licenseFromNote.trim() || undefined,
+          autoFromLicense: true,
+          extraItems: licenseFromExtraLines.map((ln) => ({
+            kind: ln.kind,
+            description: ln.description.trim(),
+            quantity: ln.quantity,
+            unit: ln.unit.trim() || "ks",
+            unitPriceNet: ln.unitPriceNet,
+            vatRate: ln.vatRate,
+          })),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Fakturu se nepodařilo vystavit",
+          description: typeof data?.error === "string" ? data.error : undefined,
+        });
+        return;
+      }
+      toast({
+        title: "Faktura z licence vystavena",
+        description: data?.invoiceNumber ? `Číslo: ${data.invoiceNumber}` : undefined,
+      });
+      if (typeof data?.pdfUrl === "string" && data.pdfUrl) {
+        window.open(data.pdfUrl, "_blank", "noopener,noreferrer");
+      }
+      setLicenseFromFor(null);
+      setLicenseFromPreview(null);
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při vystavení faktury" });
+    } finally {
+      setLicenseFromSubmitting(false);
+    }
+  };
+
+  const openAutomationDialog = async (company: Company) => {
+    setAutomationFor(company);
+    let defInterval = 30;
+    let defDue = 14;
+    try {
+      const pr = await fetch("/api/superadmin/platform-pricing", { credentials: "include", cache: "no-store" });
+      const pj = await pr.json().catch(() => ({}));
+      if (typeof pj.automationDefaultIntervalDays === "number") defInterval = pj.automationDefaultIntervalDays;
+      if (typeof pj.automationDefaultDueDays === "number") defDue = pj.automationDefaultDueDays;
+    } catch {
+      /* výchozí zůstanou */
+    }
+    try {
+      const res = await fetch(`/api/superadmin/companies/${encodeURIComponent(company.id)}`, {
+        cache: "no-store",
+      });
+      const data = await res.json().catch(() => ({}));
+      const ba = (data?.billingAutomation ?? {}) as Record<string, unknown>;
+      setAutomationForm({
+        enabled: ba.enabled === true,
+        intervalDays: Math.max(1, Number(ba.intervalDays) || defInterval),
+        nextIssueDate:
+          typeof ba.nextIssueDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(ba.nextIssueDate)
+            ? ba.nextIssueDate.slice(0, 10)
+            : "",
+        dueDays: Math.max(1, Number(ba.dueDays) || defDue),
+        sendEmail: ba.sendEmail === true,
+      });
+    } catch {
+      setAutomationForm({
+        enabled: false,
+        intervalDays: defInterval,
+        nextIssueDate: "",
+        dueDays: defDue,
+        sendEmail: false,
+      });
+    }
+  };
+
+  const saveAutomation = async () => {
+    if (!automationFor) return;
+    setAutomationSaving(true);
+    try {
+      const res = await fetch(`/api/superadmin/companies/${encodeURIComponent(automationFor.id)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          billingAutomation: {
+            enabled: automationForm.enabled,
+            intervalDays: automationForm.intervalDays,
+            nextIssueDate: automationForm.nextIssueDate || null,
+            dueDays: automationForm.dueDays,
+            sendEmail: automationForm.sendEmail,
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Uložení se nezdařilo",
+          description: typeof data?.error === "string" ? data.error : undefined,
+        });
+        return;
+      }
+      toast({ title: "Automatická fakturace uložena" });
+      setAutomationFor(null);
+      await loadCompanies({ silent: true });
+    } catch {
+      toast({ variant: "destructive", title: "Chyba při ukládání" });
+    } finally {
+      setAutomationSaving(false);
+    }
+  };
+
   const filtered = companies.filter(
     (c) =>
       c.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -601,7 +824,13 @@ export default function AdminCompaniesPage() {
                             <TabletSmartphone className="w-4 h-4 mr-2" /> Docházkový terminál
                           </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => openPlatformInvoiceDialog(company)}>
-                            <Receipt className="w-4 h-4 mr-2" /> Vystavit fakturu
+                            <Receipt className="w-4 h-4 mr-2" /> Vystavit fakturu (ručně)
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => openLicenseFromDialog(company)}>
+                            <Sparkles className="w-4 h-4 mr-2" /> Vystavit fakturu z licence
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void openAutomationDialog(company)}>
+                            <Repeat className="w-4 h-4 mr-2" /> Automatická fakturace
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => window.open(`/portal/dashboard`, "_blank")}
@@ -766,10 +995,10 @@ export default function AdminCompaniesPage() {
           data-portal-dialog
         >
           <DialogHeader>
-            <DialogTitle>Vystavit fakturu — {invoiceFor?.name}</DialogTitle>
+            <DialogTitle>Ruční faktura — {invoiceFor?.name}</DialogTitle>
             <DialogDescription>
-              Faktura za použití platformy. Dodavatelem je provozovatel z nastavení superadministrace; odběratelem je
-              tato organizace (údaje z profilu firmy).
+              Položky zadáváte ručně. Ceny modulů a základní licence se načítají z ceníku v sekci Ceník / Moduly při
+              volbě „Vystavit fakturu z licence“.
             </DialogDescription>
           </DialogHeader>
           {invoiceFor ? (
@@ -937,6 +1166,266 @@ export default function AdminCompaniesPage() {
               ) : (
                 "Vystavit fakturu"
               )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!licenseFromFor}
+        onOpenChange={(open) => {
+          if (!open) {
+            setLicenseFromFor(null);
+            setLicenseFromPreview(null);
+          }
+        }}
+      >
+        <DialogContent
+          className="max-w-3xl max-h-[min(92vh,900px)] overflow-y-auto bg-white border-slate-200 text-slate-900"
+          data-portal-dialog
+        >
+          <DialogHeader>
+            <DialogTitle>Faktura z licence — {licenseFromFor?.name}</DialogTitle>
+            <DialogDescription>
+              Položky se dopočítají z aktivní licence, modulů a ceníku (platform_settings/pricing a platform_modules).
+              Po načtení náhledu můžete doplnit vlastní řádky a znovu přepočítat.
+            </DialogDescription>
+          </DialogHeader>
+          {licenseFromFor ? (
+            <div className="space-y-4 py-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label>Období od</Label>
+                  <Input
+                    type="date"
+                    value={licenseFromPeriodFrom}
+                    onChange={(e) => setLicenseFromPeriodFrom(e.target.value)}
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Období do</Label>
+                  <Input
+                    type="date"
+                    value={licenseFromPeriodTo}
+                    onChange={(e) => setLicenseFromPeriodTo(e.target.value)}
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Datum vystavení</Label>
+                  <Input
+                    type="date"
+                    value={licenseFromIssueDate}
+                    onChange={(e) => setLicenseFromIssueDate(e.target.value)}
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Splatnost</Label>
+                  <Input
+                    type="date"
+                    value={licenseFromDueDate}
+                    onChange={(e) => setLicenseFromDueDate(e.target.value)}
+                    className="bg-white border-slate-200"
+                  />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Poznámka (volitelně)</Label>
+                <Textarea
+                  value={licenseFromNote}
+                  onChange={(e) => setLicenseFromNote(e.target.value)}
+                  rows={2}
+                  className="bg-white border-slate-200 resize-none"
+                />
+              </div>
+              <div className="flex flex-wrap gap-2 items-center">
+                <Button type="button" variant="secondary" onClick={() => void runLicensePreview()} disabled={licenseFromLoading}>
+                  {licenseFromLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                  Načíst / přepočítat náhled
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() =>
+                    setLicenseFromExtraLines((prev) => [
+                      ...prev,
+                      {
+                        kind: "custom",
+                        description: "Vlastní položka",
+                        quantity: 1,
+                        unit: "ks",
+                        unitPriceNet: 0,
+                        vatRate: 21,
+                      },
+                    ])
+                  }
+                >
+                  Přidat vlastní řádek
+                </Button>
+              </div>
+              {licenseFromExtraLines.length > 0 ? (
+                <div className="rounded-lg border border-slate-200 p-3 space-y-2">
+                  <p className="text-sm font-medium text-slate-800">Vlastní položky (před přepočtem náhledu)</p>
+                  {licenseFromExtraLines.map((ln, idx) => (
+                    <div key={idx} className="grid grid-cols-1 sm:grid-cols-5 gap-2 items-end">
+                      <Input
+                        className="sm:col-span-2 bg-white border-slate-200"
+                        value={ln.description}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setLicenseFromExtraLines((p) => p.map((x, i) => (i === idx ? { ...x, description: v } : x)));
+                        }}
+                      />
+                      <Input
+                        type="number"
+                        className="bg-white border-slate-200"
+                        value={ln.quantity}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value) || 0;
+                          setLicenseFromExtraLines((p) => p.map((x, i) => (i === idx ? { ...x, quantity: v } : x)));
+                        }}
+                      />
+                      <Input
+                        type="number"
+                        className="bg-white border-slate-200"
+                        value={ln.unitPriceNet}
+                        onChange={(e) => {
+                          const v = parseFloat(e.target.value) || 0;
+                          setLicenseFromExtraLines((p) => p.map((x, i) => (i === idx ? { ...x, unitPriceNet: v } : x)));
+                        }}
+                      />
+                      <Button type="button" variant="ghost" size="sm" onClick={() => setLicenseFromExtraLines((p) => p.filter((_, i) => i !== idx))}>
+                        Odstranit
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {licenseFromPreview ? (
+                <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/40 p-3">
+                  <p className="text-sm text-slate-800">
+                    Počet zaměstnanců v účtování modulu docházky:{" "}
+                    <strong>{licenseFromPreview.employeeCount}</strong>
+                  </p>
+                  <div className="overflow-x-auto border border-slate-200 rounded-md bg-white">
+                    <Table>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Popis</TableHead>
+                          <TableHead className="text-right">Množ.</TableHead>
+                          <TableHead className="text-right">Cena bez DPH</TableHead>
+                          <TableHead className="text-right">DPH %</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {licenseFromPreview.items.map((it, i) => (
+                          <TableRow key={i}>
+                            <TableCell className="text-sm">{String(it.description ?? "")}</TableCell>
+                            <TableCell className="text-right tabular-nums">{String(it.quantity ?? "")}</TableCell>
+                            <TableCell className="text-right tabular-nums">{String(it.unitPriceNet ?? "")}</TableCell>
+                            <TableCell className="text-right">{String(it.vatRate ?? "")}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                  <p className="text-sm text-slate-800">
+                    Celkem bez DPH: <strong>{licenseFromPreview.amountNet.toFixed(2)} Kč</strong>, DPH:{" "}
+                    <strong>{licenseFromPreview.vatAmount.toFixed(2)} Kč</strong>, <strong>včetně DPH: {licenseFromPreview.amountGross.toFixed(2)} Kč</strong>
+                  </p>
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600">Klikněte na „Načíst / přepočítat náhled“.</p>
+              )}
+            </div>
+          ) : null}
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setLicenseFromFor(null)} disabled={licenseFromSubmitting}>
+              Zrušit
+            </Button>
+            <Button type="button" onClick={() => void submitLicenseFromInvoice()} disabled={licenseFromSubmitting || !licenseFromPreview}>
+              {licenseFromSubmitting ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
+              Vystavit fakturu
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={!!automationFor}
+        onOpenChange={(open) => {
+          if (!open) setAutomationFor(null);
+        }}
+      >
+        <DialogContent className="max-w-lg bg-white border-slate-200 text-slate-900" data-portal-dialog>
+          <DialogHeader>
+            <DialogTitle>Automatická fakturace — {automationFor?.name}</DialogTitle>
+            <DialogDescription>
+              Cron volá <code className="text-xs bg-slate-100 px-1 rounded">GET /api/cron/platform-billing-automation?secret=…</code>{" "}
+              (proměnná CRON_SECRET). Při dosažení data vystavení se vytvoří faktura z licence; duplicita za stejné období
+              není povolena.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="ba-en">Zapnuto</Label>
+              <Switch
+                id="ba-en"
+                checked={automationForm.enabled}
+                onCheckedChange={(v) => setAutomationForm((f) => ({ ...f, enabled: v }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Interval (dny)</Label>
+              <Input
+                type="number"
+                min={1}
+                className="bg-white border-slate-200"
+                value={automationForm.intervalDays}
+                onChange={(e) =>
+                  setAutomationForm((f) => ({ ...f, intervalDays: Math.max(1, parseInt(e.target.value, 10) || 30) }))
+                }
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Další datum vystavení</Label>
+              <Input
+                type="date"
+                className="bg-white border-slate-200"
+                value={automationForm.nextIssueDate}
+                onChange={(e) => setAutomationForm((f) => ({ ...f, nextIssueDate: e.target.value }))}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Splatnost od vystavení (dny)</Label>
+              <Input
+                type="number"
+                min={1}
+                className="bg-white border-slate-200"
+                value={automationForm.dueDays}
+                onChange={(e) =>
+                  setAutomationForm((f) => ({ ...f, dueDays: Math.max(1, parseInt(e.target.value, 10) || 14) }))
+                }
+              />
+            </div>
+            <div className="flex items-center justify-between gap-4">
+              <Label htmlFor="ba-mail">Poslat e-mail organizaci po vystavení</Label>
+              <Switch
+                id="ba-mail"
+                checked={automationForm.sendEmail}
+                onCheckedChange={(v) => setAutomationForm((f) => ({ ...f, sendEmail: v }))}
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAutomationFor(null)} disabled={automationSaving}>
+              Zrušit
+            </Button>
+            <Button onClick={() => void saveAutomation()} disabled={automationSaving}>
+              {automationSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "Uložit"}
             </Button>
           </DialogFooter>
         </DialogContent>

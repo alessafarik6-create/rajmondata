@@ -3,6 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import {
   DEFAULT_PLATFORM_MODULES,
   PLATFORM_BILLING_PROVIDER_DOC,
+  PLATFORM_PRICING_DOC,
   PLATFORM_SETTINGS_DOC,
   PLATFORM_SEO_DOC,
 } from "@/lib/platform-config";
@@ -52,6 +53,19 @@ export async function ensurePlatformSettingsSeeded(db: Firestore): Promise<void>
   }
 }
 
+export async function ensurePlatformPricingDoc(db: Firestore): Promise<void> {
+  const ref = db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_PRICING_DOC);
+  const snap = await ref.get();
+  if (snap.exists) return;
+  await ref.set({
+    baseLicenseMonthlyCzk: 0,
+    defaultVatPercent: 21,
+    automationDefaultIntervalDays: 30,
+    automationDefaultDueDays: 14,
+    updatedAt: FieldValue.serverTimestamp(),
+  });
+}
+
 export async function ensureBillingProviderDoc(db: Firestore): Promise<void> {
   const ref = db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_BILLING_PROVIDER_DOC);
   const snap = await ref.get();
@@ -95,6 +109,7 @@ export async function ensurePlatformSeoSeeded(db: Firestore): Promise<void> {
 export async function ensureAllPlatformData(db: Firestore): Promise<void> {
   await ensurePlatformModulesSeeded(db);
   await ensurePlatformSettingsSeeded(db);
+  await ensurePlatformPricingDoc(db);
   await ensureBillingProviderDoc(db);
   await ensurePlatformSeoSeeded(db);
 }

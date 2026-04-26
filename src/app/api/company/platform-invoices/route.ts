@@ -1,6 +1,16 @@
 import { NextResponse } from "next/server";
 import { verifyCompanyBearer } from "@/lib/api-company-auth";
-import { listPlatformInvoicesForOrganization, computeEffectivePlatformInvoiceStatus } from "@/lib/platform-billing";
+import {
+  listPlatformInvoicesForOrganization,
+  computeEffectivePlatformInvoiceStatus,
+} from "@/lib/platform-billing";
+import { PLATFORM_SETTINGS_COLLECTION } from "@/lib/firestore-collections";
+import { PLATFORM_BILLING_PROVIDER_DOC } from "@/lib/platform-config";
+import {
+  buildInvoicePaymentQr,
+  convertToIban,
+  parsePaymentAccountString,
+} from "@/lib/invoice-billing-meta";
 
 function canReadPlatformBilling(role: string): boolean {
   return role === "owner" || role === "admin" || role === "accountant";
@@ -25,7 +35,48 @@ export async function GET(request: Request) {
       return e === "unpaid" || e === "overdue";
     }).length;
     const overdueCount = rows.filter((r) => eff(r) === "overdue").length;
-    return NextResponse.json({ invoices: rows, unpaidCount, overdueCount });
+
+    let provider: Record<string, unknown> | null = null;
+    try {
+      const ps = await db.collection(PLATFORM_SETTINGS_COLLECTION).doc(PLATFORM_BILLING_PROVIDER_DOC).get();
+      provider = ps.exists ? (ps.data() as Record<string, unknown>) : null;
+    } catch {
+      provider = null;
+    }
+
+    const enriched = rows.map((r) => {
+      const e = eff(r);
+      const out = { ...r } as Record<string, unknown>;
+      if (e === "paid" || e === "cancelled") {
+        out.paymentQr = null;
+        return out;
+      }
+      if (!provider) {
+        out.paymentQr = { qrUrl: "", spd: "", warning: "Chybí nastavení provozovatele." };
+        return out;
+      }
+      const accRaw = String(provider.accountNumber || "").trim();
+      const { accountNumber, bankCode, iban: parsedIban } = parsePaymentAccountString(accRaw);
+      const ibanResolved =
+        String(provider.iban || "").trim() ||
+        (parsedIban ? parsedIban : convertToIban(accountNumber, bankCode) || "") ||
+        null;
+      const invNum = String(r.invoiceNumber || r.id || "").trim();
+      const qr = buildInvoicePaymentQr({
+        iban: ibanResolved,
+        bankAccountNumber: accountNumber,
+        bankCode,
+        amountGross: Number(r.total),
+        variableSymbol: String(r.variableSymbol || "").trim() || null,
+        message: `FA ${invNum}`.slice(0, 60),
+      });
+      out.paymentQr = qr
+        ? { qrUrl: qr.qrUrl, spd: qr.spd, warning: qr.warning }
+        : { qrUrl: "", spd: "", warning: "QR nelze vytvořit." };
+      return out;
+    });
+
+    return NextResponse.json({ invoices: enriched, unpaidCount, overdueCount });
   } catch (e) {
     console.error("[company platform-invoices GET]", e);
     const msg = e instanceof Error ? e.message : "Načtení se nezdařilo.";

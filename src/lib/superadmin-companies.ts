@@ -58,6 +58,8 @@ export interface CompanyWithLicense {
   modules?: Record<string, boolean>;
   enabledModuleIds?: string[];
   companyLicense?: CompanyLicenseDoc;
+  /** Automatická fakturace (uloženo na dokumentu organizace). */
+  billingAutomation?: Record<string, unknown> | null;
 }
 
 export interface LicenseUpdate {
@@ -244,6 +246,10 @@ export async function getCompany(db: Firestore, id: string): Promise<CompanyWith
   return {
     ...base,
     companyLicense,
+    billingAutomation:
+      raw.billingAutomation != null && typeof raw.billingAutomation === "object"
+        ? (raw.billingAutomation as Record<string, unknown>)
+        : undefined,
   };
 }
 

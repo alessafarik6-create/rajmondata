@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore } from "@/lib/firebase-admin";
+import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from "@/lib/firestore-collections";
 import { getCompany, updateCompany } from "@/lib/superadmin-companies";
+import {
+  billingAutomationFirestorePayload,
+  loadPlatformPricingDoc,
+  normalizeBillingAutomation,
+} from "@/lib/platform-invoice-auto";
+import { ensureAllPlatformData } from "@/lib/superadmin-platform-seed";
 
 export async function GET(
   _request: NextRequest,
@@ -83,16 +90,43 @@ export async function PATCH(
         ? body.companyLicense
         : undefined;
 
-    if (isActive === undefined && !license && !companyLicense) {
+    const billingAutomationRaw = (body as Record<string, unknown>).billingAutomation;
+    const hasBillingPatch =
+      billingAutomationRaw !== undefined &&
+      billingAutomationRaw !== null &&
+      typeof billingAutomationRaw === "object";
+
+    if (isActive === undefined && !license && !companyLicense && !hasBillingPatch) {
       return NextResponse.json({ error: "Žádné změny." }, { status: 400 });
     }
 
-    await updateCompany(
-      db,
-      id,
-      { isActive, license, companyLicense },
-      { actorLabel: session.username }
-    );
+    if (isActive !== undefined || license || companyLicense) {
+      await updateCompany(
+        db,
+        id,
+        { isActive, license, companyLicense },
+        { actorLabel: session.username }
+      );
+    }
+
+    if (hasBillingPatch) {
+      await ensureAllPlatformData(db);
+      const pricingDefaults = await loadPlatformPricingDoc(db);
+      const orgSnap = await db.collection(ORGANIZATIONS_COLLECTION).doc(id).get();
+      const prevBa =
+        orgSnap.exists && orgSnap.data()?.billingAutomation && typeof orgSnap.data()!.billingAutomation === "object"
+          ? (orgSnap.data()!.billingAutomation as Record<string, unknown>)
+          : {};
+      const mergedBilling = { ...prevBa, ...(billingAutomationRaw as Record<string, unknown>) };
+      const state = normalizeBillingAutomation(mergedBilling, {
+        intervalDays: pricingDefaults.automationDefaultIntervalDays,
+        dueDays: pricingDefaults.automationDefaultDueDays,
+      });
+      const patch = billingAutomationFirestorePayload(state);
+      await db.collection(ORGANIZATIONS_COLLECTION).doc(id).set({ ...patch, updatedAt: new Date() }, { merge: true });
+      await db.collection(COMPANIES_COLLECTION).doc(id).set({ ...patch, updatedAt: new Date() }, { merge: true });
+    }
+
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[superadmin company update]", e);

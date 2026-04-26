@@ -916,9 +916,9 @@ export default function CompanyDashboard() {
           >
             <Alert className="border-2 border-amber-500 bg-amber-50 text-amber-950 shadow-md dark:border-amber-600 dark:bg-amber-950/35 dark:text-amber-50">
               <FileText className="h-5 w-5 text-amber-700 dark:text-amber-300" />
-              <AlertTitle className="text-base font-semibold">Máte vystavenou fakturu k úhradě</AlertTitle>
+              <AlertTitle className="text-base font-semibold">Máte novou fakturu k úhradě</AlertTitle>
               <AlertDescription className="text-sm font-medium text-amber-900 dark:text-amber-100">
-                Počet neuhrazených faktur: {platformInvoiceUnpaid}. Přejděte do sekce Vyúčtování, kde najdete PDF a platební údaje.
+                Počet neuhrazených faktur: {platformInvoiceUnpaid}. V sekci Vyúčtování najdete PDF, QR platbu a platební údaje.
               </AlertDescription>
             </Alert>
           </Link>

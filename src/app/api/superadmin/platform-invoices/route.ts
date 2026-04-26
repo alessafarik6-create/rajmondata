@@ -1,23 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { FieldValue } from "firebase-admin/firestore";
 import { getSessionFromCookie } from "@/lib/superadmin-auth";
 import { getAdminFirestore, getAdminStorageBucket } from "@/lib/firebase-admin";
 import { PLATFORM_INVOICES_COLLECTION } from "@/lib/firestore-collections";
-import { renderStoredHtmlToPdfBuffer } from "@/lib/document-email-pdf-server";
+import type { PlatformInvoiceLineInput } from "@/lib/platform-billing";
 import {
-  allocatePlatformInvoiceSequence,
-  buildLineRowsFromInput,
-  buildPlatformFeeInvoiceHtml,
-  companyDocToBillingCustomer,
-  formatPlatformInvoiceNumber,
-  loadBillingProviderOrThrow,
-  loadCompanyDocOrThrow,
-  snapshotCustomerFromCompany,
-  snapshotSupplierFromProvider,
-  sumInvoiceLines,
-  type PlatformInvoiceLineInput,
-  variableSymbolFromInvoiceNumber,
-} from "@/lib/platform-billing";
+  buildAutomaticPlatformInvoiceLineInputs,
+  loadDefaultEmployeePriceCzk,
+  loadLicenseAndCompanyForAutoInvoice,
+  loadMergedCatalogFromFirestore,
+  loadPlatformPricingDoc,
+} from "@/lib/platform-invoice-auto";
+import { issuePlatformInvoiceAdmin } from "@/lib/platform-invoice-issue";
 import { ensureAllPlatformData } from "@/lib/superadmin-platform-seed";
 
 export async function GET(request: NextRequest) {
@@ -53,6 +46,8 @@ type PostBody = {
   dueDate?: string;
   note?: string | null;
   items?: PlatformInvoiceLineInput[];
+  autoFromLicense?: boolean;
+  extraItems?: PlatformInvoiceLineInput[];
 };
 
 export async function POST(request: NextRequest) {
@@ -81,99 +76,54 @@ export async function POST(request: NextRequest) {
       { status: 400 }
     );
   }
-  const itemsRaw = Array.isArray(body.items) ? body.items : [];
-  if (itemsRaw.length === 0 || itemsRaw.length > 40) {
-    return NextResponse.json({ error: "Přidejte 1–40 položek faktury." }, { status: 400 });
-  }
   try {
     await ensureAllPlatformData(db);
-    const provider = await loadBillingProviderOrThrow(db);
-    const company = await loadCompanyDocOrThrow(db, organizationId);
-    const seq = await allocatePlatformInvoiceSequence(db);
-    const issue = issueDate || new Date().toISOString().slice(0, 10);
-    const year = Number(issue.slice(0, 4)) || new Date().getFullYear();
-    const invoiceNumber = formatPlatformInvoiceNumber(seq, year);
-    const variableSymbol = variableSymbolFromInvoiceNumber(invoiceNumber);
-    const lineRows = buildLineRowsFromInput(itemsRaw as PlatformInvoiceLineInput[]);
-    const { amountNet, vatAmount, amountGross } = sumInvoiceLines(lineRows);
-    const rates = [...new Set(lineRows.map((r) => r.vatRate))];
-    const primaryVatLabel = rates.length === 1 ? `${rates[0]} %` : "více sazeb DPH";
-    const customer = companyDocToBillingCustomer(company);
-    const orgName = String(company.companyName || company.name || organizationId).trim();
-    const html = buildPlatformFeeInvoiceHtml({
-      billingProvider: provider,
-      customer,
-      invoiceNumber,
-      issueDate: issue,
-      dueDate,
-      taxSupplyDate: issue,
-      periodFrom,
-      periodTo,
-      items: lineRows,
-      amountNet,
-      vatAmount,
-      amountGross,
-      primaryVatLabel,
-      note: note || null,
-      variableSymbol,
-    });
-    const pdfBuf = await renderStoredHtmlToPdfBuffer(html);
-    const invRef = db.collection(PLATFORM_INVOICES_COLLECTION).doc();
-    const invoiceId = invRef.id;
-    const storagePath = `platform_invoices/${organizationId}/${invoiceId}.pdf`;
-    const f = bucket.file(storagePath);
-    await f.save(pdfBuf, {
-      metadata: { contentType: "application/pdf", cacheControl: "private, max-age=120" },
-    });
-    try {
-      await f.makePublic();
-    } catch (e) {
-      console.warn("[platform-invoices POST] makePublic:", e);
+    let itemsRaw: PlatformInvoiceLineInput[] = [];
+    if (body.autoFromLicense === true) {
+      const [pricing, catalog, defEmp, ctx] = await Promise.all([
+        loadPlatformPricingDoc(db),
+        loadMergedCatalogFromFirestore(db),
+        loadDefaultEmployeePriceCzk(db),
+        loadLicenseAndCompanyForAutoInvoice(db, organizationId),
+      ]);
+      itemsRaw = buildAutomaticPlatformInvoiceLineInputs({
+        platformCompany: ctx.platformCompany,
+        license: ctx.license,
+        catalog,
+        pricing,
+        defaultEmployeePriceCzk: defEmp,
+        employeeCount: ctx.employeeCount,
+        periodFrom,
+        periodTo,
+        extraItems: Array.isArray(body.extraItems) ? body.extraItems : undefined,
+      });
+    } else {
+      itemsRaw = Array.isArray(body.items) ? body.items : [];
     }
-    const encoded = encodeURIComponent(storagePath);
-    const pdfUrl = `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encoded}?alt=media`;
-    const supplierSnapshot = snapshotSupplierFromProvider(provider);
-    const customerSnapshot = snapshotCustomerFromCompany(organizationId, company);
-    await invRef.set({
-      id: invoiceId,
+    if (itemsRaw.length === 0 || itemsRaw.length > 40) {
+      return NextResponse.json(
+        { error: body.autoFromLicense ? "Žádné automatické položky." : "Přidejte 1–40 položek faktury." },
+        { status: 400 }
+      );
+    }
+    const result = await issuePlatformInvoiceAdmin({
+      db,
+      bucket,
       organizationId,
-      organizationName: orgName,
-      invoiceNumber,
-      variableSymbol,
-      issueDate: issue,
-      dueDate,
       periodFrom,
       periodTo,
-      supplier: supplierSnapshot,
-      customer: customerSnapshot,
-      items: lineRows.map((r, i) => ({
-        index: i,
-        description: r.description,
-        quantity: r.quantity,
-        unit: r.unit,
-        unitPriceNet: r.unitPriceNet,
-        vatRate: r.vatRate,
-        lineNet: r.lineNet,
-        lineVat: r.lineVat,
-        lineGross: r.lineGross,
-      })),
-      subtotal: amountNet,
-      vatAmount,
-      total: amountGross,
-      currency: "CZK",
-      status: "unpaid",
-      pdfUrl,
-      storagePath,
+      dueDate,
+      issueDate: issueDate || undefined,
       note: note || null,
-      createdAt: FieldValue.serverTimestamp(),
+      items: itemsRaw,
       createdBy: session.username,
-      paidAt: null,
+      issueSource: body.autoFromLicense ? "license_auto" : "manual",
     });
     return NextResponse.json({
       ok: true,
-      invoiceId,
-      invoiceNumber,
-      pdfUrl,
+      invoiceId: result.invoiceId,
+      invoiceNumber: result.invoiceNumber,
+      pdfUrl: result.pdfUrl,
     });
   } catch (e) {
     console.error("[superadmin platform-invoices POST]", e);

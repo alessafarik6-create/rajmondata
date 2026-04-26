@@ -31,10 +31,13 @@ type PlatformInvoiceRow = {
   invoiceNumber?: string;
   issueDate?: string;
   dueDate?: string;
+  periodFrom?: string;
+  periodTo?: string;
   total?: number;
   currency?: string;
   status?: string;
   displayStatus?: string;
+  paymentQr?: { qrUrl?: string; spd?: string; warning?: string | null } | null;
 };
 
 function formatMoney(n: unknown, currency = "CZK"): string {
@@ -214,9 +217,9 @@ export default function VyuctovaniPage() {
       ) : unpaidCount > 0 ? (
         <Alert className="border-2 border-amber-500 bg-amber-50 text-amber-950 dark:border-amber-600 dark:bg-amber-950/35 dark:text-amber-50">
           <FileText className="h-5 w-5 text-amber-700 dark:text-amber-300" />
-          <AlertTitle className="text-base font-semibold">Máte vystavenou fakturu k úhradě</AlertTitle>
+          <AlertTitle className="text-base font-semibold">Máte novou fakturu k úhradě</AlertTitle>
           <AlertDescription className="text-sm font-medium text-amber-900 dark:text-amber-100">
-            Počet dokumentů k úhradě: {unpaidCount}. Zkontrolujte splatnosti v tabulce níže.
+            Počet neuhrazených faktur: {unpaidCount}. Níže je QR platba u každé položky (pokud je k dispozici účet v IBAN).
           </AlertDescription>
         </Alert>
       ) : null}
@@ -224,7 +227,7 @@ export default function VyuctovaniPage() {
       <Card>
         <CardHeader>
           <CardTitle>Seznam faktur</CardTitle>
-          <CardDescription>Číslo faktury, data, částka a stav úhrady.</CardDescription>
+          <CardDescription>Číslo faktury, účtované období, částka, stav a QR platba.</CardDescription>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
           {loading ? (
@@ -266,6 +269,11 @@ export default function VyuctovaniPage() {
                         <TableCell className="font-mono text-sm font-semibold">
                           {inv.invoiceNumber || inv.id.slice(0, 8)}
                         </TableCell>
+                        <TableCell className="hidden md:table-cell text-xs text-muted-foreground whitespace-nowrap">
+                          {inv.periodFrom && inv.periodTo
+                            ? `${formatDateCs(inv.periodFrom)} – ${formatDateCs(inv.periodTo)}`
+                            : "—"}
+                        </TableCell>
                         <TableCell className="whitespace-nowrap text-sm">{formatDateCs(inv.issueDate)}</TableCell>
                         <TableCell className="whitespace-nowrap text-sm">{formatDateCs(inv.dueDate)}</TableCell>
                         <TableCell className="text-right font-medium tabular-nums">
@@ -285,6 +293,23 @@ export default function VyuctovaniPage() {
                             </Badge>
                           ) : (
                             <Badge variant={eff === "paid" ? "default" : "secondary"}>{statusLabel(eff)}</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell align-middle">
+                          {eff === "paid" || eff === "cancelled" ? (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          ) : inv.paymentQr?.qrUrl && !inv.paymentQr.warning ? (
+                            <img
+                              src={inv.paymentQr.qrUrl}
+                              alt="QR platba"
+                              width={88}
+                              height={88}
+                              className="mx-auto rounded border border-border bg-white p-0.5"
+                            />
+                          ) : (
+                            <span className="text-xs text-muted-foreground block max-w-[100px]">
+                              {inv.paymentQr?.warning || "QR nelze zobrazit"}
+                            </span>
                           )}
                         </TableCell>
                         <TableCell className="text-right pr-2">
