@@ -22,6 +22,11 @@ export type SubscriptionModuleLine = {
   isPaid: boolean;
 };
 
+export type BuildSubscriptionModuleLinesOptions = {
+  /** Počet zaměstnanců bez `isActive === false` — pro moduly typu per_employee. */
+  billableEmployeeCount?: number | null;
+};
+
 function fmtMoney(n: number, currency: string): string {
   if (!Number.isFinite(n)) return "—";
   if (currency === "CZK") {
@@ -33,7 +38,8 @@ function fmtMoney(n: number, currency: string): string {
 export function buildSubscriptionModuleLines(
   company: CompanyPlatformFields,
   catalog: Record<PlatformModuleCode, PlatformModuleCatalogRow>,
-  licenseDoc: CompanyLicenseDoc | null | undefined
+  licenseDoc: CompanyLicenseDoc | null | undefined,
+  opts?: BuildSubscriptionModuleLinesOptions
 ): SubscriptionModuleLine[] {
   const lines: SubscriptionModuleLine[] = [];
   for (const code of PLATFORM_MODULE_CODES) {
@@ -65,19 +71,31 @@ export function buildSubscriptionModuleLines(
 
     if (row.billingType === "per_employee") {
       const per = row.employeePriceCzk ?? 0;
+      const cnt =
+        opts?.billableEmployeeCount != null && Number.isFinite(opts.billableEmployeeCount)
+          ? Math.max(0, Math.round(Number(opts.billableEmployeeCount)))
+          : null;
       const monthlyFromLicense =
         code === "attendance_payroll"
           ? licenseDoc?.employeePricing?.monthlyModuleCzk ?? null
           : null;
+      const monthlyFromCount =
+        cnt != null && row.currency === "CZK" && Number.isFinite(per) ? Math.round(per * cnt * 100) / 100 : null;
       const monthly =
-        monthlyFromLicense != null && Number.isFinite(monthlyFromLicense)
-          ? monthlyFromLicense
-          : null;
+        monthlyFromCount != null
+          ? monthlyFromCount
+          : monthlyFromLicense != null && Number.isFinite(monthlyFromLicense)
+            ? monthlyFromLicense
+            : null;
+      const priceLabel =
+        cnt != null && row.currency === "CZK"
+          ? `${fmtMoney(per, row.currency)} × ${cnt} = ${fmtMoney(monthlyFromCount ?? per * cnt, row.currency)} / měsíc`
+          : `${fmtMoney(per, row.currency)} / zaměstnanec / měsíc`;
       lines.push({
         moduleCode: code,
         name: row.name,
         statusLabel: "Aktivní",
-        priceLabel: `${fmtMoney(per, row.currency)} / zaměstnanec / měsíc`,
+        priceLabel,
         currency: row.currency,
         monthlyAmount: monthly,
         isPaid: true,

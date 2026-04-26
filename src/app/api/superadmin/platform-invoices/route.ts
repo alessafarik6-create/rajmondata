@@ -12,6 +12,7 @@ import {
 } from "@/lib/platform-invoice-auto";
 import { issuePlatformInvoiceAdmin } from "@/lib/platform-invoice-issue";
 import { ensureAllPlatformData } from "@/lib/superadmin-platform-seed";
+import { sortPlatformInvoicesByRecencyDesc } from "@/lib/platform-billing";
 
 export async function GET(request: NextRequest) {
   const session = await getSessionFromCookie();
@@ -25,11 +26,12 @@ export async function GET(request: NextRequest) {
       ? await db
           .collection(PLATFORM_INVOICES_COLLECTION)
           .where("organizationId", "==", orgId)
-          .orderBy("createdAt", "desc")
-          .limit(200)
+          .limit(300)
           .get()
-      : await db.collection(PLATFORM_INVOICES_COLLECTION).orderBy("createdAt", "desc").limit(200).get();
-    const rows = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      : await db.collection(PLATFORM_INVOICES_COLLECTION).limit(400).get();
+    const rows = sortPlatformInvoicesByRecencyDesc(
+      snap.docs.map((d) => ({ id: d.id, ...(d.data() as Record<string, unknown>) }))
+    ).slice(0, 200);
     return NextResponse.json({ invoices: rows });
   } catch (e) {
     console.error("[superadmin platform-invoices GET]", e);

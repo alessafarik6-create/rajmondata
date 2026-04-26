@@ -38,7 +38,7 @@ export function pickLatestUnpaidPlatformInvoiceId(
 ): string | null {
   for (const r of rows) {
     const st = String(r.status || "unpaid");
-    if (st === "paid" || st === "cancelled") continue;
+    if (st === "paid" || st === "cancelled" || st === "canceled") continue;
     const eff = r.displayStatus || computeEffectivePlatformInvoiceStatus(st, r.dueDate as string);
     if (eff === "paid" || eff === "cancelled") continue;
     return r.id;
@@ -82,7 +82,7 @@ export async function claimPlatformInvoicePaymentAdmin(input: {
     return { ok: false, status: 403, error: "Faktura nepatří této organizaci." };
   }
   const st = String(data.status || "unpaid");
-  if (st === "paid" || st === "cancelled") {
+  if (st === "paid" || st === "cancelled" || st === "canceled") {
     return { ok: false, status: 400, error: "Faktura není ve stavu k úhradě." };
   }
 
@@ -134,7 +134,7 @@ export async function processExpiredPlatformPaymentGraceAdmin(db: Firestore): Pr
     const data = (doc.data() ?? {}) as Record<string, unknown>;
     try {
       const st = String(data.status || "unpaid");
-      if (st === "paid" || st === "cancelled") continue;
+      if (st === "paid" || st === "cancelled" || st === "canceled") continue;
       if (data.graceDeactivationApplied === true) continue;
       const graceMs = firestoreTimestampToMillis(data.gracePeriodUntil);
       if (graceMs == null || graceMs > now) continue;
@@ -147,14 +147,32 @@ export async function processExpiredPlatformPaymentGraceAdmin(db: Firestore): Pr
         invoiceId: doc.id,
         at: FieldValue.serverTimestamp(),
       };
+      const orgRef = db.collection(ORGANIZATIONS_COLLECTION).doc(orgId);
+      const compRef = db.collection(COMPANIES_COLLECTION).doc(orgId);
+      const [orgSnap, compSnap] = await Promise.all([orgRef.get(), compRef.get()]);
+      const orgLic = (orgSnap.data()?.license as Record<string, unknown> | undefined) ?? {};
+      const compLic = (compSnap.data()?.license as Record<string, unknown> | undefined) ?? {};
+      const licenseSuspended = {
+        ...orgLic,
+        status: "suspended",
+        licenseStatus: "suspended",
+      };
       const patch = {
         isActive: false,
         active: false,
+        licenseActive: false,
+        license: licenseSuspended,
         platformBillingSuspension: suspension,
         updatedAt: new Date(),
       };
-      await db.collection(ORGANIZATIONS_COLLECTION).doc(orgId).set(patch, { merge: true });
-      await db.collection(COMPANIES_COLLECTION).doc(orgId).set(patch, { merge: true });
+      await orgRef.set(patch, { merge: true });
+      await compRef.set(
+        {
+          ...patch,
+          license: { ...compLic, status: "suspended", licenseStatus: "suspended" },
+        },
+        { merge: true }
+      );
       await doc.ref.set(
         {
           graceDeactivationApplied: true,

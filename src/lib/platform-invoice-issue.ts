@@ -21,6 +21,11 @@ import {
   variableSymbolFromInvoiceNumber,
 } from "@/lib/platform-billing";
 import { platformInvoiceExistsForPeriod } from "@/lib/platform-invoice-auto";
+import {
+  buildInvoicePaymentQr,
+  convertToIban,
+  parsePaymentAccountString,
+} from "@/lib/invoice-billing-meta";
 
 export type IssuePlatformInvoiceSource = "manual" | "license_auto" | "automation";
 
@@ -84,6 +89,53 @@ export async function issuePlatformInvoiceAdmin(
   const variableSymbol = variableSymbolFromInvoiceNumber(invoiceNumber);
   const lineRows = buildLineRowsFromInput(items);
   const { amountNet, vatAmount, amountGross } = sumInvoiceLines(lineRows);
+
+  let baseLicensePrice = 0;
+  let modulesTotal = 0;
+  let employeeCount = 0;
+  let employeeTotal = 0;
+  let employeePrice = 0;
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const row = lineRows[i];
+    if (!it || !row) continue;
+    const kind = String(it.kind || "custom");
+    if (kind === "platform_license") {
+      baseLicensePrice += row.lineNet;
+    } else if (kind === "employees") {
+      const q = Number(it.quantity);
+      employeeCount += Number.isFinite(q) ? q : 0;
+      employeeTotal += row.lineNet;
+      const up = Number(it.unitPriceNet);
+      if ((!employeePrice || employeePrice <= 0) && Number.isFinite(up) && up > 0) employeePrice = up;
+    } else if (kind === "modules") {
+      modulesTotal += row.lineNet;
+    } else {
+      modulesTotal += row.lineNet;
+    }
+  }
+  baseLicensePrice = Math.round(baseLicensePrice * 100) / 100;
+  modulesTotal = Math.round(modulesTotal * 100) / 100;
+  employeeTotal = Math.round(employeeTotal * 100) / 100;
+  employeePrice = Math.round(employeePrice * 100) / 100;
+
+  const accRaw = String(provider.accountNumber || "").trim();
+  const { accountNumber, bankCode, iban: parsedIban } = parsePaymentAccountString(accRaw);
+  const ibanResolved =
+    String(provider.iban || "").trim() ||
+    (parsedIban ? parsedIban : convertToIban(accountNumber, bankCode) || "") ||
+    null;
+  const qrSnap = buildInvoicePaymentQr({
+    iban: ibanResolved,
+    bankAccountNumber: accountNumber,
+    bankCode,
+    amountGross,
+    variableSymbol,
+    message: `FA ${invoiceNumber}`.slice(0, 60),
+  });
+  const qrPaymentData = qrSnap
+    ? { spd: qrSnap.spd, qrUrl: qrSnap.qrUrl, warning: qrSnap.warning }
+    : { spd: "", qrUrl: "", warning: "QR nelze vytvořit." };
   const rates = [...new Set(lineRows.map((r) => r.vatRate))];
   const primaryVatLabel = rates.length === 1 ? `${rates[0]} %` : "více sazeb DPH";
   const customer = companyDocToBillingCustomer(company);
@@ -148,6 +200,14 @@ export async function issuePlatformInvoiceAdmin(
     subtotal: amountNet,
     vatAmount,
     total: amountGross,
+    totalAmount: amountGross,
+    baseLicensePrice,
+    modulesTotal,
+    employeePrice,
+    employeeCount,
+    employeeTotal,
+    qrPaymentData,
+    issuedAt: issue,
     currency: "CZK",
     status: "unpaid",
     pdfUrl,

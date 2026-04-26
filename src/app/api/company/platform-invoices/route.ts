@@ -29,7 +29,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Přístup jen pro vlastníka, administrátora nebo účetního." }, { status: 403 });
   }
   try {
-    const rows = await listPlatformInvoicesForOrganization(db, caller.companyId);
+    let rows: Awaited<ReturnType<typeof listPlatformInvoicesForOrganization>>;
+    try {
+      rows = await listPlatformInvoicesForOrganization(db, caller.companyId);
+    } catch (listErr) {
+      console.error("[company platform-invoices GET] listPlatformInvoicesForOrganization", listErr);
+      throw listErr;
+    }
     const eff = (r: (typeof rows)[number]) =>
       computeEffectivePlatformInvoiceStatus(String(r.status), r.dueDate as string);
     const unpaidCount = rows.filter((r) => {
@@ -60,6 +66,17 @@ export async function GET(request: Request) {
       const out = serializePlatformInvoiceRowForApi({ ...r } as Record<string, unknown>);
       if (e === "paid" || e === "cancelled") {
         out.paymentQr = null;
+        return out;
+      }
+      const stored = out.qrPaymentData as
+        | { qrUrl?: string; spd?: string; warning?: string | null }
+        | undefined;
+      if (stored && typeof stored.qrUrl === "string" && stored.qrUrl.trim() && !stored.warning) {
+        out.paymentQr = {
+          qrUrl: stored.qrUrl.trim(),
+          spd: String(stored.spd || "").trim(),
+          warning: stored.warning ?? null,
+        };
         return out;
       }
       if (!provider) {

@@ -9,7 +9,8 @@ export function computeEffectivePlatformInvoiceStatus(
   status: string,
   dueDate: string | null | undefined
 ): "paid" | "cancelled" | "overdue" | "unpaid" {
-  if (status === "paid" || status === "cancelled") return status;
+  if (status === "paid") return "paid";
+  if (status === "cancelled" || status === "canceled") return "cancelled";
   const d = String(dueDate || "").slice(0, 10);
   const today = todayIsoDate();
   if (d && d < today) return "overdue";

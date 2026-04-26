@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   Card,
@@ -42,12 +42,25 @@ type PlatformInvoiceRow = {
   periodFrom?: string;
   periodTo?: string;
   total?: number;
+  totalAmount?: number;
   currency?: string;
   status?: string;
   displayStatus?: string;
   paymentClaimed?: boolean;
   gracePeriodUntil?: string;
   paymentQr?: { qrUrl?: string; spd?: string; warning?: string | null } | null;
+  qrPaymentData?: { qrUrl?: string; spd?: string; warning?: string | null };
+  baseLicensePrice?: number;
+  modulesTotal?: number;
+  employeePrice?: number;
+  employeeCount?: number;
+  employeeTotal?: number;
+  items?: Array<{
+    description?: string;
+    quantity?: number;
+    unitPriceNet?: number;
+    lineNet?: number;
+  }>;
 };
 
 type BillingSummary = {
@@ -83,6 +96,67 @@ function formatGraceRemaining(iso: string | null | undefined, _tick = 0): string
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
   return `${h} h ${m} min`;
+}
+
+function invoiceBreakdown(inv: PlatformInvoiceRow): ReactNode {
+  const base = Number(inv.baseLicensePrice);
+  const mod = Number(inv.modulesTotal);
+  const ec = Number(inv.employeeCount);
+  const ep = Number(inv.employeePrice);
+  const et = Number(inv.employeeTotal);
+  const hasAgg =
+    (Number.isFinite(base) && base > 0) ||
+    (Number.isFinite(mod) && mod > 0) ||
+    (Number.isFinite(ec) && ec > 0) ||
+    (Number.isFinite(et) && et > 0);
+  if (hasAgg) {
+    return (
+      <ul className="text-xs text-muted-foreground space-y-1 max-w-[260px]">
+        {Number.isFinite(base) && base > 0 ? (
+          <li>Základní licence (bez DPH): {formatMoney(base, inv.currency || "CZK")}</li>
+        ) : null}
+        {Number.isFinite(mod) && mod > 0 ? (
+          <li>Aktivní moduly (bez DPH): {formatMoney(mod, inv.currency || "CZK")}</li>
+        ) : null}
+        {Number.isFinite(ec) && ec > 0 && Number.isFinite(ep) && ep > 0 ? (
+          <li>
+            Zaměstnanci: {formatMoney(ep, inv.currency || "CZK")} × {ec} ={" "}
+            {formatMoney(Number.isFinite(et) && et > 0 ? et : ec * ep, inv.currency || "CZK")} (bez DPH)
+          </li>
+        ) : null}
+        <li className="font-medium text-foreground">
+          Celkem k úhradě: {formatMoney(inv.totalAmount ?? inv.total, inv.currency || "CZK")}
+        </li>
+      </ul>
+    );
+  }
+  const items = Array.isArray(inv.items) ? inv.items : [];
+  if (items.length === 0) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <ul className="text-xs text-muted-foreground space-y-1 max-w-[260px]">
+      {items.slice(0, 8).map((it, i) => (
+        <li key={i}>
+          {(it.description || "Položka").slice(0, 42)}
+          {it.quantity != null && it.quantity > 1 ? ` × ${it.quantity}` : ""}:{" "}
+          {formatMoney(it.lineNet, inv.currency || "CZK")} (bez DPH)
+        </li>
+      ))}
+      {items.length > 8 ? <li>…</li> : null}
+    </ul>
+  );
+}
+
+function qrForInvoice(inv: PlatformInvoiceRow): { qrUrl: string; warning?: string | null } | null {
+  if (inv.paymentQr?.qrUrl && !inv.paymentQr.warning) {
+    return { qrUrl: inv.paymentQr.qrUrl, warning: inv.paymentQr.warning };
+  }
+  const q = inv.qrPaymentData;
+  if (q?.qrUrl && !q.warning) return { qrUrl: q.qrUrl, warning: q.warning };
+  return inv.paymentQr?.warning
+    ? { qrUrl: "", warning: inv.paymentQr.warning }
+    : q?.warning
+      ? { qrUrl: "", warning: q.warning }
+      : null;
 }
 
 function statusLabel(eff: ReturnType<typeof computeEffectivePlatformInvoiceStatus>): string {
@@ -312,7 +386,7 @@ export default function VyuctovaniPage() {
           <CalendarClock className="h-5 w-5 text-sky-700 dark:text-sky-300" />
           <AlertTitle className="text-base font-semibold">Platba čeká na potvrzení</AlertTitle>
           <AlertDescription className="text-sm font-medium text-sky-900 dark:text-sky-100">
-            Platba čeká na potvrzení superadministrátorem. Účet zůstává aktivní ještě 48 hodin.             Zbývá:{" "}
+            Platba čeká na potvrzení superadministrátorem. Účet zůstává aktivní ještě 48 hodin. Zbývá:{" "}
             {formatGraceRemaining(billing.gracePeriodUntilIso, graceTick)}.
           </AlertDescription>
         </Alert>
@@ -339,7 +413,9 @@ export default function VyuctovaniPage() {
       <Card>
         <CardHeader>
           <CardTitle>Seznam faktur</CardTitle>
-          <CardDescription>Číslo faktury, období, částka, stav, QR platba a PDF.</CardDescription>
+          <CardDescription>
+            Číslo faktury, období, rozpis položek, částka, stav, QR platba (SPD) a PDF.
+          </CardDescription>
         </CardHeader>
         <CardContent className="p-0 sm:p-6 sm:pt-0">
           {loading ? (
@@ -418,22 +494,31 @@ export default function VyuctovaniPage() {
                             ) : null}
                           </div>
                         </TableCell>
-                        <TableCell className="hidden lg:table-cell align-middle">
+                        <TableCell className="hidden sm:table-cell align-top py-3">
+                          {invoiceBreakdown(inv)}
+                        </TableCell>
+                        <TableCell className="align-middle">
                           {eff === "paid" || eff === "cancelled" ? (
                             <span className="text-xs text-muted-foreground">—</span>
-                          ) : inv.paymentQr?.qrUrl && !inv.paymentQr.warning ? (
-                            <img
-                              src={inv.paymentQr.qrUrl}
-                              alt="QR platba"
-                              width={88}
-                              height={88}
-                              className="mx-auto rounded border border-border bg-white p-0.5"
-                            />
-                          ) : (
-                            <span className="text-xs text-muted-foreground block max-w-[100px] mx-auto">
-                              {inv.paymentQr?.warning || "QR nelze zobrazit"}
-                            </span>
-                          )}
+                          ) : (() => {
+                            const qr = qrForInvoice(inv);
+                            if (qr?.qrUrl) {
+                              return (
+                                <img
+                                  src={qr.qrUrl}
+                                  alt="QR platba SPD"
+                                  width={88}
+                                  height={88}
+                                  className="mx-auto rounded border border-border bg-white p-0.5"
+                                />
+                              );
+                            }
+                            return (
+                              <span className="text-xs text-muted-foreground block max-w-[100px] mx-auto">
+                                {qr?.warning || "QR nelze zobrazit"}
+                              </span>
+                            );
+                          })()}
                         </TableCell>
                         <TableCell className="text-right pr-2">
                           <div className="flex flex-wrap justify-end gap-1">

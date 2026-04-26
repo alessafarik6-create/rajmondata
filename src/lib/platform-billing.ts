@@ -277,18 +277,40 @@ export function sumInvoiceLines(rows: InvoiceLineRow[]): {
   };
 }
 
+/** Čas řazení faktury (bez orderBy ve Firestore = bez composite indexu). */
+export function platformInvoiceRecencyMs(row: Record<string, unknown>): number {
+  const v = row.createdAt;
+  if (v && typeof (v as { toMillis?: () => number }).toMillis === "function") {
+    const n = (v as { toMillis: () => number }).toMillis();
+    return Number.isFinite(n) ? n : 0;
+  }
+  if (v && typeof (v as { seconds?: number }).seconds === "number") {
+    return (v as { seconds: number }).seconds * 1000;
+  }
+  const issue = String(row.issueDate || row.issuedAt || "").slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(issue)) {
+    return Date.parse(`${issue}T12:00:00.000Z`) || 0;
+  }
+  return 0;
+}
+
+export function sortPlatformInvoicesByRecencyDesc<T extends Record<string, unknown> & { id: string }>(
+  rows: T[]
+): T[] {
+  return [...rows].sort((a, b) => platformInvoiceRecencyMs(b) - platformInvoiceRecencyMs(a));
+}
+
 export async function listPlatformInvoicesForOrganization(
   db: Firestore,
   organizationId: string,
-  max = 100
+  max = 200
 ): Promise<Array<Record<string, unknown> & { id: string; displayStatus: string }>> {
   const q = await db
     .collection(PLATFORM_INVOICES_COLLECTION)
     .where("organizationId", "==", organizationId)
-    .orderBy("createdAt", "desc")
-    .limit(max)
+    .limit(Math.min(Math.max(max, 1), 500))
     .get();
-  return q.docs.map((d) => {
+  const rows = q.docs.map((d) => {
     const data = (d.data() ?? {}) as Record<string, unknown>;
     const row: Record<string, unknown> & { id: string } = { ...data, id: d.id };
     const st = String(row.status || "unpaid");
@@ -296,4 +318,5 @@ export async function listPlatformInvoicesForOrganization(
     const displayStatus = computeEffectivePlatformInvoiceStatus(st, due);
     return { ...row, displayStatus };
   });
+  return sortPlatformInvoicesByRecencyDesc(rows).slice(0, max);
 }

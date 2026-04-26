@@ -22,6 +22,15 @@ service cloud.firestore {
       return hasUser() ? userDoc().companyId : null;
     }
 
+    /** Tenant organizace — `companyId` nebo `organizationId` na profilu uživatele. */
+    function userTenantOrgId() {
+      return hasUser()
+        ? (userDoc().companyId != null
+            ? userDoc().companyId
+            : userDoc().organizationId)
+        : null;
+    }
+
     function userRole() {
       return hasUser() ? userDoc().role : null;
     }
@@ -2034,10 +2043,6 @@ service cloud.firestore {
         isPrivileged();
     }
 
-    match /platform_invoices/{id} {
-      allow read, write: if isSuperAdminFirebase();
-    }
-
     /**
      * Licence firmy — zápis jen při registraci (pending); úpravy přes Admin SDK (superadmin).
      * Dokument company_licenses/{companyId} musí mít companyId shodný s ID dokumentu.
@@ -2057,9 +2062,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    /** Faktury provozovatele platformy — pouze Admin SDK / API. */
+    /**
+     * Faktury provozovatele platformy — zápis přes Admin SDK / API.
+     * Čtení: superadmin nebo vlastník/admin/účetní vlastní organizace (organizationId = tenant).
+     * Úpravy z klienta nepovoleny (např. „Zaplatil jsem“ jen přes serverové API).
+     */
     match /platform_invoices/{invoiceId} {
-      allow read, write: if false;
+      allow read: if isSuperAdminFirebase() ||
+        (signedIn() &&
+          resource.data.organizationId == userTenantOrgId() &&
+          userRole() in ['owner', 'admin', 'accountant']);
+      allow create, delete: if false;
+      allow update: if false;
     }
 
     /** Katalog modulů — čtení pro přihlášené (výchozí pro menu / fallback u firmy); zápis jen Admin SDK. */

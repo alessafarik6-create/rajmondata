@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -10,8 +10,8 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { CheckCircle2, AlertCircle, Loader2, Lock } from "lucide-react";
-import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
-import { doc } from "firebase/firestore";
+import { useUser, useFirestore, useDoc, useMemoFirebase, useCollection } from "@/firebase";
+import { collection, doc } from "firebase/firestore";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Table,
@@ -27,7 +27,7 @@ import {
   getEffectiveModulesMerged,
 } from "@/lib/platform-access";
 import type { CompanyLicenseDoc } from "@/lib/platform-config";
-import { COMPANY_LICENSES_COLLECTION } from "@/lib/firestore-collections";
+import { COMPANIES_COLLECTION, COMPANY_LICENSES_COLLECTION } from "@/lib/firestore-collections";
 import {
   buildSubscriptionModuleLines,
   sumSubscriptionMonthlyCzk,
@@ -62,19 +62,78 @@ export default function BillingPage() {
 
   const licenseDoc = licenseRaw as CompanyLicenseDoc | null | undefined;
 
+  const employeesColRef = useMemoFirebase(
+    () =>
+      companyId && firestore ? collection(firestore, COMPANIES_COLLECTION, companyId, "employees") : null,
+    [firestore, companyId]
+  );
+  const { data: employeeRows } = useCollection(employeesColRef);
+
+  const billableEmployeeCount = useMemo(() => {
+    if (!employeeRows || !Array.isArray(employeeRows)) return null;
+    let n = 0;
+    for (const d of employeeRows) {
+      const row = d as { isActive?: boolean };
+      if (row.isActive !== false) n += 1;
+    }
+    return n;
+  }, [employeeRows]);
+
+  const [pricingPreview, setPricingPreview] = useState<{
+    baseLicenseMonthlyCzk: number;
+    defaultEmployeePriceCzk: number;
+  } | null>(null);
+
+  const loadPricing = useCallback(async () => {
+    if (!user) return;
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch("/api/company/subscription-pricing", {
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setPricingPreview(null);
+        return;
+      }
+      setPricingPreview({
+        baseLicenseMonthlyCzk: Number(data.baseLicenseMonthlyCzk) || 0,
+        defaultEmployeePriceCzk: Number(data.defaultEmployeePriceCzk) || 0,
+      });
+    } catch {
+      setPricingPreview(null);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    void loadPricing();
+  }, [loadPricing]);
+
   const subscriptionItems = useMemo(() => {
     if (!company) return [];
     return buildSubscriptionModuleLines(
       company as CompanyPlatformFields,
       moduleCatalog,
-      licenseDoc ?? null
+      licenseDoc ?? null,
+      { billableEmployeeCount }
     );
-  }, [company, moduleCatalog, licenseDoc]);
+  }, [company, moduleCatalog, licenseDoc, billableEmployeeCount]);
 
-  const totalRow = useMemo(
+  const modulesTotalRow = useMemo(
     () => sumSubscriptionMonthlyCzk(subscriptionItems),
     [subscriptionItems]
   );
+
+  const totalRow = useMemo(() => {
+    const base = pricingPreview?.baseLicenseMonthlyCzk ?? 0;
+    const m = modulesTotalRow;
+    if (m.total == null) {
+      if (base > 0) return { total: base, partial: m.partial };
+      return m;
+    }
+    return { total: base + m.total, partial: m.partial };
+  }, [modulesTotalRow, pricingPreview]);
 
   useEffect(() => {
     if (process.env.NODE_ENV !== "development" || !company) return;
@@ -189,6 +248,19 @@ export default function BillingPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
+                {(pricingPreview?.baseLicenseMonthlyCzk ?? 0) > 0 ? (
+                  <TableRow>
+                    <TableCell className="font-medium">Základní licence platformy</TableCell>
+                    <TableCell>
+                      <Badge variant="outline" className="font-normal">
+                        Aktivní
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-right text-sm">
+                      {Math.round(pricingPreview?.baseLicenseMonthlyCzk ?? 0).toLocaleString("cs-CZ")} Kč
+                    </TableCell>
+                  </TableRow>
+                ) : null}
                 {subscriptionItems.map((row) => (
                   <TableRow key={row.moduleCode}>
                     <TableCell className="font-medium">{row.name}</TableCell>

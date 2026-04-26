@@ -209,13 +209,15 @@ export async function platformInvoiceExistsForPeriod(
   const snap = await db
     .collection(PLATFORM_INVOICES_COLLECTION)
     .where("organizationId", "==", organizationId)
-    .where("periodFrom", "==", periodFrom)
-    .where("periodTo", "==", periodTo)
-    .limit(8)
+    .limit(120)
     .get();
   return snap.docs.some((d) => {
-    const st = String((d.data() as { status?: string }).status || "unpaid");
-    return st !== "cancelled";
+    const data = d.data() as { status?: string; periodFrom?: string; periodTo?: string };
+    if (String(data.periodFrom || "") !== periodFrom || String(data.periodTo || "") !== periodTo) {
+      return false;
+    }
+    const st = String(data.status || "unpaid");
+    return st !== "cancelled" && st !== "canceled";
   });
 }
 
