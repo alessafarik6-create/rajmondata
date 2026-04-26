@@ -26,9 +26,10 @@ export async function GET(request: NextRequest) {
     const companies = await getCompanies(db, { light, deletedOnly });
     return NextResponse.json(companies);
   } catch (e) {
-    console.error("[superadmin companies]", e);
+    const message = e instanceof Error ? e.message : String(e);
+    console.error("[superadmin companies]", message, e);
     return NextResponse.json(
-      { error: "Nepodařilo se načíst firmy." },
+      { error: "Nepodařilo se načíst firmy.", details: message },
       { status: 500 }
     );
   }

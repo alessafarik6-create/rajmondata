@@ -242,17 +242,23 @@ export default function AdminCompaniesPage() {
     setDeletedLoading(true);
     setDeletedLoadError(null);
     try {
-      const res = await fetch(`/api/superadmin/companies?deleted=1`);
+      const res = await fetch(`/api/superadmin/companies?deleted=1&light=1`);
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const detail =
+          typeof (data as { details?: string })?.details === "string"
+            ? (data as { details: string }).details
+            : undefined;
         const msg =
           typeof data?.error === "string" ? data.error : "Nepodařilo se načíst smazané organizace.";
-        setDeletedLoadError(msg);
+        console.error("[AdminCompanies] Smazané organizace:", msg, detail ?? "", data);
+        setDeletedLoadError(detail ? `${msg} (${detail})` : msg);
         setDeletedCompanies([]);
         return;
       }
       setDeletedCompanies((Array.isArray(data) ? data : []) as Company[]);
-    } catch {
+    } catch (e) {
+      console.error("[AdminCompanies] Smazané organizace (síť / parsování):", e);
       setDeletedLoadError("Nepodařilo se načíst smazané organizace.");
       setDeletedCompanies([]);
     } finally {
@@ -1063,6 +1069,7 @@ export default function AdminCompaniesPage() {
                 <TableHeader>
                   <TableRow className="border-slate-200 hover:bg-transparent">
                     <TableHead className="pl-4 sm:pl-6">Organizace</TableHead>
+                    <TableHead className="hidden lg:table-cell">E-mail</TableHead>
                     <TableHead className="hidden md:table-cell">Smazáno</TableHead>
                     <TableHead className="hidden md:table-cell">Trvalé smazání</TableHead>
                     <TableHead>Zbývá dní</TableHead>
@@ -1081,6 +1088,9 @@ export default function AdminCompaniesPage() {
                             <span>{row.name}</span>
                             <span className="text-xs font-mono text-slate-600 truncate">{row.id}</span>
                           </div>
+                        </TableCell>
+                        <TableCell className="hidden lg:table-cell text-sm text-slate-800">
+                          <span className="break-all">{row.email?.trim() || "—"}</span>
                         </TableCell>
                         <TableCell className="hidden md:table-cell text-sm text-slate-800">
                           {row.deletedAt

@@ -2,7 +2,7 @@
  * Superadmin organization/company service.
  * Reads from Firestore "společnosti" (organizations) + `company_licenses` + denormalizace do `companies`.
  */
-import { FieldValue, type Firestore } from "firebase-admin/firestore";
+import { FieldValue, type Firestore, type QueryDocumentSnapshot } from "firebase-admin/firestore";
 import {
   DEFAULT_LICENSE,
   MODULE_KEYS,
@@ -164,6 +164,17 @@ function isOrganizationSoftDeleted(data: Record<string, unknown>): boolean {
 
 function timestampToIso(value: unknown): string | null {
   if (value == null) return null;
+  if (typeof value === "object" && value !== null && "toMillis" in value) {
+    const fn = (value as { toMillis?: () => number }).toMillis;
+    if (typeof fn === "function") {
+      try {
+        const ms = fn.call(value);
+        return typeof ms === "number" && Number.isFinite(ms) ? new Date(ms).toISOString() : null;
+      } catch {
+        return null;
+      }
+    }
+  }
   if (typeof value === "object" && value !== null && "toDate" in value) {
     const fn = (value as { toDate?: () => Date }).toDate;
     if (typeof fn === "function") {
@@ -179,20 +190,62 @@ function timestampToIso(value: unknown): string | null {
   return null;
 }
 
+function deletedAtSortMillis(value: unknown): number {
+  if (value == null) return 0;
+  if (typeof value === "object" && value !== null && "toMillis" in value) {
+    const fn = (value as { toMillis?: () => number }).toMillis;
+    if (typeof fn === "function") {
+      try {
+        const ms = fn.call(value);
+        return typeof ms === "number" && Number.isFinite(ms) ? ms : 0;
+      } catch {
+        return 0;
+      }
+    }
+  }
+  if (typeof value === "object" && value !== null && "toDate" in value) {
+    const fn = (value as { toDate?: () => Date }).toDate;
+    if (typeof fn === "function") {
+      try {
+        const d = fn.call(value);
+        return d instanceof Date && !Number.isNaN(d.getTime()) ? d.getTime() : 0;
+      } catch {
+        return 0;
+      }
+    }
+  }
+  return 0;
+}
+
 export async function getCompanies(
   db: Firestore,
   options?: { light?: boolean; deletedOnly?: boolean }
 ) {
-  const light = options?.light === true;
   const deletedOnly = options?.deletedOnly === true;
-  const snapshot = await db.collection(ORGANIZATIONS_COLLECTION).get();
-  const docs = snapshot.docs.filter((doc) => {
-    const data = doc.data() as Record<string, unknown>;
-    const soft = isOrganizationSoftDeleted(data);
-    const tomb = data.permanentlyDeleted === true;
-    if (deletedOnly) return soft && !tomb;
-    return !soft && !tomb;
-  });
+  /** U smazaných organizací nepočítáme zaměstnance — stačí lehký výpis. */
+  const light = options?.light === true || deletedOnly;
+
+  let docs: QueryDocumentSnapshot[];
+  if (deletedOnly) {
+    const snap = await db.collection(ORGANIZATIONS_COLLECTION).where("isDeleted", "==", true).limit(500).get();
+    docs = snap.docs.filter((doc) => {
+      const data = doc.data() as Record<string, unknown>;
+      return data.permanentlyDeleted !== true;
+    });
+    docs.sort(
+      (a, b) =>
+        deletedAtSortMillis((b.data() as Record<string, unknown>).deletedAt) -
+        deletedAtSortMillis((a.data() as Record<string, unknown>).deletedAt)
+    );
+  } else {
+    const snapshot = await db.collection(ORGANIZATIONS_COLLECTION).get();
+    docs = snapshot.docs.filter((doc) => {
+      const data = doc.data() as Record<string, unknown>;
+      const soft = isOrganizationSoftDeleted(data);
+      const tomb = data.permanentlyDeleted === true;
+      return !soft && !tomb;
+    });
+  }
 
   const licenseSnaps = await Promise.all(
     docs.map((d) => db.collection(COMPANY_LICENSES_COLLECTION).doc(d.id).get())

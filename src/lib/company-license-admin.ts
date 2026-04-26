@@ -210,11 +210,14 @@ export async function getCompanyLicenseDoc(
 
 /** Starší dokumenty měly modul `warehouse`; nahrazeno kódem `sklad`. */
 export function normalizeLegacyWarehouseModule(license: CompanyLicenseDoc): CompanyLicenseDoc {
-  const w = license.modules["warehouse"];
-  if (!w || license.modules["sklad"]) return license;
-  const { warehouse: _drop, ...restMods } = license.modules;
+  const modules =
+    license.modules && typeof license.modules === "object" ? license.modules : ({} as CompanyLicenseDoc["modules"]);
+  const base = { ...license, modules };
+  const w = modules["warehouse"];
+  if (!w || modules["sklad"]) return base;
+  const { warehouse: _drop, ...restMods } = modules;
   return {
-    ...license,
+    ...base,
     modules: {
       ...restMods,
       sklad: { ...w, moduleCode: "sklad" },
@@ -300,13 +303,14 @@ export function applyExpiredLicenseStatus(license: CompanyLicenseDoc): CompanyLi
 /** Odhad měsíčního poplatku podle aktivních modulů a docházky (základ z DEFAULT_PLATFORM_MODULES). */
 export function estimateMonthlyLicenseCzk(license: CompanyLicenseDoc): number {
   let t = 0;
-  const att = license.modules["attendance_payroll"];
+  const mods = license.modules ?? {};
+  const att = mods["attendance_payroll"];
   if (att && isModuleEntitlementActiveNow(att)) {
     t += license.employeePricing.monthlyModuleCzk || 0;
   }
   for (const code of PLATFORM_MODULE_CODES) {
     if (code === "attendance_payroll") continue;
-    const ent = license.modules[code];
+    const ent = mods[code];
     if (!ent || !isModuleEntitlementActiveNow(ent)) continue;
     const base = DEFAULT_PLATFORM_MODULES.find((m) => m.code === code);
     t += ent.customPriceCzk ?? base?.basePriceCzk ?? 0;
