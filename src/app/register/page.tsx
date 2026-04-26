@@ -268,6 +268,8 @@ export default function RegisterPage() {
         isActive: false,
         licenseId: 'starter',
         ...platformDenorm,
+        onboardingCompleted: false,
+        onboardingStep: 0,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       };

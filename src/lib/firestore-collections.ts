@@ -17,3 +17,6 @@ export const COMPANY_LICENSES_COLLECTION = "company_licenses";
 
 /** Položky nápovědy portálu (globální nebo per firma). */
 export const HELP_CONTENT_COLLECTION = "helpContent";
+
+/** Dotazy organizací na provozovatele platformy (zápis přes API / Admin SDK). */
+export const SUPPORT_TICKETS_COLLECTION = "supportTickets";

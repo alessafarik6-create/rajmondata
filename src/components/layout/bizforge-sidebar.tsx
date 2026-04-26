@@ -28,6 +28,7 @@ import {
   Receipt,
   CalendarClock,
   CircleHelp,
+  LifeBuoy,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Logo } from '@/components/ui/logo';
@@ -54,7 +55,9 @@ import {
 } from '@/lib/portal-menu-config';
 import type { LucideIcon } from 'lucide-react';
 
-const adminLinksStatic = [
+type PortalNavLink = { label: string; href: string; icon: LucideIcon; navId?: string };
+
+const adminLinksStatic: PortalNavLink[] = [
   { label: 'Přehled', href: '/admin/dashboard', icon: LayoutDashboard },
   { label: 'Organizace', href: '/admin/companies', icon: Building2 },
   { label: 'Moduly', href: '/admin/modules', icon: Briefcase },
@@ -64,6 +67,7 @@ const adminLinksStatic = [
   { label: 'Provozovatel / fakturace', href: '/admin/billing-provider', icon: Landmark },
   { label: 'Licence', href: '/admin/licenses', icon: ShieldCheck },
   { label: 'Fakturace', href: '/admin/billing', icon: CreditCard },
+  { label: 'Podpora / dotazy', href: '/admin/support-tickets', icon: LifeBuoy },
   { label: 'Nápověda portálu', href: '/admin/help-content', icon: CircleHelp },
 ];
 
@@ -87,10 +91,9 @@ const PORTAL_MENU_ICONS: Record<string, LucideIcon> = {
   billing: PaymentIcon,
   vyuctovani: Banknote,
   chat: MessageSquare,
+  help: CircleHelp,
   settings: Settings,
 };
-
-type PortalNavLink = { label: string; href: string; icon: LucideIcon };
 
 function isPortalMenuItemVisible(
   def: PortalSidebarMenuDef,
@@ -233,6 +236,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
         label: def.label,
         href: def.href,
         icon: PORTAL_MENU_ICONS[def.id] ?? LayoutDashboard,
+        navId: def.id,
       })
     );
   }, [
@@ -325,6 +329,9 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
     if (href === "/portal/meeting-records") {
       return pathname === href || pathname.startsWith(`${href}/`);
     }
+    if (href === "/portal/help") {
+      return pathname === href || pathname.startsWith(`${href}/`);
+    }
     return pathname.startsWith(`${href}/`);
   };
 
@@ -363,6 +370,7 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
             <button
               key={link.href}
               type="button"
+              data-onboarding-nav={link.navId}
               className={cn(
                 linkClass(link.href),
                 "w-full border-0 bg-transparent text-left font-[inherit]"
@@ -373,7 +381,12 @@ export const BizForgeSidebar = ({ mobileSheetClose }: BizForgeSidebarProps) => {
               <span className="min-w-0 flex-1 truncate text-left">{link.label}</span>
             </button>
           ) : (
-            <Link key={link.href} href={link.href} className={linkClass(link.href)}>
+            <Link
+              key={link.href}
+              href={link.href}
+              data-onboarding-nav={link.navId}
+              className={linkClass(link.href)}
+            >
               <link.icon className="w-5 h-5 shrink-0" />
               <span className="min-w-0 flex-1 truncate">{link.label}</span>
             </Link>

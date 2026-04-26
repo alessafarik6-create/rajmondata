@@ -39,6 +39,7 @@ import {
 import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 import { ChatAssistant } from "@/components/portal/ChatAssistant";
+import { OnboardingOverlay } from "@/components/portal/OnboardingOverlay";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -140,7 +141,8 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
     pathname.startsWith("/portal/labor") ||
     pathname.startsWith("/portal/sklad") ||
     pathname.startsWith("/portal/vyroba") ||
-    pathname.startsWith("/portal/notifications");
+    pathname.startsWith("/portal/notifications") ||
+    pathname.startsWith("/portal/help");
 
   /** Načítání profilu z Firestore — bez automatického doplňování dokumentu (žádný nový auth účet). */
   const waitingForProfileResolution = isProfileLoading;
@@ -694,6 +696,7 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         </main>
       </div>
       <ChatAssistant />
+      <OnboardingOverlay enabled={!isPortalEmployeeOnly && !isPortalCustomerOnly} />
     </div>
   );
 }

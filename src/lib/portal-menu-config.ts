@@ -49,6 +49,7 @@ export type PortalSidebarMenuDef = {
 export const SYSTEM_MENU_ITEM_IDS = [
   "overview",
   "chat",
+  "help",
   "settings",
 ] as const;
 
@@ -246,6 +247,14 @@ export const PORTAL_SIDEBAR_MENU_DEFS: readonly PortalSidebarMenuDef[] = [
     type: "system",
     label: "Zprávy",
     href: "/portal/chat",
+    roles: ["owner", "admin", "manager", "accountant", "employee"],
+    platformModuleCode: null,
+  },
+  {
+    id: "help",
+    type: "system",
+    label: "Nápověda",
+    href: "/portal/help",
     roles: ["owner", "admin", "manager", "accountant", "employee"],
     platformModuleCode: null,
   },

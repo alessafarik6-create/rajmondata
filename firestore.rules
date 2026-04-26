@@ -2087,6 +2087,24 @@ service cloud.firestore {
     }
 
     /**
+     * Podpora / dotazy na platformu — zápis přes API (Admin SDK).
+     * Čtení: privilegované role firmy jen vlastní tickety (organizationId = tenant).
+     */
+    match /supportTickets/{ticketId} {
+      allow read: if signedIn() &&
+        resource.data.organizationId == userTenantOrgId() &&
+        userRole() in ['owner', 'admin', 'manager', 'accountant'];
+      allow create, update, delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if signedIn() &&
+          get(/databases/$(database)/documents/supportTickets/$(ticketId)).data.organizationId == userTenantOrgId() &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant'];
+        allow create, update, delete: if false;
+      }
+    }
+
+    /**
      * Nápověda portálu — čtení jen aktivních řádků pro vlastní firmu nebo globál.
      * Zápis pouze přes Admin API (superadmin).
      */
