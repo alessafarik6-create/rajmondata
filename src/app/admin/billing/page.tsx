@@ -27,7 +27,18 @@ import {
   CheckCircle2,
   XCircle,
   Ban,
+  Trash2,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { computeEffectivePlatformInvoiceStatus } from "@/lib/platform-invoice-status";
@@ -74,6 +85,8 @@ export default function AdminBillingPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [patchingId, setPatchingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<PlatformInvoiceRow | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -137,6 +150,31 @@ export default function AdminBillingPage() {
     }
     return { expected, paid, overdue };
   }, [invoices]);
+
+  const deleteInvoice = async () => {
+    if (!deleteTarget) return;
+    setDeletingId(deleteTarget.id);
+    try {
+      const res = await fetch(
+        `/api/superadmin/platform-invoices/${encodeURIComponent(deleteTarget.id)}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: typeof data?.error === "string" ? data.error : "Smazání se nezdařilo.",
+        });
+        return;
+      }
+      toast({ title: "Smazáno", description: "Platformní faktura byla odstraněna." });
+      setDeleteTarget(null);
+      await load();
+    } finally {
+      setDeletingId(null);
+    }
+  };
 
   const patchStatus = async (id: string, status: "paid" | "unpaid" | "cancelled") => {
     setPatchingId(id);
@@ -356,6 +394,17 @@ export default function AdminBillingPage() {
                               Storno
                             </Button>
                           ) : null}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-destructive"
+                            disabled={busy || !!deletingId}
+                            onClick={() => setDeleteTarget(inv)}
+                            title="Smazat platformní fakturu"
+                          >
+                            <Trash2 className="w-4 h-4 mr-1" />
+                            Smazat
+                          </Button>
                         </div>
                       </TableCell>
                     </TableRow>

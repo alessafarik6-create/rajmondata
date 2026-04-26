@@ -8,6 +8,7 @@ export function serializePlatformInvoiceRowForApi(row: Record<string, unknown>):
     "paymentClaimedAt",
     "gracePeriodUntil",
     "graceDeactivatedAt",
+    "transferredToDocumentsAt",
   ] as const;
   for (const k of keys) {
     const v = out[k];

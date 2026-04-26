@@ -1,24 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyCompanyBearer } from "@/lib/api-company-auth";
 import { PLATFORM_INVOICES_COLLECTION } from "@/lib/firestore-collections";
-import { getAdminStorageBucket } from "@/lib/firebase-admin";
+import { loadPlatformInvoicePdfBufferAdmin } from "@/lib/platform-invoice-pdf-buffer";
 
 function canReadPlatformBilling(role: string): boolean {
   return role === "owner" || role === "admin" || role === "accountant";
-}
-
-async function loadInvoicePdfBuffer(d: Record<string, unknown>): Promise<Buffer> {
-  const pdfUrl = typeof d.pdfUrl === "string" && d.pdfUrl.trim() ? d.pdfUrl.trim() : "";
-  if (pdfUrl) {
-    const r = await fetch(pdfUrl);
-    if (!r.ok) throw new Error(`Stažení PDF selhalo (HTTP ${r.status}).`);
-    return Buffer.from(await r.arrayBuffer());
-  }
-  const path = typeof d.storagePath === "string" ? d.storagePath.trim() : "";
-  const bucket = getAdminStorageBucket();
-  if (!bucket || !path) throw new Error("PDF není uloženo.");
-  const [buf] = await bucket.file(path).download();
-  return buf;
 }
 
 /**
@@ -45,7 +31,7 @@ export async function GET(
   }
   const download = request.nextUrl.searchParams.get("download") === "1";
   try {
-    const buf = await loadInvoicePdfBuffer(d);
+    const buf = await loadPlatformInvoicePdfBufferAdmin(d);
     const rawName = String(d.invoiceNumber || id).replace(/[^\w.-]+/g, "_") || "faktura";
     const disp = download ? `attachment; filename="${rawName}.pdf"` : `inline; filename="${rawName}.pdf"`;
     return new NextResponse(buf, {

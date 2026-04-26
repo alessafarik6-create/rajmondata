@@ -10,15 +10,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useUser, useFirestore, useDoc, useMemoFirebase } from "@/firebase";
 import { doc } from "firebase/firestore";
@@ -30,6 +24,7 @@ import {
   AlertTriangle,
   CalendarClock,
   AlertCircle,
+  FileStack,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { computeEffectivePlatformInvoiceStatus } from "@/lib/platform-invoice-status";
@@ -61,6 +56,9 @@ type PlatformInvoiceRow = {
     unitPriceNet?: number;
     lineNet?: number;
   }>;
+  pdfUrl?: string;
+  storagePath?: string;
+  transferredToDocumentId?: string;
 };
 
 type BillingSummary = {
@@ -193,6 +191,7 @@ export default function VyuctovaniPage() {
   const [loading, setLoading] = useState(true);
   const [pdfBusyId, setPdfBusyId] = useState<string | null>(null);
   const [claimBusyId, setClaimBusyId] = useState<string | null>(null);
+  const [transferBusyId, setTransferBusyId] = useState<string | null>(null);
   const [graceTick, setGraceTick] = useState(0);
 
   const load = useCallback(async () => {
@@ -300,6 +299,38 @@ export default function VyuctovaniPage() {
     }
   };
 
+  const transferToDocuments = async (inv: PlatformInvoiceRow) => {
+    if (!user) return;
+    setTransferBusyId(inv.id);
+    try {
+      const token = await user.getIdToken();
+      const res = await fetch(
+        `/api/company/platform-invoices/${encodeURIComponent(inv.id)}/transfer-to-documents`,
+        { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast({
+          variant: "destructive",
+          title: "Přenos se nezdařil",
+          description: typeof data?.error === "string" ? data.error : `HTTP ${res.status}`,
+        });
+        return;
+      }
+      toast({
+        title: data?.alreadyTransferred ? "Již v dokladech" : "Přeneseno",
+        description: data?.alreadyTransferred
+          ? "Tato faktura už byla mezi doklady."
+          : "PDF bylo uloženo do sekce Doklady.",
+      });
+      await load();
+    } catch {
+      toast({ variant: "destructive", title: "Chyba sítě." });
+    } finally {
+      setTransferBusyId(null);
+    }
+  };
+
   const claimPaid = async (inv: PlatformInvoiceRow) => {
     if (!user) return;
     setClaimBusyId(inv.id);
@@ -362,8 +393,6 @@ export default function VyuctovaniPage() {
     );
   }
 
-  const roseRow = "bg-rose-50/90 dark:bg-rose-950/30 border-l-4 border-l-rose-600";
-
   return (
     <div className="space-y-6">
       <div>
@@ -414,164 +443,214 @@ export default function VyuctovaniPage() {
         <CardHeader>
           <CardTitle>Seznam faktur</CardTitle>
           <CardDescription>
-            Číslo faktury, období, rozpis položek, částka, stav, QR platba (SPD) a PDF.
+            Každá faktura je v samostatné kartě — číslo, stav, datumy, částka, výpočet, QR a akce.
           </CardDescription>
         </CardHeader>
-        <CardContent className="p-0 sm:p-6 sm:pt-0">
+        <CardContent className="space-y-4 sm:space-y-5">
           {loading ? (
             <div className="flex justify-center py-16">
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
             </div>
           ) : invoices.length === 0 ? (
-            <p className="text-sm text-muted-foreground px-6 pb-6">Zatím nemáte žádné faktury od provozovatele.</p>
+            <p className="text-sm text-muted-foreground">Zatím nemáte žádné faktury od provozovatele.</p>
           ) : (
-            <div className="overflow-x-auto rounded-md border border-border/60">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Číslo</TableHead>
-                    <TableHead className="hidden md:table-cell">Období</TableHead>
-                    <TableHead>Vystaveno</TableHead>
-                    <TableHead>Splatnost</TableHead>
-                    <TableHead className="text-right">Částka</TableHead>
-                    <TableHead>Stav</TableHead>
-                    <TableHead className="hidden lg:table-cell text-center">QR</TableHead>
-                    <TableHead className="text-right pr-4">Akce</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {invoices.map((inv) => {
-                    const eff = computeEffectivePlatformInvoiceStatus(
-                      String(inv.status || "unpaid"),
-                      inv.dueDate
-                    );
-                    const graceEnd = inv.gracePeriodUntil ? Date.parse(String(inv.gracePeriodUntil)) : NaN;
-                    const claimGraceActive =
-                      inv.paymentClaimed === true && Number.isFinite(graceEnd) && graceEnd > Date.now();
-                    const showClaimBtn =
-                      (eff === "unpaid" || eff === "overdue") &&
-                      inv.id === latestUnpaidInvoiceId &&
-                      !claimGraceActive;
+            invoices.map((inv) => {
+              const eff = computeEffectivePlatformInvoiceStatus(
+                String(inv.status || "unpaid"),
+                inv.dueDate
+              );
+              const graceEnd = inv.gracePeriodUntil ? Date.parse(String(inv.gracePeriodUntil)) : NaN;
+              const claimGraceActive =
+                inv.paymentClaimed === true && Number.isFinite(graceEnd) && graceEnd > Date.now();
+              const showClaimBtn =
+                (eff === "unpaid" || eff === "overdue") &&
+                inv.id === latestUnpaidInvoiceId &&
+                !claimGraceActive;
+              const unpaidHighlight = eff === "overdue" || eff === "unpaid";
+              const transferredId = String(inv.transferredToDocumentId || "").trim();
+              const hasPdf =
+                (typeof inv.pdfUrl === "string" && inv.pdfUrl.trim()) ||
+                (typeof inv.storagePath === "string" && inv.storagePath.trim());
+              const qr = qrForInvoice(inv);
 
-                    return (
-                      <TableRow
-                        key={inv.id}
-                        className={eff === "overdue" || eff === "unpaid" ? roseRow : undefined}
-                      >
-                        <TableCell className="font-mono text-sm font-semibold">
+              return (
+                <Card
+                  key={inv.id}
+                  className={cn(
+                    "overflow-hidden border-border/80 shadow-sm",
+                    unpaidHighlight &&
+                      "border-rose-600/80 bg-rose-50/90 dark:border-rose-500 dark:bg-rose-950/35"
+                  )}
+                >
+                  <CardContent className="space-y-4 p-4 sm:p-6">
+                    <div className="grid grid-cols-1 gap-4 min-[480px]:grid-cols-2 lg:grid-cols-12 lg:gap-x-6 lg:gap-y-3">
+                      <div className="min-w-0 space-y-1 lg:col-span-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          Číslo faktury
+                        </p>
+                        <p className="font-mono text-base font-semibold break-all">
                           {inv.invoiceNumber || inv.id.slice(0, 8)}
-                        </TableCell>
-                        <TableCell className="hidden md:table-cell text-xs text-muted-foreground whitespace-nowrap">
-                          {inv.periodFrom && inv.periodTo
-                            ? `${formatDateCs(inv.periodFrom)} – ${formatDateCs(inv.periodTo)}`
-                            : "—"}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">{formatDateCs(inv.issueDate)}</TableCell>
-                        <TableCell className="whitespace-nowrap text-sm">{formatDateCs(inv.dueDate)}</TableCell>
-                        <TableCell
-                          className={
-                            eff === "overdue" || eff === "unpaid"
-                              ? "text-right font-semibold tabular-nums text-rose-900 dark:text-rose-100"
-                              : "text-right font-medium tabular-nums"
-                          }
+                        </p>
+                        {inv.periodFrom && inv.periodTo ? (
+                          <p className="text-xs text-muted-foreground">
+                            Období: {formatDateCs(inv.periodFrom)} – {formatDateCs(inv.periodTo)}
+                          </p>
+                        ) : null}
+                      </div>
+                      <div className="min-w-0 space-y-1 lg:col-span-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Stav</p>
+                        <div className="flex flex-col gap-1">
+                          {unpaidHighlight ? (
+                            <Badge variant="destructive" className="w-fit font-semibold">
+                              {statusLabel(eff)}
+                            </Badge>
+                          ) : (
+                            <Badge variant={eff === "paid" ? "default" : "secondary"} className="w-fit">
+                              {statusLabel(eff)}
+                            </Badge>
+                          )}
+                          {claimGraceActive ? (
+                            <span className="text-xs text-sky-800 dark:text-sky-200">
+                              Čeká na potvrzení provozovatele. Zbývá:{" "}
+                              {formatGraceRemaining(String(inv.gracePeriodUntil), graceTick)}.
+                            </span>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="min-w-0 space-y-1 lg:col-span-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Datum</p>
+                        <p className="text-sm">
+                          <span className="text-muted-foreground">Vystaveno:</span>{" "}
+                          {formatDateCs(inv.issueDate)}
+                        </p>
+                        <p className="text-sm">
+                          <span className="text-muted-foreground">Splatnost:</span> {formatDateCs(inv.dueDate)}
+                        </p>
+                      </div>
+                      <div className="min-w-0 space-y-1 lg:col-span-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Částka</p>
+                        <p
+                          className={cn(
+                            "text-lg font-semibold tabular-nums tracking-tight",
+                            unpaidHighlight && "text-rose-900 dark:text-rose-100"
+                          )}
                         >
                           {formatMoney(inv.total, inv.currency || "CZK")}
-                        </TableCell>
-                        <TableCell>
-                          <div className="flex flex-col gap-1">
-                            {eff === "overdue" || eff === "unpaid" ? (
-                              <Badge variant="destructive" className="font-semibold w-fit">
-                                {statusLabel(eff)}
-                              </Badge>
-                            ) : (
-                              <Badge variant={eff === "paid" ? "default" : "secondary"}>{statusLabel(eff)}</Badge>
-                            )}
-                            {claimGraceActive ? (
-                              <span className="text-xs text-sky-800 dark:text-sky-200 max-w-[200px]">
-                                Čeká na potvrzení provozovatele. Zbývá:{" "}
-                                {formatGraceRemaining(String(inv.gracePeriodUntil), graceTick)}.
-                              </span>
-                            ) : null}
-                          </div>
-                        </TableCell>
-                        <TableCell className="hidden sm:table-cell align-top py-3">
-                          {invoiceBreakdown(inv)}
-                        </TableCell>
-                        <TableCell className="align-middle">
-                          {eff === "paid" || eff === "cancelled" ? (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          ) : (() => {
-                            const qr = qrForInvoice(inv);
-                            if (qr?.qrUrl) {
-                              return (
-                                <img
-                                  src={qr.qrUrl}
-                                  alt="QR platba SPD"
-                                  width={88}
-                                  height={88}
-                                  className="mx-auto rounded border border-border bg-white p-0.5"
-                                />
-                              );
-                            }
-                            return (
-                              <span className="text-xs text-muted-foreground block max-w-[100px] mx-auto">
-                                {qr?.warning || "QR nelze zobrazit"}
-                              </span>
-                            );
-                          })()}
-                        </TableCell>
-                        <TableCell className="text-right pr-2">
-                          <div className="flex flex-wrap justify-end gap-1">
-                            {showClaimBtn ? (
-                              <Button
-                                type="button"
-                                variant="default"
-                                size="sm"
-                                className="h-8 bg-rose-700 hover:bg-rose-800"
-                                disabled={claimBusyId === inv.id}
-                                onClick={() => void claimPaid(inv)}
-                              >
-                                {claimBusyId === inv.id ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  "Zaplatil jsem"
-                                )}
-                              </Button>
-                            ) : null}
+                        </p>
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="space-y-1">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Výpočet zaměstnanců a položek
+                      </p>
+                      <div className="text-sm">{invoiceBreakdown(inv)}</div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 shrink-0 space-y-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                          QR platba
+                        </p>
+                        {eff === "paid" || eff === "cancelled" ? (
+                          <span className="text-sm text-muted-foreground">—</span>
+                        ) : qr?.qrUrl ? (
+                          <img
+                            src={qr.qrUrl}
+                            alt="QR platba SPD"
+                            width={114}
+                            height={114}
+                            className="rounded-md border border-border bg-white p-1 shadow-sm"
+                          />
+                        ) : (
+                          <p className="max-w-xs text-sm text-muted-foreground">{qr?.warning || "QR nelze zobrazit"}</p>
+                        )}
+                      </div>
+                      <div className="min-w-0 flex-1 space-y-2">
+                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Akce</p>
+                        <div className="flex flex-wrap gap-2">
+                          {showClaimBtn ? (
                             <Button
                               type="button"
-                              variant="outline"
+                              variant="default"
                               size="sm"
-                              className="h-8"
-                              disabled={pdfBusyId === inv.id}
-                              onClick={() => void openPdf(inv, false)}
+                              className="bg-rose-700 hover:bg-rose-800"
+                              disabled={claimBusyId === inv.id}
+                              onClick={() => void claimPaid(inv)}
                             >
-                              {pdfBusyId === inv.id ? (
+                              {claimBusyId === inv.id ? (
                                 <Loader2 className="h-4 w-4 animate-spin" />
                               ) : (
-                                <ExternalLink className="h-4 w-4 mr-1" />
+                                "Zaplatil jsem"
                               )}
-                              PDF
                             </Button>
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              className="h-8"
-                              disabled={pdfBusyId === inv.id}
-                              onClick={() => void openPdf(inv, true)}
-                            >
-                              <Download className="h-4 w-4 mr-1" />
-                              Stáhnout
+                          ) : null}
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            disabled={pdfBusyId === inv.id}
+                            onClick={() => void openPdf(inv, false)}
+                          >
+                            {pdfBusyId === inv.id ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <>
+                                <ExternalLink className="mr-1 h-4 w-4" />
+                                PDF
+                              </>
+                            )}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={pdfBusyId === inv.id}
+                            onClick={() => void openPdf(inv, true)}
+                          >
+                            <Download className="mr-1 h-4 w-4" />
+                            Stáhnout
+                          </Button>
+                          {hasPdf ? (
+                            transferredId ? (
+                              <Button type="button" variant="outline" size="sm" disabled className="border-emerald-600/50">
+                                Již v dokladech
+                              </Button>
+                            ) : (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                disabled={transferBusyId === inv.id}
+                                onClick={() => void transferToDocuments(inv)}
+                              >
+                                {transferBusyId === inv.id ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <>
+                                    <FileStack className="mr-1 h-4 w-4" />
+                                    Přenést do dokladů
+                                  </>
+                                )}
+                              </Button>
+                            )
+                          ) : null}
+                          {transferredId ? (
+                            <Button type="button" variant="ghost" size="sm" asChild className="px-2">
+                              <Link href="/portal/documents">Doklady</Link>
                             </Button>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })
           )}
         </CardContent>
       </Card>
