@@ -55,7 +55,7 @@ export function MobileModuleGrid(props: {
     const invoicesHref = "/portal/documents?view=issued";
 
     return [
-      { key: "calendar", title: "Kalendář", description: "Události a plánování", href: calendarHref, Icon: CalendarDays, enabled: true },
+      { key: "calendar", title: "Schůzky", description: "Záznamy a plán", href: calendarHref, Icon: CalendarDays, enabled: true },
       { key: "tasks", title: "Úkoly", description: "Moje úkoly a seznamy", href: "/portal/dashboard", Icon: ListChecks, enabled: true },
       { key: "employees", title: "Zaměstnanci", description: "Přehled týmu", href: "/portal/employees", Icon: Users, enabled: true },
       { key: "attendance", title: "Docházka", description: "Evidence a kontrola", href: "/portal/labor/dochazka", Icon: Clock, requires: "attendance_payroll" },
@@ -91,24 +91,26 @@ export function MobileModuleGrid(props: {
         </Badge>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-4">
+      <div className="grid grid-cols-4 gap-2 sm:gap-3 md:grid-cols-5 md:gap-4">
         {visible.map((t) => (
           <Link
             key={t.key}
             href={t.href}
             className={cn(
-              "group rounded-2xl border border-white/10 bg-white/[0.04] p-4 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur",
+              "group h-[100px] rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur",
               "active:scale-[0.99] transition-transform"
             )}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-b from-orange-500/20 to-transparent">
-                <t.Icon className="h-6 w-6 text-orange-300" />
+            <div className="flex flex-col items-center justify-center text-center h-full">
+              <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-b from-orange-500/20 to-transparent">
+                <t.Icon className="h-5 w-5 text-orange-300" />
               </div>
-            </div>
-            <div className="mt-3 space-y-1">
-              <p className="text-sm font-semibold text-white">{t.title}</p>
-              <p className="text-xs leading-snug text-slate-300">{t.description}</p>
+              <p className="mt-2 text-[12px] font-semibold leading-tight text-white line-clamp-2">
+                {t.title}
+              </p>
+              <p className="mt-1 hidden text-[11px] leading-snug text-slate-300 sm:block line-clamp-1">
+                {t.description}
+              </p>
             </div>
           </Link>
         ))}

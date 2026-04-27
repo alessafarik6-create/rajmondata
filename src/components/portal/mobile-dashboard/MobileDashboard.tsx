@@ -5,8 +5,8 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Bell, Menu, ArrowRight, ClipboardList, Timer, Wallet, MessageSquare, Receipt } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { DashboardSummaryCards } from "@/components/portal/mobile-dashboard/DashboardSummaryCards";
 import { MobileModuleGrid } from "@/components/portal/mobile-dashboard/MobileModuleGrid";
+import { MobileMeetingsMiniCalendar } from "@/components/portal/mobile-dashboard/MobileMeetingsMiniCalendar";
 import type { PlatformModuleCode } from "@/lib/platform-config";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import type { CompanyPlatformFields } from "@/lib/platform-access";
@@ -109,14 +109,7 @@ export function MobileDashboard(props: {
           </div>
         </div>
 
-        <DashboardSummaryCards
-          companyLabel={props.companyLabel}
-          todayLabel="Dnes"
-          todayCostsLabel={stats.unpaidLabel || "—"}
-          planLabel={undefined}
-          planPct={undefined}
-          overduePlatformInvoices={props.overduePlatformInvoices}
-        />
+        <MobileMeetingsMiniCalendar />
       </header>
 
       <div className="mt-6 space-y-6">
