@@ -75,6 +75,9 @@ import {
 import { cn } from "@/lib/utils";
 import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-record-form-dialog";
 import type { ActivityActorProfile } from "@/lib/activity-log";
+import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
+import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDashboard";
+import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
@@ -165,12 +168,14 @@ export default function CompanyDashboard() {
   const router = useRouter();
   const firestore = useFirestore();
   const [meetingRecordOpen, setMeetingRecordOpen] = useState(false);
+  const platformCatalog = useMergedPlatformModuleCatalog();
 
   const {
     userProfile: profile,
     profileLoading: isProfileLoading,
     profileError,
     companyId: companyIdFromProfile,
+    company,
     companyName,
     isLoading: companyContextLoading,
     companyDocMissing,
@@ -891,7 +896,27 @@ export default function CompanyDashboard() {
   }
 
   return (
-    <div className="space-y-6 sm:space-y-8">
+    <>
+      <MobileDashboard
+        displayName={String(typedProfile.displayName || user?.email?.split("@")[0] || "")}
+        companyLabel={String(companyName || companyId || "Organizace")}
+        role={role}
+        company={(company as unknown) as import("@/lib/platform-access").CompanyPlatformFields}
+        platformCatalog={platformCatalog}
+        unreadMessages={unreadEmployeeChatCount}
+        overduePlatformInvoices={platformInvoiceOverdue}
+        unpaidPlatformInvoices={platformInvoiceUnpaid}
+        quickStats={{
+          hoursLabel: "—",
+          payrollLabel: "—",
+          messagesLabel: unreadEmployeeChatCount ? String(unreadEmployeeChatCount) : "0",
+          unpaidLabel: "—",
+          jobsLabel: String(jobs.filter((j) => j.status !== "dokončená").length || 0),
+        }}
+      />
+      <MobileBottomNav unreadMessages={unreadEmployeeChatCount} role={role} />
+
+      <div className="hidden lg:block space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="min-w-0">
           <h1 className="portal-page-title truncate text-2xl sm:text-3xl">
@@ -1725,6 +1750,7 @@ export default function CompanyDashboard() {
           </Card>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
