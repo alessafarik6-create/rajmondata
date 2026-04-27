@@ -36,8 +36,10 @@ export function MobileDashboard(props: {
   role?: string;
   company: CompanyPlatformFields | null | undefined;
   platformCatalog: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null | undefined;
-  /** Jedna instance kalendáře z rodiče (aby neběžely dvojí Firestore dotazy pod i nad lg). */
-  scheduleCalendar?: React.ReactNode;
+  /** Náhled kalendáře + otevření modalu z rodiče. */
+  schedulePreview?: React.ReactNode;
+  /** Otevře plný kalendář (modal) — sdílené s dlaždicí Kalendář. */
+  onOpenScheduleModal?: () => void;
   unreadMessages?: number;
   overduePlatformInvoices?: number;
   unpaidPlatformInvoices?: number;
@@ -110,15 +112,20 @@ export function MobileDashboard(props: {
           </div>
         </div>
 
-        {props.scheduleCalendar ? (
+        {props.schedulePreview ? (
           <div className="mt-3 min-w-0 max-w-full scroll-mt-4 overflow-x-hidden">
-            {props.scheduleCalendar}
+            {props.schedulePreview}
           </div>
         ) : null}
       </header>
 
       <div className="mt-6 space-y-6">
-        <MobileModuleGrid company={props.company} platformCatalog={props.platformCatalog} role={props.role} />
+        <MobileModuleGrid
+          company={props.company}
+          platformCatalog={props.platformCatalog}
+          role={props.role}
+          onOpenSchedule={props.onOpenScheduleModal}
+        />
 
         <section aria-label="Moje úkoly" className="space-y-3">
           <div className="flex items-center justify-between">

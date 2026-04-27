@@ -14,7 +14,6 @@ import {
   isSameDay,
   isToday,
   format,
-  parseISO,
   startOfDay,
   addDays,
   subDays,
@@ -31,8 +30,6 @@ import {
 import {
   collection,
   query,
-  where,
-  orderBy,
   Timestamp,
   updateDoc,
   deleteDoc,
@@ -46,9 +43,12 @@ import { useFirestore, useMemoFirebase, useCollection, useUser, useDoc, useCompa
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { parseFirestoreScheduledAt } from "@/lib/lead-meeting-utils";
-import type { MeasurementDoc, MeasurementStatus } from "@/lib/measurements";
-import { MEASUREMENT_STATUS_LABELS } from "@/lib/measurements";
+import {
+  isValidCompanyScheduleEvent,
+  type CompanyScheduleCalendarEvent,
+  type MeetingStatus,
+} from "@/lib/company-schedule-events";
+import { useCompanyScheduleMonthEvents } from "@/hooks/use-company-schedule-month-events";
 import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -92,116 +92,7 @@ import { mergeEmailNotifications } from "@/lib/email-notifications/schema";
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
 
-type MeetingStatus = "planned" | "done" | "cancelled";
-
-type CalendarEvent = {
-  id: string;
-  at: Date;
-  /** Jméno zákazníka (stejné jako dříve `title` v mřížce) */
-  title: string;
-  /** Krátký název / poznámka nahoře na kartě */
-  headline: string;
-  kind: "meeting" | "measurement";
-  detail?: string;
-  phone?: string;
-  address?: string;
-  status: MeetingStatus | "measurement";
-  statusLabel: string;
-  /** Tailwind barva štítku */
-  badgeClass: string;
-  /** Barva levého proužku / akcentu karty */
-  accentClass: string;
-  /** Firestore id pro update (např. lead_meetings/{id}) */
-  sourceId?: string;
-  /** Poznámka z dokumentu schůzky (pro editaci formuláře). */
-  eventNote?: string;
-  sentToAllEmployees?: boolean;
-  notificationType?: EmployeeNotificationType;
-  notificationMessage?: string | null;
-};
-
-function isValidCalendarEvent(e: unknown): e is CalendarEvent {
-  if (e == null || typeof e !== "object") return false;
-  const o = e as Partial<CalendarEvent>;
-  if (typeof o.id !== "string" || !o.id) return false;
-  if (typeof o.headline !== "string") return false;
-  if (typeof o.statusLabel !== "string") return false;
-  if (typeof o.badgeClass !== "string") return false;
-  if (typeof o.accentClass !== "string") return false;
-  return o.at instanceof Date && !Number.isNaN(o.at.getTime());
-}
-
-function isMeasurementDeleted(m: { deletedAt?: unknown }): boolean {
-  return m.deletedAt != null;
-}
-
-function parseMeasurementTime(raw: string): Date | null {
-  try {
-    const d = parseISO(raw);
-    return Number.isNaN(d.getTime()) ? null : d;
-  } catch {
-    return null;
-  }
-}
-
-function measurementVisuals(status: MeasurementStatus | undefined): {
-  badgeClass: string;
-  accentClass: string;
-} {
-  switch (status) {
-    case "completed":
-      return {
-        badgeClass: "border-sky-200 bg-sky-100 text-sky-950",
-        accentClass: "border-l-sky-500",
-      };
-    case "converted":
-      return {
-        badgeClass: "border-violet-200 bg-violet-100 text-violet-950",
-        accentClass: "border-l-violet-500",
-      };
-    case "cancelled":
-      return {
-        badgeClass: "border-slate-200 bg-slate-100 text-slate-800",
-        accentClass: "border-l-slate-400",
-      };
-    default:
-      return {
-        badgeClass: "border-emerald-200 bg-emerald-100 text-emerald-950",
-        accentClass: "border-l-emerald-500",
-      };
-  }
-}
-
-function meetingVisuals(status: MeetingStatus | undefined): {
-  statusLabel: string;
-  badgeClass: string;
-  accentClass: string;
-  titleClass: string;
-} {
-  switch (status) {
-    case "done":
-      return {
-        statusLabel: "Vyřízeno",
-        badgeClass: "border-emerald-200 bg-emerald-100 text-emerald-950",
-        accentClass: "border-l-emerald-500",
-        titleClass: "opacity-80",
-      };
-    case "cancelled":
-      return {
-        statusLabel: "Zrušeno",
-        badgeClass: "border-rose-200 bg-rose-50 text-rose-900",
-        accentClass: "border-l-rose-400",
-        titleClass: "line-through text-slate-500",
-      };
-    default:
-      return {
-        statusLabel: "Plánováno",
-        badgeClass: "border-orange-200 bg-orange-100 text-orange-950",
-        accentClass: "border-l-orange-500",
-        titleClass: "",
-      };
-  }
-}
+type CalendarEvent = CompanyScheduleCalendarEvent;
 
 function scheduleMobileEventCountLabel(n: number): string {
   if (n === 0) return "žádná událost";
@@ -213,9 +104,11 @@ function scheduleMobileEventCountLabel(n: number): string {
 function ScheduleMobileEventCard({
   ev,
   onCardClick,
+  darkCards,
 }: {
   ev: CalendarEvent;
   onCardClick?: () => void;
+  darkCards?: boolean;
 }) {
   const telHref = ev.phone
     ? `tel:${ev.phone.replace(/\s/g, "")}`
@@ -224,9 +117,16 @@ function ScheduleMobileEventCard({
   return (
     <article
       className={cn(
-        "min-h-[44px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm border-l-[6px]",
+        "min-h-[44px] rounded-2xl border border-l-[6px] p-4 shadow-sm",
+        darkCards
+          ? "border-white/10 bg-slate-900/80 text-slate-50 ring-1 ring-white/5"
+          : "border-slate-200 bg-white text-slate-900",
         ev.accentClass,
-        onCardClick ? "cursor-pointer transition-colors hover:bg-slate-50/90" : ""
+        onCardClick
+          ? darkCards
+            ? "cursor-pointer transition-colors hover:bg-slate-800/90"
+            : "cursor-pointer transition-colors hover:bg-slate-50/90"
+          : ""
       )}
       onClick={onCardClick ? () => onCardClick() : undefined}
       role={onCardClick ? "button" : undefined}
@@ -244,15 +144,32 @@ function ScheduleMobileEventCard({
     >
       <div className="flex flex-col gap-3.5">
         <div className="space-y-1">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <p
+            className={cn(
+              "text-xs font-semibold uppercase tracking-wide",
+              darkCards ? "text-slate-400" : "text-slate-500"
+            )}
+          >
             Název
           </p>
-          <p className="text-[1.05rem] font-semibold leading-snug text-slate-900 sm:text-lg">
-            <span className={cn(ev.kind === "meeting" ? (ev as any).titleClass : "")}>
+          <p
+            className={cn(
+              "text-[1.05rem] font-semibold leading-snug sm:text-lg",
+              darkCards ? "text-white" : "text-slate-900"
+            )}
+          >
+            <span className={cn(ev.kind === "meeting" ? ev.titleClass : "")}>
               {ev.headline}
             </span>
             {ev.sentToAllEmployees ? (
-              <span className="ml-2 inline-flex rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 align-middle text-[10px] font-semibold text-indigo-900">
+              <span
+                className={cn(
+                  "ml-2 inline-flex rounded-full border px-2 py-0.5 align-middle text-[10px] font-semibold",
+                  darkCards
+                    ? "border-indigo-400/40 bg-indigo-500/20 text-indigo-100"
+                    : "border-indigo-200 bg-indigo-50 text-indigo-900"
+                )}
+              >
                 Rozesláno
               </span>
             ) : null}
@@ -261,14 +178,28 @@ function ScheduleMobileEventCard({
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1">
-            <p className="text-xs font-semibold text-slate-500">Čas</p>
-            <p className="text-lg font-semibold tabular-nums text-slate-900">
+            <p className={cn("text-xs font-semibold", darkCards ? "text-slate-400" : "text-slate-500")}>
+              Čas
+            </p>
+            <p
+              className={cn(
+                "text-lg font-semibold tabular-nums",
+                darkCards ? "text-white" : "text-slate-900"
+              )}
+            >
               {format(ev.at, "HH:mm")}
             </p>
           </div>
           <div className="space-y-1">
-            <p className="text-xs font-semibold text-slate-500">Zákazník</p>
-            <p className="text-base font-medium leading-snug text-slate-900">
+            <p className={cn("text-xs font-semibold", darkCards ? "text-slate-400" : "text-slate-500")}>
+              Zákazník
+            </p>
+            <p
+              className={cn(
+                "text-base font-medium leading-snug",
+                darkCards ? "text-slate-100" : "text-slate-900"
+              )}
+            >
               {ev.title}
             </p>
           </div>
@@ -276,25 +207,39 @@ function ScheduleMobileEventCard({
 
         {ev.address ? (
           <div className="space-y-1">
-            <p className="text-xs font-semibold text-slate-500">Adresa</p>
-            <p className="text-sm leading-relaxed text-slate-800">{ev.address}</p>
+            <p className={cn("text-xs font-semibold", darkCards ? "text-slate-400" : "text-slate-500")}>
+              Adresa
+            </p>
+            <p className={cn("text-sm leading-relaxed", darkCards ? "text-slate-200" : "text-slate-800")}>
+              {ev.address}
+            </p>
           </div>
         ) : null}
 
         {ev.phone ? (
           <div className="space-y-1">
-            <p className="text-xs font-semibold text-slate-500">Telefon</p>
+            <p className={cn("text-xs font-semibold", darkCards ? "text-slate-400" : "text-slate-500")}>
+              Telefon
+            </p>
             <a
               href={telHref}
               onClick={(e) => e.stopPropagation()}
-              className="inline-flex min-h-[44px] items-center text-base font-semibold text-blue-700 underline-offset-2 hover:underline active:text-blue-900"
+              className={cn(
+                "inline-flex min-h-[44px] items-center text-base font-semibold underline-offset-2 hover:underline",
+                darkCards ? "text-orange-300 active:text-orange-200" : "text-blue-700 active:text-blue-900"
+              )}
             >
               {ev.phone}
             </a>
           </div>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <div
+          className={cn(
+            "flex flex-wrap items-center gap-2 border-t pt-3",
+            darkCards ? "border-white/10" : "border-slate-100"
+          )}
+        >
           <span
             className={cn(
               "inline-flex max-w-full rounded-full border px-3 py-1.5 text-xs font-bold leading-tight",
@@ -325,6 +270,7 @@ export function CompanyScheduleCalendar({
   headingTitle,
   id: rootId,
   className: rootClassName,
+  appearance = "default",
 }: {
   companyId: string;
   /** `compact` = vždy mobilní rozhraní (např. mobilní dashboard pod breakpointem lg). */
@@ -332,6 +278,8 @@ export function CompanyScheduleCalendar({
   headingTitle?: string;
   id?: string;
   className?: string;
+  /** Tmavý portálový vzhled (modal na mobilu/tabletu). Desktop ponechte `default`. */
+  appearance?: "default" | "darkPortal";
 }) {
   const firestore = useFirestore();
   const router = useRouter();
@@ -396,120 +344,8 @@ export function CompanyScheduleCalendar({
   const monthStart = startOfMonth(visibleMonth);
   const monthEnd = endOfMonth(visibleMonth);
 
-  const meetingsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    return query(
-      collection(firestore, "companies", companyId, "lead_meetings"),
-      where("scheduledAt", ">=", Timestamp.fromDate(monthStart)),
-      where("scheduledAt", "<=", Timestamp.fromDate(monthEnd)),
-      orderBy("scheduledAt", "asc")
-    );
-  }, [firestore, companyId, monthStart.getTime(), monthEnd.getTime()]);
-
-  const measurementsQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId) return null;
-    const startIso = monthStart.toISOString();
-    const endIso = monthEnd.toISOString();
-    return query(
-      collection(firestore, "companies", companyId, "measurements"),
-      where("scheduledAt", ">=", startIso),
-      where("scheduledAt", "<=", endIso),
-      orderBy("scheduledAt", "asc")
-    );
-  }, [firestore, companyId, monthStart.getTime(), monthEnd.getTime()]);
-
-  const { data: meetingsRaw = [], isLoading: meetingsLoading } =
-    useCollection(meetingsQuery);
-  const { data: measurementsRaw = [], isLoading: measurementsLoading } =
-    useCollection(measurementsQuery);
-
-  const events = useMemo(() => {
-    const out: CalendarEvent[] = [];
-    const list = Array.isArray(meetingsRaw) ? meetingsRaw : [];
-    for (const raw of list as Record<string, unknown>[]) {
-      const id = String(raw?.id ?? "");
-      if (!id) continue;
-      const at = parseFirestoreScheduledAt(raw.scheduledAt);
-      if (!at) continue;
-      const customerName = String(raw.customerName ?? "—");
-      const note = String(raw.note ?? "").trim();
-      const phone = String(raw.phone ?? "").trim();
-      const place = String(raw.place ?? "").trim();
-      const stRaw = String(raw.status ?? "").trim();
-      const st: MeetingStatus =
-        stRaw === "done" || stRaw === "cancelled" || stRaw === "planned"
-          ? (stRaw as MeetingStatus)
-          : "planned";
-      const v = meetingVisuals(st);
-      const headline = String(raw.title ?? "").trim() || note || "Schůzka";
-      const sentToAllEmployees = raw?.sentToAllEmployees === true;
-      const notificationType =
-        String(raw?.notificationType ?? "").trim() as EmployeeNotificationType;
-      const nt: EmployeeNotificationType =
-        notificationType === "important" ||
-        notificationType === "training" ||
-        notificationType === "meeting" ||
-        notificationType === "info"
-          ? notificationType
-          : "info";
-      const notificationMessage =
-        typeof raw?.notificationMessage === "string" && raw.notificationMessage.trim()
-          ? raw.notificationMessage.trim()
-          : null;
-      out.push({
-        id: `m-${id}`,
-        at,
-        title: customerName,
-        headline,
-        kind: "meeting",
-        detail: note || "Schůzka",
-        phone: phone || undefined,
-        address: place || undefined,
-        status: st,
-        statusLabel: v.statusLabel,
-        badgeClass: v.badgeClass,
-        accentClass: v.accentClass,
-        sourceId: id,
-        eventNote: note,
-        sentToAllEmployees,
-        notificationType: nt,
-        notificationMessage,
-        // @ts-expect-error: internal styling field for meeting only
-        titleClass: v.titleClass,
-      });
-    }
-
-    const mlist = Array.isArray(measurementsRaw) ? measurementsRaw : [];
-    for (const raw of mlist as (MeasurementDoc & { id?: string })[]) {
-      if (!raw?.id || isMeasurementDeleted(raw)) continue;
-      const st = raw.status as MeasurementStatus | undefined;
-      const at = parseMeasurementTime(raw.scheduledAt);
-      if (!at) continue;
-      const label = MEASUREMENT_STATUS_LABELS[st ?? "planned"] ?? "Zaměření";
-      const visuals = measurementVisuals(st);
-      const note = String(raw.note ?? "").trim();
-      const phone = String(raw.phone ?? "").trim();
-      const address = String(raw.address ?? "").trim();
-      out.push({
-        id: `z-${raw.id}`,
-        at,
-        title: raw.customerName?.trim() || "—",
-        headline: note || "Zaměření",
-        kind: "measurement",
-        detail: `Zaměření · ${label}`,
-        phone: phone || undefined,
-        address: address || undefined,
-        status: "measurement",
-        statusLabel: label,
-        badgeClass: visuals.badgeClass,
-        accentClass: visuals.accentClass,
-      });
-    }
-
-    const valid = out.filter(isValidCalendarEvent);
-    valid.sort((a, b) => a.at.getTime() - b.at.getTime());
-    return valid;
-  }, [meetingsRaw, measurementsRaw]);
+  const { events, loading: meetingsMeasurementsLoading } =
+    useCompanyScheduleMonthEvents(companyId, visibleMonth);
 
   React.useEffect(() => {
     setMobileSelectedDay((prev) => {
@@ -521,7 +357,7 @@ export function CompanyScheduleCalendar({
   const eventsByDayKey = useMemo(() => {
     const m = new Map<string, CalendarEvent[]>();
     for (const ev of events) {
-      if (!isValidCalendarEvent(ev)) continue;
+      if (!isValidCompanyScheduleEvent(ev)) continue;
       const key = format(ev.at, "yyyy-MM-dd");
       const arr = m.get(key) ?? [];
       arr.push(ev);
@@ -533,7 +369,7 @@ export function CompanyScheduleCalendar({
   const mobileSelectedDayKey = format(mobileSelectedDay, "yyyy-MM-dd");
   const mobileDayEvents = useMemo(() => {
     return (eventsByDayKey.get(mobileSelectedDayKey) ?? []).filter(
-      isValidCalendarEvent
+      isValidCompanyScheduleEvent
     );
   }, [eventsByDayKey, mobileSelectedDayKey]);
 
@@ -552,7 +388,7 @@ export function CompanyScheduleCalendar({
   const gridEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
   const days = eachDayOfInterval({ start: gridStart, end: gridEnd });
 
-  const loading = meetingsLoading || measurementsLoading;
+  const loading = meetingsMeasurementsLoading;
 
   const openCreateForDay = (day: Date) => {
     console.log("[calendar] open create for day", format(day, "yyyy-MM-dd"));
@@ -881,26 +717,37 @@ export function CompanyScheduleCalendar({
   };
 
   const titleText = headingTitle ?? "Schůzky a zaměření";
+  const dark = appearance === "darkPortal";
 
   return (
     <div
       id={rootId}
       className={cn(
-        "max-w-full rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm",
+        "max-w-full rounded-xl border shadow-sm",
+        dark
+          ? "border-white/10 bg-slate-950 text-slate-50"
+          : "border-slate-200 bg-white text-slate-900",
         rootClassName
       )}
     >
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3",
+          dark ? "border-white/10 bg-slate-950" : "border-slate-200 bg-white"
+        )}
+      >
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">{titleText}</h2>
-          <p className="text-sm text-slate-800">
+          <h2 className={cn("text-lg font-semibold", dark ? "text-white" : "text-slate-900")}>
+            {titleText}
+          </h2>
+          <p className={cn("text-sm", dark ? "text-slate-300" : "text-slate-800")}>
             Schůzky z poptávek a naplánovaná zaměření — měsíční přehled.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <Button
             type="button"
-            className="hidden h-9 gap-2 md:inline-flex"
+            className={cn("h-9 gap-2", showFull ? "inline-flex" : "hidden")}
             onClick={() => openCreateForDay(new Date())}
           >
             <Plus className="h-4 w-4" />
@@ -910,20 +757,35 @@ export function CompanyScheduleCalendar({
             type="button"
             variant="outline"
             size="icon"
-            className="h-9 w-9 border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+            className={cn(
+              "h-9 w-9",
+              dark
+                ? "border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+                : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+            )}
             onClick={() => setVisibleMonth((d) => subMonths(d, 1))}
             aria-label="Předchozí měsíc"
           >
             <ChevronLeft className="h-4 w-4" />
           </Button>
-          <span className="min-w-[160px] text-center text-sm font-medium tabular-nums text-slate-900">
+          <span
+            className={cn(
+              "min-w-[160px] text-center text-sm font-medium tabular-nums",
+              dark ? "text-slate-100" : "text-slate-900"
+            )}
+          >
             {format(visibleMonth, "LLLL yyyy", { locale: cs })}
           </span>
           <Button
             type="button"
             variant="outline"
             size="icon"
-            className="h-9 w-9 border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+            className={cn(
+              "h-9 w-9",
+              dark
+                ? "border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+                : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+            )}
             onClick={() => setVisibleMonth((d) => addMonths(d, 1))}
             aria-label="Další měsíc"
           >
@@ -932,7 +794,12 @@ export function CompanyScheduleCalendar({
           <Button
             type="button"
             variant="secondary"
-            className="inline-flex shrink-0 border border-slate-200 bg-slate-100 px-3 text-slate-900 hover:bg-slate-200"
+            className={cn(
+              "inline-flex shrink-0 border px-3",
+              dark
+                ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
+                : "border-slate-200 bg-slate-100 text-slate-900 hover:bg-slate-200"
+            )}
             onClick={() => {
               const t = startOfDay(new Date());
               setVisibleMonth(startOfMonth(t));
@@ -944,11 +811,14 @@ export function CompanyScheduleCalendar({
         </div>
       </div>
 
-      <div className="p-3 sm:p-4">
+      <div className={cn("p-3 sm:p-4", dark && "bg-slate-950")}>
         {loading ? (
           <div className="flex min-h-[200px] items-center justify-center">
             <span
-              className="inline-block h-8 w-8 animate-spin rounded-full border-2 border-slate-400 border-t-transparent"
+              className={cn(
+                "inline-block h-8 w-8 animate-spin rounded-full border-2 border-t-transparent",
+                dark ? "border-orange-400/40 border-t-orange-400" : "border-slate-400 border-t-transparent"
+              )}
               aria-label="Načítání"
             />
           </div>
@@ -956,7 +826,8 @@ export function CompanyScheduleCalendar({
           <>
             <div
               className={cn(
-                "mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-800",
+                "mb-2 flex flex-wrap items-center justify-between gap-2 text-xs",
+                dark ? "text-slate-300" : "text-slate-800",
                 showFull && "md:mb-3"
               )}
             >
@@ -985,11 +856,14 @@ export function CompanyScheduleCalendar({
                 </span>
               </div>
               {!loading && events.length === 0 ? (
-                <span className="text-slate-800">
+                <span className={dark ? "text-slate-300" : "text-slate-800"}>
                   V tomto měsíci nic — naplánujte v{" "}
                   <Link
                     href="/portal/leads"
-                    className="font-medium text-slate-900 underline underline-offset-2 hover:no-underline"
+                    className={cn(
+                      "font-medium underline underline-offset-2 hover:no-underline",
+                      dark ? "text-orange-300" : "text-slate-900"
+                    )}
                   >
                     Poptávkách
                   </Link>
@@ -1001,7 +875,14 @@ export function CompanyScheduleCalendar({
             {/* Mobil / compact: pás dní, seznam akcí, měsíční mřížka */}
             <div className={showCompact ? "block" : "hidden"}>
               <div className="mb-3 flex items-center justify-between gap-2">
-                <Button type="button" className="w-full min-h-[44px] gap-2" onClick={() => openCreateForDay(mobileSelectedDay)}>
+                <Button
+                  type="button"
+                  className={cn(
+                    "w-full min-h-[44px] gap-2",
+                    dark && "bg-orange-500 text-slate-950 hover:bg-orange-400"
+                  )}
+                  onClick={() => openCreateForDay(mobileSelectedDay)}
+                >
                   <Plus className="h-4 w-4" /> Přidat schůzku / akci
                 </Button>
               </div>
@@ -1014,7 +895,7 @@ export function CompanyScheduleCalendar({
                   {mobileStripDays.map((day) => {
                     const key = format(day, "yyyy-MM-dd");
                     const dayEvents = (eventsByDayKey.get(key) ?? []).filter(
-                      isValidCalendarEvent
+                      isValidCompanyScheduleEvent
                     );
                     const hasEvents = dayEvents.length > 0;
                     const selected = isSameDay(day, mobileSelectedDay);
@@ -1033,14 +914,25 @@ export function CompanyScheduleCalendar({
                         className={cn(
                           "flex min-w-[3.25rem] shrink-0 flex-col items-center rounded-xl border-2 px-2 py-2 text-center transition-colors",
                           selected
-                            ? "border-orange-500 bg-orange-50 text-slate-900 shadow-sm"
-                            : "border-slate-200 bg-white text-slate-800 active:bg-slate-50",
+                            ? dark
+                              ? "border-orange-500 bg-orange-500/20 text-white shadow-sm"
+                              : "border-orange-500 bg-orange-50 text-slate-900 shadow-sm"
+                            : dark
+                              ? "border-white/10 bg-slate-900 text-slate-100 active:bg-slate-800"
+                              : "border-slate-200 bg-white text-slate-800 active:bg-slate-50",
                           today
-                            ? "ring-2 ring-orange-400 ring-offset-1 ring-offset-white"
+                            ? dark
+                              ? "ring-2 ring-orange-400 ring-offset-1 ring-offset-slate-950"
+                              : "ring-2 ring-orange-400 ring-offset-1 ring-offset-white"
                             : ""
                         )}
                       >
-                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                        <span
+                          className={cn(
+                            "text-[10px] font-bold uppercase tracking-wide",
+                            dark ? "text-slate-400" : "text-slate-500"
+                          )}
+                        >
                           {format(day, "EEE", { locale: cs })}
                         </span>
                         <span className="text-sm font-bold tabular-nums">
@@ -1061,15 +953,27 @@ export function CompanyScheduleCalendar({
 
               <div className="space-y-4">
                 <div className="flex flex-col gap-1 px-0.5 sm:flex-row sm:items-end sm:justify-between">
-                  <h3 className="text-lg font-bold capitalize leading-tight text-slate-900">
+                  <h3
+                    className={cn(
+                      "text-lg font-bold capitalize leading-tight",
+                      dark ? "text-white" : "text-slate-900"
+                    )}
+                  >
                     {format(mobileSelectedDay, "EEEE d. MMMM yyyy", { locale: cs })}
                   </h3>
-                  <p className="text-sm font-medium text-slate-600">
+                  <p className={cn("text-sm font-medium", dark ? "text-slate-400" : "text-slate-600")}>
                     {scheduleMobileEventCountLabel(mobileDayEvents.length)}
                   </p>
                 </div>
                 {mobileDayEvents.length === 0 ? (
-                  <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-10 text-center text-base leading-relaxed text-slate-600">
+                  <p
+                    className={cn(
+                      "rounded-2xl border border-dashed px-4 py-10 text-center text-base leading-relaxed",
+                      dark
+                        ? "border-white/15 bg-slate-900/50 text-slate-300"
+                        : "border-slate-200 bg-slate-50 text-slate-600"
+                    )}
+                  >
                     Tento den nemáte žádné naplánované schůzky ani zaměření.
                   </p>
                 ) : (
@@ -1079,6 +983,7 @@ export function CompanyScheduleCalendar({
                         <div className="space-y-2">
                           <ScheduleMobileEventCard
                             ev={ev}
+                            darkCards={dark}
                             onCardClick={
                               ev.kind === "meeting"
                                 ? () => openEditMeeting(ev)
@@ -1090,7 +995,11 @@ export function CompanyScheduleCalendar({
                               <Button
                                 type="button"
                                 variant="outline"
-                                className="min-h-[44px] gap-2"
+                                className={cn(
+                                  "min-h-[44px] gap-2",
+                                  dark &&
+                                    "border-white/20 bg-transparent text-slate-100 hover:bg-white/10"
+                                )}
                                 onClick={() => openEditMeeting(ev)}
                               >
                                 Upravit
@@ -1098,7 +1007,10 @@ export function CompanyScheduleCalendar({
                               <Button
                                 type="button"
                                 variant="secondary"
-                                className="min-h-[44px] gap-2"
+                                className={cn(
+                                  "min-h-[44px] gap-2",
+                                  dark && "border-white/10 bg-white/10 text-white hover:bg-white/15"
+                                )}
                                 onClick={() => void setMeetingQuickStatus(ev, "done")}
                               >
                                 <CheckCircle2 className="h-4 w-4" />
@@ -1122,15 +1034,23 @@ export function CompanyScheduleCalendar({
                 )}
               </div>
 
-              <div className="mt-6 border-t border-slate-100 pt-4">
-                <p className="mb-2 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+              <div className={cn("mt-6 border-t pt-4", dark ? "border-white/10" : "border-slate-100")}>
+                <p
+                  className={cn(
+                    "mb-2 text-center text-[11px] font-semibold uppercase tracking-wide",
+                    dark ? "text-slate-400" : "text-slate-500"
+                  )}
+                >
                   Celý měsíc
                 </p>
                 <div className="grid grid-cols-7 gap-2">
                   {WEEKDAYS.map((wd) => (
                     <div
                       key={wd}
-                      className="py-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-600"
+                      className={cn(
+                        "py-2 text-center text-[11px] font-bold uppercase tracking-wide",
+                        dark ? "text-slate-400" : "text-slate-600"
+                      )}
                     >
                       {wd}
                     </div>
@@ -1158,9 +1078,17 @@ export function CompanyScheduleCalendar({
                         className={cn(
                           "flex min-h-[52px] flex-col items-center justify-center rounded-xl border-2 px-0.5 py-2 text-sm font-bold tabular-nums transition-colors",
                           selected
-                            ? "border-orange-500 bg-orange-50 text-slate-900 shadow-md"
-                            : "border-slate-200 bg-white text-slate-800 active:bg-slate-50",
-                          today && !selected ? "ring-2 ring-slate-400 ring-offset-1" : ""
+                            ? dark
+                              ? "border-orange-500 bg-orange-500/15 text-white shadow-md"
+                              : "border-orange-500 bg-orange-50 text-slate-900 shadow-md"
+                            : dark
+                              ? "border-white/10 bg-slate-900 text-slate-100 active:bg-slate-800"
+                              : "border-slate-200 bg-white text-slate-800 active:bg-slate-50",
+                          today && !selected
+                            ? dark
+                              ? "ring-2 ring-orange-400/80 ring-offset-1 ring-offset-slate-950"
+                              : "ring-2 ring-slate-400 ring-offset-1"
+                            : ""
                         )}
                       >
                         <span>{format(day, "d.", { locale: cs })}</span>
@@ -1196,7 +1124,7 @@ export function CompanyScheduleCalendar({
               {days.map((day) => {
                 const key = format(day, "yyyy-MM-dd");
                 const dayEvents = (eventsByDayKey.get(key) ?? []).filter(
-                  isValidCalendarEvent
+                  isValidCompanyScheduleEvent
                 );
                 const outside = !isSameMonth(day, visibleMonth);
                 const today = isToday(day);

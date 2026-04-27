@@ -78,7 +78,9 @@ import type { ActivityActorProfile } from "@/lib/activity-log";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDashboard";
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
-import { useIsBelowLg } from "@/hooks/use-mobile";
+import { MobileSchedulePreviewCard } from "@/components/portal/mobile-dashboard/MobileSchedulePreviewCard";
+import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
+import { Dialog, DialogContent } from "@/components/ui/dialog";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
@@ -169,6 +171,7 @@ export default function CompanyDashboard() {
   const router = useRouter();
   const firestore = useFirestore();
   const [meetingRecordOpen, setMeetingRecordOpen] = useState(false);
+  const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const platformCatalog = useMergedPlatformModuleCatalog();
 
   const {
@@ -204,13 +207,13 @@ export default function CompanyDashboard() {
     (isManagement || isAccountant) && !isCustomer;
 
   const belowLg = useIsBelowLg();
+  const isPhoneLayout = useIsMobile();
 
-  const scheduleCalendarSlot =
+  const schedulePreviewSlot =
     companyId && showAdminDashboard && belowLg ? (
-      <CompanyScheduleCalendar
-        id="portal-schedule-calendar"
+      <MobileSchedulePreviewCard
         companyId={companyId}
-        layout="compact"
+        onOpenCalendar={() => setScheduleModalOpen(true)}
       />
     ) : null;
 
@@ -915,7 +918,12 @@ export default function CompanyDashboard() {
         role={role}
         company={(company as unknown) as import("@/lib/platform-access").CompanyPlatformFields}
         platformCatalog={platformCatalog}
-        scheduleCalendar={scheduleCalendarSlot}
+        schedulePreview={schedulePreviewSlot}
+        onOpenScheduleModal={
+          companyId && showAdminDashboard && belowLg
+            ? () => setScheduleModalOpen(true)
+            : undefined
+        }
         unreadMessages={unreadEmployeeChatCount}
         overduePlatformInvoices={platformInvoiceOverdue}
         unpaidPlatformInvoices={platformInvoiceUnpaid}
@@ -928,6 +936,42 @@ export default function CompanyDashboard() {
         }}
       />
       <MobileBottomNav unreadMessages={unreadEmployeeChatCount} role={role} />
+
+      {companyId && showAdminDashboard && belowLg ? (
+        <Dialog open={scheduleModalOpen} onOpenChange={setScheduleModalOpen}>
+          <DialogContent
+            className={cn(
+              "!border-white/10 !bg-slate-950 !p-0 !text-slate-50 !shadow-2xl !ring-white/10",
+              "!flex max-h-[100dvh] flex-col gap-0 !overflow-hidden",
+              "[&>button:last-child]:hidden",
+              isPhoneLayout
+                ? "!fixed !inset-0 !left-0 !top-0 z-[60] !h-[100dvh] !max-h-[100dvh] !w-full !max-w-none !translate-x-0 !translate-y-0 !rounded-none"
+                : "!left-1/2 !top-1/2 !max-h-[min(92dvh,880px)] !w-[min(900px,calc(100vw-2rem))] !max-w-[min(900px,calc(100vw-2rem))] !-translate-x-1/2 !-translate-y-1/2 !rounded-2xl"
+            )}
+          >
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+              <p className="text-sm font-semibold text-white">Schůzky a zaměření</p>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11 shrink-0 border-white/20 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
+                onClick={() => setScheduleModalOpen(false)}
+              >
+                Zavřít
+              </Button>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-4 pt-2 sm:px-4">
+              {scheduleModalOpen ? (
+                <CompanyScheduleCalendar
+                  companyId={companyId}
+                  layout="compact"
+                  appearance="darkPortal"
+                />
+              ) : null}
+            </div>
+          </DialogContent>
+        </Dialog>
+      ) : null}
 
       <div className="hidden lg:block space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

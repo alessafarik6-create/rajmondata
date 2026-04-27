@@ -31,17 +31,27 @@ type Tile = {
   key: string;
   title: string;
   description: string;
-  href: string;
+  href?: string;
+  /** Otevře kalendářový modal místo navigace. */
+  openSchedule?: boolean;
+  hideDescription?: boolean;
   Icon: React.ComponentType<{ className?: string }>;
   requires?: PlatformModuleCode;
   /** Když modul nemá přímý kód (např. interní stránky), dá se řídit externě. */
   enabled?: boolean;
 };
 
+const tileButtonClass =
+  "group flex h-[100px] w-full flex-col rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-3 text-center shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur active:scale-[0.99] transition-transform";
+
+const tileLinkClass =
+  "group flex h-[100px] flex-col rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur active:scale-[0.99] transition-transform";
+
 export function MobileModuleGrid(props: {
   company: CompanyPlatformFields | null | undefined;
   platformCatalog: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null | undefined;
   role?: string;
+  onOpenSchedule?: () => void;
 }) {
   const role = String(props.role || "");
   const company = props.company;
@@ -50,12 +60,19 @@ export function MobileModuleGrid(props: {
   const tiles = useMemo((): Tile[] => {
     const hoursHref = role === "employee" ? "/portal/employee/worklogs" : "/portal/labor/vykazy";
     const approvalsHref = "/portal/labor/vykazy";
-    const calendarHref = "/portal/dashboard#portal-schedule-calendar";
     const docsHref = "/portal/documents";
     const invoicesHref = "/portal/documents?view=issued";
 
     return [
-      { key: "calendar", title: "Schůzky", description: "Záznamy a plán", href: calendarHref, Icon: CalendarDays, enabled: true },
+      {
+        key: "calendar",
+        title: "Kalendář",
+        description: "Schůzky a zaměření",
+        openSchedule: true,
+        hideDescription: true,
+        Icon: CalendarDays,
+        enabled: true,
+      },
       { key: "tasks", title: "Úkoly", description: "Moje úkoly a seznamy", href: "/portal/dashboard", Icon: ListChecks, enabled: true },
       { key: "employees", title: "Zaměstnanci", description: "Přehled týmu", href: "/portal/employees", Icon: Users, enabled: true },
       { key: "attendance", title: "Docházka", description: "Evidence a kontrola", href: "/portal/labor/dochazka", Icon: Clock, requires: "attendance_payroll" },
@@ -92,28 +109,51 @@ export function MobileModuleGrid(props: {
       </div>
 
       <div className="grid grid-cols-4 gap-2 sm:gap-3">
-        {visible.map((t) => (
-          <Link
-            key={t.key}
-            href={t.href}
-            className={cn(
-              "group h-[100px] rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur",
-              "active:scale-[0.99] transition-transform"
-            )}
-          >
-            <div className="flex flex-col items-center justify-center text-center h-full">
+        {visible.map((t) => {
+          const body = (
+            <div className="flex h-full flex-col items-center justify-center text-center">
               <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-b from-orange-500/20 to-transparent">
                 <t.Icon className="h-5 w-5 text-orange-300" />
               </div>
               <p className="mt-2 text-[12px] font-semibold leading-tight text-white line-clamp-2">
                 {t.title}
               </p>
-              <p className="mt-1 hidden text-[11px] leading-snug text-slate-300 sm:block line-clamp-1">
-                {t.description}
-              </p>
+              {t.hideDescription ? null : (
+                <p className="mt-1 hidden text-[11px] leading-snug text-slate-300 sm:block line-clamp-1">
+                  {t.description}
+                </p>
+              )}
             </div>
-          </Link>
-        ))}
+          );
+
+          if (t.openSchedule && props.onOpenSchedule) {
+            const openSchedule = props.onOpenSchedule;
+            return (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => openSchedule()}
+                className={tileButtonClass}
+              >
+                {body}
+              </button>
+            );
+          }
+
+          if (t.openSchedule) {
+            return (
+              <Link key={t.key} href="/portal/dashboard" className={tileLinkClass}>
+                {body}
+              </Link>
+            );
+          }
+
+          return (
+            <Link key={t.key} href={t.href ?? "/portal/dashboard"} className={tileLinkClass}>
+              {body}
+            </Link>
+          );
+        })}
       </div>
     </section>
   );
