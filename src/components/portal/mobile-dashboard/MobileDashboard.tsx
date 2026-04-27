@@ -6,7 +6,6 @@ import { cn } from "@/lib/utils";
 import { Bell, Menu, ArrowRight, ClipboardList, Timer, Wallet, MessageSquare, Receipt } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { MobileModuleGrid } from "@/components/portal/mobile-dashboard/MobileModuleGrid";
-import { MobileMeetingsMiniCalendar } from "@/components/portal/mobile-dashboard/MobileMeetingsMiniCalendar";
 import type { PlatformModuleCode } from "@/lib/platform-config";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import type { CompanyPlatformFields } from "@/lib/platform-access";
@@ -37,6 +36,8 @@ export function MobileDashboard(props: {
   role?: string;
   company: CompanyPlatformFields | null | undefined;
   platformCatalog: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null | undefined;
+  /** Jedna instance kalendáře z rodiče (aby neběžely dvojí Firestore dotazy pod i nad lg). */
+  scheduleCalendar?: React.ReactNode;
   unreadMessages?: number;
   overduePlatformInvoices?: number;
   unpaidPlatformInvoices?: number;
@@ -109,7 +110,11 @@ export function MobileDashboard(props: {
           </div>
         </div>
 
-        <MobileMeetingsMiniCalendar />
+        {props.scheduleCalendar ? (
+          <div className="mt-3 min-w-0 max-w-full scroll-mt-4 overflow-x-hidden">
+            {props.scheduleCalendar}
+          </div>
+        ) : null}
       </header>
 
       <div className="mt-6 space-y-6">

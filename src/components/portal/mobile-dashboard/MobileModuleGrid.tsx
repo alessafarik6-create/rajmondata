@@ -50,7 +50,7 @@ export function MobileModuleGrid(props: {
   const tiles = useMemo((): Tile[] => {
     const hoursHref = role === "employee" ? "/portal/employee/worklogs" : "/portal/labor/vykazy";
     const approvalsHref = "/portal/labor/vykazy";
-    const calendarHref = "/portal/meeting-records";
+    const calendarHref = "/portal/dashboard#portal-schedule-calendar";
     const docsHref = "/portal/documents";
     const invoicesHref = "/portal/documents?view=issued";
 
@@ -91,7 +91,7 @@ export function MobileModuleGrid(props: {
         </Badge>
       </div>
 
-      <div className="grid grid-cols-4 gap-2 sm:gap-3 md:grid-cols-5 md:gap-4">
+      <div className="grid grid-cols-4 gap-2 sm:gap-3">
         {visible.map((t) => (
           <Link
             key={t.key}

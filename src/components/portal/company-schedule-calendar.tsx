@@ -16,6 +16,8 @@ import {
   format,
   parseISO,
   startOfDay,
+  addDays,
+  subDays,
 } from "date-fns";
 import { cs } from "date-fns/locale";
 import {
@@ -208,7 +210,13 @@ function scheduleMobileEventCountLabel(n: number): string {
   return `${n} událostí`;
 }
 
-function ScheduleMobileEventCard({ ev }: { ev: CalendarEvent }) {
+function ScheduleMobileEventCard({
+  ev,
+  onCardClick,
+}: {
+  ev: CalendarEvent;
+  onCardClick?: () => void;
+}) {
   const telHref = ev.phone
     ? `tel:${ev.phone.replace(/\s/g, "")}`
     : undefined;
@@ -217,8 +225,22 @@ function ScheduleMobileEventCard({ ev }: { ev: CalendarEvent }) {
     <article
       className={cn(
         "min-h-[44px] rounded-2xl border border-slate-200 bg-white p-4 shadow-sm border-l-[6px]",
-        ev.accentClass
+        ev.accentClass,
+        onCardClick ? "cursor-pointer transition-colors hover:bg-slate-50/90" : ""
       )}
+      onClick={onCardClick ? () => onCardClick() : undefined}
+      role={onCardClick ? "button" : undefined}
+      tabIndex={onCardClick ? 0 : undefined}
+      onKeyDown={
+        onCardClick
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onCardClick();
+              }
+            }
+          : undefined
+      }
     >
       <div className="flex flex-col gap-3.5">
         <div className="space-y-1">
@@ -264,6 +286,7 @@ function ScheduleMobileEventCard({ ev }: { ev: CalendarEvent }) {
             <p className="text-xs font-semibold text-slate-500">Telefon</p>
             <a
               href={telHref}
+              onClick={(e) => e.stopPropagation()}
               className="inline-flex min-h-[44px] items-center text-base font-semibold text-blue-700 underline-offset-2 hover:underline active:text-blue-900"
             >
               {ev.phone}
@@ -298,12 +321,24 @@ function ScheduleMobileEventCard({ ev }: { ev: CalendarEvent }) {
 
 export function CompanyScheduleCalendar({
   companyId,
+  layout = "auto",
+  headingTitle,
+  id: rootId,
+  className: rootClassName,
 }: {
   companyId: string;
+  /** `compact` = vždy mobilní rozhraní (např. mobilní dashboard pod breakpointem lg). */
+  layout?: "auto" | "compact" | "full";
+  headingTitle?: string;
+  id?: string;
+  className?: string;
 }) {
   const firestore = useFirestore();
   const router = useRouter();
   const isMobile = useIsMobile();
+  const showCompact =
+    layout === "compact" || (layout === "auto" && isMobile);
+  const showFull = layout === "full" || (layout === "auto" && !isMobile);
   const { toast } = useToast();
   const { user } = useUser();
   const { company } = useCompany();
@@ -507,6 +542,11 @@ export function CompanyScheduleCalendar({
     [monthStart, monthEnd]
   );
   const mobileGridLeadingPad = (monthStart.getDay() + 6) % 7;
+
+  const mobileStripDays = useMemo(() => {
+    const base = startOfDay(mobileSelectedDay);
+    return Array.from({ length: 10 }, (_, i) => addDays(subDays(base, 2), i));
+  }, [mobileSelectedDay]);
 
   const gridStart = startOfWeek(monthStart, { weekStartsOn: 1 });
   const gridEnd = endOfWeek(monthEnd, { weekStartsOn: 1 });
@@ -840,13 +880,19 @@ export function CompanyScheduleCalendar({
     }
   };
 
+  const titleText = headingTitle ?? "Schůzky a zaměření";
+
   return (
-    <div className="rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm">
+    <div
+      id={rootId}
+      className={cn(
+        "max-w-full rounded-xl border border-slate-200 bg-white text-slate-900 shadow-sm",
+        rootClassName
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">
-            Kalendář schůzek a zaměření
-          </h2>
+          <h2 className="text-lg font-semibold text-slate-900">{titleText}</h2>
           <p className="text-sm text-slate-800">
             Schůzky z poptávek a naplánovaná zaměření — měsíční přehled.
           </p>
@@ -908,8 +954,15 @@ export function CompanyScheduleCalendar({
           </div>
         ) : (
           <>
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-800 md:mb-3">
-              <div className="hidden flex-wrap gap-4 md:flex">
+            <div
+              className={cn(
+                "mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-800",
+                showFull && "md:mb-3"
+              )}
+            >
+              <div
+                className={cn("flex-wrap gap-4", showFull ? "hidden md:flex" : "hidden")}
+              >
                 <span className="inline-flex items-center gap-2">
                   <span className="h-3 w-3 rounded-sm bg-orange-100 ring-1 ring-orange-200" />
                   Schůzka (poptávka)
@@ -919,7 +972,9 @@ export function CompanyScheduleCalendar({
                   Zaměření
                 </span>
               </div>
-              <div className="flex w-full flex-wrap gap-3 md:hidden">
+              <div
+                className={cn("w-full flex-wrap gap-3", showCompact ? "flex" : "hidden")}
+              >
                 <span className="inline-flex items-center gap-2">
                   <span className="h-3 w-3 rounded-sm bg-orange-100 ring-1 ring-orange-200" />
                   Schůzka
@@ -943,58 +998,68 @@ export function CompanyScheduleCalendar({
               ) : null}
             </div>
 
-            {/* Mobil: výběr dne + karty událostí */}
-            <div className="md:hidden">
+            {/* Mobil / compact: pás dní, seznam akcí, měsíční mřížka */}
+            <div className={showCompact ? "block" : "hidden"}>
               <div className="mb-3 flex items-center justify-between gap-2">
                 <Button type="button" className="w-full min-h-[44px] gap-2" onClick={() => openCreateForDay(mobileSelectedDay)}>
                   <Plus className="h-4 w-4" /> Přidat schůzku / akci
                 </Button>
               </div>
-              <div className="grid grid-cols-7 gap-2">
-                {WEEKDAYS.map((wd) => (
-                  <div
-                    key={wd}
-                    className="py-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-600"
-                  >
-                    {wd}
-                  </div>
-                ))}
-                {Array.from({ length: mobileGridLeadingPad }).map((_, i) => (
-                  <div key={`pad-${i}`} className="min-h-[52px]" aria-hidden />
-                ))}
-                {monthDaysOnly.map((day) => {
-                  const key = format(day, "yyyy-MM-dd");
-                  const dayEvents = eventsByDayKey.get(key) ?? [];
-                  const hasEvents = dayEvents.length > 0;
-                  const selected = isSameDay(day, mobileSelectedDay);
-                  const today = isToday(day);
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      onClick={() => setMobileSelectedDay(startOfDay(day))}
-                      className={cn(
-                        "flex min-h-[52px] flex-col items-center justify-center rounded-xl border-2 px-0.5 py-2 text-sm font-bold tabular-nums transition-colors",
-                        selected
-                          ? "border-orange-500 bg-orange-50 text-slate-900 shadow-md"
-                          : "border-slate-200 bg-white text-slate-800 active:bg-slate-50",
-                        today && !selected ? "ring-2 ring-slate-400 ring-offset-1" : ""
-                      )}
-                    >
-                      <span>{format(day, "d.", { locale: cs })}</span>
-                      <span
+
+              <div
+                className="-mx-1 mb-4 min-w-0 overflow-x-auto pb-1"
+                aria-label="Výběr dne (10 dní)"
+              >
+                <div className="flex w-max gap-2 px-1">
+                  {mobileStripDays.map((day) => {
+                    const key = format(day, "yyyy-MM-dd");
+                    const dayEvents = (eventsByDayKey.get(key) ?? []).filter(
+                      isValidCalendarEvent
+                    );
+                    const hasEvents = dayEvents.length > 0;
+                    const selected = isSameDay(day, mobileSelectedDay);
+                    const today = isToday(day);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => {
+                          const d = startOfDay(day);
+                          setMobileSelectedDay(d);
+                          if (!isSameMonth(d, visibleMonth)) {
+                            setVisibleMonth(startOfMonth(d));
+                          }
+                        }}
                         className={cn(
-                          "mt-1 h-2 w-2 rounded-full",
-                          hasEvents ? "bg-orange-500" : "bg-transparent"
+                          "flex min-w-[3.25rem] shrink-0 flex-col items-center rounded-xl border-2 px-2 py-2 text-center transition-colors",
+                          selected
+                            ? "border-orange-500 bg-orange-50 text-slate-900 shadow-sm"
+                            : "border-slate-200 bg-white text-slate-800 active:bg-slate-50",
+                          today
+                            ? "ring-2 ring-orange-400 ring-offset-1 ring-offset-white"
+                            : ""
                         )}
-                        aria-hidden
-                      />
-                    </button>
-                  );
-                })}
+                      >
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                          {format(day, "EEE", { locale: cs })}
+                        </span>
+                        <span className="text-sm font-bold tabular-nums">
+                          {format(day, "d.", { locale: cs })}
+                        </span>
+                        <span
+                          className={cn(
+                            "mt-1 h-2 w-2 rounded-full",
+                            hasEvents ? "bg-orange-500" : "bg-transparent"
+                          )}
+                          aria-hidden
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="mt-5 space-y-4">
+              <div className="space-y-4">
                 <div className="flex flex-col gap-1 px-0.5 sm:flex-row sm:items-end sm:justify-between">
                   <h3 className="text-lg font-bold capitalize leading-tight text-slate-900">
                     {format(mobileSelectedDay, "EEEE d. MMMM yyyy", { locale: cs })}
@@ -1012,7 +1077,14 @@ export function CompanyScheduleCalendar({
                     {mobileDayEvents.map((ev) => (
                       <li key={ev.id}>
                         <div className="space-y-2">
-                          <ScheduleMobileEventCard ev={ev} />
+                          <ScheduleMobileEventCard
+                            ev={ev}
+                            onCardClick={
+                              ev.kind === "meeting"
+                                ? () => openEditMeeting(ev)
+                                : () => router.push("/portal/jobs/measurements")
+                            }
+                          />
                           {ev.kind === "meeting" ? (
                             <div className="flex flex-wrap gap-2">
                               <Button
@@ -1049,10 +1121,70 @@ export function CompanyScheduleCalendar({
                   </ul>
                 )}
               </div>
+
+              <div className="mt-6 border-t border-slate-100 pt-4">
+                <p className="mb-2 text-center text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                  Celý měsíc
+                </p>
+                <div className="grid grid-cols-7 gap-2">
+                  {WEEKDAYS.map((wd) => (
+                    <div
+                      key={wd}
+                      className="py-2 text-center text-[11px] font-bold uppercase tracking-wide text-slate-600"
+                    >
+                      {wd}
+                    </div>
+                  ))}
+                  {Array.from({ length: mobileGridLeadingPad }).map((_, i) => (
+                    <div key={`pad-${i}`} className="min-h-[52px]" aria-hidden />
+                  ))}
+                  {monthDaysOnly.map((day) => {
+                    const key = format(day, "yyyy-MM-dd");
+                    const dayEvents = eventsByDayKey.get(key) ?? [];
+                    const hasEvents = dayEvents.length > 0;
+                    const selected = isSameDay(day, mobileSelectedDay);
+                    const today = isToday(day);
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => {
+                          const d = startOfDay(day);
+                          setMobileSelectedDay(d);
+                          if (!isSameMonth(d, visibleMonth)) {
+                            setVisibleMonth(startOfMonth(d));
+                          }
+                        }}
+                        className={cn(
+                          "flex min-h-[52px] flex-col items-center justify-center rounded-xl border-2 px-0.5 py-2 text-sm font-bold tabular-nums transition-colors",
+                          selected
+                            ? "border-orange-500 bg-orange-50 text-slate-900 shadow-md"
+                            : "border-slate-200 bg-white text-slate-800 active:bg-slate-50",
+                          today && !selected ? "ring-2 ring-slate-400 ring-offset-1" : ""
+                        )}
+                      >
+                        <span>{format(day, "d.", { locale: cs })}</span>
+                        <span
+                          className={cn(
+                            "mt-1 h-2 w-2 rounded-full",
+                            hasEvents ? "bg-orange-500" : "bg-transparent"
+                          )}
+                          aria-hidden
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             {/* Desktop: klasická měsíční mřížka */}
-            <div className="hidden grid-cols-7 gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200 md:grid">
+            <div
+              className={cn(
+                "grid-cols-7 gap-px overflow-hidden rounded-lg border border-slate-200 bg-slate-200",
+                showFull ? "grid" : "hidden"
+              )}
+            >
               {WEEKDAYS.map((wd) => (
                 <div
                   key={wd}
@@ -1163,16 +1295,16 @@ export function CompanyScheduleCalendar({
         }}
       >
         <SheetContent
-          side={isMobile ? "bottom" : "right"}
+          side={showCompact ? "bottom" : "right"}
           className={cn(
             "flex w-full flex-col overflow-y-auto sm:max-w-lg",
-            isMobile ? "max-h-[92vh]" : "h-full max-h-screen"
+            showCompact ? "max-h-[92vh]" : "h-full max-h-screen"
           )}
         >
           <SheetHeader>
             <SheetTitle>{editingEvent ? "Upravit schůzku / akci" : "Nová schůzka / akce"}</SheetTitle>
             <SheetDescription>
-              {isMobile
+              {showCompact
                 ? "Formulář v dolním panelu — datum a čas pohodlně na výšku."
                 : "Boční panel — úpravy schůzky, stav a upozornění pro zaměstnance."}
             </SheetDescription>

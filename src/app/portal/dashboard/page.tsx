@@ -78,6 +78,7 @@ import type { ActivityActorProfile } from "@/lib/activity-log";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDashboard";
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
+import { useIsBelowLg } from "@/hooks/use-mobile";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
@@ -201,6 +202,17 @@ export default function CompanyDashboard() {
   /** Přehledové KPI (zakázky, mzdy, finance, zprávy) — vedení a účetní. */
   const showAdminDashboard =
     (isManagement || isAccountant) && !isCustomer;
+
+  const belowLg = useIsBelowLg();
+
+  const scheduleCalendarSlot =
+    companyId && showAdminDashboard && belowLg ? (
+      <CompanyScheduleCalendar
+        id="portal-schedule-calendar"
+        companyId={companyId}
+        layout="compact"
+      />
+    ) : null;
 
   const todayIso = useMemo(
     () => new Date().toISOString().split("T")[0],
@@ -903,6 +915,7 @@ export default function CompanyDashboard() {
         role={role}
         company={(company as unknown) as import("@/lib/platform-access").CompanyPlatformFields}
         platformCatalog={platformCatalog}
+        scheduleCalendar={scheduleCalendarSlot}
         unreadMessages={unreadEmployeeChatCount}
         overduePlatformInvoices={platformInvoiceOverdue}
         unpaidPlatformInvoices={platformInvoiceUnpaid}
@@ -1140,7 +1153,11 @@ export default function CompanyDashboard() {
             </div>
           ) : null}
 
-          {companyId ? <CompanyScheduleCalendar companyId={companyId} /> : null}
+          {companyId && showAdminDashboard && !belowLg ? (
+            <div id="portal-schedule-calendar" className="scroll-mt-4">
+              <CompanyScheduleCalendar companyId={companyId} />
+            </div>
+          ) : null}
 
           {companyId ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 lg:items-stretch lg:gap-6">
