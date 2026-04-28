@@ -255,7 +255,8 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900">
       <div className="flex min-h-screen flex-col lg:grid lg:grid-cols-2">
-        <div className="order-2 min-h-0 w-full min-w-0 shrink-0 lg:order-1">
+        {/* Media panel: pouze desktop (na mobilu/tabletu se nesmí zobrazit pod formulářem) */}
+        <div className="hidden min-h-0 w-full min-w-0 shrink-0 lg:block">
           <PublicAuthMediaPanel
             images={loginImages}
             video={loginVideo}
@@ -264,7 +265,7 @@ export default function LoginPage() {
           />
         </div>
 
-        <div className="order-1 flex w-full min-w-0 items-center justify-center px-3 py-6 sm:px-5 sm:py-8 lg:order-2 lg:px-8">
+        <div className="flex w-full min-w-0 items-center justify-center px-4 py-6 sm:px-5 sm:py-8 lg:px-8">
         <Card className="w-full max-w-md border-slate-200 bg-white text-slate-900 shadow-xl">
           <CardHeader className="space-y-3 text-center sm:space-y-4">
             <div className="mx-auto flex justify-center">
@@ -339,7 +340,7 @@ export default function LoginPage() {
 
               <Button
                 type="submit"
-                className="h-11 w-full text-base font-semibold"
+                className="h-11 w-full bg-orange-500 text-white font-semibold hover:bg-orange-600 disabled:bg-slate-300 disabled:text-white disabled:opacity-100"
                 disabled={!canSubmit}
               >
                 {loading ? (

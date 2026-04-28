@@ -51,6 +51,7 @@ function wordmarkClass(context: LogoProps["context"], part: "brand" | "suffix") 
   }
   if (c === "sidebar") return "text-sidebar-foreground/80";
   if (c === "light") return "text-slate-800";
+  if (c === "page") return "text-primary";
   return "text-foreground/75";
 }
 
@@ -83,7 +84,8 @@ export function Logo({
         <LogoMark className="h-8 w-8" />
         <span
           className={cn(
-            "font-extrabold tracking-tight text-base truncate",
+            "font-extrabold tracking-tight text-base",
+            context === "page" ? "whitespace-nowrap" : "truncate",
             wordmarkClass(context, "brand")
           )}
         >
@@ -104,7 +106,8 @@ export function Logo({
       <LogoMark className={compact ? "h-8 w-8 sm:h-9 sm:w-9" : "h-9 w-9 sm:h-10 sm:w-10"} />
       <span
         className={cn(
-          "font-extrabold tracking-tight truncate",
+          "font-extrabold tracking-tight",
+          context === "page" ? "whitespace-nowrap" : "truncate",
           compact
             ? "text-sm sm:text-base md:text-lg"
             : "text-lg sm:text-xl",
