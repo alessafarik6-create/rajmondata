@@ -77,7 +77,6 @@ import type { ActivityActorProfile } from "@/lib/activity-log";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDashboard";
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
-import { MobileSchedulePreviewCard } from "@/components/portal/mobile-dashboard/MobileSchedulePreviewCard";
 import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -209,13 +208,8 @@ export default function CompanyDashboard() {
   const belowLg = useIsBelowLg();
   const isPhoneLayout = useIsMobile();
 
-  const schedulePreviewSlot =
-    companyId && showAdminDashboard && belowLg ? (
-      <MobileSchedulePreviewCard
-        companyId={companyId}
-        onOpenCalendar={() => setScheduleModalOpen(true)}
-      />
-    ) : null;
+  // Na mobilním dashboardu neukazujeme náhled kalendáře automaticky.
+  const schedulePreviewSlot = null;
 
   const todayIso = useMemo(
     () => new Date().toISOString().split("T")[0],
@@ -973,7 +967,7 @@ export default function CompanyDashboard() {
                 Zavřít
               </Button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-4 pt-2 sm:px-4">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-[calc(96px+env(safe-area-inset-bottom))] pt-2 sm:px-4">
               {scheduleModalOpen ? (
                 <CompanyScheduleCalendar
                   companyId={companyId}

@@ -68,27 +68,21 @@ export function MobileDashboard(props: {
           </p>
           <p className="text-[12px] text-slate-400">{formatCompanySubline(props.companyLabel)}</p>
         </div>
-
-        {props.schedulePreview ? (
-          <div className="min-w-0 max-w-full overflow-x-hidden">
-            {props.schedulePreview}
-          </div>
-        ) : null}
       </header>
 
       <div className="mt-6 space-y-6">
+        {props.tasksSection ? (
+          <div className="min-w-0 max-w-full overflow-x-hidden">
+            {props.tasksSection}
+          </div>
+        ) : null}
+
         <MobileModuleGrid
           company={props.company}
           platformCatalog={props.platformCatalog}
           role={props.role}
           onOpenSchedule={props.onOpenScheduleModal}
         />
-
-        {props.tasksSection ? (
-          <div className="min-w-0 max-w-full overflow-x-hidden">
-            {props.tasksSection}
-          </div>
-        ) : null}
 
         <section aria-label="Rychlý přehled" className="space-y-3">
           <h2 className="text-sm font-semibold tracking-wide text-slate-200">Rychlý přehled</h2>
