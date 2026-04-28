@@ -367,8 +367,8 @@ export default function LoginPage() {
 
             <Link href="/register" className="w-full">
               <Button
-                variant="outline"
-                className="h-11 w-full gap-2 border-slate-300 text-slate-900 hover:bg-slate-50"
+                variant="secondary"
+                className="h-11 w-full gap-2 bg-black text-white font-semibold hover:bg-neutral-800 hover:text-white disabled:bg-[#444] disabled:text-[#ccc] disabled:opacity-100"
               >
                 <UserPlus className="h-4 w-4" /> {regButtonLabel}
               </Button>
