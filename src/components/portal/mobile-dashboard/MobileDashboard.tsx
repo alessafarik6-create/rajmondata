@@ -1,21 +1,14 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import { Bell, Menu, ArrowRight, ClipboardList, Timer, Wallet, MessageSquare, Receipt } from "lucide-react";
+import { Timer, Wallet, MessageSquare, Receipt } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { MobileModuleGrid } from "@/components/portal/mobile-dashboard/MobileModuleGrid";
 import type { PlatformModuleCode } from "@/lib/platform-config";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import type { CompanyPlatformFields } from "@/lib/platform-access";
-
-type TaskItem = {
-  id: string;
-  title: string;
-  statusLabel: string;
-  tone: "today" | "soon" | "late";
-};
 
 function dayPartGreeting(now = new Date()): string {
   const h = now.getHours();
@@ -38,6 +31,8 @@ export function MobileDashboard(props: {
   platformCatalog: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null | undefined;
   /** Náhled kalendáře + otevření modalu z rodiče. */
   schedulePreview?: React.ReactNode;
+  /** Úkoly pod moduly (stejný zdroj jako desktop „ÚKOLY“). */
+  tasksSection?: React.ReactNode;
   /** Otevře plný kalendář (modal) — sdílené s dlaždicí Kalendář. */
   onOpenScheduleModal?: () => void;
   unreadMessages?: number;
@@ -54,10 +49,6 @@ export function MobileDashboard(props: {
   const greet = dayPartGreeting();
   const name = props.displayName || "uživateli";
 
-  const tasks = useMemo((): TaskItem[] => {
-    return [];
-  }, []);
-
   const stats = props.quickStats ?? {};
   const unread = Number(props.unreadMessages) || 0;
   const badgeCount = unread;
@@ -70,50 +61,16 @@ export function MobileDashboard(props: {
         "bg-slate-950 text-slate-50"
       )}
     >
-      <header className="space-y-4">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-500/15 ring-1 ring-orange-500/25">
-                <span className="text-sm font-extrabold text-orange-300">R</span>
-              </div>
-              <div className="leading-tight">
-                <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-300">RAJMONDATA</p>
-                <p className="text-xs text-slate-400">Mobilní dashboard</p>
-              </div>
-            </div>
-
-            <h1 className="mt-4 text-2xl font-semibold tracking-tight text-white">
-              {greet}, {name} <span aria-hidden>👋</span>
-            </h1>
-            <p className="mt-1 text-sm text-slate-300">{formatCompanySubline(props.companyLabel)}</p>
-          </div>
-
-          <div className="flex items-center gap-2 pt-1">
-            <Link
-              href="/portal/notifications"
-              className="relative inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur"
-              aria-label="Notifikace"
-            >
-              <Bell className="h-5 w-5 text-slate-200" />
-              {badgeCount > 0 ? (
-                <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-orange-500 px-1 text-[11px] font-bold text-slate-950">
-                  {badgeCount > 99 ? "99+" : badgeCount}
-                </span>
-              ) : null}
-            </Link>
-            <Link
-              href="/portal/settings"
-              className="inline-flex h-11 w-11 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04] backdrop-blur"
-              aria-label="Menu"
-            >
-              <Menu className="h-5 w-5 text-slate-200" />
-            </Link>
-          </div>
+      <header className="space-y-3">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-white">
+            {greet}, {name} <span aria-hidden>👋</span>
+          </p>
+          <p className="text-[12px] text-slate-400">{formatCompanySubline(props.companyLabel)}</p>
         </div>
 
         {props.schedulePreview ? (
-          <div className="mt-3 min-w-0 max-w-full scroll-mt-4 overflow-x-hidden">
+          <div className="min-w-0 max-w-full overflow-x-hidden">
             {props.schedulePreview}
           </div>
         ) : null}
@@ -127,44 +84,11 @@ export function MobileDashboard(props: {
           onOpenSchedule={props.onOpenScheduleModal}
         />
 
-        <section aria-label="Moje úkoly" className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold tracking-wide text-slate-200">Moje úkoly</h2>
-            <Link href="/portal/dashboard" className="text-xs font-semibold text-orange-300">
-              Zobrazit všechny <ArrowRight className="ml-1 inline h-4 w-4" />
-            </Link>
+        {props.tasksSection ? (
+          <div className="min-w-0 max-w-full overflow-x-hidden">
+            {props.tasksSection}
           </div>
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur">
-            {tasks.length === 0 ? (
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-2xl border border-white/10 bg-white/5">
-                  <ClipboardList className="h-5 w-5 text-orange-300" />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm font-semibold text-white">Zatím žádné úkoly</p>
-                  <p className="text-xs text-slate-300">Až se objeví nové úkoly nebo upozornění, uvidíte je tady.</p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {tasks.slice(0, 5).map((t) => (
-                  <div key={t.id} className="flex items-center justify-between gap-3">
-                    <p className="text-sm font-medium text-white">{t.title}</p>
-                    <Badge
-                      className={cn(
-                        "border border-white/10 bg-white/5 text-slate-200",
-                        t.tone === "today" && "bg-orange-500/15 text-orange-200 border-orange-500/20",
-                        t.tone === "late" && "bg-rose-500/15 text-rose-200 border-rose-500/20"
-                      )}
-                    >
-                      {t.statusLabel}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </section>
+        ) : null}
 
         <section aria-label="Rychlý přehled" className="space-y-3">
           <h2 className="text-sm font-semibold tracking-wide text-slate-200">Rychlý přehled</h2>

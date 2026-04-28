@@ -23,7 +23,6 @@ import {
   CardTitle,
   CardDescription,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   useUser,
@@ -81,6 +80,7 @@ import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBott
 import { MobileSchedulePreviewCard } from "@/components/portal/mobile-dashboard/MobileSchedulePreviewCard";
 import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 
 const DASHBOARD_LEADS_POLL_MS = 60_000;
 
@@ -465,6 +465,18 @@ export default function CompanyDashboard() {
   const typedJobs: JobData[] = Array.isArray(allJobsRaw)
     ? (allJobsRaw as JobData[])
     : [];
+
+  const mobileTasksSectionSlot =
+    companyId && showAdminDashboard && belowLg ? (
+      <DashboardJobTasksWidget
+        companyId={companyId}
+        todayIso={todayIso}
+        jobs={typedJobs}
+        jobsLoading={isJobsLoading}
+        variant="mobile"
+        maxItems={5}
+      />
+    ) : null;
 
   const jobNamesById = useMemo(() => {
     const m: Record<string, string> = {};
@@ -919,6 +931,7 @@ export default function CompanyDashboard() {
         company={(company as unknown) as import("@/lib/platform-access").CompanyPlatformFields}
         platformCatalog={platformCatalog}
         schedulePreview={schedulePreviewSlot}
+        tasksSection={mobileTasksSectionSlot}
         onOpenScheduleModal={
           companyId && showAdminDashboard && belowLg
             ? () => setScheduleModalOpen(true)

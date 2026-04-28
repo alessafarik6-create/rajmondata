@@ -23,6 +23,7 @@ import { signOut } from 'firebase/auth';
 import { doc } from 'firebase/firestore';
 import { useUnreadEmployeeChatCount } from '@/hooks/use-unread-employee-chat';
 import { usePortalNotificationsSafe } from '@/components/portal/portal-notifications-context';
+import { cn } from "@/lib/utils";
 
 interface TopHeaderProps {
   onOpenMobileMenu?: () => void;
@@ -49,6 +50,8 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   const isAdminArea = pathname?.startsWith('/admin');
   const isEmployeePortal = pathname?.startsWith('/portal/employee');
   const isCustomerPortal = pathname?.startsWith('/portal/customer');
+  const isPortalDashboard = pathname === "/portal/dashboard";
+  const dashboardDark = isPortalDashboard && !isAdminArea;
   const showCompanyChatShortcut = !isAdminArea && !isEmployeePortal;
   const customerChatRef = useMemoFirebase(
     () =>
@@ -110,19 +113,49 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
   };
 
   return (
-    <header className="print:hidden h-14 sm:h-16 border-b border-slate-200 bg-white/90 backdrop-blur-sm sticky top-0 z-40 flex items-center justify-between gap-2 px-4 sm:px-6 lg:px-8">
+    <header
+      className={cn(
+        "print:hidden h-14 sm:h-16 sticky top-0 z-40 flex items-center justify-between gap-2 px-4 sm:px-6 lg:px-8 backdrop-blur-sm border-b",
+        dashboardDark
+          ? "border-white/10 bg-slate-950/95 text-slate-50"
+          : "border-slate-200 bg-white/90 text-slate-900"
+      )}
+    >
       <div className="flex items-center gap-2 min-w-0 flex-1">
         {onOpenMobileMenu && (
           <Button
             variant="ghost"
             size="icon"
-            className="shrink-0 lg:hidden h-10 w-10 text-slate-700 hover:bg-slate-200"
+            className={cn(
+              "shrink-0 lg:hidden h-10 w-10",
+              dashboardDark
+                ? "text-slate-100 hover:bg-white/10"
+                : "text-slate-700 hover:bg-slate-200"
+            )}
             onClick={onOpenMobileMenu}
             aria-label="Otevřít menu"
           >
             <Menu className="h-5 w-5" />
           </Button>
         )}
+
+        {/* Mobilní dashboard: tmavé RAJMONDATA logo vlevo */}
+        <Link
+          href="/portal/dashboard"
+          className={cn(
+            "flex shrink-0 items-center gap-2 min-w-0",
+            dashboardDark ? "lg:hidden" : "hidden"
+          )}
+          aria-label="RAJMONDATA"
+        >
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-orange-500 ring-1 ring-orange-400/40">
+            <span className="text-sm font-extrabold text-white">R</span>
+          </div>
+          <span className="truncate text-sm font-extrabold tracking-wide text-white">
+            RAJMONDATA
+          </span>
+        </Link>
+
         <Link
           href={
             isAdminArea
@@ -131,7 +164,10 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
                 ? '/portal/employee'
                 : '/portal/dashboard'
           }
-          className="hidden sm:flex shrink-0 mr-1 items-center"
+          className={cn(
+            "shrink-0 mr-1 items-center",
+            dashboardDark ? "hidden lg:flex" : "hidden sm:flex"
+          )}
           aria-label="Přehled portálu"
         >
           <Logo variant="small" context="light" className="max-w-[140px] lg:max-w-[180px]" />
@@ -153,12 +189,17 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             asChild
             variant="ghost"
             size="icon"
-            className="relative text-slate-800 hover:bg-slate-200 hover:text-slate-900 h-10 w-10 shrink-0"
+            className={cn(
+              "relative h-10 w-10 shrink-0",
+              dashboardDark
+                ? "text-slate-100 hover:bg-white/10 hover:text-white"
+                : "text-slate-800 hover:bg-slate-200 hover:text-slate-900"
+            )}
           >
             <Link href="/portal/notifications" aria-label="Oznámení portálu">
               <Bell className="w-5 h-5" />
               {portalNotifyCount > 0 ? (
-                <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-amber-600 px-1 text-[10px] font-bold leading-none text-white shadow-sm">
+                <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold leading-none text-slate-950 shadow-sm">
                   {portalNotifyCount > 99 ? "99+" : portalNotifyCount}
                 </span>
               ) : null}
@@ -170,12 +211,17 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
             asChild
             variant="ghost"
             size="icon"
-            className="relative text-slate-800 hover:bg-slate-200 hover:text-slate-900 h-10 w-10 shrink-0"
+            className={cn(
+              "relative h-10 w-10 shrink-0",
+              dashboardDark
+                ? "text-slate-100 hover:bg-white/10 hover:text-white"
+                : "text-slate-800 hover:bg-slate-200 hover:text-slate-900"
+            )}
           >
             <Link href={chatHref} aria-label={isCustomerPortal ? "Chat s administrací" : "Zprávy od zaměstnanců"}>
               <MessageSquare className="w-5 h-5" />
               {(isCustomerPortal ? customerUnread > 0 : showChatBadge && unreadChatCount > 0) ? (
-                <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white shadow-sm">
+                <span className="absolute -right-0.5 -top-0.5 flex min-h-[1.125rem] min-w-[1.125rem] items-center justify-center rounded-full bg-orange-500 px-1 text-[10px] font-bold leading-none text-slate-950 shadow-sm">
                   {isCustomerPortal
                     ? customerUnread > 99
                       ? "99+"
@@ -191,12 +237,31 @@ export const TopHeader = ({ onOpenMobileMenu }: TopHeaderProps) => {
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="flex items-center gap-2 sm:gap-3 px-2 hover:bg-slate-200 text-slate-900 transition-colors min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0 h-10 w-10 sm:h-auto sm:w-auto sm:px-2 rounded-full sm:rounded-lg" aria-label="Účet">
+            <Button
+              variant="ghost"
+              className={cn(
+                "flex items-center gap-2 sm:gap-3 px-2 transition-colors min-w-[44px] min-h-[44px] sm:min-w-0 sm:min-h-0 h-10 w-10 sm:h-auto sm:w-auto sm:px-2 rounded-full sm:rounded-lg",
+                dashboardDark
+                  ? "hover:bg-white/10 text-slate-50"
+                  : "hover:bg-slate-200 text-slate-900"
+              )}
+              aria-label="Účet"
+            >
               <div className="text-right hidden sm:block">
-                <p className="text-sm font-medium leading-none text-slate-900">
+                <p
+                  className={cn(
+                    "text-sm font-medium leading-none",
+                    dashboardDark ? "text-slate-50" : "text-slate-900"
+                  )}
+                >
                   {superadminUsername || profile?.displayName || user?.email || 'Účet'}
                 </p>
-                <p className="text-xs text-slate-800 mt-1 capitalize">
+                <p
+                  className={cn(
+                    "text-xs mt-1 capitalize",
+                    dashboardDark ? "text-slate-300" : "text-slate-800"
+                  )}
+                >
                   {superadminUsername
                     ? 'Super administrátor'
                     : getRoleLabel(

@@ -189,16 +189,23 @@ export function DashboardJobTasksWidget({
   todayIso,
   jobs,
   jobsLoading,
+  variant = "desktop",
+  maxItems,
 }: {
   companyId: string;
   todayIso: string;
   jobs: JobRef[];
   /** Dokud Firebase načítá kolekci jobs — čekej, než spustíme listenery tasks pod zakázkami. */
   jobsLoading: boolean;
+  /** `mobile` = tmavý RAJMONDATA styl + omezení počtu řádků. */
+  variant?: "desktop" | "mobile";
+  /** Pro `mobile`: max počet zobrazených položek (např. 5). */
+  maxItems?: number;
 }) {
   const firestore = useFirestore();
   const { toast } = useToast();
   const cid = String(companyId ?? "").trim();
+  const isMobileVariant = variant === "mobile";
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dialogItem, setDialogItem] = useState<DashboardTaskItem | null>(null);
@@ -497,36 +504,87 @@ export function DashboardJobTasksWidget({
     }
   };
 
+  const visibleItems = isMobileVariant && typeof maxItems === "number" ? items.slice(0, Math.max(0, maxItems)) : items;
+
+  function darkAccentClass(tier: "strong" | "medium" | "soft"): string {
+    if (tier === "strong") return "border-l-orange-500 bg-white/[0.04]";
+    if (tier === "medium") return "border-l-orange-400/80 bg-white/[0.03]";
+    return "border-l-white/10 bg-white/[0.02]";
+  }
+
   return (
     <>
       <section
-        className="mx-auto w-full max-w-5xl rounded-lg border border-border/60 bg-muted/5 px-3 py-3 sm:px-4 sm:py-4"
+        className={cn(
+          "mx-auto w-full",
+          isMobileVariant
+            ? "rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-4 shadow-[0_12px_40px_rgba(0,0,0,0.45)] backdrop-blur"
+            : "max-w-5xl rounded-lg border border-border/60 bg-muted/5 px-3 py-3 sm:px-4 sm:py-4"
+        )}
         aria-label="Úkoly zakázek a organizace"
       >
-        <div className="mb-3 flex flex-wrap items-center gap-2 text-muted-foreground">
-          <ListTodo className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground/85">
+        <div
+          className={cn(
+            "mb-3 flex flex-wrap items-center justify-between gap-2",
+            isMobileVariant ? "text-slate-300" : "text-muted-foreground"
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-2">
+            <ListTodo className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+            <h2
+              className={cn(
+                "text-sm font-semibold uppercase tracking-wide",
+                isMobileVariant ? "text-slate-100" : "text-foreground/85"
+              )}
+            >
             Úkoly
-          </h2>
-          {!isLoading ? (
-            <span className="text-xs font-normal normal-case tracking-normal text-muted-foreground">
-              ({items.length} aktivních)
-            </span>
+            </h2>
+            {!isLoading ? (
+              <span
+                className={cn(
+                  "text-xs font-normal normal-case tracking-normal",
+                  isMobileVariant ? "text-slate-400" : "text-muted-foreground"
+                )}
+              >
+                ({items.length} aktivních)
+              </span>
+            ) : null}
+          </div>
+
+          {isMobileVariant ? (
+            <Button
+              asChild
+              type="button"
+              variant="outline"
+              className="min-h-11 border-white/20 bg-transparent px-4 text-slate-100 hover:bg-white/10"
+            >
+              <Link href="/portal/jobs">Zobrazit všechny</Link>
+            </Button>
           ) : null}
         </div>
 
         {isLoading ? (
-          <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+          <div
+            className={cn(
+              "flex items-center gap-2 py-6 text-sm",
+              isMobileVariant ? "text-slate-300" : "text-muted-foreground"
+            )}
+          >
             <Loader2 className="h-4 w-4 animate-spin shrink-0 opacity-80" />
             Načítání…
           </div>
-        ) : items.length === 0 ? (
-          <p className="py-2 text-sm text-muted-foreground">
+        ) : visibleItems.length === 0 ? (
+          <p className={cn("py-2 text-sm", isMobileVariant ? "text-slate-300" : "text-muted-foreground")}>
             Žádné aktivní úkoly (zakázky ani organizace).
           </p>
         ) : (
-          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((row) => {
+          <ul
+            className={cn(
+              "gap-3",
+              isMobileVariant ? "flex flex-col" : "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3"
+            )}
+          >
+            {visibleItems.map((row) => {
               const tier = accentTier(row, todayIso);
               const due = validDue(row.dueIso);
               const overdue = Boolean(due && due < todayIso);
@@ -544,14 +602,27 @@ export function DashboardJobTasksWidget({
                       }
                     }}
                     className={cn(
-                      "flex h-full w-full cursor-pointer flex-col rounded-lg border p-3 text-left text-sm shadow-sm outline-none transition hover:shadow-md focus-visible:ring-2 focus-visible:ring-ring",
-                      cardAccentClass(tier)
+                      "flex h-full w-full cursor-pointer flex-col border p-3 text-left text-sm shadow-sm outline-none transition focus-visible:ring-2",
+                      isMobileVariant
+                        ? cn(
+                            "rounded-2xl border-white/10 text-slate-100 hover:bg-white/[0.06] focus-visible:ring-orange-500/40 border-l-[6px]",
+                            darkAccentClass(tier)
+                          )
+                        : cn(
+                            "rounded-lg hover:shadow-md focus-visible:ring-ring",
+                            cardAccentClass(tier)
+                          )
                     )}
                   >
                     <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
                       <Badge
                         variant="outline"
-                        className="shrink-0 border-border/80 text-[10px] font-normal"
+                        className={cn(
+                          "shrink-0 text-[10px] font-normal",
+                          isMobileVariant
+                            ? "border-white/15 bg-white/5 text-slate-200"
+                            : "border-border/80"
+                        )}
                       >
                         {row.source === "job" ? "Zakázka" : "Organizace"}
                       </Badge>
@@ -559,7 +630,10 @@ export function DashboardJobTasksWidget({
                         type="button"
                         size="sm"
                         variant="secondary"
-                        className="h-7 shrink-0 gap-1 px-2 text-[11px]"
+                        className={cn(
+                          "h-7 shrink-0 gap-1 px-2 text-[11px]",
+                          isMobileVariant && "border border-white/15 bg-white/10 text-white hover:bg-white/15"
+                        )}
                         onClick={(e) => {
                           e.stopPropagation();
                           void quickDone(e, row);
@@ -570,25 +644,31 @@ export function DashboardJobTasksWidget({
                       </Button>
                     </div>
                     <p
-                      className="line-clamp-2 font-semibold leading-snug text-foreground"
+                      className={cn(
+                        "line-clamp-2 font-semibold leading-snug",
+                        isMobileVariant ? "text-white" : "text-foreground"
+                      )}
                       title={row.title}
                     >
                       {row.title}
                     </p>
                     {row.note ? (
                       <p
-                        className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                        className={cn(
+                          "mt-1 line-clamp-2 text-xs",
+                          isMobileVariant ? "text-slate-300" : "text-muted-foreground"
+                        )}
                         title={row.note}
                       >
                         {row.note}
                       </p>
                     ) : null}
                     {row.source === "job" && row.jobName ? (
-                      <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                      <p className={cn("mt-1 truncate text-[11px]", isMobileVariant ? "text-slate-400" : "text-muted-foreground")}>
                         {row.jobName}
                       </p>
                     ) : null}
-                    <div className="mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                    <div className={cn("mt-2 flex flex-wrap gap-x-2 gap-y-1 text-[11px]", isMobileVariant ? "text-slate-400" : "text-muted-foreground")}>
                       <span
                         className={cn(
                           overdue &&
@@ -607,7 +687,7 @@ export function DashboardJobTasksWidget({
                             : "Otevřený"}
                       </span>
                     </div>
-                    <p className="mt-1 text-[11px] text-muted-foreground">
+                    <p className={cn("mt-1 text-[11px]", isMobileVariant ? "text-slate-300" : "text-muted-foreground")}>
                       Přiřazeno: {assignmentLine(row, employeeNameById)}
                     </p>
                   </div>
