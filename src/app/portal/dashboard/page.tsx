@@ -77,6 +77,7 @@ import type { ActivityActorProfile } from "@/lib/activity-log";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDashboard";
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
+import { MobileSchedulePreviewCard } from "@/components/portal/mobile-dashboard/MobileSchedulePreviewCard";
 import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -208,8 +209,13 @@ export default function CompanyDashboard() {
   const belowLg = useIsBelowLg();
   const isPhoneLayout = useIsMobile();
 
-  // Na mobilním dashboardu neukazujeme náhled kalendáře automaticky.
-  const schedulePreviewSlot = null;
+  const schedulePreviewSlot =
+    companyId && showAdminDashboard && belowLg ? (
+      <MobileSchedulePreviewCard
+        companyId={companyId}
+        onOpenCalendar={() => setScheduleModalOpen(true)}
+      />
+    ) : null;
 
   const todayIso = useMemo(
     () => new Date().toISOString().split("T")[0],
@@ -460,17 +466,7 @@ export default function CompanyDashboard() {
     ? (allJobsRaw as JobData[])
     : [];
 
-  const mobileTasksSectionSlot =
-    companyId && showAdminDashboard && belowLg ? (
-      <DashboardJobTasksWidget
-        companyId={companyId}
-        todayIso={todayIso}
-        jobs={typedJobs}
-        jobsLoading={isJobsLoading}
-        variant="mobile"
-        maxItems={5}
-      />
-    ) : null;
+  // Úkoly na mobilním dashboardu nezobrazujeme automaticky (otevřou se přes modul „Úkoly“).
 
   const jobNamesById = useMemo(() => {
     const m: Record<string, string> = {};
@@ -925,7 +921,7 @@ export default function CompanyDashboard() {
         company={(company as unknown) as import("@/lib/platform-access").CompanyPlatformFields}
         platformCatalog={platformCatalog}
         schedulePreview={schedulePreviewSlot}
-        tasksSection={mobileTasksSectionSlot}
+        tasksSection={undefined}
         onOpenScheduleModal={
           companyId && showAdminDashboard && belowLg
             ? () => setScheduleModalOpen(true)

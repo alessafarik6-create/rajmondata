@@ -73,7 +73,7 @@ export function MobileModuleGrid(props: {
         Icon: CalendarDays,
         enabled: true,
       },
-      { key: "tasks", title: "Úkoly", description: "Moje úkoly a seznamy", href: "/portal/dashboard", Icon: ListChecks, enabled: true },
+      { key: "tasks", title: "Úkoly", description: "Moje úkoly a seznamy", href: "/portal/tasks", Icon: ListChecks, enabled: true },
       { key: "employees", title: "Zaměstnanci", description: "Přehled týmu", href: "/portal/employees", Icon: Users, enabled: true },
       { key: "attendance", title: "Docházka", description: "Evidence a kontrola", href: "/portal/labor/dochazka", Icon: Clock, requires: "attendance_payroll" },
       { key: "payroll", title: "Výplaty", description: "Mzdy a výplaty", href: "/portal/labor/vyplaty", Icon: Wallet, requires: "attendance_payroll" },

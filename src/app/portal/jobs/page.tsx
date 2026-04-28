@@ -67,6 +67,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import Link from "next/link";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
 import type { JobTemplate, JobTemplateValues } from "@/lib/job-templates";
 import {
   cloneQuestionnaireTemplateForJob,
@@ -102,6 +103,7 @@ import {
   type JobPdfExportRow,
 } from "@/lib/pdf/exportJobsToPdf";
 import { sumJobExpensesFromFirestore } from "@/lib/pdf/sum-job-expenses-client";
+import { useIsBelowLg } from "@/hooks/use-mobile";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
 
@@ -190,6 +192,7 @@ function normalizeJobsList(
 }
 
 function JobsPageContent() {
+  const belowLg = useIsBelowLg();
   const { user } = useUser();
   const firestore = useFirestore();
   const { company, companyName: tenantCompanyName } = useCompany();
@@ -303,6 +306,20 @@ function JobsPageContent() {
     }
     return list;
   }, [jobs, jobListSearch, jobTagFilter]);
+
+  const statusOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const j of jobs) {
+      const st = String(j?.status ?? "").trim();
+      if (st) s.add(st);
+    }
+    return Array.from(s.values()).sort((a, b) => a.localeCompare(b, "cs"));
+  }, [jobs]);
+  const [statusFilter, setStatusFilter] = useState("");
+  const filteredJobsMobile = useMemo(() => {
+    if (!statusFilter) return filteredJobs;
+    return filteredJobs.filter((j) => String(j?.status ?? "").trim() === statusFilter);
+  }, [filteredJobs, statusFilter]);
 
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [templateValues, setTemplateValues] = useState<JobTemplateValues>({});
@@ -790,7 +807,13 @@ function JobsPageContent() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8">
+    <div
+      className={cn(
+        "mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8",
+        belowLg &&
+          "bg-slate-950 text-slate-50 -mx-3 -my-3 px-4 pt-4 pb-[calc(96px+env(safe-area-inset-bottom))] sm:-mx-4 sm:-my-4 sm:px-6 md:-mx-6 md:-my-6 md:px-8"
+      )}
+    >
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
         <div className="min-w-0">
           <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl break-words">
@@ -1302,35 +1325,52 @@ function JobsPageContent() {
         </div>
       </div>
 
-      <Card className="border-slate-200 shadow-sm">
+      <Card className={cn("shadow-sm", belowLg ? "border-white/10 bg-white/[0.04] text-slate-50" : "border-slate-200")}>
         <CardContent className="p-4 sm:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <div className="flex-1 min-w-[200px] space-y-1.5">
-              <Label htmlFor="jobs-search" className="text-xs text-slate-800">
+              <Label htmlFor="jobs-search" className={cn("text-xs", belowLg ? "text-slate-300" : "text-slate-800")}>
                 Vyhledávání
               </Label>
               <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-800 pointer-events-none" />
+                <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none", belowLg ? "text-slate-300" : "text-slate-800")} />
                 <Input
                   id="jobs-search"
-                  className="pl-9"
+                  className={cn("pl-9", belowLg && "bg-slate-900/60 border-white/10 text-white placeholder:text-slate-400")}
                   placeholder="Název nebo popis zakázky…"
                   value={jobListSearch}
                   onChange={(e) => setJobListSearch(e.target.value)}
                 />
               </div>
             </div>
+            {belowLg ? (
+              <div className="w-full sm:w-[min(100%,260px)] space-y-1.5">
+                <Label className="text-xs text-slate-300">Stav</Label>
+                <select
+                  className={cn(NATIVE_SELECT_CLASS, "bg-slate-900/60 border-white/10 text-white")}
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="">Všechny stavy</option>
+                  {statusOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : null}
             <div className="w-full sm:w-[min(100%,260px)] space-y-1.5">
               <Label
                 htmlFor="jobs-tag-filter"
-                className="text-xs text-slate-800 inline-flex items-center gap-1.5"
+                className={cn("text-xs inline-flex items-center gap-1.5", belowLg ? "text-slate-300" : "text-slate-800")}
               >
                 <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden />
                 Štítek / typ
               </Label>
               <select
                 id="jobs-tag-filter"
-                className={NATIVE_SELECT_CLASS}
+                className={cn(NATIVE_SELECT_CLASS, belowLg && "bg-slate-900/60 border-white/10 text-white")}
                 value={jobTagFilter}
                 onChange={(e) => setJobTagFilter(e.target.value)}
               >
@@ -1346,14 +1386,14 @@ function JobsPageContent() {
         </CardContent>
       </Card>
 
-      <Card className="overflow-hidden">
-        <CardContent className="p-0 overflow-x-auto">
+      <Card className={cn("overflow-hidden", belowLg ? "border-white/10 bg-white/[0.04] text-slate-50" : "")}>
+        <CardContent className={cn("p-0", belowLg ? "overflow-x-hidden" : "overflow-x-auto")}>
           {isLoading ? (
             <div className="flex items-center justify-center p-8 sm:p-12">
               <Loader2 className="w-8 h-8 animate-spin text-primary" />
             </div>
           ) : jobs.length > 0 && filteredJobs.length === 0 ? (
-            <div className="text-center py-16 px-4 text-slate-800 space-y-3">
+            <div className={cn("text-center py-16 px-4 space-y-3", belowLg ? "text-slate-200" : "text-slate-800")}>
               <p>Žádná zakázka neodpovídá vyhledávání nebo filtru štítku.</p>
               <Button
                 type="button"
@@ -1367,6 +1407,86 @@ function JobsPageContent() {
               >
                 Zrušit filtry
               </Button>
+            </div>
+          ) : belowLg && filteredJobsMobile.length > 0 ? (
+            <div className="p-4 space-y-3">
+              {filteredJobsMobile.map((job) => {
+                const jid = job?.id;
+                const raw = job as unknown as Record<string, unknown>;
+                const bd = resolveJobBudgetFromFirestore(raw);
+                const budgetGross =
+                  bd?.budgetGross != null && Number.isFinite(Number(bd.budgetGross))
+                    ? Math.round(Number(bd.budgetGross))
+                    : null;
+                return (
+                  <div
+                    key={jid ?? `job-${job?.name}`}
+                    className="rounded-2xl border border-white/10 bg-slate-900/50 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-base font-semibold text-white truncate">
+                          {job?.name ?? "—"}
+                        </p>
+                        <p className="mt-1 text-xs text-slate-300 truncate">
+                          {getCustomerName(job?.customerId)}
+                        </p>
+                      </div>
+                      <div className="shrink-0">{getStatusBadge(job?.status)}</div>
+                    </div>
+
+                    <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-slate-300">
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">Termín</p>
+                        <p className="mt-0.5 text-slate-200">
+                          {job?.endDate || job?.startDate || "—"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-400">Částka</p>
+                        <p className="mt-0.5 text-slate-200">
+                          {budgetGross != null
+                            ? `${budgetGross.toLocaleString("cs-CZ")} Kč`
+                            : "—"}
+                        </p>
+                      </div>
+                    </div>
+
+                    {job?.description ? (
+                      <p className="mt-3 text-sm text-slate-200 line-clamp-2">
+                        {job.description}
+                      </p>
+                    ) : null}
+
+                    <div className="mt-4 flex gap-2">
+                      {jid ? (
+                        <Link
+                          href={
+                            isPortalEmployee
+                              ? `/portal/employee/jobs/${jid}`
+                              : `/portal/jobs/${jid}`
+                          }
+                          className="flex-1"
+                        >
+                          <Button className="w-full min-h-11 bg-orange-500 text-slate-950 hover:bg-orange-400">
+                            Detail
+                          </Button>
+                        </Link>
+                      ) : null}
+                      {isAdmin && jid ? (
+                        <Link href={`/portal/jobs/${jid}`} className="flex-1">
+                          <Button
+                            variant="outline"
+                            className="w-full min-h-11 border-white/20 bg-transparent text-white hover:bg-white/10"
+                          >
+                            Upravit
+                          </Button>
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ) : filteredJobs.length > 0 ? (
             <Table className="min-w-[520px] w-full">
@@ -1452,7 +1572,7 @@ function JobsPageContent() {
               </TableBody>
             </Table>
           ) : (
-            <div className="text-center py-20 text-slate-800">
+            <div className={cn("text-center py-20", belowLg ? "text-slate-200" : "text-slate-800")}>
               <Briefcase className="w-12 h-12 mx-auto mb-4 opacity-20" />
               <p>Zatím nemáte žádné zakázky.</p>
               {isAdmin && (

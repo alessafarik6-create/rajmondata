@@ -57,7 +57,7 @@ export function MobileDashboard(props: {
     <div
       className={cn(
         "lg:hidden",
-        "-mx-3 -my-3 px-4 pb-24 pt-5 sm:-mx-4 sm:-my-4 sm:px-6 sm:pt-6 md:-mx-6 md:-my-6 md:px-8 md:pt-8",
+        "-mx-3 -my-3 px-4 pb-[calc(96px+env(safe-area-inset-bottom))] pt-5 sm:-mx-4 sm:-my-4 sm:px-6 sm:pt-6 md:-mx-6 md:-my-6 md:px-8 md:pt-8",
         "bg-slate-950 text-slate-50"
       )}
     >
@@ -68,15 +68,15 @@ export function MobileDashboard(props: {
           </p>
           <p className="text-[12px] text-slate-400">{formatCompanySubline(props.companyLabel)}</p>
         </div>
+
+        {props.schedulePreview ? (
+          <div className="min-w-0 max-w-full overflow-x-hidden">
+            {props.schedulePreview}
+          </div>
+        ) : null}
       </header>
 
       <div className="mt-6 space-y-6">
-        {props.tasksSection ? (
-          <div className="min-w-0 max-w-full overflow-x-hidden">
-            {props.tasksSection}
-          </div>
-        ) : null}
-
         <MobileModuleGrid
           company={props.company}
           platformCatalog={props.platformCatalog}
