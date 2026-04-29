@@ -33,6 +33,7 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
+import { MeetingRecordCustomerNotificationDialog } from "@/components/meeting-records/meeting-record-customer-notification-dialog";
 import {
   MEETING_RECORD_INTERNAL_DOC_ID,
   resolveMeetingTitle,
@@ -91,6 +92,14 @@ export function MeetingRecordFormDialog(props: {
   const [nextSteps, setNextSteps] = useState("");
   const [internalNotes, setInternalNotes] = useState("");
   const [syncCustomerFromJob, setSyncCustomerFromJob] = useState(true);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyCtx, setNotifyCtx] = useState<{
+    meetingId: string;
+    jobId: string | null;
+    customerId: string | null;
+    meetingTitle: string | null;
+    defaultEmail: string | null;
+  } | null>(null);
 
   const jobById = useMemo(() => {
     const m = new Map<string, JobOption>();
@@ -241,6 +250,7 @@ export function MeetingRecordFormDialog(props: {
 
     let resolvedCustomerId = customerId.trim() || null;
     let resolvedCustomerName = customerName.trim() || null;
+    let resolvedCustomerEmailFromJob: string | null = null;
     if (jId && syncCustomerFromJob) {
       try {
         const jref = doc(firestore, "companies", companyId, "jobs", jId);
@@ -251,8 +261,13 @@ export function MeetingRecordFormDialog(props: {
             typeof j.customerId === "string" && j.customerId.trim() ? j.customerId.trim() : null;
           const cn =
             typeof j.customerName === "string" && j.customerName.trim() ? j.customerName.trim() : null;
+          const ce =
+            typeof j.customerEmail === "string" && j.customerEmail.trim()
+              ? j.customerEmail.trim()
+              : null;
           if (cid) resolvedCustomerId = cid;
           if (cn) resolvedCustomerName = cn;
+          if (ce) resolvedCustomerEmailFromJob = ce;
         }
       } catch (syncErr) {
         console.error("[MeetingRecordFormDialog] syncCustomerFromJob on save failed", syncErr);
@@ -391,6 +406,16 @@ export function MeetingRecordFormDialog(props: {
           sourceModule: "schuzky",
           route: activityRouteForRecord(jId, editRecordId),
         });
+        if (share) {
+          setNotifyCtx({
+            meetingId: editRecordId,
+            jobId: jId,
+            customerId: resolvedCustomerId,
+            meetingTitle: meetingTitleVal || legacyTitleVal || null,
+            defaultEmail: resolvedCustomerEmailFromJob,
+          });
+          setNotifyOpen(true);
+        }
       } else {
         const pref = doc(col);
         const id = pref.id;
@@ -461,6 +486,16 @@ export function MeetingRecordFormDialog(props: {
           sourceModule: "schuzky",
           route: activityRouteForRecord(jId, id),
         });
+        if (share) {
+          setNotifyCtx({
+            meetingId: id,
+            jobId: jId,
+            customerId: resolvedCustomerId,
+            meetingTitle: meetingTitleVal || legacyTitleVal || null,
+            defaultEmail: resolvedCustomerEmailFromJob,
+          });
+          setNotifyOpen(true);
+        }
       }
 
       toast({
@@ -471,8 +506,10 @@ export function MeetingRecordFormDialog(props: {
             : "Veřejná část je u zákazníka v profilu portálu (bez vazby na konkrétní zakázku)."
           : "Interní poznámky zůstávají jen u týmu.",
       });
-      onOpenChange(false);
-      onSaved?.();
+      if (!share) {
+        onOpenChange(false);
+        onSaved?.();
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Uložení se nezdařilo.";
       console.error("[MeetingRecordFormDialog] save failed", e);
@@ -487,13 +524,14 @@ export function MeetingRecordFormDialog(props: {
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(92vh,900px)] overflow-y-auto w-[min(100vw-1.5rem,520px)] sm:max-w-lg border border-slate-200 bg-white p-4 sm:p-6">
-        <DialogHeader>
-          <DialogTitle className="text-slate-900">
-            {editRecordId ? "Upravit záznam ze schůzky" : "Záznam ze schůzky"}
-          </DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-h-[min(92vh,900px)] overflow-y-auto w-[min(100vw-1.5rem,520px)] sm:max-w-lg border border-slate-200 bg-white p-4 sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="text-slate-900">
+              {editRecordId ? "Upravit záznam ze schůzky" : "Záznam ze schůzky"}
+            </DialogTitle>
+          </DialogHeader>
 
         {loading && editRecordId ? (
           <div className="flex justify-center py-12">
@@ -650,7 +688,32 @@ export function MeetingRecordFormDialog(props: {
             Uložit a zpřístupnit zákazníkovi
           </Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </DialogContent>
+      </Dialog>
+
+      {notifyCtx ? (
+        <MeetingRecordCustomerNotificationDialog
+          open={notifyOpen}
+          onOpenChange={(v) => {
+            setNotifyOpen(v);
+            if (!v) {
+              setNotifyCtx(null);
+              onOpenChange(false);
+              onSaved?.();
+            }
+          }}
+          firestore={firestore}
+          companyId={companyId}
+          meetingId={notifyCtx.meetingId}
+          jobId={notifyCtx.jobId}
+          customerId={notifyCtx.customerId}
+          meetingTitle={notifyCtx.meetingTitle}
+          lastUsedEmail={null}
+          defaultEmail={notifyCtx.defaultEmail}
+          user={user}
+          onSent={() => onSaved?.()}
+        />
+      ) : null}
+    </>
   );
 }

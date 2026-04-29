@@ -31,6 +31,7 @@ import { ArrowLeft, CalendarClock, FileDown, Loader2, Mail, Pencil, Trash2 } fro
 import { formatDashboardActivityTime } from "@/components/portal/dashboard-activity-section";
 import { MeetingRecordFormDialog } from "@/components/meeting-records/meeting-record-form-dialog";
 import { MeetingRecordEmailDialog } from "@/components/meeting-records/meeting-record-email-dialog";
+import { MeetingRecordCustomerNotificationDialog } from "@/components/meeting-records/meeting-record-customer-notification-dialog";
 import { downloadMeetingRecordPdf } from "@/lib/meeting-records-client-api";
 import type { ActivityActorProfile } from "@/lib/activity-log";
 import { logActivitySafe } from "@/lib/activity-log";
@@ -143,6 +144,7 @@ export default function MeetingRecordDetailPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
   const [pdfBusy, setPdfBusy] = useState(false);
 
   const row = record as MeetingRecordPublicRow | null | undefined;
@@ -164,6 +166,14 @@ export default function MeetingRecordDetailPage() {
   const title = row ? resolveMeetingTitle(row) || "Schůzka" : "—";
   const sent = row ? resolveSentToCustomer(row) : false;
   const assigned = row ? resolveAssignmentStatus(row) === "assigned" : false;
+  const notifySent = row?.customerNotificationEmailSent === true;
+  const notifyEmail =
+    typeof row?.customerNotificationEmail === "string" ? row.customerNotificationEmail.trim() : "";
+  const notifyResentCount =
+    typeof row?.customerNotificationEmailResentCount === "number" &&
+    Number.isFinite(row.customerNotificationEmailResentCount)
+      ? row.customerNotificationEmailResentCount
+      : 0;
 
   useEffect(() => {
     if ((userProfile as { role?: string })?.role === "customer") {
@@ -311,6 +321,18 @@ export default function MeetingRecordDetailPage() {
                 {row.sentToEmails.join(", ")}
               </p>
             ) : null}
+            {notifySent ? (
+              <p className="text-xs text-slate-600">
+                Upozornění zákazníkovi odesláno:{" "}
+                {formatDashboardActivityTime(row.customerNotificationEmailSentAt)}{" "}
+                {notifyEmail ? <>— na: {notifyEmail}</> : null}
+                {notifyResentCount > 0 ? <> (znovu odesláno: {notifyResentCount}×)</> : null}
+              </p>
+            ) : sent ? (
+              <p className="text-xs text-amber-800">
+                Záznam je viditelný zákazníkovi, ale upozornění e-mailem ještě nebylo odesláno.
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             {sent ? (
@@ -417,6 +439,17 @@ export default function MeetingRecordDetailPage() {
                 <Pencil className="h-4 w-4" />
                 Upravit / přiřadit zakázku
               </Button>
+              {sent ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-1"
+                  onClick={() => setNotifyOpen(true)}
+                >
+                  <Mail className="h-4 w-4" />
+                  Odeslat upozornění zákazníkovi
+                </Button>
+              ) : null}
               <Button type="button" variant="outline" className="gap-1" onClick={() => setEmailOpen(true)}>
                 <Mail className="h-4 w-4" />
                 Odeslat e-mailem
@@ -455,6 +488,22 @@ export default function MeetingRecordDetailPage() {
           jobId={typeof row.jobId === "string" ? row.jobId : null}
           user={user}
           defaultTo={defaultCustomerEmail || undefined}
+        />
+      ) : null}
+
+      {user && companyId && firestore && sent ? (
+        <MeetingRecordCustomerNotificationDialog
+          open={notifyOpen}
+          onOpenChange={setNotifyOpen}
+          firestore={firestore}
+          companyId={companyId}
+          meetingId={recordIdStr}
+          jobId={typeof row.jobId === "string" ? row.jobId : null}
+          customerId={typeof row.customerId === "string" ? row.customerId : null}
+          meetingTitle={title}
+          lastUsedEmail={notifyEmail || null}
+          defaultEmail={defaultCustomerEmail || null}
+          user={user}
         />
       ) : null}
 

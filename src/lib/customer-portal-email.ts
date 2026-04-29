@@ -239,6 +239,86 @@ export function buildCustomerAccessEmailHtml(params: {
   `.trim();
 }
 
+export function buildMeetingRecordCustomerNotificationEmailHtml(params: {
+  portalName: string;
+  organizationName: string;
+  customerName: string;
+  jobName: string | null;
+  actionUrl: string;
+  loginUrl: string;
+  logoUrl?: string | null;
+  contactEmail?: string | null;
+}): string {
+  const contactRow = params.contactEmail
+    ? `<p style="margin:6px 0 0;font-size:13px;color:#4b5563;">Kontakt: <a href="mailto:${escapeHtml(
+        params.contactEmail
+      )}" style="color:#c2410c;text-decoration:none;">${escapeHtml(params.contactEmail)}</a></p>`
+    : "";
+  const jobBlock = params.jobName?.trim()
+    ? `
+      <div style="margin:14px 0 18px;padding:12px 14px;border:1px solid #e5e7eb;border-radius:12px;background:#ffffff;">
+        <p style="margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:#6b7280;">Zakázka</p>
+        <p style="margin:0;font-size:15px;color:#111827;font-weight:600;">${escapeHtml(params.jobName.trim())}</p>
+      </div>
+    `.trim()
+    : "";
+  return `
+    <div style="margin:0;padding:24px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
+      <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
+        <div style="padding:22px 24px;background:#fff7ed;border-bottom:1px solid #fed7aa;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            ${
+              params.logoUrl
+                ? `<img src="${escapeHtml(params.logoUrl)}" alt="${escapeHtml(params.portalName)}" style="max-height:40px;max-width:140px;" />`
+                : `<div style="font-weight:800;font-size:20px;letter-spacing:0.02em;color:#c2410c;">${escapeHtml(
+                    params.portalName
+                  )}</div>`
+            }
+          </div>
+          <p style="margin:10px 0 0;font-size:13px;color:#9a3412;">Zákaznický portál ${escapeHtml(
+            params.portalName
+          )}</p>
+        </div>
+
+        <div style="padding:26px 24px;">
+          <h1 style="margin:0 0 12px;font-size:22px;line-height:1.25;color:#111827;">Nový záznam ze schůzky</h1>
+          <p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:#374151;">Dobrý den ${escapeHtml(
+            params.customerName
+          )},</p>
+          <p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:#374151;">
+            v zákaznickém portálu máte nový záznam ze schůzky k nahlédnutí.
+          </p>
+          ${jobBlock}
+          <p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#374151;">
+            Přihlaste se prosím do portálu a záznam si zobrazte.
+          </p>
+
+          <p style="margin:0 0 18px;">
+            <a href="${escapeHtml(
+              params.actionUrl
+            )}" style="display:inline-block;background:#ea580c;color:#ffffff;text-decoration:none;padding:14px 22px;border-radius:10px;font-weight:700;font-size:16px;">
+              Otevřít zákaznický portál
+            </a>
+          </p>
+
+          <p style="margin:0 0 6px;font-size:13px;color:#6b7280;">Odkaz do portálu:</p>
+          <p style="margin:0 0 16px;font-size:14px;">
+            <a href="${escapeHtml(params.loginUrl)}" style="color:#c2410c;text-decoration:none;">${escapeHtml(
+              params.loginUrl
+            )}</a>
+          </p>
+
+          <hr style="border:none;border-top:1px solid #e5e7eb;margin:18px 0;" />
+          <p style="margin:0;font-size:13px;color:#4b5563;">Odesílající organizace: ${escapeHtml(
+            params.organizationName
+          )}</p>
+          ${contactRow}
+        </div>
+      </div>
+    </div>
+  `.trim();
+}
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")

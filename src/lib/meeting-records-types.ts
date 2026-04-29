@@ -56,6 +56,12 @@ export type MeetingRecordPublicRow = {
   sentAt?: Timestamp | unknown;
   sentToEmails?: string[];
   lastSentBy?: string | null;
+
+  /** E-mailové upozornění zákazníkovi na nový záznam v portálu. */
+  customerNotificationEmailSent?: boolean;
+  customerNotificationEmailSentAt?: Timestamp | unknown;
+  customerNotificationEmail?: string | null;
+  customerNotificationEmailResentCount?: number;
 };
 
 export type MeetingRecordInternalPayload = {
