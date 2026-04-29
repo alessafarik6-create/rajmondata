@@ -10,6 +10,8 @@ export const MEETING_RECORD_INTERNAL_DOC_ID = "data";
 
 export type MeetingRecordAssignmentStatus = "assigned" | "unassigned";
 
+export type MeetingRecordCustomerSendMode = "portalNotification" | "pdfEmail";
+
 export type MeetingShareEvent = {
   /** ISO 8601 — uvnitř pole `shareHistory` nelze použít `serverTimestamp()`. */
   at: string | Timestamp | unknown;
@@ -58,10 +60,21 @@ export type MeetingRecordPublicRow = {
   lastSentBy?: string | null;
 
   /** E-mailové upozornění zákazníkovi na nový záznam v portálu. */
+  customerNotificationType?: MeetingRecordCustomerSendMode | string | null;
   customerNotificationEmailSent?: boolean;
   customerNotificationEmailSentAt?: Timestamp | unknown;
   customerNotificationEmail?: string | null;
   customerNotificationEmailResentCount?: number;
+
+  /** Odeslání PDF zápisu zákazníkovi (modal / send-to-customer). */
+  customerPdfEmailSent?: boolean;
+  customerPdfEmailSentAt?: Timestamp | unknown;
+  customerPdfEmailResentCount?: number;
+
+  /** Poslední odeslání z modalu „Odeslat zákazníkovi“. */
+  customerLastSendMode?: MeetingRecordCustomerSendMode | string | null;
+  customerLastSendAt?: Timestamp | unknown;
+  customerLastSendEmail?: string | null;
 };
 
 export type MeetingRecordInternalPayload = {

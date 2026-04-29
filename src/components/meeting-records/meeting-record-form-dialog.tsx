@@ -708,7 +708,6 @@ export function MeetingRecordFormDialog(props: {
           jobId={notifyCtx.jobId}
           customerId={notifyCtx.customerId}
           meetingTitle={notifyCtx.meetingTitle}
-          lastUsedEmail={null}
           defaultEmail={notifyCtx.defaultEmail}
           user={user}
           onSent={() => onSaved?.()}

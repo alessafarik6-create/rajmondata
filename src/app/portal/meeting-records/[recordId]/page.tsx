@@ -40,6 +40,7 @@ import {
   resolveAssignmentStatus,
   resolveMeetingTitle,
   resolveSentToCustomer,
+  type MeetingRecordCustomerSendMode,
   type MeetingRecordPublicRow,
 } from "@/lib/meeting-records-types";
 import {
@@ -174,6 +175,47 @@ export default function MeetingRecordDetailPage() {
     Number.isFinite(row.customerNotificationEmailResentCount)
       ? row.customerNotificationEmailResentCount
       : 0;
+  const pdfSent = row?.customerPdfEmailSent === true;
+  const pdfResentCount =
+    typeof row?.customerPdfEmailResentCount === "number" && Number.isFinite(row.customerPdfEmailResentCount)
+      ? row.customerPdfEmailResentCount
+      : 0;
+  const lastModeRaw = String(row?.customerLastSendMode ?? "").trim();
+  const notifTypeRaw = String(row?.customerNotificationType ?? "").trim();
+  const lastTypeLabel =
+    lastModeRaw === "pdfEmail"
+      ? "PDF e-mailem"
+      : lastModeRaw === "portalNotification"
+        ? "Upozornění do portálu"
+        : notifTypeRaw === "pdfEmail"
+          ? "PDF e-mailem"
+          : notifTypeRaw === "portalNotification"
+            ? "Upozornění do portálu"
+            : pdfSent && !notifySent
+              ? "PDF e-mailem"
+              : notifySent
+                ? "Upozornění do portálu"
+                : null;
+  const lastAt =
+    row?.customerLastSendAt ??
+    (lastTypeLabel === "PDF e-mailem" ? row?.customerPdfEmailSentAt : row?.customerNotificationEmailSentAt);
+  const lastEm =
+    (typeof row?.customerLastSendEmail === "string" && row.customerLastSendEmail.trim()
+      ? row.customerLastSendEmail.trim()
+      : "") || notifyEmail;
+  const lastResentCount = lastTypeLabel === "PDF e-mailem" ? pdfResentCount : notifyResentCount;
+  const defaultModeForDialog: MeetingRecordCustomerSendMode | null =
+    lastModeRaw === "pdfEmail"
+      ? "pdfEmail"
+      : lastModeRaw === "portalNotification"
+        ? "portalNotification"
+        : notifTypeRaw === "pdfEmail"
+          ? "pdfEmail"
+          : notifTypeRaw === "portalNotification"
+            ? "portalNotification"
+            : lastTypeLabel === "PDF e-mailem"
+              ? "pdfEmail"
+              : "portalNotification";
 
   useEffect(() => {
     if ((userProfile as { role?: string })?.role === "customer") {
@@ -321,16 +363,17 @@ export default function MeetingRecordDetailPage() {
                 {row.sentToEmails.join(", ")}
               </p>
             ) : null}
-            {notifySent ? (
+            {lastTypeLabel && lastAt ? (
               <p className="text-xs text-slate-600">
-                Upozornění zákazníkovi odesláno:{" "}
-                {formatDashboardActivityTime(row.customerNotificationEmailSentAt)}{" "}
-                {notifyEmail ? <>— na: {notifyEmail}</> : null}
-                {notifyResentCount > 0 ? <> (znovu odesláno: {notifyResentCount}×)</> : null}
+                Poslední odeslání zákazníkovi: <span className="font-medium">{lastTypeLabel}</span> ·{" "}
+                {formatDashboardActivityTime(lastAt)}
+                {lastEm ? <> · {lastEm}</> : null}
+                {lastResentCount > 0 ? <> · opakovaně: {lastResentCount}×</> : null}
               </p>
             ) : sent ? (
               <p className="text-xs text-amber-800">
-                Záznam je viditelný zákazníkovi, ale upozornění e-mailem ještě nebylo odesláno.
+                Záznam je viditelný zákazníkovi — zatím nebylo odesláno upozornění ani PDF z modalu „Odeslat
+                zákazníkovi“.
               </p>
             ) : null}
           </div>
@@ -447,7 +490,7 @@ export default function MeetingRecordDetailPage() {
                   onClick={() => setNotifyOpen(true)}
                 >
                   <Mail className="h-4 w-4" />
-                  Odeslat upozornění zákazníkovi
+                  Odeslat zákazníkovi znovu
                 </Button>
               ) : null}
               <Button type="button" variant="outline" className="gap-1" onClick={() => setEmailOpen(true)}>
@@ -501,8 +544,9 @@ export default function MeetingRecordDetailPage() {
           jobId={typeof row.jobId === "string" ? row.jobId : null}
           customerId={typeof row.customerId === "string" ? row.customerId : null}
           meetingTitle={title}
-          lastUsedEmail={notifyEmail || null}
+          lastUsedEmail={lastEm || null}
           defaultEmail={defaultCustomerEmail || null}
+          defaultMode={defaultModeForDialog}
           user={user}
         />
       ) : null}

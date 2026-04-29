@@ -254,14 +254,10 @@ export function buildMeetingRecordCustomerNotificationEmailHtml(params: {
         params.contactEmail
       )}" style="color:#c2410c;text-decoration:none;">${escapeHtml(params.contactEmail)}</a></p>`
     : "";
-  const jobBlock = params.jobName?.trim()
-    ? `
-      <div style="margin:14px 0 18px;padding:12px 14px;border:1px solid #e5e7eb;border-radius:12px;background:#ffffff;">
-        <p style="margin:0 0 6px;font-size:12px;text-transform:uppercase;letter-spacing:0.06em;color:#6b7280;">Zakázka</p>
-        <p style="margin:0;font-size:15px;color:#111827;font-weight:600;">${escapeHtml(params.jobName.trim())}</p>
-      </div>
-    `.trim()
-    : "";
+  const jobLabel = params.jobName?.trim() ? params.jobName.trim() : null;
+  const mainCopy = jobLabel
+    ? `V zákaznickém portálu máte nový zápis ze schůzky k zakázce ${jobLabel}. Přihlaste se prosím do portálu a zápis si zobrazte.`
+    : `V zákaznickém portálu máte nový zápis ze schůzky. Přihlaste se prosím do portálu a zápis si zobrazte.`;
   return `
     <div style="margin:0;padding:24px;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif;color:#111827;">
       <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:16px;overflow:hidden;">
@@ -281,16 +277,12 @@ export function buildMeetingRecordCustomerNotificationEmailHtml(params: {
         </div>
 
         <div style="padding:26px 24px;">
-          <h1 style="margin:0 0 12px;font-size:22px;line-height:1.25;color:#111827;">Nový záznam ze schůzky</h1>
+          <h1 style="margin:0 0 12px;font-size:22px;line-height:1.25;color:#111827;">Nový zápis ze schůzky</h1>
           <p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:#374151;">Dobrý den ${escapeHtml(
             params.customerName
           )},</p>
-          <p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:#374151;">
-            v zákaznickém portálu máte nový záznam ze schůzky k nahlédnutí.
-          </p>
-          ${jobBlock}
           <p style="margin:0 0 18px;font-size:15px;line-height:1.6;color:#374151;">
-            Přihlaste se prosím do portálu a záznam si zobrazte.
+            ${escapeHtml(mainCopy)}
           </p>
 
           <p style="margin:0 0 18px;">
