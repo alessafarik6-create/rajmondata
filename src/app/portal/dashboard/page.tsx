@@ -930,6 +930,13 @@ export default function CompanyDashboard() {
         unreadMessages={unreadEmployeeChatCount}
         overduePlatformInvoices={platformInvoiceOverdue}
         unpaidPlatformInvoices={platformInvoiceUnpaid}
+        companyId={companyId}
+        showAdminDashboard={showAdminDashboard}
+        todayIso={todayIso}
+        jobsForTaskBadge={typedJobs}
+        jobsLoading={isJobsLoading}
+        employeeId={typedProfile?.employeeId}
+        isTaskBadgePrivileged={isManagement || isAccountant}
         quickStats={{
           hoursLabel: "—",
           payrollLabel: "—",
@@ -1079,7 +1086,7 @@ export default function CompanyDashboard() {
         ) : null
       ) : null}
 
-      {!isCustomer && companyId && !showAdminDashboard ? (
+      {!belowLg && !isCustomer && companyId && !showAdminDashboard ? (
         <DashboardOpenTasks
           companyId={companyId}
           employeeId={typedProfile?.employeeId}
@@ -1089,7 +1096,7 @@ export default function CompanyDashboard() {
 
       {showAdminDashboard ? (
         <div className="space-y-6">
-          {companyId ? (
+          {!belowLg && companyId ? (
             <DashboardJobTasksWidget
               companyId={companyId}
               todayIso={todayIso}

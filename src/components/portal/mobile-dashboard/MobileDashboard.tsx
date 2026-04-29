@@ -1,14 +1,18 @@
 "use client";
 
-import React from "react";
+import React, { useMemo } from "react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Timer, Wallet, MessageSquare, Receipt } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { MobileModuleGrid } from "@/components/portal/mobile-dashboard/MobileModuleGrid";
+import {
+  MobileModuleGrid,
+  type MobileModuleTileId,
+} from "@/components/portal/mobile-dashboard/MobileModuleGrid";
 import type { PlatformModuleCode } from "@/lib/platform-config";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import type { CompanyPlatformFields } from "@/lib/platform-access";
+import { usePortalTasksModuleBadgeCount } from "@/hooks/use-portal-tasks-module-badge-count";
 
 function dayPartGreeting(now = new Date()): string {
   const h = now.getHours();
@@ -45,13 +49,47 @@ export function MobileDashboard(props: {
     unpaidLabel?: string;
     jobsLabel?: string;
   };
+  /** Pro badge úkolů — stejná data jako desktop / stránka Úkoly. */
+  companyId?: string | null;
+  /** Vedení + účetní dashboard (sloučení úkolů zakázek + organizace). */
+  showAdminDashboard?: boolean;
+  todayIso?: string;
+  jobsForTaskBadge?: { id: string; name?: string }[];
+  jobsLoading?: boolean;
+  employeeId?: string | null;
+  /** Owner / admin / manager / accountant — u zaměstnaneckého režimu vidí všechny org. úkoly. */
+  isTaskBadgePrivileged?: boolean;
+  /** Volitelné doplnění badge podle klíče dlaždice (např. `jobs`, `invoices`). */
+  extraModuleBadgeCounts?: Partial<Record<MobileModuleTileId, number>>;
 }) {
   const greet = dayPartGreeting();
   const name = props.displayName || "uživateli";
 
   const stats = props.quickStats ?? {};
   const unread = Number(props.unreadMessages) || 0;
-  const badgeCount = unread;
+
+  const todayIso = props.todayIso ?? new Date().toISOString().split("T")[0];
+  const jobsForBadge = props.jobsForTaskBadge ?? [];
+  const mergeJobAndOrg = Boolean(props.showAdminDashboard);
+
+  const { count: tasksOpenCount } = usePortalTasksModuleBadgeCount({
+    companyId: props.companyId,
+    mergeJobAndOrgTasks: mergeJobAndOrg,
+    jobs: jobsForBadge,
+    jobsLoading: Boolean(props.jobsLoading),
+    todayIso,
+    employeeId: props.employeeId,
+    isPrivileged: Boolean(props.isTaskBadgePrivileged),
+  });
+
+  const moduleBadgeCounts = useMemo(() => {
+    const out: Partial<Record<MobileModuleTileId, number>> = {
+      ...(props.extraModuleBadgeCounts ?? {}),
+    };
+    if (tasksOpenCount > 0) out.tasks = tasksOpenCount;
+    if (unread > 0) out.chat = unread;
+    return out;
+  }, [props.extraModuleBadgeCounts, tasksOpenCount, unread]);
 
   return (
     <div
@@ -82,6 +120,7 @@ export function MobileDashboard(props: {
           platformCatalog={props.platformCatalog}
           role={props.role}
           onOpenSchedule={props.onOpenScheduleModal}
+          moduleBadgeCounts={moduleBadgeCounts}
         />
 
         <section aria-label="Rychlý přehled" className="space-y-3">

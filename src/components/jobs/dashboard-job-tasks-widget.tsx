@@ -29,16 +29,19 @@ import {
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useToast } from "@/hooks/use-toast";
 import {
-  type JobTaskRow,
   type JobTaskPriority,
   type JobTaskStatus,
   type TaskAssignedMode,
   jobTaskPriorityLabel,
   jobTaskStatusLabel,
 } from "@/lib/job-task-types";
-import type { OrganizationTask } from "@/lib/organization-task";
 import type { OrganizationTaskStatus } from "@/lib/organization-task";
-import { isTaskOpen } from "@/lib/organization-task";
+import {
+  type DashboardTaskItem,
+  buildMergedDashboardTaskItems,
+  itemForAll,
+  validDue,
+} from "@/lib/dashboard-task-items-merge";
 import {
   LIGHT_FORM_CONTROL_CLASS,
   LIGHT_SELECT_CONTENT_CLASS,
@@ -48,33 +51,6 @@ import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { useActiveJobTasksFromJobList } from "@/components/jobs/use-active-job-tasks-from-jobs";
 
 type JobRef = { id: string; name?: string };
-
-type DashboardTaskItem = {
-  key: string;
-  source: "job" | "organization";
-  taskId: string;
-  jobId?: string;
-  title: string;
-  note: string;
-  dueIso?: string;
-  priority: JobTaskPriority;
-  jobStatus?: JobTaskStatus;
-  orgStatus?: OrganizationTaskStatus;
-  jobName?: string;
-  assignedTo: string | null;
-  assignedMode: TaskAssignedMode;
-};
-
-const PRIORITY_RANK: Record<JobTaskPriority, number> = {
-  high: 0,
-  medium: 1,
-  low: 2,
-};
-
-function validDue(iso: string | undefined): string {
-  if (!iso?.trim() || !/^\d{4}-\d{2}-\d{2}$/.test(iso.trim())) return "";
-  return iso.trim();
-}
 
 function formatDueShort(due: string | undefined): string {
   if (!due?.trim()) return "—";
@@ -88,46 +64,6 @@ function formatDueShort(due: string | undefined): string {
   } catch {
     return due;
   }
-}
-
-function parseOrgPriority(p: unknown): JobTaskPriority {
-  if (p === "high" || p === "medium" || p === "low") return p;
-  return "low";
-}
-
-function jobNormAssign(row: JobTaskRow): {
-  mode: TaskAssignedMode;
-  at: string | null;
-} {
-  if (row.assignedMode === "all") return { mode: "all", at: null };
-  if (row.assignedMode === "single")
-    return { mode: "single", at: dStr(row.assignedTo) };
-  if (row.assignedTo != null && String(row.assignedTo).trim())
-    return { mode: "single", at: String(row.assignedTo).trim() };
-  return { mode: "all", at: null };
-}
-
-function orgNormAssign(t: OrganizationTask): {
-  mode: TaskAssignedMode;
-  at: string | null;
-} {
-  if (t.assignedMode === "all") return { mode: "all", at: null };
-  if (t.assignedMode === "single")
-    return { mode: "single", at: dStr(t.assignedTo) };
-  if (t.assignedTo != null && String(t.assignedTo).trim())
-    return { mode: "single", at: String(t.assignedTo).trim() };
-  return { mode: "all", at: null };
-}
-
-function dStr(v: string | null | undefined): string | null {
-  if (v == null || !String(v).trim()) return null;
-  return String(v).trim();
-}
-
-function itemForAll(t: DashboardTaskItem): boolean {
-  if (t.assignedMode === "all") return true;
-  if (t.assignedMode === "single") return false;
-  return !t.assignedTo || String(t.assignedTo).trim() === "";
 }
 
 function accentTier(
@@ -150,28 +86,6 @@ function cardAccentClass(tier: "strong" | "medium" | "soft"): string {
     default:
       return "border-rose-100/75 bg-rose-50/40 dark:border-rose-900/28 dark:bg-rose-950/18";
   }
-}
-
-function sortDashboardTasks(
-  rows: DashboardTaskItem[],
-  todayIso: string
-): DashboardTaskItem[] {
-  return [...rows].sort((a, b) => {
-    const da = validDue(a.dueIso);
-    const db = validDue(b.dueIso);
-    const overdueA = da && da < todayIso ? 0 : 1;
-    const overdueB = db && db < todayIso ? 0 : 1;
-    if (overdueA !== overdueB) return overdueA - overdueB;
-    const sa = da || "9999-12-31";
-    const sb = db || "9999-12-31";
-    if (sa !== sb) return sa.localeCompare(sb);
-    const pa = PRIORITY_RANK[a.priority];
-    const pb = PRIORITY_RANK[b.priority];
-    if (pa !== pb) return pa - pb;
-    const aa = itemForAll(a) ? 1 : 0;
-    const ab = itemForAll(b) ? 1 : 0;
-    return aa - ab;
-  });
 }
 
 function assignmentLine(
@@ -272,60 +186,16 @@ export function DashboardJobTasksWidget({
 
   const { data: orgRaw, isLoading: orgLoading } = useCollection(orgTasksQuery);
 
-  const items = useMemo(() => {
-    const out: DashboardTaskItem[] = [];
-
-    const jlist = Array.isArray(jobTasksRows) ? jobTasksRows : [];
-    for (const row of jlist) {
-      if (row.status === "done") continue;
-      const jid = row.jobId?.trim() ?? "";
-      const { mode, at } = jobNormAssign(row);
-      out.push({
-        key: jid ? `job-${jid}-${row.id}` : `job-orphan-${row.id}`,
-        source: "job",
-        taskId: row.id,
-        jobId: jid || undefined,
-        title: row.title || "Bez názvu",
-        note: row.note?.trim() || "",
-        dueIso: row.dueDate?.trim() || undefined,
-        priority: (row.priority as JobTaskPriority) || "low",
-        jobStatus: (row.status as JobTaskStatus) || "active",
-        jobName: jid ? jobNameById.get(jid) : undefined,
-        assignedTo: at,
-        assignedMode: mode,
-      });
-    }
-
-    const olist = Array.isArray(orgRaw) ? orgRaw : [];
-    for (const raw of olist) {
-      const t = {
-        ...raw,
-        id: String((raw as { id?: string })?.id ?? ""),
-      } as OrganizationTask;
-      if (!t.id || !isTaskOpen(t)) continue;
-      const r = raw as { dueDate?: string };
-      const dueRaw =
-        typeof r.dueDate === "string" && r.dueDate.trim()
-          ? r.dueDate.trim()
-          : undefined;
-      const { mode, at } = orgNormAssign(t);
-
-      out.push({
-        key: `org-${t.id}`,
-        source: "organization",
-        taskId: t.id,
-        title: t.title || "Bez názvu",
-        note: (t.description ?? "").trim(),
-        dueIso: dueRaw,
-        priority: parseOrgPriority((raw as { priority?: unknown }).priority),
-        orgStatus: (t.status as OrganizationTaskStatus) || "open",
-        assignedTo: at,
-        assignedMode: mode,
-      });
-    }
-
-    return sortDashboardTasks(out, todayIso);
-  }, [jobTasksRows, orgRaw, jobNameById, todayIso]);
+  const items = useMemo(
+    () =>
+      buildMergedDashboardTaskItems(
+        jobTasksRows,
+        orgRaw,
+        jobNameById,
+        todayIso
+      ),
+    [jobTasksRows, orgRaw, jobNameById, todayIso]
+  );
 
   const isLoading = orgLoading || jobsLoading || jobTasksLoading;
 

@@ -10,13 +10,14 @@ import {
   type Firestore,
 } from "firebase/firestore";
 import type { JobTaskRow } from "@/lib/job-task-types";
+import type { JobTaskWithId } from "@/lib/dashboard-task-items-merge";
 import {
   isFirestoreIndexError,
   logFirestoreIndexError,
 } from "@/firebase/firestore/firestore-query-errors";
 import { useFirestoreIndexPendingRegistry } from "@/firebase/firestore/firestore-index-pending-registry";
 
-export type JobTaskWithId = JobTaskRow & { id: string };
+export type { JobTaskWithId };
 
 /**
  * Aktivní úkoly ze subkolekcí jobs/{jobId}/tasks pro dané jobId.

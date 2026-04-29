@@ -27,8 +27,30 @@ import type { CompanyPlatformFields } from "@/lib/platform-access";
 import { canAccessCompanyModule } from "@/lib/platform-access";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 
+/**
+ * Klíče dlaždic v mřížce — hodnoty `moduleBadgeCounts` používají stejné řetězce
+ * (`tasks`, `chat`, `jobs`, …) pro budoucí rozšíření (Zprávy, Podpora, Faktury, …).
+ */
+export type MobileModuleTileId =
+  | "calendar"
+  | "tasks"
+  | "employees"
+  | "attendance"
+  | "payroll"
+  | "hours"
+  | "jobs"
+  | "costs"
+  | "chat"
+  | "approvals"
+  | "customers"
+  | "team"
+  | "invoices"
+  | "docs"
+  | "warehouse"
+  | "production";
+
 type Tile = {
-  key: string;
+  key: MobileModuleTileId;
   title: string;
   description: string;
   href?: string;
@@ -42,16 +64,31 @@ type Tile = {
 };
 
 const tileButtonClass =
-  "group flex h-[100px] w-full flex-col rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-3 text-center shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur active:scale-[0.99] transition-transform";
+  "group relative flex h-[100px] w-full flex-col rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-3 text-center shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur active:scale-[0.99] transition-transform";
 
 const tileLinkClass =
-  "group flex h-[100px] flex-col rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur active:scale-[0.99] transition-transform";
+  "group relative flex h-[100px] flex-col rounded-2xl border border-white/10 bg-white/[0.04] px-2.5 py-3 shadow-[0_10px_30px_rgba(0,0,0,0.35)] backdrop-blur active:scale-[0.99] transition-transform";
+
+function ModuleIconCountBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  const label = count > 99 ? "99+" : String(count);
+  return (
+    <span
+      className="pointer-events-none absolute -right-0.5 -top-0.5 z-10 flex min-h-[1.125rem] min-w-[1.125rem] max-w-[2.25rem] items-center justify-center rounded-sm bg-red-600 px-0.5 text-[10px] font-bold leading-none text-white shadow-sm ring-1 ring-black/30"
+      aria-label={`Počet: ${label}`}
+    >
+      {label}
+    </span>
+  );
+}
 
 export function MobileModuleGrid(props: {
   company: CompanyPlatformFields | null | undefined;
   platformCatalog: Partial<Record<PlatformModuleCode, PlatformModuleCatalogRow>> | null | undefined;
   role?: string;
   onOpenSchedule?: () => void;
+  /** Počty upozornění podle `Tile.key` (např. `tasks`, `chat`). Hodnota ≤ 0 = bez badge. */
+  moduleBadgeCounts?: Partial<Record<MobileModuleTileId, number>>;
 }) {
   const role = String(props.role || "");
   const company = props.company;
@@ -99,6 +136,8 @@ export function MobileModuleGrid(props: {
     });
   }, [tiles, company, catalog]);
 
+  const badges = props.moduleBadgeCounts ?? {};
+
   return (
     <section aria-label="Moduly" className="space-y-3">
       <div className="flex items-center justify-between">
@@ -110,10 +149,12 @@ export function MobileModuleGrid(props: {
 
       <div className="grid grid-cols-4 gap-2 sm:gap-3">
         {visible.map((t) => {
+          const badgeCount = Math.max(0, Math.floor(Number(badges[t.key]) || 0));
           const body = (
             <div className="flex h-full flex-col items-center justify-center text-center">
-              <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-b from-orange-500/20 to-transparent">
+              <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-2xl border border-white/10 bg-gradient-to-b from-orange-500/20 to-transparent">
                 <t.Icon className="h-5 w-5 text-orange-300" />
+                <ModuleIconCountBadge count={badgeCount} />
               </div>
               <p className="mt-2 text-[12px] font-semibold leading-tight text-white line-clamp-2">
                 {t.title}
