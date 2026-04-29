@@ -1,13 +1,21 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft, ListTodo } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { useCompany, useCollection, useFirestore, useMemoFirebase } from "@/firebase";
-import { collection } from "firebase/firestore";
+import {
+  useCompany,
+  useCollection,
+  useDoc,
+  useFirestore,
+  useMemoFirebase,
+  useUser,
+} from "@/firebase";
+import { collection, doc } from "firebase/firestore";
 import { DashboardJobTasksWidget } from "@/components/jobs/dashboard-job-tasks-widget";
+import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
 import { useIsBelowLg } from "@/hooks/use-mobile";
 
 type JobRow = { id?: string; name?: string };
@@ -15,7 +23,23 @@ type JobRow = { id?: string; name?: string };
 export default function PortalTasksPage() {
   const belowLg = useIsBelowLg();
   const firestore = useFirestore();
+  const { user } = useUser();
   const { companyId } = useCompany();
+  const userRef = useMemoFirebase(
+    () => (user && firestore ? doc(firestore, "users", user.uid) : null),
+    [firestore, user]
+  );
+  const { data: profile } = useDoc(userRef);
+
+  const canManageTasks =
+    profile?.role === "owner" ||
+    profile?.role === "admin" ||
+    profile?.role === "manager" ||
+    profile?.role === "accountant" ||
+    profile?.globalRoles?.includes("super_admin");
+
+  const [tasksDialogOpen, setTasksDialogOpen] = useState(false);
+  const [tasksDialogStartCreate, setTasksDialogStartCreate] = useState(false);
 
   const jobsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
@@ -47,21 +71,35 @@ export default function PortalTasksPage() {
         )}
       >
         {belowLg ? (
-          <div className="flex items-center gap-3">
-            <Button
-              asChild
-              variant="outline"
-              className="h-9 min-h-[36px] shrink-0 rounded-lg border-white/20 bg-white/5 px-3 text-xs text-slate-100 hover:bg-white/10"
-            >
-              <Link href="/portal/dashboard">
-                <ArrowLeft className="mr-1.5 h-4 w-4" />
-                Zpět
-              </Link>
-            </Button>
-            <div className="flex min-w-0 items-center gap-2">
-              <ListTodo className="h-5 w-5 shrink-0 text-orange-300" aria-hidden />
-              <h1 className="truncate text-lg font-semibold text-white">Úkoly</h1>
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-3">
+              <Button
+                asChild
+                variant="outline"
+                className="h-9 min-h-[36px] shrink-0 rounded-lg border-white/20 bg-white/5 px-3 text-xs text-slate-100 hover:bg-white/10"
+              >
+                <Link href="/portal/dashboard">
+                  <ArrowLeft className="mr-1.5 h-4 w-4" />
+                  Zpět
+                </Link>
+              </Button>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <ListTodo className="h-5 w-5 shrink-0 text-orange-300" aria-hidden />
+                <h1 className="truncate text-lg font-semibold text-white">Úkoly</h1>
+              </div>
             </div>
+            {canManageTasks && companyId ? (
+              <Button
+                type="button"
+                className="h-9 w-fit min-h-[36px] shrink-0 rounded-lg border-0 bg-orange-600 px-3 text-xs font-medium text-white hover:bg-orange-500"
+                onClick={() => {
+                  setTasksDialogStartCreate(true);
+                  setTasksDialogOpen(true);
+                }}
+              >
+                Nový úkol
+              </Button>
+            ) : null}
           </div>
         ) : (
           <div className="flex items-center justify-between gap-3">
@@ -89,6 +127,20 @@ export default function PortalTasksPage() {
         ) : (
           <p className="text-sm text-slate-300">Není vybraná organizace.</p>
         )}
+
+        {companyId && user ? (
+          <OrganizationTasksDialog
+            open={tasksDialogOpen}
+            onOpenChange={(o) => {
+              setTasksDialogOpen(o);
+              if (!o) setTasksDialogStartCreate(false);
+            }}
+            companyId={companyId}
+            canManage={!!canManageTasks}
+            employeeId={profile?.employeeId as string | undefined}
+            startInCreateMode={tasksDialogStartCreate}
+          />
+        ) : null}
       </div>
     </div>
   );

@@ -49,6 +49,8 @@ type Props = {
   canManage: boolean;
   /** Firestore zaměstnanec id přihlášeného */
   employeeId: string | null | undefined;
+  /** Po otevření dialogu přepnout rovnou na formulář nového úkolu (např. mobilní zkratka). */
+  startInCreateMode?: boolean;
 };
 
 function formatTaskDate(v: unknown): string {
@@ -83,6 +85,7 @@ export function OrganizationTasksDialog({
   companyId,
   canManage,
   employeeId,
+  startInCreateMode = false,
 }: Props) {
   const { user } = useUser();
   const firestore = useFirestore();
@@ -164,6 +167,18 @@ export function OrganizationTasksDialog({
       setEditingId(null);
     }
   }, [open]);
+
+  useEffect(() => {
+    if (!open || !startInCreateMode || !canManage) return;
+    setEditingId(null);
+    setTitle("");
+    setDescription("");
+    setDueDate("");
+    setPriority("medium");
+    setAssignMode("all");
+    setAssignEmployeeId("");
+    setIsEditing(true);
+  }, [open, startInCreateMode, canManage]);
 
   const openCreate = () => {
     setEditingId(null);

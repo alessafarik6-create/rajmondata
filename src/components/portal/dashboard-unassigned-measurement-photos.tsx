@@ -6,6 +6,7 @@ import type { DocumentData, Firestore, UpdateData } from "firebase/firestore";
 import {
   collection,
   deleteField,
+  deleteDoc,
   doc,
   limit,
   query,
@@ -13,7 +14,9 @@ import {
   serverTimestamp,
   where,
 } from "firebase/firestore";
+import { deleteObject, ref } from "firebase/storage";
 import { useCollection, useMemoFirebase } from "@/firebase";
+import { getFirebaseStorage } from "@/firebase/storage";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,7 +42,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { Camera, ChevronDown, ChevronUp, Loader2, MoreHorizontal } from "lucide-react";
+import {
+  Camera,
+  ChevronDown,
+  ChevronUp,
+  Loader2,
+  MoreHorizontal,
+  MoreVertical,
+} from "lucide-react";
 import { getJobMediaPreviewUrl, formatMediaDate } from "@/lib/job-media-types";
 import {
   isMeasurementPhotoUnassignedForJob,
@@ -69,6 +79,8 @@ type Props = {
   jobsForAssign: JobOption[];
   userId: string | null | undefined;
   profile: ProfileLike;
+  /** Karta na dashboardu vs. vložená tmavá galerie na mobilních Zakázkách. */
+  variant?: "dashboard" | "mobileDark";
 };
 
 function editorHrefForMeasurementRow(row: Row): string {
@@ -96,6 +108,7 @@ export function DashboardUnassignedMeasurementPhotos({
   jobsForAssign,
   userId,
   profile,
+  variant = "dashboard",
 }: Props) {
   const { toast } = useToast();
   const [expanded, setExpanded] = useState(false);
@@ -323,9 +336,304 @@ export function DashboardUnassignedMeasurementPhotos({
     return "Foto zaměření";
   };
 
+  const canDeleteMeasurementRow = (row: Row): boolean => {
+    if (!userId) return false;
+    if (canManagePhotos) return true;
+    return String(row.createdBy ?? "") === String(userId);
+  };
+
+  const deleteMeasurementRow = async (row: Row) => {
+    if (!firestore || !companyId) return;
+    if (!canDeleteMeasurementRow(row)) {
+      toast({
+        variant: "destructive",
+        title: "Nelze smazat",
+        description: "Chybí oprávnění ke smazání tohoto záznamu.",
+      });
+      return;
+    }
+    if (!window.confirm("Smazat foto zaměření včetně souborů ve Storage?")) return;
+    setBusyId(row.id);
+    try {
+      const sp = typeof row.storagePath === "string" ? row.storagePath : "";
+      const asp =
+        typeof row.annotatedStoragePath === "string" ? row.annotatedStoragePath : "";
+      if (sp) {
+        try {
+          await deleteObject(ref(getFirebaseStorage(), sp));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (asp) {
+        try {
+          await deleteObject(ref(getFirebaseStorage(), asp));
+        } catch {
+          /* ignore */
+        }
+      }
+      await deleteDoc(
+        doc(firestore, "companies", companyId, "measurement_photos", row.id)
+      );
+      setLightboxRow((prev) => (prev?.id === row.id ? null : prev));
+      setAssignRow((prev) => (prev?.id === row.id ? null : prev));
+      toast({ title: "Foto zaměření bylo odstraněno" });
+    } catch (e) {
+      console.error("[DashboardUnassignedMeasurementPhotos] delete", e);
+      toast({
+        variant: "destructive",
+        title: "Smazání se nezdařilo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   if (!companyId) return null;
 
   const lightboxUrl = lightboxRow ? previewUrlForRow(lightboxRow) : undefined;
+
+  const assignAndLightboxDialogs = (
+    <>
+      <Dialog open={Boolean(lightboxRow)} onOpenChange={(o) => !o && setLightboxRow(null)}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Náhled — foto zaměření</DialogTitle>
+            <DialogDescription>
+              {lightboxRow &&
+              typeof lightboxRow.title === "string" &&
+              lightboxRow.title.trim()
+                ? lightboxRow.title.trim()
+                : "Nezařazené foto"}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex max-h-[min(70vh,560px)] items-center justify-center overflow-auto rounded-md border bg-muted/30 p-2">
+            {lightboxUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={lightboxUrl}
+                alt=""
+                className="max-h-[min(65vh,520px)] w-auto max-w-full object-contain"
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground py-8">Náhled není k dispozici.</p>
+            )}
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => setLightboxRow(null)}>
+              Zavřít
+            </Button>
+            {lightboxRow ? (
+              <Button type="button" asChild>
+                <Link
+                  href={editorHrefForMeasurementRow(lightboxRow)}
+                  onClick={() => setLightboxRow(null)}
+                >
+                  Upravit
+                </Link>
+              </Button>
+            ) : null}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(assignRow)}
+        onOpenChange={(o) => {
+          if (!o) setAssignRow(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Přiřadit foto zaměření</DialogTitle>
+            <DialogDescription>
+              Vyberte zakázku nebo záznam plánovaného zaměření. Po uložení zmizí fotka z tohoto přehledu.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <Label>Typ přiřazení</Label>
+              <select
+                className={NATIVE_SELECT_CLASS}
+                value={assignKind}
+                onChange={(e) =>
+                  setAssignKind(e.target.value === "measurement" ? "measurement" : "job")
+                }
+              >
+                <option value="job">Zakázka</option>
+                <option value="measurement" disabled={!canManageMeasurements}>
+                  Zaměření (plánované)
+                </option>
+              </select>
+              {!canManageMeasurements ? (
+                <p className="text-[11px] text-muted-foreground">
+                  Přiřazení k zaměření je dostupné rolím s přístupem k přehledu zaměření.
+                </p>
+              ) : null}
+            </div>
+            {assignKind === "job" ? (
+              <div className="space-y-1">
+                <Label>Zakázka</Label>
+                <Select
+                  value={assignJobId || "__none__"}
+                  onValueChange={(v) => setAssignJobId(v === "__none__" ? "" : v)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Vyberte zakázku" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— vyberte —</SelectItem>
+                    {jobsForAssign
+                      .filter((j) => j.id)
+                      .map((j) => (
+                        <SelectItem key={j.id} value={j.id}>
+                          {j.name?.trim() || j.id}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="space-y-1">
+                <Label>Zaměření</Label>
+                <select
+                  className={NATIVE_SELECT_CLASS}
+                  value={assignMeasurementId}
+                  onChange={(e) => setAssignMeasurementId(e.target.value)}
+                >
+                  <option value="">— vyberte zaměření —</option>
+                  {measurementsList.map((m: { id?: string; customerName?: string }) =>
+                    m.id ? (
+                      <option key={m.id} value={m.id}>
+                        {m.customerName || m.id}
+                      </option>
+                    ) : null
+                  )}
+                </select>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setAssignRow(null)}>
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              disabled={busyId === assignRow?.id}
+              onClick={() => void submitAssign()}
+            >
+              {busyId === assignRow?.id ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                "Uložit přiřazení"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+
+  if (variant === "mobileDark") {
+    return (
+      <section className="mt-1 space-y-2 border-t border-white/10 pt-3">
+        <h2 className="text-sm font-semibold tracking-tight text-white">Foto zaměření</h2>
+        {isLoading ? (
+          <div className="flex justify-center py-6">
+            <Loader2 className="h-7 w-7 animate-spin text-slate-500" />
+          </div>
+        ) : rows.length === 0 ? (
+          <p className="py-3 text-center text-xs text-slate-400">
+            Zatím nejsou žádné fotky zaměření.
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 min-[400px]:grid-cols-4 gap-2">
+            {rows.map((row) => {
+              const preview = previewUrlForRow(row);
+              const titleStr =
+                typeof row.title === "string" && row.title.trim()
+                  ? row.title.trim()
+                  : "Foto zaměření";
+              const editHref = editorHrefForMeasurementRow(row);
+              const isBusy = busyId === row.id;
+              const canDel = canDeleteMeasurementRow(row);
+              return (
+                <div
+                  key={row.id}
+                  className="relative aspect-square overflow-hidden rounded-lg border border-white/10 bg-slate-900/50 shadow-sm"
+                >
+                  <button
+                    type="button"
+                    className="absolute inset-0 block h-full w-full text-left"
+                    onClick={() => setLightboxRow(row)}
+                  >
+                    {preview ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={preview} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full items-center justify-center p-1 text-center text-[10px] text-slate-400">
+                        Bez náhledu
+                      </div>
+                    )}
+                  </button>
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/45 to-transparent px-1 pb-1 pt-5">
+                    <p className="truncate text-[10px] font-medium text-white">{titleStr}</p>
+                    <p className="truncate text-[9px] text-white/80">
+                      {formatMediaDate(row.createdAt)}
+                    </p>
+                  </div>
+                  <div className="pointer-events-auto absolute right-0.5 top-0.5 z-10">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="secondary"
+                          className="h-7 w-7 shrink-0 rounded-full border-0 bg-black/55 text-white shadow-sm hover:bg-black/70"
+                          disabled={isBusy}
+                          aria-label="Akce u fotky"
+                        >
+                          {isBusy ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <MoreVertical className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent
+                        align="end"
+                        className="w-[min(100vw-2rem,14rem)] border-white/10 bg-slate-900 text-slate-100"
+                      >
+                        <DropdownMenuItem
+                          className="focus:bg-white/10 focus:text-white"
+                          onSelect={() => openAssign(row, "job")}
+                          disabled={!canManagePhotos}
+                        >
+                          Přiřadit k zakázce
+                        </DropdownMenuItem>
+                        <DropdownMenuItem className="focus:bg-white/10 focus:text-white" asChild>
+                          <Link href={editHref}>Upravit / anotovat</Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-red-400 focus:bg-red-950/50 focus:text-red-300"
+                          disabled={!canDel}
+                          onSelect={() => void deleteMeasurementRow(row)}
+                        >
+                          Smazat
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        {assignAndLightboxDialogs}
+      </section>
+    );
+  }
 
   return (
     <Card>
@@ -469,137 +777,7 @@ export function DashboardUnassignedMeasurementPhotos({
           </>
         )}
       </CardContent>
-
-      <Dialog open={Boolean(lightboxRow)} onOpenChange={(o) => !o && setLightboxRow(null)}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Náhled — foto zaměření</DialogTitle>
-            <DialogDescription>
-              {lightboxRow &&
-              typeof lightboxRow.title === "string" &&
-              lightboxRow.title.trim()
-                ? lightboxRow.title.trim()
-                : "Nezařazené foto"}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex max-h-[min(70vh,560px)] items-center justify-center overflow-auto rounded-md border bg-muted/30 p-2">
-            {lightboxUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={lightboxUrl}
-                alt=""
-                className="max-h-[min(65vh,520px)] w-auto max-w-full object-contain"
-              />
-            ) : (
-              <p className="text-sm text-muted-foreground py-8">Náhled není k dispozici.</p>
-            )}
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button type="button" variant="outline" onClick={() => setLightboxRow(null)}>
-              Zavřít
-            </Button>
-            {lightboxRow ? (
-              <Button type="button" asChild>
-                <Link href={editorHrefForMeasurementRow(lightboxRow)} onClick={() => setLightboxRow(null)}>
-                  Upravit
-                </Link>
-              </Button>
-            ) : null}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={Boolean(assignRow)}
-        onOpenChange={(o) => {
-          if (!o) setAssignRow(null);
-        }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Přiřadit foto zaměření</DialogTitle>
-            <DialogDescription>
-              Vyberte zakázku nebo záznam plánovaného zaměření. Po uložení zmizí fotka z tohoto přehledu.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 py-2">
-            <div className="space-y-1">
-              <Label>Typ přiřazení</Label>
-              <select
-                className={NATIVE_SELECT_CLASS}
-                value={assignKind}
-                onChange={(e) =>
-                  setAssignKind(e.target.value === "measurement" ? "measurement" : "job")
-                }
-              >
-                <option value="job">Zakázka</option>
-                <option value="measurement" disabled={!canManageMeasurements}>
-                  Zaměření (plánované)
-                </option>
-              </select>
-              {!canManageMeasurements ? (
-                <p className="text-[11px] text-muted-foreground">
-                  Přiřazení k zaměření je dostupné rolím s přístupem k přehledu zaměření.
-                </p>
-              ) : null}
-            </div>
-            {assignKind === "job" ? (
-              <div className="space-y-1">
-                <Label>Zakázka</Label>
-                <Select value={assignJobId || "__none__"} onValueChange={(v) => setAssignJobId(v === "__none__" ? "" : v)}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Vyberte zakázku" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__none__">— vyberte —</SelectItem>
-                    {jobsForAssign
-                      .filter((j) => j.id)
-                      .map((j) => (
-                        <SelectItem key={j.id} value={j.id}>
-                          {j.name?.trim() || j.id}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ) : (
-              <div className="space-y-1">
-                <Label>Zaměření</Label>
-                <select
-                  className={NATIVE_SELECT_CLASS}
-                  value={assignMeasurementId}
-                  onChange={(e) => setAssignMeasurementId(e.target.value)}
-                >
-                  <option value="">— vyberte zaměření —</option>
-                  {measurementsList.map((m: { id?: string; customerName?: string }) =>
-                    m.id ? (
-                      <option key={m.id} value={m.id}>
-                        {m.customerName || m.id}
-                      </option>
-                    ) : null
-                  )}
-                </select>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setAssignRow(null)}>
-              Zrušit
-            </Button>
-            <Button
-              type="button"
-              disabled={busyId === assignRow?.id}
-              onClick={() => void submitAssign()}
-            >
-              {busyId === assignRow?.id ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                "Uložit přiřazení"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {assignAndLightboxDialogs}
     </Card>
   );
 }

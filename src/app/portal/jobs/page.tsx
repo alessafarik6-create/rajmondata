@@ -81,6 +81,7 @@ import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 import { OrganizationTasksDialog } from "@/components/tasks/organization-tasks-dialog";
 import { MeasurementPhotoCaptureDialog } from "@/components/jobs/measurement-photo-capture-dialog";
+import { DashboardUnassignedMeasurementPhotos } from "@/components/portal/dashboard-unassigned-measurement-photos";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
 import {
   JOB_TAG_CUSTOM_VALUE,
@@ -258,6 +259,24 @@ function JobsPageContent() {
   const jobs = useMemo(
     () => normalizeJobsList(allJobs, !!isAdmin, user?.uid, employeeDocId),
     [allJobs, isAdmin, user?.uid, employeeDocId]
+  );
+
+  const jobNamesById = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const j of jobs) {
+      const id = String(j?.id ?? "").trim();
+      if (!id) continue;
+      m[id] = (typeof j.name === "string" && j.name.trim()) ? j.name.trim() : id;
+    }
+    return m;
+  }, [jobs]);
+
+  const jobsForAssign = useMemo(
+    () =>
+      jobs
+        .map((j) => ({ id: String(j?.id ?? "").trim(), name: j.name }))
+        .filter((j) => Boolean(j.id)),
+    [jobs]
   );
 
   const searchParams = useSearchParams();
@@ -870,9 +889,9 @@ function JobsPageContent() {
               "flex h-[84px] w-full min-w-0 flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-slate-900/85 px-0.5 py-1.5 text-center shadow-sm active:opacity-90";
             const labelClass =
               "line-clamp-2 text-center text-[10px] font-medium leading-tight text-slate-100";
-            const nodes: React.ReactNode[] = [];
+            const row1: React.ReactNode[] = [];
             if (userCanManageMeasurements(profile)) {
-              nodes.push(
+              row1.push(
                 <Link key="zamereni" href="/portal/jobs/measurements" className="min-w-0">
                   <div className={tileClass}>
                     <Ruler className="h-5 w-5 shrink-0 text-orange-400" />
@@ -882,7 +901,7 @@ function JobsPageContent() {
               );
             }
             if (showMeasurementPhotoEntry) {
-              nodes.push(
+              row1.push(
                 <button
                   key="foto"
                   type="button"
@@ -897,7 +916,7 @@ function JobsPageContent() {
               );
             }
             if (isAdmin) {
-              nodes.push(
+              row1.push(
                 <button
                   key="pdf"
                   type="button"
@@ -919,7 +938,7 @@ function JobsPageContent() {
                   </div>
                 </button>
               );
-              nodes.push(
+              row1.push(
                 <Link key="sablony" href="/portal/jobs/templates" className="min-w-0">
                   <div className={tileClass}>
                     <FileStack className="h-5 w-5 shrink-0 text-orange-400" />
@@ -928,75 +947,47 @@ function JobsPageContent() {
                 </Link>
               );
             }
-            if (showTasksButton) {
-              nodes.push(
-                <button
-                  key="ukoly"
-                  type="button"
-                  className="min-w-0 text-left"
-                  onClick={() => setTasksDialogOpen(true)}
-                >
-                  <div className={tileClass}>
-                    <ListTodo className="h-5 w-5 shrink-0 text-orange-400" />
-                    <span className={labelClass}>Úkoly</span>
-                  </div>
-                </button>
-              );
-            }
-            if (isAdmin) {
-              nodes.push(
-                <button
-                  key="sod"
-                  type="button"
-                  className="min-w-0 text-left"
-                  onClick={() => setWorkContractTemplatesManagerOpen(true)}
-                >
-                  <div className={tileClass}>
-                    <FileText className="h-5 w-5 shrink-0 text-orange-400" />
-                    <span className={labelClass}>Šablony SOD</span>
-                  </div>
-                </button>
-              );
-              nodes.push(
-                <button
-                  key="nova"
-                  type="button"
-                  className="min-w-0 text-left"
-                  onClick={() => setIsNewJobOpen(true)}
-                >
-                  <div className={tileClass}>
-                    <Plus className="h-5 w-5 shrink-0 text-orange-400" />
-                    <span className={labelClass}>Nová zakázka</span>
-                  </div>
-                </button>
-              );
-            }
-            const row1 = nodes.slice(0, 4);
-            const row2 = nodes.slice(4);
             return (
               <div className="space-y-1.5 pb-2">
                 <div className="grid grid-cols-4 gap-1.5">{row1}</div>
-                {row2.length === 1 ? (
-                  <div className="grid grid-cols-4 gap-1.5">
-                    <div className="col-span-2 col-start-2 min-w-0">{row2[0]}</div>
+                {isAdmin ? (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
+                      className="min-w-0 text-left"
+                      onClick={() => setWorkContractTemplatesManagerOpen(true)}
+                    >
+                      <div className={tileClass}>
+                        <FileText className="h-5 w-5 shrink-0 text-orange-400" />
+                        <span className={labelClass}>Šablony SOD</span>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      className="min-w-0 text-left"
+                      onClick={() => setIsNewJobOpen(true)}
+                    >
+                      <div className={tileClass}>
+                        <Plus className="h-5 w-5 shrink-0 text-orange-400" />
+                        <span className={labelClass}>Nová zakázka</span>
+                      </div>
+                    </button>
                   </div>
-                ) : row2.length === 2 ? (
-                  <div className="grid grid-cols-4 gap-1.5">
-                    <div className="col-span-2 min-w-0">{row2[0]}</div>
-                    <div className="col-span-2 min-w-0">{row2[1]}</div>
-                  </div>
-                ) : row2.length === 3 ? (
-                  <div className="grid grid-cols-6 gap-1.5">
-                    <div className="col-span-2 min-w-0">{row2[0]}</div>
-                    <div className="col-span-2 min-w-0">{row2[1]}</div>
-                    <div className="col-span-2 min-w-0">{row2[2]}</div>
-                  </div>
-                ) : row2.length >= 4 ? (
-                  <div className="grid grid-cols-4 gap-1.5">{row2}</div>
                 ) : null}
               </div>
             );
           })()}
+          {belowLg && companyId && firestore && user && showMeasurementPhotoEntry ? (
+            <DashboardUnassignedMeasurementPhotos
+              variant="mobileDark"
+              firestore={firestore}
+              companyId={companyId}
+              jobNamesById={jobNamesById}
+              jobsForAssign={jobsForAssign}
+              userId={user.uid}
+              profile={profile as Record<string, unknown> | null | undefined}
+            />
+          ) : null}
         </>
       ) : null}
 
