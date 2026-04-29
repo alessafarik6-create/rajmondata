@@ -578,7 +578,6 @@ function UserFolderBlock({
   );
   const { data: actorProfile } = useDoc(actorRef);
   const [busy, setBusy] = useState(false);
-  const [resendBusyKey, setResendBusyKey] = useState<string | null>(null);
   type FolderMediaViewerOpen = {
     url: string;
     title: string;
@@ -589,47 +588,6 @@ function UserFolderBlock({
     adminNote?: string;
   };
   const [mediaViewer, setMediaViewer] = useState<FolderMediaViewerOpen | null>(null);
-  const resendApprovalEmail = useCallback(
-    async (target: JobMediaRef, fileLabel: string, busyKey: string) => {
-      setResendBusyKey(busyKey);
-      try {
-        const idToken = await user.getIdToken();
-        const res = await fetch(
-          `/api/jobs/${encodeURIComponent(jobId)}/approval-email/resend`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${idToken}`,
-            },
-            body: JSON.stringify({ target, fileLabel }),
-          }
-        );
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        if (!res.ok) {
-          throw new Error(
-            typeof data.error === "string"
-              ? data.error
-              : "Nepodařilo se odeslat upozornění znovu."
-          );
-        }
-        toast({
-          title: "Upozornění odesláno",
-          description: "Zákazník dostal e-mailové upozornění znovu.",
-        });
-      } catch (e) {
-        toast({
-          variant: "destructive",
-          title: "Odeslání selhalo",
-          description: e instanceof Error ? e.message : "Zkuste to znovu.",
-        });
-      } finally {
-        setResendBusyKey(null);
-      }
-    },
-    [jobId, toast, user]
-  );
-
   const openFolderMediaViewer = useCallback(
     (img: JobFolderImageDoc, openUrl: string, title: string) => {
       const kind = inferJobMediaItemType(img);
@@ -1980,18 +1938,18 @@ function UserFolderBlock({
                     onResendApprovalEmail={
                       mediaApprovalSummary?.requiresCustomerApproval
                         ? () =>
-                            void resendApprovalEmail(
-                              {
+                            onOpenMediaApprovalDialog?.({
+                              target: {
                                 kind: "folderImages",
                                 folderId: folder.id,
                                 imageId: img.id,
                               },
-                              title,
-                              `folder:${folder.id}:${img.id}`
-                            )
+                              fileLabel: title,
+                              row: img as unknown as Record<string, unknown>,
+                            })
                         : undefined
                     }
-                    resendApprovalBusy={resendBusyKey === `folder:${folder.id}:${img.id}`}
+                    resendApprovalBusy={false}
                     actions={
                       <>
                         <JobMediaIconButton
@@ -2131,18 +2089,18 @@ function UserFolderBlock({
                   onResendApprovalEmail={
                     mediaApprovalSummary?.requiresCustomerApproval
                       ? () =>
-                          void resendApprovalEmail(
-                            {
+                          onOpenMediaApprovalDialog?.({
+                            target: {
                               kind: "folderImages",
                               folderId: folder.id,
                               imageId: img.id,
                             },
-                            title,
-                            `folder:${folder.id}:${img.id}`
-                          )
+                            fileLabel: title,
+                            row: img as unknown as Record<string, unknown>,
+                          })
                       : undefined
                   }
-                  resendApprovalBusy={resendBusyKey === `folder:${folder.id}:${img.id}`}
+                  resendApprovalBusy={false}
                   actions={
                     <>
                       <JobMediaIconButton
@@ -2491,8 +2449,8 @@ export function JobMediaSection({
     fileLabel: string;
     initialRequires: boolean;
     initialAdminNote: string;
+    initialApprovalEmailSent: boolean;
   } | null>(null);
-  const [legacyResendBusyKey, setLegacyResendBusyKey] = useState<string | null>(null);
 
   const openMediaApprovalDialog = useCallback(
     (ctx: { target: JobMediaRef; fileLabel: string; row: Record<string, unknown> }) => {
@@ -2502,51 +2460,10 @@ export function JobMediaSection({
         fileLabel: ctx.fileLabel,
         initialRequires: pr.requiresCustomerApproval,
         initialAdminNote: pr.approvalNoteFromAdmin,
+        initialApprovalEmailSent: pr.approvalEmailSent,
       });
     },
     []
-  );
-
-  const resendApprovalEmailForLegacy = useCallback(
-    async (target: JobMediaRef, fileLabel: string, busyKey: string) => {
-      if (!user) return;
-      setLegacyResendBusyKey(busyKey);
-      try {
-        const idToken = await user.getIdToken();
-        const res = await fetch(
-          `/api/jobs/${encodeURIComponent(jobId)}/approval-email/resend`,
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${idToken}`,
-            },
-            body: JSON.stringify({ target, fileLabel }),
-          }
-        );
-        const data = (await res.json().catch(() => ({}))) as { error?: string };
-        if (!res.ok) {
-          throw new Error(
-            typeof data.error === "string"
-              ? data.error
-              : "Nepodařilo se odeslat upozornění znovu."
-          );
-        }
-        toast({
-          title: "Upozornění odesláno",
-          description: "Zákazník dostal e-mailové upozornění znovu.",
-        });
-      } catch (e) {
-        toast({
-          variant: "destructive",
-          title: "Odeslání selhalo",
-          description: e instanceof Error ? e.message : "Zkuste to znovu.",
-        });
-      } finally {
-        setLegacyResendBusyKey(null);
-      }
-    },
-    [jobId, toast, user]
   );
 
   const galleryRef = useRef<HTMLInputElement>(null);
@@ -3285,14 +3202,14 @@ export function JobMediaSection({
                         onResendApprovalEmail={
                           legacyMediaApprovalSummary?.requiresCustomerApproval
                             ? () =>
-                                void resendApprovalEmailForLegacy(
-                                  { kind: "photos", photoId: p.id },
-                                  title,
-                                  `legacy:${p.id}`
-                                )
+                                openMediaApprovalDialog({
+                                  target: { kind: "photos", photoId: p.id },
+                                  fileLabel: title,
+                                  row: p as unknown as Record<string, unknown>,
+                                })
                             : undefined
                         }
-                        resendApprovalBusy={legacyResendBusyKey === `legacy:${p.id}`}
+                        resendApprovalBusy={false}
                         actions={
                           <>
                             <JobMediaIconButton
@@ -3422,14 +3339,14 @@ export function JobMediaSection({
                       onResendApprovalEmail={
                         legacyMediaApprovalSummary?.requiresCustomerApproval
                           ? () =>
-                              void resendApprovalEmailForLegacy(
-                                { kind: "photos", photoId: p.id },
-                                title,
-                                `legacy:${p.id}`
-                              )
+                              openMediaApprovalDialog({
+                                target: { kind: "photos", photoId: p.id },
+                                fileLabel: title,
+                                row: p as unknown as Record<string, unknown>,
+                              })
                           : undefined
                       }
-                      resendApprovalBusy={legacyResendBusyKey === `legacy:${p.id}`}
+                      resendApprovalBusy={false}
                       actions={
                         <>
                           <JobMediaIconButton
@@ -3830,6 +3747,7 @@ export function JobMediaSection({
           fileLabel={mediaApprovalDlg.fileLabel}
           initialRequires={mediaApprovalDlg.initialRequires}
           initialAdminNote={mediaApprovalDlg.initialAdminNote}
+          initialApprovalEmailSent={mediaApprovalDlg.initialApprovalEmailSent}
           onApplied={() => setMediaApprovalDlg(null)}
         />
       ) : null}

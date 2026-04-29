@@ -8,6 +8,8 @@ import {
 } from "@/lib/api-verify-company-user";
 import {
   absoluteUrl,
+  isValidEmail,
+  normalizeEmail,
   loadCompanyEmailBranding,
   resolveCustomerEmailForJob,
   wrapPortalEmailHtml,
@@ -21,6 +23,9 @@ type Body = {
   target?: { kind?: "photos" | "folderImages"; photoId?: string; folderId?: string; imageId?: string };
   fileLabel?: string;
   approvalNoteFromAdmin?: string;
+  email?: string;
+  fileId?: string;
+  organizationId?: string;
 };
 
 function mediaRefFromBody(params: {
@@ -102,6 +107,11 @@ export async function POST(
   const job = (jobSnap.data() ?? {}) as Record<string, unknown>;
   const media = (mediaSnap.data() ?? {}) as Record<string, unknown>;
   const alreadySent = media.approvalEmailSent === true;
+  const fileIdForLog =
+    String(body.fileId ?? "").trim() ||
+    (body.target?.kind === "photos"
+      ? String(body.target.photoId ?? "")
+      : `${String(body.target?.folderId ?? "")}:${String(body.target?.imageId ?? "")}`);
 
   // Vždy nastav stav čekajícího schválení při této akci.
   await mediaRef.set(
@@ -125,7 +135,11 @@ export async function POST(
     });
   }
 
-  const customerEmail = await resolveCustomerEmailForJob({ db, companyId, job });
+  const overrideEmail = normalizeEmail(body.email ?? "");
+  const customerEmail =
+    isValidEmail(overrideEmail)
+      ? overrideEmail
+      : await resolveCustomerEmailForJob({ db, companyId, job });
   if (!customerEmail) {
     return NextResponse.json({ error: "Zákazník nemá vyplněný e-mail" }, { status: 400 });
   }
@@ -146,10 +160,36 @@ export async function POST(
     logoUrl: branding.logoUrl,
     contactEmail: branding.contactEmail,
   });
-  const sent = await sendTransactionalEmail({
-    to: [customerEmail],
-    subject,
-    html,
+  console.info("[approval-email] sending", {
+    email: customerEmail,
+    jobId,
+    fileId: fileIdForLog,
+    organizationId: companyId,
+    resend: false,
+    hasResendApiKey: Boolean(String(process.env.RESEND_API_KEY ?? "").trim()),
+    hasEmailFrom: Boolean(String(process.env.EMAIL_FROM ?? "").trim()),
+  });
+  let sent:
+    | Awaited<ReturnType<typeof sendTransactionalEmail>>
+    | null = null;
+  try {
+    sent = await sendTransactionalEmail({
+      to: [customerEmail],
+      subject,
+      html,
+    });
+  } catch (error) {
+    console.error("[approval-email] EMAIL ERROR:", error);
+    return NextResponse.json(
+      { error: "E-mail se nepodařilo odeslat.", detail: error instanceof Error ? error.message : null },
+      { status: 502 }
+    );
+  }
+  console.info("[approval-email] email service response", {
+    email: customerEmail,
+    jobId,
+    fileId: fileIdForLog,
+    response: sent,
   });
   if (!sent.ok) {
     return NextResponse.json(
@@ -162,6 +202,7 @@ export async function POST(
     {
       approvalEmailSent: true,
       approvalEmailSentAt: FieldValue.serverTimestamp(),
+      approvalEmail: customerEmail,
       approvalEmailResentCount: media.approvalEmailResentCount ?? 0,
     },
     { merge: true }
