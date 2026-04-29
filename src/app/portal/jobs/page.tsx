@@ -1090,6 +1090,7 @@ function JobsPageContent() {
             }[]
           }
           profile={profile as Record<string, unknown> | null | undefined}
+          standaloneReturnTo={belowLg ? "/portal/jobs" : null}
         />
       ) : null}
 
@@ -1522,7 +1523,7 @@ function JobsPageContent() {
                   <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                   <Input
                     id="jobs-search"
-                    className="h-9 border border-white/25 bg-slate-800/95 pl-8 text-xs text-white shadow-none placeholder:text-slate-400 [color-scheme:dark]"
+                    className="!h-9 !min-h-9 rounded-md border border-white/35 !bg-slate-950 pl-8 !py-1 !text-xs !text-white shadow-none !placeholder:text-slate-400 focus-visible:border-orange-500/70 focus-visible:!ring-2 focus-visible:!ring-orange-500/40 [color-scheme:dark]"
                     placeholder="Hledat…"
                     value={jobListSearch}
                     onChange={(e) => setJobListSearch(e.target.value)}
@@ -1531,8 +1532,7 @@ function JobsPageContent() {
                 <select
                   aria-label="Filtrovat podle stavu"
                   className={cn(
-                    NATIVE_SELECT_CLASS,
-                    "h-9 shrink-0 max-w-[42%] border border-white/25 bg-slate-800/95 py-0 text-xs text-white shadow-none min-[360px]:max-w-[46%] [color-scheme:dark] accent-orange-500"
+                    "h-9 max-w-[42%] min-[360px]:max-w-[46%] shrink-0 cursor-pointer appearance-none rounded-md border border-white/35 !bg-slate-950 px-2 py-0 text-xs !text-white shadow-none outline-none focus:border-orange-500/70 focus:ring-2 focus:ring-orange-500/40 [color-scheme:dark]"
                   )}
                   value={statusFilter}
                   onChange={(e) => setStatusFilter(e.target.value)}
@@ -1550,10 +1550,7 @@ function JobsPageContent() {
                 <select
                   id="jobs-tag-filter-mobile"
                   aria-label="Filtrovat podle štítku"
-                  className={cn(
-                    NATIVE_SELECT_CLASS,
-                    "h-9 min-w-0 flex-1 border border-white/25 bg-slate-800/95 py-0 text-xs text-white shadow-none [color-scheme:dark] accent-orange-500"
-                  )}
+                  className="h-9 min-w-0 flex-1 cursor-pointer appearance-none rounded-md border border-white/35 !bg-slate-950 px-2 py-0 text-xs !text-white shadow-none outline-none focus:border-orange-500/70 focus:ring-2 focus:ring-orange-500/40 [color-scheme:dark]"
                   value={jobTagFilter}
                   onChange={(e) => setJobTagFilter(e.target.value)}
                 >

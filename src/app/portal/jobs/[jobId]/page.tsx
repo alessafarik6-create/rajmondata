@@ -206,6 +206,7 @@ import {
   isMeasurementPhotoUnassignedForJob,
 } from "@/lib/measurement-photos";
 import { MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID } from "@/lib/measurement-photo-pending-route";
+import { sanitizeMeasurementEditorReturnTo } from "@/lib/measurement-photo-editor-return";
 import {
   clearPendingJobMeasurementFile,
   peekPendingJobMeasurementFile,
@@ -1056,6 +1057,7 @@ function JobDetailPageContent() {
     panX: number;
     panY: number;
   } | null>(null);
+  const measurementEditorReturnToRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!editorOpen) return;
@@ -1064,6 +1066,15 @@ function JobDetailPageContent() {
     pinchSessionRef.current = null;
     viewPanStartRef.current = null;
   }, [editorOpen]);
+
+  useEffect(() => {
+    if (!editorOpen || !isAnnotTouchUI) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [editorOpen, isAnnotTouchUI]);
 
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
   const [contractDialogMode, setContractDialogMode] = useState<"view" | "edit">(
@@ -1937,6 +1948,8 @@ function JobDetailPageContent() {
       openedMpFromQueryRef.current = null;
       return;
     }
+    const rtMp = sanitizeMeasurementEditorReturnTo(searchParams.get("returnTo"));
+    if (rtMp) measurementEditorReturnToRef.current = rtMp;
     if (!companyId || !jobIdParam || !firestore) return;
     if (openedMpFromQueryRef.current === mp) return;
 
@@ -3662,7 +3675,7 @@ function JobDetailPageContent() {
     setNoteRectDraft(null);
   }, [annotations.length]);
 
-  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLElement>) => {
     if (!imageForCanvas || !baseImageLoaded) return;
     if (!canvasRef.current) return;
     e.preventDefault();
@@ -3807,7 +3820,7 @@ function JobDetailPageContent() {
     }
   };
 
-  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLElement>) => {
     if (!imageForCanvas || !baseImageLoaded) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -3936,7 +3949,7 @@ function JobDetailPageContent() {
     setDragLastPoint(pt);
   };
 
-  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLElement>) => {
     if (!imageForCanvas || !baseImageLoaded) return;
 
     pointerMapRef.current.delete(e.pointerId);
@@ -4270,6 +4283,10 @@ function JobDetailPageContent() {
       measurementPendingNavHandledKeyRef.current = null;
       return;
     }
+    const rtPending = sanitizeMeasurementEditorReturnTo(
+      searchParams.get("returnTo")
+    );
+    if (rtPending) measurementEditorReturnToRef.current = rtPending;
     if (!jobIdParam || !companyId) return;
     if (!user?.uid) {
       toast({
@@ -4824,12 +4841,19 @@ function JobDetailPageContent() {
             }
       );
 
-      if (
-        target.kind === "measurementPhotos" &&
-        photoToEdit?.id?.startsWith("pending-") &&
-        isStandaloneMeasurementEditorRoute
-      ) {
-        router.replace("/portal/dashboard");
+      if (target.kind === "measurementPhotos") {
+        const raw = measurementEditorReturnToRef.current;
+        measurementEditorReturnToRef.current = null;
+        const fromParam = sanitizeMeasurementEditorReturnTo(raw);
+        const fallback =
+          photoToEdit?.id?.startsWith("pending-") &&
+          isStandaloneMeasurementEditorRoute
+            ? "/portal/jobs"
+            : null;
+        const dest = fromParam ?? fallback;
+        if (dest) {
+          router.replace(dest);
+        }
       }
 
       setEditorOpen(false);
@@ -5463,6 +5487,7 @@ function JobDetailPageContent() {
         onOpenChange={(open) => {
           setEditorOpen(open);
           if (!open) {
+            measurementEditorReturnToRef.current = null;
             measurementCaptureFileRef.current = null;
             setPhotoToEdit((prev) => {
               if (prev?.pendingObjectUrl) {
@@ -5481,7 +5506,7 @@ function JobDetailPageContent() {
         <DialogContent
           className={cn(
             isAnnotTouchUI
-              ? "!fixed !inset-0 !left-0 !top-0 z-[200] flex h-[100dvh] max-h-[100dvh] w-full max-w-full !translate-x-0 !translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-slate-950 p-0 text-white shadow-none overscroll-none data-[state=open]:zoom-in-100"
+              ? "!fixed !inset-0 !left-0 !top-0 z-[200] flex h-[100dvh] min-h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] !translate-x-0 !translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-slate-950 p-0 text-white shadow-none overscroll-none data-[state=open]:zoom-in-100"
               : "!flex !max-h-[min(92dvh,92vh)] !h-[min(92dvh,92vh)] !w-[min(95vw,1920px)] !max-w-[min(95vw,1920px)] !flex-col !gap-0 !overflow-hidden overscroll-contain p-2 sm:p-3 md:p-4 sm:!max-w-[min(95vw,1920px)] sm:!w-[min(95vw,1920px)] md:!max-w-[min(95vw,1920px)] md:!w-[min(95vw,1920px)]"
           )}
         >
@@ -5490,7 +5515,7 @@ function JobDetailPageContent() {
               <DialogHeader className="sr-only">
                 <DialogTitle>Anotace fotografie</DialogTitle>
               </DialogHeader>
-              <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900 px-2 py-1">
+              <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900 px-2 pb-1 pt-[max(0.25rem,env(safe-area-inset-top))]">
                 <Button
                   type="button"
                   variant="ghost"
@@ -5573,48 +5598,47 @@ function JobDetailPageContent() {
                     />
                   ))}
                 </div>
-                <div
-                  className="flex min-h-0 min-w-0 flex-1 items-center justify-center px-11 py-1"
-                  style={{ touchAction: "none" }}
-                >
-                  <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-black">
-                    <div className="flex h-full w-full max-h-full max-w-full items-center justify-center">
-                      <div
-                        style={{
-                          transform: `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
-                          transformOrigin: "center center",
-                        }}
-                        className="flex max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)] items-center justify-center"
-                      >
-                        <canvas
-                          ref={setCanvasNode}
-                          onPointerDown={handleCanvasPointerDown}
-                          onPointerMove={handleCanvasPointerMove}
-                          onPointerUp={handleCanvasPointerUp}
-                          onPointerCancel={() => {
-                            pointerMapRef.current.clear();
-                            pinchSessionRef.current = null;
-                            viewPanStartRef.current = null;
-                            setDragMode("none");
-                            setDragLastPoint(null);
-                            setNoteRectDraft(null);
-                            setDraftAnnotationId(null);
-                          }}
-                          className={cn(
-                            "h-auto w-auto max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)] object-contain",
-                            baseImageLoaded ? "opacity-100" : "opacity-0"
-                          )}
-                          style={{ cursor: canvasCursor }}
-                        />
-                      </div>
+                <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black">
+                  <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+                    <div
+                      style={{
+                        transform: `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
+                        transformOrigin: "center center",
+                      }}
+                      className="flex h-full w-full max-h-full max-w-full items-center justify-center"
+                    >
+                      <canvas
+                        ref={setCanvasNode}
+                        className={cn(
+                          "pointer-events-none h-auto w-auto max-h-full max-w-full object-contain",
+                          baseImageLoaded ? "opacity-100" : "opacity-0"
+                        )}
+                        style={{ cursor: canvasCursor }}
+                      />
                     </div>
+                    <div
+                      className="pointer-events-auto absolute inset-0 z-[12]"
+                      style={{ touchAction: "none" }}
+                      onPointerDown={handleCanvasPointerDown}
+                      onPointerMove={handleCanvasPointerMove}
+                      onPointerUp={handleCanvasPointerUp}
+                      onPointerCancel={() => {
+                        pointerMapRef.current.clear();
+                        pinchSessionRef.current = null;
+                        viewPanStartRef.current = null;
+                        setDragMode("none");
+                        setDragLastPoint(null);
+                        setNoteRectDraft(null);
+                        setDraftAnnotationId(null);
+                      }}
+                    />
                     {!baseImageLoaded && !imageError && (
-                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 text-xs text-slate-300">
+                      <div className="pointer-events-none absolute inset-0 z-[14] flex items-center justify-center bg-black/40 text-xs text-slate-300">
                         Načítání…
                       </div>
                     )}
                     {imageError && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-3 text-center text-xs text-red-400">
+                      <div className="absolute inset-0 z-[14] flex items-center justify-center bg-black/70 p-3 text-center text-xs text-red-400">
                         <div className="space-y-1">
                           <p>{imageError}</p>
                           <p className="break-all text-slate-400">
@@ -5626,7 +5650,7 @@ function JobDetailPageContent() {
                   </div>
                 </div>
               </div>
-              <div className="flex min-h-0 shrink-0 flex-wrap items-center gap-1 border-t border-white/10 bg-slate-900 px-2 py-1.5">
+              <div className="flex min-h-0 shrink-0 flex-wrap items-center gap-1 border-t border-white/10 bg-slate-900 px-2 py-[max(0.375rem,env(safe-area-inset-bottom))]">
                 <Button
                   type="button"
                   variant="outline"

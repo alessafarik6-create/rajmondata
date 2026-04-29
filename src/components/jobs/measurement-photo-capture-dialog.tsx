@@ -54,6 +54,8 @@ export type MeasurementPhotoCaptureDialogProps = {
   jobs: JobOption[];
   customers: CustomerOption[];
   profile: Record<string, unknown> | null | undefined;
+  /** Po uložení draftu navigace zpět (např. /portal/jobs na mobilu). */
+  standaloneReturnTo?: string | null;
 };
 
 export function MeasurementPhotoCaptureDialog({
@@ -65,6 +67,7 @@ export function MeasurementPhotoCaptureDialog({
   jobs,
   customers,
   profile,
+  standaloneReturnTo = null,
 }: MeasurementPhotoCaptureDialogProps) {
   const { toast } = useToast();
   const router = useRouter();
@@ -176,8 +179,15 @@ export function MeasurementPhotoCaptureDialog({
             "Otevře se editor anotací — po uložení bude fotka mezi nezařazenými na hlavní stránce.",
         });
         handleOpenChange(false);
+        const ret =
+          typeof standaloneReturnTo === "string" &&
+          standaloneReturnTo.trim().startsWith("/portal/") &&
+          !standaloneReturnTo.includes("..") &&
+          !standaloneReturnTo.includes("?")
+            ? `&returnTo=${encodeURIComponent(standaloneReturnTo.trim())}`
+            : "";
         router.push(
-          `/portal/jobs/${MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID}?measurementPending=1`
+          `/portal/jobs/${MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID}?measurementPending=1${ret}`
         );
       } catch (e) {
         console.error("[MeasurementPhotoCaptureDialog] pending standalone", e);

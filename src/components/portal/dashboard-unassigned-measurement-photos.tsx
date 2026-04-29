@@ -86,13 +86,20 @@ type Props = {
   variant?: "dashboard" | "mobileDark";
 };
 
-function editorHrefForMeasurementRow(row: Row): string {
+function editorHrefForMeasurementRow(
+  row: Row,
+  returnTo?: string | null
+): string {
   const jobId =
     typeof row.jobId === "string" && row.jobId.trim() ? row.jobId.trim() : "";
   const base = jobId
     ? `/portal/jobs/${jobId}`
     : `/portal/jobs/${MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID}`;
-  return `${base}?mp=${encodeURIComponent(row.id)}`;
+  let url = `${base}?mp=${encodeURIComponent(row.id)}`;
+  if (returnTo) {
+    url += `&returnTo=${encodeURIComponent(returnTo)}`;
+  }
+  return url;
 }
 
 function previewUrlForRow(row: Row): string | undefined {
@@ -395,6 +402,8 @@ export function DashboardUnassignedMeasurementPhotos({
 
   if (!companyId) return null;
 
+  const editorReturnTo = variant === "mobileDark" ? "/portal/jobs" : null;
+
   const lightboxUrl = lightboxRow ? previewUrlForRow(lightboxRow) : undefined;
 
   const assignAndLightboxDialogs = (
@@ -430,7 +439,7 @@ export function DashboardUnassignedMeasurementPhotos({
             {lightboxRow ? (
               <Button type="button" asChild>
                 <Link
-                  href={editorHrefForMeasurementRow(lightboxRow)}
+                  href={editorHrefForMeasurementRow(lightboxRow, editorReturnTo)}
                   onClick={() => setLightboxRow(null)}
                 >
                   Upravit
@@ -558,7 +567,7 @@ export function DashboardUnassignedMeasurementPhotos({
                 typeof row.title === "string" && row.title.trim()
                   ? row.title.trim()
                   : "Foto zaměření";
-              const editHref = editorHrefForMeasurementRow(row);
+              const editHref = editorHrefForMeasurementRow(row, editorReturnTo);
               const isBusy = busyId === row.id;
               const canDel = canDeleteMeasurementRow(row);
               return (
@@ -686,7 +695,7 @@ export function DashboardUnassignedMeasurementPhotos({
                     : typeof row.createdBy === "string" && row.createdBy
                       ? `ID ${row.createdBy.slice(0, 8)}…`
                       : null;
-                const editHref = editorHrefForMeasurementRow(row);
+                const editHref = editorHrefForMeasurementRow(row, editorReturnTo);
                 const isBusy = busyId === row.id;
 
                 return (
