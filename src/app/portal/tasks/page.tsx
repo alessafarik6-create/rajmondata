@@ -36,26 +36,47 @@ export default function PortalTasksPage() {
     <div
       className={cn(
         belowLg ? "bg-slate-950 text-slate-50" : "bg-background text-foreground",
-        "min-h-[100dvh] px-4 pt-4 pb-[calc(96px+env(safe-area-inset-bottom))] sm:px-6"
+        "min-h-[100dvh] pb-[calc(96px+env(safe-area-inset-bottom))]",
+        belowLg ? "px-0 pt-3" : "px-4 pt-4 sm:px-6"
       )}
     >
-      <div className="mx-auto w-full max-w-3xl space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2 min-w-0">
-            <ListTodo className="h-5 w-5 text-orange-300 shrink-0" aria-hidden />
-            <h1 className="truncate text-lg font-semibold text-white">Úkoly</h1>
+      <div
+        className={cn(
+          "mx-auto w-full space-y-4",
+          belowLg ? "max-w-none px-4" : "max-w-3xl"
+        )}
+      >
+        {belowLg ? (
+          <div className="flex items-center gap-3">
+            <Button
+              asChild
+              variant="outline"
+              className="h-9 min-h-[36px] shrink-0 rounded-lg border-white/20 bg-white/5 px-3 text-xs text-slate-100 hover:bg-white/10"
+            >
+              <Link href="/portal/dashboard">
+                <ArrowLeft className="mr-1.5 h-4 w-4" />
+                Zpět
+              </Link>
+            </Button>
+            <div className="flex min-w-0 items-center gap-2">
+              <ListTodo className="h-5 w-5 shrink-0 text-orange-300" aria-hidden />
+              <h1 className="truncate text-lg font-semibold text-white">Úkoly</h1>
+            </div>
           </div>
-          <Button
-            asChild
-            variant="outline"
-            className="min-h-11 border-white/20 bg-white/5 px-4 text-slate-100 hover:bg-white/10"
-          >
-            <Link href="/portal/dashboard">
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Zpět
-            </Link>
-          </Button>
-        </div>
+        ) : (
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <ListTodo className="h-5 w-5 shrink-0 text-orange-500" aria-hidden />
+              <h1 className="truncate text-lg font-semibold text-foreground">Úkoly</h1>
+            </div>
+            <Button asChild variant="outline" className="min-h-11 shrink-0 px-4">
+              <Link href="/portal/dashboard">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Zpět
+              </Link>
+            </Button>
+          </div>
+        )}
 
         {companyId ? (
           <DashboardJobTasksWidget

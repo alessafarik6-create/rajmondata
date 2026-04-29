@@ -27,8 +27,12 @@ import {
   Link2,
   Landmark,
   UserCheck,
+  ArrowLeft,
+  Receipt,
+  Clock,
 } from 'lucide-react';
 import Link from "next/link";
+import { useIsBelowLg } from "@/hooks/use-mobile";
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
 import { collection, doc, deleteDoc, updateDoc, serverTimestamp, query, where, limit } from 'firebase/firestore';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -72,6 +76,11 @@ const INVITE_SELECT_ITEM_CLASS =
   "cursor-pointer text-black focus:bg-gray-100 focus:text-black data-[highlighted]:bg-gray-100 data-[highlighted]:text-black";
 
 const INVITE_LABEL_CLASS = "text-sm font-medium text-gray-700";
+
+/** Kompaktní akce na mobilu (Zaměstnanci) — sjednocená výška a typografie. */
+const MOBILE_EMP_ACTION_BTN =
+  "h-9 min-h-[36px] rounded-lg px-3 text-xs font-medium touch-manipulation";
+
 import { useToast } from '@/hooks/use-toast';
 import { useRouter } from 'next/navigation';
 import { QRCodeSVG } from 'qrcode.react';
@@ -167,6 +176,7 @@ export default function EmployeesPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const router = useRouter();
+  const belowLg = useIsBelowLg();
 
   const userRef = useMemoFirebase(
     () => (user ? doc(firestore, "users", user.uid) : null),
@@ -1206,8 +1216,13 @@ export default function EmployeesPage() {
   if (!canView && profile) return null;
 
   return (
-    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-6 pb-[calc(96px+env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-0">
-      <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+    <div
+      className={cn(
+        "mx-auto w-full max-w-7xl min-w-0 space-y-6 pb-[calc(96px+env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-0",
+        belowLg && "max-w-none space-y-0 bg-slate-950 px-0 min-h-[100dvh] overflow-x-hidden"
+      )}
+    >
+      <div className="hidden md:flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
         <div className="min-w-0">
           <h1 className="portal-page-title hidden text-xl sm:text-2xl md:block md:text-3xl break-words">
             Správa zaměstnanců
@@ -1633,11 +1648,34 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      <Card className="border-border bg-[#121826] text-slate-100 shadow-sm md:hidden">
-        <CardContent className="space-y-4 p-3">
+      <div className="md:hidden">
+        <div className="flex items-center gap-3 px-4 pb-3 pt-2">
+          <Button
+            asChild
+            variant="outline"
+            className={cn(
+              MOBILE_EMP_ACTION_BTN,
+              "shrink-0 border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+            )}
+          >
+            <Link href="/portal/dashboard">
+              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+              Zpět
+            </Link>
+          </Button>
+          <h1 className="truncate text-lg font-semibold text-white">Zaměstnanci</h1>
+        </div>
+        <Card className="border-0 bg-transparent text-slate-100 shadow-none">
+          <CardContent className="space-y-4 p-3 pt-0">
           <div className="space-y-3">
             {canManage ? (
-              <Button className="h-9 w-full gap-2 bg-orange-500 text-black hover:bg-orange-400" onClick={() => setIsInviteOpen(true)}>
+              <Button
+                className={cn(
+                  MOBILE_EMP_ACTION_BTN,
+                  "w-full gap-2 bg-orange-500 text-black hover:bg-orange-400"
+                )}
+                onClick={() => setIsInviteOpen(true)}
+              >
                 <Plus className="h-4 w-4" /> Přidat zaměstnance
               </Button>
             ) : null}
@@ -1785,21 +1823,125 @@ export default function EmployeesPage() {
                         {emp.isActive ? "Aktivní" : "Neaktivní"}
                       </span>
                     </div>
-                    <div className="mt-2 flex items-center justify-end gap-2">
-                      <Button asChild size="sm" variant="outline" className="h-7 border-slate-600 bg-slate-800 text-xs text-slate-100 hover:bg-slate-700">
+                    <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+                      <Button
+                        asChild
+                        variant="outline"
+                        className={cn(
+                          MOBILE_EMP_ACTION_BTN,
+                          "border-slate-600 bg-slate-800 text-slate-100 hover:bg-slate-700"
+                        )}
+                      >
                         <Link href={`/portal/employees/${encodeURIComponent(emp.id)}`}>Detail</Link>
                       </Button>
                       {canManage ? (
                         <Button
-                          size="sm"
+                          type="button"
                           variant="outline"
-                          className="h-7 border-orange-500/60 bg-orange-500/10 text-xs text-orange-300 hover:bg-orange-500/20"
+                          className={cn(
+                            MOBILE_EMP_ACTION_BTN,
+                            "border-orange-500/60 bg-orange-500/10 text-orange-300 hover:bg-orange-500/20"
+                          )}
                           onClick={() =>
                             openOrgSettingsForEmployee(emp as Record<string, unknown> & { id?: string })
                           }
                         >
                           Upravit
                         </Button>
+                      ) : null}
+                      {canManage || canEditEmployeeBank || canResetEmployeeAuthPassword ? (
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className={cn(
+                                MOBILE_EMP_ACTION_BTN,
+                                "border-slate-600 bg-slate-900 px-2 text-slate-200"
+                              )}
+                              aria-label="Další akce"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end" className="w-56">
+                            {canEditEmployeeBank ? (
+                              <>
+                                <DropdownMenuLabel className="text-[10px] text-muted-foreground uppercase">
+                                  Peníze
+                                </DropdownMenuLabel>
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    runAfterDropdownMenuCloses(() => {
+                                      void router.push(
+                                        `/portal/labor/vyplaty?employee=${encodeURIComponent(emp.id)}`
+                                      );
+                                    });
+                                  }}
+                                >
+                                  <DollarSign className="mr-2 h-4 w-4" /> Výplaty
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    runAfterDropdownMenuCloses(() => {
+                                      void router.push(
+                                        `/portal/labor/vyplaty?employee=${encodeURIComponent(emp.id)}`
+                                      );
+                                    });
+                                  }}
+                                >
+                                  <Receipt className="mr-2 h-4 w-4" /> Dluhy
+                                </DropdownMenuItem>
+                                <DropdownMenuItem
+                                  onSelect={() => {
+                                    runAfterDropdownMenuCloses(() => {
+                                      openBankDialog(
+                                        emp as Record<string, unknown> & { id?: string }
+                                      );
+                                    });
+                                  }}
+                                >
+                                  <Landmark className="mr-2 h-4 w-4" /> Bankovní údaje
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                runAfterDropdownMenuCloses(() => {
+                                  void router.push("/portal/labor/dochazka/prehled");
+                                });
+                              }}
+                            >
+                              <Clock className="mr-2 h-4 w-4" /> Docházka
+                            </DropdownMenuItem>
+                            {emp.authUserId && canResetEmployeeAuthPassword ? (
+                              <DropdownMenuItem
+                                onSelect={() => {
+                                  runAfterDropdownMenuCloses(() => {
+                                    setPwdResetEmployee(emp);
+                                    setPwdResetNew("");
+                                    setPwdResetConfirm("");
+                                  });
+                                }}
+                              >
+                                <KeyRound className="mr-2 h-4 w-4" /> Nové heslo
+                              </DropdownMenuItem>
+                            ) : null}
+                            {canManage ? (
+                              <>
+                                <DropdownMenuSeparator />
+                                <DropdownMenuItem
+                                  className="text-destructive"
+                                  onSelect={() => {
+                                    void deleteEmployee(emp.id);
+                                  }}
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" /> Smazat
+                                </DropdownMenuItem>
+                              </>
+                            ) : null}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       ) : null}
                     </div>
                   </div>
@@ -1808,7 +1950,8 @@ export default function EmployeesPage() {
             )}
           </div>
         </CardContent>
-      </Card>
+        </Card>
+      </div>
 
       <Card className="hidden overflow-hidden border-border bg-surface md:block">
         <div className="p-3 sm:p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-3 sm:gap-4 justify-between min-w-0">

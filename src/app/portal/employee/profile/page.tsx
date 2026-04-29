@@ -25,7 +25,15 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Upload, Trash2, AlertCircle, KeyRound, Briefcase } from "lucide-react";
+import {
+  Loader2,
+  Upload,
+  Trash2,
+  AlertCircle,
+  KeyRound,
+  Briefcase,
+  ChevronDown,
+} from "lucide-react";
 import Link from "next/link";
 import { EmployeeDebtsReadonlySection } from "@/components/portal/employee-debts-readonly";
 import { employeeDebtSelfViewAllowed } from "@/lib/employee-debt-visibility";
@@ -41,6 +49,12 @@ import {
 } from "@/lib/i18n/employee-ui";
 import { useEmployeeUiLang } from "@/hooks/use-employee-ui-lang";
 import { cn } from "@/lib/utils";
+import { useIsBelowLg } from "@/hooks/use-mobile";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { MIN_TERMINAL_PIN_LENGTH, normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
 import { mapFirebaseAuthPasswordChangeError } from "@/lib/firebase-auth-password-errors";
@@ -139,6 +153,9 @@ export default function EmployeeProfilePage() {
     ...EMPTY_EMPLOYEE_BANK_ACCOUNT,
   });
   const [empBankSaving, setEmpBankSaving] = useState(false);
+  const belowLg = useIsBelowLg();
+  const [bankSectionOpen, setBankSectionOpen] = useState(false);
+  const [debtsSectionOpen, setDebtsSectionOpen] = useState(false);
 
   const { t, lang: uiLang } = useEmployeeUiLang(profile);
 
@@ -637,109 +654,261 @@ export default function EmployeeProfilePage() {
       </Card>
 
       {companyId && employeeId && allowEmployeeBankAccountSelfEdit ? (
-        <Card className="bg-white border-slate-200 shadow-sm">
-          <CardHeader>
-            <CardTitle>Bankovní údaje (výplata)</CardTitle>
-            <p className="text-sm text-slate-700 font-normal pt-1">
-              Vyplňte účet pro výplatu podle pokynů zaměstnavatele. Organizace má tuto možnost zapnutou
-              v administraci zaměstnanců.
-            </p>
-          </CardHeader>
-          <CardContent>
-            {employeeRowLoading ? (
-              <div className="flex items-center gap-2 text-sm text-slate-800">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Načítání…
-              </div>
-            ) : (
-              <form onSubmit={handleEmployeeBankSave} className="space-y-4 max-w-xl">
-                <p className="text-xs text-slate-600 rounded-md border border-slate-200 bg-slate-50 p-2">
-                  Formát: číslo účtu (např. <strong>19-123456789</strong>) a kód banky (
-                  <strong>0800</strong>), nebo jedním řádkem <strong>123456789/0800</strong>. Volitelně
-                  IBAN — musí projít kontrolním součtem.
-                </p>
-                <div className="space-y-2">
-                  <Label htmlFor="emp-bank-acc">Číslo účtu (CZ)</Label>
-                  <Input
-                    id="emp-bank-acc"
-                    className={LIGHT_FORM_CONTROL_CLASS}
-                    autoComplete="off"
-                    value={empBankForm.accountNumber}
-                    onChange={(e) =>
-                      setEmpBankForm((f) => ({ ...f, accountNumber: e.target.value }))
-                    }
+        belowLg ? (
+          <Collapsible open={bankSectionOpen} onOpenChange={setBankSectionOpen}>
+            <Card className="border-slate-200 bg-white shadow-sm">
+              <CollapsibleTrigger asChild>
+                <button
+                  type="button"
+                  className="flex w-full items-start justify-between gap-3 rounded-t-lg p-6 text-left text-black hover:bg-slate-50/80"
+                >
+                  <div className="min-w-0">
+                    <p className="text-lg font-semibold">Bankovní údaje (výplata)</p>
+                    <p className="pt-1 text-sm font-normal text-slate-700">
+                      Vyplňte účet pro výplatu podle pokynů zaměstnavatele. Organizace má tuto možnost zapnutou
+                      v administraci zaměstnanců.
+                    </p>
+                  </div>
+                  <ChevronDown
+                    className={cn(
+                      "mt-1 h-5 w-5 shrink-0 text-slate-600 transition-transform",
+                      bankSectionOpen && "rotate-180"
+                    )}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="emp-bank-code">Kód banky</Label>
-                  <Input
-                    id="emp-bank-code"
-                    className={LIGHT_FORM_CONTROL_CLASS}
-                    inputMode="numeric"
-                    maxLength={4}
-                    autoComplete="off"
-                    value={empBankForm.bankCode}
-                    onChange={(e) =>
-                      setEmpBankForm((f) => ({ ...f, bankCode: e.target.value }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="emp-bank-iban">IBAN (volitelné)</Label>
-                  <Input
-                    id="emp-bank-iban"
-                    className={LIGHT_FORM_CONTROL_CLASS}
-                    autoComplete="off"
-                    value={empBankForm.iban}
-                    onChange={(e) =>
-                      setEmpBankForm((f) => ({
-                        ...f,
-                        iban: e.target.value.toUpperCase(),
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="emp-bank-bic">BIC / SWIFT (volitelné)</Label>
-                  <Input
-                    id="emp-bank-bic"
-                    className={LIGHT_FORM_CONTROL_CLASS}
-                    autoComplete="off"
-                    value={empBankForm.bic}
-                    onChange={(e) =>
-                      setEmpBankForm((f) => ({
-                        ...f,
-                        bic: e.target.value.toUpperCase(),
-                      }))
-                    }
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="emp-bank-note">Poznámka k výplatě (volitelné)</Label>
-                  <Textarea
-                    id="emp-bank-note"
-                    className="min-h-[72px] border-slate-200"
-                    value={empBankForm.paymentNote}
-                    onChange={(e) =>
-                      setEmpBankForm((f) => ({ ...f, paymentNote: e.target.value }))
-                    }
-                  />
-                </div>
-                <Button type="submit" disabled={empBankSaving}>
-                  {empBankSaving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0">
+                  {employeeRowLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-slate-800">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Načítání…
+                    </div>
                   ) : (
-                    "Uložit bankovní údaje"
+                    <form onSubmit={handleEmployeeBankSave} className="max-w-xl space-y-4">
+                      <p className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
+                        Formát: číslo účtu (např. <strong>19-123456789</strong>) a kód banky (
+                        <strong>0800</strong>), nebo jedním řádkem <strong>123456789/0800</strong>. Volitelně
+                        IBAN — musí projít kontrolním součtem.
+                      </p>
+                      <div className="space-y-2">
+                        <Label htmlFor="emp-bank-acc">Číslo účtu (CZ)</Label>
+                        <Input
+                          id="emp-bank-acc"
+                          className={LIGHT_FORM_CONTROL_CLASS}
+                          autoComplete="off"
+                          value={empBankForm.accountNumber}
+                          onChange={(e) =>
+                            setEmpBankForm((f) => ({ ...f, accountNumber: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="emp-bank-code">Kód banky</Label>
+                        <Input
+                          id="emp-bank-code"
+                          className={LIGHT_FORM_CONTROL_CLASS}
+                          inputMode="numeric"
+                          maxLength={4}
+                          autoComplete="off"
+                          value={empBankForm.bankCode}
+                          onChange={(e) =>
+                            setEmpBankForm((f) => ({ ...f, bankCode: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="emp-bank-iban">IBAN (volitelné)</Label>
+                        <Input
+                          id="emp-bank-iban"
+                          className={LIGHT_FORM_CONTROL_CLASS}
+                          autoComplete="off"
+                          value={empBankForm.iban}
+                          onChange={(e) =>
+                            setEmpBankForm((f) => ({
+                              ...f,
+                              iban: e.target.value.toUpperCase(),
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="emp-bank-bic">BIC / SWIFT (volitelné)</Label>
+                        <Input
+                          id="emp-bank-bic"
+                          className={LIGHT_FORM_CONTROL_CLASS}
+                          autoComplete="off"
+                          value={empBankForm.bic}
+                          onChange={(e) =>
+                            setEmpBankForm((f) => ({
+                              ...f,
+                              bic: e.target.value.toUpperCase(),
+                            }))
+                          }
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="emp-bank-note">Poznámka k výplatě (volitelné)</Label>
+                        <Textarea
+                          id="emp-bank-note"
+                          className="min-h-[72px] border-slate-200"
+                          value={empBankForm.paymentNote}
+                          onChange={(e) =>
+                            setEmpBankForm((f) => ({ ...f, paymentNote: e.target.value }))
+                          }
+                        />
+                      </div>
+                      <Button
+                        type="submit"
+                        disabled={empBankSaving}
+                        className="h-9 min-h-[36px] rounded-lg px-3 text-xs"
+                      >
+                        {empBankSaving ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          "Uložit bankovní údaje"
+                        )}
+                      </Button>
+                    </form>
                   )}
-                </Button>
-              </form>
-            )}
-          </CardContent>
-        </Card>
+                </CardContent>
+              </CollapsibleContent>
+            </Card>
+          </Collapsible>
+        ) : (
+          <Card className="border-slate-200 bg-white shadow-sm">
+            <CardHeader>
+              <CardTitle>Bankovní údaje (výplata)</CardTitle>
+              <p className="pt-1 text-sm font-normal text-slate-700">
+                Vyplňte účet pro výplatu podle pokynů zaměstnavatele. Organizace má tuto možnost zapnutou
+                v administraci zaměstnanců.
+              </p>
+            </CardHeader>
+            <CardContent>
+              {employeeRowLoading ? (
+                <div className="flex items-center gap-2 text-sm text-slate-800">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Načítání…
+                </div>
+              ) : (
+                <form onSubmit={handleEmployeeBankSave} className="max-w-xl space-y-4">
+                  <p className="rounded-md border border-slate-200 bg-slate-50 p-2 text-xs text-slate-600">
+                    Formát: číslo účtu (např. <strong>19-123456789</strong>) a kód banky (
+                    <strong>0800</strong>), nebo jedním řádkem <strong>123456789/0800</strong>. Volitelně
+                    IBAN — musí projít kontrolním součtem.
+                  </p>
+                  <div className="space-y-2">
+                    <Label htmlFor="emp-bank-acc-lg">Číslo účtu (CZ)</Label>
+                    <Input
+                      id="emp-bank-acc-lg"
+                      className={LIGHT_FORM_CONTROL_CLASS}
+                      autoComplete="off"
+                      value={empBankForm.accountNumber}
+                      onChange={(e) =>
+                        setEmpBankForm((f) => ({ ...f, accountNumber: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="emp-bank-code-lg">Kód banky</Label>
+                    <Input
+                      id="emp-bank-code-lg"
+                      className={LIGHT_FORM_CONTROL_CLASS}
+                      inputMode="numeric"
+                      maxLength={4}
+                      autoComplete="off"
+                      value={empBankForm.bankCode}
+                      onChange={(e) =>
+                        setEmpBankForm((f) => ({ ...f, bankCode: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="emp-bank-iban-lg">IBAN (volitelné)</Label>
+                    <Input
+                      id="emp-bank-iban-lg"
+                      className={LIGHT_FORM_CONTROL_CLASS}
+                      autoComplete="off"
+                      value={empBankForm.iban}
+                      onChange={(e) =>
+                        setEmpBankForm((f) => ({
+                          ...f,
+                          iban: e.target.value.toUpperCase(),
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="emp-bank-bic-lg">BIC / SWIFT (volitelné)</Label>
+                    <Input
+                      id="emp-bank-bic-lg"
+                      className={LIGHT_FORM_CONTROL_CLASS}
+                      autoComplete="off"
+                      value={empBankForm.bic}
+                      onChange={(e) =>
+                        setEmpBankForm((f) => ({
+                          ...f,
+                          bic: e.target.value.toUpperCase(),
+                        }))
+                      }
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="emp-bank-note-lg">Poznámka k výplatě (volitelné)</Label>
+                    <Textarea
+                      id="emp-bank-note-lg"
+                      className="min-h-[72px] border-slate-200"
+                      value={empBankForm.paymentNote}
+                      onChange={(e) =>
+                        setEmpBankForm((f) => ({ ...f, paymentNote: e.target.value }))
+                      }
+                    />
+                  </div>
+                  <Button type="submit" disabled={empBankSaving}>
+                    {empBankSaving ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      "Uložit bankovní údaje"
+                    )}
+                  </Button>
+                </form>
+              )}
+            </CardContent>
+          </Card>
+        )
       ) : null}
 
       {companyId && employeeId && allowEmployeeDebtSelfView ? (
-        <EmployeeDebtsReadonlySection companyId={companyId} employeeId={employeeId} />
+        belowLg ? (
+          <Collapsible open={debtsSectionOpen} onOpenChange={setDebtsSectionOpen}>
+            <CollapsibleTrigger asChild>
+              <button
+                type="button"
+                className="flex w-full items-center justify-between rounded-lg border border-slate-200 bg-white p-4 text-left shadow-sm"
+              >
+                <span className="text-base font-semibold text-black">Vlastní dluhy</span>
+                <ChevronDown
+                  className={cn(
+                    "h-5 w-5 shrink-0 text-slate-600 transition-transform",
+                    debtsSectionOpen && "rotate-180"
+                  )}
+                />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-2 max-w-full overflow-x-hidden [&_button]:h-8 [&_button]:min-h-8 [&_button]:rounded-lg [&_button]:px-3 [&_button]:text-xs">
+                <EmployeeDebtsReadonlySection
+                  hideHeader
+                  className="shadow-md"
+                  companyId={companyId}
+                  employeeId={employeeId}
+                />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+        ) : (
+          <EmployeeDebtsReadonlySection companyId={companyId} employeeId={employeeId} />
+        )
       ) : null}
 
       <Card className="bg-white border-slate-200 shadow-sm">

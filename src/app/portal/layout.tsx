@@ -41,6 +41,8 @@ import { parseAssignedWorklogJobIds } from "@/lib/assigned-jobs";
 import { PwaInstallBanner } from "@/components/pwa/pwa-install-banner";
 import { ChatAssistant } from "@/components/portal/ChatAssistant";
 import { OnboardingOverlay } from "@/components/portal/OnboardingOverlay";
+import { useIsBelowLg } from "@/hooks/use-mobile";
+import { cn } from "@/lib/utils";
 
 const REDIRECT_GRACE_MS = 2500;
 /** Až po inicializaci Firebase — aby „čekání na služby“ nespouštělo falešný timeout. */
@@ -59,6 +61,10 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   const { firestore, areServicesAvailable, firebaseConfigError, auth } = useFirebase();
   const router = useRouter();
   const pathname = usePathname();
+  const belowLg = useIsBelowLg();
+  const hideMobileTopChrome =
+    belowLg &&
+    (pathname === "/portal/tasks" || pathname === "/portal/employees");
 
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -720,8 +726,17 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
         data-portal-content
       >
         <PwaInstallBanner />
-        <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
-        <main className="flex-1 overflow-x-hidden overflow-y-auto px-3 py-3 print:p-2 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8 min-w-0">
+        {!hideMobileTopChrome ? (
+          <TopHeader onOpenMobileMenu={() => setMobileMenuOpen(true)} />
+        ) : null}
+        <main
+          className={cn(
+            "flex-1 overflow-x-hidden overflow-y-auto print:p-2 min-w-0",
+            hideMobileTopChrome
+              ? "px-0 py-0"
+              : "px-3 py-3 sm:px-4 sm:py-4 md:px-6 md:py-6 lg:px-8 lg:py-8"
+          )}
+        >
           {licenseNotice}
           {children}
         </main>

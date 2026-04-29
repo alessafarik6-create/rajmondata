@@ -25,6 +25,7 @@ import {
 import { Loader2, AlertCircle } from "lucide-react";
 import { formatKc } from "@/lib/employee-money";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { cn } from "@/lib/utils";
 
 const FETCH_LIMIT_DEBTS = 300;
 const FETCH_LIMIT_PAYMENTS = 500;
@@ -154,12 +155,17 @@ type Props = {
   employeeId: string;
   /** Kotva pro skok z jiné stránky */
   sectionId?: string;
+  /** Skryje horní nadpis (např. accordion na mobilu má vlastní titulek). */
+  hideHeader?: boolean;
+  className?: string;
 };
 
 export function EmployeeDebtsReadonlySection({
   companyId,
   employeeId,
   sectionId = "employee-debts",
+  hideHeader = false,
+  className,
 }: Props) {
   const firestore = useFirestore();
 
@@ -366,16 +372,18 @@ export function EmployeeDebtsReadonlySection({
   return (
     <Card
       id={sectionId}
-      className="scroll-mt-4 border-slate-200 bg-white shadow-sm"
+      className={cn("scroll-mt-4 border-slate-200 bg-white shadow-sm", className)}
     >
-      <CardHeader>
-        <CardTitle className="text-lg text-black">Dluhy a historie</CardTitle>
-        <p className="text-sm text-slate-700">
-          Aktivní a doplacené dluhy jsou oddělené. Po úplném doplatění zůstává
-          záznam v evidenci a v auditní historii. Úpravy provádí pouze
-          administrátor.
-        </p>
-      </CardHeader>
+      {!hideHeader ? (
+        <CardHeader>
+          <CardTitle className="text-lg text-black">Dluhy a historie</CardTitle>
+          <p className="text-sm text-slate-700">
+            Aktivní a doplacené dluhy jsou oddělené. Po úplném doplatění zůstává
+            záznam v evidenci a v auditní historii. Úpravy provádí pouze
+            administrátor.
+          </p>
+        </CardHeader>
+      ) : null}
       <CardContent className="space-y-4">
         {error ? (
           <Alert variant="default" className="border-amber-300 bg-amber-50">
