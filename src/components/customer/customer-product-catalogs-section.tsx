@@ -11,7 +11,6 @@ import { useToast } from "@/hooks/use-toast";
 import { createCustomerActivity } from "@/lib/customer-activity";
 import {
   buildProductSelectionSnapshots,
-  computeToggledSelection,
   persistCustomerCatalogSelection,
 } from "@/lib/customer-catalog-selection";
 import {
@@ -91,7 +90,13 @@ export function CustomerProductCatalogsSection({
       });
       return;
     }
-    const nextIds = computeToggledSelection(catalog, productId, existing?.selectedProductIds ?? []);
+    if ((existing?.selectedProductIds ?? []).includes(productId)) {
+      toast({ title: "Produkt je již vybraný" });
+      return;
+    }
+    const mode = catalog.selectionMode === "single" ? "single" : "multi";
+    const prevIds = existing?.selectedProductIds ?? [];
+    const nextIds = mode === "single" ? [productId] : [...new Set([...prevIds, productId])];
     setSavingKey(`${catalog.id}:${productId}`);
     try {
       await persistCustomerCatalogSelection({
@@ -135,6 +140,7 @@ export function CustomerProductCatalogsSection({
     }
     const payload: Partial<JobProductSelectionDoc> = {
       companyId,
+      organizationId: companyId,
       jobId,
       customerPortalUid: customerUid,
       customerId: customerId ?? null,
@@ -145,9 +151,10 @@ export function CustomerProductCatalogsSection({
         existing?.selectedProductIds ?? [],
         existing
       ),
-      selectedBy: customerUid,
+      selectedBy: "customer",
+      selectedByUserId: customerUid,
       selectedAt: serverTimestamp(),
-      status: existing?.status ?? "draft",
+      status: existing?.status ?? "selected",
       note: note.trim() || null,
       createdAt: existing?.createdAt ?? serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -193,6 +200,7 @@ export function CustomerProductCatalogsSection({
     <div id="customer-product-catalogs" className="space-y-4 scroll-mt-4">
       {catalogs.map((catalog) => {
         const selected = new Set(selectionMap.get(catalog.id)?.selectedProductIds ?? []);
+        const selectionRow = selectionMap.get(catalog.id);
         const isSelectionLocked = selectionMap.get(catalog.id)?.status === "confirmed";
         const noteDefault = selectionMap.get(catalog.id)?.note ?? "";
         const catalogHref = `/portal/customer/jobs/${jobId}/catalogs/${catalog.id}`;
@@ -228,6 +236,30 @@ export function CustomerProductCatalogsSection({
               ) : null}
             </CardHeader>
             <CardContent className="space-y-3 pt-0">
+              {selectionRow && (selectionRow.selectedProducts ?? []).length > 0 ? (
+                <div className="rounded-md border bg-muted/20 p-2">
+                  <p className="mb-1 text-xs font-medium text-muted-foreground">
+                    Vybrané produkty · stav {selectionRow.status ?? "selected"} ·{" "}
+                    {typeof (selectionRow.selectedAt as { toDate?: () => Date } | undefined)?.toDate ===
+                    "function"
+                      ? (selectionRow.selectedAt as { toDate: () => Date }).toDate().toLocaleString("cs-CZ")
+                      : "datum není dostupné"}
+                  </p>
+                  <ul className="space-y-1">
+                    {(selectionRow.selectedProducts ?? []).map((sp) => (
+                      <li key={sp.productId} className="flex items-center gap-2 text-xs">
+                        {sp.productImageSnapshot ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={sp.productImageSnapshot} alt="" className="h-8 w-8 rounded object-cover" />
+                        ) : (
+                          <div className="h-8 w-8 rounded bg-muted" />
+                        )}
+                        <span className="truncate">{sp.productNameSnapshot || sp.productId}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <CustomerCatalogCompactRow href={catalogHref} catalog={catalog} className="sm:hidden" />
               <ul className="space-y-2">
                 {visibleProducts.map((p) => {

@@ -25,14 +25,20 @@ export function buildProductSelectionSnapshots(
   return selectedIds.map((id) => {
     const p = byId.get(id);
     const prev = existingById.get(id);
-    return {
+    const out: ProductSelectionSnapshot = {
       productId: id,
       productNameSnapshot: p?.name || prev?.productNameSnapshot || id,
-      productImageSnapshot: p?.imageUrl || prev?.productImageSnapshot,
-      catalogNameSnapshot: catalog.name || prev?.catalogNameSnapshot || "Katalog",
-      categorySnapshot: p?.category || prev?.categorySnapshot,
-      priceSnapshot: typeof p?.price === "number" ? p.price : prev?.priceSnapshot ?? null,
     };
+    const image = p?.imageUrl || prev?.productImageSnapshot;
+    const catalogName = catalog.name || prev?.catalogNameSnapshot || "Katalog";
+    const category = p?.category || prev?.categorySnapshot;
+    const price =
+      typeof p?.price === "number" ? p.price : prev?.priceSnapshot ?? null;
+    if (image) out.productImageSnapshot = image;
+    if (catalogName) out.catalogNameSnapshot = catalogName;
+    if (category) out.categorySnapshot = category;
+    if (price != null) out.priceSnapshot = price;
+    return out;
   });
 }
 
@@ -72,15 +78,17 @@ export async function persistCustomerCatalogSelection(
   );
   const payload: JobProductSelectionDoc = {
     companyId,
+    organizationId: companyId,
     jobId,
     customerPortalUid: customerUid,
     customerId: customerId ?? null,
     catalogId: catalog.id,
     selectedProductIds,
     selectedProducts: buildProductSelectionSnapshots(catalog, selectedProductIds, existing),
-    selectedBy: customerUid,
+    selectedBy: "customer",
+    selectedByUserId: customerUid,
     selectedAt: serverTimestamp(),
-    status: "submitted",
+    status: "selected",
     note: existing?.note ?? null,
     createdAt: existing?.createdAt ?? serverTimestamp(),
     updatedAt: serverTimestamp(),

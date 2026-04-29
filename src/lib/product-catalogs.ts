@@ -1,5 +1,9 @@
 export type ProductCatalogSelectionMode = "single" | "multi";
-export type ProductCatalogSelectionStatus = "draft" | "submitted" | "confirmed";
+export type ProductCatalogSelectionStatus =
+  | "draft"
+  | "selected"
+  | "submitted"
+  | "confirmed";
 export type ProductSelectionSnapshot = {
   productId: string;
   productNameSnapshot: string;
@@ -123,6 +127,7 @@ export type ProductCatalogDoc = {
 
 export type JobProductSelectionDoc = {
   companyId: string;
+  organizationId?: string;
   jobId: string;
   customerPortalUid: string;
   customerId?: string | null;
@@ -131,6 +136,7 @@ export type JobProductSelectionDoc = {
   selectedProducts?: ProductSelectionSnapshot[];
   selectedAt?: unknown;
   selectedBy: string;
+  selectedByUserId?: string;
   note?: string | null;
   status: ProductCatalogSelectionStatus;
   confirmedAt?: unknown;

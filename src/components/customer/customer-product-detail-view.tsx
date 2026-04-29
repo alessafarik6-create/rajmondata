@@ -53,6 +53,7 @@ export function CustomerProductDetailView({
   const firestore = useFirestore();
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
+  const [justSelected, setJustSelected] = useState(false);
 
   const orderedProducts = useMemo(() => {
     return [...(catalog.products ?? [])]
@@ -76,11 +77,21 @@ export function CustomerProductDetailView({
   useEffect(() => {
     setMainImage((prev) => (prev && gallery.includes(prev) ? prev : gallery[0] ?? ""));
   }, [product.id, gallery]);
+  useEffect(() => {
+    setJustSelected(false);
+  }, [product.id]);
 
   const isSelected = selection?.existing?.selectedProductIds?.includes(product.id) ?? false;
+  const selectedUi = isSelected || justSelected;
 
   const handleToggle = async () => {
     if (!firestore || !jobId || !selection || selection.locked) return;
+    if (selectedUi) {
+      toast({
+        title: "Produkt je již vybraný",
+      });
+      return;
+    }
     const nextIds = computeToggledSelection(catalog, product.id, selection.existing?.selectedProductIds ?? []);
     setSaving(true);
     try {
@@ -94,7 +105,8 @@ export function CustomerProductDetailView({
         selectedProductIds: nextIds,
         existing: selection.existing,
       });
-      toast({ title: "Výběr uložen", description: "Vaše volba byla uložena." });
+      toast({ title: "Produkt byl uložen k zakázce" });
+      setJustSelected(true);
     } catch {
       toast({ variant: "destructive", title: "Uložení se nezdařilo" });
     } finally {
@@ -225,10 +237,10 @@ export function CustomerProductDetailView({
                   size="lg"
                   className="min-h-12 w-full sm:w-auto"
                   disabled={saving}
-                  variant={isSelected ? "outlineLight" : "default"}
+                  variant={selectedUi ? "outlineLight" : "default"}
                   onClick={() => void handleToggle()}
                 >
-                  {saving ? "Ukládám…" : isSelected ? "Odebrat z výběru" : "Vybrat"}
+                  {saving ? "Ukládám…" : selectedUi ? "Vybráno" : "Vybrat"}
                 </Button>
               )}
             </div>

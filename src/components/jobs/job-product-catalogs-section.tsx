@@ -99,6 +99,7 @@ export function JobProductCatalogsSection({ companyId, jobId }: Props) {
 
   const statusBadge = (status?: string) => {
     if (status === "confirmed") return "bg-emerald-100 text-emerald-800";
+    if (status === "selected") return "bg-indigo-100 text-indigo-800";
     if (status === "submitted") return "bg-blue-100 text-blue-800";
     return "bg-amber-100 text-amber-800";
   };
@@ -130,6 +131,8 @@ export function JobProductCatalogsSection({ companyId, jobId }: Props) {
                           <span className={`rounded px-2 py-0.5 text-xs font-medium ${statusBadge(sel.status)}`}>
                             {sel.status === "confirmed"
                               ? "Potvrzeno"
+                              : sel.status === "selected"
+                                ? "Vybráno"
                               : sel.status === "submitted"
                                 ? "Odesláno"
                                 : "Rozpracováno"}
@@ -184,7 +187,9 @@ export function JobProductCatalogsSection({ companyId, jobId }: Props) {
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          Stav: {sel.status ?? "draft"} · Uživatel: {sel.customerPortalUid ?? "—"}
+                          Stav: {sel.status ?? "draft"} · Vybral:{" "}
+                          {sel.selectedBy === "customer" ? "zákazník" : sel.selectedBy ?? "—"} ·
+                          Uživatel: {sel.selectedByUserId ?? sel.customerPortalUid ?? "—"}
                         </p>
                         {sel.note ? <p className="text-xs">Poznámka: {sel.note}</p> : null}
                         <div className="mt-2">

@@ -1063,9 +1063,10 @@ service cloud.firestore {
               customerPortalLinkedJob(companyId, jobId) &&
               request.resource.data.jobId == jobId &&
               request.resource.data.companyId == companyId &&
-              request.resource.data.selectedBy == request.auth.uid &&
+              request.resource.data.selectedBy == 'customer' &&
+              request.resource.data.selectedByUserId == request.auth.uid &&
               request.resource.data.customerPortalUid == request.auth.uid &&
-              request.resource.data.status in ['draft', 'submitted']
+              request.resource.data.status in ['draft', 'selected', 'submitted']
             )
           );
           allow update: if signedIn() && sameCompany(companyId) && (
@@ -1076,9 +1077,10 @@ service cloud.firestore {
               resource.data.status != 'confirmed' &&
               request.resource.data.jobId == jobId &&
               request.resource.data.companyId == companyId &&
-              request.resource.data.selectedBy == request.auth.uid &&
+              request.resource.data.selectedBy == 'customer' &&
+              request.resource.data.selectedByUserId == request.auth.uid &&
               request.resource.data.customerPortalUid == request.auth.uid &&
-              request.resource.data.status in ['draft', 'submitted']
+              request.resource.data.status in ['draft', 'selected', 'submitted']
             )
           );
           allow delete: if signedIn() && sameCompany(companyId) && (
