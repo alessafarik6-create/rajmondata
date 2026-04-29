@@ -64,7 +64,9 @@ function PortalLayoutContent({ children }: { children: React.ReactNode }) {
   const belowLg = useIsBelowLg();
   const hideMobileTopChrome =
     belowLg &&
-    (pathname === "/portal/tasks" || pathname === "/portal/employees");
+    (pathname === "/portal/tasks" ||
+      pathname === "/portal/employees" ||
+      pathname === "/portal/jobs");
 
   const redirectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);

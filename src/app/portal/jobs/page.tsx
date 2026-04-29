@@ -34,6 +34,8 @@ import {
   Tag,
   Camera,
   FileDown,
+  ArrowLeft,
+  MapPin,
 } from "lucide-react";
 import {
   useFirestore,
@@ -59,7 +61,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -696,6 +697,16 @@ function JobsPageContent() {
     );
   };
 
+  const getCustomerAddress = (id: string | undefined | null) => {
+    if (id == null || id === "") return "";
+    const customer = customers.find((c) => c?.id === id) as
+      | { address?: unknown }
+      | undefined;
+    if (!customer || customer.address == null) return "";
+    const a = String(customer.address).trim();
+    return a;
+  };
+
   const jobStatusLabel = (status: string | undefined | null) => {
     const key = typeof status === "string" ? status : "";
     const map: Record<string, string> = {
@@ -706,6 +717,31 @@ function JobsPageContent() {
       fakturována: "Fakturována",
     };
     return map[key] || (key ? key : "—");
+  };
+
+  const getStatusBadgeMobile = (status: string | undefined | null) => {
+    const key = typeof status === "string" ? status : "";
+    const styleMap: Record<string, string> = {
+      nová: "border-slate-500/40 bg-slate-800/90 text-slate-200",
+      rozpracovaná: "border-orange-500/35 bg-orange-500/15 text-orange-200",
+      čeká: "border-amber-500/35 bg-amber-500/10 text-amber-100",
+      dokončená: "border-emerald-500/35 bg-emerald-500/15 text-emerald-100",
+      fakturována: "border-emerald-500/35 bg-emerald-600/20 text-emerald-100",
+    };
+    const label = jobStatusLabel(status);
+    const cls =
+      styleMap[key] || "border-white/15 bg-slate-800/70 text-slate-200";
+    return (
+      <span
+        className={cn(
+          "inline-flex max-w-full shrink-0 truncate rounded-full border px-2 py-0.5 text-[10px] font-medium",
+          cls
+        )}
+        title={label}
+      >
+        {label}
+      </span>
+    );
   };
 
   const handleExportJobsPdf = async () => {
@@ -809,11 +845,162 @@ function JobsPageContent() {
   return (
     <div
       className={cn(
-        "mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8",
-        belowLg &&
-          "bg-slate-950 text-slate-50 -mx-3 -my-3 px-4 pt-4 pb-[calc(96px+env(safe-area-inset-bottom))] sm:-mx-4 sm:-my-4 sm:px-6 md:-mx-6 md:-my-6 md:px-8"
+        belowLg
+          ? "flex w-full min-h-[100dvh] flex-col gap-3 overflow-x-hidden bg-slate-950 px-3 pb-[calc(96px+env(safe-area-inset-bottom))] pt-3 text-slate-50"
+          : "mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8"
       )}
     >
+      {belowLg ? (
+        <>
+          <div className="flex flex-col gap-2">
+            <Button
+              asChild
+              variant="outline"
+              className="h-9 w-fit min-w-0 shrink-0 rounded-lg border-white/20 bg-white/5 px-3 text-xs text-slate-100 hover:bg-white/10"
+            >
+              <Link href="/portal/dashboard">
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" />
+                Zpět
+              </Link>
+            </Button>
+            <h1 className="text-lg font-semibold text-white">Zakázky</h1>
+          </div>
+          {(() => {
+            const tileClass =
+              "flex h-[84px] w-full min-w-0 flex-col items-center justify-center gap-1 rounded-xl border border-white/10 bg-slate-900/85 px-0.5 py-1.5 text-center shadow-sm active:opacity-90";
+            const labelClass =
+              "line-clamp-2 text-center text-[10px] font-medium leading-tight text-slate-100";
+            const nodes: React.ReactNode[] = [];
+            if (userCanManageMeasurements(profile)) {
+              nodes.push(
+                <Link key="zamereni" href="/portal/jobs/measurements" className="min-w-0">
+                  <div className={tileClass}>
+                    <Ruler className="h-5 w-5 shrink-0 text-orange-400" />
+                    <span className={labelClass}>Zaměření</span>
+                  </div>
+                </Link>
+              );
+            }
+            if (showMeasurementPhotoEntry) {
+              nodes.push(
+                <button
+                  key="foto"
+                  type="button"
+                  className="min-w-0 text-left"
+                  onClick={() => setMeasurementPhotoDialogOpen(true)}
+                >
+                  <div className={tileClass}>
+                    <Camera className="h-5 w-5 shrink-0 text-orange-400" />
+                    <span className={labelClass}>Foto zaměření</span>
+                  </div>
+                </button>
+              );
+            }
+            if (isAdmin) {
+              nodes.push(
+                <button
+                  key="pdf"
+                  type="button"
+                  className={cn(
+                    "min-w-0 text-left",
+                    (exportPdfLoading || filteredJobs.length === 0) &&
+                      "pointer-events-none opacity-50"
+                  )}
+                  disabled={exportPdfLoading || filteredJobs.length === 0}
+                  onClick={() => void handleExportJobsPdf()}
+                >
+                  <div className={tileClass}>
+                    {exportPdfLoading ? (
+                      <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-400" />
+                    ) : (
+                      <FileDown className="h-5 w-5 shrink-0 text-orange-400" />
+                    )}
+                    <span className={labelClass}>Export PDF</span>
+                  </div>
+                </button>
+              );
+              nodes.push(
+                <Link key="sablony" href="/portal/jobs/templates" className="min-w-0">
+                  <div className={tileClass}>
+                    <FileStack className="h-5 w-5 shrink-0 text-orange-400" />
+                    <span className={labelClass}>Šablony</span>
+                  </div>
+                </Link>
+              );
+            }
+            if (showTasksButton) {
+              nodes.push(
+                <button
+                  key="ukoly"
+                  type="button"
+                  className="min-w-0 text-left"
+                  onClick={() => setTasksDialogOpen(true)}
+                >
+                  <div className={tileClass}>
+                    <ListTodo className="h-5 w-5 shrink-0 text-orange-400" />
+                    <span className={labelClass}>Úkoly</span>
+                  </div>
+                </button>
+              );
+            }
+            if (isAdmin) {
+              nodes.push(
+                <button
+                  key="sod"
+                  type="button"
+                  className="min-w-0 text-left"
+                  onClick={() => setWorkContractTemplatesManagerOpen(true)}
+                >
+                  <div className={tileClass}>
+                    <FileText className="h-5 w-5 shrink-0 text-orange-400" />
+                    <span className={labelClass}>Šablony SOD</span>
+                  </div>
+                </button>
+              );
+              nodes.push(
+                <button
+                  key="nova"
+                  type="button"
+                  className="min-w-0 text-left"
+                  onClick={() => setIsNewJobOpen(true)}
+                >
+                  <div className={tileClass}>
+                    <Plus className="h-5 w-5 shrink-0 text-orange-400" />
+                    <span className={labelClass}>Nová zakázka</span>
+                  </div>
+                </button>
+              );
+            }
+            const row1 = nodes.slice(0, 4);
+            const row2 = nodes.slice(4);
+            return (
+              <div className="space-y-1.5 pb-2">
+                <div className="grid grid-cols-4 gap-1.5">{row1}</div>
+                {row2.length === 1 ? (
+                  <div className="grid grid-cols-4 gap-1.5">
+                    <div className="col-span-2 col-start-2 min-w-0">{row2[0]}</div>
+                  </div>
+                ) : row2.length === 2 ? (
+                  <div className="grid grid-cols-4 gap-1.5">
+                    <div className="col-span-2 min-w-0">{row2[0]}</div>
+                    <div className="col-span-2 min-w-0">{row2[1]}</div>
+                  </div>
+                ) : row2.length === 3 ? (
+                  <div className="grid grid-cols-6 gap-1.5">
+                    <div className="col-span-2 min-w-0">{row2[0]}</div>
+                    <div className="col-span-2 min-w-0">{row2[1]}</div>
+                    <div className="col-span-2 min-w-0">{row2[2]}</div>
+                  </div>
+                ) : row2.length >= 4 ? (
+                  <div className="grid grid-cols-4 gap-1.5">{row2}</div>
+                ) : null}
+              </div>
+            );
+          })()}
+        </>
+      ) : null}
+
+      {!belowLg ? (
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
         <div className="min-w-0">
           <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl break-words">
@@ -835,29 +1022,6 @@ function JobsPageContent() {
               </Button>
             </Link>
           )}
-          {showMeasurementPhotoEntry ? (
-            <>
-              <Button
-                type="button"
-                variant="secondary"
-                className="gap-2 min-h-[44px]"
-                onClick={() => setMeasurementPhotoDialogOpen(true)}
-              >
-                <Camera className="w-4 h-4 shrink-0" />
-                Foto zaměření
-              </Button>
-              <MeasurementPhotoCaptureDialog
-                open={measurementPhotoDialogOpen}
-                onOpenChange={setMeasurementPhotoDialogOpen}
-                firestore={firestore}
-                companyId={companyId}
-                userId={user.uid}
-                jobs={jobs as { id: string; name?: string }[]}
-                customers={customers as { id: string; companyName?: string; firstName?: string; lastName?: string }[]}
-                profile={profile as Record<string, unknown> | null | undefined}
-              />
-            </>
-          ) : null}
           {isAdmin && (
             <>
               <Button
@@ -895,12 +1059,51 @@ function JobsPageContent() {
               >
                 <FileText className="w-4 h-4" /> Šablony SOD
               </Button>
-              <Dialog open={isNewJobOpen} onOpenChange={setIsNewJobOpen}>
-                <DialogTrigger asChild>
-                  <Button className="gap-2 min-h-[44px]">
-                    <Plus className="w-4 h-4" /> Nová zakázka
-                  </Button>
-                </DialogTrigger>
+              <Button
+                type="button"
+                className="gap-2 min-h-[44px]"
+                onClick={() => setIsNewJobOpen(true)}
+              >
+                <Plus className="w-4 h-4" /> Nová zakázka
+              </Button>
+            </>
+          )}
+          {!isAdmin && showTasksButton && (
+            <Button
+              type="button"
+              variant="outlineLight"
+              className="gap-2 min-h-[44px]"
+              onClick={() => setTasksDialogOpen(true)}
+            >
+              <ListTodo className="w-4 h-4" /> Úkoly
+            </Button>
+          )}
+        </div>
+      </div>
+      ) : null}
+
+      {showMeasurementPhotoEntry ? (
+        <MeasurementPhotoCaptureDialog
+          open={measurementPhotoDialogOpen}
+          onOpenChange={setMeasurementPhotoDialogOpen}
+          firestore={firestore}
+          companyId={companyId}
+          userId={user.uid}
+          jobs={jobs as { id: string; name?: string }[]}
+          customers={
+            customers as {
+              id: string;
+              companyName?: string;
+              firstName?: string;
+              lastName?: string;
+            }[]
+          }
+          profile={profile as Record<string, unknown> | null | undefined}
+        />
+      ) : null}
+
+      {isAdmin ? (
+        <Dialog open={isNewJobOpen} onOpenChange={setIsNewJobOpen}>
                 <DialogContent
                   className="bg-white border-slate-200 text-slate-900 max-w-3xl w-[95vw] sm:w-full max-h-[90vh] flex flex-col"
                   data-portal-dialog
@@ -1309,80 +1512,81 @@ function JobsPageContent() {
                     </DialogFooter>
                   </div>
                 </DialogContent>
-              </Dialog>
-            </>
-          )}
-          {!isAdmin && showTasksButton && (
-            <Button
-              type="button"
-              variant="outlineLight"
-              className="gap-2 min-h-[44px]"
-              onClick={() => setTasksDialogOpen(true)}
-            >
-              <ListTodo className="w-4 h-4" /> Úkoly
-            </Button>
-          )}
-        </div>
-      </div>
+        </Dialog>
+      ) : null}
 
       <Card className={cn("shadow-sm", belowLg ? "border-white/10 bg-white/[0.04] text-slate-50" : "border-slate-200")}>
-        <CardContent className="p-4 sm:p-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-            <div className="flex-1 min-w-[200px] space-y-1.5">
-              <Label htmlFor="jobs-search" className={cn("text-xs", belowLg ? "text-slate-300" : "text-slate-800")}>
-                Vyhledávání
-              </Label>
-              <div className="relative">
-                <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 pointer-events-none", belowLg ? "text-slate-300" : "text-slate-800")} />
+        <CardContent className={cn(belowLg ? "p-2.5" : "p-4 sm:p-5")}>
+          {belowLg ? (
+            <div className="flex min-w-0 flex-row items-center gap-2">
+              <div className="relative min-w-0 flex-1">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
                 <Input
                   id="jobs-search"
-                  className={cn("pl-9", belowLg && "bg-slate-900/60 border-white/10 text-white placeholder:text-slate-400")}
-                  placeholder="Název nebo popis zakázky…"
+                  className="h-9 border-white/10 bg-slate-900/70 pl-8 text-xs text-white placeholder:text-slate-500"
+                  placeholder="Hledat…"
                   value={jobListSearch}
                   onChange={(e) => setJobListSearch(e.target.value)}
                 />
               </div>
-            </div>
-            {belowLg ? (
-              <div className="w-full sm:w-[min(100%,260px)] space-y-1.5">
-                <Label className="text-xs text-slate-300">Stav</Label>
-                <select
-                  className={cn(NATIVE_SELECT_CLASS, "bg-slate-900/60 border-white/10 text-white")}
-                  value={statusFilter}
-                  onChange={(e) => setStatusFilter(e.target.value)}
-                >
-                  <option value="">Všechny stavy</option>
-                  {statusOptions.map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ) : null}
-            <div className="w-full sm:w-[min(100%,260px)] space-y-1.5">
-              <Label
-                htmlFor="jobs-tag-filter"
-                className={cn("text-xs inline-flex items-center gap-1.5", belowLg ? "text-slate-300" : "text-slate-800")}
-              >
-                <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden />
-                Štítek / typ
-              </Label>
               <select
-                id="jobs-tag-filter"
-                className={cn(NATIVE_SELECT_CLASS, belowLg && "bg-slate-900/60 border-white/10 text-white")}
-                value={jobTagFilter}
-                onChange={(e) => setJobTagFilter(e.target.value)}
+                aria-label="Filtrovat podle stavu"
+                className={cn(
+                  NATIVE_SELECT_CLASS,
+                  "h-9 shrink-0 max-w-[42%] border-white/10 bg-slate-900/70 py-0 text-xs text-white min-[360px]:max-w-[46%]"
+                )}
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
               >
-                <option value="">Všechny zakázky</option>
-                {jobTagFilterOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
+                <option value="">Všechny stavy</option>
+                {statusOptions.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
                   </option>
                 ))}
               </select>
             </div>
-          </div>
+          ) : (
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+              <div className="min-w-[200px] flex-1 space-y-1.5">
+                <Label htmlFor="jobs-search" className="text-xs text-slate-800">
+                  Vyhledávání
+                </Label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-800" />
+                  <Input
+                    id="jobs-search"
+                    className="pl-9"
+                    placeholder="Název nebo popis zakázky…"
+                    value={jobListSearch}
+                    onChange={(e) => setJobListSearch(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div className="w-full space-y-1.5 sm:w-[min(100%,260px)]">
+                <Label
+                  htmlFor="jobs-tag-filter"
+                  className="inline-flex items-center gap-1.5 text-xs text-slate-800"
+                >
+                  <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                  Štítek / typ
+                </Label>
+                <select
+                  id="jobs-tag-filter"
+                  className={NATIVE_SELECT_CLASS}
+                  value={jobTagFilter}
+                  onChange={(e) => setJobTagFilter(e.target.value)}
+                >
+                  <option value="">Všechny zakázky</option>
+                  {jobTagFilterOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
 
@@ -1403,13 +1607,14 @@ function JobsPageContent() {
                 onClick={() => {
                   setJobListSearch("");
                   setJobTagFilter("");
+                  setStatusFilter("");
                 }}
               >
                 Zrušit filtry
               </Button>
             </div>
           ) : belowLg && filteredJobsMobile.length > 0 ? (
-            <div className="p-4 space-y-3">
+            <div className="space-y-1.5 p-2">
               {filteredJobsMobile.map((job) => {
                 const jid = job?.id;
                 const raw = job as unknown as Record<string, unknown>;
@@ -1418,70 +1623,76 @@ function JobsPageContent() {
                   bd?.budgetGross != null && Number.isFinite(Number(bd.budgetGross))
                     ? Math.round(Number(bd.budgetGross))
                     : null;
+                const addr = getCustomerAddress(job?.customerId);
+                const term =
+                  job?.endDate && job?.startDate
+                    ? `${job.startDate} → ${job.endDate}`
+                    : job?.endDate || job?.startDate || "—";
                 return (
                   <div
                     key={jid ?? `job-${job?.name}`}
-                    className="rounded-2xl border border-white/10 bg-slate-900/50 p-4"
+                    className="rounded-lg border border-white/10 bg-slate-900/70 px-2.5 py-2"
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-base font-semibold text-white truncate">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-semibold leading-tight text-white">
                           {job?.name ?? "—"}
                         </p>
-                        <p className="mt-1 text-xs text-slate-300 truncate">
+                        <p className="mt-0.5 truncate text-[11px] text-orange-300/95">
                           {getCustomerName(job?.customerId)}
                         </p>
+                        {addr ? (
+                          <p className="mt-0.5 flex items-start gap-1 text-[10px] leading-snug text-slate-400">
+                            <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-slate-500" aria-hidden />
+                            <span className="line-clamp-2">{addr}</span>
+                          </p>
+                        ) : (
+                          <p className="mt-0.5 text-[10px] text-slate-500">Adresa —</p>
+                        )}
                       </div>
-                      <div className="shrink-0">{getStatusBadge(job?.status)}</div>
+                      <div className="shrink-0 pt-0.5">{getStatusBadgeMobile(job?.status)}</div>
                     </div>
 
-                    <div className="mt-3 grid grid-cols-2 gap-3 text-xs text-slate-300">
+                    <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-slate-400">
                       <div>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-400">Termín</p>
-                        <p className="mt-0.5 text-slate-200">
-                          {job?.endDate || job?.startDate || "—"}
-                        </p>
+                        <span className="text-slate-500">Termín </span>
+                        <span className="font-medium text-slate-200">{term}</span>
                       </div>
-                      <div>
-                        <p className="text-[11px] uppercase tracking-wide text-slate-400">Částka</p>
-                        <p className="mt-0.5 text-slate-200">
+                      <div className="text-right">
+                        <span className="text-slate-500">Částka </span>
+                        <span className="font-medium tabular-nums text-orange-200">
                           {budgetGross != null
                             ? `${budgetGross.toLocaleString("cs-CZ")} Kč`
                             : "—"}
-                        </p>
+                        </span>
                       </div>
                     </div>
 
-                    {job?.description ? (
-                      <p className="mt-3 text-sm text-slate-200 line-clamp-2">
-                        {job.description}
-                      </p>
-                    ) : null}
-
-                    <div className="mt-4 flex gap-2">
+                    <div className="mt-2 flex flex-wrap justify-end gap-1.5">
                       {jid ? (
-                        <Link
-                          href={
-                            isPortalEmployee
-                              ? `/portal/employee/jobs/${jid}`
-                              : `/portal/jobs/${jid}`
-                          }
-                          className="flex-1"
+                        <Button
+                          asChild
+                          className="h-8 min-h-8 rounded-md px-3 text-xs bg-orange-500 text-slate-950 hover:bg-orange-400"
                         >
-                          <Button className="w-full min-h-11 bg-orange-500 text-slate-950 hover:bg-orange-400">
+                          <Link
+                            href={
+                              isPortalEmployee
+                                ? `/portal/employee/jobs/${jid}`
+                                : `/portal/jobs/${jid}`
+                            }
+                          >
                             Detail
-                          </Button>
-                        </Link>
+                          </Link>
+                        </Button>
                       ) : null}
                       {isAdmin && jid ? (
-                        <Link href={`/portal/jobs/${jid}`} className="flex-1">
-                          <Button
-                            variant="outline"
-                            className="w-full min-h-11 border-white/20 bg-transparent text-white hover:bg-white/10"
-                          >
-                            Upravit
-                          </Button>
-                        </Link>
+                        <Button
+                          asChild
+                          variant="outline"
+                          className="h-8 min-h-8 rounded-md border-white/20 bg-slate-950/40 px-3 text-xs text-slate-100 hover:bg-white/10"
+                        >
+                          <Link href={`/portal/jobs/${jid}`}>Upravit</Link>
+                        </Button>
                       ) : null}
                     </div>
                   </div>
