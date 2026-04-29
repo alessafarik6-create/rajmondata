@@ -834,6 +834,52 @@ function JobDetailPageContent() {
     const j = job as { customerEmail?: string } | null | undefined;
     return String(j?.customerEmail ?? "").trim();
   }, [customer, job]);
+  const customerAccessEmailSent =
+    (customer as { customerAccessEmailSent?: unknown } | null | undefined)
+      ?.customerAccessEmailSent === true;
+  const customerAccessEmailSentAt = (() => {
+    const raw = (customer as { customerAccessEmailSentAt?: any } | null | undefined)
+      ?.customerAccessEmailSentAt;
+    if (raw && typeof raw.toDate === "function") return raw.toDate() as Date;
+    if (raw && typeof raw.seconds === "number") return new Date(raw.seconds * 1000);
+    return null;
+  })();
+
+  const sendCustomerAccessEmailFromJob = async () => {
+    if (!user || !isAdmin || !customerId) return;
+    setCustomerAccessEmailSending(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch(
+        `/api/customers/${encodeURIComponent(String(customerId))}/send-access-email`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+        }
+      );
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Odeslání přístupu selhalo."
+        );
+      }
+      toast({
+        title: "Přístup odeslán e-mailem",
+        description: "Zákazník dostal e-mail s odkazem pro nastavení hesla.",
+      });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Odeslání selhalo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setCustomerAccessEmailSending(false);
+    }
+  };
 
   const customersColRef = useMemoFirebase(
     () =>
@@ -943,6 +989,7 @@ function JobDetailPageContent() {
   const [isUploading, setIsUploading] = useState(false);
   const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
   const [measurementCaptureBusy, setMeasurementCaptureBusy] = useState(false);
+  const [customerAccessEmailSending, setCustomerAccessEmailSending] = useState(false);
   const measurementGalleryInputRef = useRef<HTMLInputElement>(null);
   const measurementCameraInputRef = useRef<HTMLInputElement>(null);
   /** Záloha souboru z foťáku (iOS někdy ztratí odkaz ve state před otevřením editoru). */
@@ -5631,6 +5678,29 @@ function JobDetailPageContent() {
                   <p className="text-base font-semibold text-foreground">
                     {jobCustomerAddressBlock.displayName}
                   </p>
+                  {customerAccessEmailSent ? (
+                    <p className="text-xs text-muted-foreground">
+                      Přístup odeslán e-mailem
+                      {customerAccessEmailSentAt
+                        ? `: ${customerAccessEmailSentAt.toLocaleString("cs-CZ")}`
+                        : ""}
+                    </p>
+                  ) : null}
+                  {isAdmin && customerId ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-2 h-8"
+                      disabled={customerAccessEmailSending}
+                      onClick={() => void sendCustomerAccessEmailFromJob()}
+                    >
+                      {customerAccessEmailSending ? (
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                      ) : null}
+                      Odeslat přístup e-mailem
+                    </Button>
+                  ) : null}
                 </div>
               ) : (
                 <p className={JD.bodyMuted}>

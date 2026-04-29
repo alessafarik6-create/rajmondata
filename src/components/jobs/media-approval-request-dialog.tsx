@@ -29,6 +29,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
+import { useUser } from "@/firebase";
 
 export type MediaApprovalRequestDialogProps = {
   open: boolean;
@@ -60,6 +61,7 @@ export function MediaApprovalRequestDialog({
   onApplied,
 }: MediaApprovalRequestDialogProps) {
   const { toast } = useToast();
+  const { user } = useUser();
   const [requires, setRequires] = useState(initialRequires);
   const [note, setNote] = useState(initialAdminNote);
   const [saving, setSaving] = useState(false);
@@ -78,21 +80,35 @@ export function MediaApprovalRequestDialog({
       const portalUid = await resolveCustomerPortalUidForJob(firestore, companyId, jobRecord ?? {});
 
       if (requires) {
-        await updateDoc(
-          ref,
-          stripUndefined({
-            requiresCustomerApproval: true,
-            approvalStatus: "pending",
-            approvalNoteFromAdmin: noteNorm || null,
-            approvalRequestedAt: serverTimestamp(),
-            approvalRequestedBy: adminUid,
-            customerComment: deleteField(),
-            customerCommentAt: deleteField(),
-            customerCommentBy: deleteField(),
-            approvedAt: deleteField(),
-            approvedBy: deleteField(),
-          }) as unknown as UpdateData<DocumentData>
+        if (!user) throw new Error("Chybí přihlášení uživatele.");
+        const idToken = await user.getIdToken();
+        const res = await fetch(
+          `/api/jobs/${encodeURIComponent(jobId)}/approval-email`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({
+              target,
+              fileLabel,
+              approvalNoteFromAdmin: noteNorm || null,
+            }),
+          }
         );
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          message?: string;
+          skipped?: string;
+        };
+        if (!res.ok) {
+          throw new Error(
+            typeof data.error === "string"
+              ? data.error
+              : "Nepodařilo se odeslat upozornění zákazníkovi."
+          );
+        }
         if (portalUid) {
           await syncCustomerTaskForMediaApproval({
             firestore,
@@ -107,7 +123,10 @@ export function MediaApprovalRequestDialog({
         }
         toast({
           title: "Ke schválení",
-          description: "Zákazník uvidí dokument v sekci Ke schválení.",
+          description:
+            data.skipped === "already_sent"
+              ? data.message || "Dokument čeká na schválení. Upozornění už bylo odesláno dříve."
+              : "Zákazník uvidí dokument v sekci Ke schválení a bylo mu posláno upozornění e-mailem.",
         });
       } else {
         await updateDoc(

@@ -137,11 +137,22 @@ export default function CustomerDetailPage() {
     customerPortalUid?: string;
     customerPortalEmail?: string;
     customerPortalEnabled?: boolean;
+    customerAccessEmailSent?: boolean;
+    customerAccessEmailSentAt?: { toDate?: () => Date; seconds?: number };
   };
   const portalUid = typeof crm.customerPortalUid === 'string' ? crm.customerPortalUid.trim() : '';
   const portalEmailStored =
     typeof crm.customerPortalEmail === 'string' ? crm.customerPortalEmail.trim() : '';
   const portalEnabled = crm.customerPortalEnabled !== false;
+  const customerAccessEmailSent = crm.customerAccessEmailSent === true;
+  const customerAccessEmailSentAt =
+    crm.customerAccessEmailSentAt &&
+    typeof crm.customerAccessEmailSentAt.toDate === 'function'
+      ? crm.customerAccessEmailSentAt.toDate()
+      : crm.customerAccessEmailSentAt &&
+          typeof crm.customerAccessEmailSentAt.seconds === 'number'
+        ? new Date(crm.customerAccessEmailSentAt.seconds * 1000)
+        : null;
 
   const handleTransferMeasurementPhotoToJob = async () => {
     if (!firestore || !companyId || !transferPhotoId || !transferJobId.trim()) {
@@ -397,6 +408,37 @@ export default function CustomerDetailPage() {
     }
   };
 
+  const handleSendPortalAccessEmail = async () => {
+    if (!user || !canManagePortal) return;
+    setPortalActionLoading(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch(`/api/customers/${encodeURIComponent(customerIdStr)}/send-access-email`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        throw new Error(typeof data.error === 'string' ? data.error : 'Odeslání přístupu selhalo.');
+      }
+      toast({
+        title: 'Přístup odeslán e-mailem',
+        description: 'Zákazník obdržel e-mail s přístupem a odkazem pro nastavení hesla.',
+      });
+    } catch (err: unknown) {
+      toast({
+        variant: 'destructive',
+        title: 'Chyba',
+        description: err instanceof Error ? err.message : 'Odeslání přístupu selhalo.',
+      });
+    } finally {
+      setPortalActionLoading(false);
+    }
+  };
+
   const copyResetLink = async () => {
     try {
       await navigator.clipboard.writeText(resetLinkValue);
@@ -621,6 +663,16 @@ export default function CustomerDetailPage() {
                     <p className="text-xs text-muted-foreground uppercase font-bold">Zakázek v portálu (sync)</p>
                     <p>{jobs?.length ?? 0} (podle CRM u tohoto zákazníka)</p>
                   </div>
+                  {customerAccessEmailSent ? (
+                    <div>
+                      <p className="text-xs text-muted-foreground uppercase font-bold">Přístup odeslán e-mailem</p>
+                      <p className="text-xs">
+                        {customerAccessEmailSentAt
+                          ? customerAccessEmailSentAt.toLocaleString('cs-CZ')
+                          : 'Ano'}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
               )}
 
@@ -657,6 +709,16 @@ export default function CustomerDetailPage() {
                       >
                         <KeyRound className="w-4 h-4" />
                         Odkaz pro reset hesla
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full gap-2"
+                        disabled={portalActionLoading || !customer}
+                        onClick={() => void handleSendPortalAccessEmail()}
+                      >
+                        <Mail className="w-4 h-4" />
+                        Odeslat přístup e-mailem
                       </Button>
                       {portalEnabled ? (
                         <Button

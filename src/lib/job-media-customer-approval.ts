@@ -26,6 +26,9 @@ export type ParsedJobMediaApproval = {
   customerComment: string;
   customerCommentAtMs: number | null;
   customerCommentBy: string | null;
+  approvalEmailSent: boolean;
+  approvalEmailSentAtMs: number | null;
+  approvalEmailResentCount: number;
 };
 
 function toMs(t: unknown): number | null {
@@ -68,6 +71,12 @@ export function parseJobMediaApproval(raw: Record<string, unknown> | null | unde
       typeof raw?.customerCommentBy === "string" && raw.customerCommentBy.trim()
         ? raw.customerCommentBy.trim()
         : null,
+    approvalEmailSent: raw?.approvalEmailSent === true,
+    approvalEmailSentAtMs: toMs(raw?.approvalEmailSentAt),
+    approvalEmailResentCount:
+      typeof raw?.approvalEmailResentCount === "number" && Number.isFinite(raw.approvalEmailResentCount)
+        ? Math.max(0, Math.floor(raw.approvalEmailResentCount))
+        : 0,
   };
 }
 

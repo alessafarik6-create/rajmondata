@@ -1,0 +1,155 @@
+import { NextRequest, NextResponse } from "next/server";
+import { FieldValue } from "firebase-admin/firestore";
+import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import {
+  callerCanAccessCompany,
+  callerCanTriggerOrgNotifications,
+  verifyBearerAndLoadCaller,
+} from "@/lib/api-verify-company-user";
+import {
+  absoluteUrl,
+  loadCompanyEmailBranding,
+  resolveCustomerEmailForJob,
+  wrapPortalEmailHtml,
+} from "@/lib/customer-portal-email";
+import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+type Body = {
+  target?: { kind?: "photos" | "folderImages"; photoId?: string; folderId?: string; imageId?: string };
+  fileLabel?: string;
+};
+
+function mediaRefFromBody(params: {
+  companyId: string;
+  jobId: string;
+  body: Body;
+  db: NonNullable<ReturnType<typeof getAdminFirestore>>;
+}) {
+  const target = params.body.target;
+  if (!target?.kind) return null;
+  if (target.kind === "photos" && target.photoId) {
+    return params.db
+      .collection("companies")
+      .doc(params.companyId)
+      .collection("jobs")
+      .doc(params.jobId)
+      .collection("photos")
+      .doc(target.photoId);
+  }
+  if (target.kind === "folderImages" && target.folderId && target.imageId) {
+    return params.db
+      .collection("companies")
+      .doc(params.companyId)
+      .collection("jobs")
+      .doc(params.jobId)
+      .collection("folders")
+      .doc(target.folderId)
+      .collection("images")
+      .doc(target.imageId);
+  }
+  return null;
+}
+
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ jobId: string }> }
+) {
+  const db = getAdminFirestore();
+  const auth = getAdminAuth();
+  if (!db || !auth) {
+    return NextResponse.json({ error: "Server není nakonfigurován." }, { status: 503 });
+  }
+  const authHeader = request.headers.get("authorization") || "";
+  const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  const caller = await verifyBearerAndLoadCaller(auth, db, idToken);
+  if (!caller || !callerCanTriggerOrgNotifications(caller)) {
+    return NextResponse.json({ error: "Nemáte oprávnění." }, { status: 403 });
+  }
+  const { jobId } = await context.params;
+  const companyId = caller.companyId;
+  if (!jobId?.trim()) {
+    return NextResponse.json({ error: "Chybí jobId." }, { status: 400 });
+  }
+  if (!callerCanAccessCompany(caller, companyId)) {
+    return NextResponse.json({ error: "Nemáte přístup k organizaci." }, { status: 403 });
+  }
+
+  let body: Body;
+  try {
+    body = (await request.json()) as Body;
+  } catch {
+    return NextResponse.json({ error: "Neplatné JSON tělo." }, { status: 400 });
+  }
+
+  const mediaRef = mediaRefFromBody({ companyId, jobId, body, db });
+  if (!mediaRef) {
+    return NextResponse.json({ error: "Neplatná reference souboru." }, { status: 400 });
+  }
+
+  const [jobSnap, mediaSnap] = await Promise.all([
+    db.collection("companies").doc(companyId).collection("jobs").doc(jobId).get(),
+    mediaRef.get(),
+  ]);
+  if (!jobSnap.exists || !mediaSnap.exists) {
+    return NextResponse.json({ error: "Zakázka nebo soubor nebyly nalezeny." }, { status: 404 });
+  }
+  const job = (jobSnap.data() ?? {}) as Record<string, unknown>;
+  const media = (mediaSnap.data() ?? {}) as Record<string, unknown>;
+  if (media.requiresCustomerApproval !== true || String(media.approvalStatus ?? "") !== "pending") {
+    return NextResponse.json(
+      { error: "Upozornění lze poslat znovu jen u souboru čekajícího na schválení." },
+      { status: 400 }
+    );
+  }
+
+  const customerEmail = await resolveCustomerEmailForJob({ db, companyId, job });
+  if (!customerEmail) {
+    return NextResponse.json({ error: "Zákazník nemá vyplněný e-mail" }, { status: 400 });
+  }
+  const branding = await loadCompanyEmailBranding(db, companyId);
+  const jobName = String(job.name ?? "").trim() || jobId;
+  const jobLink = absoluteUrl(`/portal/customer/jobs/${encodeURIComponent(jobId)}`);
+  const subject = `Nový výkres / dokument ke schválení – ${jobName}`;
+  const html = wrapPortalEmailHtml({
+    greeting: "Dobrý den,",
+    paragraphs: [
+      `v zákaznickém portálu máte nový výkres nebo dokument ke schválení k zakázce: ${jobName}.`,
+      "Přihlaste se prosím do portálu a dokument zkontrolujte.",
+      `Odkaz: ${jobLink}`,
+    ],
+    actionUrl: jobLink,
+    actionLabel: "Otevřít zakázku v portálu",
+    companyName: branding.companyName,
+    logoUrl: branding.logoUrl,
+    contactEmail: branding.contactEmail,
+  });
+
+  const sent = await sendTransactionalEmail({
+    to: [customerEmail],
+    subject,
+    html,
+  });
+  if (!sent.ok) {
+    return NextResponse.json(
+      { error: sent.error || "Nepodařilo se odeslat e-mail.", detail: sent.detail ?? null },
+      { status: 502 }
+    );
+  }
+
+  const resentCountRaw = media.approvalEmailResentCount;
+  const resentCount =
+    typeof resentCountRaw === "number" && Number.isFinite(resentCountRaw) ? resentCountRaw : 0;
+  await mediaRef.set(
+    {
+      approvalEmailSent: true,
+      approvalEmailSentAt: FieldValue.serverTimestamp(),
+      approvalEmailResentCount: resentCount + 1,
+    },
+    { merge: true }
+  );
+
+  return NextResponse.json({ ok: true });
+}

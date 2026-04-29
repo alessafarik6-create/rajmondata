@@ -127,6 +127,7 @@ import {
   FileText,
   FolderPlus,
   ImagePlus,
+  Loader2,
   Pencil,
   StickyNote,
   Trash2,
@@ -378,7 +379,15 @@ function JobMediaCsvPreview() {
   );
 }
 
-function JobMediaApprovalAdminSummary({ a }: { a: ParsedJobMediaApproval }) {
+function JobMediaApprovalAdminSummary({
+  a,
+  onResend,
+  resendLoading = false,
+}: {
+  a: ParsedJobMediaApproval;
+  onResend?: () => void;
+  resendLoading?: boolean;
+}) {
   if (!a.requiresCustomerApproval) return null;
   const st = a.approvalStatus;
   return (
@@ -415,6 +424,27 @@ function JobMediaApprovalAdminSummary({ a }: { a: ParsedJobMediaApproval }) {
           Žádost odeslána: {new Date(a.approvalRequestedAtMs).toLocaleString("cs-CZ")}
         </p>
       ) : null}
+      {a.approvalEmailSent ? (
+        <p className="text-[10px] text-muted-foreground">
+          Upozornění zákazníkovi odesláno
+          {a.approvalEmailSentAtMs
+            ? `: ${new Date(a.approvalEmailSentAtMs).toLocaleString("cs-CZ")}`
+            : ""}
+        </p>
+      ) : null}
+      {typeof onResend === "function" && a.approvalStatus === "pending" ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="h-7 px-2 text-[10px]"
+          disabled={resendLoading}
+          onClick={onResend}
+        >
+          {resendLoading ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+          Odeslat upozornění znovu
+        </Button>
+      ) : null}
       {a.approvedAtMs ? (
         <p className="text-[10px] text-muted-foreground">
           Schváleno zákazníkem: {new Date(a.approvedAtMs).toLocaleString("cs-CZ")}
@@ -438,6 +468,8 @@ function JobMediaFileCard({
   hasNote,
   actions,
   mediaApprovalSummary,
+  onResendApprovalEmail,
+  resendApprovalBusy,
 }: {
   borderClassName?: string;
   preview: React.ReactNode;
@@ -448,6 +480,8 @@ function JobMediaFileCard({
   actions: React.ReactNode;
   /** Stav schválení u souboru (jen interní přehled). */
   mediaApprovalSummary?: ParsedJobMediaApproval | null;
+  onResendApprovalEmail?: () => void;
+  resendApprovalBusy?: boolean;
 }) {
   return (
     <div
@@ -478,7 +512,11 @@ function JobMediaFileCard({
         </p>
         <p className="text-xs text-gray-700 sm:text-sm">{dateLine}</p>
         {mediaApprovalSummary?.requiresCustomerApproval ? (
-          <JobMediaApprovalAdminSummary a={mediaApprovalSummary} />
+          <JobMediaApprovalAdminSummary
+            a={mediaApprovalSummary}
+            onResend={onResendApprovalEmail}
+            resendLoading={resendApprovalBusy}
+          />
         ) : null}
         {note?.trim() ? (
           <p className="line-clamp-2 text-[11px] leading-snug text-foreground/88">
@@ -540,6 +578,7 @@ function UserFolderBlock({
   );
   const { data: actorProfile } = useDoc(actorRef);
   const [busy, setBusy] = useState(false);
+  const [resendBusyKey, setResendBusyKey] = useState<string | null>(null);
   type FolderMediaViewerOpen = {
     url: string;
     title: string;
@@ -550,6 +589,46 @@ function UserFolderBlock({
     adminNote?: string;
   };
   const [mediaViewer, setMediaViewer] = useState<FolderMediaViewerOpen | null>(null);
+  const resendApprovalEmail = useCallback(
+    async (target: JobMediaRef, fileLabel: string, busyKey: string) => {
+      setResendBusyKey(busyKey);
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch(
+          `/api/jobs/${encodeURIComponent(jobId)}/approval-email/resend`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({ target, fileLabel }),
+          }
+        );
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          throw new Error(
+            typeof data.error === "string"
+              ? data.error
+              : "Nepodařilo se odeslat upozornění znovu."
+          );
+        }
+        toast({
+          title: "Upozornění odesláno",
+          description: "Zákazník dostal e-mailové upozornění znovu.",
+        });
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "Odeslání selhalo",
+          description: e instanceof Error ? e.message : "Zkuste to znovu.",
+        });
+      } finally {
+        setResendBusyKey(null);
+      }
+    },
+    [jobId, toast, user]
+  );
 
   const openFolderMediaViewer = useCallback(
     (img: JobFolderImageDoc, openUrl: string, title: string) => {
@@ -1898,6 +1977,21 @@ function UserFolderBlock({
                     note={img.note}
                     hasNote={hasNote}
                     mediaApprovalSummary={mediaApprovalSummary}
+                    onResendApprovalEmail={
+                      mediaApprovalSummary?.requiresCustomerApproval
+                        ? () =>
+                            void resendApprovalEmail(
+                              {
+                                kind: "folderImages",
+                                folderId: folder.id,
+                                imageId: img.id,
+                              },
+                              title,
+                              `folder:${folder.id}:${img.id}`
+                            )
+                        : undefined
+                    }
+                    resendApprovalBusy={resendBusyKey === `folder:${folder.id}:${img.id}`}
                     actions={
                       <>
                         <JobMediaIconButton
@@ -2034,6 +2128,21 @@ function UserFolderBlock({
                   note={img.note}
                   hasNote={hasNote}
                   mediaApprovalSummary={mediaApprovalSummary}
+                  onResendApprovalEmail={
+                    mediaApprovalSummary?.requiresCustomerApproval
+                      ? () =>
+                          void resendApprovalEmail(
+                            {
+                              kind: "folderImages",
+                              folderId: folder.id,
+                              imageId: img.id,
+                            },
+                            title,
+                            `folder:${folder.id}:${img.id}`
+                          )
+                      : undefined
+                  }
+                  resendApprovalBusy={resendBusyKey === `folder:${folder.id}:${img.id}`}
                   actions={
                     <>
                       <JobMediaIconButton
@@ -2383,6 +2492,7 @@ export function JobMediaSection({
     initialRequires: boolean;
     initialAdminNote: string;
   } | null>(null);
+  const [legacyResendBusyKey, setLegacyResendBusyKey] = useState<string | null>(null);
 
   const openMediaApprovalDialog = useCallback(
     (ctx: { target: JobMediaRef; fileLabel: string; row: Record<string, unknown> }) => {
@@ -2395,6 +2505,48 @@ export function JobMediaSection({
       });
     },
     []
+  );
+
+  const resendApprovalEmailForLegacy = useCallback(
+    async (target: JobMediaRef, fileLabel: string, busyKey: string) => {
+      if (!user) return;
+      setLegacyResendBusyKey(busyKey);
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch(
+          `/api/jobs/${encodeURIComponent(jobId)}/approval-email/resend`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${idToken}`,
+            },
+            body: JSON.stringify({ target, fileLabel }),
+          }
+        );
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          throw new Error(
+            typeof data.error === "string"
+              ? data.error
+              : "Nepodařilo se odeslat upozornění znovu."
+          );
+        }
+        toast({
+          title: "Upozornění odesláno",
+          description: "Zákazník dostal e-mailové upozornění znovu.",
+        });
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "Odeslání selhalo",
+          description: e instanceof Error ? e.message : "Zkuste to znovu.",
+        });
+      } finally {
+        setLegacyResendBusyKey(null);
+      }
+    },
+    [jobId, toast, user]
   );
 
   const galleryRef = useRef<HTMLInputElement>(null);
@@ -3130,6 +3282,17 @@ export function JobMediaSection({
                         note={p.note}
                         hasNote={hasNote}
                         mediaApprovalSummary={legacyMediaApprovalSummary}
+                        onResendApprovalEmail={
+                          legacyMediaApprovalSummary?.requiresCustomerApproval
+                            ? () =>
+                                void resendApprovalEmailForLegacy(
+                                  { kind: "photos", photoId: p.id },
+                                  title,
+                                  `legacy:${p.id}`
+                                )
+                            : undefined
+                        }
+                        resendApprovalBusy={legacyResendBusyKey === `legacy:${p.id}`}
                         actions={
                           <>
                             <JobMediaIconButton
@@ -3256,6 +3419,17 @@ export function JobMediaSection({
                       note={p.note}
                       hasNote={hasNote}
                       mediaApprovalSummary={legacyMediaApprovalSummary}
+                      onResendApprovalEmail={
+                        legacyMediaApprovalSummary?.requiresCustomerApproval
+                          ? () =>
+                              void resendApprovalEmailForLegacy(
+                                { kind: "photos", photoId: p.id },
+                                title,
+                                `legacy:${p.id}`
+                              )
+                          : undefined
+                      }
+                      resendApprovalBusy={legacyResendBusyKey === `legacy:${p.id}`}
                       actions={
                         <>
                           <JobMediaIconButton
