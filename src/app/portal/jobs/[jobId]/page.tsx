@@ -79,6 +79,7 @@ import {
   ImagePlus,
   FolderInput,
   Factory,
+  RotateCcw,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -86,6 +87,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
+import { useIsBelowLg } from "@/hooks/use-mobile";
 import {
   Select,
   SelectContent,
@@ -220,7 +222,17 @@ type DragMode =
   | "note-target"
   | "note-box"
   | "note-rect-draw"
-  | "note-resize-br";
+  | "note-resize-br"
+  | "view-pan";
+
+type AnnotationPinchSession = {
+  anchorDist: number;
+  anchorZoom: number;
+  anchorPanX: number;
+  anchorPanY: number;
+  anchorMidX: number;
+  anchorMidY: number;
+};
 
 type ContractOpenPreset = "sod_work" | "new_contract" | "new_addendum" | "new_attachment";
 
@@ -518,6 +530,7 @@ function JobDetailPageContent() {
   const { user } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const isAnnotTouchUI = useIsBelowLg();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -1021,6 +1034,36 @@ function JobDetailPageContent() {
   } | null>(null);
   const noteRectDraftRef = useRef(noteRectDraft);
   noteRectDraftRef.current = noteRectDraft;
+
+  const draftAnnotationIdRef = useRef<string | null>(null);
+  draftAnnotationIdRef.current = draftAnnotationId;
+
+  const [annotationView, setAnnotationView] = useState({
+    zoom: 1,
+    panX: 0,
+    panY: 0,
+  });
+  const annotationViewRef = useRef(annotationView);
+  annotationViewRef.current = annotationView;
+
+  const pointerMapRef = useRef(
+    new Map<number, { clientX: number; clientY: number; pointerType: string }>()
+  );
+  const pinchSessionRef = useRef<AnnotationPinchSession | null>(null);
+  const viewPanStartRef = useRef<{
+    cx: number;
+    cy: number;
+    panX: number;
+    panY: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!editorOpen) return;
+    setAnnotationView({ zoom: 1, panX: 0, panY: 0 });
+    pointerMapRef.current.clear();
+    pinchSessionRef.current = null;
+    viewPanStartRef.current = null;
+  }, [editorOpen]);
 
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
   const [contractDialogMode, setContractDialogMode] = useState<"view" | "edit">(
@@ -3624,6 +3667,60 @@ function JobDetailPageContent() {
     if (!canvasRef.current) return;
     e.preventDefault();
 
+    pointerMapRef.current.set(e.pointerId, {
+      clientX: e.clientX,
+      clientY: e.clientY,
+      pointerType: e.pointerType,
+    });
+
+    if (isAnnotTouchUI) {
+      const touchEntries = [...pointerMapRef.current.entries()].filter(
+        ([, v]) => v.pointerType === "touch"
+      );
+      if (touchEntries.length >= 2) {
+        const te = touchEntries.slice(0, 2);
+        const p1 = { x: te[0][1].clientX, y: te[0][1].clientY };
+        const p2 = { x: te[1][1].clientX, y: te[1][1].clientY };
+        const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y);
+        if (dist >= 8) {
+          const av = annotationViewRef.current;
+          pinchSessionRef.current = {
+            anchorDist: dist,
+            anchorZoom: av.zoom,
+            anchorPanX: av.panX,
+            anchorPanY: av.panY,
+            anchorMidX: (p1.x + p2.x) / 2,
+            anchorMidY: (p1.y + p2.y) / 2,
+          };
+        }
+        const dId = draftAnnotationIdRef.current;
+        setNoteRectDraft(null);
+        setDragMode("none");
+        setDragLastPoint(null);
+        if (dId) {
+          setAnnotations((prev) => {
+            if (!prev.length) return prev;
+            const last = prev[prev.length - 1];
+            if (last?.type === "dimension" && last.id === dId) {
+              const len = Math.hypot(
+                last.endX - last.startX,
+                last.endY - last.startY
+              );
+              if (len < 10) return prev.slice(0, -1);
+            }
+            return prev;
+          });
+        }
+        setDraftAnnotationId(null);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+    }
+
     const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
     const hit = hitTestAnnotation(pt.x, pt.y);
 
@@ -3686,6 +3783,25 @@ function JobDetailPageContent() {
     } else {
       setSelectedAnnotationId(null);
       setDraftAnnotationId(null);
+      if (
+        isAnnotTouchUI &&
+        annotationViewRef.current.zoom > 1.02 &&
+        e.pointerType === "touch"
+      ) {
+        setDragMode("view-pan");
+        viewPanStartRef.current = {
+          cx: e.clientX,
+          cy: e.clientY,
+          panX: annotationViewRef.current.panX,
+          panY: annotationViewRef.current.panY,
+        };
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
       setDragMode("none");
       setDragLastPoint(null);
     }
@@ -3695,6 +3811,52 @@ function JobDetailPageContent() {
     if (!imageForCanvas || !baseImageLoaded) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    if (pointerMapRef.current.has(e.pointerId)) {
+      const prev = pointerMapRef.current.get(e.pointerId)!;
+      pointerMapRef.current.set(e.pointerId, {
+        ...prev,
+        clientX: e.clientX,
+        clientY: e.clientY,
+      });
+    }
+
+    if (isAnnotTouchUI && pinchSessionRef.current) {
+      const touchPts = [...pointerMapRef.current.entries()]
+        .filter(([, v]) => v.pointerType === "touch")
+        .map(([, v]) => ({ x: v.clientX, y: v.clientY }));
+      if (touchPts.length >= 2) {
+        e.preventDefault();
+        const p1 = touchPts[0];
+        const p2 = touchPts[1];
+        const dist = Math.hypot(p1.x - p2.x, p1.y - p2.y) || 1;
+        const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+        const s = pinchSessionRef.current;
+        const scaleRatio = dist / s.anchorDist;
+        const newZoom = Math.min(5, Math.max(1, s.anchorZoom * scaleRatio));
+        const dmx = mid.x - s.anchorMidX;
+        const dmy = mid.y - s.anchorMidY;
+        setAnnotationView({
+          zoom: newZoom,
+          panX: s.anchorPanX + dmx,
+          panY: s.anchorPanY + dmy,
+        });
+        return;
+      }
+    }
+
+    if (dragMode === "view-pan") {
+      e.preventDefault();
+      const st = viewPanStartRef.current;
+      if (st) {
+        setAnnotationView({
+          zoom: annotationViewRef.current.zoom,
+          panX: st.panX + (e.clientX - st.cx),
+          panY: st.panY + (e.clientY - st.cy),
+        });
+      }
+      return;
+    }
 
     const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
 
@@ -3776,6 +3938,25 @@ function JobDetailPageContent() {
 
   const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!imageForCanvas || !baseImageLoaded) return;
+
+    pointerMapRef.current.delete(e.pointerId);
+    const touchesRemain = [...pointerMapRef.current.values()].filter(
+      (v) => v.pointerType === "touch"
+    ).length;
+    if (touchesRemain < 2) pinchSessionRef.current = null;
+
+    if (dragMode === "view-pan") {
+      e.preventDefault();
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      setDragMode("none");
+      viewPanStartRef.current = null;
+      setDragLastPoint(null);
+      return;
+    }
 
     if (dragMode === "note-rect-draw") {
       e.preventDefault();
@@ -5297,14 +5478,223 @@ function JobDetailPageContent() {
           }
         }}
       >
-        <DialogContent className="!flex !max-h-[min(92dvh,92vh)] !h-[min(92dvh,92vh)] !w-[min(95vw,1920px)] !max-w-[min(95vw,1920px)] !flex-col !gap-0 !overflow-hidden overscroll-contain p-2 sm:p-3 md:p-4 sm:!max-w-[min(95vw,1920px)] sm:!w-[min(95vw,1920px)] md:!max-w-[min(95vw,1920px)] md:!w-[min(95vw,1920px)]">
-          <DialogHeader className="shrink-0 space-y-1 pb-2 pr-8 text-left">
-            <DialogTitle className="text-base sm:text-lg">
-              Anotace fotografie
-            </DialogTitle>
-          </DialogHeader>
+        <DialogContent
+          className={cn(
+            isAnnotTouchUI
+              ? "!fixed !inset-0 !left-0 !top-0 z-[200] flex h-[100dvh] max-h-[100dvh] w-full max-w-full !translate-x-0 !translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-slate-950 p-0 text-white shadow-none overscroll-none data-[state=open]:zoom-in-100"
+              : "!flex !max-h-[min(92dvh,92vh)] !h-[min(92dvh,92vh)] !w-[min(95vw,1920px)] !max-w-[min(95vw,1920px)] !flex-col !gap-0 !overflow-hidden overscroll-contain p-2 sm:p-3 md:p-4 sm:!max-w-[min(95vw,1920px)] sm:!w-[min(95vw,1920px)] md:!max-w-[min(95vw,1920px)] md:!w-[min(95vw,1920px)]"
+          )}
+        >
+          {isAnnotTouchUI ? (
+            <>
+              <DialogHeader className="sr-only">
+                <DialogTitle>Anotace fotografie</DialogTitle>
+              </DialogHeader>
+              <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900 px-2 py-1">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0 px-2 text-white hover:bg-white/10"
+                  onClick={() => setEditorOpen(false)}
+                >
+                  Zavřít
+                </Button>
+                <span className="min-w-0 truncate text-center text-xs font-semibold text-white">
+                  Anotace
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 shrink-0 bg-orange-600 px-2 text-xs text-white hover:bg-orange-500 disabled:opacity-50"
+                  onClick={handleSaveAnnotated}
+                  disabled={!baseImageLoaded || isSavingAnnotation}
+                >
+                  {isSavingAnnotation ? "…" : "Uložit"}
+                </Button>
+              </div>
+              <div className="relative flex min-h-0 flex-1 overflow-hidden bg-black">
+                <div className="pointer-events-auto absolute left-0 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-0.5 rounded-r-lg border border-white/10 bg-slate-900/95 py-1 pl-1 pr-0.5 shadow-lg">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={activeTool === "dimension" ? "default" : "ghost"}
+                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
+                    onClick={() => setActiveTool("dimension")}
+                  >
+                    Kóty
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={activeTool === "note" ? "default" : "ghost"}
+                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
+                    onClick={() => setActiveTool("note")}
+                  >
+                    Pozn.
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={activeTool === "select" ? "default" : "ghost"}
+                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
+                    onClick={() => setActiveTool("select")}
+                  >
+                    Výběr
+                  </Button>
+                </div>
+                <div className="pointer-events-auto absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-l-lg border border-white/10 bg-slate-900/95 py-1 pl-0.5 pr-1 shadow-lg">
+                  {(
+                    [
+                      { id: "red", label: "Červená" },
+                      { id: "yellow", label: "Žlutá" },
+                      { id: "white", label: "Bílá" },
+                      { id: "black", label: "Černá" },
+                      { id: "blue", label: "Modrá" },
+                    ] as const
+                  ).map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      aria-label={c.label}
+                      title={c.label}
+                      onClick={() => updateSelectedColor(c.id)}
+                      className={cn(
+                        "h-7 w-7 shrink-0 rounded-md border",
+                        activeColor === c.id
+                          ? "ring-2 ring-orange-400 ring-offset-1 ring-offset-slate-900"
+                          : ""
+                      )}
+                      style={{
+                        backgroundColor: colorToHex(c.id),
+                        borderColor:
+                          c.id === "white" ? "rgba(0,0,0,0.35)" : "transparent",
+                      }}
+                    />
+                  ))}
+                </div>
+                <div
+                  className="flex min-h-0 min-w-0 flex-1 items-center justify-center px-11 py-1"
+                  style={{ touchAction: "none" }}
+                >
+                  <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-black">
+                    <div className="flex h-full w-full max-h-full max-w-full items-center justify-center">
+                      <div
+                        style={{
+                          transform: `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
+                          transformOrigin: "center center",
+                        }}
+                        className="flex max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)] items-center justify-center"
+                      >
+                        <canvas
+                          ref={setCanvasNode}
+                          onPointerDown={handleCanvasPointerDown}
+                          onPointerMove={handleCanvasPointerMove}
+                          onPointerUp={handleCanvasPointerUp}
+                          onPointerCancel={() => {
+                            pointerMapRef.current.clear();
+                            pinchSessionRef.current = null;
+                            viewPanStartRef.current = null;
+                            setDragMode("none");
+                            setDragLastPoint(null);
+                            setNoteRectDraft(null);
+                            setDraftAnnotationId(null);
+                          }}
+                          className={cn(
+                            "h-auto w-auto max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)] object-contain",
+                            baseImageLoaded ? "opacity-100" : "opacity-0"
+                          )}
+                          style={{ cursor: canvasCursor }}
+                        />
+                      </div>
+                    </div>
+                    {!baseImageLoaded && !imageError && (
+                      <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 text-xs text-slate-300">
+                        Načítání…
+                      </div>
+                    )}
+                    {imageError && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-3 text-center text-xs text-red-400">
+                        <div className="space-y-1">
+                          <p>{imageError}</p>
+                          <p className="break-all text-slate-400">
+                            {annotationSource || "—"}
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="flex min-h-0 shrink-0 flex-wrap items-center gap-1 border-t border-white/10 bg-slate-900 px-2 py-1.5">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
+                  onClick={() =>
+                    setAnnotationView({ zoom: 1, panX: 0, panY: 0 })
+                  }
+                  disabled={
+                    annotationView.zoom === 1 &&
+                    annotationView.panX === 0 &&
+                    annotationView.panY === 0
+                  }
+                >
+                  <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+                  1:1
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
+                  onClick={undoLast}
+                  disabled={!annotations.length}
+                >
+                  Zpět
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
+                  onClick={clearAllAnnotations}
+                  disabled={!annotations.length}
+                >
+                  Vymazat
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
+                  onClick={editSelectedText}
+                  disabled={!selectedAnnotationId}
+                >
+                  Text
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={deleteSelectedAnnotation}
+                  disabled={!selectedAnnotationId}
+                >
+                  Smazat
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader className="shrink-0 space-y-1 pb-2 pr-8 text-left">
+                <DialogTitle className="text-base sm:text-lg">
+                  Anotace fotografie
+                </DialogTitle>
+              </DialogHeader>
 
-          <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3">
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3">
             <div className="shrink-0 space-y-1.5 sm:space-y-2">
               <p className="text-xs leading-snug text-muted-foreground sm:text-sm sm:leading-normal">
                 Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: táhněte
@@ -5397,35 +5787,76 @@ function JobDetailPageContent() {
               </div>
             </div>
 
-            <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden rounded-md border bg-black/80 p-0.5 sm:p-1">
-              <canvas
-                ref={setCanvasNode}
-                onPointerDown={handleCanvasPointerDown}
-                onPointerMove={handleCanvasPointerMove}
-                onPointerUp={handleCanvasPointerUp}
-                onPointerCancel={() => {
-                  setDragMode("none");
-                  setDragLastPoint(null);
-                  setNoteRectDraft(null);
-                  setDraftAnnotationId(null);
-                }}
-                className={`h-auto w-auto max-h-full max-w-full object-contain touch-none ${
-                  baseImageLoaded ? "opacity-100" : "opacity-0"
-                }`}
-                style={{ cursor: canvasCursor }}
-              />
+            <div
+              className={cn(
+                "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-black",
+                isAnnotTouchUI
+                  ? "rounded-none border-0 p-0"
+                  : "rounded-md border bg-black/80 p-0.5 sm:p-1"
+              )}
+            >
+              <div
+                className={cn(
+                  "flex max-h-full max-w-full items-center justify-center",
+                  isAnnotTouchUI && "h-full w-full"
+                )}
+                style={
+                  isAnnotTouchUI
+                    ? ({
+                        touchAction: "none" as const,
+                      } satisfies React.CSSProperties)
+                    : undefined
+                }
+              >
+                <div
+                  style={{
+                    transform: `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
+                    transformOrigin: "center center",
+                  }}
+                  className={cn(
+                    "flex items-center justify-center",
+                    isAnnotTouchUI
+                      ? "max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)]"
+                      : "max-h-full max-w-full"
+                  )}
+                >
+                  <canvas
+                    ref={setCanvasNode}
+                    onPointerDown={handleCanvasPointerDown}
+                    onPointerMove={handleCanvasPointerMove}
+                    onPointerUp={handleCanvasPointerUp}
+                    onPointerCancel={() => {
+                      pointerMapRef.current.clear();
+                      pinchSessionRef.current = null;
+                      viewPanStartRef.current = null;
+                      setDragMode("none");
+                      setDragLastPoint(null);
+                      setNoteRectDraft(null);
+                      setDraftAnnotationId(null);
+                    }}
+                    className={cn(
+                      "h-auto w-auto object-contain",
+                      isAnnotTouchUI
+                        ? "max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)]"
+                        : "max-h-full max-w-full touch-none",
+                      baseImageLoaded ? "opacity-100" : "opacity-0"
+                    )}
+                    style={{ cursor: canvasCursor }}
+                  />
+                </div>
+              </div>
 
               {!baseImageLoaded && !imageError && (
-                <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground bg-black/40 pointer-events-none">
+                <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 text-sm text-slate-300">
                   Načítání fotografie...
                 </div>
               )}
 
               {imageError && (
-                <div className="absolute inset-0 flex items-center justify-center p-4 text-sm text-red-500 text-center bg-black/70">
+                <div className="absolute inset-0 flex items-center justify-center bg-black/70 p-4 text-center text-sm text-red-400">
                   <div className="space-y-2">
                     <p>{imageError}</p>
-                    <p className="break-all text-xs text-muted-foreground">
+                    <p className="break-all text-xs text-slate-400">
                       URL: {annotationSource || "neznámé"}
                     </p>
                   </div>
@@ -5477,6 +5908,8 @@ function JobDetailPageContent() {
               </div>
             </div>
           </div>
+            </>
+          )}
         </DialogContent>
       </Dialog>
   );

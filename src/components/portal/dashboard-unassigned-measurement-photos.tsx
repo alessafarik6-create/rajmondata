@@ -49,6 +49,9 @@ import {
   Loader2,
   MoreHorizontal,
   MoreVertical,
+  Pencil,
+  Link2,
+  Trash2,
 } from "lucide-react";
 import { getJobMediaPreviewUrl, formatMediaDate } from "@/lib/job-media-types";
 import {
@@ -603,23 +606,31 @@ export function DashboardUnassignedMeasurementPhotos({
                       </DropdownMenuTrigger>
                       <DropdownMenuContent
                         align="end"
-                        className="w-[min(100vw-2rem,14rem)] border-white/10 bg-slate-900 text-slate-100"
+                        className="w-[min(100vw-2rem,14rem)] border border-white/15 bg-zinc-950 p-1 text-white shadow-xl [&_[data-radix-collection-item]]:text-white"
                       >
                         <DropdownMenuItem
-                          className="focus:bg-white/10 focus:text-white"
+                          className="cursor-pointer gap-2 !text-white focus:!bg-zinc-800 focus:!text-white data-[highlighted]:!bg-zinc-800 data-[highlighted]:!text-white [&_svg]:!text-white"
                           onSelect={() => openAssign(row, "job")}
                           disabled={!canManagePhotos}
                         >
-                          Přiřadit k zakázce
-                        </DropdownMenuItem>
-                        <DropdownMenuItem className="focus:bg-white/10 focus:text-white" asChild>
-                          <Link href={editHref}>Upravit / anotovat</Link>
+                          <Link2 className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                          Přidat k zakázce
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          className="text-red-400 focus:bg-red-950/50 focus:text-red-300"
+                          className="cursor-pointer gap-2 !text-white focus:!bg-zinc-800 focus:!text-white data-[highlighted]:!bg-zinc-800 data-[highlighted]:!text-white [&_svg]:!text-white"
+                          asChild
+                        >
+                          <Link href={editHref} className="flex items-center gap-2">
+                            <Pencil className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
+                            Anotovat
+                          </Link>
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="cursor-pointer gap-2 !text-red-300 focus:!bg-red-950/60 focus:!text-red-200 data-[highlighted]:!bg-red-950/60 data-[highlighted]:!text-red-200 [&_svg]:!text-red-300"
                           disabled={!canDel}
                           onSelect={() => void deleteMeasurementRow(row)}
                         >
+                          <Trash2 className="h-4 w-4 shrink-0 opacity-90" aria-hidden />
                           Smazat
                         </DropdownMenuItem>
                       </DropdownMenuContent>

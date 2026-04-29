@@ -1506,36 +1506,65 @@ function JobsPageContent() {
         </Dialog>
       ) : null}
 
-      <Card className={cn("shadow-sm", belowLg ? "border-white/10 bg-white/[0.04] text-slate-50" : "border-slate-200")}>
+      <Card
+        className={cn(
+          "shadow-sm",
+          belowLg
+            ? "border-white/10 bg-slate-900/85 text-slate-50 shadow-none"
+            : "border-slate-200"
+        )}
+      >
         <CardContent className={cn(belowLg ? "p-2.5" : "p-4 sm:p-5")}>
           {belowLg ? (
-            <div className="flex min-w-0 flex-row items-center gap-2">
-              <div className="relative min-w-0 flex-1">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
-                <Input
-                  id="jobs-search"
-                  className="h-9 border-white/10 bg-slate-900/70 pl-8 text-xs text-white placeholder:text-slate-500"
-                  placeholder="Hledat…"
-                  value={jobListSearch}
-                  onChange={(e) => setJobListSearch(e.target.value)}
-                />
+            <div className="flex flex-col gap-2">
+              <div className="flex min-w-0 flex-row items-center gap-2">
+                <div className="relative min-w-0 flex-1">
+                  <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-400" />
+                  <Input
+                    id="jobs-search"
+                    className="h-9 border border-white/25 bg-slate-800/95 pl-8 text-xs text-white shadow-none placeholder:text-slate-400 [color-scheme:dark]"
+                    placeholder="Hledat…"
+                    value={jobListSearch}
+                    onChange={(e) => setJobListSearch(e.target.value)}
+                  />
+                </div>
+                <select
+                  aria-label="Filtrovat podle stavu"
+                  className={cn(
+                    NATIVE_SELECT_CLASS,
+                    "h-9 shrink-0 max-w-[42%] border border-white/25 bg-slate-800/95 py-0 text-xs text-white shadow-none min-[360px]:max-w-[46%] [color-scheme:dark] accent-orange-500"
+                  )}
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                >
+                  <option value="">Všechny stavy</option>
+                  {statusOptions.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
               </div>
-              <select
-                aria-label="Filtrovat podle stavu"
-                className={cn(
-                  NATIVE_SELECT_CLASS,
-                  "h-9 shrink-0 max-w-[42%] border-white/10 bg-slate-900/70 py-0 text-xs text-white min-[360px]:max-w-[46%]"
-                )}
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-              >
-                <option value="">Všechny stavy</option>
-                {statusOptions.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
-              </select>
+              <div className="flex min-w-0 items-center gap-2">
+                <Tag className="h-3.5 w-3.5 shrink-0 text-slate-400" aria-hidden />
+                <select
+                  id="jobs-tag-filter-mobile"
+                  aria-label="Filtrovat podle štítku"
+                  className={cn(
+                    NATIVE_SELECT_CLASS,
+                    "h-9 min-w-0 flex-1 border border-white/25 bg-slate-800/95 py-0 text-xs text-white shadow-none [color-scheme:dark] accent-orange-500"
+                  )}
+                  value={jobTagFilter}
+                  onChange={(e) => setJobTagFilter(e.target.value)}
+                >
+                  <option value="">Všechny zakázky</option>
+                  {jobTagFilterOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
           ) : (
             <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
@@ -1581,20 +1610,51 @@ function JobsPageContent() {
         </CardContent>
       </Card>
 
-      <Card className={cn("overflow-hidden", belowLg ? "border-white/10 bg-white/[0.04] text-slate-50" : "")}>
-        <CardContent className={cn("p-0", belowLg ? "overflow-x-hidden" : "overflow-x-auto")}>
+      <Card
+        className={cn(
+          "overflow-hidden",
+          belowLg ? "border-white/10 bg-slate-900/85 text-slate-50 shadow-none" : ""
+        )}
+      >
+        <CardContent
+          className={cn(
+            "p-0",
+            belowLg ? "overflow-x-hidden bg-slate-950" : "overflow-x-auto"
+          )}
+        >
           {isLoading ? (
-            <div className="flex items-center justify-center p-8 sm:p-12">
-              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <div
+              className={cn(
+                "flex items-center justify-center p-8 sm:p-12",
+                belowLg && "bg-slate-950"
+              )}
+            >
+              <Loader2
+                className={cn(
+                  "w-8 h-8 animate-spin",
+                  belowLg ? "text-slate-300" : "text-primary"
+                )}
+              />
             </div>
           ) : jobs.length > 0 && filteredJobs.length === 0 ? (
-            <div className={cn("text-center py-16 px-4 space-y-3", belowLg ? "text-slate-200" : "text-slate-800")}>
-              <p>Žádná zakázka neodpovídá vyhledávání nebo filtru štítku.</p>
+            <div
+              className={cn(
+                "space-y-3 px-4 py-16 text-center",
+                belowLg ? "bg-slate-950 text-slate-200" : "text-slate-800"
+              )}
+            >
+              <p className={belowLg ? "text-slate-200" : undefined}>
+                Žádná zakázka neodpovídá vyhledávání nebo filtru štítku.
+              </p>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="min-h-[40px]"
+                className={cn(
+                  "min-h-[40px]",
+                  belowLg &&
+                    "border-white/25 bg-slate-800 text-slate-100 hover:bg-slate-700 hover:text-white"
+                )}
                 onClick={() => {
                   setJobListSearch("");
                   setJobTagFilter("");
@@ -1605,7 +1665,7 @@ function JobsPageContent() {
               </Button>
             </div>
           ) : belowLg && filteredJobsMobile.length > 0 ? (
-            <div className="space-y-1.5 p-2">
+            <div className="space-y-1.5 bg-slate-950 p-2">
               {filteredJobsMobile.map((job) => {
                 const jid = job?.id;
                 const raw = job as unknown as Record<string, unknown>;
@@ -1622,35 +1682,35 @@ function JobsPageContent() {
                 return (
                   <div
                     key={jid ?? `job-${job?.name}`}
-                    className="rounded-lg border border-white/10 bg-slate-900/70 px-2.5 py-2"
+                    className="rounded-lg border border-white/10 bg-slate-900/90 px-2.5 py-2"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-semibold leading-tight text-white">
                           {job?.name ?? "—"}
                         </p>
-                        <p className="mt-0.5 truncate text-[11px] text-orange-300/95">
+                        <p className="mt-0.5 truncate text-[11px] text-slate-200">
                           {getCustomerName(job?.customerId)}
                         </p>
                         {addr ? (
-                          <p className="mt-0.5 flex items-start gap-1 text-[10px] leading-snug text-slate-400">
-                            <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-slate-500" aria-hidden />
+                          <p className="mt-0.5 flex items-start gap-1 text-[10px] leading-snug text-slate-300">
+                            <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-slate-400" aria-hidden />
                             <span className="line-clamp-2">{addr}</span>
                           </p>
                         ) : (
-                          <p className="mt-0.5 text-[10px] text-slate-500">Adresa —</p>
+                          <p className="mt-0.5 text-[10px] text-slate-400">Adresa —</p>
                         )}
                       </div>
                       <div className="shrink-0 pt-0.5">{getStatusBadgeMobile(job?.status)}</div>
                     </div>
 
-                    <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px] text-slate-400">
+                    <div className="mt-1.5 grid grid-cols-2 gap-x-2 gap-y-1 text-[10px]">
                       <div>
-                        <span className="text-slate-500">Termín </span>
-                        <span className="font-medium text-slate-200">{term}</span>
+                        <span className="text-slate-400">Termín </span>
+                        <span className="font-medium text-slate-100">{term}</span>
                       </div>
                       <div className="text-right">
-                        <span className="text-slate-500">Částka </span>
+                        <span className="text-slate-400">Částka </span>
                         <span className="font-medium tabular-nums text-orange-200">
                           {budgetGross != null
                             ? `${budgetGross.toLocaleString("cs-CZ")} Kč`
@@ -1774,13 +1834,29 @@ function JobsPageContent() {
               </TableBody>
             </Table>
           ) : (
-            <div className={cn("text-center py-20", belowLg ? "text-slate-200" : "text-slate-800")}>
-              <Briefcase className="w-12 h-12 mx-auto mb-4 opacity-20" />
-              <p>Zatím nemáte žádné zakázky.</p>
+            <div
+              className={cn(
+                "py-20 text-center",
+                belowLg ? "bg-slate-950 text-slate-200" : "text-slate-800"
+              )}
+            >
+              <Briefcase
+                className={cn(
+                  "mx-auto mb-4 h-12 w-12 opacity-20",
+                  belowLg ? "text-slate-200" : ""
+                )}
+              />
+              <p className={belowLg ? "text-slate-200" : undefined}>
+                Zatím nemáte žádné zakázky.
+              </p>
               {isAdmin && (
                 <Button
                   variant="link"
-                  className="text-primary"
+                  className={cn(
+                    belowLg
+                      ? "text-orange-400 hover:text-orange-300"
+                      : "text-primary"
+                  )}
                   onClick={() => setIsNewJobOpen(true)}
                 >
                   Vytvořit první projekt
