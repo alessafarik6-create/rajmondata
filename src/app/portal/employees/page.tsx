@@ -26,10 +26,11 @@ import {
   AlertTriangle,
   Link2,
   Landmark,
+  UserCheck,
 } from 'lucide-react';
 import Link from "next/link";
 import { useFirestore, useCollection, useMemoFirebase, useUser, useDoc } from '@/firebase';
-import { collection, doc, deleteDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, deleteDoc, updateDoc, serverTimestamp, query, where, limit } from 'firebase/firestore';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   parseAssignedWorklogJobIds,
@@ -88,9 +89,20 @@ import {
   parseEmployeeOrgRole,
 } from "@/lib/employee-organization";
 import {
+  attendanceRowMatchesEmployee,
+  buildEmployeeMap,
+} from "@/lib/attendance-overview-compute";
+import {
   isDailyWorkLogEnabled,
   isWorkLogEnabled,
 } from "@/lib/employee-report-flags";
+import {
+  buildTerminalActiveSegmentMapFromRows,
+} from "@/lib/terminal-active-segment";
+import {
+  computeWorkedHoursFromDayEvents,
+  type AttendanceEventLite,
+} from "@/lib/attendance-shift-state";
 import { parseEmployeePortalModules } from "@/lib/employee-portal-modules";
 import {
   EMPTY_EMPLOYEE_BANK_ACCOUNT,
@@ -98,6 +110,10 @@ import {
   parseBankAccountFromFirestore,
   type EmployeeBankAccount,
 } from "@/lib/employee-bank-account";
+import {
+  inferAttendanceClockStateForDay,
+  type AttendanceRow,
+} from "@/lib/employee-attendance";
 
 function releaseModalLocksAfterDismiss() {
   releaseDocumentModalLocksAfterTransition(320);
@@ -184,6 +200,33 @@ export default function EmployeesPage() {
   }, [firestore, companyId]);
 
   const { data: employees, isLoading } = useCollection(employeesQuery);
+  const todayIso = useMemo(
+    () => new Date().toISOString().split("T")[0],
+    []
+  );
+
+  const attendanceTodayQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "attendance"),
+      where("date", "==", todayIso),
+      limit(4000)
+    );
+  }, [firestore, companyId, todayIso]);
+
+  const openWorkSegmentsTodayQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "work_segments"),
+      where("date", "==", todayIso),
+      where("closed", "==", false)
+    );
+  }, [firestore, companyId, todayIso]);
+
+  const { data: attendanceTodayRaw, isLoading: attendanceTodayLoading } =
+    useCollection(attendanceTodayQuery);
+  const { data: openWorkSegmentsRaw, isLoading: openWorkSegmentsLoading } =
+    useCollection(openWorkSegmentsTodayQuery);
 
   const companyDocRef = useMemoFirebase(
     () =>
@@ -203,6 +246,95 @@ export default function EmployeesPage() {
 
   const [companySelfBankSaving, setCompanySelfBankSaving] = useState(false);
   const [companySelfDebtSaving, setCompanySelfDebtSaving] = useState(false);
+  const [mobileSearch, setMobileSearch] = useState("");
+  const [mobileStatusFilter, setMobileStatusFilter] = useState<"all" | "active" | "inactive">("all");
+
+  const employeesSafe = useMemo(() => (Array.isArray(employees) ? employees : []), [employees]);
+
+  const employeesMobileFiltered = useMemo(() => {
+    const q = mobileSearch.trim().toLowerCase();
+    return employeesSafe.filter((emp) => {
+      if (mobileStatusFilter === "active" && !emp.isActive) return false;
+      if (mobileStatusFilter === "inactive" && emp.isActive) return false;
+      if (!q) return true;
+      const fullName = `${String(emp.firstName ?? "")} ${String(emp.lastName ?? "")}`.toLowerCase();
+      const email = String(emp.email ?? "").toLowerCase();
+      const phone = String((emp as { phone?: unknown }).phone ?? "").toLowerCase();
+      return fullName.includes(q) || email.includes(q) || phone.includes(q);
+    });
+  }, [employeesSafe, mobileSearch, mobileStatusFilter]);
+
+  const inWorkMobileRows = useMemo(() => {
+    const todayRows = (Array.isArray(attendanceTodayRaw) ? attendanceTodayRaw : []) as AttendanceRow[];
+    const openSegments = Array.isArray(openWorkSegmentsRaw) ? openWorkSegmentsRaw : [];
+    const segmentMap = buildTerminalActiveSegmentMapFromRows(
+      openSegments as Array<Record<string, unknown> & { id: string }>
+    );
+    const empMap = buildEmployeeMap(employeesSafe as Record<string, unknown>[]);
+    const nowMs = Date.now();
+    const rows: Array<{
+      employeeKey: string;
+      name: string;
+      firstName: string;
+      lastName: string;
+      checkInLabel: string;
+      workedTodayLabel: string;
+      photoUrl?: string;
+    }> = [];
+
+    for (const emp of empMap.values()) {
+      const dayRows = todayRows.filter((r) =>
+        attendanceRowMatchesEmployee(r, emp.id, emp.authUserId)
+      );
+      if (dayRows.length === 0) continue;
+      const st = inferAttendanceClockStateForDay(dayRows);
+      if (st.state !== "in") continue;
+      const events: AttendanceEventLite[] = dayRows
+        .map((r) => {
+          const ts = r.timestamp;
+          const dt =
+            ts instanceof Date
+              ? ts
+              : ts && typeof (ts as { toDate?: () => Date }).toDate === "function"
+                ? (ts as { toDate: () => Date }).toDate()
+                : null;
+          return dt
+            ? { type: String(r.type || ""), timestampMs: dt.getTime() }
+            : null;
+        })
+        .filter((e): e is AttendanceEventLite => Boolean(e))
+        .sort((a, b) => a.timestampMs - b.timestampMs);
+      const worked = computeWorkedHoursFromDayEvents(events, nowMs);
+      const sourceEmp = employeesSafe.find((item) => item.id === emp.id) as
+        | Record<string, unknown>
+        | undefined;
+      rows.push({
+        employeeKey: emp.id,
+        name: emp.displayName,
+        firstName: String((sourceEmp?.firstName as string) ?? ""),
+        lastName: String((sourceEmp?.lastName as string) ?? ""),
+        checkInLabel: st.lastCheckIn.toLocaleTimeString("cs-CZ", {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+        workedTodayLabel: `${worked.toLocaleString("cs-CZ", {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 2,
+        })} h`,
+        photoUrl:
+          typeof sourceEmp?.photoURL === "string"
+            ? sourceEmp.photoURL
+            : typeof sourceEmp?.profileImage === "string"
+              ? sourceEmp.profileImage
+              : typeof sourceEmp?.photoUrl === "string"
+                ? sourceEmp.photoUrl
+                : undefined,
+      });
+    }
+
+    rows.sort((a, b) => a.name.localeCompare(b.name, "cs"));
+    return rows;
+  }, [attendanceTodayRaw, openWorkSegmentsRaw, employeesSafe]);
 
   /** Řízené menu „tři tečky“ — zabrání rozporu stavu s Dialogem po zavření. */
   const [employeeActionMenuOpenId, setEmployeeActionMenuOpenId] = useState<
@@ -1074,12 +1206,13 @@ export default function EmployeesPage() {
   if (!canView && profile) return null;
 
   return (
-    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8">
+    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-6 pb-[calc(96px+env(safe-area-inset-bottom))] sm:space-y-8 sm:pb-0">
       <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
         <div className="min-w-0">
-          <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl break-words">
+          <h1 className="portal-page-title hidden text-xl sm:text-2xl md:block md:text-3xl break-words">
             Správa zaměstnanců
           </h1>
+          <h1 className="portal-page-title text-2xl break-words md:hidden">Zaměstnanci</h1>
           <p className="portal-page-description">Pracovníci organizace {companyId}.</p>
           {canManage ? (
             <>
@@ -1500,7 +1633,184 @@ export default function EmployeesPage() {
         </DialogContent>
       </Dialog>
 
-      <Card className="bg-surface border-border overflow-hidden">
+      <Card className="border-border bg-[#121826] text-slate-100 shadow-sm md:hidden">
+        <CardContent className="space-y-4 p-3">
+          <div className="space-y-3">
+            {canManage ? (
+              <Button className="h-9 w-full gap-2 bg-orange-500 text-black hover:bg-orange-400" onClick={() => setIsInviteOpen(true)}>
+                <Plus className="h-4 w-4" /> Přidat zaměstnance
+              </Button>
+            ) : null}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+              <Input
+                value={mobileSearch}
+                onChange={(e) => setMobileSearch(e.target.value)}
+                placeholder="Vyhledat zaměstnance"
+                className="h-9 border-slate-700 bg-slate-900 pl-9 text-slate-100 placeholder:text-slate-400"
+              />
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant={mobileStatusFilter === "all" ? "default" : "outline"}
+                className={cn(
+                  "h-8 flex-1 text-xs",
+                  mobileStatusFilter === "all"
+                    ? "bg-orange-500 text-black hover:bg-orange-400"
+                    : "border-slate-700 bg-slate-900 text-slate-200"
+                )}
+                onClick={() => setMobileStatusFilter("all")}
+              >
+                Všichni
+              </Button>
+              <Button
+                type="button"
+                variant={mobileStatusFilter === "active" ? "default" : "outline"}
+                className={cn(
+                  "h-8 flex-1 text-xs",
+                  mobileStatusFilter === "active"
+                    ? "bg-emerald-500 text-black hover:bg-emerald-400"
+                    : "border-slate-700 bg-slate-900 text-slate-200"
+                )}
+                onClick={() => setMobileStatusFilter("active")}
+              >
+                Aktivní
+              </Button>
+              <Button
+                type="button"
+                variant={mobileStatusFilter === "inactive" ? "default" : "outline"}
+                className={cn(
+                  "h-8 flex-1 text-xs",
+                  mobileStatusFilter === "inactive"
+                    ? "bg-slate-600 text-white hover:bg-slate-500"
+                    : "border-slate-700 bg-slate-900 text-slate-200"
+                )}
+                onClick={() => setMobileStatusFilter("inactive")}
+              >
+                Neaktivní
+              </Button>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <UserCheck className="h-4 w-4 text-emerald-400" />
+              <h2 className="text-sm font-semibold tracking-wide">V práci</h2>
+            </div>
+            {attendanceTodayLoading || openWorkSegmentsLoading ? (
+              <div className="flex items-center justify-center py-5">
+                <Loader2 className="h-5 w-5 animate-spin text-orange-400" />
+              </div>
+            ) : inWorkMobileRows.length === 0 ? (
+              <p className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-3 text-sm text-slate-300">
+                Nikdo není aktuálně v práci
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {inWorkMobileRows.map((item) => (
+                  <div key={item.employeeKey} className="rounded-md border border-emerald-500/30 bg-slate-900/80 px-3 py-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        <Avatar className="h-7 w-7 border border-slate-700">
+                          <AvatarImage src={item.photoUrl} alt="" className="object-cover" />
+                          <AvatarFallback className="bg-slate-700 text-[10px] text-slate-100">
+                            {`${item.firstName.trim()[0] || ""}${item.lastName.trim()[0] || ""}`.toUpperCase() || "—"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-100">{item.name}</p>
+                          <p className="text-[11px] text-slate-400">Příchod {item.checkInLabel} · Odpracováno {item.workedTodayLabel}</p>
+                        </div>
+                      </div>
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-medium text-emerald-300">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+                        V práci
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <h2 className="text-sm font-semibold tracking-wide text-slate-100">Přehled zaměstnanců</h2>
+            {isLoading ? (
+              <div className="flex items-center justify-center py-6">
+                <Loader2 className="h-5 w-5 animate-spin text-orange-400" />
+              </div>
+            ) : employeesMobileFiltered.length === 0 ? (
+              <p className="rounded-md border border-slate-700 bg-slate-900/60 px-3 py-3 text-sm text-slate-300">
+                Zatím nemáte žádné zaměstnance.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                {employeesMobileFiltered.map((emp) => (
+                  <div key={emp.id} className="rounded-md border border-slate-700 bg-slate-900/70 px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-start gap-2.5">
+                        <Avatar className="h-8 w-8 border border-slate-700">
+                          <AvatarImage
+                            src={(emp as any).photoURL || (emp as any).profileImage || (emp as any).photoUrl || undefined}
+                            className="object-cover"
+                            alt=""
+                          />
+                          <AvatarFallback className="bg-slate-700 text-[10px] text-slate-100">
+                            {`${String(emp.firstName || "").trim()[0] || ""}${String(emp.lastName || "").trim()[0] || ""}`.toUpperCase() || "—"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-slate-100">
+                            {emp.firstName} {emp.lastName}
+                          </p>
+                          <p className="truncate text-[11px] text-slate-400">
+                            {parseEmployeeOrgRole(emp as { role?: unknown }) === "orgAdmin"
+                              ? "Administrátor organizace"
+                              : "Zaměstnanec"}
+                          </p>
+                          <p className="truncate text-[11px] text-slate-400">{String(emp.phone ?? "—")}</p>
+                          <p className="truncate text-[11px] text-slate-400">{String(emp.email ?? "—")}</p>
+                        </div>
+                      </div>
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium",
+                          emp.isActive
+                            ? "border border-emerald-400/40 bg-emerald-500/10 text-emerald-300"
+                            : "border border-slate-500/60 bg-slate-700/40 text-slate-300"
+                        )}
+                      >
+                        <span className={cn("h-1.5 w-1.5 rounded-full", emp.isActive ? "bg-emerald-400" : "bg-slate-400")} />
+                        {emp.isActive ? "Aktivní" : "Neaktivní"}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex items-center justify-end gap-2">
+                      <Button asChild size="sm" variant="outline" className="h-7 border-slate-600 bg-slate-800 text-xs text-slate-100 hover:bg-slate-700">
+                        <Link href={`/portal/employees/${encodeURIComponent(emp.id)}`}>Detail</Link>
+                      </Button>
+                      {canManage ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 border-orange-500/60 bg-orange-500/10 text-xs text-orange-300 hover:bg-orange-500/20"
+                          onClick={() =>
+                            openOrgSettingsForEmployee(emp as Record<string, unknown> & { id?: string })
+                          }
+                        >
+                          Upravit
+                        </Button>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="hidden overflow-hidden border-border bg-surface md:block">
         <div className="p-3 sm:p-4 border-b bg-background/30 flex flex-col sm:flex-row gap-3 sm:gap-4 justify-between min-w-0">
           <div className="relative w-full max-w-full sm:max-w-md sm:w-80 min-w-0">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
