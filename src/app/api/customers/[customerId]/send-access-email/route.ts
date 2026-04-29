@@ -7,12 +7,14 @@ import {
 } from "@/lib/api-verify-company-user";
 import {
   absoluteUrl,
+  buildCustomerAccessEmailHtml,
   loadCompanyEmailBranding,
   normalizeEmail,
   isValidEmail,
-  wrapPortalEmailHtml,
+  toAppPasswordResetUrl,
 } from "@/lib/customer-portal-email";
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
+import { PLATFORM_NAME } from "@/lib/platform-brand";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,7 +70,8 @@ export async function POST(
 
   let resetLink: string;
   try {
-    resetLink = await auth.generatePasswordResetLink(email);
+    const firebaseResetLink = await auth.generatePasswordResetLink(email);
+    resetLink = toAppPasswordResetUrl(firebaseResetLink);
   } catch {
     return NextResponse.json(
       { error: "Nepodařilo se připravit odkaz pro nastavení hesla." },
@@ -78,19 +81,19 @@ export async function POST(
 
   const branding = await loadCompanyEmailBranding(db, companyId);
   const loginUrl = absoluteUrl("/login");
-  const subject = `Přístup do zákaznického portálu – ${branding.companyName}`;
-  const html = wrapPortalEmailHtml({
-    greeting: "Dobrý den,",
-    paragraphs: [
-      "byl Vám vytvořen přístup do zákaznického portálu.",
-      `Přihlášení: ${loginUrl}`,
-      `E-mail: ${email}`,
-      `Nastavení hesla: ${resetLink}`,
-      "Po přihlášení uvidíte své zakázky, dokumenty, výkresy a schválení.",
-    ],
-    actionUrl: resetLink,
-    actionLabel: "Nastavit heslo a otevřít portál",
-    companyName: branding.companyName,
+  const customerName =
+    String(customer.name ?? "").trim() ||
+    String(customer.fullName ?? "").trim() ||
+    String(customer.contactName ?? "").trim() ||
+    "zákazníku";
+  const subject = `${PLATFORM_NAME}: přístup do zákaznického portálu`;
+  const html = buildCustomerAccessEmailHtml({
+    portalName: PLATFORM_NAME,
+    organizationName: branding.companyName,
+    customerName,
+    customerEmail: email,
+    inviteUrl: resetLink,
+    loginUrl,
     logoUrl: branding.logoUrl,
     contactEmail: branding.contactEmail,
   });

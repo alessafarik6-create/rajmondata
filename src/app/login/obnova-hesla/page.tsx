@@ -52,6 +52,7 @@ function AuthPageShell({ children }: { children: React.ReactNode }) {
 
 const INPUT_CLASS =
   "border-border bg-background text-foreground pr-10";
+const MIN_PASSWORD_LENGTH = 8;
 
 function PasswordField({
   id,
@@ -155,6 +156,11 @@ function ObnovaHeslaContent() {
       return;
     }
 
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setSubmitError(`Heslo musí mít alespoň ${MIN_PASSWORD_LENGTH} znaků.`);
+      return;
+    }
+
     if (!auth || !oobCode) {
       setLinkInvalid(true);
       return;
@@ -228,7 +234,7 @@ function ObnovaHeslaContent() {
                 Nastavení nového hesla
               </CardTitle>
               <CardDescription className="text-foreground">
-                Heslo bylo úspěšně změněno.
+                Heslo bylo nastaveno. Nyní se můžete přihlásit.
               </CardDescription>
             </div>
           </CardHeader>
@@ -280,7 +286,7 @@ function ObnovaHeslaContent() {
                 className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
                 role="alert"
               >
-                Hesla se neshodují.
+                Hesla se neshodují
               </div>
             ) : null}
 
@@ -332,7 +338,7 @@ function ObnovaHeslaContent() {
                   Ukládám...
                 </>
               ) : (
-                "Uložit nové heslo"
+                "Uložit heslo"
               )}
             </Button>
           </CardContent>
