@@ -29,15 +29,27 @@ type Props = {
   jobId: string;
   customerUid: string;
   jobName?: string;
+  /** Výchozí: /portal/customer/jobs/{jobId} — u admin náhledu předej cestu k náhledové stránce. */
+  taskLinkBase?: string;
+  readOnly?: boolean;
 };
 
-function taskHref(jobId: string, type: string | undefined): string {
-  if (type === "fill_questionnaire") return `/portal/customer/jobs/${jobId}#customer-questionnaire`;
-  if (type === "select_products") return `/portal/customer/jobs/${jobId}#customer-product-catalogs`;
-  return `/portal/customer/jobs/${jobId}`;
+function taskHref(jobId: string, type: string | undefined, base: string): string {
+  if (type === "fill_questionnaire") return `${base}#customer-questionnaire`;
+  if (type === "select_products") return `${base}#customer-product-catalogs`;
+  return base;
 }
 
-export function CustomerJobTasksSection({ companyId, jobId, customerUid, jobName }: Props) {
+export function CustomerJobTasksSection({
+  companyId,
+  jobId,
+  customerUid,
+  jobName,
+  taskLinkBase,
+  readOnly = false,
+}: Props) {
+  const linkBase =
+    (taskLinkBase?.trim() || `/portal/customer/jobs/${jobId}`).replace(/\/$/, "");
   const firestore = useFirestore();
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -130,15 +142,17 @@ export function CustomerJobTasksSection({ companyId, jobId, customerUid, jobName
               </div>
               <div className="flex flex-wrap gap-2 shrink-0">
                 <Button variant="outline" size="sm" asChild>
-                  <Link href={taskHref(jobId, t.type)}>Otevřít</Link>
+                  <Link href={taskHref(jobId, t.type, linkBase)}>Otevřít</Link>
                 </Button>
-                <Button
-                  size="sm"
-                  disabled={busyId === t.id}
-                  onClick={() => void markCompleted(t.id)}
-                >
-                  {busyId === t.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Označit splněno"}
-                </Button>
+                {readOnly ? null : (
+                  <Button
+                    size="sm"
+                    disabled={busyId === t.id}
+                    onClick={() => void markCompleted(t.id)}
+                  >
+                    {busyId === t.id ? <Loader2 className="h-4 w-4 animate-spin" /> : "Označit splněno"}
+                  </Button>
+                )}
               </div>
             </div>
           );

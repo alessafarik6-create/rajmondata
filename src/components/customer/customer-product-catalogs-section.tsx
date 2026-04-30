@@ -30,6 +30,7 @@ type Props = {
   jobId: string;
   customerUid: string;
   customerId?: string | null;
+  readOnly?: boolean;
 };
 
 export function CustomerProductCatalogsSection({
@@ -37,6 +38,7 @@ export function CustomerProductCatalogsSection({
   jobId,
   customerUid,
   customerId = null,
+  readOnly = false,
 }: Props) {
   const { toast } = useToast();
   const firestore = useFirestore();
@@ -80,7 +82,7 @@ export function CustomerProductCatalogsSection({
     catalog: { id: string } & Partial<ProductCatalogDoc>,
     productId: string
   ) => {
-    if (!firestore) return;
+    if (readOnly || !firestore) return;
     const existing = selectionMap.get(catalog.id);
     const isSelectionLocked = existing?.status === "confirmed";
     if (isSelectionLocked) {
@@ -118,7 +120,7 @@ export function CustomerProductCatalogsSection({
   };
 
   const saveNote = async (catalog: { id: string } & Partial<ProductCatalogDoc>, note: string) => {
-    if (!firestore) return;
+    if (readOnly || !firestore) return;
     const docId = `${catalog.id}__${customerUid}`;
     const ref = doc(
       firestore,
@@ -204,6 +206,7 @@ export function CustomerProductCatalogsSection({
         const isSelectionLocked = selectionMap.get(catalog.id)?.status === "confirmed";
         const noteDefault = selectionMap.get(catalog.id)?.note ?? "";
         const catalogHref = `/portal/customer/jobs/${jobId}/catalogs/${catalog.id}`;
+        const navOff = readOnly;
         const visibleProducts = [...(catalog.products ?? [])]
           .filter((p) => p && p.active !== false && p.archived !== true)
           .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
@@ -214,20 +217,30 @@ export function CustomerProductCatalogsSection({
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
                   <CardTitle className="text-lg leading-snug">
-                    <Link
-                      href={catalogHref}
-                      className="text-primary underline-offset-4 hover:underline"
-                    >
-                      {catalog.name || "Katalog"}
-                    </Link>
+                    {navOff ? (
+                      <span className="text-foreground">{catalog.name || "Katalog"}</span>
+                    ) : (
+                      <Link
+                        href={catalogHref}
+                        className="text-primary underline-offset-4 hover:underline"
+                      >
+                        {catalog.name || "Katalog"}
+                      </Link>
+                    )}
                   </CardTitle>
                   <p className="mt-1 text-xs text-muted-foreground">
                     Režim výběru: {catalog.selectionMode === "single" ? "Jedna položka" : "Více položek"}
                   </p>
                 </div>
-                <Button size="sm" variant="outline" asChild className="shrink-0">
-                  <Link href={catalogHref}>Detail katalogu</Link>
-                </Button>
+                {navOff ? (
+                  <Button size="sm" variant="outline" className="shrink-0" disabled>
+                    Detail katalogu
+                  </Button>
+                ) : (
+                  <Button size="sm" variant="outline" asChild className="shrink-0">
+                    <Link href={catalogHref}>Detail katalogu</Link>
+                  </Button>
+                )}
               </div>
               {isSelectionLocked ? (
                 <p className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
@@ -260,7 +273,12 @@ export function CustomerProductCatalogsSection({
                   </ul>
                 </div>
               ) : null}
-              <CustomerCatalogCompactRow href={catalogHref} catalog={catalog} className="sm:hidden" />
+              <CustomerCatalogCompactRow
+                href={catalogHref}
+                catalog={catalog}
+                className="sm:hidden"
+                navigationDisabled={navOff}
+              />
               <ul className="space-y-2">
                 {visibleProducts.map((p) => {
                   const isSelected = selected.has(p.id);
@@ -270,20 +288,23 @@ export function CustomerProductCatalogsSection({
                       <CustomerProductCompactRow
                         href={productHref}
                         product={p}
+                        navigationDisabled={navOff}
                         trailing={
-                          <Button
-                            type="button"
-                            size="sm"
-                            className="min-h-10 w-[5.5rem] px-2 text-xs sm:text-sm"
-                            variant={isSelected ? "secondary" : "default"}
-                            disabled={savingKey === `${catalog.id}:${p.id}` || isSelectionLocked}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              void toggleProduct(catalog, p.id);
-                            }}
-                          >
-                            {isSelected ? "Vybráno" : "Vybrat"}
-                          </Button>
+                          readOnly ? null : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="min-h-10 w-[5.5rem] px-2 text-xs sm:text-sm"
+                              variant={isSelected ? "secondary" : "default"}
+                              disabled={savingKey === `${catalog.id}:${p.id}` || isSelectionLocked}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                void toggleProduct(catalog, p.id);
+                              }}
+                            >
+                              {isSelected ? "Vybráno" : "Vybrat"}
+                            </Button>
+                          )
                         }
                       />
                     </li>
@@ -296,8 +317,9 @@ export function CustomerProductCatalogsSection({
               <Input
                 defaultValue={noteDefault || ""}
                 placeholder="Poznámka k výběru…"
-                disabled={isSelectionLocked}
+                disabled={readOnly || isSelectionLocked}
                 onBlur={(e) => {
+                  if (readOnly) return;
                   void saveNote(catalog, e.target.value);
                 }}
               />

@@ -112,6 +112,7 @@ import {
   jobTagLabel,
 } from "@/lib/job-tags";
 import { cn } from "@/lib/utils";
+import { getJobCustomerPortalPreviewGate } from "@/lib/job-customer-portal-preview";
 import { JD } from "@/lib/job-detail-page-styles";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
@@ -671,6 +672,11 @@ function JobDetailPageContent() {
     profile?.role === "owner" ||
     profile?.role === "admin" ||
     profile?.globalRoles?.includes("super_admin");
+
+  const customerPortalPreviewGate = useMemo(
+    () => getJobCustomerPortalPreviewGate(job as Record<string, unknown> | null | undefined),
+    [job]
+  );
 
   const canManageFolders =
     profile?.role === "owner" ||
@@ -6808,6 +6814,32 @@ function JobDetailPageContent() {
                       ) : null}
                       Odeslat přístup e-mailem
                     </Button>
+                  ) : null}
+                  {isAdmin && jobFirestoreId && customerPortalPreviewGate.show ? (
+                    customerPortalPreviewGate.disabled ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-2 h-8 w-full sm:w-auto"
+                        disabled
+                        title="Zákazník ještě nemá vytvořené přihlášení do portálu"
+                      >
+                        Zákaznický profil není vytvořen
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        className="mt-2 h-8 w-full sm:w-auto"
+                        asChild
+                      >
+                        <Link href={`/portal/jobs/${jobFirestoreId}/customer-preview`}>
+                          Náhled jako zákazník
+                        </Link>
+                      </Button>
+                    )
                   ) : null}
                 </div>
               ) : (

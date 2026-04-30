@@ -27,6 +27,7 @@ type Props = {
   customerUid: string;
   customerId: string | null | undefined;
   jobData: Record<string, unknown> | null | undefined;
+  readOnly?: boolean;
 };
 
 export function CustomerJobQuestionnaireSection({
@@ -35,6 +36,7 @@ export function CustomerJobQuestionnaireSection({
   customerUid,
   customerId,
   jobData,
+  readOnly = false,
 }: Props) {
   const firestore = useFirestore();
   const [initDone, setInitDone] = useState(false);
@@ -78,6 +80,10 @@ export function CustomerJobQuestionnaireSection({
   }, [responseRaw]);
 
   useEffect(() => {
+    if (readOnly) {
+      setInitDone(true);
+      return;
+    }
     if (!firestore || !companyId || !jobId || !customerUid || !tpl || tpl.active === false) {
       setInitDone(true);
       return;
@@ -137,6 +143,7 @@ export function CustomerJobQuestionnaireSection({
     tpl,
     responseRaw,
     responseLoading,
+    readOnly,
   ]);
 
   const persist = useCallback(
@@ -205,6 +212,16 @@ export function CustomerJobQuestionnaireSection({
   }
 
   if (!responseRaw) {
+    if (readOnly) {
+      return (
+        <Card id="customer-questionnaire">
+          <CardHeader>
+            <CardTitle>Dotazník</CardTitle>
+            <CardDescription>Zákazník zatím nemá uloženou odpověď.</CardDescription>
+          </CardHeader>
+        </Card>
+      );
+    }
     return (
       <Card id="customer-questionnaire">
         <CardHeader>
@@ -225,12 +242,18 @@ export function CustomerJobQuestionnaireSection({
       : tpl.description;
 
   const sortedQs = [...questions].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const formLocked = locked || readOnly;
 
   return (
     <Card id="customer-questionnaire" className="scroll-mt-4">
       <CardHeader>
         <CardTitle className="text-lg">{title}</CardTitle>
         {description ? <CardDescription>{description}</CardDescription> : null}
+        {readOnly ? (
+          <p className="text-sm font-medium rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-slate-800">
+            Náhled — dotazník je pouze ke čtení.
+          </p>
+        ) : null}
         {locked ? (
           <p className="text-sm font-medium text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-md px-3 py-2">
             Dotazník byl odeslán. Úpravy již nejsou možné.
@@ -255,7 +278,7 @@ export function CustomerJobQuestionnaireSection({
               <div key={q.id} className={wrapCls}>
                 {baseLabel}
                 <Textarea
-                  disabled={locked}
+                  disabled={formLocked}
                   className="min-h-[100px]"
                   placeholder={q.placeholder}
                   value={typeof v === "string" ? v : ""}
@@ -272,7 +295,7 @@ export function CustomerJobQuestionnaireSection({
               <div key={q.id} className={wrapCls}>
                 {baseLabel}
                 <RadioGroup
-                  disabled={locked}
+                  disabled={formLocked}
                   value={val}
                   onValueChange={(x) => setAnswer(q, x)}
                   className="grid gap-3"
@@ -282,7 +305,7 @@ export function CustomerJobQuestionnaireSection({
                       key={o.value}
                       className={cn(
                         "flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-sm",
-                        locked && "opacity-60 pointer-events-none"
+                        formLocked && "opacity-60 pointer-events-none"
                       )}
                     >
                       <RadioGroupItem value={o.value} id={`${q.id}-${o.value}`} className="mt-1" />
@@ -309,13 +332,13 @@ export function CustomerJobQuestionnaireSection({
                         key={o.value}
                         className={cn(
                           "flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200 bg-white p-3",
-                          locked && "opacity-60 pointer-events-none"
+                          formLocked && "opacity-60 pointer-events-none"
                         )}
                       >
                         <input
                           type="checkbox"
                           className="mt-1 h-4 w-4 rounded border-slate-300"
-                          disabled={locked}
+                          disabled={formLocked}
                           checked={checked}
                           onChange={() => {
                             const next = new Set(arr);
@@ -341,7 +364,7 @@ export function CustomerJobQuestionnaireSection({
                 {baseLabel}
                 <Input
                   type="date"
-                  disabled={locked}
+                  disabled={formLocked}
                   value={s}
                   onChange={(e) => setAnswer(q, e.target.value)}
                 />
@@ -357,7 +380,7 @@ export function CustomerJobQuestionnaireSection({
                 {baseLabel}
                 <Input
                   type="number"
-                  disabled={locked}
+                  disabled={formLocked}
                   placeholder={q.placeholder}
                   value={n}
                   onChange={(e) => {
@@ -395,7 +418,7 @@ export function CustomerJobQuestionnaireSection({
             <div key={q.id} className={wrapCls}>
               {baseLabel}
               <Input
-                disabled={locked}
+                disabled={formLocked}
                 placeholder={q.placeholder}
                 value={typeof v === "string" ? v : ""}
                 onChange={(e) => setAnswer(q, e.target.value)}
@@ -405,7 +428,7 @@ export function CustomerJobQuestionnaireSection({
           );
         })}
 
-        {!locked ? (
+        {!locked && !readOnly ? (
           <div className="flex flex-wrap gap-3 pt-2">
             <Button type="button" variant="outline" disabled={saving} onClick={() => void onSaveDraft()}>
               Uložit rozpracované

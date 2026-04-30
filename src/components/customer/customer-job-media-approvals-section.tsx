@@ -183,6 +183,8 @@ export type CustomerJobMediaApprovalsSectionProps = {
   jobId: string;
   customerUid: string;
   legacyPhotos: LegacyPhoto[] | undefined;
+  /** Admin náhled — bez schvalování a připomínek. */
+  readOnly?: boolean;
 };
 
 export function CustomerJobMediaApprovalsSection({
@@ -190,6 +192,7 @@ export function CustomerJobMediaApprovalsSection({
   jobId,
   customerUid,
   legacyPhotos,
+  readOnly = false,
 }: CustomerJobMediaApprovalsSectionProps) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -381,7 +384,9 @@ export function CustomerJobMediaApprovalsSection({
         <CardHeader className="pb-2">
           <CardTitle className="text-lg">Ke schválení</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Dokumenty k vašemu souhlasu nebo připomínce. Klepněte na náhled pro zvětšení.
+            {readOnly
+              ? "Náhled stavu schvalování u zákazníka. Akce schválení nejsou v náhledu dostupné."
+              : "Dokumenty k vašemu souhlasu nebo připomínce. Klepněte na náhled pro zvětšení."}
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -442,7 +447,17 @@ export function CustomerJobMediaApprovalsSection({
                       {it.approval.customerComment}
                     </div>
                   ) : null}
-                  {commentOpenFor === it.key ? (
+                  {readOnly ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="min-h-[44px]"
+                      onClick={() => setLightbox(it)}
+                    >
+                      <FileText className="mr-1 h-4 w-4" aria-hidden />
+                      Zobrazit větší
+                    </Button>
+                  ) : commentOpenFor === it.key ? (
                     <div className="space-y-2">
                       <Textarea
                         value={commentDraft}
@@ -539,7 +554,7 @@ export function CustomerJobMediaApprovalsSection({
                   {lightbox.approval.approvalNoteFromAdmin}
                 </p>
               ) : null}
-              {lightboxCommentOpen ? (
+              {readOnly ? null : lightboxCommentOpen ? (
                 <div className="space-y-2">
                   <Textarea
                     value={lightboxCommentDraft}
