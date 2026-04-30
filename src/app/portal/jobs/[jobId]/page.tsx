@@ -80,6 +80,9 @@ import {
   FolderInput,
   Factory,
   RotateCcw,
+  Hand,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -211,8 +214,12 @@ import {
   clearPendingJobMeasurementFile,
   peekPendingJobMeasurementFile,
 } from "@/lib/pending-job-measurement-photo-idb";
+import {
+  clientToCanvasImagePoint,
+  clientToCanvasImagePointClamped,
+} from "@/lib/annotation-view-coords";
 
-type AnnotationTool = "dimension" | "note" | "select";
+type AnnotationTool = "dimension" | "note" | "select" | "pan";
 
 type DragMode =
   | "none"
@@ -1014,6 +1021,8 @@ function JobDetailPageContent() {
   );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const annotationTransformRef = useRef<HTMLDivElement | null>(null);
+  const annotationWheelCaptureRef = useRef<HTMLDivElement | null>(null);
   const [canvasReady, setCanvasReady] = useState(false);
   const [imageForCanvas, setImageForCanvas] = useState<HTMLImageElement | null>(null);
   const [baseImageLoaded, setBaseImageLoaded] = useState(false);
@@ -1075,6 +1084,48 @@ function JobDetailPageContent() {
       document.body.style.overflow = prev;
     };
   }, [editorOpen, isAnnotTouchUI]);
+
+  useEffect(() => {
+    if (!editorOpen) return;
+    const el = annotationWheelCaptureRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!canvasRef.current || !baseImageLoaded) return;
+      e.preventDefault();
+      const z0 = annotationViewRef.current.zoom;
+      const factor = e.ctrlKey
+        ? Math.exp(-e.deltaY * 0.01)
+        : e.deltaY > 0
+          ? 0.9
+          : 1.1;
+      const z1 = Math.min(10, Math.max(1, z0 * factor));
+      if (Math.abs(z1 - z0) < 1e-6) return;
+      const wrap = annotationTransformRef.current;
+      if (!wrap) {
+        setAnnotationView((v) => ({ ...v, zoom: z1 }));
+        return;
+      }
+      const r = wrap.getBoundingClientRect();
+      const dx = e.clientX - (r.left + r.width / 2);
+      const dy = e.clientY - (r.top + r.height / 2);
+      const ratio = z1 / z0;
+      setAnnotationView((v) => ({
+        zoom: z1,
+        panX: v.panX + dx * (1 - ratio),
+        panY: v.panY + dy * (1 - ratio),
+      }));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [editorOpen, baseImageLoaded]);
+
+  const bumpAnnotZoom = useCallback((dir: 1 | -1) => {
+    const factor = dir > 0 ? 1.15 : 1 / 1.15;
+    setAnnotationView((v) => {
+      const z1 = Math.min(10, Math.max(1, v.zoom * factor));
+      return { ...v, zoom: z1 };
+    });
+  }, []);
 
   const [contractDialogOpen, setContractDialogOpen] = useState(false);
   const [contractDialogMode, setContractDialogMode] = useState<"view" | "edit">(
@@ -3525,16 +3576,17 @@ function JobDetailPageContent() {
   const getCanvasCoordsFromClient = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
-
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-
-    return {
-      x: (clientX - rect.left) * scaleX,
-      y: (clientY - rect.top) * scaleY,
-    };
+    return clientToCanvasImagePointClamped(canvas, clientX, clientY);
   };
+
+  const hitTestCanvasPoint = useCallback(
+    (clientX: number, clientY: number) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return null;
+      return clientToCanvasImagePoint(canvas, clientX, clientY);
+    },
+    []
+  );
 
   const hitTestAnnotation = useCallback(
     (x: number, y: number) => {
@@ -3734,8 +3786,41 @@ function JobDetailPageContent() {
       }
     }
 
+    if (e.button === 1) {
+      viewPanStartRef.current = {
+        cx: e.clientX,
+        cy: e.clientY,
+        panX: annotationViewRef.current.panX,
+        panY: annotationViewRef.current.panY,
+      };
+      setDragMode("view-pan");
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    if (activeTool === "pan") {
+      viewPanStartRef.current = {
+        cx: e.clientX,
+        cy: e.clientY,
+        panX: annotationViewRef.current.panX,
+        panY: annotationViewRef.current.panY,
+      };
+      setDragMode("view-pan");
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
+    const ptStrict = hitTestCanvasPoint(e.clientX, e.clientY);
     const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
-    const hit = hitTestAnnotation(pt.x, pt.y);
+    const hit = ptStrict ? hitTestAnnotation(ptStrict.x, ptStrict.y) : null;
 
     if (activeTool === "dimension") {
       if (hit) {
@@ -3796,11 +3881,12 @@ function JobDetailPageContent() {
     } else {
       setSelectedAnnotationId(null);
       setDraftAnnotationId(null);
-      if (
-        isAnnotTouchUI &&
+      const canPanView =
         annotationViewRef.current.zoom > 1.02 &&
-        e.pointerType === "touch"
-      ) {
+        (isAnnotTouchUI
+          ? e.pointerType === "touch"
+          : activeTool === "select");
+      if (canPanView) {
         setDragMode("view-pan");
         viewPanStartRef.current = {
           cx: e.clientX,
@@ -3846,7 +3932,7 @@ function JobDetailPageContent() {
         const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
         const s = pinchSessionRef.current;
         const scaleRatio = dist / s.anchorDist;
-        const newZoom = Math.min(5, Math.max(1, s.anchorZoom * scaleRatio));
+        const newZoom = Math.min(10, Math.max(1, s.anchorZoom * scaleRatio));
         const dmx = mid.x - s.anchorMidX;
         const dmy = mid.y - s.anchorMidY;
         setAnnotationView({
@@ -4614,7 +4700,8 @@ function JobDetailPageContent() {
       const annotationData = serializeJobPhotoAnnotations(
         annotations,
         exportCanvas.width,
-        exportCanvas.height
+        exportCanvas.height,
+        { pageIndex: 0 }
       );
 
       const target = photoToEdit.annotationTarget;
@@ -5071,7 +5158,9 @@ function JobDetailPageContent() {
   const canvasCursor = useMemo(() => {
     if (dragMode === "note-rect-draw") return "crosshair";
     if (dragMode === "note-resize-br") return "nwse-resize";
+    if (dragMode === "view-pan") return "grabbing";
     if (dragMode !== "none") return "grabbing";
+    if (activeTool === "pan") return "grab";
     if (activeTool === "dimension") return "crosshair";
     if (activeTool === "note") return "crosshair";
     return "default";
@@ -5567,6 +5656,16 @@ function JobDetailPageContent() {
                   >
                     Výběr
                   </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={activeTool === "pan" ? "default" : "ghost"}
+                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
+                    onClick={() => setActiveTool("pan")}
+                    title="Posun"
+                  >
+                    Posun
+                  </Button>
                 </div>
                 <div className="pointer-events-auto absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-l-lg border border-white/10 bg-slate-900/95 py-1 pl-0.5 pr-1 shadow-lg">
                   {(
@@ -5599,8 +5698,12 @@ function JobDetailPageContent() {
                   ))}
                 </div>
                 <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black">
-                  <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+                  <div
+                    ref={annotationWheelCaptureRef}
+                    className="absolute inset-0 flex items-center justify-center overflow-hidden"
+                  >
                     <div
+                      ref={annotationTransformRef}
                       style={{
                         transform: `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
                         transformOrigin: "center center",
@@ -5618,7 +5721,7 @@ function JobDetailPageContent() {
                     </div>
                     <div
                       className="pointer-events-auto absolute inset-0 z-[12]"
-                      style={{ touchAction: "none" }}
+                      style={{ touchAction: "none", cursor: canvasCursor }}
                       onPointerDown={handleCanvasPointerDown}
                       onPointerMove={handleCanvasPointerMove}
                       onPointerUp={handleCanvasPointerUp}
@@ -5667,6 +5770,28 @@ function JobDetailPageContent() {
                 >
                   <RotateCcw className="h-3.5 w-3.5 shrink-0" />
                   1:1
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
+                  onClick={() => bumpAnnotZoom(1)}
+                  disabled={annotationView.zoom >= 10}
+                  title="Přiblížit"
+                >
+                  <ZoomIn className="h-3.5 w-3.5" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
+                  onClick={() => bumpAnnotZoom(-1)}
+                  disabled={annotationView.zoom <= 1}
+                  title="Oddálit"
+                >
+                  <ZoomOut className="h-3.5 w-3.5" />
                 </Button>
                 <Button
                   type="button"
@@ -5755,6 +5880,39 @@ function JobDetailPageContent() {
                 >
                   Výběr
                 </Button>
+                <Button
+                  type="button"
+                  variant={activeTool === "pan" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px] gap-1"
+                  onClick={() => setActiveTool("pan")}
+                  title="Posun přiblíženého náhledu (nebo kolečko myši, prostřední tlačítko)"
+                >
+                  <Hand className="h-4 w-4 shrink-0" />
+                  Posun
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px] px-2"
+                  onClick={() => bumpAnnotZoom(1)}
+                  disabled={annotationView.zoom >= 10}
+                  title="Přiblížit"
+                >
+                  <ZoomIn className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px] px-2"
+                  onClick={() => bumpAnnotZoom(-1)}
+                  disabled={annotationView.zoom <= 1}
+                  title="Oddálit"
+                >
+                  <ZoomOut className="h-4 w-4" />
+                </Button>
 
                 <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
 
@@ -5812,6 +5970,7 @@ function JobDetailPageContent() {
             </div>
 
             <div
+              ref={annotationWheelCaptureRef}
               className={cn(
                 "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-black",
                 isAnnotTouchUI
@@ -5833,6 +5992,7 @@ function JobDetailPageContent() {
                 }
               >
                 <div
+                  ref={annotationTransformRef}
                   style={{
                     transform: `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
                     transformOrigin: "center center",
@@ -5890,6 +6050,45 @@ function JobDetailPageContent() {
 
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5">
               <div className="flex flex-wrap gap-1.5 sm:gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px] gap-1"
+                  onClick={() =>
+                    setAnnotationView({ zoom: 1, panX: 0, panY: 0 })
+                  }
+                  disabled={
+                    annotationView.zoom === 1 &&
+                    annotationView.panX === 0 &&
+                    annotationView.panY === 0
+                  }
+                >
+                  <RotateCcw className="h-4 w-4 shrink-0" />
+                  1:1
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px] px-2"
+                  onClick={() => bumpAnnotZoom(1)}
+                  disabled={annotationView.zoom >= 10}
+                  title="Přiblížit"
+                >
+                  <ZoomIn className="h-4 w-4" />
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px] px-2"
+                  onClick={() => bumpAnnotZoom(-1)}
+                  disabled={annotationView.zoom <= 1}
+                  title="Oddálit"
+                >
+                  <ZoomOut className="h-4 w-4" />
+                </Button>
                 <Button
                   type="button"
                   variant="outline"

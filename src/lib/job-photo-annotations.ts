@@ -37,6 +37,8 @@ export type JobPhotoAnnotationPayload = {
   version: number;
   imageWidth: number;
   imageHeight: number;
+  /** 0-based; u vícestránkového PDF budoucí rozšíření (zatím vždy 0). */
+  pageIndex?: number;
   items: SerializedItem[];
 };
 
@@ -73,10 +75,15 @@ function clamp01(n: number): number {
 export function serializeJobPhotoAnnotations(
   items: JobPhotoAnnotation[],
   imageWidth: number,
-  imageHeight: number
+  imageHeight: number,
+  opts?: { pageIndex?: number }
 ): JobPhotoAnnotationPayload {
   const iw = Math.max(1, Math.round(imageWidth));
   const ih = Math.max(1, Math.round(imageHeight));
+  const pageIndex =
+    typeof opts?.pageIndex === "number" && Number.isFinite(opts.pageIndex)
+      ? Math.max(0, Math.floor(opts.pageIndex))
+      : 0;
 
   const out: SerializedItem[] = [];
   for (const a of items) {
@@ -117,7 +124,13 @@ export function serializeJobPhotoAnnotations(
     }
   }
 
-  return { version: JOB_PHOTO_ANNOTATION_VERSION, imageWidth: iw, imageHeight: ih, items: out };
+  return {
+    version: JOB_PHOTO_ANNOTATION_VERSION,
+    imageWidth: iw,
+    imageHeight: ih,
+    pageIndex,
+    items: out,
+  };
 }
 
 export function deserializeJobPhotoAnnotations(
