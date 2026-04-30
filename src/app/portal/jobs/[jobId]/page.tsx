@@ -70,6 +70,7 @@ import {
   Users,
   Clock,
   ChevronLeft,
+  ChevronRight,
   Edit2,
   FileText,
   FileStack,
@@ -190,9 +191,11 @@ import {
 import { ref, getDownloadURL, deleteObject, getBlob } from "firebase/storage";
 import { FirebaseError } from "firebase/app";
 import Link from "next/link";
+import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deserializeJobPhotoAnnotations,
   readAnnotationPayloadFromPhotoDoc,
+  readAnnotationPayloadReferenceSize,
   serializeJobPhotoAnnotations,
   type DimensionColor,
   type JobPhotoAnnotation as Annotation,
@@ -241,6 +244,41 @@ type AnnotationPinchSession = {
   anchorMidX: number;
   anchorMidY: number;
 };
+
+const PDF_EDITOR_SCALE_MIN = 0.5;
+const PDF_EDITOR_SCALE_MAX = 4;
+const PDF_EDITOR_SCALE_STEP = 0.25;
+
+function clampPdfScale(s: number): number {
+  const stepped = Math.round(s / PDF_EDITOR_SCALE_STEP) * PDF_EDITOR_SCALE_STEP;
+  return Math.min(
+    PDF_EDITOR_SCALE_MAX,
+    Math.max(PDF_EDITOR_SCALE_MIN, stepped)
+  );
+}
+
+function annotationTargetLooksPdf(
+  pe: JobPhotoAnnotationTarget | null,
+  resolvedUrl: string
+): boolean {
+  if (!pe) return false;
+  if (pe.fileType === "pdf") return true;
+  const n = `${pe.fileName || ""} ${pe.name || ""}`.toLowerCase();
+  if (n.includes(".pdf")) return true;
+  if (/\.pdf(\?|#|$)/i.test(resolvedUrl)) return true;
+  return false;
+}
+
+async function loadPdfJsForAnnotationEditor() {
+  const pdfjs = await import("pdfjs-dist");
+  const ver = pdfjs.version || "4.10.38";
+  const major = Number(String(ver).split(".")[0] || "4");
+  pdfjs.GlobalWorkerOptions.workerSrc =
+    major === 3
+      ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
+      : `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`;
+  return pdfjs;
+}
 
 type ContractOpenPreset = "sod_work" | "new_contract" | "new_addendum" | "new_attachment";
 
@@ -1056,6 +1094,28 @@ function JobDetailPageContent() {
   const annotationViewRef = useRef(annotationView);
   annotationViewRef.current = annotationView;
 
+  const [editorMediaKind, setEditorMediaKind] = useState<"image" | "pdf" | null>(
+    null
+  );
+  const editorMediaKindRef = useRef<"image" | "pdf" | null>(null);
+  editorMediaKindRef.current = editorMediaKind;
+
+  const [pdfScale, setPdfScale] = useState(1);
+  const pdfScaleRef = useRef(1);
+  pdfScaleRef.current = pdfScale;
+
+  const [pdfPage, setPdfPage] = useState(1);
+  const [pdfNumPages, setPdfNumPages] = useState(0);
+  const [pdfDocRevision, setPdfDocRevision] = useState(0);
+
+  const pdfDocRef = useRef<PDFDocumentProxy | null>(null);
+  const pdfBackingRef = useRef<HTMLCanvasElement | null>(null);
+  const pdfBaseSizeRef = useRef<{ w: number; h: number } | null>(null);
+  const pdfAnnotationsByPageRef = useRef<Map<number, Annotation[]>>(new Map());
+  const prevPdfPageRef = useRef(1);
+  const annotationsRef = useRef<Annotation[]>([]);
+  annotationsRef.current = annotations;
+
   const pointerMapRef = useRef(
     new Map<number, { clientX: number; clientY: number; pointerType: string }>()
   );
@@ -1071,6 +1131,8 @@ function JobDetailPageContent() {
   useEffect(() => {
     if (!editorOpen) return;
     setAnnotationView({ zoom: 1, panX: 0, panY: 0 });
+    setPdfScale(1);
+    setPdfPage(1);
     pointerMapRef.current.clear();
     pinchSessionRef.current = null;
     viewPanStartRef.current = null;
@@ -1092,6 +1154,32 @@ function JobDetailPageContent() {
     const onWheel = (e: WheelEvent) => {
       if (!canvasRef.current || !baseImageLoaded) return;
       e.preventDefault();
+      if (editorMediaKindRef.current === "pdf") {
+        const z0 = pdfScaleRef.current;
+        const factor = e.ctrlKey
+          ? Math.exp(-e.deltaY * 0.01)
+          : e.deltaY > 0
+            ? 0.9
+            : 1.1;
+        const z1 = clampPdfScale(z0 * factor);
+        if (Math.abs(z1 - z0) < 1e-6) return;
+        const wrap = annotationTransformRef.current;
+        if (!wrap) {
+          setPdfScale(z1);
+          return;
+        }
+        const r = wrap.getBoundingClientRect();
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        const ratio = z1 / z0;
+        setAnnotationView((v) => ({
+          zoom: 1,
+          panX: v.panX + dx * (1 - ratio),
+          panY: v.panY + dy * (1 - ratio),
+        }));
+        setPdfScale(z1);
+        return;
+      }
       const z0 = annotationViewRef.current.zoom;
       const factor = e.ctrlKey
         ? Math.exp(-e.deltaY * 0.01)
@@ -1120,6 +1208,10 @@ function JobDetailPageContent() {
   }, [editorOpen, baseImageLoaded]);
 
   const bumpAnnotZoom = useCallback((dir: 1 | -1) => {
+    if (editorMediaKindRef.current === "pdf") {
+      setPdfScale((s) => clampPdfScale(s + dir * PDF_EDITOR_SCALE_STEP));
+      return;
+    }
     const factor = dir > 0 ? 1.15 : 1 / 1.15;
     setAnnotationView((v) => {
       const z1 = Math.min(10, Math.max(1, v.zoom * factor));
@@ -1283,6 +1375,22 @@ function JobDetailPageContent() {
   }, []);
 
   const resetAnnotationState = useCallback(() => {
+    try {
+      pdfDocRef.current?.destroy?.();
+    } catch {
+      /* ignore */
+    }
+    pdfDocRef.current = null;
+    pdfBackingRef.current = null;
+    pdfBaseSizeRef.current = null;
+    pdfAnnotationsByPageRef.current.clear();
+    prevPdfPageRef.current = 1;
+    setPdfPage(1);
+    setPdfScale(1);
+    setPdfNumPages(0);
+    setPdfDocRevision(0);
+    setEditorMediaKind(null);
+
     setImageError(null);
     setImageForCanvas(null);
     setBaseImageLoaded(false);
@@ -3354,6 +3462,63 @@ function JobDetailPageContent() {
         }
         if (cancelled) return;
 
+        const isPdfTarget = annotationTargetLooksPdf(photoToEdit, resolvedUrl);
+
+        if (isPdfTarget) {
+          const pdfjs = await loadPdfJsForAnnotationEditor();
+          const pdfBuf = await fetch(resolvedUrl).then((r) => r.arrayBuffer());
+          if (cancelled) return;
+          const pdf = await pdfjs.getDocument({ data: new Uint8Array(pdfBuf) })
+            .promise;
+          if (cancelled) {
+            try {
+              await pdf.destroy?.();
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          pdfDocRef.current = pdf;
+          setPdfNumPages(pdf.numPages);
+
+          const rawPayload = photoToEdit
+            ? readAnnotationPayloadFromPhotoDoc(
+                photoToEdit as Record<string, unknown>
+              )
+            : null;
+          const refSz = readAnnotationPayloadReferenceSize(rawPayload);
+          let initialPage = 1;
+          const pIdx = (rawPayload as { pageIndex?: unknown } | null)?.pageIndex;
+          if (typeof pIdx === "number" && Number.isFinite(pIdx)) {
+            initialPage = Math.min(
+              pdf.numPages,
+              Math.max(1, Math.floor(pIdx) + 1)
+            );
+          }
+          prevPdfPageRef.current = initialPage;
+          setPdfPage(initialPage);
+
+          const pageForBase = await pdf.getPage(initialPage);
+          const baseVp = pageForBase.getViewport({ scale: 1 });
+          pdfBaseSizeRef.current = { w: baseVp.width, h: baseVp.height };
+
+          const iw = refSz?.width ?? baseVp.width;
+          const ih = refSz?.height ?? baseVp.height;
+          const loaded = deserializeJobPhotoAnnotations(rawPayload, iw, ih);
+          pdfAnnotationsByPageRef.current.clear();
+          pdfAnnotationsByPageRef.current.set(initialPage, loaded as Annotation[]);
+          setAnnotations(loaded as Annotation[]);
+
+          setImageForCanvas(null);
+          setImageError(null);
+          setEditorMediaKind("pdf");
+          setPdfDocRevision((v) => v + 1);
+          if (photoToEdit?.annotationTarget?.kind === "measurementPhotos") {
+            console.log("[MeasurementPhoto] editor: PDF document ready");
+          }
+          return;
+        }
+
         let image: HTMLImageElement;
 
         try {
@@ -3420,6 +3585,7 @@ function JobDetailPageContent() {
           canvas.height
         );
         setAnnotations(loaded as Annotation[]);
+        setEditorMediaKind("image");
       } catch (error) {
         if (cancelled) return;
 
@@ -3451,17 +3617,100 @@ function JobDetailPageContent() {
     photoToEdit?.annotationData,
     photoToEdit?.pendingObjectUrl,
     photoToEdit?.pendingLocalFile,
+    photoToEdit?.fileType,
   ]);
+
+  useEffect(() => {
+    if (!editorOpen || editorMediaKind !== "pdf") return;
+    const pdf = pdfDocRef.current;
+    if (!pdf || pdfNumPages < 1) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        setBaseImageLoaded(false);
+        const page = await pdf.getPage(pdfPage);
+        if (cancelled) return;
+        const baseVp = page.getViewport({ scale: 1 });
+        pdfBaseSizeRef.current = { w: baseVp.width, h: baseVp.height };
+        const vp = page.getViewport({ scale: pdfScale });
+        const w = Math.max(1, Math.round(vp.width));
+        const h = Math.max(1, Math.round(vp.height));
+
+        let backing = pdfBackingRef.current;
+        if (!backing) {
+          backing = document.createElement("canvas");
+          pdfBackingRef.current = backing;
+        }
+        backing.width = w;
+        backing.height = h;
+        const bctx = backing.getContext("2d");
+        if (!bctx) throw new Error("2D context");
+        bctx.fillStyle = "#ffffff";
+        bctx.fillRect(0, 0, w, h);
+        await page.render({ canvasContext: bctx, viewport: vp }).promise;
+        if (cancelled) return;
+
+        const canvas = canvasRef.current;
+        if (canvas && !cancelled) {
+          canvas.width = w;
+          canvas.height = h;
+        }
+        setBaseImageLoaded(true);
+        setImageError(null);
+      } catch (e) {
+        if (cancelled) return;
+        console.error("[JobDetailPage] PDF render failed", e);
+        setBaseImageLoaded(false);
+        setImageError(
+          e instanceof Error ? e.message : "PDF se nepodařilo vykreslit."
+        );
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    editorOpen,
+    editorMediaKind,
+    pdfDocRevision,
+    pdfPage,
+    pdfScale,
+    pdfNumPages,
+  ]);
+
+  const goPdfPage = useCallback(
+    (delta: number) => {
+      if (editorMediaKindRef.current !== "pdf" || pdfNumPages < 1) return;
+      const clamped = Math.max(1, Math.min(pdfNumPages, pdfPage + delta));
+      if (clamped === pdfPage) return;
+      pdfAnnotationsByPageRef.current.set(pdfPage, annotationsRef.current);
+      prevPdfPageRef.current = clamped;
+      setPdfPage(clamped);
+      setAnnotations(pdfAnnotationsByPageRef.current.get(clamped) ?? []);
+    },
+    [pdfNumPages, pdfPage]
+  );
 
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !imageForCanvas || !baseImageLoaded) return;
+    if (!canvas || !baseImageLoaded) return;
+    const isPdf = editorMediaKind === "pdf";
+    if (!isPdf && !imageForCanvas) return;
+    if (isPdf && !pdfBackingRef.current) return;
 
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(imageForCanvas, 0, 0, canvas.width, canvas.height);
+    if (isPdf) {
+      ctx.drawImage(pdfBackingRef.current!, 0, 0);
+    } else {
+      ctx.drawImage(imageForCanvas!, 0, 0, canvas.width, canvas.height);
+    }
+
+    const coordScale = isPdf ? pdfScale : 1;
 
     const { fontSize, lineWidth, endpointRadius, arrowLen } =
       getScaleAwareSizes(canvas);
@@ -3482,6 +3731,10 @@ function JobDetailPageContent() {
     };
 
     const drawDimension = (a: DimensionAnnotation, isSelected: boolean) => {
+      const sx = a.startX * coordScale;
+      const sy = a.startY * coordScale;
+      const ex = a.endX * coordScale;
+      const ey = a.endY * coordScale;
       const stroke = colorToHex(a.color);
       ctx.lineWidth = isSelected ? lineWidth + 2 : lineWidth;
       ctx.lineCap = "round";
@@ -3490,25 +3743,25 @@ function JobDetailPageContent() {
       ctx.fillStyle = stroke;
 
       ctx.beginPath();
-      ctx.moveTo(a.startX, a.startY);
-      ctx.lineTo(a.endX, a.endY);
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.arc(a.startX, a.startY, endpointRadius, 0, Math.PI * 2);
+      ctx.arc(sx, sy, endpointRadius, 0, Math.PI * 2);
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(a.endX, a.endY, endpointRadius, 0, Math.PI * 2);
+      ctx.arc(ex, ey, endpointRadius, 0, Math.PI * 2);
       ctx.fill();
 
-      const angle = Math.atan2(a.endY - a.startY, a.endX - a.startX);
-      drawArrowHead(a.startX, a.startY, angle + Math.PI);
-      drawArrowHead(a.endX, a.endY, angle);
+      const angle = Math.atan2(ey - sy, ex - sx);
+      drawArrowHead(sx, sy, angle + Math.PI);
+      drawArrowHead(ex, ey, angle);
 
       const label = (a.label || "").trim();
       if (label) {
-        const midX = (a.startX + a.endX) / 2;
-        const midY = (a.startY + a.endY) / 2;
+        const midX = (sx + ex) / 2;
+        const midY = (sy + ey) / 2;
         const paddingX = Math.round(fontSize * 0.6);
         const paddingY = Math.round(fontSize * 0.45);
         const offset = Math.round(fontSize * 0.6);
@@ -3537,7 +3790,22 @@ function JobDetailPageContent() {
       const isSelected = a.id === selectedAnnotationId;
       if (a.type === "dimension") drawDimension(a, isSelected);
       if (a.type === "note") {
-        drawNoteAnnotationOnCanvas(ctx, canvas, a, isSelected, {
+        const na = a as NoteAnnotation;
+        const scaled: NoteAnnotation =
+          coordScale === 1
+            ? na
+            : {
+                ...na,
+                boxX: na.boxX * coordScale,
+                boxY: na.boxY * coordScale,
+                targetX: na.targetX * coordScale,
+                targetY: na.targetY * coordScale,
+                boxWidth:
+                  na.boxWidth != null ? na.boxWidth * coordScale : undefined,
+                boxHeight:
+                  na.boxHeight != null ? na.boxHeight * coordScale : undefined,
+              };
+        drawNoteAnnotationOnCanvas(ctx, canvas, scaled, isSelected, {
           fontSize,
           lineWidth,
           endpointRadius,
@@ -3548,10 +3816,12 @@ function JobDetailPageContent() {
     });
 
     if (noteRectDraft) {
-      const bx = Math.min(noteRectDraft.x0, noteRectDraft.x1);
-      const by = Math.min(noteRectDraft.y0, noteRectDraft.y1);
-      const bw = Math.abs(noteRectDraft.x1 - noteRectDraft.x0);
-      const bh = Math.abs(noteRectDraft.y1 - noteRectDraft.y0);
+      const bx =
+        Math.min(noteRectDraft.x0, noteRectDraft.x1) * coordScale;
+      const by =
+        Math.min(noteRectDraft.y0, noteRectDraft.y1) * coordScale;
+      const bw = Math.abs(noteRectDraft.x1 - noteRectDraft.x0) * coordScale;
+      const bh = Math.abs(noteRectDraft.y1 - noteRectDraft.y0) * coordScale;
       ctx.fillStyle = "rgba(250,204,21,0.18)";
       ctx.strokeStyle = "rgba(250,204,21,0.95)";
       ctx.lineWidth = 2;
@@ -3567,6 +3837,8 @@ function JobDetailPageContent() {
     selectedAnnotationId,
     noteRectDraft,
     colorToHex,
+    editorMediaKind,
+    pdfScale,
   ]);
 
   useEffect(() => {
@@ -3576,14 +3848,25 @@ function JobDetailPageContent() {
   const getCanvasCoordsFromClient = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
-    return clientToCanvasImagePointClamped(canvas, clientX, clientY);
+    const p = clientToCanvasImagePointClamped(canvas, clientX, clientY);
+    if (editorMediaKind === "pdf") {
+      const s = Math.max(1e-6, pdfScale);
+      return { x: p.x / s, y: p.y / s };
+    }
+    return p;
   };
 
   const hitTestCanvasPoint = useCallback(
     (clientX: number, clientY: number) => {
       const canvas = canvasRef.current;
       if (!canvas) return null;
-      return clientToCanvasImagePoint(canvas, clientX, clientY);
+      const pt = clientToCanvasImagePoint(canvas, clientX, clientY);
+      if (!pt) return null;
+      if (editorMediaKindRef.current === "pdf") {
+        const s = Math.max(1e-6, pdfScaleRef.current);
+        return { x: pt.x / s, y: pt.y / s };
+      }
+      return pt;
     },
     []
   );
@@ -3595,15 +3878,20 @@ function JobDetailPageContent() {
       const ctx = canvas.getContext("2d");
       if (!ctx) return null;
       const { hitRadius, fontSize, endpointRadius } = getScaleAwareSizes(canvas);
+      const isPdf = editorMediaKind === "pdf";
+      const s = Math.max(1e-6, pdfScale);
+      const hrDim = isPdf ? hitRadius / s : hitRadius;
+      const xN = isPdf ? x * s : x;
+      const yN = isPdf ? y * s : y;
 
       // Top-most first (last drawn)
       for (let i = annotations.length - 1; i >= 0; i--) {
         const a = annotations[i];
 
         if (a.type === "dimension") {
-          const nearStart = distance(x, y, a.startX, a.startY) <= hitRadius;
+          const nearStart = distance(x, y, a.startX, a.startY) <= hrDim;
           if (nearStart) return { id: a.id, part: "dim-start" as const };
-          const nearEnd = distance(x, y, a.endX, a.endY) <= hitRadius;
+          const nearEnd = distance(x, y, a.endX, a.endY) <= hrDim;
           if (nearEnd) return { id: a.id, part: "dim-end" as const };
 
           const dLine = distancePointToSegment(
@@ -3614,11 +3902,25 @@ function JobDetailPageContent() {
             a.endX,
             a.endY
           );
-          if (dLine <= hitRadius) return { id: a.id, part: "dim-move" as const };
+          if (dLine <= hrDim) return { id: a.id, part: "dim-move" as const };
         }
 
         if (a.type === "note") {
-          const layout = computeNoteLayout(a, canvas, ctx, fontSize);
+          const na = a as NoteAnnotation;
+          const noteForLayout: NoteAnnotation = isPdf
+            ? {
+                ...na,
+                boxX: na.boxX * s,
+                boxY: na.boxY * s,
+                targetX: na.targetX * s,
+                targetY: na.targetY * s,
+                boxWidth:
+                  na.boxWidth != null ? na.boxWidth * s : undefined,
+                boxHeight:
+                  na.boxHeight != null ? na.boxHeight * s : undefined,
+              }
+            : na;
+          const layout = computeNoteLayout(noteForLayout, canvas, ctx, fontSize);
 
           if (
             selectedAnnotationId === a.id &&
@@ -3629,20 +3931,22 @@ function JobDetailPageContent() {
             const h = noteResizeHandleSize(endpointRadius);
             const hx = layout.boxX + layout.boxW - h;
             const hy = layout.boxY + layout.boxH - h;
-            if (x >= hx && x <= hx + h && y >= hy && y <= hy + h) {
+            if (xN >= hx && xN <= hx + h && yN >= hy && yN <= hy + h) {
               return { id: a.id, part: "note-resize-br" as const };
             }
           }
 
           const inBox =
-            x >= layout.boxX &&
-            x <= layout.boxX + layout.boxW &&
-            y >= layout.boxY &&
-            y <= layout.boxY + layout.boxH;
+            xN >= layout.boxX &&
+            xN <= layout.boxX + layout.boxW &&
+            yN >= layout.boxY &&
+            yN <= layout.boxY + layout.boxH;
           if (inBox) return { id: a.id, part: "note-box" as const };
 
           if (a.showArrow !== false) {
-            const nearTarget = distance(x, y, a.targetX, a.targetY) <= hitRadius;
+            const nearTarget =
+              distance(xN, yN, noteForLayout.targetX, noteForLayout.targetY) <=
+              hitRadius;
             if (nearTarget) return { id: a.id, part: "note-target" as const };
           }
         }
@@ -3650,7 +3954,7 @@ function JobDetailPageContent() {
 
       return null;
     },
-    [annotations, selectedAnnotationId]
+    [annotations, selectedAnnotationId, editorMediaKind, pdfScale]
   );
 
   const updateSelectedColor = useCallback(
@@ -3728,8 +4032,9 @@ function JobDetailPageContent() {
   }, [annotations.length]);
 
   const handleCanvasPointerDown = (e: React.PointerEvent<HTMLElement>) => {
-    if (!imageForCanvas || !baseImageLoaded) return;
+    if (!baseImageLoaded) return;
     if (!canvasRef.current) return;
+    if (editorMediaKindRef.current !== "pdf" && !imageForCanvas) return;
     e.preventDefault();
 
     pointerMapRef.current.set(e.pointerId, {
@@ -3751,7 +4056,10 @@ function JobDetailPageContent() {
           const av = annotationViewRef.current;
           pinchSessionRef.current = {
             anchorDist: dist,
-            anchorZoom: av.zoom,
+            anchorZoom:
+              editorMediaKindRef.current === "pdf"
+                ? pdfScaleRef.current
+                : av.zoom,
             anchorPanX: av.panX,
             anchorPanY: av.panY,
             anchorMidX: (p1.x + p2.x) / 2,
@@ -3881,8 +4189,12 @@ function JobDetailPageContent() {
     } else {
       setSelectedAnnotationId(null);
       setDraftAnnotationId(null);
+      const zoomed =
+        editorMediaKindRef.current === "pdf"
+          ? pdfScaleRef.current > 1.02
+          : annotationViewRef.current.zoom > 1.02;
       const canPanView =
-        annotationViewRef.current.zoom > 1.02 &&
+        zoomed &&
         (isAnnotTouchUI
           ? e.pointerType === "touch"
           : activeTool === "select");
@@ -3907,7 +4219,8 @@ function JobDetailPageContent() {
   };
 
   const handleCanvasPointerMove = (e: React.PointerEvent<HTMLElement>) => {
-    if (!imageForCanvas || !baseImageLoaded) return;
+    if (!baseImageLoaded) return;
+    if (editorMediaKindRef.current !== "pdf" && !imageForCanvas) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
 
@@ -3932,14 +4245,24 @@ function JobDetailPageContent() {
         const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
         const s = pinchSessionRef.current;
         const scaleRatio = dist / s.anchorDist;
-        const newZoom = Math.min(10, Math.max(1, s.anchorZoom * scaleRatio));
         const dmx = mid.x - s.anchorMidX;
         const dmy = mid.y - s.anchorMidY;
-        setAnnotationView({
-          zoom: newZoom,
-          panX: s.anchorPanX + dmx,
-          panY: s.anchorPanY + dmy,
-        });
+        if (editorMediaKindRef.current === "pdf") {
+          const newScale = clampPdfScale(s.anchorZoom * scaleRatio);
+          setPdfScale(newScale);
+          setAnnotationView({
+            zoom: 1,
+            panX: s.anchorPanX + dmx,
+            panY: s.anchorPanY + dmy,
+          });
+        } else {
+          const newZoom = Math.min(10, Math.max(1, s.anchorZoom * scaleRatio));
+          setAnnotationView({
+            zoom: newZoom,
+            panX: s.anchorPanX + dmx,
+            panY: s.anchorPanY + dmy,
+          });
+        }
         return;
       }
     }
@@ -3949,7 +4272,7 @@ function JobDetailPageContent() {
       const st = viewPanStartRef.current;
       if (st) {
         setAnnotationView({
-          zoom: annotationViewRef.current.zoom,
+          zoom: editorMediaKindRef.current === "pdf" ? 1 : annotationViewRef.current.zoom,
           panX: st.panX + (e.clientX - st.cx),
           panY: st.panY + (e.clientY - st.cy),
         });
@@ -4011,8 +4334,12 @@ function JobDetailPageContent() {
             };
           }
           if (dragMode === "note-resize-br") {
-            const maxW = canvas.width - a.boxX;
-            const maxH = canvas.height - a.boxY;
+            const pdfS = Math.max(1e-6, pdfScaleRef.current);
+            const isPdf = editorMediaKindRef.current === "pdf";
+            const cwBase = isPdf ? canvas.width / pdfS : canvas.width;
+            const chBase = isPdf ? canvas.height / pdfS : canvas.height;
+            const maxW = cwBase - a.boxX;
+            const maxH = chBase - a.boxY;
             const newW = Math.max(40, Math.min(pt.x - a.boxX, maxW));
             const newH = Math.max(24, Math.min(pt.y - a.boxY, maxH));
             const next: NoteAnnotation = {
@@ -4036,7 +4363,8 @@ function JobDetailPageContent() {
   };
 
   const handleCanvasPointerUp = (e: React.PointerEvent<HTMLElement>) => {
-    if (!imageForCanvas || !baseImageLoaded) return;
+    if (!baseImageLoaded) return;
+    if (editorMediaKindRef.current !== "pdf" && !imageForCanvas) return;
 
     pointerMapRef.current.delete(e.pointerId);
     const touchesRemain = [...pointerMapRef.current.values()].filter(
@@ -4544,11 +4872,28 @@ function JobDetailPageContent() {
   };
 
   const handleSaveAnnotated = async () => {
-    if (!baseImageLoaded || !imageForCanvas) {
+    const isPdfSave = editorMediaKind === "pdf";
+    if (!baseImageLoaded) {
+      toast({
+        variant: "destructive",
+        title: "Chyba při exportu",
+        description: "Podklad není načten, export nelze provést.",
+      });
+      return;
+    }
+    if (!isPdfSave && !imageForCanvas) {
       toast({
         variant: "destructive",
         title: "Chyba při exportu",
         description: "Základní fotografie není načtena, export nelze provést.",
+      });
+      return;
+    }
+    if (isPdfSave && (!pdfDocRef.current || pdfNumPages < 1)) {
+      toast({
+        variant: "destructive",
+        title: "Chyba při exportu",
+        description: "PDF není připraveno k uložení.",
       });
       return;
     }
@@ -4585,8 +4930,6 @@ function JobDetailPageContent() {
     }
 
     const exportCanvas = document.createElement("canvas");
-    exportCanvas.width = imageForCanvas.naturalWidth || imageForCanvas.width;
-    exportCanvas.height = imageForCanvas.naturalHeight || imageForCanvas.height;
 
     const ctx = exportCanvas.getContext("2d");
     if (!ctx) {
@@ -4600,8 +4943,31 @@ function JobDetailPageContent() {
 
     setIsSavingAnnotation(true);
 
-    ctx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
-    ctx.drawImage(imageForCanvas, 0, 0);
+    try {
+      if (isPdfSave) {
+        const pdf = pdfDocRef.current!;
+        const page = await pdf.getPage(pdfPage);
+        const vp = page.getViewport({ scale: 1 });
+        exportCanvas.width = Math.max(1, Math.round(vp.width));
+        exportCanvas.height = Math.max(1, Math.round(vp.height));
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+        await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      } else {
+        exportCanvas.width = imageForCanvas!.naturalWidth || imageForCanvas!.width;
+        exportCanvas.height = imageForCanvas!.naturalHeight || imageForCanvas!.height;
+        ctx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
+        ctx.drawImage(imageForCanvas!, 0, 0);
+      }
+    } catch (e) {
+      setIsSavingAnnotation(false);
+      toast({
+        variant: "destructive",
+        title: "Chyba při exportu",
+        description: e instanceof Error ? e.message : "Export podkladu selhal.",
+      });
+      return;
+    }
 
     const drawAll = (targetCtx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
       const { fontSize, lineWidth, endpointRadius, arrowLen } =
@@ -4701,7 +5067,7 @@ function JobDetailPageContent() {
         annotations,
         exportCanvas.width,
         exportCanvas.height,
-        { pageIndex: 0 }
+        { pageIndex: isPdfSave ? pdfPage - 1 : 0 }
       );
 
       const target = photoToEdit.annotationTarget;
@@ -5700,12 +6066,15 @@ function JobDetailPageContent() {
                 <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black">
                   <div
                     ref={annotationWheelCaptureRef}
-                    className="absolute inset-0 flex items-center justify-center overflow-hidden"
+                    className="absolute inset-0 flex touch-none items-center justify-center overflow-hidden"
                   >
                     <div
                       ref={annotationTransformRef}
                       style={{
-                        transform: `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
+                        transform:
+                          editorMediaKind === "pdf"
+                            ? `translate(${annotationView.panX}px, ${annotationView.panY}px)`
+                            : `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
                         transformOrigin: "center center",
                       }}
                       className="flex h-full w-full max-h-full max-w-full items-center justify-center"
@@ -5759,11 +6128,14 @@ function JobDetailPageContent() {
                   variant="outline"
                   size="sm"
                   className="h-8 gap-1 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
-                  onClick={() =>
-                    setAnnotationView({ zoom: 1, panX: 0, panY: 0 })
-                  }
+                  onClick={() => {
+                    setPdfScale(1);
+                    setAnnotationView({ zoom: 1, panX: 0, panY: 0 });
+                  }}
                   disabled={
-                    annotationView.zoom === 1 &&
+                    (editorMediaKind === "pdf"
+                      ? pdfScale === 1
+                      : annotationView.zoom === 1) &&
                     annotationView.panX === 0 &&
                     annotationView.panY === 0
                   }
@@ -5777,7 +6149,11 @@ function JobDetailPageContent() {
                   size="sm"
                   className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
                   onClick={() => bumpAnnotZoom(1)}
-                  disabled={annotationView.zoom >= 10}
+                  disabled={
+                    editorMediaKind === "pdf"
+                      ? pdfScale >= PDF_EDITOR_SCALE_MAX
+                      : annotationView.zoom >= 10
+                  }
                   title="Přiblížit"
                 >
                   <ZoomIn className="h-3.5 w-3.5" />
@@ -5788,11 +6164,44 @@ function JobDetailPageContent() {
                   size="sm"
                   className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
                   onClick={() => bumpAnnotZoom(-1)}
-                  disabled={annotationView.zoom <= 1}
+                  disabled={
+                    editorMediaKind === "pdf"
+                      ? pdfScale <= PDF_EDITOR_SCALE_MIN
+                      : annotationView.zoom <= 1
+                  }
                   title="Oddálit"
                 >
                   <ZoomOut className="h-3.5 w-3.5" />
                 </Button>
+                {editorMediaKind === "pdf" && pdfNumPages > 1 ? (
+                  <div className="flex items-center gap-0.5 border-l border-white/15 pl-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-white/25 bg-slate-800 px-1.5 text-white hover:bg-slate-700"
+                      onClick={() => goPdfPage(-1)}
+                      disabled={pdfPage <= 1}
+                      title="Předchozí stránka"
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                    <span className="px-1 text-[10px] tabular-nums text-white/90">
+                      {pdfPage}/{pdfNumPages}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 border-white/25 bg-slate-800 px-1.5 text-white hover:bg-slate-700"
+                      onClick={() => goPdfPage(1)}
+                      disabled={pdfPage >= pdfNumPages}
+                      title="Další stránka"
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                ) : null}
                 <Button
                   type="button"
                   variant="outline"
@@ -5972,7 +6381,7 @@ function JobDetailPageContent() {
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
-                "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-black",
+                "relative flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-hidden bg-black",
                 isAnnotTouchUI
                   ? "rounded-none border-0 p-0"
                   : "rounded-md border bg-black/80 p-0.5 sm:p-1"
@@ -5988,13 +6397,16 @@ function JobDetailPageContent() {
                     ? ({
                         touchAction: "none" as const,
                       } satisfies React.CSSProperties)
-                    : undefined
+                    : { touchAction: "none" as const }
                 }
               >
                 <div
                   ref={annotationTransformRef}
                   style={{
-                    transform: `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
+                    transform:
+                      editorMediaKind === "pdf"
+                        ? `translate(${annotationView.panX}px, ${annotationView.panY}px)`
+                        : `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
                     transformOrigin: "center center",
                   }}
                   className={cn(
@@ -6055,11 +6467,14 @@ function JobDetailPageContent() {
                   variant="outline"
                   size="sm"
                   className="min-h-[36px] gap-1"
-                  onClick={() =>
-                    setAnnotationView({ zoom: 1, panX: 0, panY: 0 })
-                  }
+                  onClick={() => {
+                    setPdfScale(1);
+                    setAnnotationView({ zoom: 1, panX: 0, panY: 0 });
+                  }}
                   disabled={
-                    annotationView.zoom === 1 &&
+                    (editorMediaKind === "pdf"
+                      ? pdfScale === 1
+                      : annotationView.zoom === 1) &&
                     annotationView.panX === 0 &&
                     annotationView.panY === 0
                   }
@@ -6073,7 +6488,11 @@ function JobDetailPageContent() {
                   size="sm"
                   className="min-h-[36px] px-2"
                   onClick={() => bumpAnnotZoom(1)}
-                  disabled={annotationView.zoom >= 10}
+                  disabled={
+                    editorMediaKind === "pdf"
+                      ? pdfScale >= PDF_EDITOR_SCALE_MAX
+                      : annotationView.zoom >= 10
+                  }
                   title="Přiblížit"
                 >
                   <ZoomIn className="h-4 w-4" />
@@ -6084,11 +6503,44 @@ function JobDetailPageContent() {
                   size="sm"
                   className="min-h-[36px] px-2"
                   onClick={() => bumpAnnotZoom(-1)}
-                  disabled={annotationView.zoom <= 1}
+                  disabled={
+                    editorMediaKind === "pdf"
+                      ? pdfScale <= PDF_EDITOR_SCALE_MIN
+                      : annotationView.zoom <= 1
+                  }
                   title="Oddálit"
                 >
                   <ZoomOut className="h-4 w-4" />
                 </Button>
+                {editorMediaKind === "pdf" && pdfNumPages > 1 ? (
+                  <div className="flex items-center gap-0.5">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-[36px] px-2"
+                      onClick={() => goPdfPage(-1)}
+                      disabled={pdfPage <= 1}
+                      title="Předchozí stránka"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <span className="text-xs tabular-nums text-muted-foreground">
+                      {pdfPage}/{pdfNumPages}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-[36px] px-2"
+                      onClick={() => goPdfPage(1)}
+                      disabled={pdfPage >= pdfNumPages}
+                      title="Další stránka"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                ) : null}
                 <Button
                   type="button"
                   variant="outline"

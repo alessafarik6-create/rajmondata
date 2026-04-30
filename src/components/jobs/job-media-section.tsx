@@ -2128,6 +2128,7 @@ function UserFolderBlock({
                               annotatedStoragePath: img.annotatedStoragePath,
                               fileName: img.fileName,
                               name: img.name,
+                              fileType: inferJobMediaItemType(img),
                               annotationData: img.annotationData,
                               annotationTarget: {
                                 kind: "folderImages",
@@ -3374,6 +3375,7 @@ export function JobMediaSection({
                                   fullPath: p.fullPath,
                                   fileName: p.fileName,
                                   name: p.name,
+                                  fileType: inferJobMediaItemType(p),
                                   annotationData: p.annotationData,
                                   annotationTarget: { kind: "photos" },
                                 })

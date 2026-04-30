@@ -36,6 +36,8 @@ export type JobPhotoAnnotationTarget = {
   pendingMeasurementTitle?: string | null;
   pendingMeasurementNote?: string | null;
   pendingMeasurementRecordId?: string | null;
+  /** Podklad v editoru — PDF vyžaduje pdf.js, ne načítání přes Image. */
+  fileType?: JobMediaFileType;
 };
 
 /** Typ vlastní složky u zakázky (v Firestore pole `type`). */
