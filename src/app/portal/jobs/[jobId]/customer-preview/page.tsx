@@ -10,7 +10,7 @@ import {
   useMemoFirebase,
   useCollection,
 } from "@/firebase";
-import { collection, doc } from "firebase/firestore";
+import { collection, doc, query, where, limit } from "firebase/firestore";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, ChevronLeft } from "lucide-react";
@@ -46,6 +46,48 @@ export default function AdminCustomerJobPreviewPage() {
   );
   const { data: jobDoc, isLoading: jobLoading } = useDoc(jobRef);
 
+  const crmCustomerId = useMemo(() => {
+    const j = jobDoc as Record<string, unknown> | null | undefined;
+    const raw =
+      (typeof j?.customerId === "string" && j.customerId.trim()) ||
+      (typeof j?.customer_id === "string" && String(j.customer_id).trim()) ||
+      (typeof j?.customerID === "string" && String(j.customerID).trim()) ||
+      "";
+    return raw || null;
+  }, [jobDoc]);
+
+  const customerRef = useMemoFirebase(
+    () =>
+      firestore && companyId && crmCustomerId
+        ? doc(firestore, "companies", companyId, "customers", crmCustomerId)
+        : null,
+    [firestore, companyId, crmCustomerId]
+  );
+  const { data: customerDoc } = useDoc(customerRef);
+
+  const portalCustomerUsersQuery = useMemoFirebase(
+    () =>
+      firestore && crmCustomerId
+        ? query(
+            collection(firestore, "users"),
+            where("customerRecordId", "==", crmCustomerId),
+            where("role", "==", "customer"),
+            limit(1)
+          )
+        : null,
+    [firestore, crmCustomerId]
+  );
+  const { data: portalCustomerUsersRows } = useCollection<{ id?: string }>(
+    portalCustomerUsersQuery,
+    { suppressGlobalPermissionError: true }
+  );
+  const customerPortalUserDocId =
+    portalCustomerUsersRows &&
+    portalCustomerUsersRows[0] &&
+    typeof portalCustomerUsersRows[0].id === "string"
+      ? portalCustomerUsersRows[0].id.trim()
+      : null;
+
   const photosColRef = useMemoFirebase(
     () =>
       firestore && companyId && jobId && typeof jobId === "string"
@@ -57,8 +99,12 @@ export default function AdminCustomerJobPreviewPage() {
   const legacyPhotos = legacyPhotosData ?? undefined;
 
   const previewGate = useMemo(
-    () => getJobCustomerPortalPreviewGate(jobDoc as Record<string, unknown> | null | undefined),
-    [jobDoc]
+    () =>
+      getJobCustomerPortalPreviewGate(jobDoc as Record<string, unknown> | null | undefined, {
+        customer: (customerDoc as Record<string, unknown> | null | undefined) ?? null,
+        customerPortalUserDocId,
+      }),
+    [jobDoc, customerDoc, customerPortalUserDocId]
   );
 
   const effectiveCustomerUid =

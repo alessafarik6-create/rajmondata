@@ -62,6 +62,7 @@ import {
   deleteField,
   addDoc,
   Timestamp,
+  limit,
 } from "firebase/firestore";
 import {
   User,
@@ -673,11 +674,6 @@ function JobDetailPageContent() {
     profile?.role === "admin" ||
     profile?.globalRoles?.includes("super_admin");
 
-  const customerPortalPreviewGate = useMemo(
-    () => getJobCustomerPortalPreviewGate(job as Record<string, unknown> | null | undefined),
-    [job]
-  );
-
   const canManageFolders =
     profile?.role === "owner" ||
     profile?.role === "admin" ||
@@ -893,12 +889,76 @@ function JobDetailPageContent() {
   );
   const { data: customer } = useDoc<any>(customerRef);
 
+  const portalCustomerUsersQuery = useMemoFirebase(
+    () =>
+      firestore && customerId
+        ? query(
+            collection(firestore, "users"),
+            where("customerRecordId", "==", String(customerId)),
+            where("role", "==", "customer"),
+            limit(1)
+          )
+        : null,
+    [firestore, customerId]
+  );
+  const { data: portalCustomerUsersRows } = useCollection<{ id?: string }>(
+    portalCustomerUsersQuery,
+    { suppressGlobalPermissionError: true }
+  );
+  const customerPortalUserDocId =
+    portalCustomerUsersRows &&
+    portalCustomerUsersRows[0] &&
+    typeof portalCustomerUsersRows[0].id === "string"
+      ? portalCustomerUsersRows[0].id.trim()
+      : null;
+
   const customerEmailForJob = useMemo(() => {
     const fromCustomer = String(customer?.email ?? "").trim();
     if (fromCustomer) return fromCustomer;
     const j = job as { customerEmail?: string } | null | undefined;
     return String(j?.customerEmail ?? "").trim();
   }, [customer, job]);
+
+  const customerPortalPreviewGate = useMemo(
+    () =>
+      getJobCustomerPortalPreviewGate(job as Record<string, unknown> | null | undefined, {
+        customer: (customer as Record<string, unknown> | null | undefined) ?? null,
+        customerPortalUserDocId,
+      }),
+    [job, customer, customerPortalUserDocId]
+  );
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (!jobFirestoreId) return;
+    const j = job as Record<string, unknown> | null | undefined;
+    const c = customer as Record<string, unknown> | null | undefined;
+    const resolvedUid =
+      customerPortalPreviewGate.show && !customerPortalPreviewGate.disabled
+        ? customerPortalPreviewGate.customerUid
+        : null;
+    console.debug("[job customer preview gate]", {
+      jobId: jobFirestoreId,
+      customerId: customerId ?? null,
+      customerEmail: customerEmailForJob || null,
+      jobCustomerUserId: j?.customerUserId ?? null,
+      jobCustomerAccessEnabled: j?.customerAccessEnabled ?? null,
+      customerCustomerUserId: c?.customerUserId ?? null,
+      customerPortalAccessEnabled: c?.portalAccessEnabled ?? null,
+      customerPortalUid: c?.customerPortalUid ?? null,
+      customerPortalEnabled: c?.customerPortalEnabled ?? null,
+      customerPortalUserDocId,
+      resolvedHasCustomerAccess: !!resolvedUid,
+    });
+  }, [
+    jobFirestoreId,
+    customerId,
+    customerEmailForJob,
+    job,
+    customer,
+    customerPortalPreviewGate,
+    customerPortalUserDocId,
+  ]);
   const customerAccessEmailSent =
     (customer as { customerAccessEmailSent?: unknown } | null | undefined)
       ?.customerAccessEmailSent === true;
