@@ -1330,7 +1330,7 @@ function JobDetailPageContent() {
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [editorOpen, baseImageLoaded]);
+  }, [editorOpen, baseImageLoaded, canvasReady]);
 
   const bumpAnnotZoom = useCallback((dir: 1 | -1) => {
     if (editorMediaKindRef.current === "pdf") {
@@ -6397,325 +6397,25 @@ function JobDetailPageContent() {
       >
         <DialogContent
           className={cn(
-            "relative",
-            isAnnotTouchUI
-              ? "!fixed !inset-0 !left-0 !top-0 z-[200] flex h-[100dvh] min-h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] !translate-x-0 !translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-slate-950 p-0 text-white shadow-none overscroll-none data-[state=open]:zoom-in-100"
-              : "!flex !max-h-[min(92dvh,92vh)] !h-[min(92dvh,92vh)] !w-[min(95vw,1920px)] !max-w-[min(95vw,1920px)] !flex-col !gap-0 !overflow-hidden overscroll-contain p-2 sm:p-3 md:p-4 sm:!max-w-[min(95vw,1920px)] sm:!w-[min(95vw,1920px)] md:!max-w-[min(95vw,1920px)] md:!w-[min(95vw,1920px)]"
+            "relative flex flex-col gap-0 overflow-hidden overscroll-contain",
+            "max-lg:!fixed max-lg:!inset-0 max-lg:!left-0 max-lg:!top-0 max-lg:z-[200] max-lg:flex max-lg:h-[100dvh] max-lg:min-h-[100dvh] max-lg:max-h-[100dvh] max-lg:w-[100vw] max-lg:max-w-[100vw] max-lg:!translate-x-0 max-lg:!translate-y-0 max-lg:rounded-none max-lg:border-0 max-lg:bg-slate-950 max-lg:p-0 max-lg:text-white max-lg:shadow-none data-[state=open]:max-lg:zoom-in-100",
+            "lg:!flex lg:!h-[min(92dvh,92vh)] lg:!max-h-[min(92dvh,92vh)] lg:!w-[min(95vw,1920px)] lg:!max-w-[min(95vw,1920px)] lg:rounded-lg lg:border lg:bg-background lg:p-3 lg:text-foreground lg:shadow-xl"
           )}
         >
-          {isAnnotTouchUI ? (
-            <>
-              <DialogHeader className="sr-only">
-                <DialogTitle>Anotace fotografie</DialogTitle>
-              </DialogHeader>
-              <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/10 bg-slate-900 px-2 pb-1 pt-[max(0.25rem,env(safe-area-inset-top))]">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 shrink-0 px-2 text-white hover:bg-white/10"
-                  onClick={() => dismissAnnotationEditor()}
-                >
-                  Zavřít
-                </Button>
-                <span className="min-w-0 truncate text-center text-xs font-semibold text-white">
-                  Anotace
-                </span>
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8 shrink-0 bg-orange-600 px-2 text-xs text-white hover:bg-orange-500 disabled:opacity-50"
-                  onClick={handleSaveAnnotated}
-                  disabled={!baseImageLoaded || isSavingAnnotation}
-                >
-                  {isSavingAnnotation ? "…" : "Uložit"}
-                </Button>
-              </div>
-              <div className="relative flex min-h-0 flex-1 overflow-hidden bg-black">
-                <div className="pointer-events-auto absolute left-0 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-0.5 rounded-r-lg border border-white/10 bg-slate-900/95 py-1 pl-1 pr-0.5 shadow-lg">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={activeTool === "dimension" ? "default" : "ghost"}
-                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
-                    onClick={() => setActiveTool("dimension")}
-                  >
-                    Kóty
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={activeTool === "note" ? "default" : "ghost"}
-                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
-                    onClick={() => setActiveTool("note")}
-                  >
-                    Pozn.
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={activeTool === "shapeLabel" ? "default" : "ghost"}
-                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
-                    onClick={() => setActiveTool("shapeLabel")}
-                    title="Značka / model"
-                  >
-                    Značka
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={activeTool === "select" ? "default" : "ghost"}
-                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
-                    onClick={() => setActiveTool("select")}
-                  >
-                    Výběr
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={activeTool === "pan" ? "default" : "ghost"}
-                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
-                    onClick={() => setActiveTool("pan")}
-                    title="Posun"
-                  >
-                    Posun
-                  </Button>
-                </div>
-                <div className="pointer-events-auto absolute right-0 top-1/2 z-20 flex -translate-y-1/2 flex-col gap-1 rounded-l-lg border border-white/10 bg-slate-900/95 py-1 pl-0.5 pr-1 shadow-lg">
-                  {(
-                    [
-                      { id: "red", label: "Červená" },
-                      { id: "yellow", label: "Žlutá" },
-                      { id: "white", label: "Bílá" },
-                      { id: "black", label: "Černá" },
-                      { id: "blue", label: "Modrá" },
-                    ] as const
-                  ).map((c) => (
-                    <button
-                      key={c.id}
-                      type="button"
-                      aria-label={c.label}
-                      title={c.label}
-                      onClick={() => updateSelectedColor(c.id)}
-                      className={cn(
-                        "h-7 w-7 shrink-0 rounded-md border",
-                        activeColor === c.id
-                          ? "ring-2 ring-orange-400 ring-offset-1 ring-offset-slate-900"
-                          : ""
-                      )}
-                      style={{
-                        backgroundColor: colorToHex(c.id),
-                        borderColor:
-                          c.id === "white" ? "rgba(0,0,0,0.35)" : "transparent",
-                      }}
-                    />
-                  ))}
-                </div>
-                <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-black">
-                  <div
-                    ref={annotationWheelCaptureRef}
-                    className="absolute inset-0 flex touch-none items-center justify-center overflow-hidden"
-                  >
-                    <div
-                      ref={annotationTransformRef}
-                      style={{
-                        transform:
-                          editorMediaKind === "pdf"
-                            ? `translate(${annotationView.panX}px, ${annotationView.panY}px)`
-                            : `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
-                        transformOrigin: "center center",
-                      }}
-                      className="flex h-full w-full max-h-full max-w-full items-center justify-center"
-                    >
-                      <div className="relative w-fit max-h-full max-w-full">
-                        <canvas
-                          ref={setCanvasNode}
-                          className={cn(
-                            "pointer-events-none block h-auto w-auto max-h-full max-w-full object-contain",
-                            baseImageLoaded ? "opacity-100" : "opacity-0"
-                          )}
-                        />
-                        <div
-                          className="absolute inset-0 z-[12] touch-none"
-                          style={{ cursor: canvasCursor }}
-                          onPointerDown={handleCanvasPointerDown}
-                          onPointerMove={handleCanvasPointerMove}
-                          onPointerUp={handleCanvasPointerUp}
-                          onPointerCancel={() => {
-                            pointerMapRef.current.clear();
-                            pinchSessionRef.current = null;
-                            viewPanStartRef.current = null;
-                            setDragMode("none");
-                            setDragLastPoint(null);
-                            setNoteRectDraft(null);
-                            setShapeRectDraft(null);
-                            setDraftAnnotationId(null);
-                          }}
-                        />
-                      </div>
-                    </div>
-                    {!baseImageLoaded && !imageError && (
-                      <div className="pointer-events-none absolute inset-0 z-[14] flex items-center justify-center bg-black/40 text-xs text-slate-300">
-                        Načítání…
-                      </div>
-                    )}
-                    {imageError && (
-                      <div className="absolute inset-0 z-[14] flex items-center justify-center bg-black/70 p-3 text-center text-xs text-red-400">
-                        <div className="space-y-1">
-                          <p>{imageError}</p>
-                          <p className="break-all text-slate-400">
-                            {annotationSource || "—"}
-                          </p>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  {annotationLegendEntries.length ? (
-                    <div className="pointer-events-none absolute bottom-1 left-1 right-1 z-10 max-h-[22%] overflow-y-auto rounded border border-white/20 bg-black/75 px-2 py-1 text-[10px] leading-snug text-white/95">
-                      <p className="font-semibold text-orange-300/95">Legenda</p>
-                      {annotationLegendEntries.map((e) => (
-                        <p key={`${e.legendNumber}-${e.label}`}>
-                          {e.legendNumber} – {e.label}, {e.widthMm}×{e.heightMm} mm
-                          {e.note ? ` — ${e.note}` : ""}
-                        </p>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-              <div className="flex min-h-0 shrink-0 flex-wrap items-center gap-1 border-t border-white/10 bg-slate-900 px-2 py-[max(0.375rem,env(safe-area-inset-bottom))]">
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-1 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
-                  onClick={() => {
-                    setPdfScale(1);
-                    setAnnotationView({ zoom: 1, panX: 0, panY: 0 });
-                  }}
-                  disabled={
-                    (editorMediaKind === "pdf"
-                      ? pdfScale === 1
-                      : annotationView.zoom === 1) &&
-                    annotationView.panX === 0 &&
-                    annotationView.panY === 0
-                  }
-                >
-                  <RotateCcw className="h-3.5 w-3.5 shrink-0" />
-                  1:1
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
-                  onClick={() => bumpAnnotZoom(1)}
-                  disabled={
-                    editorMediaKind === "pdf"
-                      ? pdfScale >= PDF_EDITOR_SCALE_MAX
-                      : annotationView.zoom >= ANNOTATION_VIEW_ZOOM_MAX
-                  }
-                  title="Přiblížit"
-                >
-                  <ZoomIn className="h-3.5 w-3.5" />
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
-                  onClick={() => bumpAnnotZoom(-1)}
-                  disabled={
-                    editorMediaKind === "pdf"
-                      ? pdfScale <= PDF_EDITOR_SCALE_MIN
-                      : annotationView.zoom <= ANNOTATION_VIEW_ZOOM_MIN
-                  }
-                  title="Oddálit"
-                >
-                  <ZoomOut className="h-3.5 w-3.5" />
-                </Button>
-                {editorMediaKind === "pdf" && pdfNumPages > 1 ? (
-                  <div className="flex items-center gap-0.5 border-l border-white/15 pl-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 border-white/25 bg-slate-800 px-1.5 text-white hover:bg-slate-700"
-                      onClick={() => goPdfPage(-1)}
-                      disabled={pdfPage <= 1}
-                      title="Předchozí stránka"
-                    >
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    </Button>
-                    <span className="px-1 text-[10px] tabular-nums text-white/90">
-                      {pdfPage}/{pdfNumPages}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8 border-white/25 bg-slate-800 px-1.5 text-white hover:bg-slate-700"
-                      onClick={() => goPdfPage(1)}
-                      disabled={pdfPage >= pdfNumPages}
-                      title="Další stránka"
-                    >
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                ) : null}
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
-                  onClick={undoLast}
-                  disabled={!annotations.length}
-                >
-                  Zpět
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
-                  onClick={clearAllAnnotations}
-                  disabled={!annotations.length}
-                >
-                  Vymazat
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 border-white/25 bg-slate-800 px-2 text-xs text-white hover:bg-slate-700"
-                  onClick={editSelectedText}
-                  disabled={!selectedAnnotationId}
-                >
-                  Text
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  size="sm"
-                  className="h-8 px-2 text-xs"
-                  onClick={deleteSelectedAnnotation}
-                  disabled={!selectedAnnotationId}
-                >
-                  Smazat
-                </Button>
-              </div>
-            </>
-          ) : (
-            <>
-              <DialogHeader className="shrink-0 space-y-1 pb-2 pr-8 text-left">
+            <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/15 bg-slate-900 px-2 py-1.5 pt-[max(0.25rem,env(safe-area-inset-top))] text-white lg:hidden">
+                <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-white hover:bg-white/10" onClick={() => dismissAnnotationEditor()}>Zavřít</Button>
+                <span className="min-w-0 truncate text-center text-xs font-semibold">Anotace</span>
+                <Button type="button" size="sm" className="h-8 shrink-0 bg-primary px-2 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={handleSaveAnnotated} disabled={!baseImageLoaded || isSavingAnnotation}>{isSavingAnnotation ? "…" : "Uložit"}</Button>
+            </div>
+              <DialogHeader className="hidden shrink-0 space-y-1 pb-2 pr-8 text-left lg:block">
                 <DialogTitle className="text-base sm:text-lg">
                   Anotace fotografie
                 </DialogTitle>
               </DialogHeader>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3">
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:bg-slate-950 max-lg:px-2 max-lg:pb-2">
             <div className="shrink-0 space-y-1.5 sm:space-y-2">
-              <p className="text-xs leading-snug text-muted-foreground sm:text-sm sm:leading-normal">
+              <p className="text-xs leading-snug text-muted-foreground max-lg:text-slate-300 sm:text-sm sm:leading-normal lg:text-muted-foreground">
                 Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
                 Značka / model: obdélník na plánu, pak název a rozměry v mm; legenda
                 dole. Výběr: přesun a úpravy. Kolečko myši nebo +/- přibližuje podklad
@@ -6861,20 +6561,13 @@ function JobDetailPageContent() {
               ref={annotationWheelCaptureRef}
               className={cn(
                 "relative z-0 flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-hidden bg-black",
-                isAnnotTouchUI
-                  ? "rounded-none border-0 p-0"
-                  : "min-h-[min(70vh,80dvh)] rounded-md border bg-black/80 p-0.5 sm:p-1"
+                "max-lg:rounded-none max-lg:border-0 max-lg:p-0",
+                "lg:min-h-[min(70vh,80dvh)] lg:rounded-md lg:border lg:bg-black/80 lg:p-0.5 lg:sm:p-1"
               )}
             >
               <div
                 className="flex h-full min-h-0 max-h-full w-full max-w-full items-center justify-center"
-                style={
-                  isAnnotTouchUI
-                    ? ({
-                        touchAction: "none" as const,
-                      } satisfies React.CSSProperties)
-                    : { touchAction: "none" as const }
-                }
+                style={{ touchAction: "none" as const }}
               >
                 <div
                   ref={annotationTransformRef}
@@ -6887,9 +6580,8 @@ function JobDetailPageContent() {
                   }}
                   className={cn(
                     "flex min-h-0 items-center justify-center",
-                    isAnnotTouchUI
-                      ? "max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)]"
-                      : "h-full max-h-full w-full max-w-full"
+                    "max-lg:max-h-[min(100dvh-14rem,86dvh)] max-lg:max-w-[min(100vw-0.75rem,96vw)]",
+                    "lg:h-full lg:max-h-full lg:w-full lg:max-w-full"
                   )}
                 >
                   <div className="relative z-[1] w-fit max-h-full max-w-full min-w-0">
@@ -6897,9 +6589,8 @@ function JobDetailPageContent() {
                       ref={setCanvasNode}
                       className={cn(
                         "pointer-events-none block h-auto w-auto object-contain",
-                        isAnnotTouchUI
-                          ? "max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)]"
-                          : "max-h-full max-w-full",
+                        "max-lg:max-h-[min(100dvh-14rem,86dvh)] max-lg:max-w-[min(100vw-0.75rem,96vw)]",
+                        "lg:max-h-full lg:max-w-full",
                         baseImageLoaded ? "opacity-100" : "opacity-0"
                       )}
                     />
@@ -6953,7 +6644,7 @@ function JobDetailPageContent() {
               ) : null}
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5 max-lg:border-white/10 max-lg:bg-slate-900 max-lg:text-white max-lg:pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:pt-2">
               <div className="flex flex-wrap gap-1.5 sm:gap-2">
                 <Button
                   type="button"
@@ -7076,21 +6767,18 @@ function JobDetailPageContent() {
               </div>
             </div>
           </div>
-            </>
-          )}
           {shapeLabelDialogOpen ? (
             <div
               className={cn(
                 "pointer-events-auto absolute inset-0 z-[220] flex items-center justify-center p-3 sm:p-6",
-                isAnnotTouchUI ? "bg-black/80" : "bg-black/60"
+                "max-lg:bg-black/80 lg:bg-black/60"
               )}
             >
               <div
                 className={cn(
                   "max-h-[min(90dvh,560px)] w-full max-w-md overflow-y-auto rounded-lg border p-4 shadow-xl",
-                  isAnnotTouchUI
-                    ? "border-white/20 bg-slate-900 text-white"
-                    : "border-border bg-card text-card-foreground"
+                  "max-lg:border-white/20 max-lg:bg-slate-900 max-lg:text-white",
+                  "lg:border-border lg:bg-card lg:text-card-foreground"
                 )}
                 role="dialog"
                 aria-modal="true"
@@ -7104,9 +6792,8 @@ function JobDetailPageContent() {
                     <select
                       className={cn(
                         "h-9 w-full rounded-md border px-2 text-sm",
-                        isAnnotTouchUI
-                          ? "border-white/25 bg-slate-950 text-white"
-                          : "border-input bg-background"
+                        "max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white",
+                        "lg:border-input lg:bg-background"
                       )}
                       value={shapeLabelForm.shape}
                       onChange={(e) =>
@@ -7130,7 +6817,7 @@ function JobDetailPageContent() {
                         setShapeLabelForm((f) => ({ ...f, label: e.target.value }))
                       }
                       placeholder="např. Pračka"
-                      className={isAnnotTouchUI ? "border-white/25 bg-slate-950 text-white" : ""}
+                      className="max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white"
                     />
                   </div>
                   <div className="grid grid-cols-2 gap-2">
@@ -7147,7 +6834,7 @@ function JobDetailPageContent() {
                             widthMm: Number(e.target.value) || 0,
                           }))
                         }
-                        className={isAnnotTouchUI ? "border-white/25 bg-slate-950 text-white" : ""}
+                        className="max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white"
                       />
                     </div>
                     <div className="flex flex-col gap-1">
@@ -7163,7 +6850,7 @@ function JobDetailPageContent() {
                             heightMm: Number(e.target.value) || 0,
                           }))
                         }
-                        className={isAnnotTouchUI ? "border-white/25 bg-slate-950 text-white" : ""}
+                        className="max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white"
                       />
                     </div>
                   </div>
@@ -7174,7 +6861,7 @@ function JobDetailPageContent() {
                       onChange={(e) =>
                         setShapeLabelForm((f) => ({ ...f, note: e.target.value }))
                       }
-                      className={isAnnotTouchUI ? "border-white/25 bg-slate-950 text-white" : ""}
+                      className="max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white"
                     />
                   </div>
                   <label className="flex cursor-pointer items-center gap-2">

@@ -402,7 +402,9 @@ export function DashboardUnassignedMeasurementPhotos({
 
   if (!companyId) return null;
 
-  const editorReturnTo = variant === "mobileDark" ? "/portal/jobs" : null;
+  /** Po uložení anotace — stejný editor jako u zakázky; návrat podle místa otevření. */
+  const editorReturnTo =
+    variant === "mobileDark" ? "/portal/jobs" : "/portal/dashboard";
 
   const lightboxUrl = lightboxRow ? previewUrlForRow(lightboxRow) : undefined;
 
