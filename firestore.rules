@@ -705,6 +705,18 @@ service cloud.firestore {
       match /inventoryItems/{itemId} {
         allow read: if inventoryReadForProductionOrWarehouse(companyId);
         allow write: if warehouseModuleUser(companyId);
+
+        /** Jednotlivé kusy délkového materiálu (tyče). */
+        match /stockPieces/{pieceId} {
+          allow read: if inventoryReadForProductionOrWarehouse(companyId);
+          allow write: if warehouseModuleUser(companyId);
+        }
+      }
+
+      /** Historie řezů délkového materiálu (zápis typicky přes Admin SDK u výdeje ve výrobě). */
+      match /stockCuts/{cutId} {
+        allow read: if inventoryReadForProductionOrWarehouse(companyId);
+        allow create, update, delete: if false;
       }
 
       /** Kategorie skladových položek (správa ve skladu). */

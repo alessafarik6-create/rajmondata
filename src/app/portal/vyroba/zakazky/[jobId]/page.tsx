@@ -205,10 +205,26 @@ type IssueQueueLine = {
   key: string;
   itemId: string;
   qtyStr: string;
+  /** Počet opakování stejné délky (jen metráž). */
+  repeatCountStr: string;
   note: string;
   batchNumber: string;
   inputLengthUnit: "mm" | "cm" | "m" | null;
 };
+
+function issueLineTotalInStockUnits(item: InventoryItemRow, ln: IssueQueueLine): number | null {
+  const q = Number(String(ln.qtyStr).replace(",", "."));
+  if (!Number.isFinite(q) || q <= 0) return null;
+  let rep = 1;
+  if (String(item.stockTrackingMode) === "length") {
+    rep = Number(String(ln.repeatCountStr ?? "1").replace(",", "."));
+    if (!Number.isFinite(rep) || rep < 1 || Math.floor(rep) !== rep) return null;
+  }
+  const inputLen = lengthUnitEditableForItem(item) ? ln.inputLengthUnit : null;
+  const c = quantityInStockUnits(item, q, inputLen);
+  if (c == null || !Number.isFinite(c)) return null;
+  return c * rep;
+}
 
 function newIssueQueueLineKey(): string {
   if (typeof globalThis !== "undefined" && globalThis.crypto && "randomUUID" in globalThis.crypto) {
@@ -222,11 +238,8 @@ function projectedAvailableForItem(item: InventoryItemRow, priorQueue: IssueQueu
   let avail = availableStockQtyForIssueForm(item);
   for (const ln of priorQueue) {
     if (ln.itemId !== item.id) continue;
-    const q = Number(String(ln.qtyStr).replace(",", "."));
-    if (!Number.isFinite(q) || q <= 0) continue;
-    const inputLen = lengthUnitEditableForItem(item) ? ln.inputLengthUnit : null;
-    const c = quantityInStockUnits(item, q, inputLen);
-    if (c != null && Number.isFinite(c)) avail -= c;
+    const total = issueLineTotalInStockUnits(item, ln);
+    if (total != null && Number.isFinite(total)) avail -= total;
   }
   return avail;
 }
@@ -263,16 +276,20 @@ function formatConsumptionCreatedAt(raw: unknown): string {
 function LengthCutSummary({
   item,
   issueQtyStr,
+  repeatCountStr,
   inputUnit,
   availableInStockUnit,
 }: {
   item: InventoryItemRow;
   issueQtyStr: string;
+  repeatCountStr: string;
   inputUnit: "mm" | "cm" | "m" | null;
   availableInStockUnit: number;
 }) {
   const u = String(item.unit || "").trim() || "—";
   const q = Number(String(issueQtyStr).replace(",", "."));
+  const rep = Number(String(repeatCountStr || "1").replace(",", "."));
+  const repOk = Number.isFinite(rep) && rep >= 1 && Math.floor(rep) === rep;
   if (!Number.isFinite(q) || q <= 0) {
     return (
       <div className="rounded-md border border-blue-100 bg-blue-50/70 p-3 text-xs text-slate-800 space-y-1">
@@ -284,7 +301,9 @@ function LengthCutSummary({
       </div>
     );
   }
-  const conv = quantityInStockUnits(item, q, inputUnit);
+  const convOne = quantityInStockUnits(item, q, inputUnit);
+  const conv =
+    convOne != null && Number.isFinite(convOne) && repOk ? convOne * rep : null;
   const rem =
     conv != null && Number.isFinite(conv) ? Math.max(0, availableInStockUnit - conv) : null;
   return (
@@ -294,7 +313,7 @@ function LengthCutSummary({
         Zásoba před výdejem: <strong>{availableInStockUnit}</strong> {u}
       </p>
       <p>
-        Odebírá se na zakázku:{" "}
+        Odebírá se na zakázku ({repOk ? `${rep}×` : "?×"} stejná délka):{" "}
         <strong>
           {conv != null && Number.isFinite(conv) ? conv.toFixed(4).replace(/\.?0+$/, "") : "—"}
         </strong>{" "}
@@ -448,12 +467,14 @@ export default function VyrobaZakazkaDetailPage() {
   const [issueQty, setIssueQty] = useState<string>("");
   const [issueNote, setIssueNote] = useState<string>("");
   const [issueBatch, setIssueBatch] = useState<string>("");
+  const [issueRepeatCount, setIssueRepeatCount] = useState<string>("1");
   const [issueSaving, setIssueSaving] = useState(false);
   const [issueQueue, setIssueQueue] = useState<IssueQueueLine[]>([]);
   const [bulkSaving, setBulkSaving] = useState(false);
   const [queueEditOpen, setQueueEditOpen] = useState(false);
   const [queueEditLine, setQueueEditLine] = useState<IssueQueueLine | null>(null);
   const [queueEditQtyStr, setQueueEditQtyStr] = useState("");
+  const [queueEditRepeatStr, setQueueEditRepeatStr] = useState("1");
   const [issueInputLengthUnit, setIssueInputLengthUnit] = useState<"mm" | "cm" | "m">("mm");
   const [attachmentFiles, setAttachmentFiles] = useState<JobAttachmentFile[]>([]);
   const [attachmentsLoading, setAttachmentsLoading] = useState(false);
@@ -983,10 +1004,23 @@ export default function VyrobaZakazkaDetailPage() {
     const q = Number(String(issueQty).replace(",", "."));
     if (!selectedItem || !Number.isFinite(q) || q <= 0) return null;
     const inputUnit = lengthUnitEditable ? issueInputLengthUnit : null;
-    const conv = quantityInStockUnits(selectedItem, q, inputUnit);
-    if (conv == null || !Number.isFinite(conv)) return null;
+    const convOne = quantityInStockUnits(selectedItem, q, inputUnit);
+    if (convOne == null || !Number.isFinite(convOne)) return null;
+    let rep = 1;
+    if (String(selectedItem.stockTrackingMode) === "length") {
+      rep = Number(String(issueRepeatCount).replace(",", "."));
+      if (!Number.isFinite(rep) || rep < 1 || Math.floor(rep) !== rep) return null;
+    }
+    const conv = convOne * rep;
     return Math.max(0, availableQty - conv);
-  }, [selectedItem, issueQty, availableQty, issueInputLengthUnit, lengthUnitEditable]);
+  }, [
+    selectedItem,
+    issueQty,
+    issueRepeatCount,
+    availableQty,
+    issueInputLengthUnit,
+    lengthUnitEditable,
+  ]);
 
   const bulkRepresentativeIdx = useMemo(() => {
     const pos = new Map<string, number>();
@@ -1077,6 +1111,18 @@ export default function VyrobaZakazkaDetailPage() {
       toast({ variant: "destructive", title: "Vyberte položku a množství." });
       return;
     }
+    let repeatCount = 1;
+    if (String(selectedItem.stockTrackingMode) === "length") {
+      repeatCount = Number(String(issueRepeatCount).replace(",", "."));
+      if (!Number.isFinite(repeatCount) || repeatCount < 1 || Math.floor(repeatCount) !== repeatCount) {
+        toast({
+          variant: "destructive",
+          title: "Počet kusů",
+          description: "Zadejte celé kladné číslo (kolikrát odebrat tuto délku).",
+        });
+        return;
+      }
+    }
     const inputUnitForApi =
       String(selectedItem.stockTrackingMode) === "length" && lengthUnitEditable
         ? issueInputLengthUnit
@@ -1090,7 +1136,8 @@ export default function VyrobaZakazkaDetailPage() {
       });
       return;
     }
-    if (conv > availableQty + 1e-9) {
+    const convTotal = conv * repeatCount;
+    if (convTotal > availableQty + 1e-9) {
       toast({ variant: "destructive", title: "Nelze vydat více než je skladem." });
       return;
     }
@@ -1107,6 +1154,7 @@ export default function VyrobaZakazkaDetailPage() {
           jobId: String(jobId),
           itemId: issueItemId,
           quantity: qty,
+          repeatCount,
           note: issueNote.trim() || null,
           batchNumber: issueBatch.trim() || null,
           inputLengthUnit: inputUnitForApi,
@@ -1116,8 +1164,21 @@ export default function VyrobaZakazkaDetailPage() {
       if (!res.ok) {
         throw new Error(typeof data.error === "string" ? data.error : "Výdej se nezdařil.");
       }
-      toast({ title: "Materiál vydán", description: "Zápis byl uložen na zakázku a do skladu." });
+      const allocs = Array.isArray(data.allocations)
+        ? (data.allocations as { pieceId?: string; usedLengthMm?: number; remainingAfterMm?: number }[])
+        : [];
+      const allocDesc =
+        allocs.length > 0
+          ? allocs
+              .map(
+                (a) =>
+                  `Kus ${String(a.pieceId ?? "").slice(0, 8)}… −${Number(a.usedLengthMm).toFixed(1)} mm → zbývá ${Number(a.remainingAfterMm).toFixed(1)} mm`
+              )
+              .join("; ")
+          : "Zápis byl uložen na zakázku a do skladu.";
+      toast({ title: "Materiál vydán", description: allocDesc });
       setIssueQty("");
+      setIssueRepeatCount("1");
       setIssueNote("");
       setIssueBatch("");
       await loadApi();
@@ -1140,25 +1201,23 @@ export default function VyrobaZakazkaDetailPage() {
       if (!item) return { ok: false, message: `Neznámá položka (${ln.itemId}).` };
       if (!sim.has(ln.itemId)) sim.set(ln.itemId, availableStockQtyForIssueForm(item));
       const avail = sim.get(ln.itemId)!;
-      const q = Number(String(ln.qtyStr).replace(",", "."));
-      if (!Number.isFinite(q) || q <= 0) {
-        return { ok: false, message: "U každého řádku zadejte kladné množství." };
-      }
-      const inputLen = lengthUnitEditableForItem(item) ? ln.inputLengthUnit : null;
-      const conv = quantityInStockUnits(item, q, inputLen);
-      if (conv == null || !Number.isFinite(conv)) {
-        return { ok: false, message: `Neplatná délka nebo jednotka u „${item.name}“.` };
-      }
-      if (String(item.stockTrackingMode) === "pieces" && !Number.isInteger(conv)) {
-        return { ok: false, message: `U kusové evidence musí být u „${item.name}“ celé číslo.` };
-      }
-      if (conv > avail + 1e-9) {
+      const total = issueLineTotalInStockUnits(item, ln);
+      if (total == null || !Number.isFinite(total) || total <= 0) {
         return {
           ok: false,
-          message: `Nedostatek skladu u „${item.name}“: požadováno ${conv}, dostupné ${avail} ${item.unit || "ks"} (včetně řádků ve frontě výše).`,
+          message: `U řádku „${item.name}“ zkontrolujte množství a u metráže počet opakování (celé číslo).`,
         };
       }
-      sim.set(ln.itemId, avail - conv);
+      if (String(item.stockTrackingMode) === "pieces" && !Number.isInteger(total)) {
+        return { ok: false, message: `U kusové evidence musí být u „${item.name}“ celé číslo.` };
+      }
+      if (total > avail + 1e-9) {
+        return {
+          ok: false,
+          message: `Nedostatek skladu u „${item.name}“: požadováno ${total}, dostupné ${avail} ${item.unit || "ks"} (včetně řádků ve frontě výše).`,
+        };
+      }
+      sim.set(ln.itemId, avail - total);
     }
     return { ok: true };
   }, [issueQueue, inventoryById]);
@@ -1173,14 +1232,30 @@ export default function VyrobaZakazkaDetailPage() {
       toast({ variant: "destructive", title: "Zadejte kladné množství." });
       return;
     }
+    const repLine =
+      String(selectedItem.stockTrackingMode) === "length"
+        ? Number(String(issueRepeatCount).replace(",", "."))
+        : 1;
+    if (
+      String(selectedItem.stockTrackingMode) === "length" &&
+      (!Number.isFinite(repLine) || repLine < 1 || Math.floor(repLine) !== repLine)
+    ) {
+      toast({
+        variant: "destructive",
+        title: "Počet kusů",
+        description: "U metráže zadejte celé kladné číslo opakování.",
+      });
+      return;
+    }
     const inputUnitForLine = lengthUnitEditableForItem(selectedItem) ? issueInputLengthUnit : null;
     const conv = quantityInStockUnits(selectedItem, qty, inputUnitForLine);
     if (conv == null || !Number.isFinite(conv)) {
       toast({ variant: "destructive", title: "Neplatná délka", description: "Zkontrolujte jednotku." });
       return;
     }
+    const convTotal = conv * repLine;
     const left = projectedAvailableForItem(selectedItem, issueQueue);
-    if (conv > left + 1e-9) {
+    if (convTotal > left + 1e-9) {
       toast({
         variant: "destructive",
         title: "Nedostatek skladu",
@@ -1194,6 +1269,10 @@ export default function VyrobaZakazkaDetailPage() {
         key: newIssueQueueLineKey(),
         itemId: selectedItem.id,
         qtyStr: issueQty.trim(),
+        repeatCountStr:
+          String(selectedItem.stockTrackingMode) === "length"
+            ? issueRepeatCount.trim() || "1"
+            : "1",
         note: issueNote.trim(),
         batchNumber: issueBatch.trim(),
         inputLengthUnit: inputUnitForLine,
@@ -1205,6 +1284,7 @@ export default function VyrobaZakazkaDetailPage() {
     selectedItem,
     issueItemId,
     issueQty,
+    issueRepeatCount,
     issueNote,
     issueBatch,
     issueInputLengthUnit,
@@ -1237,6 +1317,7 @@ export default function VyrobaZakazkaDetailPage() {
   const openEditIssueQueueLine = useCallback((ln: IssueQueueLine) => {
     setQueueEditLine(ln);
     setQueueEditQtyStr(ln.qtyStr);
+    setQueueEditRepeatStr(ln.repeatCountStr ?? "1");
     setQueueEditOpen(true);
   }, []);
 
@@ -1253,22 +1334,36 @@ export default function VyrobaZakazkaDetailPage() {
       toast({ variant: "destructive", title: "Zadejte kladné množství." });
       return;
     }
+    const rep =
+      String(item.stockTrackingMode) === "length"
+        ? Number(String(queueEditRepeatStr).replace(",", "."))
+        : 1;
+    if (String(item.stockTrackingMode) === "length" && (!Number.isFinite(rep) || rep < 1 || Math.floor(rep) !== rep)) {
+      toast({ variant: "destructive", title: "Počet opakování musí být celé kladné číslo." });
+      return;
+    }
     const inputLen = lengthUnitEditableForItem(item) ? queueEditLine.inputLengthUnit : null;
-    const conv = quantityInStockUnits(item, next, inputLen);
-    if (conv == null || !Number.isFinite(conv)) {
+    const convOne = quantityInStockUnits(item, next, inputLen);
+    if (convOne == null || !Number.isFinite(convOne)) {
       toast({ variant: "destructive", title: "Neplatná délka nebo jednotka." });
       return;
     }
+    const conv = convOne * rep;
     const others = issueQueue.filter((l) => l.key !== queueEditLine.key);
     const left = projectedAvailableForItem(item, others);
     if (conv > left + 1e-9) {
       toast({ variant: "destructive", title: "Nedostatek skladu", description: "Zadejte menší množství." });
       return;
     }
-    setIssueQueue((q) => q.map((l) => (l.key === queueEditLine.key ? { ...l, qtyStr: trimmed } : l)));
+    const repStr = String(item.stockTrackingMode) === "length" ? String(Math.floor(rep)) : "1";
+    setIssueQueue((q) =>
+      q.map((l) =>
+        l.key === queueEditLine.key ? { ...l, qtyStr: trimmed, repeatCountStr: repStr } : l
+      )
+    );
     setQueueEditOpen(false);
     setQueueEditLine(null);
-  }, [queueEditLine, queueEditQtyStr, issueQueue, inventoryById, toast]);
+  }, [queueEditLine, queueEditQtyStr, queueEditRepeatStr, issueQueue, inventoryById, toast]);
 
   const submitBulkIssue = useCallback(async () => {
     if (!user || !jobId) return;
@@ -1288,6 +1383,7 @@ export default function VyrobaZakazkaDetailPage() {
           lines: issueQueue.map((ln) => ({
             itemId: ln.itemId,
             quantity: Number(String(ln.qtyStr).replace(",", ".")),
+            repeatCount: Number(String(ln.repeatCountStr ?? "1").replace(",", ".")) || 1,
             note: ln.note || null,
             batchNumber: ln.batchNumber || null,
             inputLengthUnit: ln.inputLengthUnit,
@@ -1926,6 +2022,28 @@ export default function VyrobaZakazkaDetailPage() {
                             : ""
                         }
                       />
+                      {selectedItem && String(selectedItem.stockTrackingMode) === "length" ? (
+                        <div className="mt-4 space-y-2">
+                          <Label
+                            htmlFor="issue-repeat-count"
+                            className="text-sm font-semibold text-slate-800"
+                          >
+                            Počet stejných řezů
+                          </Label>
+                          <Input
+                            id="issue-repeat-count"
+                            className="min-h-12 max-w-full border-slate-300 bg-white px-4 py-3 text-base shadow-sm sm:max-w-[12rem]"
+                            inputMode="numeric"
+                            value={issueRepeatCount}
+                            onChange={(e) => setIssueRepeatCount(e.target.value)}
+                            placeholder="např. 3"
+                          />
+                          <p className="text-xs text-slate-600">
+                            Celkem se odečte (počet × délka řezu). Sklad vybere nejdelší dostupný kus, při
+                            potřebě další.
+                          </p>
+                        </div>
+                      ) : null}
                     </div>
                   </div>
 
@@ -1948,6 +2066,7 @@ export default function VyrobaZakazkaDetailPage() {
                         <LengthCutSummary
                           item={selectedItem}
                           issueQtyStr={issueQty}
+                          repeatCountStr={issueRepeatCount}
                           inputUnit={lengthUnitEditable ? issueInputLengthUnit : null}
                           availableInStockUnit={availableQty}
                         />
@@ -2039,7 +2158,16 @@ export default function VyrobaZakazkaDetailPage() {
                                 <td className="p-2 tabular-nums text-slate-800">
                                   {inv ? rowAvail : "—"} {unitLabel}
                                 </td>
-                                <td className="p-2 tabular-nums font-medium">{ln.qtyStr}</td>
+                                <td className="p-2 tabular-nums font-medium">
+                                  {inv && String(inv.stockTrackingMode) === "length" && ln.repeatCountStr !== "1"
+                                    ? `${ln.repeatCountStr}× ${ln.qtyStr}`
+                                    : ln.qtyStr}
+                                </td>
+                                <td className="p-2 tabular-nums text-slate-700">
+                                  {inv && String(inv.stockTrackingMode) === "length"
+                                    ? ln.repeatCountStr || "1"
+                                    : "—"}
+                                </td>
                                 <td className="p-2 text-xs text-slate-600">
                                   {lenEd ? (ln.inputLengthUnit || "—") : "—"}
                                 </td>
@@ -2639,6 +2767,7 @@ export default function VyrobaZakazkaDetailPage() {
               if (!o) {
                 setQueueEditOpen(false);
                 setQueueEditLine(null);
+                setQueueEditRepeatStr("1");
               }
             }}
           >
@@ -2655,6 +2784,20 @@ export default function VyrobaZakazkaDetailPage() {
                   onChange={(e) => setQueueEditQtyStr(e.target.value)}
                   inputMode="decimal"
                 />
+                {queueEditLine &&
+                inventoryById.get(queueEditLine.itemId) &&
+                String(inventoryById.get(queueEditLine.itemId)!.stockTrackingMode) === "length" ? (
+                  <div className="space-y-1">
+                    <Label htmlFor="queue-edit-repeat">Počet stejných řezů</Label>
+                    <Input
+                      id="queue-edit-repeat"
+                      className="bg-white"
+                      value={queueEditRepeatStr}
+                      onChange={(e) => setQueueEditRepeatStr(e.target.value)}
+                      inputMode="numeric"
+                    />
+                  </div>
+                ) : null}
                 <p className="text-xs text-slate-500">
                   Jednotka zadání odpovídá řádku ve frontě (mm/cm/m u metráže, jinak přímo ve skladové jednotce).
                 </p>

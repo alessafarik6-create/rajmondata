@@ -90,6 +90,7 @@ import {
 } from "@/components/ui/select";
 import { WarehouseImportDialog } from "@/components/warehouse/warehouse-import-dialog";
 import { DEFAULT_STOCK_CATEGORIES } from "@/lib/stock-categories";
+import { millimetersToUnit } from "@/lib/job-production-settings";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -235,6 +236,8 @@ export default function SkladPage() {
   const [inNewPrice, setInNewPrice] = useState("");
   const [inNewNote, setInNewNote] = useState("");
   const [inCreateNew, setInCreateNew] = useState(false);
+  /** Při naskladnění délkového materiálu: délka jedné tyče v mm. */
+  const [inBarLengthMm, setInBarLengthMm] = useState("6500");
 
   const [outItemId, setOutItemId] = useState("");
   const [outQty, setOutQty] = useState("1");
@@ -288,6 +291,14 @@ export default function SkladPage() {
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [imagePreviewOpen, setImagePreviewOpen] = useState(false);
   const [imagePreviewSrc, setImagePreviewSrc] = useState<string | null>(null);
+
+  const inboundSelectedItem = useMemo(() => {
+    if (inCreateNew || !inItemId) return null;
+    return activeItemList.find((i) => i.id === inItemId) ?? null;
+  }, [inCreateNew, inItemId, activeItemList]);
+
+  const inboundLengthPieces =
+    !!inboundSelectedItem && String(inboundSelectedItem.stockTrackingMode) === "length";
 
   const filteredItems = useMemo(() => {
     let rows = activeItemList;
@@ -368,6 +379,7 @@ export default function SkladPage() {
     setInNewPrice("");
     setInNewNote("");
     setInCreateNew(false);
+    setInBarLengthMm("6500");
   };
 
   const resetOut = () => {
@@ -391,11 +403,16 @@ export default function SkladPage() {
     try {
       let inboundMovementId: string | null = null;
       let inboundItemName = "";
+      let movQuantityForEmail = qty;
+      let movDetailLine: string | null = null;
+      let inboundUnitForEmail = "ks";
+
       await runTransaction(firestore, async (tx) => {
         let itemRef;
         let itemName: string;
         let unit: string;
         let itemId: string;
+        let movQuantity = qty;
 
         if (inCreateNew) {
           const name = inNewName.trim();
@@ -438,12 +455,73 @@ export default function SkladPage() {
           itemName = d.name;
           unit = d.unit || "ks";
           const prev = Number(d.quantity ?? 0);
-          tx.update(itemRef, {
-            quantity: prev + qty,
-            updatedAt: serverTimestamp(),
-          });
+          if (String(d.stockTrackingMode) === "length") {
+            const barCount = Math.floor(qty);
+            const barLenMm = Number(String(inBarLengthMm).replace(",", "."));
+            if (!Number.isFinite(barLenMm) || barLenMm <= 0) {
+              throw new Error("Zadejte kladnou délku jedné tyče (mm).");
+            }
+            if (barCount < 1 || barCount !== qty) {
+              throw new Error("Počet tyčí musí být celé kladné číslo.");
+            }
+            const stockU = String(d.lengthStockUnit || d.unit || "mm").trim().toLowerCase();
+            const addStock = millimetersToUnit(barCount * barLenMm, stockU);
+            if (addStock == null) {
+              throw new Error("Nelze převést délku do skladové jednotky položky.");
+            }
+            const prevCur =
+              d.currentLength != null && Number.isFinite(Number(d.currentLength))
+                ? Number(d.currentLength)
+                : prev;
+            const stats = d.stockPieceStats ?? {
+              total: 0,
+              full: 0,
+              partial: 0,
+              empty: 0,
+            };
+            const pieceCol = collection(
+              firestore,
+              "companies",
+              companyId,
+              "inventoryItems",
+              itemId,
+              "stockPieces"
+            );
+            for (let i = 0; i < barCount; i++) {
+              const pRef = doc(pieceCol);
+              tx.set(pRef, {
+                companyId,
+                materialId: itemId,
+                originalLength: barLenMm,
+                remainingLength: barLenMm,
+                status: "available",
+                createdAt: serverTimestamp(),
+              });
+            }
+            tx.update(itemRef, {
+              quantity: prev + addStock,
+              currentLength: prevCur + addStock,
+              remainingQuantity: prevCur + addStock,
+              stockPieceStats: {
+                total: stats.total + barCount,
+                full: stats.full + barCount,
+                partial: stats.partial,
+                empty: stats.empty,
+              },
+              updatedAt: serverTimestamp(),
+            });
+            movQuantity = addStock;
+            movDetailLine = `${barCount} tyčí × ${barLenMm} mm`;
+          } else {
+            tx.update(itemRef, {
+              quantity: prev + qty,
+              updatedAt: serverTimestamp(),
+            });
+          }
         }
 
+        movQuantityForEmail = movQuantity;
+        inboundUnitForEmail = unit;
         const movRef = doc(collection(firestore, "companies", companyId, "inventoryMovements"));
         inboundMovementId = movRef.id;
         inboundItemName = itemName;
@@ -452,7 +530,7 @@ export default function SkladPage() {
           type: "in",
           itemId,
           itemName,
-          quantity: qty,
+          quantity: movQuantity,
           unit,
           date: inDate,
           note: inNote.trim() || null,
@@ -469,7 +547,12 @@ export default function SkladPage() {
           eventKey: "stockIn",
           entityId: inboundMovementId,
           title: "Naskladnění",
-          lines: [`Položka: ${inboundItemName || "—"}`, `Množství: ${qty}`],
+          lines: [
+            `Položka: ${inboundItemName || "—"}`,
+            movDetailLine
+              ? `Délkový materiál: ${movDetailLine} (+${movQuantityForEmail} ${inboundUnitForEmail})`
+              : `Množství: ${movQuantityForEmail}`,
+          ],
           actionPath: "/portal/sklad",
         });
       }
@@ -1007,7 +1090,14 @@ export default function SkladPage() {
                           ).trim() || "Bez kategorie"}
                         </TableCell>
                         <TableCell className="text-right tabular-nums align-middle">
-                          {Number(row.quantity ?? 0)}
+                          <div>{Number(row.quantity ?? 0)}</div>
+                          {row.stockPieceStats && row.stockPieceStats.total > 0 ? (
+                            <div className="text-xs font-normal text-slate-500 mt-1 text-left sm:text-right">
+                              Kusů {row.stockPieceStats.total}: {row.stockPieceStats.full} plných,{" "}
+                              {row.stockPieceStats.partial} načatých, {row.stockPieceStats.empty} zbytků
+                              (&lt;50&nbsp;mm)
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell className="text-slate-600 align-middle">
                           {row.unit || "ks"}
@@ -1273,14 +1363,39 @@ export default function SkladPage() {
                 </Select>
               </div>
             )}
-            <div className="space-y-1">
-              <Label>Množství</Label>
-              <Input
-                className="bg-white border-slate-200"
-                value={inQty}
-                onChange={(e) => setInQty(e.target.value)}
-              />
-            </div>
+            {inboundLengthPieces ? (
+              <>
+                <div className="space-y-1">
+                  <Label>Počet tyčí (kusů)</Label>
+                  <Input
+                    className="bg-white border-slate-200"
+                    value={inQty}
+                    onChange={(e) => setInQty(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Délka jedné tyče (mm)</Label>
+                  <Input
+                    className="bg-white border-slate-200"
+                    value={inBarLengthMm}
+                    onChange={(e) => setInBarLengthMm(e.target.value)}
+                  />
+                  <p className="text-xs text-slate-500">
+                    Uloží se {`"`}jedna tyč = jeden záznam{`"`} ve skladu (řezání ve výrobě vybírá nejdelší
+                    kus).
+                  </p>
+                </div>
+              </>
+            ) : (
+              <div className="space-y-1">
+                <Label>Množství</Label>
+                <Input
+                  className="bg-white border-slate-200"
+                  value={inQty}
+                  onChange={(e) => setInQty(e.target.value)}
+                />
+              </div>
+            )}
             <div className="space-y-1">
               <Label>Datum</Label>
               <Input

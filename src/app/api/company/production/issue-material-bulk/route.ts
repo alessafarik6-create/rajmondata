@@ -4,12 +4,14 @@ import type { Firestore } from "firebase-admin/firestore";
 import { verifyCompanyBearer } from "@/lib/api-company-auth";
 import { canIssueMaterialToJob } from "@/lib/production-material-issue-access";
 import { executeMaterialIssueInAdminTransaction } from "@/lib/production-issue-material-in-tx";
+import { getOrderedStockPieceRefsForIssue } from "@/lib/stock-pieces-admin";
 
 const MAX_LINES = 40;
 
 type LineBody = {
   itemId?: string;
   quantity?: unknown;
+  repeatCount?: unknown;
   note?: string | null;
   batchNumber?: string | null;
   inputLengthUnit?: unknown;
@@ -81,6 +83,7 @@ export async function POST(request: NextRequest) {
   const normalized: {
     itemId: string;
     quantity: number;
+    repeatCount: number;
     note: string;
     batchNumber: string;
     inputLengthUnit: "mm" | "cm" | "m" | null;
@@ -109,9 +112,23 @@ export async function POST(request: NextRequest) {
     const batchNumber = row.batchNumber != null ? String(row.batchNumber).trim().slice(0, 120) : "";
     const noteParts = [lineNote, noteGlobal].filter((x) => x.length > 0);
     const noteJoined = noteParts.join(" · ").slice(0, 2000);
+    const repRaw = row.repeatCount;
+    const repeatCount =
+      typeof repRaw === "number" && Number.isFinite(repRaw)
+        ? repRaw
+        : repRaw != null && String(repRaw).trim() !== ""
+          ? Number.parseInt(String(repRaw), 10)
+          : 1;
+    if (!Number.isFinite(repeatCount) || repeatCount < 1 || Math.floor(repeatCount) !== repeatCount) {
+      return NextResponse.json(
+        { error: `Řádek ${i + 1}: počet opakování (repeatCount) musí být celé číslo ≥ 1.` },
+        { status: 400 }
+      );
+    }
     normalized.push({
       itemId,
       quantity: qtyNum,
+      repeatCount,
       note: noteJoined,
       batchNumber,
       inputLengthUnit,
@@ -131,25 +148,47 @@ export async function POST(request: NextRequest) {
     createdByName,
   };
 
+  const uniqueItemIds = [...new Set(normalized.map((l) => l.itemId))];
+  const stockPieceRefsByItem = new Map<string, Awaited<ReturnType<typeof getOrderedStockPieceRefsForIssue>>>();
+  for (const uid of uniqueItemIds) {
+    const s = await db
+      .collection("companies")
+      .doc(caller.companyId)
+      .collection("inventoryItems")
+      .doc(uid)
+      .get();
+    if (s.exists && String((s.data() as Record<string, unknown>)?.stockTrackingMode || "") === "length") {
+      const refs = await getOrderedStockPieceRefsForIssue(db as Firestore, caller.companyId, uid);
+      if (refs.length > 0) stockPieceRefsByItem.set(uid, refs);
+    }
+  }
+
   try {
     const results = await (db as Firestore).runTransaction(async (tx) => {
       const out: Awaited<ReturnType<typeof executeMaterialIssueInAdminTransaction>>[] = [];
       for (let i = 0; i < normalized.length; i++) {
         const line = normalized[i];
         try {
-          const r = await executeMaterialIssueInAdminTransaction(tx, ctx, {
-            itemId: line.itemId,
-            quantity: line.quantity,
-            inputLengthUnit: line.inputLengthUnit,
-            note: line.note,
-            batchNumber: line.batchNumber,
-            consumptionExtras: {
-              bulkIssueGroupId,
-              bulkIssueLineIndex: i,
-              bulkIssueLineCount,
-              isBulkMaterialIssue: true,
+          const refs = stockPieceRefsByItem.get(line.itemId);
+          const r = await executeMaterialIssueInAdminTransaction(
+            tx,
+            ctx,
+            {
+              itemId: line.itemId,
+              quantity: line.quantity,
+              inputLengthUnit: line.inputLengthUnit,
+              note: line.note,
+              batchNumber: line.batchNumber,
+              repeatCount: line.repeatCount,
+              consumptionExtras: {
+                bulkIssueGroupId,
+                bulkIssueLineIndex: i,
+                bulkIssueLineCount,
+                isBulkMaterialIssue: true,
+              },
             },
-          });
+            refs?.length ? { stockPieceRefs: refs } : undefined
+          );
           out.push(r);
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Výdej se nezdařil.";

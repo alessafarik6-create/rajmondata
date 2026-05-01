@@ -83,6 +83,42 @@ export type InventoryItemRow = {
   isDeleted?: boolean;
   deletedAt?: unknown;
   deletedBy?: string | null;
+  /**
+   * Souhrn kusů u délkového materiálu (stockPieces/{id}), denormalizovaně pro sklad.
+   */
+  stockPieceStats?: {
+    total: number;
+    full: number;
+    partial: number;
+    empty: number;
+  } | null;
+};
+
+/** Jeden fyzický kus (tyč) u skladové položky — délky v mm. */
+export type StockPieceRow = {
+  id: string;
+  companyId?: string;
+  materialId: string;
+  originalLength: number;
+  remainingLength: number;
+  status: "available" | "partial" | "empty";
+  createdAt?: unknown;
+};
+
+/** Historie řezů / výdeje z konkrétního kusu. */
+export type StockCutRow = {
+  id: string;
+  companyId?: string;
+  pieceId: string;
+  materialId: string;
+  /** Odebraná délka v mm. */
+  usedLength: number;
+  jobId: string;
+  userId: string;
+  date: string;
+  movementId?: string | null;
+  consumptionId?: string | null;
+  createdAt?: unknown;
 };
 
 export type InventoryMovementRow = {

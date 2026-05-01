@@ -3,11 +3,13 @@ import type { Firestore } from "firebase-admin/firestore";
 import { verifyCompanyBearer } from "@/lib/api-company-auth";
 import { canIssueMaterialToJob } from "@/lib/production-material-issue-access";
 import { executeMaterialIssueInAdminTransaction } from "@/lib/production-issue-material-in-tx";
+import { getOrderedStockPieceRefsForIssue } from "@/lib/stock-pieces-admin";
 
 type Body = {
   jobId?: string;
   itemId?: string;
   quantity?: number;
+  repeatCount?: number;
   note?: string | null;
   batchNumber?: string | null;
   inputLengthUnit?: "mm" | "cm" | "m" | null;
@@ -74,6 +76,30 @@ export async function POST(request: NextRequest) {
   const batchNumber =
     body.batchNumber != null ? String(body.batchNumber).trim().slice(0, 120) : "";
 
+  const repeatRaw = body.repeatCount;
+  const repeatCount =
+    typeof repeatRaw === "number" && Number.isFinite(repeatRaw)
+      ? repeatRaw
+      : typeof repeatRaw === "string"
+        ? Number.parseInt(String(repeatRaw), 10)
+        : 1;
+
+  let issueOpts: { stockPieceRefs?: Awaited<ReturnType<typeof getOrderedStockPieceRefsForIssue>> } =
+    {};
+  const itemPre = await db
+    .collection("companies")
+    .doc(caller.companyId)
+    .collection("inventoryItems")
+    .doc(itemId)
+    .get();
+  if (itemPre.exists) {
+    const d = itemPre.data() as Record<string, unknown>;
+    if (String(d.stockTrackingMode || "") === "length") {
+      const refs = await getOrderedStockPieceRefsForIssue(db as Firestore, caller.companyId, itemId);
+      if (refs.length > 0) issueOpts = { stockPieceRefs: refs };
+    }
+  }
+
   try {
     const result = await (db as Firestore).runTransaction(async (tx) => {
       return executeMaterialIssueInAdminTransaction(
@@ -93,7 +119,9 @@ export async function POST(request: NextRequest) {
           inputLengthUnit,
           note,
           batchNumber,
-        }
+          repeatCount,
+        },
+        issueOpts.stockPieceRefs?.length ? { stockPieceRefs: issueOpts.stockPieceRefs } : undefined
       );
     });
 
