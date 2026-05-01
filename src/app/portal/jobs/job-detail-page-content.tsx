@@ -6861,11 +6861,20 @@ export function JobDetailPageContent({
       >
         <DialogContent
           className={cn(
-            "relative !flex min-h-0 flex-col gap-0 overflow-hidden overscroll-contain",
-            "max-lg:!fixed max-lg:!inset-0 max-lg:!left-0 max-lg:!top-0 max-lg:z-[200] max-lg:flex max-lg:h-[100dvh] max-lg:min-h-[100dvh] max-lg:max-h-[100dvh] max-lg:w-[100vw] max-lg:max-w-[100vw] max-lg:!translate-x-0 max-lg:!translate-y-0 max-lg:rounded-none max-lg:border-0 max-lg:bg-slate-950 max-lg:p-0 max-lg:text-white max-lg:shadow-none data-[state=open]:max-lg:zoom-in-100",
-            "lg:!flex lg:!h-[min(92dvh,92vh)] lg:!max-h-[min(92dvh,92vh)] lg:!min-h-[min(72vh,90dvh)] lg:!w-[min(95vw,1920px)] lg:!max-w-[min(95vw,1920px)] lg:rounded-lg lg:border lg:bg-background lg:p-3 lg:text-foreground lg:shadow-xl"
+            "!flex min-h-0 flex-col gap-0 !overflow-hidden overscroll-contain",
+            "max-lg:!fixed max-lg:!inset-0 max-lg:!left-0 max-lg:!top-0 max-lg:z-[200] max-lg:h-[100dvh] max-lg:min-h-[100dvh] max-lg:max-h-[100dvh] max-lg:w-[100vw] max-lg:max-w-[100vw] max-lg:!translate-x-0 max-lg:!translate-y-0 max-lg:rounded-none max-lg:border-0 max-lg:bg-slate-950 max-lg:p-0 max-lg:text-white max-lg:shadow-none max-lg:pointer-events-auto",
+            "data-[state=open]:max-lg:zoom-in-100",
+            "lg:!fixed lg:!inset-0 lg:!left-0 lg:!top-0 lg:!h-full lg:!max-h-none lg:!w-full lg:!max-w-none lg:!translate-x-0 lg:!translate-y-0 lg:z-[260] lg:items-center lg:justify-center lg:bg-transparent lg:border-0 lg:p-4 lg:text-foreground lg:shadow-none lg:ring-0 lg:!overflow-y-auto lg:!overflow-x-hidden lg:pointer-events-none",
+            "lg:data-[state=open]:zoom-in-100 lg:data-[state=closed]:zoom-out-100"
           )}
         >
+          <div
+            className={cn(
+              "flex min-h-0 flex-1 flex-col overflow-hidden",
+              "max-lg:h-full max-lg:max-h-[100dvh] max-lg:w-full max-lg:min-h-0 max-lg:flex-1",
+              "lg:pointer-events-auto lg:h-[min(90vh,900px)] lg:max-h-[90vh] lg:w-[min(95vw,1400px)] lg:max-w-[min(95vw,1400px)] lg:flex-none lg:overflow-hidden lg:rounded-lg lg:border lg:border-slate-200 lg:bg-background lg:shadow-xl lg:ring-1 lg:ring-slate-950/[0.08]"
+            )}
+          >
             <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/15 bg-slate-900 px-2 py-1.5 pt-[max(0.25rem,env(safe-area-inset-top))] text-white lg:hidden">
                 <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-white hover:bg-white/10" onClick={() => dismissAnnotationEditor()}>Zavřít</Button>
                 <span className="min-w-0 truncate text-center text-xs font-semibold">Anotace</span>
@@ -6877,7 +6886,7 @@ export function JobDetailPageContent({
                 </DialogTitle>
               </DialogHeader>
 
-              <div className="flex min-h-[70vh] flex-1 flex-col gap-2 overflow-auto sm:gap-3 max-lg:bg-slate-950 max-lg:px-2 max-lg:pb-2">
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:min-h-0 max-lg:overflow-auto max-lg:bg-slate-950 max-lg:px-2 max-lg:pb-2 lg:min-h-0 lg:overflow-hidden lg:p-3">
             <div className="shrink-0 space-y-1.5 sm:space-y-2">
               <p className="text-xs leading-snug text-muted-foreground max-lg:text-slate-300 sm:text-sm sm:leading-normal lg:text-muted-foreground">
                 Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
@@ -7024,7 +7033,9 @@ export function JobDetailPageContent({
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
-                "relative z-0 flex min-h-[70vh] h-[70vh] min-w-0 flex-1 touch-none items-center justify-center overflow-auto bg-black",
+                "relative z-0 flex min-w-0 flex-1 touch-none items-center justify-center overflow-auto bg-black",
+                "min-h-[70vh] h-[70vh] max-lg:min-h-[70vh] max-lg:h-[70vh]",
+                "lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1",
                 "max-lg:rounded-none max-lg:border-0 max-lg:p-0",
                 "lg:rounded-md lg:border lg:bg-black/80 lg:p-0.5 lg:sm:p-1"
               )}
@@ -7230,6 +7241,7 @@ export function JobDetailPageContent({
                 </Button>
               </div>
             </div>
+          </div>
           </div>
           {shapeLabelDialogOpen ? (
             <div
