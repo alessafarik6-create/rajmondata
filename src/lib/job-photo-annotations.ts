@@ -141,13 +141,17 @@ function buildLegendPayload(
   const sorted = [...shapes].sort(
     (a, b) => a.legendNumber - b.legendNumber || a.id.localeCompare(b.id)
   );
-  return sorted.map((s) => ({
-    legendNumber: s.legendNumber,
-    label: s.label || "",
-    widthMm: s.widthMm,
-    heightMm: s.heightMm,
-    note: s.note?.trim() ? s.note.trim() : undefined,
-  }));
+  return sorted.map((s) => {
+    const entry: AnnotationLegendEntry = {
+      legendNumber: s.legendNumber,
+      label: s.label || "",
+      widthMm: s.widthMm,
+      heightMm: s.heightMm,
+    };
+    const nt = s.note?.trim();
+    if (nt) entry.note = nt;
+    return entry;
+  });
 }
 
 export function serializeJobPhotoAnnotations(
@@ -217,7 +221,7 @@ export function serializeJobPhotoAnnotations(
         typeof s.pageIndex === "number" && Number.isFinite(s.pageIndex)
           ? Math.max(0, Math.floor(s.pageIndex))
           : pageIndex;
-      out.push({
+      const row: Extract<SerializedItem, { type: "shapeLabel" }> = {
         type: "shapeLabel",
         id: s.id,
         shape: s.shape,
@@ -229,12 +233,16 @@ export function serializeJobPhotoAnnotations(
         widthMm: Number.isFinite(s.widthMm) ? s.widthMm : 0,
         heightMm: Number.isFinite(s.heightMm) ? s.heightMm : 0,
         label: String(s.label ?? ""),
-        note: s.note?.trim() ? s.note.trim() : undefined,
         legendNumber: Math.max(1, Math.floor(s.legendNumber || 1)),
         showLabelInline: Boolean(s.showLabelInline),
         color: s.color,
-        createdAt: typeof s.createdAt === "number" ? s.createdAt : undefined,
-      });
+      };
+      const nt = s.note?.trim();
+      if (nt) row.note = nt;
+      if (typeof s.createdAt === "number" && Number.isFinite(s.createdAt)) {
+        row.createdAt = s.createdAt;
+      }
+      out.push(row);
     }
   }
 

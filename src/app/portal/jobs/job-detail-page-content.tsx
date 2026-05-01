@@ -214,6 +214,7 @@ import {
   type JobPhotoNoteAnnotation as NoteAnnotation,
   type JobPhotoShapeLabelAnnotation as ShapeLabelAnnotation,
 } from "@/lib/job-photo-annotations";
+import { removeUndefinedDeep } from "@/lib/firestore-clean-payload";
 import {
   computeNoteLayout,
   drawNoteAnnotationOnCanvas,
@@ -5985,62 +5986,68 @@ export function JobDetailPageContent({
       let annotatedUrl: string;
 
       if (target.kind === "photos") {
+        const jobKey = jobFirestoreId as string;
         const up = await uploadJobPhotoBlobViaFirebaseSdk(
           blob,
           companyId,
-          jobId as string,
+          jobKey,
           `${photoToEdit.id}-annotated.png`
         );
         annotatedPath = up.storagePath;
         annotatedUrl = up.downloadURL;
-        await updateDoc(
-          doc(
-            firestore,
-            "companies",
-            companyId,
-            "jobs",
-            jobId as string,
-            "photos",
-            photoToEdit.id
-          ),
-          {
-            originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
-            annotatedImageUrl: annotatedUrl,
-            annotatedStoragePath: annotatedPath,
-            annotationData,
-            updatedAt: serverTimestamp(),
-          }
+        const photoRef = doc(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          jobKey,
+          "photos",
+          photoToEdit.id
         );
+        const rawPatch = {
+          originalImageUrl:
+            photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+          annotatedImageUrl: annotatedUrl,
+          annotatedStoragePath: annotatedPath,
+          annotationData,
+          updatedAt: serverTimestamp(),
+        };
+        const cleanPayload = removeUndefinedDeep(rawPatch);
+        console.log("ANNOTATION SAVE PAYLOAD", cleanPayload);
+        await setDoc(photoRef, cleanPayload, { merge: true });
       } else if (target.kind === "folderImages") {
+        const jobKey = jobFirestoreId as string;
         const up = await uploadJobFolderImageBlobViaFirebaseSdk(
           blob,
           companyId,
-          jobId as string,
+          jobKey,
           target.folderId,
           `${photoToEdit.id}-annotated.png`
         );
         annotatedPath = up.storagePath;
         annotatedUrl = up.downloadURL;
-        await updateDoc(
-          doc(
-            firestore,
-            "companies",
-            companyId,
-            "jobs",
-            jobId as string,
-            "folders",
-            target.folderId,
-            "images",
-            photoToEdit.id
-          ),
-          {
-            originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
-            annotatedImageUrl: annotatedUrl,
-            annotatedStoragePath: annotatedPath,
-            annotationData,
-            updatedAt: serverTimestamp(),
-          }
+        const imageRef = doc(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          jobKey,
+          "folders",
+          target.folderId,
+          "images",
+          photoToEdit.id
         );
+        const rawPatch = {
+          originalImageUrl:
+            photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+          annotatedImageUrl: annotatedUrl,
+          annotatedStoragePath: annotatedPath,
+          annotationData,
+          updatedAt: serverTimestamp(),
+        };
+        const cleanPayload = removeUndefinedDeep(rawPatch);
+        console.log("ANNOTATION SAVE PAYLOAD", cleanPayload);
+        await setDoc(imageRef, cleanPayload, { merge: true });
       } else if (target.kind === "measurementPhotos") {
         const isPendingDraft =
           Boolean(pendingFileForSave) && photoToEdit.id.startsWith("pending-");
@@ -6096,7 +6103,10 @@ export function JobDetailPageContent({
           const pMid = photoToEdit.pendingMeasurementRecordId?.trim();
           if (pMid) firestorePayload.measurementId = pMid;
 
-          await setDoc(photoRef, firestorePayload);
+          await setDoc(
+            photoRef,
+            removeUndefinedDeep(firestorePayload) as Record<string, unknown>
+          );
 
           console.log("[MeasurementPhoto] save: Firestore doc written", {
             photoDocId,
@@ -6127,22 +6137,24 @@ export function JobDetailPageContent({
           );
           annotatedPath = up.storagePath;
           annotatedUrl = up.downloadURL;
-          await updateDoc(
-            doc(
-              firestore,
-              "companies",
-              companyId,
-              "measurement_photos",
-              photoToEdit.id
-            ),
-            {
-              originalImageUrl: photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
-              annotatedImageUrl: annotatedUrl,
-              annotatedStoragePath: annotatedPath,
-              annotationData,
-              updatedAt: serverTimestamp(),
-            }
+          const measRef = doc(
+            firestore,
+            "companies",
+            companyId,
+            "measurement_photos",
+            photoToEdit.id
           );
+          const rawMeasPatch = {
+            originalImageUrl:
+              photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+            annotatedImageUrl: annotatedUrl,
+            annotatedStoragePath: annotatedPath,
+            annotationData,
+            updatedAt: serverTimestamp(),
+          };
+          const cleanMeas = removeUndefinedDeep(rawMeasPatch);
+          console.log("ANNOTATION SAVE PAYLOAD", cleanMeas);
+          await setDoc(measRef, cleanMeas, { merge: true });
         }
       } else {
         throw new Error("Neznámý cíl anotace.");
@@ -6150,10 +6162,12 @@ export function JobDetailPageContent({
 
       if (target.kind === "photos" || target.kind === "folderImages") {
         try {
-          const mirrorPatch = buildJobMediaMirrorAnnotatedUrlPatch({
-            fileUrl: annotatedUrl,
-            jobDisplayName: job?.name?.trim() ?? null,
-          });
+          const mirrorPatch = removeUndefinedDeep(
+            buildJobMediaMirrorAnnotatedUrlPatch({
+              fileUrl: annotatedUrl,
+              jobDisplayName: job?.name?.trim() ?? null,
+            })
+          ) as Record<string, unknown>;
           if (target.kind === "photos") {
             await setDoc(
               companyDocumentRefForJobLegacyPhoto(
@@ -6219,7 +6233,8 @@ export function JobDetailPageContent({
       setPhotoToEdit(null);
       measurementCaptureFileRef.current = null;
       resetAnnotationState();
-    } catch (err: any) {
+    } catch (err: unknown) {
+      console.error("ANNOTATION SAVE ERROR", err);
       console.error("[JobDetailPage] saving annotated photo failed", err);
       toast({
         variant: "destructive",
