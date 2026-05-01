@@ -196,13 +196,16 @@ import Link from "next/link";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deserializeJobPhotoAnnotations,
+  nextShapeLegendNumber,
   readAnnotationPayloadFromPhotoDoc,
   readAnnotationPayloadReferenceSize,
+  renumberShapeLabelLegends,
   serializeJobPhotoAnnotations,
   type DimensionColor,
   type JobPhotoAnnotation as Annotation,
   type JobPhotoDimensionAnnotation as DimensionAnnotation,
   type JobPhotoNoteAnnotation as NoteAnnotation,
+  type JobPhotoShapeLabelAnnotation as ShapeLabelAnnotation,
 } from "@/lib/job-photo-annotations";
 import {
   computeNoteLayout,
@@ -220,11 +223,18 @@ import {
   peekPendingJobMeasurementFile,
 } from "@/lib/pending-job-measurement-photo-idb";
 import {
-  clientToCanvasImagePoint,
-  clientToCanvasImagePointClamped,
-} from "@/lib/annotation-view-coords";
+  screenToDocumentPoint,
+  screenToDocumentPointClamped,
+} from "@/lib/annotation-document-coords";
+import {
+  buildLegendFromShapeLabels,
+  drawShapeLabelOnCanvas,
+  drawLegendStrip,
+  estimateLegendStripHeight,
+  hitTestShapeLabel,
+} from "@/lib/job-photo-shape-label";
 
-type AnnotationTool = "dimension" | "note" | "select" | "pan";
+type AnnotationTool = "dimension" | "note" | "select" | "pan" | "shapeLabel";
 
 type DragMode =
   | "none"
@@ -236,6 +246,9 @@ type DragMode =
   | "note-box"
   | "note-rect-draw"
   | "note-resize-br"
+  | "shape-rect-draw"
+  | "shape-move"
+  | "shape-resize-br"
   | "view-pan";
 
 type AnnotationPinchSession = {
@@ -250,6 +263,9 @@ type AnnotationPinchSession = {
 const PDF_EDITOR_SCALE_MIN = 0.5;
 const PDF_EDITOR_SCALE_MAX = 4;
 const PDF_EDITOR_SCALE_STEP = 0.25;
+/** Min. zoom náhledu u obrázku (CSS); anotace v pixelech dokumentu. */
+const ANNOTATION_VIEW_ZOOM_MIN = 0.25;
+const ANNOTATION_VIEW_ZOOM_MAX = 10;
 
 function clampPdfScale(s: number): number {
   const stepped = Math.round(s / PDF_EDITOR_SCALE_STEP) * PDF_EDITOR_SCALE_STEP;
@@ -1149,6 +1165,40 @@ function JobDetailPageContent() {
   const noteRectDraftRef = useRef(noteRectDraft);
   noteRectDraftRef.current = noteRectDraft;
 
+  const [shapeRectDraft, setShapeRectDraft] = useState<{
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  } | null>(null);
+  const shapeRectDraftRef = useRef(shapeRectDraft);
+  shapeRectDraftRef.current = shapeRectDraft;
+
+  const pendingShapeRectRef = useRef<{
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+  } | null>(null);
+
+  const [shapeLabelDialogOpen, setShapeLabelDialogOpen] = useState(false);
+  const [shapeLabelEditingId, setShapeLabelEditingId] = useState<string | null>(null);
+  const [shapeLabelForm, setShapeLabelForm] = useState<{
+    shape: ShapeLabelAnnotation["shape"];
+    label: string;
+    widthMm: number;
+    heightMm: number;
+    note: string;
+    showLabelInline: boolean;
+  }>({
+    shape: "square",
+    label: "",
+    widthMm: 60,
+    heightMm: 60,
+    note: "",
+    showLabelInline: false,
+  });
+
   const draftAnnotationIdRef = useRef<string | null>(null);
   draftAnnotationIdRef.current = draftAnnotationId;
 
@@ -1171,6 +1221,7 @@ function JobDetailPageContent() {
   pdfScaleRef.current = pdfScale;
 
   const [pdfPage, setPdfPage] = useState(1);
+  const pdfPageRef = useRef(1);
   const [pdfNumPages, setPdfNumPages] = useState(0);
   const [pdfDocRevision, setPdfDocRevision] = useState(0);
 
@@ -1181,6 +1232,10 @@ function JobDetailPageContent() {
   const prevPdfPageRef = useRef(1);
   const annotationsRef = useRef<Annotation[]>([]);
   annotationsRef.current = annotations;
+
+  useEffect(() => {
+    pdfPageRef.current = pdfPage;
+  }, [pdfPage]);
 
   const pointerMapRef = useRef(
     new Map<number, { clientX: number; clientY: number; pointerType: string }>()
@@ -1252,7 +1307,10 @@ function JobDetailPageContent() {
         : e.deltaY > 0
           ? 0.9
           : 1.1;
-      const z1 = Math.min(10, Math.max(1, z0 * factor));
+      const z1 = Math.min(
+        ANNOTATION_VIEW_ZOOM_MAX,
+        Math.max(ANNOTATION_VIEW_ZOOM_MIN, z0 * factor)
+      );
       if (Math.abs(z1 - z0) < 1e-6) return;
       const wrap = annotationTransformRef.current;
       if (!wrap) {
@@ -1280,7 +1338,10 @@ function JobDetailPageContent() {
     }
     const factor = dir > 0 ? 1.15 : 1 / 1.15;
     setAnnotationView((v) => {
-      const z1 = Math.min(10, Math.max(1, v.zoom * factor));
+      const z1 = Math.min(
+        ANNOTATION_VIEW_ZOOM_MAX,
+        Math.max(ANNOTATION_VIEW_ZOOM_MIN, v.zoom * factor)
+      );
       return { ...v, zoom: z1 };
     });
   }, []);
@@ -1466,6 +1527,9 @@ function JobDetailPageContent() {
     setDragMode("none");
     setDragLastPoint(null);
     setNoteRectDraft(null);
+    setShapeRectDraft(null);
+    setShapeLabelDialogOpen(false);
+    setShapeLabelEditingId(null);
     setImageObjectUrl((prev) => {
       if (prev) {
         try {
@@ -3879,6 +3943,17 @@ function JobDetailPageContent() {
           colorToHex,
         });
       }
+      if (a.type === "shapeLabel") {
+        drawShapeLabelOnCanvas(
+          ctx,
+          a as ShapeLabelAnnotation,
+          isSelected,
+          coordScale,
+          colorToHex,
+          fontSize,
+          lineWidth
+        );
+      }
     });
 
     if (noteRectDraft) {
@@ -3896,12 +3971,28 @@ function JobDetailPageContent() {
       ctx.strokeRect(bx, by, bw, bh);
       ctx.setLineDash([]);
     }
+
+    if (shapeRectDraft) {
+      const bx =
+        Math.min(shapeRectDraft.x0, shapeRectDraft.x1) * coordScale;
+      const by =
+        Math.min(shapeRectDraft.y0, shapeRectDraft.y1) * coordScale;
+      const bw = Math.abs(shapeRectDraft.x1 - shapeRectDraft.x0) * coordScale;
+      const bh = Math.abs(shapeRectDraft.y1 - shapeRectDraft.y0) * coordScale;
+      ctx.fillStyle = "rgba(59,130,246,0.15)";
+      ctx.strokeStyle = "rgba(59,130,246,0.95)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.setLineDash([]);
+    }
   }, [
     imageForCanvas,
     baseImageLoaded,
     annotations,
     selectedAnnotationId,
     noteRectDraft,
+    shapeRectDraft,
     colorToHex,
     editorMediaKind,
     pdfScale,
@@ -3914,28 +4005,20 @@ function JobDetailPageContent() {
   const getCanvasCoordsFromClient = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
-    const p = clientToCanvasImagePointClamped(canvas, clientX, clientY);
-    if (editorMediaKind === "pdf") {
-      const s = Math.max(1e-6, pdfScale);
-      return { x: p.x / s, y: p.y / s };
-    }
-    return p;
+    return screenToDocumentPointClamped(canvas, clientX, clientY, {
+      mediaKind: editorMediaKind === "pdf" ? "pdf" : "image",
+      pdfScale,
+    });
   };
 
-  const hitTestCanvasPoint = useCallback(
-    (clientX: number, clientY: number) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return null;
-      const pt = clientToCanvasImagePoint(canvas, clientX, clientY);
-      if (!pt) return null;
-      if (editorMediaKindRef.current === "pdf") {
-        const s = Math.max(1e-6, pdfScaleRef.current);
-        return { x: pt.x / s, y: pt.y / s };
-      }
-      return pt;
-    },
-    []
-  );
+  const hitTestCanvasPoint = useCallback((clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    return screenToDocumentPoint(canvas, clientX, clientY, {
+      mediaKind: editorMediaKindRef.current === "pdf" ? "pdf" : "image",
+      pdfScale: pdfScaleRef.current,
+    });
+  }, []);
 
   const hitTestAnnotation = useCallback(
     (x: number, y: number) => {
@@ -3950,7 +4033,16 @@ function JobDetailPageContent() {
       const xN = isPdf ? x * s : x;
       const yN = isPdf ? y * s : y;
 
-      // Top-most first (last drawn)
+      for (let i = annotations.length - 1; i >= 0; i--) {
+        const a = annotations[i];
+        if (a.type === "shapeLabel") {
+          const part = hitTestShapeLabel(a as ShapeLabelAnnotation, x, y, hrDim);
+          if (part === "resize-br")
+            return { id: a.id, part: "shape-resize-br" as const };
+          if (part === "move") return { id: a.id, part: "shape-move" as const };
+        }
+      }
+
       for (let i = annotations.length - 1; i >= 0; i--) {
         const a = annotations[i];
 
@@ -4029,7 +4121,12 @@ function JobDetailPageContent() {
       if (!selectedAnnotationId) return;
       setAnnotations((prev) =>
         prev.map((a) =>
-          a.id === selectedAnnotationId ? { ...a, color: newColor } : a
+          a.id === selectedAnnotationId &&
+          (a.type === "dimension" ||
+            a.type === "note" ||
+            a.type === "shapeLabel")
+            ? { ...a, color: newColor }
+            : a
         )
       );
     },
@@ -4040,6 +4137,21 @@ function JobDetailPageContent() {
     if (!selectedAnnotationId) return;
     const a = annotations.find((x) => x.id === selectedAnnotationId);
     if (!a) return;
+    if (a.type === "shapeLabel") {
+      const s = a as ShapeLabelAnnotation;
+      setShapeLabelForm({
+        shape: s.shape,
+        label: s.label,
+        widthMm: s.widthMm,
+        heightMm: s.heightMm,
+        note: s.note ?? "",
+        showLabelInline: s.showLabelInline,
+      });
+      setShapeLabelEditingId(s.id);
+      pendingShapeRectRef.current = null;
+      setShapeLabelDialogOpen(true);
+      return;
+    }
     if (a.type === "dimension") {
       const next = window.prompt("Upravit kótu:", a.label || "") ?? null;
       if (next === null) return;
@@ -4065,12 +4177,86 @@ function JobDetailPageContent() {
 
   const deleteSelectedAnnotation = useCallback(() => {
     if (!selectedAnnotationId) return;
-    setAnnotations((prev) => prev.filter((a) => a.id !== selectedAnnotationId));
+    setAnnotations((prev) =>
+      renumberShapeLabelLegends(prev.filter((a) => a.id !== selectedAnnotationId))
+    );
     setSelectedAnnotationId(null);
     setDraftAnnotationId(null);
     setDragMode("none");
     setDragLastPoint(null);
   }, [selectedAnnotationId]);
+
+  const commitShapeLabelFromDialog = useCallback(() => {
+    const rect = pendingShapeRectRef.current;
+    const editing = shapeLabelEditingId;
+    if (!editing && !rect) {
+      setShapeLabelDialogOpen(false);
+      return;
+    }
+    const pageIx =
+      editorMediaKindRef.current === "pdf" ? Math.max(0, pdfPageRef.current - 1) : 0;
+    const make = (
+      id: string,
+      legendNumber: number,
+      baseX: number,
+      baseY: number,
+      bw: number,
+      bh: number
+    ): ShapeLabelAnnotation => ({
+      id,
+      type: "shapeLabel",
+      shape: shapeLabelForm.shape,
+      pageIndex: pageIx,
+      x: baseX,
+      y: baseY,
+      width: Math.max(8, bw),
+      height: Math.max(8, bh),
+      widthMm: Number(shapeLabelForm.widthMm) || 0,
+      heightMm: Number(shapeLabelForm.heightMm) || 0,
+      label: shapeLabelForm.label.trim(),
+      note: shapeLabelForm.note.trim() || undefined,
+      legendNumber,
+      showLabelInline: shapeLabelForm.showLabelInline,
+      color: activeColor,
+      createdAt: Date.now(),
+    });
+    if (editing) {
+      setAnnotations((prev) =>
+        renumberShapeLabelLegends(
+          prev.map((a) => {
+            if (a.id !== editing || a.type !== "shapeLabel") return a;
+            const cur = a as ShapeLabelAnnotation;
+            return {
+              ...cur,
+              shape: shapeLabelForm.shape,
+              label: shapeLabelForm.label.trim(),
+              widthMm: Number(shapeLabelForm.widthMm) || 0,
+              heightMm: Number(shapeLabelForm.heightMm) || 0,
+              note: shapeLabelForm.note.trim() || undefined,
+              showLabelInline: shapeLabelForm.showLabelInline,
+              color: activeColor,
+              x: rect?.x ?? cur.x,
+              y: rect?.y ?? cur.y,
+              width: rect ? Math.max(8, rect.w) : cur.width,
+              height: rect ? Math.max(8, rect.h) : cur.height,
+            };
+          })
+        )
+      );
+    } else if (rect) {
+      const id = createId();
+      setAnnotations((prev) => {
+        const n = nextShapeLegendNumber(prev);
+        return renumberShapeLabelLegends([
+          ...prev,
+          make(id, n, rect.x, rect.y, rect.w, rect.h),
+        ]);
+      });
+    }
+    pendingShapeRectRef.current = null;
+    setShapeLabelDialogOpen(false);
+    setShapeLabelEditingId(null);
+  }, [activeColor, shapeLabelForm, shapeLabelEditingId]);
 
   const undoLast = useCallback(() => {
     setAnnotations((prev) => prev.slice(0, -1));
@@ -4197,7 +4383,12 @@ function JobDetailPageContent() {
     const hit = ptStrict ? hitTestAnnotation(ptStrict.x, ptStrict.y) : null;
 
     if (activeTool === "dimension") {
-      if (hit) {
+      if (
+        hit &&
+        (hit.part === "dim-start" ||
+          hit.part === "dim-end" ||
+          hit.part === "dim-move")
+      ) {
         setSelectedAnnotationId(hit.id);
         setDraftAnnotationId(hit.id);
         setDragMode(hit.part as DragMode);
@@ -4215,6 +4406,8 @@ function JobDetailPageContent() {
         endY: pt.y,
         label: "",
         color: activeColor,
+        pageIndex:
+          editorMediaKindRef.current === "pdf" ? Math.max(0, pdfPageRef.current - 1) : 0,
       };
       setAnnotations((prev) => [...prev, a]);
       setSelectedAnnotationId(id);
@@ -4225,7 +4418,12 @@ function JobDetailPageContent() {
     }
 
     if (activeTool === "note") {
-      if (hit) {
+      if (
+        hit &&
+        (hit.part === "note-target" ||
+          hit.part === "note-box" ||
+          hit.part === "note-resize-br")
+      ) {
         setSelectedAnnotationId(hit.id);
         setDraftAnnotationId(hit.id);
         setDragMode(hit.part as DragMode);
@@ -4246,19 +4444,57 @@ function JobDetailPageContent() {
       return;
     }
 
+    if (activeTool === "shapeLabel") {
+      if (
+        hit &&
+        (hit.part === "shape-move" || hit.part === "shape-resize-br")
+      ) {
+        setSelectedAnnotationId(hit.id);
+        setDraftAnnotationId(hit.id);
+        setDragMode(hit.part as DragMode);
+        setDragLastPoint(pt);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      setSelectedAnnotationId(null);
+      setDraftAnnotationId(null);
+      setShapeRectDraft({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y });
+      setDragMode("shape-rect-draw");
+      setDragLastPoint(pt);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
     // select tool
     if (hit) {
       setSelectedAnnotationId(hit.id);
       setDraftAnnotationId(hit.id);
       setDragMode(hit.part as DragMode);
       setDragLastPoint(pt);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
     } else {
       setSelectedAnnotationId(null);
       setDraftAnnotationId(null);
       const zoomed =
         editorMediaKindRef.current === "pdf"
-          ? pdfScaleRef.current > 1.02
-          : annotationViewRef.current.zoom > 1.02;
+          ? pdfScaleRef.current > PDF_EDITOR_SCALE_MIN + 0.01 ||
+            Math.abs(annotationViewRef.current.panX) > 1 ||
+            Math.abs(annotationViewRef.current.panY) > 1
+          : annotationViewRef.current.zoom > ANNOTATION_VIEW_ZOOM_MIN + 0.01 ||
+            Math.abs(annotationViewRef.current.panX) > 1 ||
+            Math.abs(annotationViewRef.current.panY) > 1;
       const canPanView =
         zoomed &&
         (isAnnotTouchUI
@@ -4322,7 +4558,10 @@ function JobDetailPageContent() {
             panY: s.anchorPanY + dmy,
           });
         } else {
-          const newZoom = Math.min(10, Math.max(1, s.anchorZoom * scaleRatio));
+          const newZoom = Math.min(
+            ANNOTATION_VIEW_ZOOM_MAX,
+            Math.max(ANNOTATION_VIEW_ZOOM_MIN, s.anchorZoom * scaleRatio)
+          );
           setAnnotationView({
             zoom: newZoom,
             panX: s.anchorPanX + dmx,
@@ -4347,6 +4586,12 @@ function JobDetailPageContent() {
     }
 
     const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
+
+    if (dragMode === "shape-rect-draw") {
+      e.preventDefault();
+      setShapeRectDraft((d) => (d ? { ...d, x1: pt.x, y1: pt.y } : null));
+      return;
+    }
 
     if (dragMode === "note-rect-draw") {
       e.preventDefault();
@@ -4421,6 +4666,29 @@ function JobDetailPageContent() {
           }
         }
 
+        if (a.type === "shapeLabel") {
+          const sh = a as ShapeLabelAnnotation;
+          if (dragMode === "shape-move") {
+            return { ...sh, x: sh.x + dx, y: sh.y + dy };
+          }
+          if (dragMode === "shape-resize-br") {
+            const pdfS = Math.max(1e-6, pdfScaleRef.current);
+            const isPdf = editorMediaKindRef.current === "pdf";
+            const cwBase = isPdf ? canvas.width / pdfS : canvas.width;
+            const chBase = isPdf ? canvas.height / pdfS : canvas.height;
+            const maxW = cwBase - sh.x;
+            const maxH = chBase - sh.y;
+            let newW = Math.max(8, Math.min(pt.x - sh.x, maxW));
+            let newH = Math.max(8, Math.min(pt.y - sh.y, maxH));
+            if (sh.shape === "square" || sh.shape === "circle") {
+              const side = Math.min(newW, newH);
+              newW = side;
+              newH = side;
+            }
+            return { ...sh, width: newW, height: newH };
+          }
+        }
+
         return a;
       })
     );
@@ -4448,6 +4716,46 @@ function JobDetailPageContent() {
       setDragMode("none");
       viewPanStartRef.current = null;
       setDragLastPoint(null);
+      return;
+    }
+
+    if (dragMode === "shape-rect-draw") {
+      e.preventDefault();
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      const d = shapeRectDraftRef.current;
+      setShapeRectDraft(null);
+      setDragMode("none");
+      setDragLastPoint(null);
+      if (!d) return;
+      let bx = Math.min(d.x0, d.x1);
+      let by = Math.min(d.y0, d.y1);
+      let bw = Math.abs(d.x1 - d.x0);
+      let bh = Math.abs(d.y1 - d.y0);
+      if (bw < 6 && bh < 6) {
+        const s = 18;
+        bx = d.x0 - s / 2;
+        by = d.y0 - s / 2;
+        bw = s;
+        bh = s;
+      }
+      pendingShapeRectRef.current = { x: bx, y: by, w: bw, h: bh };
+      const estW = Math.max(1, Math.round(bw));
+      const estH = Math.max(1, Math.round(bh));
+      setShapeLabelForm((prev) => ({
+        ...prev,
+        shape: bw === bh ? "square" : "rectangle",
+        label: "",
+        widthMm: estW,
+        heightMm: estH,
+        note: "",
+        showLabelInline: false,
+      }));
+      setShapeLabelEditingId(null);
+      setShapeLabelDialogOpen(true);
       return;
     }
 
@@ -4488,6 +4796,8 @@ function JobDetailPageContent() {
         text,
         color: activeColor,
         showArrow: false,
+        pageIndex:
+          editorMediaKindRef.current === "pdf" ? Math.max(0, pdfPageRef.current - 1) : 0,
       };
       setAnnotations((prev) => [...prev, note]);
       setSelectedAnnotationId(id);
@@ -5011,6 +5321,7 @@ function JobDetailPageContent() {
 
     try {
       if (isPdfSave) {
+        pdfAnnotationsByPageRef.current.set(pdfPage, annotations);
         const pdf = pdfDocRef.current!;
         const page = await pdf.getPage(pdfPage);
         const vp = page.getViewport({ scale: 1 });
@@ -5113,10 +5424,44 @@ function JobDetailPageContent() {
             colorToHex,
           });
         }
+
+        if (a.type === "shapeLabel") {
+          drawShapeLabelOnCanvas(
+            targetCtx,
+            a as ShapeLabelAnnotation,
+            false,
+            1,
+            colorToHex,
+            fontSize,
+            lineWidth
+          );
+        }
       });
     };
 
     drawAll(ctx, exportCanvas);
+
+    const legendShapes = annotations.filter(
+      (a): a is ShapeLabelAnnotation => a.type === "shapeLabel"
+    );
+    const leg = buildLegendFromShapeLabels(legendShapes);
+    let uploadCanvas: HTMLCanvasElement = exportCanvas;
+    if (leg.length > 0 && ctx) {
+      const legH = estimateLegendStripHeight(ctx, leg, exportCanvas.width);
+      if (legH > 0) {
+        const merged = document.createElement("canvas");
+        merged.width = exportCanvas.width;
+        merged.height = exportCanvas.height + legH;
+        const mctx = merged.getContext("2d");
+        if (mctx) {
+          mctx.fillStyle = "#ffffff";
+          mctx.fillRect(0, 0, merged.width, merged.height);
+          mctx.drawImage(exportCanvas, 0, 0);
+          drawLegendStrip(mctx, leg, merged.width, exportCanvas.height, legH);
+          uploadCanvas = merged;
+        }
+      }
+    }
 
     const canvasToBlob = (canvas: HTMLCanvasElement): Promise<Blob> =>
       new Promise((resolve, reject) => {
@@ -5127,7 +5472,7 @@ function JobDetailPageContent() {
       });
 
     try {
-      const blob = await canvasToBlob(exportCanvas);
+      const blob = await canvasToBlob(uploadCanvas);
 
       const annotationData = serializeJobPhotoAnnotations(
         annotations,
@@ -5588,6 +5933,8 @@ function JobDetailPageContent() {
   };
 
   const canvasCursor = useMemo(() => {
+    if (dragMode === "shape-rect-draw") return "crosshair";
+    if (dragMode === "shape-resize-br") return "nwse-resize";
     if (dragMode === "note-rect-draw") return "crosshair";
     if (dragMode === "note-resize-br") return "nwse-resize";
     if (dragMode === "view-pan") return "grabbing";
@@ -5595,8 +5942,16 @@ function JobDetailPageContent() {
     if (activeTool === "pan") return "grab";
     if (activeTool === "dimension") return "crosshair";
     if (activeTool === "note") return "crosshair";
+    if (activeTool === "shapeLabel") return "crosshair";
     return "default";
   }, [activeTool, dragMode]);
+
+  const annotationLegendEntries = useMemo(() => {
+    const shapes = annotations.filter(
+      (a): a is ShapeLabelAnnotation => a.type === "shapeLabel"
+    );
+    return buildLegendFromShapeLabels(shapes);
+  }, [annotations]);
 
   const openEditJobDialog = useCallback(() => {
     if (!isAdmin) {
@@ -6026,6 +6381,7 @@ function JobDetailPageContent() {
       >
         <DialogContent
           className={cn(
+            "relative",
             isAnnotTouchUI
               ? "!fixed !inset-0 !left-0 !top-0 z-[200] flex h-[100dvh] min-h-[100dvh] max-h-[100dvh] w-[100vw] max-w-[100vw] !translate-x-0 !translate-y-0 flex-col gap-0 overflow-hidden rounded-none border-0 bg-slate-950 p-0 text-white shadow-none overscroll-none data-[state=open]:zoom-in-100"
               : "!flex !max-h-[min(92dvh,92vh)] !h-[min(92dvh,92vh)] !w-[min(95vw,1920px)] !max-w-[min(95vw,1920px)] !flex-col !gap-0 !overflow-hidden overscroll-contain p-2 sm:p-3 md:p-4 sm:!max-w-[min(95vw,1920px)] sm:!w-[min(95vw,1920px)] md:!max-w-[min(95vw,1920px)] md:!w-[min(95vw,1920px)]"
@@ -6078,6 +6434,16 @@ function JobDetailPageContent() {
                     onClick={() => setActiveTool("note")}
                   >
                     Pozn.
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant={activeTool === "shapeLabel" ? "default" : "ghost"}
+                    className="h-7 min-w-[2.75rem] px-1 text-[10px] font-medium leading-none text-white"
+                    onClick={() => setActiveTool("shapeLabel")}
+                    title="Značka / model"
+                  >
+                    Značka
                   </Button>
                   <Button
                     type="button"
@@ -6145,31 +6511,33 @@ function JobDetailPageContent() {
                       }}
                       className="flex h-full w-full max-h-full max-w-full items-center justify-center"
                     >
-                      <canvas
-                        ref={setCanvasNode}
-                        className={cn(
-                          "pointer-events-none h-auto w-auto max-h-full max-w-full object-contain",
-                          baseImageLoaded ? "opacity-100" : "opacity-0"
-                        )}
-                        style={{ cursor: canvasCursor }}
-                      />
+                      <div className="relative w-fit max-h-full max-w-full">
+                        <canvas
+                          ref={setCanvasNode}
+                          className={cn(
+                            "pointer-events-none block h-auto w-auto max-h-full max-w-full object-contain",
+                            baseImageLoaded ? "opacity-100" : "opacity-0"
+                          )}
+                        />
+                        <div
+                          className="absolute inset-0 z-[12] touch-none"
+                          style={{ cursor: canvasCursor }}
+                          onPointerDown={handleCanvasPointerDown}
+                          onPointerMove={handleCanvasPointerMove}
+                          onPointerUp={handleCanvasPointerUp}
+                          onPointerCancel={() => {
+                            pointerMapRef.current.clear();
+                            pinchSessionRef.current = null;
+                            viewPanStartRef.current = null;
+                            setDragMode("none");
+                            setDragLastPoint(null);
+                            setNoteRectDraft(null);
+                            setShapeRectDraft(null);
+                            setDraftAnnotationId(null);
+                          }}
+                        />
+                      </div>
                     </div>
-                    <div
-                      className="pointer-events-auto absolute inset-0 z-[12]"
-                      style={{ touchAction: "none", cursor: canvasCursor }}
-                      onPointerDown={handleCanvasPointerDown}
-                      onPointerMove={handleCanvasPointerMove}
-                      onPointerUp={handleCanvasPointerUp}
-                      onPointerCancel={() => {
-                        pointerMapRef.current.clear();
-                        pinchSessionRef.current = null;
-                        viewPanStartRef.current = null;
-                        setDragMode("none");
-                        setDragLastPoint(null);
-                        setNoteRectDraft(null);
-                        setDraftAnnotationId(null);
-                      }}
-                    />
                     {!baseImageLoaded && !imageError && (
                       <div className="pointer-events-none absolute inset-0 z-[14] flex items-center justify-center bg-black/40 text-xs text-slate-300">
                         Načítání…
@@ -6186,6 +6554,17 @@ function JobDetailPageContent() {
                       </div>
                     )}
                   </div>
+                  {annotationLegendEntries.length ? (
+                    <div className="pointer-events-none absolute bottom-1 left-1 right-1 z-10 max-h-[22%] overflow-y-auto rounded border border-white/20 bg-black/75 px-2 py-1 text-[10px] leading-snug text-white/95">
+                      <p className="font-semibold text-orange-300/95">Legenda</p>
+                      {annotationLegendEntries.map((e) => (
+                        <p key={`${e.legendNumber}-${e.label}`}>
+                          {e.legendNumber} – {e.label}, {e.widthMm}×{e.heightMm} mm
+                          {e.note ? ` — ${e.note}` : ""}
+                        </p>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               </div>
               <div className="flex min-h-0 shrink-0 flex-wrap items-center gap-1 border-t border-white/10 bg-slate-900 px-2 py-[max(0.375rem,env(safe-area-inset-bottom))]">
@@ -6218,7 +6597,7 @@ function JobDetailPageContent() {
                   disabled={
                     editorMediaKind === "pdf"
                       ? pdfScale >= PDF_EDITOR_SCALE_MAX
-                      : annotationView.zoom >= 10
+                      : annotationView.zoom >= ANNOTATION_VIEW_ZOOM_MAX
                   }
                   title="Přiblížit"
                 >
@@ -6233,7 +6612,7 @@ function JobDetailPageContent() {
                   disabled={
                     editorMediaKind === "pdf"
                       ? pdfScale <= PDF_EDITOR_SCALE_MIN
-                      : annotationView.zoom <= 1
+                      : annotationView.zoom <= ANNOTATION_VIEW_ZOOM_MIN
                   }
                   title="Oddálit"
                 >
@@ -6321,10 +6700,10 @@ function JobDetailPageContent() {
               <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3">
             <div className="shrink-0 space-y-1.5 sm:space-y-2">
               <p className="text-xs leading-snug text-muted-foreground sm:text-sm sm:leading-normal">
-                Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: táhněte
-                průhledný obdélník a doplňte text (bez šipky). Výběr: klikněte na
-                kótu nebo poznámku — přesun, úprava textu, konce čáry nebo cíle
-                šipky, změna velikosti poznámky tahem za roh. Dotyk i myš.
+                Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
+                Značka / model: obdélník na plánu, pak název a rozměry v mm; legenda
+                dole. Výběr: přesun a úpravy. Kolečko myši nebo +/- přibližuje podklad
+                v souřadnicích dokumentu. Dotyk i myš.
               </p>
 
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
@@ -6345,6 +6724,16 @@ function JobDetailPageContent() {
                   onClick={() => setActiveTool("note")}
                 >
                   Poznámka
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeTool === "shapeLabel" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("shapeLabel")}
+                  title="Měřítková značka s legendou"
+                >
+                  Značka
                 </Button>
                 <Button
                   type="button"
@@ -6372,7 +6761,11 @@ function JobDetailPageContent() {
                   size="sm"
                   className="min-h-[36px] px-2"
                   onClick={() => bumpAnnotZoom(1)}
-                  disabled={annotationView.zoom >= 10}
+                  disabled={
+                    editorMediaKind === "pdf"
+                      ? pdfScale >= PDF_EDITOR_SCALE_MAX
+                      : annotationView.zoom >= ANNOTATION_VIEW_ZOOM_MAX
+                  }
                   title="Přiblížit"
                 >
                   <ZoomIn className="h-4 w-4" />
@@ -6383,7 +6776,11 @@ function JobDetailPageContent() {
                   size="sm"
                   className="min-h-[36px] px-2"
                   onClick={() => bumpAnnotZoom(-1)}
-                  disabled={annotationView.zoom <= 1}
+                  disabled={
+                    editorMediaKind === "pdf"
+                      ? pdfScale <= PDF_EDITOR_SCALE_MIN
+                      : annotationView.zoom <= ANNOTATION_VIEW_ZOOM_MIN
+                  }
                   title="Oddálit"
                 >
                   <ZoomOut className="h-4 w-4" />
@@ -6482,29 +6879,35 @@ function JobDetailPageContent() {
                       : "max-h-full max-w-full"
                   )}
                 >
-                  <canvas
-                    ref={setCanvasNode}
-                    onPointerDown={handleCanvasPointerDown}
-                    onPointerMove={handleCanvasPointerMove}
-                    onPointerUp={handleCanvasPointerUp}
-                    onPointerCancel={() => {
-                      pointerMapRef.current.clear();
-                      pinchSessionRef.current = null;
-                      viewPanStartRef.current = null;
-                      setDragMode("none");
-                      setDragLastPoint(null);
-                      setNoteRectDraft(null);
-                      setDraftAnnotationId(null);
-                    }}
-                    className={cn(
-                      "h-auto w-auto object-contain",
-                      isAnnotTouchUI
-                        ? "max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)]"
-                        : "max-h-full max-w-full touch-none",
-                      baseImageLoaded ? "opacity-100" : "opacity-0"
-                    )}
-                    style={{ cursor: canvasCursor }}
-                  />
+                  <div className="relative w-fit max-h-full max-w-full">
+                    <canvas
+                      ref={setCanvasNode}
+                      className={cn(
+                        "pointer-events-none block h-auto w-auto object-contain",
+                        isAnnotTouchUI
+                          ? "max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)]"
+                          : "max-h-full max-w-full",
+                        baseImageLoaded ? "opacity-100" : "opacity-0"
+                      )}
+                    />
+                    <div
+                      className="absolute inset-0 z-[12] touch-none"
+                      style={{ cursor: canvasCursor }}
+                      onPointerDown={handleCanvasPointerDown}
+                      onPointerMove={handleCanvasPointerMove}
+                      onPointerUp={handleCanvasPointerUp}
+                      onPointerCancel={() => {
+                        pointerMapRef.current.clear();
+                        pinchSessionRef.current = null;
+                        viewPanStartRef.current = null;
+                        setDragMode("none");
+                        setDragLastPoint(null);
+                        setNoteRectDraft(null);
+                        setShapeRectDraft(null);
+                        setDraftAnnotationId(null);
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -6524,6 +6927,17 @@ function JobDetailPageContent() {
                   </div>
                 </div>
               )}
+              {annotationLegendEntries.length ? (
+                <div className="pointer-events-none absolute bottom-2 left-2 right-2 z-10 max-h-[28%] overflow-y-auto rounded-md border border-white/25 bg-black/70 p-2 text-[11px] leading-snug text-slate-100 shadow-md sm:max-h-[24%]">
+                  <p className="mb-0.5 font-semibold text-orange-300">Legenda</p>
+                  {annotationLegendEntries.map((e) => (
+                    <p key={`${e.legendNumber}-${e.label}`}>
+                      {e.legendNumber} – {e.label}, {e.widthMm}×{e.heightMm} mm
+                      {e.note ? ` — ${e.note}` : ""}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5">
@@ -6557,7 +6971,7 @@ function JobDetailPageContent() {
                   disabled={
                     editorMediaKind === "pdf"
                       ? pdfScale >= PDF_EDITOR_SCALE_MAX
-                      : annotationView.zoom >= 10
+                      : annotationView.zoom >= ANNOTATION_VIEW_ZOOM_MAX
                   }
                   title="Přiblížit"
                 >
@@ -6572,7 +6986,7 @@ function JobDetailPageContent() {
                   disabled={
                     editorMediaKind === "pdf"
                       ? pdfScale <= PDF_EDITOR_SCALE_MIN
-                      : annotationView.zoom <= 1
+                      : annotationView.zoom <= ANNOTATION_VIEW_ZOOM_MIN
                   }
                   title="Oddálit"
                 >
@@ -6651,6 +7065,139 @@ function JobDetailPageContent() {
           </div>
             </>
           )}
+          {shapeLabelDialogOpen ? (
+            <div
+              className={cn(
+                "pointer-events-auto absolute inset-0 z-[220] flex items-center justify-center p-3 sm:p-6",
+                isAnnotTouchUI ? "bg-black/80" : "bg-black/60"
+              )}
+            >
+              <div
+                className={cn(
+                  "max-h-[min(90dvh,560px)] w-full max-w-md overflow-y-auto rounded-lg border p-4 shadow-xl",
+                  isAnnotTouchUI
+                    ? "border-white/20 bg-slate-900 text-white"
+                    : "border-border bg-card text-card-foreground"
+                )}
+                role="dialog"
+                aria-modal="true"
+              >
+                <h3 className="mb-3 text-base font-semibold">
+                  {shapeLabelEditingId ? "Upravit značku" : "Nová značka / model"}
+                </h3>
+                <div className="space-y-3 text-sm">
+                  <div className="flex flex-col gap-1">
+                    <Label>Tvar</Label>
+                    <select
+                      className={cn(
+                        "h-9 w-full rounded-md border px-2 text-sm",
+                        isAnnotTouchUI
+                          ? "border-white/25 bg-slate-950 text-white"
+                          : "border-input bg-background"
+                      )}
+                      value={shapeLabelForm.shape}
+                      onChange={(e) =>
+                        setShapeLabelForm((f) => ({
+                          ...f,
+                          shape: e.target.value as ShapeLabelAnnotation["shape"],
+                        }))
+                      }
+                    >
+                      <option value="square">Čtverec</option>
+                      <option value="rectangle">Obdélník</option>
+                      <option value="circle">Kruh</option>
+                      <option value="point">Bod</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label>Název</Label>
+                    <Input
+                      value={shapeLabelForm.label}
+                      onChange={(e) =>
+                        setShapeLabelForm((f) => ({ ...f, label: e.target.value }))
+                      }
+                      placeholder="např. Pračka"
+                      className={isAnnotTouchUI ? "border-white/25 bg-slate-950 text-white" : ""}
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
+                      <Label>Šířka (mm)</Label>
+                      <Input
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        value={shapeLabelForm.widthMm}
+                        onChange={(e) =>
+                          setShapeLabelForm((f) => ({
+                            ...f,
+                            widthMm: Number(e.target.value) || 0,
+                          }))
+                        }
+                        className={isAnnotTouchUI ? "border-white/25 bg-slate-950 text-white" : ""}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <Label>Výška (mm)</Label>
+                      <Input
+                        type="number"
+                        min={0.1}
+                        step={0.1}
+                        value={shapeLabelForm.heightMm}
+                        onChange={(e) =>
+                          setShapeLabelForm((f) => ({
+                            ...f,
+                            heightMm: Number(e.target.value) || 0,
+                          }))
+                        }
+                        className={isAnnotTouchUI ? "border-white/25 bg-slate-950 text-white" : ""}
+                      />
+                    </div>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label>Poznámka (volitelně)</Label>
+                    <Input
+                      value={shapeLabelForm.note}
+                      onChange={(e) =>
+                        setShapeLabelForm((f) => ({ ...f, note: e.target.value }))
+                      }
+                      className={isAnnotTouchUI ? "border-white/25 bg-slate-950 text-white" : ""}
+                    />
+                  </div>
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 rounded border"
+                      checked={shapeLabelForm.showLabelInline}
+                      onChange={(e) =>
+                        setShapeLabelForm((f) => ({
+                          ...f,
+                          showLabelInline: e.target.checked,
+                        }))
+                      }
+                    />
+                    <span>Zobrazit popis přímo u značky (jinak jen číslo + legenda)</span>
+                  </label>
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      setShapeLabelDialogOpen(false);
+                      setShapeLabelEditingId(null);
+                      pendingShapeRectRef.current = null;
+                    }}
+                  >
+                    Zrušit
+                  </Button>
+                  <Button type="button" onClick={() => void commitShapeLabelFromDialog()}>
+                    {shapeLabelEditingId ? "Uložit změny" : "Vložit značku"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </DialogContent>
       </Dialog>
   );

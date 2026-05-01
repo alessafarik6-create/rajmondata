@@ -31,7 +31,12 @@ import {
   type JobPhotoAnnotation,
 } from "@/lib/job-photo-annotations";
 import { drawNoteAnnotationOnCanvas } from "@/lib/job-photo-annotation-canvas";
-import type { JobPhotoDimensionAnnotation, JobPhotoNoteAnnotation } from "@/lib/job-photo-annotations";
+import type {
+  JobPhotoDimensionAnnotation,
+  JobPhotoNoteAnnotation,
+  JobPhotoShapeLabelAnnotation,
+} from "@/lib/job-photo-annotations";
+import { drawShapeLabelOnCanvas } from "@/lib/job-photo-shape-label";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -801,6 +806,13 @@ export function CustomerMediaAnnotationViewer({
     octx.clearRect(0, 0, cw, ch);
     const pageIdx = fileType === "pdf" ? pdfPage - 1 : 0;
     for (const a of embeddedItems) {
+      if (fileType === "pdf") {
+        const pi =
+          typeof (a as { pageIndex?: number }).pageIndex === "number"
+            ? (a as { pageIndex: number }).pageIndex
+            : 0;
+        if (pi !== pageIdx) continue;
+      }
       if (a.type === "dimension") {
         drawDimensionOnCtx(mctx, a as JobPhotoDimensionAnnotation, cw, ch);
       } else if (a.type === "note") {
@@ -808,6 +820,17 @@ export function CustomerMediaAnnotationViewer({
           ...scaleSizes(cw, ch),
           colorToHex: dimColorHex,
         });
+      } else if (a.type === "shapeLabel") {
+        const { fontSize, lineWidth } = scaleSizes(cw, ch);
+        drawShapeLabelOnCanvas(
+          mctx,
+          a as JobPhotoShapeLabelAnnotation,
+          false,
+          1,
+          dimColorHex,
+          fontSize,
+          lineWidth
+        );
       }
     }
     const selectedItem = items.find((it) => it.id === selectedId) ?? null;
