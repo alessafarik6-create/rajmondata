@@ -426,26 +426,71 @@ function getPhotoStorageFullPath(
   return "";
 }
 
+function firstTrimmedString(...vals: unknown[]): string {
+  for (const v of vals) {
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
+
 function measurementDocToAnnotationTarget(
   row: Record<string, unknown> & { id: string }
 ): JobPhotoAnnotationTarget {
-  const originalImageUrl =
-    typeof row.originalImageUrl === "string" ? row.originalImageUrl : "";
+  const annotatedImageUrl = firstTrimmedString(row.annotatedImageUrl) || undefined;
+  const downloadURL = firstTrimmedString(row.downloadURL) || undefined;
+  const url = firstTrimmedString(row.url) || undefined;
+  const storagePath = firstTrimmedString(row.storagePath) || undefined;
+  const path = firstTrimmedString(row.path) || undefined;
+  const fullPath = firstTrimmedString(row.fullPath) || undefined;
+
+  /** Kanonický podklad editoru — bez náhrady „jen náhledu“, dokud nezbyde nic jiného. */
+  const canonicalOriginal = firstTrimmedString(
+    row.originalImageUrl,
+    row.imageUrl,
+    row.fileUrl,
+    url,
+    downloadURL
+  );
+
+  const previewFallback = getJobMediaPreviewUrl({
+    annotatedImageUrl,
+    imageUrl: typeof row.imageUrl === "string" ? row.imageUrl : undefined,
+    url,
+    downloadURL,
+    originalImageUrl:
+      typeof row.originalImageUrl === "string" ? row.originalImageUrl : undefined,
+  });
+
+  const thumbFallback = firstTrimmedString(
+    row.thumbUrl,
+    row.thumbnailUrl,
+    row.thumbURL
+  );
+
+  const resolvedUrl =
+    canonicalOriginal || previewFallback || thumbFallback || "";
+
+  const fileName =
+    firstTrimmedString(row.fileName, row.name) || undefined;
+
   return {
     id: row.id,
-    imageUrl: originalImageUrl,
-    originalImageUrl,
-    annotatedImageUrl:
-      typeof row.annotatedImageUrl === "string" ? row.annotatedImageUrl : undefined,
-    storagePath:
-      typeof row.storagePath === "string" ? row.storagePath : undefined,
+    imageUrl: resolvedUrl || undefined,
+    originalImageUrl: resolvedUrl || undefined,
+    annotatedImageUrl,
+    storagePath,
+    path: path || undefined,
+    fullPath: fullPath || undefined,
     annotatedStoragePath:
-      typeof row.annotatedStoragePath === "string"
-        ? row.annotatedStoragePath
-        : undefined,
+      firstTrimmedString(row.annotatedStoragePath) || undefined,
+    downloadURL,
+    url,
+    fileName,
+    name: typeof row.name === "string" ? row.name : undefined,
     annotationData: row.annotationData,
     annotationTarget: { kind: "measurementPhotos" },
     measurementPhotoId: row.id,
+    fileType: "image",
   };
 }
 
@@ -3558,6 +3603,14 @@ function JobDetailPageContent() {
     if (!canvasRef.current) return;
 
     if (!annotationSource) {
+      console.log("[AnnotationEditor:debug]", {
+        fileId: photoToEdit?.id,
+        imageUrl: null,
+        imageLoaded: false,
+        naturalWidth: null,
+        naturalHeight: null,
+        reason: "missing_annotation_source",
+      });
       setImageError("Nebyla nalezena fotografie pro anotaci.");
       setBaseImageLoaded(false);
       return;
@@ -3716,6 +3769,7 @@ function JobDetailPageContent() {
         ctx.drawImage(image, 0, 0);
 
         console.log("[AnnotationEditor:debug]", {
+          fileId: photoToEdit?.id,
           imageUrl: resolvedUrl,
           imageLoaded: true,
           naturalWidth: image.naturalWidth,
@@ -3744,6 +3798,14 @@ function JobDetailPageContent() {
       } catch (error) {
         if (cancelled) return;
 
+        console.log("[AnnotationEditor:debug]", {
+          fileId: photoToEdit?.id,
+          imageUrl: annotationSource,
+          imageLoaded: false,
+          naturalWidth: null,
+          naturalHeight: null,
+          error: error instanceof Error ? error.message : String(error),
+        });
         console.error("[JobDetailPage] Image load failed", error);
         setBaseImageLoaded(false);
         setImageForCanvas(null);
@@ -5741,12 +5803,9 @@ function JobDetailPageContent() {
         const raw = measurementEditorReturnToRef.current;
         measurementEditorReturnToRef.current = null;
         const fromParam = sanitizeMeasurementEditorReturnTo(raw);
-        const fallback =
-          photoToEdit?.id?.startsWith("pending-") &&
-          isStandaloneMeasurementEditorRoute
-            ? "/portal/jobs"
-            : null;
-        const dest = fromParam ?? fallback;
+        const dest =
+          fromParam ??
+          (isStandaloneMeasurementEditorRoute ? "/portal/dashboard" : null);
         if (dest) {
           router.replace(dest);
         }
@@ -6397,7 +6456,7 @@ function JobDetailPageContent() {
       >
         <DialogContent
           className={cn(
-            "relative flex flex-col gap-0 overflow-hidden overscroll-contain",
+            "relative !flex min-h-0 flex-col gap-0 overflow-hidden overscroll-contain",
             "max-lg:!fixed max-lg:!inset-0 max-lg:!left-0 max-lg:!top-0 max-lg:z-[200] max-lg:flex max-lg:h-[100dvh] max-lg:min-h-[100dvh] max-lg:max-h-[100dvh] max-lg:w-[100vw] max-lg:max-w-[100vw] max-lg:!translate-x-0 max-lg:!translate-y-0 max-lg:rounded-none max-lg:border-0 max-lg:bg-slate-950 max-lg:p-0 max-lg:text-white max-lg:shadow-none data-[state=open]:max-lg:zoom-in-100",
             "lg:!flex lg:!h-[min(92dvh,92vh)] lg:!max-h-[min(92dvh,92vh)] lg:!w-[min(95vw,1920px)] lg:!max-w-[min(95vw,1920px)] lg:rounded-lg lg:border lg:bg-background lg:p-3 lg:text-foreground lg:shadow-xl"
           )}
@@ -6413,7 +6472,7 @@ function JobDetailPageContent() {
                 </DialogTitle>
               </DialogHeader>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:bg-slate-950 max-lg:px-2 max-lg:pb-2">
+              <div className="flex min-h-[min(70vh,85dvh)] flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:bg-slate-950 max-lg:px-2 max-lg:pb-2">
             <div className="shrink-0 space-y-1.5 sm:space-y-2">
               <p className="text-xs leading-snug text-muted-foreground max-lg:text-slate-300 sm:text-sm sm:leading-normal lg:text-muted-foreground">
                 Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
@@ -6560,9 +6619,9 @@ function JobDetailPageContent() {
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
-                "relative z-0 flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-hidden bg-black",
+                "relative z-0 flex min-h-[min(70vh,80dvh)] min-w-0 flex-1 touch-none items-center justify-center overflow-hidden bg-black",
                 "max-lg:rounded-none max-lg:border-0 max-lg:p-0",
-                "lg:min-h-[min(70vh,80dvh)] lg:rounded-md lg:border lg:bg-black/80 lg:p-0.5 lg:sm:p-1"
+                "lg:rounded-md lg:border lg:bg-black/80 lg:p-0.5 lg:sm:p-1"
               )}
             >
               <div
@@ -6924,7 +6983,7 @@ function JobDetailPageContent() {
   if (isStandaloneMeasurementEditorRoute) {
     const standaloneMeasurementBackHref =
       sanitizeMeasurementEditorReturnTo(searchParams.get("returnTo")) ??
-      "/portal/jobs";
+      "/portal/dashboard";
     return (
       <div className={JD.page}>
         <div className={JD.contentMax}>

@@ -103,12 +103,16 @@ function editorHrefForMeasurementRow(
 }
 
 function previewUrlForRow(row: Row): string | undefined {
-  return getJobMediaPreviewUrl({
+  const u = getJobMediaPreviewUrl({
     annotatedImageUrl:
       typeof row.annotatedImageUrl === "string" ? row.annotatedImageUrl : undefined,
-    imageUrl:
+    imageUrl: typeof row.imageUrl === "string" ? row.imageUrl : undefined,
+    url: typeof row.url === "string" ? row.url : undefined,
+    downloadURL: typeof row.downloadURL === "string" ? row.downloadURL : undefined,
+    originalImageUrl:
       typeof row.originalImageUrl === "string" ? row.originalImageUrl : undefined,
   });
+  return u || undefined;
 }
 
 export function DashboardUnassignedMeasurementPhotos({
