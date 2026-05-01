@@ -588,11 +588,44 @@ function UserFolderBlock({
     adminNote?: string;
   };
   const [mediaViewer, setMediaViewer] = useState<FolderMediaViewerOpen | null>(null);
+
+  const folderType: JobFolderType = folder.type ?? "files";
+  const isEmployeeLimited = mediaScope === "employeeLimited";
+  const isCustomerScope = mediaScope === "customer";
+  /** Mazání, poznámky, anotace v seznamu souborů — ne pro zákaznický portál. */
+  const allowFolderStaffFileActions = !isEmployeeLimited && !isCustomerScope;
+
   const openFolderMediaViewer = useCallback(
     (img: JobFolderImageDoc, openUrl: string, title: string) => {
       const kind = inferJobMediaItemType(img);
       if (kind === "office") {
         if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
+        return;
+      }
+      /** Interní zakázka (majitel/admin) — stejný editor jako měření / dashboard, ne CustomerMediaAnnotationViewer. */
+      if (
+        allowFolderStaffFileActions &&
+        (kind === "image" || kind === "pdf")
+      ) {
+        onAnnotatePhoto({
+          id: img.id,
+          imageUrl: img.imageUrl,
+          url: img.url,
+          downloadURL: img.downloadURL,
+          originalImageUrl: img.originalImageUrl,
+          annotatedImageUrl: img.annotatedImageUrl,
+          storagePath: img.storagePath,
+          path: img.path,
+          annotatedStoragePath: img.annotatedStoragePath,
+          fileName: img.fileName,
+          name: img.name,
+          fileType: kind === "pdf" ? "pdf" : "image",
+          annotationData: img.annotationData,
+          annotationTarget: {
+            kind: "folderImages",
+            folderId: folder.id,
+          },
+        });
         return;
       }
       const fileType = kind === "pdf" ? "pdf" : "image";
@@ -614,16 +647,11 @@ function UserFolderBlock({
         adminNote: typeof img.note === "string" ? img.note : "",
       });
     },
-    [folder, mediaScope]
+    [folder, mediaScope, allowFolderStaffFileActions, onAnnotatePhoto]
   );
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
 
-  const folderType: JobFolderType = folder.type ?? "files";
-  const isEmployeeLimited = mediaScope === "employeeLimited";
-  const isCustomerScope = mediaScope === "customer";
-  /** Mazání, poznámky, anotace v seznamu souborů — ne pro zákaznický portál. */
-  const allowFolderStaffFileActions = !isEmployeeLimited && !isCustomerScope;
   const isAccountingFolder =
     folderType === "documents" && !isEmployeeLimited && !isCustomerScope;
   const [folderPermBusy, setFolderPermBusy] = useState(false);
@@ -2487,6 +2515,26 @@ export function JobMediaSection({
         if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
         return;
       }
+      /** Firemní detail zakázky — jednotný editor v JobDetailPageContent (zoom, kóty, PDF). */
+      if (!hideJobMediaAdminUi && (kind === "image" || kind === "pdf")) {
+        onAnnotatePhoto({
+          id: p.id,
+          imageUrl: p.imageUrl,
+          url: p.url,
+          downloadURL: p.downloadURL,
+          originalImageUrl: p.originalImageUrl,
+          annotatedImageUrl: p.annotatedImageUrl,
+          storagePath: p.storagePath,
+          path: p.path,
+          fullPath: p.fullPath,
+          fileName: p.fileName,
+          name: p.name,
+          fileType: kind === "pdf" ? "pdf" : "image",
+          annotationData: p.annotationData,
+          annotationTarget: { kind: "photos" },
+        });
+        return;
+      }
       const fileType = kind === "pdf" ? "pdf" : "image";
       const readOnly =
         mediaScope === "customer" &&
@@ -2503,7 +2551,7 @@ export function JobMediaSection({
         adminNote: typeof p.note === "string" ? p.note : "",
       });
     },
-    [mediaScope]
+    [mediaScope, hideJobMediaAdminUi, onAnnotatePhoto]
   );
 
   const isJobDetailWide = layout === "jobDetailWide";
