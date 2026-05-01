@@ -1135,10 +1135,11 @@ function JobDetailPageContent() {
   const measurementCameraInputRef = useRef<HTMLInputElement>(null);
   /** Záloha souboru z foťáku (iOS někdy ztratí odkaz ve state před otevřením editoru). */
   const measurementCaptureFileRef = useRef<File | null>(null);
-  const [editorOpen, setEditorOpen] = useState(false);
   const [photoToEdit, setPhotoToEdit] = useState<JobPhotoAnnotationTarget | null>(
     null
   );
+  /** Jeden zdroj pravdy: editor je otevřený právě tehdy, je-li vybrané médium k anotaci. */
+  const editorOpen = Boolean(photoToEdit);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const annotationTransformRef = useRef<HTMLDivElement | null>(null);
@@ -1539,6 +1540,22 @@ function JobDetailPageContent() {
       return null;
     });
   }, []);
+
+  const dismissAnnotationEditor = useCallback(() => {
+    measurementEditorReturnToRef.current = null;
+    measurementCaptureFileRef.current = null;
+    setPhotoToEdit((prev) => {
+      if (prev?.pendingObjectUrl) {
+        try {
+          URL.revokeObjectURL(prev.pendingObjectUrl);
+        } catch {
+          /* ignore */
+        }
+      }
+      return null;
+    });
+    resetAnnotationState();
+  }, [resetAnnotationState]);
 
   const annotationSource = useMemo(() => {
     if (!photoToEdit) return null;
@@ -2290,7 +2307,6 @@ function JobDetailPageContent() {
         setPhotoToEdit(
           measurementDocToAnnotationTarget({ id: snap.id, ...data })
         );
-        setEditorOpen(true);
         router.replace(`/portal/jobs/${jobIdParam}`, { scroll: false });
       } catch (e) {
         if (cancelled) return;
@@ -3699,6 +3715,15 @@ function JobDetailPageContent() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(image, 0, 0);
 
+        console.log("[AnnotationEditor:debug]", {
+          imageUrl: resolvedUrl,
+          imageLoaded: true,
+          naturalWidth: image.naturalWidth,
+          naturalHeight: image.naturalHeight,
+          canvasWidth: canvas.width,
+          canvasHeight: canvas.height,
+        });
+
         setImageForCanvas(image);
         setBaseImageLoaded(true);
         setImageError(null);
@@ -3786,6 +3811,14 @@ function JobDetailPageContent() {
           canvas.width = w;
           canvas.height = h;
         }
+        console.log("[AnnotationEditor:debug]", {
+          imageUrl: "pdf-page",
+          imageLoaded: true,
+          naturalWidth: w,
+          naturalHeight: h,
+          canvasWidth: canvas?.width ?? w,
+          canvasHeight: canvas?.height ?? h,
+        });
         setBaseImageLoaded(true);
         setImageError(null);
       } catch (e) {
@@ -5058,7 +5091,6 @@ function JobDetailPageContent() {
       });
       setMeasurementCaptureBusy(true);
       setPhotoToEdit(target);
-      setEditorOpen(true);
       setMeasurementCaptureBusy(false);
       requestAnimationFrame(() => {
         if (measurementGalleryInputRef.current) measurementGalleryInputRef.current.value = "";
@@ -5720,7 +5752,6 @@ function JobDetailPageContent() {
         }
       }
 
-      setEditorOpen(false);
       setPhotoToEdit(null);
       measurementCaptureFileRef.current = null;
       resetAnnotationState();
@@ -6361,22 +6392,7 @@ function JobDetailPageContent() {
       <Dialog
         open={editorOpen}
         onOpenChange={(open) => {
-          setEditorOpen(open);
-          if (!open) {
-            measurementEditorReturnToRef.current = null;
-            measurementCaptureFileRef.current = null;
-            setPhotoToEdit((prev) => {
-              if (prev?.pendingObjectUrl) {
-                try {
-                  URL.revokeObjectURL(prev.pendingObjectUrl);
-                } catch {
-                  /* ignore */
-                }
-              }
-              return null;
-            });
-            resetAnnotationState();
-          }
+          if (!open) dismissAnnotationEditor();
         }}
       >
         <DialogContent
@@ -6398,7 +6414,7 @@ function JobDetailPageContent() {
                   variant="ghost"
                   size="sm"
                   className="h-8 shrink-0 px-2 text-white hover:bg-white/10"
-                  onClick={() => setEditorOpen(false)}
+                  onClick={() => dismissAnnotationEditor()}
                 >
                   Zavřít
                 </Button>
@@ -6844,17 +6860,14 @@ function JobDetailPageContent() {
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
-                "relative flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-hidden bg-black",
+                "relative z-0 flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-hidden bg-black",
                 isAnnotTouchUI
                   ? "rounded-none border-0 p-0"
-                  : "rounded-md border bg-black/80 p-0.5 sm:p-1"
+                  : "min-h-[min(70vh,80dvh)] rounded-md border bg-black/80 p-0.5 sm:p-1"
               )}
             >
               <div
-                className={cn(
-                  "flex max-h-full max-w-full items-center justify-center",
-                  isAnnotTouchUI && "h-full w-full"
-                )}
+                className="flex h-full min-h-0 max-h-full w-full max-w-full items-center justify-center"
                 style={
                   isAnnotTouchUI
                     ? ({
@@ -6873,13 +6886,13 @@ function JobDetailPageContent() {
                     transformOrigin: "center center",
                   }}
                   className={cn(
-                    "flex items-center justify-center",
+                    "flex min-h-0 items-center justify-center",
                     isAnnotTouchUI
                       ? "max-h-[min(100dvh-5.5rem,92dvh)] max-w-[min(100vw-4.5rem,96vw)]"
-                      : "max-h-full max-w-full"
+                      : "h-full max-h-full w-full max-w-full"
                   )}
                 >
-                  <div className="relative w-fit max-h-full max-w-full">
+                  <div className="relative z-[1] w-fit max-h-full max-w-full min-w-0">
                     <canvas
                       ref={setCanvasNode}
                       className={cn(
@@ -7048,7 +7061,7 @@ function JobDetailPageContent() {
                 <Button
                   variant="outline"
                   className="min-h-[36px]"
-                  onClick={() => setEditorOpen(false)}
+                  onClick={() => dismissAnnotationEditor()}
                 >
                   Zrušit
                 </Button>
@@ -7222,6 +7235,9 @@ function JobDetailPageContent() {
   }
 
   if (isStandaloneMeasurementEditorRoute) {
+    const standaloneMeasurementBackHref =
+      sanitizeMeasurementEditorReturnTo(searchParams.get("returnTo")) ??
+      "/portal/jobs";
     return (
       <div className={JD.page}>
         <div className={JD.contentMax}>
@@ -7229,7 +7245,7 @@ function JobDetailPageContent() {
             <Button
               variant="ghost"
               className="h-10 w-10 shrink-0 w-fit"
-              onClick={() => router.push("/portal/dashboard")}
+              onClick={() => router.push(standaloneMeasurementBackHref)}
             >
               <ChevronLeft className="w-6 h-6" />
               <span className="sr-only">Zpět</span>
@@ -8457,7 +8473,6 @@ function JobDetailPageContent() {
                               setPhotoToEdit(
                                 measurementDocToAnnotationTarget(row)
                               );
-                              setEditorOpen(true);
                             }}
                           >
                             <Edit2 className="w-3 h-3 mr-1" />
@@ -8553,7 +8568,6 @@ function JobDetailPageContent() {
                   setPhotoToEdit(
                     measurementDocToAnnotationTarget(measurementLightboxRow)
                   );
-                  setEditorOpen(true);
                 }}
               >
                 Upravit anotace
@@ -8591,7 +8605,6 @@ function JobDetailPageContent() {
               layout="jobDetailWide"
               onAnnotatePhoto={(target) => {
                 setPhotoToEdit(target);
-                setEditorOpen(true);
               }}
             />
           </div>
