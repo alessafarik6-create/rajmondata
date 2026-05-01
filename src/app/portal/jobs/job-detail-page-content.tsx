@@ -443,6 +443,49 @@ function firstTrimmedString(...vals: unknown[]): string {
   return "";
 }
 
+/** Do Firestore se někdy omylem uloží blob: — po navigaci nefunguje; pro trvalý editor ignorovat. */
+function isEphemeralObjectMediaUrl(s: string | null | undefined): boolean {
+  if (!s || typeof s !== "string") return false;
+  const t = s.trim();
+  return t.startsWith("blob:") || t.startsWith("data:");
+}
+
+function stripEphemeralMediaUrl(
+  s: string | undefined | null
+): string | undefined {
+  if (!s?.trim()) return undefined;
+  const t = s.trim();
+  if (isEphemeralObjectMediaUrl(t)) return undefined;
+  return t;
+}
+
+/** První neprázdný řetězec, který po vyhození `blob:`/`data:` zůstane platný (např. `imageUrl` je blob, `fileUrl` je HTTPS). */
+function firstPersistedHttpString(...vals: unknown[]): string | undefined {
+  for (const v of vals) {
+    const s = stripEphemeralMediaUrl(
+      typeof v === "string" && v.trim() ? v.trim() : undefined
+    );
+    if (s) return s;
+  }
+  return undefined;
+}
+
+function pickNonHttpStoragePath(pe: JobPhotoAnnotationTarget): string | undefined {
+  for (const p of [
+    pe.storagePath,
+    pe.path,
+    pe.fullPath,
+    pe.annotatedStoragePath,
+  ]) {
+    if (typeof p !== "string" || !p.trim()) continue;
+    const t = p.trim();
+    if (isEphemeralObjectMediaUrl(t)) continue;
+    if (t.startsWith("http://") || t.startsWith("https://")) continue;
+    return t;
+  }
+  return undefined;
+}
+
 /**
  * Stejné pole jako při `onAnnotatePhoto` u fotodokumentace — žádné sloučení do jedné URL,
  * ať `annotationSource` a Storage blob větev fungují stejně jako u `photos` / `folderImages`.
@@ -451,29 +494,43 @@ function firstTrimmedString(...vals: unknown[]): string {
 function measurementDocToAnnotationTarget(
   row: Record<string, unknown> & { id: string }
 ): JobPhotoAnnotationTarget {
-  const annotatedImageUrl = firstTrimmedString(row.annotatedImageUrl) || undefined;
-  const downloadURL = firstTrimmedString(row.downloadURL) || undefined;
-  const url = firstTrimmedString(row.url) || undefined;
+  const annotatedImageUrl =
+    stripEphemeralMediaUrl(firstTrimmedString(row.annotatedImageUrl)) ||
+    undefined;
+  const downloadURL =
+    stripEphemeralMediaUrl(firstTrimmedString(row.downloadURL)) || undefined;
+  const urlRaw = firstTrimmedString(row.url) || undefined;
+  const fileUrlRaw = firstTrimmedString(row.fileUrl) || undefined;
+  const url =
+    stripEphemeralMediaUrl(urlRaw) ||
+    stripEphemeralMediaUrl(fileUrlRaw) ||
+    undefined;
+  const fileUrl = stripEphemeralMediaUrl(fileUrlRaw) || undefined;
   const storagePath = firstTrimmedString(row.storagePath) || undefined;
   const path = firstTrimmedString(row.path) || undefined;
   const fullPath = firstTrimmedString(row.fullPath) || undefined;
 
-  let originalImageUrl = firstTrimmedString(row.originalImageUrl) || undefined;
+  let originalImageUrl =
+    firstPersistedHttpString(row.originalImageUrl, row.imageUrl, row.fileUrl) ||
+    undefined;
   let imageUrl =
-    firstTrimmedString(row.imageUrl, row.fileUrl, row.originalImageUrl) ||
+    firstPersistedHttpString(row.imageUrl, row.fileUrl, row.originalImageUrl) ||
     undefined;
 
   if (!originalImageUrl && imageUrl) originalImageUrl = imageUrl;
   if (!imageUrl && originalImageUrl) imageUrl = originalImageUrl;
 
   if (!originalImageUrl && !imageUrl) {
-    const fromUrls = firstTrimmedString(url, downloadURL) || undefined;
+    const fromUrls =
+      firstPersistedHttpString(urlRaw, fileUrlRaw) || downloadURL || undefined;
     originalImageUrl = fromUrls;
     imageUrl = fromUrls;
   }
 
   const thumbFallback =
-    firstTrimmedString(row.thumbUrl, row.thumbnailUrl, row.thumbURL) || undefined;
+    stripEphemeralMediaUrl(
+      firstTrimmedString(row.thumbUrl, row.thumbnailUrl, row.thumbURL)
+    ) || undefined;
   const hasStorageHint = Boolean(storagePath || path || fullPath);
   if (
     !hasStorageHint &&
@@ -496,9 +553,11 @@ function measurementDocToAnnotationTarget(
     path: path || undefined,
     fullPath: fullPath || undefined,
     annotatedStoragePath:
-      firstTrimmedString(row.annotatedStoragePath) || undefined,
+      stripEphemeralMediaUrl(firstTrimmedString(row.annotatedStoragePath)) ||
+      undefined,
     downloadURL,
     url,
+    fileUrl,
     fileName,
     name: typeof row.name === "string" ? row.name : undefined,
     annotationData: row.annotationData,
@@ -508,21 +567,102 @@ function measurementDocToAnnotationTarget(
   };
 }
 
+function pickMeasurementAnnotationSourceString(
+  pe: JobPhotoAnnotationTarget
+): string | null {
+  const rawPayload = readAnnotationPayloadFromPhotoDoc(
+    pe as Record<string, unknown>
+  );
+  const hasVectorLayer = rawPayload != null;
+  const storageFallback = pickNonHttpStoragePath(pe);
+  const httpAnnotatedFirst = () =>
+    firstPersistedHttpString(
+      pe.annotatedImageUrl,
+      pe.imageUrl,
+      pe.fileUrl,
+      pe.originalImageUrl,
+      pe.url,
+      pe.downloadURL
+    );
+  const httpOriginalFirst = () =>
+    firstPersistedHttpString(
+      pe.originalImageUrl,
+      pe.imageUrl,
+      pe.fileUrl,
+      pe.annotatedImageUrl,
+      pe.url,
+      pe.downloadURL
+    );
+  if (!hasVectorLayer) {
+    return httpAnnotatedFirst() || storageFallback || null;
+  }
+  return httpOriginalFirst() || storageFallback || null;
+}
+
+function measurementPhotoRowHasEphemeralButNoStorage(
+  row: Record<string, unknown>
+): boolean {
+  if (
+    firstTrimmedString(
+      row.storagePath,
+      row.path,
+      row.fullPath,
+      row.annotatedStoragePath
+    )
+  ) {
+    return false;
+  }
+  const fields = [
+    row.imageUrl,
+    row.fileUrl,
+    row.url,
+    row.downloadURL,
+    row.annotatedImageUrl,
+    row.originalImageUrl,
+  ];
+  return fields.some(
+    (v) => typeof v === "string" && isEphemeralObjectMediaUrl(v)
+  );
+}
+
 function annotationTargetHasResolvableUrl(t: JobPhotoAnnotationTarget | null): boolean {
   if (!t) return false;
-  const s =
-    firstTrimmedString(
-      t.annotatedImageUrl,
-      t.originalImageUrl,
-      t.imageUrl,
-      t.url,
-      t.downloadURL,
-      t.storagePath,
-      t.path,
-      t.fullPath,
-      t.annotatedStoragePath
-    ) || "";
-  return Boolean(s);
+  const pending =
+    Boolean(t.id?.startsWith("pending-")) &&
+    (Boolean(t.pendingObjectUrl) ||
+      Boolean(t.pendingLocalFile) ||
+      Boolean(t.imageUrl && isEphemeralObjectMediaUrl(t.imageUrl)));
+  if (pending) {
+    return Boolean(
+      t.pendingObjectUrl ||
+        t.pendingLocalFile ||
+        t.imageUrl ||
+        t.originalImageUrl
+    );
+  }
+  const httpOk = (u: string | undefined) =>
+    Boolean(u?.trim()) && !isEphemeralObjectMediaUrl(u);
+  if (
+    httpOk(t.annotatedImageUrl) ||
+    httpOk(t.imageUrl) ||
+    httpOk(t.originalImageUrl) ||
+    httpOk(t.url) ||
+    httpOk(t.fileUrl) ||
+    httpOk(t.downloadURL)
+  ) {
+    return true;
+  }
+  for (const p of [
+    t.storagePath,
+    t.path,
+    t.fullPath,
+    t.annotatedStoragePath,
+  ]) {
+    if (typeof p === "string" && p.trim() && !isEphemeralObjectMediaUrl(p)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function resolveMeasurementPhotoRowForEditorLog(row: Record<string, unknown>): {
@@ -545,7 +685,7 @@ function resolveMeasurementPhotoRowForEditorLog(row: Record<string, unknown>): {
     firstTrimmedString(row.thumbUrl, row.thumbnailUrl, row.thumbURL) ||
     undefined;
   const resolvedImageUrl =
-    firstTrimmedString(
+    firstPersistedHttpString(
       row.annotatedImageUrl,
       row.imageUrl,
       row.fileUrl,
@@ -1388,19 +1528,52 @@ export function JobDetailPageContent({
   const openMeasurementPhotoAnnotationFromRow = useCallback(
     (row: Record<string, unknown> & { id: string }) => {
       const target = measurementDocToAnnotationTarget(row);
+      const picked = pickMeasurementAnnotationSourceString(target);
       const thumb =
         firstTrimmedString(row.thumbUrl, row.thumbnailUrl, row.thumbURL) ||
         undefined;
+      if (!annotationTargetHasResolvableUrl(target)) {
+        const ephemeralNoStorage = measurementPhotoRowHasEphemeralButNoStorage(row);
+        console.error(
+          "[JobDetailPage] openMeasurementPhotoAnnotationFromRow: nelze otevřít editor",
+          row
+        );
+        toast({
+          variant: "destructive",
+          title: "Foto zaměření",
+          description: ephemeralNoStorage
+            ? "Obrázek není uložený ve storage. Nejdřív jej uložte."
+            : "Nepodařilo se načíst obrázek pro anotaci.",
+        });
+        return;
+      }
+      if (
+        typeof picked === "string" &&
+        (picked.startsWith("blob:") || picked.startsWith("data:"))
+      ) {
+        console.error(
+          "[JobDetailPage] openMeasurementPhotoAnnotationFromRow: ephemeral zdroj (blob/data)",
+          row
+        );
+        toast({
+          variant: "destructive",
+          title: "Foto zaměření",
+          description:
+            "Obrázek není uložený ve storage. Nejdřív jej uložte.",
+        });
+        return;
+      }
       console.log("OPEN MEASUREMENT PHOTO ANNOTATION", {
         photoId: row.id,
         imageUrl: target.imageUrl ?? target.originalImageUrl,
+        annotationSource: picked,
         thumbnailUrl: thumb,
         annotatedUrl: target.annotatedImageUrl,
         editor: "UniversalAnnotationEditor",
       });
       openPhotoAnnotationEditor(target);
     },
-    [openPhotoAnnotationEditor]
+    [openPhotoAnnotationEditor, toast]
   );
 
   useEffect(() => {
@@ -1715,40 +1888,18 @@ export function JobDetailPageContent({
 
     const pe = photoToEdit;
     if (pe.annotationTarget?.kind === "measurementPhotos") {
-      const rawPayload = readAnnotationPayloadFromPhotoDoc(
-        pe as Record<string, unknown>
-      );
-      const hasVectorLayer = rawPayload != null;
-      const chainOriginalFirst = () =>
-        pe.originalImageUrl ||
-        pe.imageUrl ||
-        pe.annotatedImageUrl ||
-        pe.url ||
-        pe.downloadURL ||
-        pe.storagePath ||
-        pe.path ||
-        pe.fullPath ||
-        pe.annotatedStoragePath ||
-        null;
-      /** Bez uložených kót: podkladem je plný raster export; jinak originál + vektorová vrstva. */
-      if (!hasVectorLayer) {
-        return (
-          pe.annotatedImageUrl ||
-          chainOriginalFirst()
-        );
-      }
-      return chainOriginalFirst();
+      return pickMeasurementAnnotationSourceString(pe);
     }
     return (
-      pe.originalImageUrl ||
-      pe.imageUrl ||
-      pe.annotatedImageUrl ||
-      pe.url ||
-      pe.downloadURL ||
-      pe.storagePath ||
-      pe.path ||
-      pe.fullPath ||
-      pe.annotatedStoragePath ||
+      firstPersistedHttpString(
+        pe.originalImageUrl,
+        pe.imageUrl,
+        pe.annotatedImageUrl,
+        pe.url,
+        pe.fileUrl,
+        pe.downloadURL
+      ) ||
+      pickNonHttpStoragePath(pe) ||
       null
     );
   }, [photoToEdit]);
@@ -2427,7 +2578,11 @@ export function JobDetailPageContent({
   }, [jobId]);
 
   useEffect(() => {
-    const mp = searchParams.get("mp");
+    const mp =
+      searchParams.get("mp")?.trim() ||
+      searchParams.get("photoId")?.trim() ||
+      searchParams.get("fileId")?.trim() ||
+      "";
     if (!mp) {
       openedMpFromQueryRef.current = null;
       return;
@@ -2499,15 +2654,40 @@ export function JobDetailPageContent({
         });
         const target = measurementDocToAnnotationTarget(rowFull);
         if (!annotationTargetHasResolvableUrl(target)) {
+          const ephemeralNoStorage =
+            measurementPhotoRowHasEphemeralButNoStorage(rowFull);
           console.error(
-            "[JobDetailPage] measurement photo has no resolvable image URL",
+            ephemeralNoStorage
+              ? "[JobDetailPage] measurement photo: jen blob/data URL, chybí Storage"
+              : "[JobDetailPage] measurement photo has no resolvable image URL",
             rowFull
           );
           openedMpFromQueryRef.current = mp;
           toast({
             variant: "destructive",
             title: "Foto zaměření",
-            description: "Nepodařilo se načíst obrázek pro anotaci.",
+            description: ephemeralNoStorage
+              ? "Obrázek není uložený ve storage. Nejdřív jej uložte."
+              : "Nepodařilo se načíst obrázek pro anotaci.",
+          });
+          router.replace(measurementEditorStripPath, { scroll: false });
+          return;
+        }
+        const pickedSrc = pickMeasurementAnnotationSourceString(target);
+        if (
+          typeof pickedSrc === "string" &&
+          (pickedSrc.startsWith("blob:") || pickedSrc.startsWith("data:"))
+        ) {
+          console.error(
+            "[JobDetailPage] measurement editor: zdroj je stále ephemeral",
+            rowFull
+          );
+          openedMpFromQueryRef.current = mp;
+          toast({
+            variant: "destructive",
+            title: "Foto zaměření",
+            description:
+              "Obrázek není uložený ve storage. Nejdřív jej uložte.",
           });
           router.replace(measurementEditorStripPath, { scroll: false });
           return;
@@ -3790,7 +3970,31 @@ export function JobDetailPageContent({
         );
         if (cancelled) return;
 
-        // Prefer Storage SDK blob -> objectUrl to avoid CORS/tainted canvas.
+        const pe0 = photoToEdit;
+        const isPendingLocalDraft0 =
+          Boolean(pe0?.id?.startsWith("pending-")) &&
+          (Boolean(pe0?.pendingObjectUrl) ||
+            Boolean(pe0?.pendingLocalFile) ||
+            Boolean(measurementCaptureFileRef.current));
+
+        if (
+          photoToEdit?.annotationTarget?.kind === "measurementPhotos" &&
+          !isPendingLocalDraft0
+        ) {
+          const s = (annotationSource || "").trim();
+          if (s.startsWith("blob:") || s.startsWith("data:")) {
+            console.error(
+              "[JobDetailPage] editor: trvalé foto nemá mít blob annotationSource",
+              photoToEdit
+            );
+            setImageError(
+              "Obrázek není uložený ve storage. Nejdřív jej uložte."
+            );
+            setBaseImageLoaded(false);
+            return;
+          }
+        }
+
         let resolvedUrl = await resolveAnnotationImageUrl(annotationSource);
 
         if (photoToEdit) {
@@ -3801,20 +4005,23 @@ export function JobDetailPageContent({
               Boolean(pe.pendingLocalFile) ||
               Boolean(measurementCaptureFileRef.current));
 
-          /** Lokální draft z foťáku — nenačívat Storage (žádná cesta); blob/data/http zůstane z resolve. */
+          /** SDK blob jen když ještě nemáme HTTPS download URL (zdroj je čistá storage cesta). */
           if (!isPendingLocalDraft) {
             const rawPath =
               pe.storagePath ||
               pe.path ||
               getPhotoStorageFullPath(pe);
             const storagePath = typeof rawPath === "string" ? rawPath.trim() : "";
-            if (
+            const canStorageSdkBlob =
               storagePath &&
               !storagePath.startsWith("blob:") &&
               !storagePath.startsWith("data:") &&
               !storagePath.startsWith("http://") &&
-              !storagePath.startsWith("https://")
-            ) {
+              !storagePath.startsWith("https://") &&
+              !resolvedUrl.startsWith("http://") &&
+              !resolvedUrl.startsWith("https://");
+
+            if (canStorageSdkBlob) {
               const blob = await getBlob(ref(getFirebaseStorage(), storagePath));
               const objectUrl = URL.createObjectURL(blob);
               setImageObjectUrl(objectUrl);
@@ -3883,8 +4090,19 @@ export function JobDetailPageContent({
 
         let image: HTMLImageElement;
 
+        const isHttpResolved =
+          resolvedUrl.startsWith("https://") || resolvedUrl.startsWith("http://");
+
         try {
-          image = await loadHtmlImage(resolvedUrl, false);
+          if (isHttpResolved) {
+            try {
+              image = await loadHtmlImage(resolvedUrl, true);
+            } catch {
+              image = await loadHtmlImage(resolvedUrl, false);
+            }
+          } else {
+            image = await loadHtmlImage(resolvedUrl, false);
+          }
         } catch (firstErr) {
           const pendingFile =
             photoToEdit?.pendingLocalFile ?? measurementCaptureFileRef.current ?? null;
@@ -3931,20 +4149,30 @@ export function JobDetailPageContent({
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(image, 0, 0);
 
+        const srcForLog = String(annotationSource ?? "");
+        const durableForAnnotationLog =
+          srcForLog.startsWith("https://") || srcForLog.startsWith("http://")
+            ? srcForLog
+            : resolvedUrl.startsWith("https://") ||
+                resolvedUrl.startsWith("http://")
+              ? resolvedUrl
+              : srcForLog;
+
+        console.log("ANNOTATION IMAGE SOURCE", {
+          fileId: photoToEdit?.id,
+          imageUrl: durableForAnnotationLog,
+          startsWithBlob: durableForAnnotationLog.startsWith("blob:"),
+          naturalWidth: image.naturalWidth,
+          naturalHeight: image.naturalHeight,
+        });
         console.log("[AnnotationEditor:debug]", {
           fileId: photoToEdit?.id,
-          imageUrl: resolvedUrl,
+          imageUrl: durableForAnnotationLog,
           imageLoaded: true,
           naturalWidth: image.naturalWidth,
           naturalHeight: image.naturalHeight,
           canvasWidth: canvas.width,
           canvasHeight: canvas.height,
-        });
-        console.log("ANNOTATION IMAGE LOAD", {
-          resolvedImageUrl: resolvedUrl,
-          loaded: true,
-          naturalWidth: image.naturalWidth,
-          naturalHeight: image.naturalHeight,
         });
 
         setImageForCanvas(image);
@@ -6649,7 +6877,7 @@ export function JobDetailPageContent({
                 </DialogTitle>
               </DialogHeader>
 
-              <div className="flex min-h-[min(70vh,85dvh)] flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:bg-slate-950 max-lg:px-2 max-lg:pb-2">
+              <div className="flex min-h-[70vh] flex-1 flex-col gap-2 overflow-auto sm:gap-3 max-lg:bg-slate-950 max-lg:px-2 max-lg:pb-2">
             <div className="shrink-0 space-y-1.5 sm:space-y-2">
               <p className="text-xs leading-snug text-muted-foreground max-lg:text-slate-300 sm:text-sm sm:leading-normal lg:text-muted-foreground">
                 Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
@@ -6796,13 +7024,13 @@ export function JobDetailPageContent({
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
-                "relative z-0 flex min-h-[min(70vh,80dvh)] min-w-0 flex-1 touch-none items-center justify-center overflow-hidden bg-black",
+                "relative z-0 flex min-h-[70vh] h-[70vh] min-w-0 flex-1 touch-none items-center justify-center overflow-auto bg-black",
                 "max-lg:rounded-none max-lg:border-0 max-lg:p-0",
                 "lg:rounded-md lg:border lg:bg-black/80 lg:p-0.5 lg:sm:p-1"
               )}
             >
               <div
-                className="flex h-full min-h-0 max-h-full w-full max-w-full items-center justify-center"
+                className="flex h-full min-h-0 max-h-full w-full max-w-full items-center justify-center overflow-auto"
                 style={{ touchAction: "none" as const }}
               >
                 <div

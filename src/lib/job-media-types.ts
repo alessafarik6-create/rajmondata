@@ -19,6 +19,8 @@ export type JobPhotoAnnotationTarget = {
   path?: string;
   fullPath?: string;
   url?: string;
+  /** Synonymum z některých záznamů (např. měření). */
+  fileUrl?: string;
   downloadURL?: string;
   fileName?: string;
   name?: string;
