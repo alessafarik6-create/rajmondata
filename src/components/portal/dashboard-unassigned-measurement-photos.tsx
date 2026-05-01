@@ -59,7 +59,7 @@ import {
   measurementPhotoHasValidAssignment,
   repairOrphanAssignedMeasurementPhotos,
 } from "@/lib/measurement-photos";
-import { MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID } from "@/lib/measurement-photo-pending-route";
+import { MEASUREMENT_PHOTO_ANNOTATE_PAGE_PATH } from "@/lib/measurement-photo-pending-route";
 import { userCanManageMeasurements } from "@/lib/measurements";
 import { NATIVE_SELECT_CLASS } from "@/lib/light-form-control-classes";
 
@@ -94,7 +94,7 @@ function editorHrefForMeasurementRow(
     typeof row.jobId === "string" && row.jobId.trim() ? row.jobId.trim() : "";
   const base = jobId
     ? `/portal/jobs/${jobId}`
-    : `/portal/jobs/${MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID}`;
+    : MEASUREMENT_PHOTO_ANNOTATE_PAGE_PATH;
   let url = `${base}?mp=${encodeURIComponent(row.id)}`;
   if (returnTo) {
     url += `&returnTo=${encodeURIComponent(returnTo)}`;

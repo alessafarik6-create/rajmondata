@@ -187,7 +187,7 @@ export function MeasurementPhotoCaptureDialog({
             ? `&returnTo=${encodeURIComponent(standaloneReturnTo.trim())}`
             : "";
         router.push(
-          `/portal/jobs/${MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID}?measurementPending=1${ret}`
+          `/portal/jobs/measurement-annotate?measurementPending=1${ret}`
         );
       } catch (e) {
         console.error("[MeasurementPhotoCaptureDialog] pending standalone", e);
