@@ -433,6 +433,11 @@ function firstTrimmedString(...vals: unknown[]): string {
   return "";
 }
 
+/**
+ * Stejné pole jako při `onAnnotatePhoto` u fotodokumentace — žádné sloučení do jedné URL,
+ * ať `annotationSource` a Storage blob větev fungují stejně jako u `photos` / `folderImages`.
+ * Plné rozlišení: nejdřív originál / imageUrl / download, ne až thumbnail.
+ */
 function measurementDocToAnnotationTarget(
   row: Record<string, unknown> & { id: string }
 ): JobPhotoAnnotationTarget {
@@ -443,40 +448,38 @@ function measurementDocToAnnotationTarget(
   const path = firstTrimmedString(row.path) || undefined;
   const fullPath = firstTrimmedString(row.fullPath) || undefined;
 
-  /** Kanonický podklad editoru — bez náhrady „jen náhledu“, dokud nezbyde nic jiného. */
-  const canonicalOriginal = firstTrimmedString(
-    row.originalImageUrl,
-    row.imageUrl,
-    row.fileUrl,
-    url,
-    downloadURL
-  );
+  let originalImageUrl = firstTrimmedString(row.originalImageUrl) || undefined;
+  let imageUrl =
+    firstTrimmedString(row.imageUrl, row.fileUrl) || undefined;
 
-  const previewFallback = getJobMediaPreviewUrl({
-    annotatedImageUrl,
-    imageUrl: typeof row.imageUrl === "string" ? row.imageUrl : undefined,
-    url,
-    downloadURL,
-    originalImageUrl:
-      typeof row.originalImageUrl === "string" ? row.originalImageUrl : undefined,
-  });
+  if (!originalImageUrl && imageUrl) originalImageUrl = imageUrl;
+  if (!imageUrl && originalImageUrl) imageUrl = originalImageUrl;
 
-  const thumbFallback = firstTrimmedString(
-    row.thumbUrl,
-    row.thumbnailUrl,
-    row.thumbURL
-  );
+  if (!originalImageUrl && !imageUrl) {
+    const fromUrls = firstTrimmedString(url, downloadURL) || undefined;
+    originalImageUrl = fromUrls;
+    imageUrl = fromUrls;
+  }
 
-  const resolvedUrl =
-    canonicalOriginal || previewFallback || thumbFallback || "";
+  const thumbFallback =
+    firstTrimmedString(row.thumbUrl, row.thumbnailUrl, row.thumbURL) || undefined;
+  const hasStorageHint = Boolean(storagePath || path || fullPath);
+  if (
+    !hasStorageHint &&
+    !originalImageUrl &&
+    !imageUrl &&
+    thumbFallback
+  ) {
+    imageUrl = thumbFallback;
+    originalImageUrl = thumbFallback;
+  }
 
-  const fileName =
-    firstTrimmedString(row.fileName, row.name) || undefined;
+  const fileName = firstTrimmedString(row.fileName, row.name) || undefined;
 
   return {
     id: row.id,
-    imageUrl: resolvedUrl || undefined,
-    originalImageUrl: resolvedUrl || undefined,
+    imageUrl,
+    originalImageUrl,
     annotatedImageUrl,
     storagePath,
     path: path || undefined,
@@ -1295,6 +1298,33 @@ function JobDetailPageContent() {
   } | null>(null);
   const measurementEditorReturnToRef = useRef<string | null>(null);
 
+  /** Jednotný vstup do editoru anotací (fotodokumentace i foto zaměření) — vždy vyčistí návrat z jiného kontextu. */
+  const openPhotoAnnotationEditor = useCallback(
+    (target: JobPhotoAnnotationTarget) => {
+      measurementEditorReturnToRef.current = null;
+      setPhotoToEdit(target);
+    },
+    []
+  );
+
+  const openMeasurementPhotoAnnotationFromRow = useCallback(
+    (row: Record<string, unknown> & { id: string }) => {
+      const target = measurementDocToAnnotationTarget(row);
+      const thumb =
+        firstTrimmedString(row.thumbUrl, row.thumbnailUrl, row.thumbURL) ||
+        undefined;
+      console.log("OPEN MEASUREMENT PHOTO ANNOTATION", {
+        photoId: row.id,
+        imageUrl: target.imageUrl ?? target.originalImageUrl,
+        thumbnailUrl: thumb,
+        annotatedUrl: target.annotatedImageUrl,
+        editor: "UniversalAnnotationEditor",
+      });
+      openPhotoAnnotationEditor(target);
+    },
+    [openPhotoAnnotationEditor]
+  );
+
   useEffect(() => {
     if (!editorOpen) return;
     setAnnotationView({ zoom: 1, panX: 0, panY: 0 });
@@ -1606,6 +1636,31 @@ function JobDetailPageContent() {
     if (!photoToEdit) return null;
 
     const pe = photoToEdit;
+    if (pe.annotationTarget?.kind === "measurementPhotos") {
+      const rawPayload = readAnnotationPayloadFromPhotoDoc(
+        pe as Record<string, unknown>
+      );
+      const hasVectorLayer = rawPayload != null;
+      const chainOriginalFirst = () =>
+        pe.originalImageUrl ||
+        pe.imageUrl ||
+        pe.annotatedImageUrl ||
+        pe.url ||
+        pe.downloadURL ||
+        pe.storagePath ||
+        pe.path ||
+        pe.fullPath ||
+        pe.annotatedStoragePath ||
+        null;
+      /** Bez uložených kót: podkladem je plný raster export; jinak originál + vektorová vrstva. */
+      if (!hasVectorLayer) {
+        return (
+          pe.annotatedImageUrl ||
+          chainOriginalFirst()
+        );
+      }
+      return chainOriginalFirst();
+    }
     return (
       pe.originalImageUrl ||
       pe.imageUrl ||
@@ -5152,6 +5207,7 @@ function JobDetailPageContent() {
         name: file.name,
       });
       setMeasurementCaptureBusy(true);
+      measurementEditorReturnToRef.current = null;
       setPhotoToEdit(target);
       setMeasurementCaptureBusy(false);
       requestAnimationFrame(() => {
@@ -8158,6 +8214,13 @@ function JobDetailPageContent() {
                         ? row.annotatedImageUrl
                         : undefined,
                     imageUrl:
+                      typeof row.imageUrl === "string" ? row.imageUrl : undefined,
+                    url: typeof row.url === "string" ? row.url : undefined,
+                    downloadURL:
+                      typeof row.downloadURL === "string"
+                        ? row.downloadURL
+                        : undefined,
+                    originalImageUrl:
                       typeof row.originalImageUrl === "string"
                         ? row.originalImageUrl
                         : undefined,
@@ -8216,9 +8279,7 @@ function JobDetailPageContent() {
                             variant="secondary"
                             className="h-8 text-xs"
                             onClick={() => {
-                              setPhotoToEdit(
-                                measurementDocToAnnotationTarget(row)
-                              );
+                              openMeasurementPhotoAnnotationFromRow(row);
                             }}
                           >
                             <Edit2 className="w-3 h-3 mr-1" />
@@ -8297,6 +8358,18 @@ function JobDetailPageContent() {
                     ? measurementLightboxRow.annotatedImageUrl
                     : undefined,
                 imageUrl:
+                  typeof measurementLightboxRow.imageUrl === "string"
+                    ? measurementLightboxRow.imageUrl
+                    : undefined,
+                url:
+                  typeof measurementLightboxRow.url === "string"
+                    ? measurementLightboxRow.url
+                    : undefined,
+                downloadURL:
+                  typeof measurementLightboxRow.downloadURL === "string"
+                    ? measurementLightboxRow.downloadURL
+                    : undefined,
+                originalImageUrl:
                   typeof measurementLightboxRow.originalImageUrl === "string"
                     ? measurementLightboxRow.originalImageUrl
                     : undefined,
@@ -8311,9 +8384,7 @@ function JobDetailPageContent() {
                 type="button"
                 onClick={() => {
                   setMeasurementLightboxDocId(null);
-                  setPhotoToEdit(
-                    measurementDocToAnnotationTarget(measurementLightboxRow)
-                  );
+                  openMeasurementPhotoAnnotationFromRow(measurementLightboxRow);
                 }}
               >
                 Upravit anotace
@@ -8349,9 +8420,7 @@ function JobDetailPageContent() {
               }}
               legacyUploading={isUploading}
               layout="jobDetailWide"
-              onAnnotatePhoto={(target) => {
-                setPhotoToEdit(target);
-              }}
+              onAnnotatePhoto={openPhotoAnnotationEditor}
             />
           </div>
         </section>
