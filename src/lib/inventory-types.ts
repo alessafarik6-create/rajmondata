@@ -23,6 +23,11 @@ export type InventoryStockTrackingMode =
   | "mass"
   | "generic";
 
+/**
+ * U jednotky mm a délkové evidence: buď jedno číslo (celková mm), nebo kusy × délka + stockPieces.
+ */
+export type InventoryStockModeMm = "totalLength" | "piecesLength";
+
 export type InventoryItemRow = {
   id: string;
   companyId: string;
@@ -38,6 +43,15 @@ export type InventoryItemRow = {
   quantity: number;
   /** Režim evidence (výchozí pieces = kompatibilní se stávajícími záznamy). */
   stockTrackingMode?: InventoryStockTrackingMode | null;
+  /**
+   * Jen u unit mm + stockTrackingMode length: celková délka vs. kusy s evidencí stockPieces.
+   * Legacy položky mají null → chová se jako totalLength.
+   */
+  stockMode?: InventoryStockModeMm | null;
+  /** Počet fyzických kusů (tyčí); u piecesLength typicky = počet dokumentů ve stockPieces. */
+  pieceCount?: number | null;
+  /** Typová délka jednoho kusu v mm (naskladnění / štítek). */
+  pieceLengthMm?: number | null;
   /** U délkových materiálů: původní délka v `lengthStockUnit`. */
   originalLength?: number | null;
   /** Aktuální dostupná délka / množství ve skladu ve stejné jednotce jako `unit` u length. */

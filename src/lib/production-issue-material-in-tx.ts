@@ -250,6 +250,7 @@ export async function executeMaterialIssueInAdminTransaction(
     }
     const stats = countPiecesByStatus(byId.values());
     itemPatch.stockPieceStats = stats;
+    itemPatch.pieceCount = stats.total;
 
     tx.update(itemRef, itemPatch as UpdateData<DocumentData>);
 

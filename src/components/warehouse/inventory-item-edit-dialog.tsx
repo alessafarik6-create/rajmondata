@@ -3,7 +3,9 @@
 import React, { useEffect, useRef, useState } from "react";
 import {
   collection,
+  deleteField,
   doc,
+  getDocs,
   runTransaction,
   serverTimestamp,
 } from "firebase/firestore";
@@ -30,7 +32,12 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { getFirebaseStorage } from "@/firebase";
-import type { InventoryItemRow, InventoryStockTrackingMode } from "@/lib/inventory-types";
+import type {
+  InventoryItemRow,
+  InventoryStockModeMm,
+  InventoryStockTrackingMode,
+} from "@/lib/inventory-types";
+import { countPiecesByStatus } from "@/lib/stock-pieces";
 
 function safeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 120) || "image";
@@ -73,6 +80,10 @@ export function InventoryItemEditDialog({
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [stockTrackingMode, setStockTrackingMode] = useState<InventoryStockTrackingMode>("pieces");
   const [originalLengthInput, setOriginalLengthInput] = useState("");
+  const [stockModeMm, setStockModeMm] = useState<InventoryStockModeMm>("totalLength");
+  const [pieceCountInput, setPieceCountInput] = useState("1");
+  const [pieceLengthMmInput, setPieceLengthMmInput] = useState("6500");
+  const [piecesHaveCuts, setPiecesHaveCuts] = useState(false);
 
   useEffect(() => {
     if (!open || !item) return;
@@ -99,7 +110,58 @@ export function InventoryItemEditDialog({
     setOriginalLengthInput(
       ol != null && Number.isFinite(Number(ol)) ? String(ol) : ""
     );
+    const sm = item.stockMode as InventoryStockModeMm | null | undefined;
+    if (sm === "piecesLength" || sm === "totalLength") {
+      setStockModeMm(sm);
+    } else if (
+      m === "length" &&
+      String(item.unit || "")
+        .trim()
+        .toLowerCase() === "mm" &&
+      (item.stockPieceStats?.total ?? 0) > 0 &&
+      item.pieceLengthMm != null
+    ) {
+      setStockModeMm("piecesLength");
+    } else {
+      setStockModeMm("totalLength");
+    }
+    const plc = item.pieceCount ?? item.stockPieceStats?.total;
+    setPieceCountInput(
+      plc != null && Number.isFinite(Number(plc)) && Number(plc) > 0 ? String(Math.floor(Number(plc))) : "1"
+    );
+    const plm = item.pieceLengthMm;
+    setPieceLengthMmInput(
+      plm != null && Number.isFinite(Number(plm)) && Number(plm) > 0 ? String(plm) : "6500"
+    );
   }, [open, item]);
+
+  useEffect(() => {
+    if (!open || !item || !firestore) return;
+    let cancelled = false;
+    (async () => {
+      const col = collection(
+        firestore,
+        "companies",
+        companyId,
+        "inventoryItems",
+        item.id,
+        "stockPieces"
+      );
+      const snap = await getDocs(col);
+      if (cancelled) return;
+      const cuts = snap.docs.some((d) => {
+        const x = d.data() as Record<string, unknown>;
+        const rem = Number(x.remainingLength);
+        const orig = Number(x.originalLength ?? rem);
+        const st = String(x.status || "");
+        return st !== "available" || Math.abs(rem - orig) > 0.5;
+      });
+      setPiecesHaveCuts(cuts);
+    })().catch(() => setPiecesHaveCuts(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [open, item, firestore, companyId]);
 
   useEffect(() => {
     if (!pendingFile) {
@@ -112,6 +174,17 @@ export function InventoryItemEditDialog({
   }, [pendingFile]);
 
   const thumbSrc = previewUrl ?? imageUrl;
+  const unitLower = unit.trim().toLowerCase();
+  const showMmPieceMode = stockTrackingMode === "length" && unitLower === "mm";
+
+  const computedPiecesTotalMm = (() => {
+    if (!showMmPieceMode || stockModeMm !== "piecesLength") return null;
+    if (piecesHaveCuts) return Number(String(quantity).replace(",", "."));
+    const a = Number(String(pieceCountInput).replace(",", "."));
+    const b = Number(String(pieceLengthMmInput).replace(",", "."));
+    if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+    return a * b;
+  })();
 
   const handleSave = async () => {
     if (!item) return;
@@ -120,20 +193,65 @@ export function InventoryItemEditDialog({
       toast({ variant: "destructive", title: "Vyplňte název položky." });
       return;
     }
-    const q = Number(String(quantity).replace(",", "."));
-    if (!Number.isFinite(q) || q < 0) {
-      toast({ variant: "destructive", title: "Množství musí být nezáporné číslo." });
-      return;
+    const u = unit.trim() || "ks";
+    const isMm = u.toLowerCase() === "mm";
+    const usePiecesLength =
+      stockTrackingMode === "length" && isMm && stockModeMm === "piecesLength";
+
+    const plParsed = Number(String(pieceLengthMmInput).replace(",", "."));
+    const pcParsed = Number(String(pieceCountInput).replace(",", "."));
+
+    let q = Number(String(quantity).replace(",", "."));
+    if (usePiecesLength) {
+      if (piecesHaveCuts) {
+        q = Number(item.quantity ?? 0);
+        if (!Number.isFinite(q) || q < 0) {
+          toast({ variant: "destructive", title: "Neplatná zásoba na položce." });
+          return;
+        }
+      } else {
+        if (!Number.isFinite(plParsed) || plParsed <= 0) {
+          toast({ variant: "destructive", title: "Délka jednoho kusu (mm) musí být kladné číslo." });
+          return;
+        }
+        if (!Number.isFinite(pcParsed) || pcParsed < 1 || Math.floor(pcParsed) !== pcParsed) {
+          toast({ variant: "destructive", title: "Počet kusů musí být celé číslo větší než 0." });
+          return;
+        }
+        q = pcParsed * plParsed;
+      }
+    } else {
+      if (!Number.isFinite(q) || q < 0) {
+        toast({ variant: "destructive", title: "Množství musí být nezáporné číslo." });
+        return;
+      }
     }
+
+    if (usePiecesLength && piecesHaveCuts) {
+      if (!Number.isFinite(plParsed) || plParsed <= 0) {
+        toast({ variant: "destructive", title: "Doplňte typovou délku kusu (mm)." });
+        return;
+      }
+    }
+
     const priceRaw = unitPrice.trim() === "" ? null : Number(String(unitPrice).replace(",", "."));
     const priceNum =
       priceRaw != null && Number.isFinite(priceRaw) && priceRaw >= 0 ? priceRaw : null;
 
-    const catResolved =
-      categoryId.trim() || null;
+    const catResolved = categoryId.trim() || null;
     const catNameResolved = catResolved
       ? (stockCategories.find((c) => c.id === catResolved)?.name ?? null)
       : null;
+
+    const piecesCol = collection(
+      firestore,
+      "companies",
+      companyId,
+      "inventoryItems",
+      item.id,
+      "stockPieces"
+    );
+    const existingPiecesSnap = await getDocs(piecesCol);
 
     setSaving(true);
     try {
@@ -152,23 +270,22 @@ export function InventoryItemEditDialog({
         const itemRef = doc(firestore, "companies", companyId, "inventoryItems", item.id);
         const snap = await tx.get(itemRef);
         if (!snap.exists()) throw new Error("Položka neexistuje.");
-        const prev = snap.data() as InventoryItemRow;
-        if (prev.isDeleted === true) throw new Error("Položka byla odstraněna.");
+        const prevRow = snap.data() as InventoryItemRow;
+        if (prevRow.isDeleted === true) throw new Error("Položka byla odstraněna.");
 
-        const oldQty = Number(prev.quantity ?? 0);
-        const oldName = String(prev.name ?? "");
-        const oldSku = String(prev.sku ?? "");
-        const oldCat = String(prev.categoryId ?? "");
-        const oldUnit = String(prev.unit ?? "ks");
-        const oldSup = String(prev.supplier ?? "");
-        const oldNote = String(prev.note ?? "");
+        const oldQty = Number(prevRow.quantity ?? 0);
+        const oldName = String(prevRow.name ?? "");
+        const oldSku = String(prevRow.sku ?? "");
+        const oldCat = String(prevRow.categoryId ?? "");
+        const oldUnit = String(prevRow.unit ?? "ks");
+        const oldSup = String(prevRow.supplier ?? "");
+        const oldNote = String(prevRow.note ?? "");
         const oldP =
-          prev.unitPrice != null && Number.isFinite(Number(prev.unitPrice))
-            ? Number(prev.unitPrice)
+          prevRow.unitPrice != null && Number.isFinite(Number(prevRow.unitPrice))
+            ? Number(prevRow.unitPrice)
             : null;
-        const oldImg = prev.imageUrl ?? null;
+        const oldImg = prevRow.imageUrl ?? null;
 
-        const u = unit.trim() || "ks";
         const origLenParsed =
           originalLengthInput.trim() === ""
             ? null
@@ -183,7 +300,6 @@ export function InventoryItemEditDialog({
           sku: sku.trim() || null,
           categoryId: catResolved,
           categoryName: catNameResolved,
-          /** Legacy fallback pro staré UI (zařazení materiálu) */
           materialCategory: catNameResolved,
           unit: u,
           quantity: q,
@@ -194,6 +310,24 @@ export function InventoryItemEditDialog({
           imageUrl: nextImage ?? null,
           updatedAt: serverTimestamp(),
         };
+
+        if (stockTrackingMode === "length" && isMm && stockModeMm === "piecesLength") {
+          basePatch.stockMode = "piecesLength";
+          basePatch.pieceLengthMm = plParsed;
+          const pcFinal = piecesHaveCuts
+            ? Number(prevRow.stockPieceStats?.total ?? prevRow.pieceCount ?? pcParsed)
+            : pcParsed;
+          basePatch.pieceCount = Math.floor(pcFinal);
+        } else if (stockTrackingMode === "length" && isMm && stockModeMm === "totalLength") {
+          basePatch.stockMode = "totalLength";
+          basePatch.pieceCount = deleteField();
+          basePatch.pieceLengthMm = deleteField();
+        } else {
+          basePatch.stockMode = deleteField();
+          basePatch.pieceCount = deleteField();
+          basePatch.pieceLengthMm = deleteField();
+        }
+
         if (stockTrackingMode === "length") {
           basePatch.currentLength = q;
           basePatch.lengthStockUnit = u;
@@ -202,6 +336,60 @@ export function InventoryItemEditDialog({
           basePatch.currentLength = null;
           basePatch.lengthStockUnit = null;
           basePatch.originalLength = null;
+        }
+
+        const leavePieceMode =
+          stockTrackingMode !== "length" || !isMm || stockModeMm === "totalLength";
+
+        const shouldRebuildPieces =
+          stockTrackingMode === "length" &&
+          isMm &&
+          stockModeMm === "piecesLength" &&
+          !piecesHaveCuts &&
+          Number.isFinite(pcParsed) &&
+          pcParsed >= 1 &&
+          Number.isFinite(plParsed) &&
+          plParsed > 0;
+
+        if (leavePieceMode) {
+          for (const d of existingPiecesSnap.docs) {
+            const r = await tx.get(d.ref);
+            if (r.exists()) tx.delete(d.ref);
+          }
+          basePatch.stockPieceStats = deleteField();
+        } else if (shouldRebuildPieces) {
+          for (const d of existingPiecesSnap.docs) {
+            const r = await tx.get(d.ref);
+            if (r.exists()) tx.delete(d.ref);
+          }
+          const pc = Math.floor(pcParsed);
+          const pl = plParsed;
+          const plans: {
+            id: string;
+            remainingMm: number;
+            originalMm: number;
+            status: "available" | "partial" | "empty";
+          }[] = [];
+          for (let i = 0; i < pc; i++) {
+            const pRef = doc(piecesCol);
+            tx.set(pRef, {
+              companyId,
+              materialId: item.id,
+              originalLength: pl,
+              remainingLength: pl,
+              status: "available",
+              createdAt: serverTimestamp(),
+            });
+            plans.push({
+              id: pRef.id,
+              remainingMm: pl,
+              originalMm: pl,
+              status: "available",
+            });
+          }
+          basePatch.stockPieceStats = countPiecesByStatus(plans);
+        } else if (usePiecesLength && piecesHaveCuts) {
+          basePatch.stockPieceStats = prevRow.stockPieceStats ?? null;
         }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -381,15 +569,36 @@ export function InventoryItemEditDialog({
                 <SelectItem value="generic">Obecná jednotka</SelectItem>
               </SelectContent>
             </Select>
-            {stockTrackingMode === "length" ? (
+            {stockTrackingMode === "length" && !showMmPieceMode ? (
               <p className="text-[11px] text-slate-500">
-                Množství = aktuální dostupná délka v jednotce uvedené výše (např. mm). Při výdeji části zůstane
-                rozdíl na skladě u téže položky.
+                Množství = aktuální dostupná délka v jednotce uvedené výše. Při výdeji části zůstane rozdíl na
+                skladě u téže položky.
               </p>
             ) : null}
           </div>
 
-          {stockTrackingMode === "length" ? (
+          {showMmPieceMode ? (
+            <div className="space-y-1">
+              <Label>Evidence zásoby (mm)</Label>
+              <Select
+                value={stockModeMm}
+                onValueChange={(v) => setStockModeMm(v as InventoryStockModeMm)}
+              >
+                <SelectTrigger className="bg-white">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="totalLength">Celková délka</SelectItem>
+                  <SelectItem value="piecesLength">Kusy s délkou</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-slate-500">
+                U „Kusy s délkou“ se každý kus ukládá zvlášť (řezání ve výrobě bere nejdelší tyč).
+              </p>
+            </div>
+          ) : null}
+
+          {stockTrackingMode === "length" && !showMmPieceMode ? (
             <div className="space-y-1">
               <Label>Původní délka při naskladnění (volitelné)</Label>
               <Input
@@ -401,10 +610,85 @@ export function InventoryItemEditDialog({
             </div>
           ) : null}
 
+          {showMmPieceMode && stockModeMm === "totalLength" ? (
+            <div className="space-y-1">
+              <Label>Původní délka při naskladnění (volitelné)</Label>
+              <Input
+                className="bg-white"
+                value={originalLengthInput}
+                onChange={(e) => setOriginalLengthInput(e.target.value)}
+                placeholder="např. 6000"
+              />
+            </div>
+          ) : null}
+
+          {showMmPieceMode && stockModeMm === "piecesLength" ? (
+            <div className="space-y-3 rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <Label>Počet kusů</Label>
+                  <Input
+                    className="bg-white"
+                    value={pieceCountInput}
+                    onChange={(e) => setPieceCountInput(e.target.value)}
+                    inputMode="numeric"
+                    readOnly={piecesHaveCuts}
+                    disabled={piecesHaveCuts}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Délka jednoho kusu (mm)</Label>
+                  <Input
+                    className="bg-white"
+                    value={pieceLengthMmInput}
+                    onChange={(e) => setPieceLengthMmInput(e.target.value)}
+                    inputMode="decimal"
+                    readOnly={piecesHaveCuts}
+                    disabled={piecesHaveCuts}
+                  />
+                </div>
+              </div>
+              <p className="text-sm text-slate-800">
+                Celkem:{" "}
+                <strong className="tabular-nums">
+                  {computedPiecesTotalMm != null && Number.isFinite(computedPiecesTotalMm)
+                    ? computedPiecesTotalMm.toLocaleString("cs-CZ")
+                    : "—"}{" "}
+                  mm
+                </strong>
+              </p>
+              {piecesHaveCuts ? (
+                <p className="text-xs text-amber-800">
+                  Kusy už byly řezány — počet a typová délka jsou jen ke čtení. Skutečný stav řídí evidence kusů a
+                  výdeje.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1">
-              <Label>{stockTrackingMode === "length" ? "Aktuální množství / délka" : "Množství"}</Label>
-              <Input value={quantity} onChange={(e) => setQuantity(e.target.value)} className="bg-white" />
+              <Label>
+                {showMmPieceMode && stockModeMm === "piecesLength"
+                  ? "Celková délka na skladě (mm)"
+                  : stockTrackingMode === "length"
+                    ? "Aktuální množství / délka"
+                    : "Množství"}
+              </Label>
+              <Input
+                value={
+                  showMmPieceMode && stockModeMm === "piecesLength"
+                    ? String(computedPiecesTotalMm ?? quantity)
+                    : quantity
+                }
+                onChange={(e) => setQuantity(e.target.value)}
+                className="bg-white"
+                readOnly={showMmPieceMode && stockModeMm === "piecesLength"}
+                disabled={showMmPieceMode && stockModeMm === "piecesLength"}
+              />
+              {showMmPieceMode && stockModeMm === "piecesLength" ? (
+                <p className="text-[11px] text-slate-500">Dopočítává se z počtu kusů × délka (nebo ze skutečného stavu po řezech).</p>
+              ) : null}
             </div>
             <div className="space-y-1">
               <Label>Cena za jednotku (Kč)</Label>

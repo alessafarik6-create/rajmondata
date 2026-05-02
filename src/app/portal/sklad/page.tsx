@@ -297,8 +297,18 @@ export default function SkladPage() {
     return activeItemList.find((i) => i.id === inItemId) ?? null;
   }, [inCreateNew, inItemId, activeItemList]);
 
-  const inboundLengthPieces =
-    !!inboundSelectedItem && String(inboundSelectedItem.stockTrackingMode) === "length";
+  const inboundUsesBarPieces = useMemo(() => {
+    if (!inboundSelectedItem) return false;
+    const unitMm = String(inboundSelectedItem.unit || "")
+      .trim()
+      .toLowerCase() === "mm";
+    if (!unitMm || String(inboundSelectedItem.stockTrackingMode) !== "length") return false;
+    const sm = String(inboundSelectedItem.stockMode || "").trim();
+    const legacy =
+      !inboundSelectedItem.stockMode &&
+      (inboundSelectedItem.stockPieceStats?.total ?? 0) > 0;
+    return sm === "piecesLength" || legacy;
+  }, [inboundSelectedItem]);
 
   const filteredItems = useMemo(() => {
     let rows = activeItemList;
@@ -455,7 +465,19 @@ export default function SkladPage() {
           itemName = d.name;
           unit = d.unit || "ks";
           const prev = Number(d.quantity ?? 0);
-          if (String(d.stockTrackingMode) === "length") {
+          const unitMm = String(d.unit || "").trim().toLowerCase() === "mm";
+          const sm = String(d.stockMode || "").trim();
+          const legacyBar =
+            !d.stockMode &&
+            String(d.stockTrackingMode) === "length" &&
+            unitMm &&
+            (d.stockPieceStats?.total ?? 0) > 0;
+          const useBarInbound =
+            String(d.stockTrackingMode) === "length" &&
+            unitMm &&
+            (sm === "piecesLength" || legacyBar);
+
+          if (useBarInbound) {
             const barCount = Math.floor(qty);
             const barLenMm = Number(String(inBarLengthMm).replace(",", "."));
             if (!Number.isFinite(barLenMm) || barLenMm <= 0) {
@@ -498,12 +520,16 @@ export default function SkladPage() {
                 createdAt: serverTimestamp(),
               });
             }
+            const nextTotalPieces = stats.total + barCount;
             tx.update(itemRef, {
               quantity: prev + addStock,
               currentLength: prevCur + addStock,
               remainingQuantity: prevCur + addStock,
+              stockMode: "piecesLength",
+              pieceLengthMm: barLenMm,
+              pieceCount: nextTotalPieces,
               stockPieceStats: {
-                total: stats.total + barCount,
+                total: nextTotalPieces,
                 full: stats.full + barCount,
                 partial: stats.partial,
                 empty: stats.empty,
@@ -512,6 +538,17 @@ export default function SkladPage() {
             });
             movQuantity = addStock;
             movDetailLine = `${barCount} tyčí × ${barLenMm} mm`;
+          } else if (String(d.stockTrackingMode) === "length") {
+            const prevCur =
+              d.currentLength != null && Number.isFinite(Number(d.currentLength))
+                ? Number(d.currentLength)
+                : prev;
+            tx.update(itemRef, {
+              quantity: prev + qty,
+              currentLength: prevCur + qty,
+              remainingQuantity: prevCur + qty,
+              updatedAt: serverTimestamp(),
+            });
           } else {
             tx.update(itemRef, {
               quantity: prev + qty,
@@ -1090,14 +1127,37 @@ export default function SkladPage() {
                           ).trim() || "Bez kategorie"}
                         </TableCell>
                         <TableCell className="text-right tabular-nums align-middle">
-                          <div>{Number(row.quantity ?? 0)}</div>
-                          {row.stockPieceStats && row.stockPieceStats.total > 0 ? (
-                            <div className="text-xs font-normal text-slate-500 mt-1 text-left sm:text-right">
-                              Kusů {row.stockPieceStats.total}: {row.stockPieceStats.full} plných,{" "}
-                              {row.stockPieceStats.partial} načatých, {row.stockPieceStats.empty} zbytků
-                              (&lt;50&nbsp;mm)
-                            </div>
-                          ) : null}
+                          {String(row.stockMode) === "piecesLength" &&
+                          row.pieceLengthMm != null &&
+                          Number(row.pieceLengthMm) > 0 ? (
+                            <>
+                              <div className="text-slate-900">
+                                {row.stockPieceStats?.total ?? row.pieceCount ?? "—"} ks ×{" "}
+                                {Number(row.pieceLengthMm).toLocaleString("cs-CZ")} mm
+                              </div>
+                              <div className="text-xs text-slate-500 mt-0.5">
+                                celkem {Number(row.quantity ?? 0).toLocaleString("cs-CZ")}{" "}
+                                {row.unit || "mm"}
+                              </div>
+                              {row.stockPieceStats && row.stockPieceStats.total > 0 ? (
+                                <div className="text-xs font-normal text-slate-500 mt-1 text-left sm:text-right">
+                                  {row.stockPieceStats.full} plných, {row.stockPieceStats.partial} načatých,{" "}
+                                  {row.stockPieceStats.empty} zbytků (&lt;50&nbsp;mm)
+                                </div>
+                              ) : null}
+                            </>
+                          ) : (
+                            <>
+                              <div>{Number(row.quantity ?? 0)}</div>
+                              {row.stockPieceStats && row.stockPieceStats.total > 0 ? (
+                                <div className="text-xs font-normal text-slate-500 mt-1 text-left sm:text-right">
+                                  Kusů {row.stockPieceStats.total}: {row.stockPieceStats.full} plných,{" "}
+                                  {row.stockPieceStats.partial} načatých, {row.stockPieceStats.empty} zbytků
+                                  (&lt;50&nbsp;mm)
+                                </div>
+                              ) : null}
+                            </>
+                          )}
                         </TableCell>
                         <TableCell className="text-slate-600 align-middle">
                           {row.unit || "ks"}
@@ -1363,7 +1423,7 @@ export default function SkladPage() {
                 </Select>
               </div>
             )}
-            {inboundLengthPieces ? (
+            {inboundUsesBarPieces ? (
               <>
                 <div className="space-y-1">
                   <Label>Počet tyčí (kusů)</Label>
