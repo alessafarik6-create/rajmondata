@@ -89,8 +89,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { WarehouseImportDialog } from "@/components/warehouse/warehouse-import-dialog";
+import { LengthStockPiecesPanelGate } from "@/components/warehouse/length-stock-pieces-panel";
 import { DEFAULT_STOCK_CATEGORIES } from "@/lib/stock-categories";
 import { millimetersToUnit } from "@/lib/job-production-settings";
+import { isInventoryPiecesLengthRow } from "@/lib/stock-pieces-display";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -1062,7 +1064,135 @@ export default function SkladPage() {
           ) : filteredItems.length === 0 ? (
             <p className="text-sm text-slate-600 px-6 py-8">Žádná položka neodpovídá filtru.</p>
           ) : (
-            <div className="rounded-b-lg border-t border-slate-100 overflow-x-auto">
+            <>
+            <div className="md:hidden space-y-3 px-4 pb-4">
+              {filteredItems.map((row) => {
+                const lineVal = inventoryLineValueCzk(row);
+                const unitP =
+                  row.unitPrice != null && Number.isFinite(Number(row.unitPrice))
+                    ? Number(row.unitPrice)
+                    : null;
+                const showLenPiecesDetail =
+                  isInventoryPiecesLengthRow(row) &&
+                  row.pieceLengthMm != null &&
+                  Number(row.pieceLengthMm) > 0;
+                return (
+                  <div
+                    key={`m-${row.id}`}
+                    className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm"
+                  >
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md border border-slate-200 bg-slate-50"
+                        onClick={() => {
+                          if (row.imageUrl) {
+                            setImagePreviewSrc(row.imageUrl);
+                            setImagePreviewOpen(true);
+                          }
+                        }}
+                        disabled={!row.imageUrl}
+                      >
+                        {row.imageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            src={row.imageUrl}
+                            alt=""
+                            className="max-h-full max-w-full object-contain"
+                          />
+                        ) : (
+                          <ImageIcon className="h-6 w-6 text-slate-400" />
+                        )}
+                      </button>
+                      <div className="min-w-0 flex-1">
+                        <p className="font-semibold text-slate-900">{row.name}</p>
+                        <p className="text-xs text-slate-500">
+                          {row.sku?.trim() ? `SKU: ${row.sku}` : "—"} ·{" "}
+                          {String(
+                            row.categoryName ??
+                              (row.categoryId ? stockCategoryById.get(String(row.categoryId)) : "") ??
+                              ""
+                          ).trim() || "Bez kategorie"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-sm">
+                      {showLenPiecesDetail ? (
+                        <>
+                          <p className="text-slate-800">
+                            <span className="text-slate-500">Množství:</span>{" "}
+                            {row.stockPieceStats?.total ?? row.pieceCount ?? "—"} ks ×{" "}
+                            {Number(row.pieceLengthMm).toLocaleString("cs-CZ")} mm
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            Celkem {Number(row.quantity ?? 0).toLocaleString("cs-CZ")}{" "}
+                            {row.unit || "mm"}
+                          </p>
+                          <LengthStockPiecesPanelGate
+                            firestore={firestore}
+                            companyId={companyId}
+                            row={row}
+                            variant="card"
+                          />
+                        </>
+                      ) : (
+                        <>
+                          <p className="text-slate-800">
+                            <span className="text-slate-500">Množství:</span>{" "}
+                            {Number(row.quantity ?? 0)}
+                          </p>
+                          {row.stockPieceStats && row.stockPieceStats.total > 0 ? (
+                            <p className="text-xs text-slate-500">
+                              Kusů {row.stockPieceStats.total}: {row.stockPieceStats.full} plných,{" "}
+                              {row.stockPieceStats.partial} načatých, {row.stockPieceStats.empty}{" "}
+                              prázdných
+                            </p>
+                          ) : null}
+                        </>
+                      )}
+                      <div className="flex flex-wrap justify-between gap-2 text-sm">
+                        <span className="text-slate-500">MJ</span>
+                        <span>{row.unit || "ks"}</span>
+                      </div>
+                      <div className="flex flex-wrap justify-between gap-2">
+                        <span className="text-slate-500">Hodnota</span>
+                        <span className="font-medium text-slate-900">
+                          {formatInventoryMoneyCzk(lineVal)}
+                        </span>
+                      </div>
+                      {canManageInventory ? (
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8"
+                            onClick={() => {
+                              setEditItem(row);
+                              setEditOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-3.5 w-3.5 mr-1" />
+                            Upravit
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 text-red-700"
+                            onClick={() => setDeleteTarget(row)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5 mr-1" />
+                            Smazat
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="hidden md:block rounded-b-lg border-t border-slate-100 overflow-x-auto">
               <Table>
                 <TableHeader>
                   <TableRow className="border-slate-200 hover:bg-transparent">
@@ -1126,34 +1256,33 @@ export default function SkladPage() {
                               ""
                           ).trim() || "Bez kategorie"}
                         </TableCell>
-                        <TableCell className="text-right tabular-nums align-middle">
-                          {String(row.stockMode) === "piecesLength" &&
+                        <TableCell className="text-right tabular-nums align-middle max-w-[min(100vw,22rem)]">
+                          {isInventoryPiecesLengthRow(row) &&
                           row.pieceLengthMm != null &&
                           Number(row.pieceLengthMm) > 0 ? (
-                            <>
+                            <div className="space-y-2">
                               <div className="text-slate-900">
                                 {row.stockPieceStats?.total ?? row.pieceCount ?? "—"} ks ×{" "}
                                 {Number(row.pieceLengthMm).toLocaleString("cs-CZ")} mm
                               </div>
-                              <div className="text-xs text-slate-500 mt-0.5">
+                              <div className="text-xs text-slate-500">
                                 celkem {Number(row.quantity ?? 0).toLocaleString("cs-CZ")}{" "}
                                 {row.unit || "mm"}
                               </div>
-                              {row.stockPieceStats && row.stockPieceStats.total > 0 ? (
-                                <div className="text-xs font-normal text-slate-500 mt-1 text-left sm:text-right">
-                                  {row.stockPieceStats.full} plných, {row.stockPieceStats.partial} načatých,{" "}
-                                  {row.stockPieceStats.empty} zbytků (&lt;50&nbsp;mm)
-                                </div>
-                              ) : null}
-                            </>
+                              <LengthStockPiecesPanelGate
+                                firestore={firestore}
+                                companyId={companyId}
+                                row={row}
+                                variant="compact"
+                              />
+                            </div>
                           ) : (
                             <>
                               <div>{Number(row.quantity ?? 0)}</div>
                               {row.stockPieceStats && row.stockPieceStats.total > 0 ? (
                                 <div className="text-xs font-normal text-slate-500 mt-1 text-left sm:text-right">
                                   Kusů {row.stockPieceStats.total}: {row.stockPieceStats.full} plných,{" "}
-                                  {row.stockPieceStats.partial} načatých, {row.stockPieceStats.empty} zbytků
-                                  (&lt;50&nbsp;mm)
+                                  {row.stockPieceStats.partial} načatých, {row.stockPieceStats.empty} prázdných
                                 </div>
                               ) : null}
                             </>
@@ -1203,6 +1332,7 @@ export default function SkladPage() {
                 </TableBody>
               </Table>
             </div>
+            </>
           )}
         </CardContent>
       </Card>
