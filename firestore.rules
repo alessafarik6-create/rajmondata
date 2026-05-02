@@ -706,7 +706,7 @@ service cloud.firestore {
        */
       match /annotationModels/{modelId} {
         allow read: if signedIn() && sameCompany(companyId) && userRole() != 'customer';
-        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+        allow create: if signedIn() && sameCompany(companyId) && userRole() != 'customer' &&
           request.resource.data.organizationId == companyId &&
           request.resource.data.name is string &&
           request.resource.data.name.size() > 0 &&
@@ -721,8 +721,12 @@ service cloud.firestore {
           (!('note' in request.resource.data) ||
             request.resource.data.note == null ||
             (request.resource.data.note is string &&
-              request.resource.data.note.size() <= 2000));
-        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+              request.resource.data.note.size() <= 2000)) &&
+          (!('legendDescription' in request.resource.data) ||
+            request.resource.data.legendDescription == null ||
+            (request.resource.data.legendDescription is string &&
+              request.resource.data.legendDescription.size() <= 2000));
+        allow update: if signedIn() && sameCompany(companyId) && userRole() != 'customer' &&
           resource.data.organizationId == companyId &&
           request.resource.data.organizationId == companyId &&
           request.resource.data.name is string &&
@@ -734,12 +738,15 @@ service cloud.firestore {
           request.resource.data.color is string &&
           request.resource.data.color.size() > 0 &&
           request.resource.data.color.size() <= 64 &&
-          request.resource.data.createdBy == resource.data.createdBy &&
           (!('note' in request.resource.data) ||
             request.resource.data.note == null ||
             (request.resource.data.note is string &&
-              request.resource.data.note.size() <= 2000));
-        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+              request.resource.data.note.size() <= 2000)) &&
+          (!('legendDescription' in request.resource.data) ||
+            request.resource.data.legendDescription == null ||
+            (request.resource.data.legendDescription is string &&
+              request.resource.data.legendDescription.size() <= 2000));
+        allow delete: if signedIn() && sameCompany(companyId) && userRole() != 'customer' &&
           resource.data.organizationId == companyId;
       }
 

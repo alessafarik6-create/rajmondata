@@ -49,6 +49,8 @@ export type JobPhotoShapeLabelAnnotation = {
   heightMm: number;
   label: string;
   note?: string;
+  /** Text do legendy za rozměry (ze šablony nebo ručně). */
+  legendDescription?: string;
   legendNumber: number;
   showLabelInline: boolean;
   color: DimensionColor;
@@ -62,6 +64,8 @@ export type AnnotationLegendEntry = {
   label: string;
   widthMm: number;
   heightMm: number;
+  /** Popis v legendě za rozměry. */
+  legendDescription?: string;
   note?: string;
 };
 
@@ -124,6 +128,7 @@ type SerializedItem =
       heightMm: number;
       label: string;
       note?: string;
+      legendDescription?: string;
       legendNumber: number;
       showLabelInline: boolean;
       color: DimensionColor;
@@ -156,6 +161,8 @@ function buildLegendPayload(
       widthMm: s.widthMm,
       heightMm: s.heightMm,
     };
+    const ld = s.legendDescription?.trim();
+    if (ld) entry.legendDescription = ld;
     const nt = s.note?.trim();
     if (nt) entry.note = nt;
     out.push(entry);
@@ -248,6 +255,8 @@ export function serializeJobPhotoAnnotations(
       };
       const nt = s.note?.trim();
       if (nt) row.note = nt;
+      const ld = s.legendDescription?.trim();
+      if (ld) row.legendDescription = ld;
       if (typeof s.createdAt === "number" && Number.isFinite(s.createdAt)) {
         row.createdAt = s.createdAt;
       }
@@ -354,6 +363,10 @@ export function deserializeJobPhotoAnnotations(
         heightMm: typeof s.heightMm === "number" ? s.heightMm : 0,
         label: String(s.label ?? ""),
         note: typeof s.note === "string" ? s.note : undefined,
+        legendDescription:
+          typeof (s as { legendDescription?: string }).legendDescription === "string"
+            ? (s as { legendDescription?: string }).legendDescription
+            : undefined,
         legendNumber: Math.max(1, Math.floor(Number(s.legendNumber) || 1)),
         showLabelInline: Boolean(s.showLabelInline),
         color: (s.color as DimensionColor) || "blue",
@@ -379,7 +392,8 @@ export function groupKeyForShapeLabel(s: JobPhotoShapeLabelAnnotation): string {
   if (mid) return `m:${mid}`;
   const lab = (s.label || "").trim().toLowerCase();
   const note = (s.note ?? "").trim();
-  return `f:${lab}|${Number(s.widthMm) || 0}|${Number(s.heightMm) || 0}|${note}`;
+  const leg = (s.legendDescription ?? "").trim();
+  return `f:${lab}|${Number(s.widthMm) || 0}|${Number(s.heightMm) || 0}|${note}|${leg}`;
 }
 
 /** Přiřadí legendNumber podle skupin (model / stejné parametry); čísla 1…k bez mezer. */

@@ -248,12 +248,13 @@ import {
   drawShapeLabelOnCanvas,
   drawLegendStrip,
   estimateLegendStripHeight,
+  formatLegendEntryLine,
   hitTestShapeLabel,
 } from "@/lib/job-photo-shape-label";
+import { AnnotationModelsSettingsDialog } from "@/components/annotations/annotation-models-settings-dialog";
 import {
   dimensionColorFromModelColor,
   type AnnotationModelDoc,
-  type AnnotationModelShape,
 } from "@/lib/annotation-models";
 
 type AnnotationTool = "dimension" | "note" | "select" | "pan" | "shapeLabel";
@@ -1476,6 +1477,7 @@ export function JobDetailPageContent({
     widthMm: number;
     heightMm: number;
     note: string;
+    legendDescription: string;
     showLabelInline: boolean;
     modelId?: string;
   }>({
@@ -1484,28 +1486,14 @@ export function JobDetailPageContent({
     widthMm: 600,
     heightMm: 600,
     note: "",
+    legendDescription: "",
     showLabelInline: false,
     modelId: undefined,
   });
   const [shapeLabelLibraryPickerOpen, setShapeLabelLibraryPickerOpen] =
     useState(false);
-  const [shapeLabelCreateLibraryOpen, setShapeLabelCreateLibraryOpen] =
+  const [annotationModelsSettingsOpen, setAnnotationModelsSettingsOpen] =
     useState(false);
-  const [shapeLabelLibraryForm, setShapeLabelLibraryForm] = useState<{
-    name: string;
-    widthMm: number;
-    heightMm: number;
-    shape: AnnotationModelShape;
-    color: string;
-    note: string;
-  }>({
-    name: "",
-    widthMm: 600,
-    heightMm: 600,
-    shape: "square",
-    color: "#2563eb",
-    note: "",
-  });
   const [shapeLabelPlacementModel, setShapeLabelPlacementModel] =
     useState<AnnotationModelDoc | null>(null);
   const shapeLabelPlacementModelRef = useRef<AnnotationModelDoc | null>(null);
@@ -4735,6 +4723,7 @@ export function JobDetailPageContent({
         widthMm: s.widthMm,
         heightMm: s.heightMm,
         note: s.note ?? "",
+        legendDescription: s.legendDescription ?? "",
         showLabelInline: s.showLabelInline,
         modelId: s.modelId,
       });
@@ -4798,6 +4787,7 @@ export function JobDetailPageContent({
               widthMm: Number(shapeLabelForm.widthMm) || 0,
               heightMm: Number(shapeLabelForm.heightMm) || 0,
               note: shapeLabelForm.note.trim() || undefined,
+              legendDescription: shapeLabelForm.legendDescription.trim() || undefined,
               showLabelInline: shapeLabelForm.showLabelInline,
               color: activeColor,
               modelId: mid || cur.modelId,
@@ -4836,6 +4826,7 @@ export function JobDetailPageContent({
         heightMm: Number(shapeLabelForm.heightMm) || 0,
         label: shapeLabelForm.label.trim(),
         note: shapeLabelForm.note.trim() || undefined,
+        legendDescription: shapeLabelForm.legendDescription.trim() || undefined,
         legendNumber: 1,
         showLabelInline: shapeLabelForm.showLabelInline,
         color: activeColor,
@@ -5087,7 +5078,8 @@ export function JobDetailPageContent({
             widthMm: plm.widthMm,
             heightMm: plm.heightMm,
             label: plm.name.trim() || "Model",
-            note: plm.note?.trim() || undefined,
+            legendDescription: plm.legendDescription?.trim() || undefined,
+            note: undefined,
             legendNumber: 1,
             showLabelInline: false,
             color: col,
@@ -5118,6 +5110,7 @@ export function JobDetailPageContent({
           widthMm: 600,
           heightMm: 600,
           note: "",
+          legendDescription: "",
           showLabelInline: false,
           modelId: undefined,
         }));
@@ -6975,55 +6968,6 @@ export function JobDetailPageContent({
     }
   };
 
-  const saveAnnotationModelToLibrary = useCallback(async () => {
-    if (!firestore || !companyId || !user) return;
-    const n = shapeLabelLibraryForm.name.trim();
-    if (!n) {
-      toast({
-        variant: "destructive",
-        title: "Chybí název",
-        description: "Zadejte název modelu (např. Pračka).",
-      });
-      return;
-    }
-    try {
-      await addDoc(
-        collection(firestore, "companies", companyId, "annotationModels"),
-        {
-          organizationId: companyId,
-          name: n,
-          widthMm: Number(shapeLabelLibraryForm.widthMm) || 0,
-          heightMm: Number(shapeLabelLibraryForm.heightMm) || 0,
-          shape: shapeLabelLibraryForm.shape,
-          color: shapeLabelLibraryForm.color.trim() || "#2563eb",
-          ...(shapeLabelLibraryForm.note.trim()
-            ? { note: shapeLabelLibraryForm.note.trim() }
-            : {}),
-          createdBy: user.uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        }
-      );
-      toast({ title: "Model uložen", description: n });
-      setShapeLabelCreateLibraryOpen(false);
-      setShapeLabelLibraryForm({
-        name: "",
-        widthMm: 600,
-        heightMm: 600,
-        shape: "square",
-        color: "#2563eb",
-        note: "",
-      });
-    } catch (err) {
-      console.error(err);
-      toast({
-        variant: "destructive",
-        title: "Model se nepodařilo uložit",
-        description: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }, [firestore, companyId, user, shapeLabelLibraryForm, toast]);
-
   const measurementLightboxRow = useMemo(() => {
     if (!measurementLightboxDocId || !measurementPhotosRaw) return null;
     return measurementPhotosRaw.find(
@@ -7111,6 +7055,16 @@ export function JobDetailPageContent({
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                 <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setAnnotationModelsSettingsOpen(true)}
+                  title="Nastavení modelů pro legendu"
+                >
+                  Modely
+                </Button>
+                <Button
+                  type="button"
                   variant={activeTool === "dimension" ? "default" : "outline"}
                   size="sm"
                   className="min-h-[36px]"
@@ -7158,13 +7112,11 @@ export function JobDetailPageContent({
                     >
                       Vybrat uložený model…
                     </DropdownMenuItem>
-                    {canManageFolders ? (
-                      <DropdownMenuItem
-                        onClick={() => setShapeLabelCreateLibraryOpen(true)}
-                      >
-                        Vytvořit nový model do knihovny…
-                      </DropdownMenuItem>
-                    ) : null}
+                    <DropdownMenuItem
+                      onClick={() => setAnnotationModelsSettingsOpen(true)}
+                    >
+                      Nastavení modelů…
+                    </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <Button
@@ -7355,30 +7307,18 @@ export function JobDetailPageContent({
                 </div>
               )}
               {annotationLegendEntries.length ? (
-                <div className="pointer-events-auto absolute bottom-3 left-2 z-10 max-w-[min(calc(100vw-1rem),22rem)]">
-                  <div className="max-h-[min(36dvh,280px)] overflow-y-auto rounded-lg border border-white/35 bg-black/88 px-3 py-2.5 text-left text-sm leading-snug text-white shadow-lg backdrop-blur-sm max-lg:text-[15px] lg:border-border lg:bg-card/95 lg:text-card-foreground lg:shadow-md">
-                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-white/80 lg:text-muted-foreground">
+                <div className="pointer-events-auto absolute bottom-3 left-2 z-10 max-w-[min(calc(100vw-1rem),28rem)]">
+                  <div className="max-h-[min(40dvh,340px)] overflow-y-auto rounded-lg border border-white/35 bg-black/88 px-3 py-3 text-left text-base leading-relaxed text-white shadow-lg backdrop-blur-sm max-lg:text-[15px] lg:border-border lg:bg-card/95 lg:text-card-foreground lg:shadow-md">
+                    <p className="mb-2 text-sm font-semibold uppercase tracking-wide text-white/85 lg:text-muted-foreground">
                       Legenda
                     </p>
-                    <ul className="space-y-1.5">
+                    <ul className="space-y-2.5">
                       {annotationLegendEntries.map((e) => (
-                        <li key={`leg-${e.legendNumber}-${e.label}`}>
-                          <span className="font-semibold tabular-nums">
-                            {e.legendNumber}
-                          </span>
-                          <span className="text-white/70 lg:text-muted-foreground">
-                            {" "}
-                            –{" "}
-                          </span>
-                          <span>{e.label}</span>
-                          <span className="text-white/75 lg:text-muted-foreground">
-                            , {e.widthMm} × {e.heightMm} mm
-                          </span>
-                          {e.note ? (
-                            <span className="mt-0.5 block text-xs text-white/65 lg:text-muted-foreground">
-                              {e.note}
-                            </span>
-                          ) : null}
+                        <li
+                          key={`leg-${e.legendNumber}-${e.label}-${e.widthMm}`}
+                          className="border-l-2 border-primary/70 pl-2.5 text-[15px] sm:text-base"
+                        >
+                          {formatLegendEntryLine(e)}
                         </li>
                       ))}
                     </ul>
@@ -7609,6 +7549,21 @@ export function JobDetailPageContent({
                       className="max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white"
                     />
                   </div>
+                  <div className="flex flex-col gap-1">
+                    <Label>Popis do legendy (volitelně)</Label>
+                    <Textarea
+                      rows={2}
+                      value={shapeLabelForm.legendDescription}
+                      onChange={(e) =>
+                        setShapeLabelForm((f) => ({
+                          ...f,
+                          legendDescription: e.target.value,
+                        }))
+                      }
+                      placeholder="např. přívod vody vlevo"
+                      className="max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white"
+                    />
+                  </div>
                   <label className="flex cursor-pointer items-center gap-2">
                     <input
                       type="checkbox"
@@ -7682,7 +7637,7 @@ export function JobDetailPageContent({
             </ul>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Zatím nemáte uložené žádné modely. Vytvořte nový přes menu Značka.
+              Zatím nemáte uložené žádné modely. Přidejte je přes tlačítko Modely v editoru.
             </p>
           )}
           <DialogFooter>
@@ -7697,113 +7652,14 @@ export function JobDetailPageContent({
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={shapeLabelCreateLibraryOpen}
-        onOpenChange={setShapeLabelCreateLibraryOpen}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Nový model do knihovny</DialogTitle>
-            <DialogDescription>
-              Model půjde opakovaně vkládat do anotací (organizace).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 text-sm">
-            <div className="flex flex-col gap-1">
-              <Label htmlFor="lib-model-name">Název</Label>
-              <Input
-                id="lib-model-name"
-                value={shapeLabelLibraryForm.name}
-                onChange={(e) =>
-                  setShapeLabelLibraryForm((f) => ({ ...f, name: e.target.value }))
-                }
-                placeholder="např. Pračka"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col gap-1">
-                <Label>Šířka (mm)</Label>
-                <Input
-                  type="number"
-                  min={0.1}
-                  step={0.1}
-                  value={shapeLabelLibraryForm.widthMm}
-                  onChange={(e) =>
-                    setShapeLabelLibraryForm((f) => ({
-                      ...f,
-                      widthMm: Number(e.target.value) || 0,
-                    }))
-                  }
-                />
-              </div>
-              <div className="flex flex-col gap-1">
-                <Label>Výška (mm)</Label>
-                <Input
-                  type="number"
-                  min={0.1}
-                  step={0.1}
-                  value={shapeLabelLibraryForm.heightMm}
-                  onChange={(e) =>
-                    setShapeLabelLibraryForm((f) => ({
-                      ...f,
-                      heightMm: Number(e.target.value) || 0,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label>Tvar</Label>
-              <select
-                className={NATIVE_SELECT_CLASS}
-                value={shapeLabelLibraryForm.shape}
-                onChange={(e) =>
-                  setShapeLabelLibraryForm((f) => ({
-                    ...f,
-                    shape: e.target.value as AnnotationModelShape,
-                  }))
-                }
-              >
-                <option value="square">Čtverec</option>
-                <option value="rectangle">Obdélník</option>
-                <option value="circle">Kruh</option>
-                <option value="point">Bod</option>
-              </select>
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label>Barva (CSS / hex)</Label>
-              <Input
-                value={shapeLabelLibraryForm.color}
-                onChange={(e) =>
-                  setShapeLabelLibraryForm((f) => ({ ...f, color: e.target.value }))
-                }
-                placeholder="#2563eb"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label>Poznámka (volitelně)</Label>
-              <Input
-                value={shapeLabelLibraryForm.note}
-                onChange={(e) =>
-                  setShapeLabelLibraryForm((f) => ({ ...f, note: e.target.value }))
-                }
-              />
-            </div>
-          </div>
-          <DialogFooter className="gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => setShapeLabelCreateLibraryOpen(false)}
-            >
-              Zrušit
-            </Button>
-            <Button type="button" onClick={() => void saveAnnotationModelToLibrary()}>
-              Uložit model
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AnnotationModelsSettingsDialog
+        open={annotationModelsSettingsOpen}
+        onOpenChange={setAnnotationModelsSettingsOpen}
+        firestore={firestore}
+        companyId={companyId}
+        userId={user?.uid ?? null}
+        models={annotationModelsSorted}
+      />
     </>
   );
 

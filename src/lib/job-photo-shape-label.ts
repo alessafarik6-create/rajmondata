@@ -8,6 +8,16 @@ import type {
   JobPhotoShapeLabelAnnotation,
 } from "@/lib/job-photo-annotations";
 
+/** Jeden řádek legendy (editor + export PNG). */
+export function formatLegendEntryLine(e: AnnotationLegendEntry): string {
+  let s = `${e.legendNumber} – ${e.label}, ${e.widthMm} × ${e.heightMm} mm`;
+  const ld = e.legendDescription?.trim();
+  if (ld) s += `, ${ld}`;
+  const nt = e.note?.trim();
+  if (nt) s += ` — ${nt}`;
+  return s;
+}
+
 export function buildLegendFromShapeLabels(
   items: JobPhotoShapeLabelAnnotation[]
 ): AnnotationLegendEntry[] {
@@ -25,6 +35,7 @@ export function buildLegendFromShapeLabels(
       label: s.label || "",
       widthMm: s.widthMm,
       heightMm: s.heightMm,
+      legendDescription: s.legendDescription?.trim() ? s.legendDescription.trim() : undefined,
       note: s.note?.trim() ? s.note.trim() : undefined,
     });
   }
@@ -140,15 +151,13 @@ export function estimateLegendStripHeight(
 ): number {
   if (!entries.length) return 0;
   const pad = 16;
-  const lineH = 22;
-  const titleH = 28;
+  const lineH = 28;
+  const titleH = 32;
   ctx.save();
-  ctx.font = "15px ui-sans-serif, system-ui, sans-serif";
+  ctx.font = "16px ui-sans-serif, system-ui, sans-serif";
   let lines = 1;
   for (const e of entries) {
-    const text = `${e.legendNumber} – ${e.label}, ${e.widthMm} × ${e.heightMm} mm${
-      e.note ? ` (${e.note})` : ""
-    }`;
+    const text = formatLegendEntryLine(e);
     const maxW = Math.max(80, width - pad * 2);
     let lineW = 0;
     for (const ch of text) {
@@ -179,18 +188,16 @@ export function drawLegendStrip(
   ctx.strokeStyle = "#cbd5e1";
   ctx.lineWidth = 1;
   ctx.strokeRect(0.5, y0 + 0.5, width - 1, height - 1);
-  let y = y0 + 14;
+  let y = y0 + 16;
   ctx.fillStyle = "#0f172a";
-  ctx.font = "600 17px ui-sans-serif, system-ui, sans-serif";
+  ctx.font = "600 20px ui-sans-serif, system-ui, sans-serif";
   ctx.fillText("Legenda", 14, y);
-  y += 26;
-  ctx.font = "15px ui-sans-serif, system-ui, sans-serif";
+  y += 30;
+  ctx.font = "16px ui-sans-serif, system-ui, sans-serif";
   for (const e of entries) {
-    const line = `${e.legendNumber} – ${e.label}, ${e.widthMm} × ${e.heightMm} mm${
-      e.note ? ` — ${e.note}` : ""
-    }`;
-    wrapFillText(ctx, line, 14, y, width - 28, 20);
-    y += 22;
+    const line = formatLegendEntryLine(e);
+    wrapFillText(ctx, line, 14, y, width - 28, 26);
+    y += 28;
   }
   ctx.restore();
 }

@@ -15,6 +15,9 @@ export type AnnotationModelDoc = {
   shape: AnnotationModelShape;
   /** Např. #2563eb nebo název barvy */
   color: string;
+  /** Text za rozměry v legendě, např. „přívod vody vlevo“. */
+  legendDescription?: string;
+  /** Interní poznámka ke šabloně (nelegenda). */
   note?: string;
   createdAt?: unknown;
   updatedAt?: unknown;
