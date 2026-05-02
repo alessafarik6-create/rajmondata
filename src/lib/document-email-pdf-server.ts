@@ -317,6 +317,8 @@ export type GetDocumentPdfBufferInput = {
   type: DocumentEmailType;
   contractId: string | null;
   invoiceId: string | null;
+  /** companies/.../jobs/{jobId}/materialOrders/{id} */
+  materialOrderId?: string | null;
 };
 
 export type GetDocumentPdfBufferResult =
@@ -516,6 +518,75 @@ export async function getDocumentPdfBuffer(
       return { ok: true, buffer, filename: `${prefix}-${safeNum}.pdf` };
   }
 
+  if (type === "material_order") {
+    const mid = String(input.materialOrderId ?? "").trim();
+    if (!mid) {
+      return {
+        ok: false,
+        error: "Chybí identifikátor objednávky materiálu.",
+        detail: "materialOrderId missing in getDocumentPdfBuffer input",
+      };
+    }
+    const jid = String(jobId ?? "").trim();
+    if (!jid) {
+      return {
+        ok: false,
+        error: "Chybí zakázka k objednávce materiálu.",
+        detail: "jobId missing for material_order",
+      };
+    }
+    const oref = db
+      .collection(COMPANIES_COLLECTION)
+      .doc(companyId)
+      .collection("jobs")
+      .doc(jid)
+      .collection("materialOrders")
+      .doc(mid);
+    const osnap = await oref.get();
+    if (!osnap.exists) {
+      return {
+        ok: false,
+        error: "Objednávka materiálu nebyla nalezena.",
+        detail: `Firestore path=${oref.path} exists=false`,
+      };
+    }
+    const odata = (osnap.data() ?? {}) as Record<string, unknown>;
+    const rawHtml = String(odata.pdfHtml ?? "").trim();
+    if (!rawHtml) {
+      return {
+        ok: false,
+        error: "Objednávka nemá uložený obsah pro PDF.",
+        detail: `Firestore path=${oref.path} exists=true pdfHtmlLen=0`,
+      };
+    }
+    const html = sanitizeInvoicePreviewHtml(rawHtml);
+    let buffer: Buffer;
+    try {
+      buffer = await renderStoredHtmlToPdfBuffer(html);
+    } catch (pdfErr: unknown) {
+      const stack = String(
+        errorStackFromUnknown(pdfErr) ?? serializeUnknownForLog(pdfErr) ?? ""
+      );
+      logPdfError("material_order.renderPdf", pdfErr);
+      return {
+        ok: false,
+        error: "Nepodařilo se vykreslit PDF z objednávky materiálu.",
+        detail: stack.slice(0, 12_000),
+      };
+    }
+    if (buffer.length > MAX_PDF_BYTES) {
+      return {
+        ok: false,
+        error: "Vygenerované PDF je příliš velké pro odeslání e-mailem.",
+        detail: `pdfBytes=${buffer.length} max=${MAX_PDF_BYTES}`,
+      };
+    }
+    const num = String(odata.documentNumber ?? "").trim() || mid;
+    const safeNum = num.replace(/[^\w.\-]+/g, "_").slice(0, 80);
+    logPdf("done", `material_order filename=objednavka-materialu-${safeNum}.pdf bytes=${buffer.length}`);
+    return { ok: true, buffer, filename: `objednavka-materialu-${safeNum}.pdf` };
+  }
+
   return {
     ok: false,
     error: "Nepodporovaný typ dokumentu.",
@@ -542,5 +613,6 @@ export async function generateContractPdfBuffer(
     type: "contract",
     invoiceId: null,
     contractId: input.contractId,
+    materialOrderId: null,
   });
 }

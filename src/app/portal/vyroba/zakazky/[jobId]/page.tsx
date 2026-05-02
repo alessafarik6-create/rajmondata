@@ -106,6 +106,7 @@ import { ProductionWorkbenchSplit } from "@/components/production/production-wor
 import { useStockPiecesSummaries } from "@/hooks/use-stock-pieces-summaries";
 import { buildProductionWorksheetPdf } from "@/lib/production-worksheet-pdf";
 import { Checkbox } from "@/components/ui/checkbox";
+import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -1583,6 +1584,67 @@ export default function VyrobaZakazkaDetailPage() {
     });
   }, [bulkPickIds, inventoryById, toast]);
 
+  const productionMaterialLinesForOrder = useMemo(() => {
+    return issueQueue.map((ln) => {
+      const inv = inventoryById.get(ln.itemId);
+      const name = inv?.name ?? ln.itemId;
+      const unit = inv?.unit || "ks";
+      const total = inv ? issueLineTotalInStockUnits(inv, ln) : null;
+      const qty =
+        total != null && Number.isFinite(total)
+          ? total
+          : Number(String(ln.qtyStr).replace(",", ".")) || 0;
+      let cutsText: string | undefined;
+      if (inv && String(inv.stockTrackingMode) === "length") {
+        const u = ln.inputLengthUnit || "mm";
+        cutsText =
+          ln.repeatCountStr && ln.repeatCountStr !== "1"
+            ? `${ln.repeatCountStr}× ${ln.qtyStr} ${u}`
+            : `${ln.qtyStr} ${u}`;
+      }
+      const noteParts = [ln.note?.trim(), ln.batchNumber ? `Šarže: ${ln.batchNumber}` : ""].filter(Boolean);
+      return {
+        key: ln.key,
+        name,
+        quantity: qty,
+        unit,
+        cutsText,
+        note: noteParts.length ? noteParts.join(" · ") : undefined,
+      };
+    });
+  }, [issueQueue, inventoryById]);
+
+  const materialOrderJobRecord = useMemo(
+    () =>
+      jobView
+        ? ({ ...(jobView as Record<string, unknown>) } as Record<string, unknown>)
+        : ({} as Record<string, unknown>),
+    [jobView]
+  );
+  const materialOrderCustomerName = useMemo(() => {
+    if (!jobView) return "—";
+    const j = jobView as Record<string, unknown>;
+    return String(j.customerName || j.customerCompanyName || j.companyName || j.customerDisplayName || "—");
+  }, [jobView]);
+  const materialOrderCustomerAddress = useMemo(() => {
+    if (!jobView) return "";
+    const j = jobView as Record<string, unknown>;
+    return String(j.address || j.customerAddress || j.installAddress || "").trim();
+  }, [jobView]);
+  const companyDisplayNameForOrders = useMemo(
+    () =>
+      String(
+        (company as { name?: string; companyName?: string } | null)?.name ||
+          (company as { companyName?: string } | null)?.companyName ||
+          "Organizace"
+      ),
+    [company]
+  );
+  const companyDocForOrders = useMemo(
+    () => (company ? ({ ...(company as Record<string, unknown>) } as Record<string, unknown>) : null),
+    [company]
+  );
+
   if (!user || !companyId || !jobId) {
     return (
       <div className="flex justify-center py-16">
@@ -2549,6 +2611,21 @@ export default function VyrobaZakazkaDetailPage() {
           />
             </CardContent>
           </Card>
+
+          {companyId && jobId && jobView && user ? (
+            <JobMaterialOrdersSection
+              companyId={companyId}
+              companyDisplayName={companyDisplayNameForOrders}
+              jobId={String(jobId)}
+              job={materialOrderJobRecord}
+              customerName={materialOrderCustomerName}
+              customerAddressLines={materialOrderCustomerAddress}
+              userId={user.uid}
+              canManage={accessOk}
+              productionMaterialLines={productionMaterialLinesForOrder}
+              companyDoc={companyDocForOrders}
+            />
+          ) : null}
 
           <Card className={CARD}>
             <CardHeader className="border-b border-slate-100">

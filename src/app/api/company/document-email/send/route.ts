@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "node:crypto";
+import { FieldValue } from "firebase-admin/firestore";
 import { getAdminAuth, getAdminFirestore, getAdminStorageBucket } from "@/lib/firebase-admin";
 import {
   callerCanAccessCompany,
@@ -45,6 +46,8 @@ type Body = {
   organizationId?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
+  /** companies/.../jobs/{jobId}/materialOrders/{materialOrderId} */
+  materialOrderId?: string | null;
 };
 
 async function downloadStorageAttachment(params: {
@@ -152,6 +155,8 @@ export async function POST(request: NextRequest) {
       contractIdRaw || (type === "contract" ? docId : null);
     const invoiceId =
       invoiceIdRaw || (type === "invoice" || type === "advance_invoice" ? docId : null);
+    const materialOrderIdRaw =
+      body.materialOrderId != null ? String(body.materialOrderId).trim() || null : null;
 
     if (!companyId || !type || !to) {
       return jsonFail(400, "Chybí povinná pole.", null, {
@@ -205,6 +210,20 @@ export async function POST(request: NextRequest) {
     }
     if (type === "received_document" && !docId) {
       return jsonFail(400, "Chybí identifikátor dokladu.", null, { step: "documentId", requestId });
+    }
+    if (type === "material_order") {
+      if (!resolvedJobId) {
+        return jsonFail(400, "Chybí zakázka k objednávce materiálu.", null, {
+          step: "jobRequiredMaterialOrder",
+          requestId,
+        });
+      }
+      if (!materialOrderIdRaw) {
+        return jsonFail(400, "Chybí identifikátor objednávky materiálu.", null, {
+          step: "materialOrderId",
+          requestId,
+        });
+      }
     }
 
     if (type === "contract") {
@@ -427,6 +446,31 @@ export async function POST(request: NextRequest) {
       jobId: resolvedJobId || null,
       documentType: type,
     });
+
+    if (type === "material_order" && materialOrderIdRaw && resolvedJobId) {
+      try {
+        await db
+          .collection(COMPANIES_COLLECTION)
+          .doc(companyId)
+          .collection("jobs")
+          .doc(resolvedJobId)
+          .collection("materialOrders")
+          .doc(materialOrderIdRaw)
+          .set(
+            {
+              lastEmailSentAt: FieldValue.serverTimestamp(),
+              lastEmailSentTo: to.trim().toLowerCase(),
+              lastEmailSentCc: ccExtra,
+              lastEmailSentByUid: caller.uid,
+              lastEmailSubject: subject.trim(),
+              emailStatus: "sent",
+            },
+            { merge: true }
+          );
+      } catch (moErr) {
+        console.error(ROUTE_LOG, "materialOrders merge failed", serializeUnknownForLog(moErr));
+      }
+    }
 
     try {
       const attNames = attachments.map((a) => a.filename).filter(Boolean);

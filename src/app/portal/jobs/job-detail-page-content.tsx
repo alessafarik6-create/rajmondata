@@ -4623,7 +4623,10 @@ export function JobDetailPageContent({
       for (let i = annotations.length - 1; i >= 0; i--) {
         const a = annotations[i];
         if (a.type === "shapeLabel") {
-          const part = hitTestShapeLabel(a as ShapeLabelAnnotation, x, y, hrDim);
+          const sl = a as ShapeLabelAnnotation;
+          const part = hitTestShapeLabel(sl, x, y, hrDim, {
+            lockResize: Boolean(sl.modelId?.trim()),
+          });
           if (part === "resize-br")
             return { id: a.id, part: "shape-resize-br" as const };
           if (part === "move") return { id: a.id, part: "shape-move" as const };
@@ -5317,6 +5320,7 @@ export function JobDetailPageContent({
             return { ...sh, x: sh.x + dx, y: sh.y + dy };
           }
           if (dragMode === "shape-resize-br") {
+            if (sh.modelId?.trim()) return sh;
             const pdfS = Math.max(1e-6, pdfScaleRef.current);
             const isPdf = editorMediaKindRef.current === "pdf";
             const cwBase = isPdf ? canvas.width / pdfS : canvas.width;
@@ -8819,6 +8823,7 @@ export function JobDetailPageContent({
               customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
               userId={user.uid}
               canManage={canManageFolders}
+              companyDoc={(companyDoc as Record<string, unknown> | null | undefined) ?? null}
             />
           ) : null}
 

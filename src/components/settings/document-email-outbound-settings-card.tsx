@@ -44,6 +44,7 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
     advance_invoice: { subject: "", body: "" },
     received_document: { subject: "", body: "" },
     meeting_record: { subject: "", body: "" },
+    material_order: { subject: "", body: "" },
   });
   const [saving, setSaving] = useState(false);
 
@@ -84,6 +85,10 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
         meeting_record: {
           subject: tpl.meeting_record.subject,
           body: tpl.meeting_record.body,
+        },
+        material_order: {
+          subject: tpl.material_order.subject,
+          body: tpl.material_order.body,
         },
       },
     };

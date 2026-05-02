@@ -100,12 +100,14 @@ export function hitTestShapeLabel(
   a: JobPhotoShapeLabelAnnotation,
   x: number,
   y: number,
-  hitRadius: number
+  hitRadius: number,
+  opts?: { lockResize?: boolean }
 ): "move" | "resize-br" | null {
   const ax = a.x;
   const ay = a.y;
   const aw = a.width;
   const ah = a.height;
+  const lockResize = opts?.lockResize === true;
 
   if (a.shape === "circle" || a.shape === "point") {
     const cx = ax + aw / 2;
@@ -118,6 +120,7 @@ export function hitTestShapeLabel(
 
   const br = hitRadius * 2;
   if (
+    !lockResize &&
     x >= ax + aw - br &&
     x <= ax + aw + hitRadius &&
     y >= ay + ah - br &&

@@ -6,6 +6,8 @@ type MaterialOrderRow = {
   unit: string;
   note?: string | null;
   supplier?: string | null;
+  /** Řezy / metráž (např. 3× 785,5 mm) */
+  cuts?: string | null;
 };
 
 function brJoinEscaped(text: string): string {
@@ -38,14 +40,16 @@ export function buildMaterialOrderHtml(params: {
   const rows = (params.items || []).filter((r) => String(r.name || "").trim());
   const itemsHtml =
     rows.length === 0
-      ? `<tr><td colspan="5">—</td></tr>`
+      ? `<tr><td colspan="6">—</td></tr>`
       : rows
           .map((r) => {
             const supplier = String(r.supplier ?? "").trim();
+            const cuts = String(r.cuts ?? "").trim();
             return `<tr>
 <td>${escapeHtml(String(r.name).trim())}</td>
 <td class="num">${escapeHtml(fmtQty(r.quantity))}</td>
 <td>${escapeHtml(String(r.unit || "ks").trim() || "ks")}</td>
+<td>${escapeHtml(cuts)}</td>
 <td>${escapeHtml(String(r.note ?? "").trim())}</td>
 <td>${escapeHtml(supplier)}</td>
 </tr>`;
@@ -93,6 +97,7 @@ export function buildMaterialOrderHtml(params: {
           <th>Položka</th>
           <th class="num">Množství</th>
           <th>Jedn.</th>
+          <th>Řezy</th>
           <th>Poznámka</th>
           <th>Dodavatel</th>
         </tr>

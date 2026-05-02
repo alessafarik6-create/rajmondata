@@ -22,6 +22,8 @@ export type SendJobDocumentEmailPayload = {
   documentId?: string | null;
   invoiceId?: string | null;
   contractId?: string | null;
+  /** Objednávka materiálu u zakázky (`material_order`). */
+  materialOrderId?: string | null;
 };
 
 /**
