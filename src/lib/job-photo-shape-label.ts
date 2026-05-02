@@ -14,13 +14,21 @@ export function buildLegendFromShapeLabels(
   const sorted = [...items].sort(
     (a, b) => (a.legendNumber || 0) - (b.legendNumber || 0) || a.id.localeCompare(b.id)
   );
-  return sorted.map((s) => ({
-    legendNumber: s.legendNumber,
-    label: s.label || "",
-    widthMm: s.widthMm,
-    heightMm: s.heightMm,
-    note: s.note?.trim() ? s.note.trim() : undefined,
-  }));
+  const seen = new Set<number>();
+  const out: AnnotationLegendEntry[] = [];
+  for (const s of sorted) {
+    const ln = Math.max(1, Math.floor(s.legendNumber || 1));
+    if (seen.has(ln)) continue;
+    seen.add(ln);
+    out.push({
+      legendNumber: ln,
+      label: s.label || "",
+      widthMm: s.widthMm,
+      heightMm: s.heightMm,
+      note: s.note?.trim() ? s.note.trim() : undefined,
+    });
+  }
+  return out;
 }
 
 export function drawShapeLabelOnCanvas(

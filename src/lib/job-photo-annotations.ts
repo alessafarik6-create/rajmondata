@@ -144,17 +144,23 @@ function buildLegendPayload(
   const sorted = [...shapes].sort(
     (a, b) => a.legendNumber - b.legendNumber || a.id.localeCompare(b.id)
   );
-  return sorted.map((s) => {
+  const seen = new Set<number>();
+  const out: AnnotationLegendEntry[] = [];
+  for (const s of sorted) {
+    const ln = Math.max(1, Math.floor(s.legendNumber || 1));
+    if (seen.has(ln)) continue;
+    seen.add(ln);
     const entry: AnnotationLegendEntry = {
-      legendNumber: s.legendNumber,
+      legendNumber: ln,
       label: s.label || "",
       widthMm: s.widthMm,
       heightMm: s.heightMm,
     };
     const nt = s.note?.trim();
     if (nt) entry.note = nt;
-    return entry;
-  });
+    out.push(entry);
+  }
+  return out.length ? out : undefined;
 }
 
 export function serializeJobPhotoAnnotations(
@@ -364,28 +370,41 @@ export function deserializeJobPhotoAnnotations(
   return out;
 }
 
-/** Přečísluje legendNumber u značek 1…n podle stávajícího pořadí. */
-export function renumberShapeLabelLegends(items: JobPhotoAnnotation[]): JobPhotoAnnotation[] {
+/**
+ * Klíč skupiny legendy: stejný model (modelId) nebo stejné ruční zadání (název + mm + poznámka).
+ * Více značek ve skupině sdílí jedno číslo v legendě.
+ */
+export function groupKeyForShapeLabel(s: JobPhotoShapeLabelAnnotation): string {
+  const mid = s.modelId?.trim();
+  if (mid) return `m:${mid}`;
+  const lab = (s.label || "").trim().toLowerCase();
+  const note = (s.note ?? "").trim();
+  return `f:${lab}|${Number(s.widthMm) || 0}|${Number(s.heightMm) || 0}|${note}`;
+}
+
+/** Přiřadí legendNumber podle skupin (model / stejné parametry); čísla 1…k bez mezer. */
+export function syncShapeLabelLegendNumbers(items: JobPhotoAnnotation[]): JobPhotoAnnotation[] {
   const shapes = items.filter((a): a is JobPhotoShapeLabelAnnotation => a.type === "shapeLabel");
-  shapes.sort(
-    (a, b) => a.legendNumber - b.legendNumber || (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.id.localeCompare(b.id)
+  const sorted = [...shapes].sort(
+    (a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.id.localeCompare(b.id)
   );
-  const idToNum = new Map<string, number>();
-  shapes.forEach((s, i) => idToNum.set(s.id, i + 1));
+  const keyToNum = new Map<string, number>();
+  let next = 1;
+  for (const s of sorted) {
+    const k = groupKeyForShapeLabel(s);
+    if (!keyToNum.has(k)) {
+      keyToNum.set(k, next++);
+    }
+  }
   return items.map((a) => {
     if (a.type !== "shapeLabel") return a;
-    const n = idToNum.get(a.id);
-    return n != null ? { ...a, legendNumber: n } : a;
+    const num = keyToNum.get(groupKeyForShapeLabel(a));
+    return num != null ? { ...a, legendNumber: num } : a;
   });
 }
 
-export function nextShapeLegendNumber(items: JobPhotoAnnotation[]): number {
-  let max = 0;
-  for (const a of items) {
-    if (a.type === "shapeLabel") max = Math.max(max, a.legendNumber || 0);
-  }
-  return max + 1;
-}
+/** @deprecated Use syncShapeLabelLegendNumbers */
+export const renumberShapeLabelLegends = syncShapeLabelLegendNumbers;
 
 function createLocalId(): string {
   return `ann-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;

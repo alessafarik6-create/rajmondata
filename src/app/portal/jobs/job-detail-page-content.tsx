@@ -204,22 +204,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { ref, getDownloadURL, deleteObject, getBlob } from "firebase/storage";
 import { FirebaseError } from "firebase/app";
 import Link from "next/link";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deserializeJobPhotoAnnotations,
-  nextShapeLegendNumber,
   readAnnotationPayloadFromPhotoDoc,
   readAnnotationPayloadReferenceSize,
-  renumberShapeLabelLegends,
   serializeJobPhotoAnnotations,
+  syncShapeLabelLegendNumbers,
   type DimensionColor,
   type JobPhotoAnnotation as Annotation,
   type JobPhotoDimensionAnnotation as DimensionAnnotation,
@@ -274,7 +268,6 @@ type DragMode =
   | "note-box"
   | "note-rect-draw"
   | "note-resize-br"
-  | "shape-rect-draw"
   | "shape-move"
   | "shape-resize-br"
   | "view-pan";
@@ -1468,20 +1461,11 @@ export function JobDetailPageContent({
   const noteRectDraftRef = useRef(noteRectDraft);
   noteRectDraftRef.current = noteRectDraft;
 
-  const [shapeRectDraft, setShapeRectDraft] = useState<{
-    x0: number;
-    y0: number;
-    x1: number;
-    y1: number;
-  } | null>(null);
-  const shapeRectDraftRef = useRef(shapeRectDraft);
-  shapeRectDraftRef.current = shapeRectDraft;
-
-  const pendingShapeRectRef = useRef<{
+  /** Klik na plán — po potvrzení dialogu se vloží značka do středu tohoto bodu. */
+  const pendingShapePointRef = useRef<{
     x: number;
     y: number;
-    w: number;
-    h: number;
+    pageIndex: number;
   } | null>(null);
 
   const [shapeLabelDialogOpen, setShapeLabelDialogOpen] = useState(false);
@@ -1495,10 +1479,10 @@ export function JobDetailPageContent({
     showLabelInline: boolean;
     modelId?: string;
   }>({
-    shape: "square",
+    shape: "point",
     label: "",
-    widthMm: 60,
-    heightMm: 60,
+    widthMm: 600,
+    heightMm: 600,
     note: "",
     showLabelInline: false,
     modelId: undefined,
@@ -1526,7 +1510,6 @@ export function JobDetailPageContent({
     useState<AnnotationModelDoc | null>(null);
   const shapeLabelPlacementModelRef = useRef<AnnotationModelDoc | null>(null);
   shapeLabelPlacementModelRef.current = shapeLabelPlacementModel;
-  const [annotLegendMobileOpen, setAnnotLegendMobileOpen] = useState(true);
   const [annotPanelSizeLg, setAnnotPanelSizeLg] = useState<{
     w: number;
     h: number;
@@ -1978,7 +1961,7 @@ export function JobDetailPageContent({
     setDragMode("none");
     setDragLastPoint(null);
     setNoteRectDraft(null);
-    setShapeRectDraft(null);
+    pendingShapePointRef.current = null;
     setShapeLabelDialogOpen(false);
     setShapeLabelEditingId(null);
     setImageObjectUrl((prev) => {
@@ -4198,9 +4181,10 @@ export function JobDetailPageContent({
           const iw = refSz?.width ?? baseVp.width;
           const ih = refSz?.height ?? baseVp.height;
           const loaded = deserializeJobPhotoAnnotations(rawPayload, iw, ih);
+          const synced = syncShapeLabelLegendNumbers(loaded as Annotation[]);
           pdfAnnotationsByPageRef.current.clear();
-          pdfAnnotationsByPageRef.current.set(initialPage, loaded as Annotation[]);
-          setAnnotations(loaded as Annotation[]);
+          pdfAnnotationsByPageRef.current.set(initialPage, synced as Annotation[]);
+          setAnnotations(synced as Annotation[]);
 
           setImageForCanvas(null);
           setImageError(null);
@@ -4314,7 +4298,9 @@ export function JobDetailPageContent({
           canvas.width,
           canvas.height
         );
-        setAnnotations(loaded as Annotation[]);
+        setAnnotations(
+          syncShapeLabelLegendNumbers(loaded as Annotation[]) as Annotation[]
+        );
         setEditorMediaKind("image");
       } catch (error) {
         if (cancelled) return;
@@ -4588,27 +4574,12 @@ export function JobDetailPageContent({
       ctx.setLineDash([]);
     }
 
-    if (shapeRectDraft) {
-      const bx =
-        Math.min(shapeRectDraft.x0, shapeRectDraft.x1) * coordScale;
-      const by =
-        Math.min(shapeRectDraft.y0, shapeRectDraft.y1) * coordScale;
-      const bw = Math.abs(shapeRectDraft.x1 - shapeRectDraft.x0) * coordScale;
-      const bh = Math.abs(shapeRectDraft.y1 - shapeRectDraft.y0) * coordScale;
-      ctx.fillStyle = "rgba(59,130,246,0.15)";
-      ctx.strokeStyle = "rgba(59,130,246,0.95)";
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.strokeRect(bx, by, bw, bh);
-      ctx.setLineDash([]);
-    }
   }, [
     imageForCanvas,
     baseImageLoaded,
     annotations,
     selectedAnnotationId,
     noteRectDraft,
-    shapeRectDraft,
     colorToHex,
     editorMediaKind,
     pdfScale,
@@ -4765,7 +4736,7 @@ export function JobDetailPageContent({
         modelId: s.modelId,
       });
       setShapeLabelEditingId(s.id);
-      pendingShapeRectRef.current = null;
+      pendingShapePointRef.current = null;
       setShapeLabelDialogOpen(true);
       return;
     }
@@ -4795,7 +4766,7 @@ export function JobDetailPageContent({
   const deleteSelectedAnnotation = useCallback(() => {
     if (!selectedAnnotationId) return;
     setAnnotations((prev) =>
-      renumberShapeLabelLegends(prev.filter((a) => a.id !== selectedAnnotationId))
+      syncShapeLabelLegendNumbers(prev.filter((a) => a.id !== selectedAnnotationId))
     );
     setSelectedAnnotationId(null);
     setDraftAnnotationId(null);
@@ -4804,47 +4775,15 @@ export function JobDetailPageContent({
   }, [selectedAnnotationId]);
 
   const commitShapeLabelFromDialog = useCallback(() => {
-    const rect = pendingShapeRectRef.current;
+    const point = pendingShapePointRef.current;
     const editing = shapeLabelEditingId;
-    if (!editing && !rect) {
+    if (!editing && !point) {
       setShapeLabelDialogOpen(false);
       return;
     }
-    const pageIx =
-      editorMediaKindRef.current === "pdf" ? Math.max(0, pdfPageRef.current - 1) : 0;
-    const make = (
-      id: string,
-      legendNumber: number,
-      baseX: number,
-      baseY: number,
-      bw: number,
-      bh: number
-    ): ShapeLabelAnnotation => {
-      const mid = shapeLabelForm.modelId?.trim();
-      const row: ShapeLabelAnnotation = {
-        id,
-        type: "shapeLabel",
-        shape: shapeLabelForm.shape,
-        pageIndex: pageIx,
-        x: baseX,
-        y: baseY,
-        width: Math.max(8, bw),
-        height: Math.max(8, bh),
-        widthMm: Number(shapeLabelForm.widthMm) || 0,
-        heightMm: Number(shapeLabelForm.heightMm) || 0,
-        label: shapeLabelForm.label.trim(),
-        note: shapeLabelForm.note.trim() || undefined,
-        legendNumber,
-        showLabelInline: shapeLabelForm.showLabelInline,
-        color: activeColor,
-        createdAt: Date.now(),
-      };
-      if (mid) row.modelId = mid;
-      return row;
-    };
     if (editing) {
       setAnnotations((prev) =>
-        renumberShapeLabelLegends(
+        syncShapeLabelLegendNumbers(
           prev.map((a) => {
             if (a.id !== editing || a.type !== "shapeLabel") return a;
             const cur = a as ShapeLabelAnnotation;
@@ -4859,25 +4798,50 @@ export function JobDetailPageContent({
               showLabelInline: shapeLabelForm.showLabelInline,
               color: activeColor,
               modelId: mid || cur.modelId,
-              x: rect?.x ?? cur.x,
-              y: rect?.y ?? cur.y,
-              width: rect ? Math.max(8, rect.w) : cur.width,
-              height: rect ? Math.max(8, rect.h) : cur.height,
             };
           })
         )
       );
-    } else if (rect) {
+    } else if (point) {
+      const wm = Number(shapeLabelForm.widthMm) || 1;
+      const hm = Number(shapeLabelForm.heightMm) || 1;
+      const aspect = wm / Math.max(0.001, hm);
+      let boxW = 96;
+      let boxH = boxW / aspect;
+      const cvs = canvasRef.current;
+      if (cvs) {
+        const maxBox = Math.min(cvs.width, cvs.height) * 0.35;
+        if (boxW > maxBox) {
+          boxW = maxBox;
+          boxH = boxW / aspect;
+        }
+      }
+      const bx = point.x - boxW / 2;
+      const by = point.y - boxH / 2;
       const id = createId();
-      setAnnotations((prev) => {
-        const n = nextShapeLegendNumber(prev);
-        return renumberShapeLabelLegends([
-          ...prev,
-          make(id, n, rect.x, rect.y, rect.w, rect.h),
-        ]);
-      });
+      const mid = shapeLabelForm.modelId?.trim();
+      const row: ShapeLabelAnnotation = {
+        id,
+        type: "shapeLabel",
+        shape: shapeLabelForm.shape,
+        pageIndex: point.pageIndex,
+        x: bx,
+        y: by,
+        width: Math.max(8, boxW),
+        height: Math.max(8, boxH),
+        widthMm: Number(shapeLabelForm.widthMm) || 0,
+        heightMm: Number(shapeLabelForm.heightMm) || 0,
+        label: shapeLabelForm.label.trim(),
+        note: shapeLabelForm.note.trim() || undefined,
+        legendNumber: 1,
+        showLabelInline: shapeLabelForm.showLabelInline,
+        color: activeColor,
+        createdAt: Date.now(),
+      };
+      if (mid) row.modelId = mid;
+      setAnnotations((prev) => syncShapeLabelLegendNumbers([...prev, row]));
     }
-    pendingShapeRectRef.current = null;
+    pendingShapePointRef.current = null;
     setShapeLabelDialogOpen(false);
     setShapeLabelEditingId(null);
   }, [activeColor, shapeLabelForm, shapeLabelEditingId]);
@@ -4905,6 +4869,7 @@ export function JobDetailPageContent({
     setDragMode("none");
     setDragLastPoint(null);
     setNoteRectDraft(null);
+    pendingShapePointRef.current = null;
   }, [annotations.length]);
 
   const handleCanvasPointerDown = (e: React.PointerEvent<HTMLElement>) => {
@@ -5107,7 +5072,6 @@ export function JobDetailPageContent({
         const sh = plm.shape as ShapeLabelAnnotation["shape"];
         const col = dimensionColorFromModelColor(plm.color);
         setAnnotations((prev) => {
-          const n = nextShapeLegendNumber(prev);
           const nextShape: ShapeLabelAnnotation = {
             id,
             type: "shapeLabel",
@@ -5121,27 +5085,41 @@ export function JobDetailPageContent({
             heightMm: plm.heightMm,
             label: plm.name.trim() || "Model",
             note: plm.note?.trim() || undefined,
-            legendNumber: n,
+            legendNumber: 1,
             showLabelInline: false,
             color: col,
             createdAt: Date.now(),
             modelId: plm.id,
           };
-          return renumberShapeLabelLegends([...prev, nextShape]);
+          return syncShapeLabelLegendNumbers([...prev, nextShape]);
         });
         setShapeLabelPlacementModel(null);
         shapeLabelPlacementModelRef.current = null;
         return;
       }
-      setSelectedAnnotationId(null);
-      setDraftAnnotationId(null);
-      setShapeRectDraft({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y });
-      setDragMode("shape-rect-draw");
-      setDragLastPoint(pt);
-      try {
-        e.currentTarget.setPointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
+      if (e.button === 0) {
+        setSelectedAnnotationId(null);
+        setDraftAnnotationId(null);
+        pendingShapePointRef.current = {
+          x: pt.x,
+          y: pt.y,
+          pageIndex:
+            editorMediaKindRef.current === "pdf"
+              ? Math.max(0, pdfPageRef.current - 1)
+              : 0,
+        };
+        setShapeLabelForm((prev) => ({
+          ...prev,
+          shape: "point",
+          label: "",
+          widthMm: 600,
+          heightMm: 600,
+          note: "",
+          showLabelInline: false,
+          modelId: undefined,
+        }));
+        setShapeLabelEditingId(null);
+        setShapeLabelDialogOpen(true);
       }
       return;
     }
@@ -5259,12 +5237,6 @@ export function JobDetailPageContent({
     }
 
     const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
-
-    if (dragMode === "shape-rect-draw") {
-      e.preventDefault();
-      setShapeRectDraft((d) => (d ? { ...d, x1: pt.x, y1: pt.y } : null));
-      return;
-    }
 
     if (dragMode === "note-rect-draw") {
       e.preventDefault();
@@ -5389,47 +5361,6 @@ export function JobDetailPageContent({
       setDragMode("none");
       viewPanStartRef.current = null;
       setDragLastPoint(null);
-      return;
-    }
-
-    if (dragMode === "shape-rect-draw") {
-      e.preventDefault();
-      try {
-        e.currentTarget.releasePointerCapture(e.pointerId);
-      } catch {
-        /* ignore */
-      }
-      const d = shapeRectDraftRef.current;
-      setShapeRectDraft(null);
-      setDragMode("none");
-      setDragLastPoint(null);
-      if (!d) return;
-      let bx = Math.min(d.x0, d.x1);
-      let by = Math.min(d.y0, d.y1);
-      let bw = Math.abs(d.x1 - d.x0);
-      let bh = Math.abs(d.y1 - d.y0);
-      if (bw < 6 && bh < 6) {
-        const s = 18;
-        bx = d.x0 - s / 2;
-        by = d.y0 - s / 2;
-        bw = s;
-        bh = s;
-      }
-      pendingShapeRectRef.current = { x: bx, y: by, w: bw, h: bh };
-      const estW = Math.max(1, Math.round(bw));
-      const estH = Math.max(1, Math.round(bh));
-      setShapeLabelForm((prev) => ({
-        ...prev,
-        shape: bw === bh ? "square" : "rectangle",
-        label: "",
-        widthMm: estW,
-        heightMm: estH,
-        note: "",
-        showLabelInline: false,
-        modelId: undefined,
-      }));
-      setShapeLabelEditingId(null);
-      setShapeLabelDialogOpen(true);
       return;
     }
 
@@ -6624,7 +6555,6 @@ export function JobDetailPageContent({
   };
 
   const canvasCursor = useMemo(() => {
-    if (dragMode === "shape-rect-draw") return "crosshair";
     if (dragMode === "shape-resize-br") return "nwse-resize";
     if (dragMode === "note-rect-draw") return "crosshair";
     if (dragMode === "note-resize-br") return "nwse-resize";
@@ -7168,8 +7098,9 @@ export function JobDetailPageContent({
             <div className="shrink-0 space-y-1.5 sm:space-y-2">
               <p className="text-xs leading-snug text-muted-foreground max-lg:text-slate-300 sm:text-sm sm:leading-normal lg:text-muted-foreground">
                 Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
-                Značka / model: obdélník na plánu, pak název a rozměry v mm; legenda
-                dole. Výběr: přesun a úpravy. Kolečko myši nebo +/- přibližuje podklad
+                Značka / model: klepněte na plán, zadejte název a rozměry v mm; číslo
+                značky na obrázku a legenda dole vlevo. Stejný model z knihovny se v
+                legendě neopakuje. Výběr: přesun a úpravy. Kolečko myši nebo +/− přibližuje podklad
                 v souřadnicích dokumentu. Dotyk i myš.
               </p>
 
@@ -7213,7 +7144,7 @@ export function JobDetailPageContent({
                         setActiveTool("shapeLabel");
                       }}
                     >
-                      Nakreslit značku na plochu
+                      Vložit značku (klepnutím na plán)
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
@@ -7343,7 +7274,7 @@ export function JobDetailPageContent({
               ) : null}
             </div>
 
-            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2 lg:flex-row lg:gap-3">
+            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2">
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
@@ -7396,7 +7327,6 @@ export function JobDetailPageContent({
                         setDragMode("none");
                         setDragLastPoint(null);
                         setNoteRectDraft(null);
-                        setShapeRectDraft(null);
                         setDraftAnnotationId(null);
                       }}
                     />
@@ -7421,67 +7351,37 @@ export function JobDetailPageContent({
                 </div>
               )}
               {annotationLegendEntries.length ? (
-                <div className="pointer-events-auto absolute bottom-3 left-2 right-2 z-10 lg:hidden">
-                  <Collapsible
-                    open={annotLegendMobileOpen}
-                    onOpenChange={setAnnotLegendMobileOpen}
-                  >
-                    <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/35 bg-black/88 px-3 py-2.5 text-left text-base font-semibold text-white shadow-lg backdrop-blur-sm">
+                <div className="pointer-events-auto absolute bottom-3 left-2 z-10 max-w-[min(calc(100vw-1rem),22rem)]">
+                  <div className="max-h-[min(36dvh,280px)] overflow-y-auto rounded-lg border border-white/35 bg-black/88 px-3 py-2.5 text-left text-sm leading-snug text-white shadow-lg backdrop-blur-sm max-lg:text-[15px] lg:border-border lg:bg-card/95 lg:text-card-foreground lg:shadow-md">
+                    <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-white/80 lg:text-muted-foreground">
                       Legenda
-                      <ChevronDown
-                        className={cn(
-                          "h-5 w-5 shrink-0 transition-transform",
-                          annotLegendMobileOpen && "rotate-180"
-                        )}
-                        aria-hidden
-                      />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <div className="mt-1.5 max-h-[min(40dvh,320px)] space-y-2 overflow-y-auto rounded-lg border border-white/30 bg-black/88 px-3 py-3 text-base leading-relaxed text-white shadow-lg backdrop-blur-sm">
-                        {annotationLegendEntries.map((e) => (
-                          <p
-                            key={`${e.legendNumber}-${e.label}`}
-                            className="text-[15px] font-medium tracking-tight"
-                          >
-                            {e.legendNumber} – {e.label}, {e.widthMm} × {e.heightMm}{" "}
-                            mm
-                            {e.note ? ` — ${e.note}` : ""}
-                          </p>
-                        ))}
-                      </div>
-                    </CollapsibleContent>
-                  </Collapsible>
+                    </p>
+                    <ul className="space-y-1.5">
+                      {annotationLegendEntries.map((e) => (
+                        <li key={`leg-${e.legendNumber}-${e.label}`}>
+                          <span className="font-semibold tabular-nums">
+                            {e.legendNumber}
+                          </span>
+                          <span className="text-white/70 lg:text-muted-foreground">
+                            {" "}
+                            –{" "}
+                          </span>
+                          <span>{e.label}</span>
+                          <span className="text-white/75 lg:text-muted-foreground">
+                            , {e.widthMm} × {e.heightMm} mm
+                          </span>
+                          {e.note ? (
+                            <span className="mt-0.5 block text-xs text-white/65 lg:text-muted-foreground">
+                              {e.note}
+                            </span>
+                          ) : null}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 </div>
               ) : null}
             </div>
-
-            {annotationLegendEntries.length ? (
-              <aside className="hidden min-h-0 w-[min(22rem,36vw)] shrink-0 flex-col gap-2 overflow-y-auto border-l border-border bg-muted/50 p-4 text-foreground lg:flex">
-                <p className="text-base font-semibold">Legenda</p>
-                <ul className="space-y-3 text-sm leading-relaxed">
-                  {annotationLegendEntries.map((e) => (
-                    <li
-                      key={`aside-${e.legendNumber}-${e.label}`}
-                      className="border-b border-border/60 pb-2 last:border-0 last:pb-0"
-                    >
-                      <span className="font-semibold text-foreground">
-                        {e.legendNumber}
-                      </span>
-                      <span className="text-muted-foreground"> – </span>
-                      <span>{e.label}</span>
-                      <span className="text-muted-foreground">
-                        , {e.widthMm} × {e.heightMm} mm
-                      </span>
-                      {e.note ? (
-                        <span className="mt-1 block text-muted-foreground">
-                          {e.note}
-                        </span>
-                      ) : null}
-                    </li>
-                  ))}
-                </ul>
-              </aside>
-            ) : null}
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5 max-lg:border-white/10 max-lg:bg-slate-900 max-lg:text-white max-lg:pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:pt-2">
@@ -7629,28 +7529,6 @@ export function JobDetailPageContent({
                 </h3>
                 <div className="space-y-3 text-sm">
                   <div className="flex flex-col gap-1">
-                    <Label>Tvar</Label>
-                    <select
-                      className={cn(
-                        "h-9 w-full rounded-md border px-2 text-sm",
-                        "max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white",
-                        "lg:border-input lg:bg-background"
-                      )}
-                      value={shapeLabelForm.shape}
-                      onChange={(e) =>
-                        setShapeLabelForm((f) => ({
-                          ...f,
-                          shape: e.target.value as ShapeLabelAnnotation["shape"],
-                        }))
-                      }
-                    >
-                      <option value="square">Čtverec</option>
-                      <option value="rectangle">Obdélník</option>
-                      <option value="circle">Kruh</option>
-                      <option value="point">Bod</option>
-                    </select>
-                  </div>
-                  <div className="flex flex-col gap-1">
                     <Label>Název</Label>
                     <Input
                       value={shapeLabelForm.label}
@@ -7696,6 +7574,28 @@ export function JobDetailPageContent({
                     </div>
                   </div>
                   <div className="flex flex-col gap-1">
+                    <Label>Tvar na plánu</Label>
+                    <select
+                      className={cn(
+                        "h-9 w-full rounded-md border px-2 text-sm",
+                        "max-lg:border-white/25 max-lg:bg-slate-950 max-lg:text-white",
+                        "lg:border-input lg:bg-background"
+                      )}
+                      value={shapeLabelForm.shape}
+                      onChange={(e) =>
+                        setShapeLabelForm((f) => ({
+                          ...f,
+                          shape: e.target.value as ShapeLabelAnnotation["shape"],
+                        }))
+                      }
+                    >
+                      <option value="point">Bod / značka</option>
+                      <option value="square">Čtverec</option>
+                      <option value="rectangle">Obdélník</option>
+                      <option value="circle">Kruh</option>
+                    </select>
+                  </div>
+                  <div className="flex flex-col gap-1">
                     <Label>Poznámka (volitelně)</Label>
                     <Input
                       value={shapeLabelForm.note}
@@ -7727,7 +7627,7 @@ export function JobDetailPageContent({
                     onClick={() => {
                       setShapeLabelDialogOpen(false);
                       setShapeLabelEditingId(null);
-                      pendingShapeRectRef.current = null;
+                      pendingShapePointRef.current = null;
                     }}
                   >
                     Zrušit
