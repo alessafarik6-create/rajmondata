@@ -37,6 +37,7 @@ import {
   CheckCircle2,
   Pencil,
   Trash2,
+  FileDown,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -101,6 +102,10 @@ import {
   type CsvMaterialDialogSource,
 } from "@/components/production/csv-material-proposal-dialog";
 import { JobProductionPdfDocumentationPanel } from "@/components/production/job-production-pdf-documentation";
+import { ProductionWorkbenchSplit } from "@/components/production/production-workbench-split";
+import { useStockPiecesSummaries } from "@/hooks/use-stock-pieces-summaries";
+import { buildProductionWorksheetPdf } from "@/lib/production-worksheet-pdf";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 
@@ -490,6 +495,8 @@ export default function VyrobaZakazkaDetailPage() {
 
   const [deleteConsumptionTarget, setDeleteConsumptionTarget] = useState<Record<string, unknown> | null>(null);
   const [csvMaterialDialog, setCsvMaterialDialog] = useState<CsvMaterialDialogSource | null>(null);
+  const [previewTab, setPreviewTab] = useState<"pdf" | "image">("pdf");
+  const [bulkPickIds, setBulkPickIds] = useState<Set<string>>(() => new Set());
 
   const productionPdfRows = useMemo(
     () =>
@@ -971,6 +978,47 @@ export default function VyrobaZakazkaDetailPage() {
     return m;
   }, [inventoryItems]);
 
+  const stockPieceMetas = useMemo(() => {
+    const ids = new Set<string>();
+    for (const ln of issueQueue) ids.add(ln.itemId);
+    if (issueItemId) ids.add(issueItemId);
+    for (const inv of issueableInventoryFiltered.slice(0, 48)) {
+      if (String(inv.stockTrackingMode) === "length") ids.add(inv.id);
+    }
+    const out: { id: string; pieceLengthMm: number | null }[] = [];
+    for (const id of ids) {
+      const inv = inventoryById.get(id);
+      if (!inv || String(inv.stockTrackingMode) !== "length") continue;
+      const pl = inv.pieceLengthMm;
+      out.push({
+        id,
+        pieceLengthMm: pl != null && Number.isFinite(Number(pl)) ? Number(pl) : null,
+      });
+    }
+    return out;
+  }, [issueQueue, issueItemId, issueableInventoryFiltered, inventoryById]);
+
+  const stockPieceMetasKey = useMemo(
+    () =>
+      stockPieceMetas
+        .map((m) => `${m.id}:${m.pieceLengthMm ?? ""}`)
+        .sort()
+        .join("|"),
+    [stockPieceMetas]
+  );
+
+  const stockPiecesSummaryByItem = useStockPiecesSummaries(
+    firestore,
+    companyId ?? null,
+    stockPieceMetas,
+    stockPieceMetasKey
+  );
+
+  const firstImageAttachment = useMemo(
+    () => attachmentFiles.find((f) => f.kind === "photo" || f.kind === "drawing"),
+    [attachmentFiles]
+  );
+
   /** Zbytkové řádky skladu vázané na tuto zakázku (výdej řezem + evidence consumedByJobId). */
   const remainderInventoryRows = useMemo(() => {
     if (!jobId) return [];
@@ -1411,6 +1459,130 @@ export default function VyrobaZakazkaDetailPage() {
     }
   }, [user, jobId, issueQueue, validateIssueQueueAgainstInventory, toast, loadApi]);
 
+  const exportWorksheetPdf = useCallback(() => {
+    if (!jobView) return;
+    const j = jobView as Record<string, unknown>;
+    const jobName = String(jobView.displayLabel || jobView.name || jobId);
+    const customer = String(
+      j.customerName ||
+        j.customerCompanyName ||
+        j.companyName ||
+        j.customerDisplayName ||
+        ""
+    );
+    const pendingLines =
+      issueQueue.length > 0
+        ? issueQueue.map((ln) => {
+            const inv = inventoryById.get(ln.itemId);
+            const cut =
+              inv && String(inv.stockTrackingMode) === "length" && ln.repeatCountStr !== "1"
+                ? `${ln.repeatCountStr}× ${ln.qtyStr}`
+                : ln.qtyStr;
+            return `${inv?.name ?? ln.itemId}: ${cut}`;
+          })
+        : [];
+    const pdfUrl = productionPdfRows.length > 0 ? productionPdfRows[0].fileUrl : "";
+    const imgUrl = firstImageAttachment?.fileUrl || "";
+    const drawingNote = [pdfUrl ? `PDF: ${pdfUrl}` : "", imgUrl ? `Obrázek: ${imgUrl}` : ""]
+      .filter(Boolean)
+      .join("\n");
+
+    const rows = consumptions.map((raw) => {
+      const c = raw as Record<string, unknown>;
+      const itemName = String(c.itemName || "");
+      const qty = String(c.quantity ?? c.quantityUsed ?? "");
+      const unit = String(c.unit || "");
+      const rc = c.repeatCount != null ? String(c.repeatCount) : "—";
+      const rem =
+        c.quantityRemainingOnStock != null ? String(c.quantityRemainingOnStock) : "—";
+      const allocs = c.stockPieceAllocations;
+      let allocStr = "—";
+      if (Array.isArray(allocs)) {
+        allocStr = allocs
+          .map((a: unknown) => {
+            const x = a as Record<string, unknown>;
+            const u = x.usedLengthMm;
+            const r = x.remainingAfterMm;
+            const pid = String(x.pieceId || "").slice(0, 8);
+            return `${pid}… −${u} mm → ${r} mm`;
+          })
+          .join("; ");
+      }
+      return {
+        itemName,
+        quantity: qty,
+        unit,
+        repeatCount: rc,
+        remainingOnStock: rem,
+        allocations: allocStr,
+        note: c.note != null ? String(c.note) : "",
+        createdBy: c.createdByName != null ? String(c.createdByName) : "",
+        createdAt: formatConsumptionCreatedAt(c.createdAt),
+      };
+    });
+
+    buildProductionWorksheetPdf({
+      jobName,
+      customerLabel: customer,
+      dateLabel: new Date().toLocaleString("cs-CZ"),
+      drawingNote: drawingNote || undefined,
+      rows,
+      pendingLines: pendingLines.length ? pendingLines : undefined,
+    });
+  }, [
+    jobView,
+    jobId,
+    consumptions,
+    issueQueue,
+    inventoryById,
+    productionPdfRows,
+    firstImageAttachment,
+  ]);
+
+  const toggleBulkPick = useCallback((id: string) => {
+    setBulkPickIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }, []);
+
+  const addBulkPickedToQueue = useCallback(() => {
+    if (bulkPickIds.size === 0) {
+      toast({ variant: "destructive", title: "Vyberte položky zaškrtnutím." });
+      return;
+    }
+    let added = 0;
+    setIssueQueue((q) => {
+      const next = [...q];
+      for (const id of bulkPickIds) {
+        const inv = inventoryById.get(id);
+        if (!inv) continue;
+        const isLen = String(inv.stockTrackingMode) === "length";
+        const pl = inv.pieceLengthMm;
+        const defaultQty =
+          isLen && pl != null && Number.isFinite(Number(pl)) ? String(pl) : isLen ? "1000" : "1";
+        next.push({
+          key: newIssueQueueLineKey(),
+          itemId: id,
+          qtyStr: defaultQty,
+          repeatCountStr: "1",
+          note: "",
+          batchNumber: "",
+          inputLengthUnit: lengthUnitEditableForItem(inv) ? "mm" : null,
+        });
+        added++;
+      }
+      return next;
+    });
+    setBulkPickIds(new Set());
+    toast({
+      title: "Přidáno do seznamu",
+      description: `${added} řádků — zkontrolujte množství a řezy.`,
+    });
+  }, [bulkPickIds, inventoryById, toast]);
+
   if (!user || !companyId || !jobId) {
     return (
       <div className="flex justify-center py-16">
@@ -1443,7 +1615,7 @@ export default function VyrobaZakazkaDetailPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div className="mx-auto w-full max-w-[min(100%,1600px)] space-y-6">
       <div className="flex flex-wrap items-center gap-3">
         <Button type="button" variant="outline" size="sm" asChild>
           <Link href="/portal/vyroba/zakazky" className="gap-2">
@@ -1681,7 +1853,62 @@ export default function VyrobaZakazkaDetailPage() {
                 </p>
               </div>
 
-              <div className="space-y-10 rounded-xl border border-slate-200 bg-slate-50/80 p-5 shadow-sm sm:p-8 sm:pb-10">
+              <ProductionWorkbenchSplit
+                storageKeyPrefix={`vyroba-wb-${String(jobId)}`}
+                className="min-h-0"
+                leftPanel={
+                  <div className="flex h-full min-h-0 flex-col bg-white">
+                    {productionPdfRows.length > 0 || firstImageAttachment ? (
+                      <div className="flex flex-wrap gap-2 border-b border-slate-100 px-2 py-2">
+                        {productionPdfRows.length > 0 ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={previewTab === "pdf" ? "default" : "outline"}
+                            className="min-h-9 text-sm"
+                            onClick={() => setPreviewTab("pdf")}
+                          >
+                            PDF
+                          </Button>
+                        ) : null}
+                        {firstImageAttachment ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={previewTab === "image" ? "default" : "outline"}
+                            className="min-h-9 text-sm"
+                            onClick={() => setPreviewTab("image")}
+                          >
+                            Obrázek
+                          </Button>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <div className="min-h-0 flex-1 overflow-auto p-1">
+                      {productionPdfRows.length > 0 && (previewTab === "pdf" || !firstImageAttachment) ? (
+                        <JobProductionPdfDocumentationPanel
+                          embedded
+                          pdfFiles={productionPdfRows}
+                          attachmentsLoading={attachmentsLoading}
+                        />
+                      ) : firstImageAttachment &&
+                        (previewTab === "image" || productionPdfRows.length === 0) ? (
+                        <div className="flex min-h-[160px] items-center justify-center p-2">
+                          {/* eslint-disable-next-line @next/next/no-img-element -- blob/external URL; avoid next/image domain config */}
+                          <img
+                            src={firstImageAttachment.fileUrl}
+                            alt={firstImageAttachment.fileName}
+                            className="max-h-full max-w-full object-contain"
+                          />
+                        </div>
+                      ) : (
+                        <p className="p-3 text-sm text-slate-500">Žádný PDF ani obrázek v podkladech.</p>
+                      )}
+                    </div>
+                  </div>
+                }
+                rightPanel={
+                  <div className="space-y-8">
                 {/* — Výběr materiálu — */}
                 <section aria-labelledby="issue-form-material" className="space-y-8 pb-4">
                   <h3
@@ -1816,72 +2043,107 @@ export default function VyrobaZakazkaDetailPage() {
                         {issueableInventoryFiltered.slice(0, 48).map((i) => {
                           const q = availableStockQtyForIssueForm(i);
                           const active = issueItemId === i.id;
+                          const spSum = stockPiecesSummaryByItem[i.id];
                           return (
-                            <button
+                            <div
                               key={i.id}
-                              type="button"
-                              onClick={() => setIssueItemId(i.id)}
                               className={cn(
-                                "flex w-full min-w-0 shrink-0 flex-col items-stretch gap-4 overflow-hidden rounded-xl border-2 p-4 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 sm:flex-row sm:items-start sm:p-5",
+                                "flex w-full min-w-0 shrink-0 flex-col overflow-hidden rounded-xl border-2 shadow-sm transition-colors sm:flex-row sm:items-stretch",
                                 active
                                   ? "border-emerald-600 bg-emerald-600 text-white ring-1 ring-emerald-700/30"
-                                  : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50/90 active:bg-slate-100"
+                                  : "border-slate-200 bg-white"
                               )}
                             >
-                              <div className="flex justify-center sm:block">
-                                <InventoryItemThumbnail
-                                  item={i}
-                                  size={140}
-                                  enableLightbox
-                                  lightboxTitle={String(i.name ?? "Skladová položka")}
-                                  className={cn(active && "border-white/40 ring-1 ring-white/20")}
+                              <div
+                                className="flex shrink-0 items-start justify-center border-b border-slate-200/80 p-2 sm:flex-col sm:border-b-0 sm:border-r sm:border-slate-200/80"
+                                onClick={(e) => e.stopPropagation()}
+                                onPointerDown={(e) => e.stopPropagation()}
+                              >
+                                <Checkbox
+                                  checked={bulkPickIds.has(i.id)}
+                                  onCheckedChange={() => toggleBulkPick(i.id)}
+                                  aria-label={`Zařadit ${String(i.name ?? "položka")} do hromadného výběru`}
+                                  className={cn(
+                                    "border-slate-400 data-[state=checked]:border-emerald-700 data-[state=checked]:bg-emerald-700",
+                                    active && "border-white/70 data-[state=checked]:border-white data-[state=checked]:bg-white data-[state=checked]:text-emerald-700"
+                                  )}
                                 />
                               </div>
-                              <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch justify-start gap-0 overflow-hidden text-left">
-                                <p
-                                  className={cn(
-                                    "line-clamp-2 text-base font-semibold leading-snug tracking-tight",
-                                    active ? "text-white" : "text-slate-900"
-                                  )}
-                                >
-                                  {i.name}
-                                  {i.isRemainder ? (
-                                    <span
-                                      className={cn(
-                                        "font-medium",
-                                        active ? "text-emerald-100" : "text-slate-600"
-                                      )}
-                                    >
-                                      {" "}
-                                      · zbytek
-                                    </span>
-                                  ) : null}
-                                </p>
-                                <div
-                                  className={cn(
-                                    "mt-auto space-y-1 border-t pt-2 text-xs leading-relaxed sm:text-sm",
-                                    active ? "border-white/25 text-emerald-50" : "border-slate-100 text-slate-500"
-                                  )}
-                                >
-                                  {i.sku ? (
-                                    <p className={cn("truncate", active ? "text-emerald-100/95" : "")}>
-                                      SKU {i.sku}
-                                    </p>
-                                  ) : null}
-                                  <p className={active ? "text-emerald-50" : "text-slate-600"}>
-                                    <span className={active ? "text-emerald-100" : "text-slate-500"}>
-                                      Zásoba:{" "}
-                                    </span>
-                                    <strong className={active ? "text-white" : "text-slate-800"}>{q}</strong>{" "}
-                                    {i.unit || "ks"}
-                                    <span className={active ? "text-emerald-200/90" : "text-slate-400"}>
-                                      {" "}
-                                      · {stockModeShortLabel(i.stockTrackingMode)}
-                                    </span>
-                                  </p>
+                              <button
+                                type="button"
+                                onClick={() => setIssueItemId(i.id)}
+                                className={cn(
+                                  "flex min-w-0 flex-1 flex-col items-stretch gap-4 overflow-hidden p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 sm:flex-row sm:items-start sm:p-5",
+                                  active
+                                    ? ""
+                                    : "hover:border-slate-300 hover:bg-slate-50/90 active:bg-slate-100"
+                                )}
+                              >
+                                <div className="flex justify-center sm:block">
+                                  <InventoryItemThumbnail
+                                    item={i}
+                                    size={140}
+                                    enableLightbox
+                                    lightboxTitle={String(i.name ?? "Skladová položka")}
+                                    className={cn(active && "border-white/40 ring-1 ring-white/20")}
+                                  />
                                 </div>
-                              </div>
-                            </button>
+                                <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch justify-start gap-0 overflow-hidden text-left">
+                                  <p
+                                    className={cn(
+                                      "line-clamp-2 text-base font-semibold leading-snug tracking-tight",
+                                      active ? "text-white" : "text-slate-900"
+                                    )}
+                                  >
+                                    {i.name}
+                                    {i.isRemainder ? (
+                                      <span
+                                        className={cn(
+                                          "font-medium",
+                                          active ? "text-emerald-100" : "text-slate-600"
+                                        )}
+                                      >
+                                        {" "}
+                                        · zbytek
+                                      </span>
+                                    ) : null}
+                                  </p>
+                                  <div
+                                    className={cn(
+                                      "mt-auto space-y-1 border-t pt-2 text-xs leading-relaxed sm:text-sm",
+                                      active ? "border-white/25 text-emerald-50" : "border-slate-100 text-slate-500"
+                                    )}
+                                  >
+                                    {i.sku ? (
+                                      <p className={cn("truncate", active ? "text-emerald-100/95" : "")}>
+                                        SKU {i.sku}
+                                      </p>
+                                    ) : null}
+                                    <p className={active ? "text-emerald-50" : "text-slate-600"}>
+                                      <span className={active ? "text-emerald-100" : "text-slate-500"}>
+                                        Zásoba:{" "}
+                                      </span>
+                                      <strong className={active ? "text-white" : "text-slate-800"}>{q}</strong>{" "}
+                                      {i.unit || "ks"}
+                                      <span className={active ? "text-emerald-200/90" : "text-slate-400"}>
+                                        {" "}
+                                        · {stockModeShortLabel(i.stockTrackingMode)}
+                                      </span>
+                                    </p>
+                                    {String(i.stockTrackingMode) === "length" && spSum ? (
+                                      <p
+                                        className={cn(
+                                          "text-[11px] leading-snug",
+                                          active ? "text-emerald-100/95" : "text-slate-600"
+                                        )}
+                                      >
+                                        {spSum.loading ? "Načítám kusy…" : spSum.label}
+                                      </p>
+                                    ) : null}
+                                  </div>
+                                </div>
+                              </button>
+                            </div>
                           );
                         })}
                       </div>
@@ -1926,11 +2188,6 @@ export default function VyrobaZakazkaDetailPage() {
                     </div>
                   ) : null}
                 </section>
-
-                <JobProductionPdfDocumentationPanel
-                  pdfFiles={productionPdfRows}
-                  attachmentsLoading={attachmentsLoading}
-                />
 
                 {/* — Množství a řez — */}
                 <section
@@ -2075,67 +2332,120 @@ export default function VyrobaZakazkaDetailPage() {
                   ) : null}
                 </section>
 
-                {/* — Materiál k výdeji (fronta + hromadné potvrzení) — */}
+                    <div className="grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label htmlFor="issue-batch" className="text-xs font-semibold text-slate-700">
+                          Šarže (volitelně)
+                        </Label>
+                        <Input
+                          id="issue-batch"
+                          className="min-h-10 border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+                          value={issueBatch}
+                          onChange={(e) => setIssueBatch(e.target.value)}
+                          placeholder="Číslo šarže"
+                        />
+                      </div>
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label htmlFor="issue-note" className="text-xs font-semibold text-slate-700">
+                          Poznámka k výdeji
+                        </Label>
+                        <Textarea
+                          id="issue-note"
+                          className="min-h-[72px] resize-y border-slate-300 bg-white px-3 py-2 text-sm shadow-sm"
+                          value={issueNote}
+                          onChange={(e) => setIssueNote(e.target.value)}
+                          placeholder="Doplňující informace k výdeji…"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                }
+                bottomPanel={
+                  <div className="space-y-4">
+                {/* — Materiál pro zakázku — */}
                 <section
                   aria-labelledby="issue-queue-heading"
-                  className="space-y-6 border-t-2 border-slate-200/90 pt-12 sm:pt-14"
+                  className="space-y-4"
                 >
                   <h3
                     id="issue-queue-heading"
-                    className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+                    className="border-b border-slate-200 pb-2 text-base font-semibold text-slate-900"
                   >
-                    Materiál k výdeji
+                    Materiál pro zakázku
                   </h3>
                   <p className="text-sm text-slate-600 max-w-3xl">
-                    Přidejte více řádků (i stejnou skladovou položku s různými délkami) a potvrďte jedním tlačítkem.
-                    Celý výdej proběhne v jedné transakci; při nedostatku skladu se nic neuloží.
+                    Přidejte řádky (více skladových položek i různé řezy). Hromadný výdej proběhne v jedné transakci;
+                    při nedostatku skladu se nic neuloží.
                   </p>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
-                      className="gap-1"
+                      className="min-h-10 gap-1"
                       disabled={!selectedItem}
                       onClick={() => addCurrentFormToIssueQueue()}
                     >
                       <Plus className="h-4 w-4" />
-                      Přidat do výdeje
+                      Přidat do seznamu
                     </Button>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="gap-1"
+                      className="min-h-10 gap-1"
                       disabled={!issueItemId}
                       onClick={() => addSameStockLineAgain()}
                     >
-                      Přidat stejnou položku znovu
+                      Stejná položka znovu
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10 gap-1"
+                      disabled={bulkPickIds.size === 0}
+                      onClick={() => addBulkPickedToQueue()}
+                    >
+                      Zařadit zaškrtnuté
                     </Button>
                     <Button
                       type="button"
                       size="sm"
-                      className="gap-1 bg-emerald-700 text-white hover:bg-emerald-800"
+                      className="min-h-10 gap-1 bg-emerald-700 text-white hover:bg-emerald-800"
                       disabled={bulkSaving || issueQueue.length === 0}
                       onClick={() => void submitBulkIssue()}
                     >
                       {bulkSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                      Potvrdit výdej všeho materiálu
+                      Odebrat vše ze skladu
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10 gap-1"
+                      onClick={() => exportWorksheetPdf()}
+                    >
+                      <FileDown className="h-4 w-4" />
+                      Exportovat výrobní podklad do PDF
                     </Button>
                   </div>
                   {issueQueue.length === 0 ? (
                     <p className="text-sm text-slate-500">Seznam je prázdný — použijte „Přidat do výdeje“.</p>
                   ) : (
                     <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-                      <table className="w-full min-w-[42rem] text-sm">
+                      <table className="w-full min-w-[56rem] text-sm">
                         <thead>
                           <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase text-slate-600">
                             <th className="w-14 p-2 font-semibold" aria-label="Náhled" />
                             <th className="p-2 font-semibold">Položka</th>
                             <th className="p-2 font-semibold">Dostupné</th>
-                            <th className="p-2 font-semibold">Množství</th>
-                            <th className="p-2 font-semibold">Jednotka zadání</th>
+                            <th className="min-w-[12rem] p-2 font-semibold">Sklad / kusy</th>
+                            <th className="p-2 font-semibold">Řez / množství</th>
+                            <th className="p-2 font-semibold">Opak.</th>
+                            <th className="p-2 font-semibold">Zadání</th>
                             <th className="p-2 font-semibold">Poznámka</th>
+                            <th className="p-2 font-semibold">Stav</th>
                             <th className="p-2 font-semibold w-40">Akce</th>
                           </tr>
                         </thead>
@@ -2146,6 +2456,7 @@ export default function VyrobaZakazkaDetailPage() {
                             const rowAvail = inv ? projectedAvailableForItem(inv, prior) : 0;
                             const unitLabel = inv?.unit || "ks";
                             const lenEd = inv ? lengthUnitEditableForItem(inv) : false;
+                            const spRow = stockPiecesSummaryByItem[ln.itemId];
                             return (
                               <tr key={ln.key} className="border-t border-slate-100 align-top">
                                 <td className="p-2">
@@ -2158,11 +2469,14 @@ export default function VyrobaZakazkaDetailPage() {
                                 <td className="p-2 tabular-nums text-slate-800">
                                   {inv ? rowAvail : "—"} {unitLabel}
                                 </td>
-                                <td className="p-2 tabular-nums font-medium">
-                                  {inv && String(inv.stockTrackingMode) === "length" && ln.repeatCountStr !== "1"
-                                    ? `${ln.repeatCountStr}× ${ln.qtyStr}`
-                                    : ln.qtyStr}
+                                <td className="p-2 text-xs text-slate-700 max-w-[14rem]">
+                                  {inv && String(inv.stockTrackingMode) === "length" && spRow
+                                    ? spRow.loading
+                                      ? "…"
+                                      : spRow.label
+                                    : "—"}
                                 </td>
+                                <td className="p-2 tabular-nums font-medium">{ln.qtyStr}</td>
                                 <td className="p-2 tabular-nums text-slate-700">
                                   {inv && String(inv.stockTrackingMode) === "length"
                                     ? ln.repeatCountStr || "1"
@@ -2176,6 +2490,9 @@ export default function VyrobaZakazkaDetailPage() {
                                   {ln.batchNumber ? (
                                     <span className="block text-slate-500 mt-0.5">Šarže: {ln.batchNumber}</span>
                                   ) : null}
+                                </td>
+                                <td className="p-2 text-xs font-medium text-amber-800 whitespace-nowrap">
+                                  Připraveno
                                 </td>
                                 <td className="p-2">
                                   <div className="flex flex-wrap gap-1">
@@ -2208,59 +2525,28 @@ export default function VyrobaZakazkaDetailPage() {
                   )}
                 </section>
 
-                {/* — Poznámka a potvrzení — */}
-                <section aria-labelledby="issue-form-note" className="space-y-6 border-t border-slate-200 pt-10">
-                  <h3
-                    id="issue-form-note"
-                    className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+                <div className="border-t border-slate-200 pt-6 space-y-3">
+                  <p className="text-xs text-slate-600 max-w-2xl">
+                    Jednorázový výdej bez fronty: šarže a poznámku vyplňte vpravo v sekci nad tímto seznamem, pak
+                    potvrďte zde.
+                  </p>
+                  <Button
+                    type="button"
+                    size="lg"
+                    className="min-h-12 w-full px-8 text-base sm:w-auto"
+                    disabled={issueSaving || !selectedItem}
+                    onClick={() => void submitIssue()}
                   >
-                    Poznámka a potvrzení
-                  </h3>
-
-                  <div className="max-w-4xl space-y-8">
-                    <div className="max-w-md space-y-3">
-                      <Label htmlFor="issue-batch" className="text-sm font-semibold text-slate-800">
-                        Šarže <span className="font-normal text-slate-500">(volitelné)</span>
-                      </Label>
-                      <Input
-                        id="issue-batch"
-                        className="min-h-12 border-slate-300 bg-white px-4 py-3 text-base shadow-sm"
-                        value={issueBatch}
-                        onChange={(e) => setIssueBatch(e.target.value)}
-                        placeholder="Číslo šarže"
-                      />
-                    </div>
-                    <div className="space-y-3">
-                      <Label htmlFor="issue-note" className="text-sm font-semibold text-slate-800">
-                        Poznámka k výdeji <span className="font-normal text-slate-500">(volitelné)</span>
-                      </Label>
-                      <Textarea
-                        id="issue-note"
-                        className="min-h-[120px] resize-y border-slate-300 bg-white px-4 py-3 text-base leading-relaxed shadow-sm"
-                        value={issueNote}
-                        onChange={(e) => setIssueNote(e.target.value)}
-                        placeholder="Doplňující informace k výdeji…"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="border-t border-slate-200/80 pt-8">
-                    <Button
-                      type="button"
-                      size="lg"
-                      className="min-h-12 w-full px-8 text-base sm:w-auto"
-                      disabled={issueSaving || !selectedItem}
-                      onClick={() => void submitIssue()}
-                    >
-                      {issueSaving ? (
-                        <Loader2 className="h-5 w-5 animate-spin" />
-                      ) : (
-                        "Odebrat ze skladu a zapsat na zakázku"
-                      )}
-                    </Button>
-                  </div>
-                </section>
+                    {issueSaving ? (
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                    ) : (
+                      "Odebrat ze skladu a zapsat na zakázku (jeden řádek)"
+                    )}
+                  </Button>
+                </div>
               </div>
+            }
+          />
             </CardContent>
           </Card>
 
@@ -2409,6 +2695,20 @@ export default function VyrobaZakazkaDetailPage() {
                                       {srcIdL || "—"}
                                     </p>
                                     {row.note ? <p className="text-xs mt-1">{String(row.note)}</p> : null}
+                                    {Array.isArray(row.stockPieceAllocations) &&
+                                    (row.stockPieceAllocations as unknown[]).length > 0 ? (
+                                      <p className="text-[11px] text-slate-600 mt-1 leading-snug">
+                                        Řezy ze skladu:{" "}
+                                        {(row.stockPieceAllocations as Record<string, unknown>[])
+                                          .map((a) => {
+                                            const u = a.usedLengthMm;
+                                            const r = a.remainingAfterMm;
+                                            const pid = String(a.pieceId || "").slice(0, 8);
+                                            return `kus ${pid}… −${Number(u).toFixed(1)} mm → zbývá ${Number(r).toFixed(1)} mm`;
+                                          })
+                                          .join("; ")}
+                                      </p>
+                                    ) : null}
                                     <p className="text-[11px] text-slate-500 mt-1">
                                       {whoLine}
                                       {whenLine ? <> · {whenLine}</> : null}

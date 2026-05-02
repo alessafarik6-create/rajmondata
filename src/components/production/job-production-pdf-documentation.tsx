@@ -37,9 +37,12 @@ async function loadPdfJs() {
 export function JobProductionPdfDocumentationPanel({
   pdfFiles,
   attachmentsLoading,
+  /** Zmenšený režim v panelu výroby (bez velkých mezer nahoře). */
+  embedded = false,
 }: {
   pdfFiles: JobProductionPdfRow[];
   attachmentsLoading: boolean;
+  embedded?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const pageFrameRef = useRef<HTMLDivElement>(null);
@@ -225,11 +228,15 @@ export function JobProductionPdfDocumentationPanel({
     return ` · ${current.folderName}`;
   }, [current?.folderName]);
 
+  const sectionClass = embedded
+    ? "space-y-3 pt-0"
+    : "space-y-4 border-t-2 border-slate-200/90 pt-10 sm:pt-12";
+
   if (attachmentsLoading && pdfFiles.length === 0) {
     return (
       <section
         aria-labelledby="job-production-pdf-doc"
-        className="space-y-4 border-t-2 border-slate-200/90 pt-10 sm:pt-12"
+        className={embedded ? "space-y-3 pt-0" : sectionClass}
       >
         <h3
           id="job-production-pdf-doc"
@@ -248,7 +255,7 @@ export function JobProductionPdfDocumentationPanel({
     return (
       <section
         aria-labelledby="job-production-pdf-doc"
-        className="space-y-3 border-t-2 border-slate-200/90 pt-10 sm:pt-12"
+        className={embedded ? "space-y-2 pt-0" : sectionClass}
       >
         <h3
           id="job-production-pdf-doc"
@@ -265,19 +272,26 @@ export function JobProductionPdfDocumentationPanel({
   }
 
   return (
-    <section
-      aria-labelledby="job-production-pdf-doc"
-      className="space-y-5 border-t-2 border-slate-200/90 pt-10 sm:pt-12"
-    >
+    <section aria-labelledby="job-production-pdf-doc" className={embedded ? "space-y-3 pt-0" : sectionClass}>
       <h3
         id="job-production-pdf-doc"
-        className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+        className={
+          embedded
+            ? "border-b border-slate-200 pb-2 text-sm font-semibold text-slate-900"
+            : "border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+        }
       >
         PDF dokumentace zakázky
       </h3>
-      <p className="text-xs text-slate-600">
-        Náhled podle oprávnění složek zakázky. Listování stránek a zoom nemění výběr materiálu výše.
-      </p>
+      {!embedded ? (
+        <p className="text-xs text-slate-600">
+          Náhled podle oprávnění složek zakázky. Listování stránek a zoom nemění výběr materiálu výše.
+        </p>
+      ) : (
+        <p className="text-[11px] text-slate-500">
+          Listování a zoom uvnitř panelu — stránka se nerozšiřuje.
+        </p>
+      )}
 
       {pdfFiles.length > 1 ? (
         <div className="space-y-2 max-w-xl">
@@ -407,7 +421,11 @@ export function JobProductionPdfDocumentationPanel({
 
       <div
         ref={containerRef}
-        className="relative w-full overflow-auto rounded-xl border-2 border-slate-200 bg-slate-100 shadow-inner p-4"
+        className={
+          embedded
+            ? "relative max-h-[min(60vh,560px)] w-full overflow-auto rounded-lg border border-slate-200 bg-slate-100 p-2"
+            : "relative w-full overflow-auto rounded-xl border-2 border-slate-200 bg-slate-100 shadow-inner p-4"
+        }
       >
         {(busy || pageRendering) && !loadError ? (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 backdrop-blur-[1px]">
