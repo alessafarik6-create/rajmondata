@@ -92,6 +92,7 @@ import {
   Hand,
   ZoomIn,
   ZoomOut,
+  ChevronDown,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -197,6 +198,17 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { ref, getDownloadURL, deleteObject, getBlob } from "firebase/storage";
 import { FirebaseError } from "firebase/app";
 import Link from "next/link";
@@ -244,6 +256,11 @@ import {
   estimateLegendStripHeight,
   hitTestShapeLabel,
 } from "@/lib/job-photo-shape-label";
+import {
+  dimensionColorFromModelColor,
+  type AnnotationModelDoc,
+  type AnnotationModelShape,
+} from "@/lib/annotation-models";
 
 type AnnotationTool = "dimension" | "note" | "select" | "pan" | "shapeLabel";
 
@@ -907,6 +924,24 @@ export function JobDetailPageContent({
   const { data: bankAccounts, isLoading: isLoadingBankAccounts } =
     useCollection<CompanyBankAccountDoc>(bankAccountsColRef);
 
+  const annotationModelsColRef = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "annotationModels")
+        : null,
+    [firestore, companyId]
+  );
+  const { data: annotationModelsRaw } =
+    useCollection<AnnotationModelDoc>(annotationModelsColRef);
+  const annotationModelsSorted = useMemo(() => {
+    const list = (annotationModelsRaw || []).filter((x) => x?.id);
+    return [...list].sort((a, b) => {
+      const an = String(a.name || a.id);
+      const bn = String(b.name || b.id);
+      return an.localeCompare(bn, "cs");
+    });
+  }, [annotationModelsRaw]);
+
   const jobRef = useMemoFirebase(
     () =>
       firestore && companyId && jobFirestoreId
@@ -1458,6 +1493,7 @@ export function JobDetailPageContent({
     heightMm: number;
     note: string;
     showLabelInline: boolean;
+    modelId?: string;
   }>({
     shape: "square",
     label: "",
@@ -1465,7 +1501,43 @@ export function JobDetailPageContent({
     heightMm: 60,
     note: "",
     showLabelInline: false,
+    modelId: undefined,
   });
+  const [shapeLabelLibraryPickerOpen, setShapeLabelLibraryPickerOpen] =
+    useState(false);
+  const [shapeLabelCreateLibraryOpen, setShapeLabelCreateLibraryOpen] =
+    useState(false);
+  const [shapeLabelLibraryForm, setShapeLabelLibraryForm] = useState<{
+    name: string;
+    widthMm: number;
+    heightMm: number;
+    shape: AnnotationModelShape;
+    color: string;
+    note: string;
+  }>({
+    name: "",
+    widthMm: 600,
+    heightMm: 600,
+    shape: "square",
+    color: "#2563eb",
+    note: "",
+  });
+  const [shapeLabelPlacementModel, setShapeLabelPlacementModel] =
+    useState<AnnotationModelDoc | null>(null);
+  const shapeLabelPlacementModelRef = useRef<AnnotationModelDoc | null>(null);
+  shapeLabelPlacementModelRef.current = shapeLabelPlacementModel;
+  const [annotLegendMobileOpen, setAnnotLegendMobileOpen] = useState(true);
+  const [annotPanelSizeLg, setAnnotPanelSizeLg] = useState<{
+    w: number;
+    h: number;
+  }>({ w: 1120, h: 720 });
+  const annotPanelResizeRef = useRef<{
+    startX: number;
+    startY: number;
+    startW: number;
+    startH: number;
+  } | null>(null);
+  const [annotPanelResizing, setAnnotPanelResizing] = useState(false);
 
   const draftAnnotationIdRef = useRef<string | null>(null);
   draftAnnotationIdRef.current = draftAnnotationId;
@@ -1586,6 +1658,57 @@ export function JobDetailPageContent({
     pinchSessionRef.current = null;
     viewPanStartRef.current = null;
   }, [editorOpen]);
+
+  useLayoutEffect(() => {
+    if (!editorOpen || isAnnotTouchUI) return;
+    if (typeof window === "undefined") return;
+    const maxW = window.innerWidth - 32;
+    const maxH = window.innerHeight - 32;
+    setAnnotPanelSizeLg((prev) => ({
+      w: Math.min(maxW, Math.max(800, prev.w)),
+      h: Math.min(maxH, Math.max(600, prev.h)),
+    }));
+  }, [editorOpen, isAnnotTouchUI]);
+
+  useEffect(() => {
+    if (!editorOpen || isAnnotTouchUI) return;
+    const onResize = () => {
+      const maxW = window.innerWidth - 32;
+      const maxH = window.innerHeight - 32;
+      setAnnotPanelSizeLg((prev) => ({
+        w: Math.min(maxW, Math.max(800, prev.w)),
+        h: Math.min(maxH, Math.max(600, prev.h)),
+      }));
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [editorOpen, isAnnotTouchUI]);
+
+  useEffect(() => {
+    if (!annotPanelResizing) return;
+    const onMove = (ev: PointerEvent) => {
+      const st = annotPanelResizeRef.current;
+      if (!st) return;
+      const dw = ev.clientX - st.startX;
+      const dh = ev.clientY - st.startY;
+      const maxW = window.innerWidth - 32;
+      const maxH = window.innerHeight - 32;
+      setAnnotPanelSizeLg({
+        w: Math.min(maxW, Math.max(800, st.startW + dw)),
+        h: Math.min(maxH, Math.max(600, st.startH + dh)),
+      });
+    };
+    const onUp = () => {
+      setAnnotPanelResizing(false);
+      annotPanelResizeRef.current = null;
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [annotPanelResizing]);
 
   useEffect(() => {
     if (!editorOpen || !isAnnotTouchUI) return;
@@ -4639,6 +4762,7 @@ export function JobDetailPageContent({
         heightMm: s.heightMm,
         note: s.note ?? "",
         showLabelInline: s.showLabelInline,
+        modelId: s.modelId,
       });
       setShapeLabelEditingId(s.id);
       pendingShapeRectRef.current = null;
@@ -4695,30 +4819,36 @@ export function JobDetailPageContent({
       baseY: number,
       bw: number,
       bh: number
-    ): ShapeLabelAnnotation => ({
-      id,
-      type: "shapeLabel",
-      shape: shapeLabelForm.shape,
-      pageIndex: pageIx,
-      x: baseX,
-      y: baseY,
-      width: Math.max(8, bw),
-      height: Math.max(8, bh),
-      widthMm: Number(shapeLabelForm.widthMm) || 0,
-      heightMm: Number(shapeLabelForm.heightMm) || 0,
-      label: shapeLabelForm.label.trim(),
-      note: shapeLabelForm.note.trim() || undefined,
-      legendNumber,
-      showLabelInline: shapeLabelForm.showLabelInline,
-      color: activeColor,
-      createdAt: Date.now(),
-    });
+    ): ShapeLabelAnnotation => {
+      const mid = shapeLabelForm.modelId?.trim();
+      const row: ShapeLabelAnnotation = {
+        id,
+        type: "shapeLabel",
+        shape: shapeLabelForm.shape,
+        pageIndex: pageIx,
+        x: baseX,
+        y: baseY,
+        width: Math.max(8, bw),
+        height: Math.max(8, bh),
+        widthMm: Number(shapeLabelForm.widthMm) || 0,
+        heightMm: Number(shapeLabelForm.heightMm) || 0,
+        label: shapeLabelForm.label.trim(),
+        note: shapeLabelForm.note.trim() || undefined,
+        legendNumber,
+        showLabelInline: shapeLabelForm.showLabelInline,
+        color: activeColor,
+        createdAt: Date.now(),
+      };
+      if (mid) row.modelId = mid;
+      return row;
+    };
     if (editing) {
       setAnnotations((prev) =>
         renumberShapeLabelLegends(
           prev.map((a) => {
             if (a.id !== editing || a.type !== "shapeLabel") return a;
             const cur = a as ShapeLabelAnnotation;
+            const mid = shapeLabelForm.modelId?.trim();
             return {
               ...cur,
               shape: shapeLabelForm.shape,
@@ -4728,6 +4858,7 @@ export function JobDetailPageContent({
               note: shapeLabelForm.note.trim() || undefined,
               showLabelInline: shapeLabelForm.showLabelInline,
               color: activeColor,
+              modelId: mid || cur.modelId,
               x: rect?.x ?? cur.x,
               y: rect?.y ?? cur.y,
               width: rect ? Math.max(8, rect.w) : cur.width,
@@ -4951,6 +5082,55 @@ export function JobDetailPageContent({
         } catch {
           /* ignore */
         }
+        return;
+      }
+      const plm = shapeLabelPlacementModelRef.current;
+      if (plm && e.button === 0) {
+        const pageIxPl =
+          editorMediaKindRef.current === "pdf"
+            ? Math.max(0, pdfPageRef.current - 1)
+            : 0;
+        const aspect = plm.widthMm / Math.max(0.001, plm.heightMm);
+        let boxW = 96;
+        let boxH = boxW / aspect;
+        const cvs = canvasRef.current;
+        if (cvs) {
+          const maxBox = Math.min(cvs.width, cvs.height) * 0.35;
+          if (boxW > maxBox) {
+            boxW = maxBox;
+            boxH = boxW / aspect;
+          }
+        }
+        const bx = pt.x - boxW / 2;
+        const by = pt.y - boxH / 2;
+        const id = createId();
+        const sh = plm.shape as ShapeLabelAnnotation["shape"];
+        const col = dimensionColorFromModelColor(plm.color);
+        setAnnotations((prev) => {
+          const n = nextShapeLegendNumber(prev);
+          const nextShape: ShapeLabelAnnotation = {
+            id,
+            type: "shapeLabel",
+            shape: sh,
+            pageIndex: pageIxPl,
+            x: bx,
+            y: by,
+            width: Math.max(8, boxW),
+            height: Math.max(8, boxH),
+            widthMm: plm.widthMm,
+            heightMm: plm.heightMm,
+            label: plm.name.trim() || "Model",
+            note: plm.note?.trim() || undefined,
+            legendNumber: n,
+            showLabelInline: false,
+            color: col,
+            createdAt: Date.now(),
+            modelId: plm.id,
+          };
+          return renumberShapeLabelLegends([...prev, nextShape]);
+        });
+        setShapeLabelPlacementModel(null);
+        shapeLabelPlacementModelRef.current = null;
         return;
       }
       setSelectedAnnotationId(null);
@@ -5246,6 +5426,7 @@ export function JobDetailPageContent({
         heightMm: estH,
         note: "",
         showLabelInline: false,
+        modelId: undefined,
       }));
       setShapeLabelEditingId(null);
       setShapeLabelDialogOpen(true);
@@ -6860,6 +7041,55 @@ export function JobDetailPageContent({
     }
   };
 
+  const saveAnnotationModelToLibrary = useCallback(async () => {
+    if (!firestore || !companyId || !user) return;
+    const n = shapeLabelLibraryForm.name.trim();
+    if (!n) {
+      toast({
+        variant: "destructive",
+        title: "Chybí název",
+        description: "Zadejte název modelu (např. Pračka).",
+      });
+      return;
+    }
+    try {
+      await addDoc(
+        collection(firestore, "companies", companyId, "annotationModels"),
+        {
+          organizationId: companyId,
+          name: n,
+          widthMm: Number(shapeLabelLibraryForm.widthMm) || 0,
+          heightMm: Number(shapeLabelLibraryForm.heightMm) || 0,
+          shape: shapeLabelLibraryForm.shape,
+          color: shapeLabelLibraryForm.color.trim() || "#2563eb",
+          ...(shapeLabelLibraryForm.note.trim()
+            ? { note: shapeLabelLibraryForm.note.trim() }
+            : {}),
+          createdBy: user.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        }
+      );
+      toast({ title: "Model uložen", description: n });
+      setShapeLabelCreateLibraryOpen(false);
+      setShapeLabelLibraryForm({
+        name: "",
+        widthMm: 600,
+        heightMm: 600,
+        shape: "square",
+        color: "#2563eb",
+        note: "",
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Model se nepodařilo uložit",
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }, [firestore, companyId, user, shapeLabelLibraryForm, toast]);
+
   const measurementLightboxRow = useMemo(() => {
     if (!measurementLightboxDocId || !measurementPhotosRaw) return null;
     return measurementPhotosRaw.find(
@@ -6868,6 +7098,7 @@ export function JobDetailPageContent({
   }, [measurementLightboxDocId, measurementPhotosRaw]);
 
   const measurementAnnotationEditorDialog = (
+    <>
       <Dialog
         open={editorOpen}
         onOpenChange={(open) => {
@@ -6885,11 +7116,43 @@ export function JobDetailPageContent({
         >
           <div
             className={cn(
-              "flex min-h-0 flex-1 flex-col overflow-hidden",
+              "relative flex min-h-0 flex-1 flex-col overflow-hidden",
               "max-lg:h-full max-lg:max-h-[100dvh] max-lg:w-full max-lg:min-h-0 max-lg:flex-1",
-              "lg:pointer-events-auto lg:h-[min(90vh,900px)] lg:max-h-[90vh] lg:w-[min(95vw,1400px)] lg:max-w-[min(95vw,1400px)] lg:flex-none lg:overflow-hidden lg:rounded-lg lg:border lg:border-slate-200 lg:bg-background lg:shadow-xl lg:ring-1 lg:ring-slate-950/[0.08]"
+              "lg:pointer-events-auto lg:flex-none lg:overflow-hidden lg:rounded-lg lg:border lg:border-slate-200 lg:bg-background lg:shadow-xl lg:ring-1 lg:ring-slate-950/[0.08]"
             )}
+            style={
+              !isAnnotTouchUI
+                ? {
+                    width: annotPanelSizeLg.w,
+                    height: annotPanelSizeLg.h,
+                    maxWidth: "calc(100vw - 32px)",
+                    maxHeight: "calc(100vh - 32px)",
+                  }
+                : undefined
+            }
           >
+            {!isAnnotTouchUI ? (
+              <button
+                type="button"
+                aria-label="Změnit velikost okna editoru"
+                className="absolute bottom-2 right-2 z-[300] hidden h-9 w-9 cursor-nwse-resize items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-md hover:bg-accent lg:flex"
+                onPointerDown={(ev) => {
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  annotPanelResizeRef.current = {
+                    startX: ev.clientX,
+                    startY: ev.clientY,
+                    startW: annotPanelSizeLg.w,
+                    startH: annotPanelSizeLg.h,
+                  };
+                  setAnnotPanelResizing(true);
+                }}
+              >
+                <span className="select-none text-sm leading-none" aria-hidden>
+                  ⤡
+                </span>
+              </button>
+            ) : null}
             <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/15 bg-slate-900 px-2 py-1.5 pt-[max(0.25rem,env(safe-area-inset-top))] text-white lg:hidden">
                 <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-white hover:bg-white/10" onClick={() => dismissAnnotationEditor()}>Zavřít</Button>
                 <span className="min-w-0 truncate text-center text-xs font-semibold">Anotace</span>
@@ -6901,7 +7164,7 @@ export function JobDetailPageContent({
                 </DialogTitle>
               </DialogHeader>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:min-h-0 max-lg:overflow-auto max-lg:bg-slate-950 max-lg:px-2 max-lg:pb-2 lg:min-h-0 lg:overflow-hidden lg:p-3">
+              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:min-h-0 max-lg:flex-1 max-lg:overflow-hidden max-lg:bg-slate-950 max-lg:px-1 max-lg:pb-[max(0.5rem,calc(env(safe-area-inset-bottom)+5.25rem))] lg:min-h-0 lg:overflow-hidden lg:p-3">
             <div className="shrink-0 space-y-1.5 sm:space-y-2">
               <p className="text-xs leading-snug text-muted-foreground max-lg:text-slate-300 sm:text-sm sm:leading-normal lg:text-muted-foreground">
                 Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
@@ -6929,16 +7192,46 @@ export function JobDetailPageContent({
                 >
                   Poznámka
                 </Button>
-                <Button
-                  type="button"
-                  variant={activeTool === "shapeLabel" ? "default" : "outline"}
-                  size="sm"
-                  className="min-h-[36px]"
-                  onClick={() => setActiveTool("shapeLabel")}
-                  title="Měřítková značka s legendou"
-                >
-                  Značka
-                </Button>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant={activeTool === "shapeLabel" ? "default" : "outline"}
+                      size="sm"
+                      className="min-h-[36px] gap-0.5 pr-2"
+                      title="Značka / modely z knihovny"
+                    >
+                      Značka
+                      <ChevronDown className="h-4 w-4 opacity-80" aria-hidden />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="start" className="w-[min(100vw-2rem,18rem)]">
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setShapeLabelPlacementModel(null);
+                        shapeLabelPlacementModelRef.current = null;
+                        setActiveTool("shapeLabel");
+                      }}
+                    >
+                      Nakreslit značku na plochu
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setActiveTool("shapeLabel");
+                        setShapeLabelLibraryPickerOpen(true);
+                      }}
+                    >
+                      Vybrat uložený model…
+                    </DropdownMenuItem>
+                    {canManageFolders ? (
+                      <DropdownMenuItem
+                        onClick={() => setShapeLabelCreateLibraryOpen(true)}
+                      >
+                        Vytvořit nový model do knihovny…
+                      </DropdownMenuItem>
+                    ) : null}
+                  </DropdownMenuContent>
+                </DropdownMenu>
                 <Button
                   type="button"
                   variant={activeTool === "select" ? "default" : "outline"}
@@ -7043,14 +7336,20 @@ export function JobDetailPageContent({
                   Smazat
                 </Button>
               </div>
+              {shapeLabelPlacementModel ? (
+                <p className="text-xs font-medium text-amber-600 max-lg:text-amber-300">
+                  Model „{shapeLabelPlacementModel.name}“ — klepněte na obrázek pro vložení.
+                </p>
+              ) : null}
             </div>
 
+            <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2 lg:flex-row lg:gap-3">
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
-                "relative z-0 flex min-w-0 flex-1 touch-none items-center justify-center overflow-auto bg-black",
-                "min-h-[70vh] h-[70vh] max-lg:min-h-[70vh] max-lg:h-[70vh]",
-                "lg:min-h-0 lg:h-auto lg:max-h-none lg:flex-1",
+                "relative z-0 flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-auto bg-black",
+                "max-lg:min-h-0 max-lg:flex-1",
+                "lg:min-h-0 lg:flex-1",
                 "max-lg:rounded-none max-lg:border-0 max-lg:p-0",
                 "lg:rounded-md lg:border lg:bg-black/80 lg:p-0.5 lg:sm:p-1"
               )}
@@ -7122,16 +7421,67 @@ export function JobDetailPageContent({
                 </div>
               )}
               {annotationLegendEntries.length ? (
-                <div className="pointer-events-none absolute bottom-2 left-2 right-2 z-10 max-h-[28%] overflow-y-auto rounded-md border border-white/25 bg-black/70 p-2 text-[11px] leading-snug text-slate-100 shadow-md sm:max-h-[24%]">
-                  <p className="mb-0.5 font-semibold text-orange-300">Legenda</p>
-                  {annotationLegendEntries.map((e) => (
-                    <p key={`${e.legendNumber}-${e.label}`}>
-                      {e.legendNumber} – {e.label}, {e.widthMm}×{e.heightMm} mm
-                      {e.note ? ` — ${e.note}` : ""}
-                    </p>
-                  ))}
+                <div className="pointer-events-auto absolute bottom-3 left-2 right-2 z-10 lg:hidden">
+                  <Collapsible
+                    open={annotLegendMobileOpen}
+                    onOpenChange={setAnnotLegendMobileOpen}
+                  >
+                    <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-lg border border-white/35 bg-black/88 px-3 py-2.5 text-left text-base font-semibold text-white shadow-lg backdrop-blur-sm">
+                      Legenda
+                      <ChevronDown
+                        className={cn(
+                          "h-5 w-5 shrink-0 transition-transform",
+                          annotLegendMobileOpen && "rotate-180"
+                        )}
+                        aria-hidden
+                      />
+                    </CollapsibleTrigger>
+                    <CollapsibleContent>
+                      <div className="mt-1.5 max-h-[min(40dvh,320px)] space-y-2 overflow-y-auto rounded-lg border border-white/30 bg-black/88 px-3 py-3 text-base leading-relaxed text-white shadow-lg backdrop-blur-sm">
+                        {annotationLegendEntries.map((e) => (
+                          <p
+                            key={`${e.legendNumber}-${e.label}`}
+                            className="text-[15px] font-medium tracking-tight"
+                          >
+                            {e.legendNumber} – {e.label}, {e.widthMm} × {e.heightMm}{" "}
+                            mm
+                            {e.note ? ` — ${e.note}` : ""}
+                          </p>
+                        ))}
+                      </div>
+                    </CollapsibleContent>
+                  </Collapsible>
                 </div>
               ) : null}
+            </div>
+
+            {annotationLegendEntries.length ? (
+              <aside className="hidden min-h-0 w-[min(22rem,36vw)] shrink-0 flex-col gap-2 overflow-y-auto border-l border-border bg-muted/50 p-4 text-foreground lg:flex">
+                <p className="text-base font-semibold">Legenda</p>
+                <ul className="space-y-3 text-sm leading-relaxed">
+                  {annotationLegendEntries.map((e) => (
+                    <li
+                      key={`aside-${e.legendNumber}-${e.label}`}
+                      className="border-b border-border/60 pb-2 last:border-0 last:pb-0"
+                    >
+                      <span className="font-semibold text-foreground">
+                        {e.legendNumber}
+                      </span>
+                      <span className="text-muted-foreground"> – </span>
+                      <span>{e.label}</span>
+                      <span className="text-muted-foreground">
+                        , {e.widthMm} × {e.heightMm} mm
+                      </span>
+                      {e.note ? (
+                        <span className="mt-1 block text-muted-foreground">
+                          {e.note}
+                        </span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            ) : null}
             </div>
 
             <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5 max-lg:border-white/10 max-lg:bg-slate-900 max-lg:text-white max-lg:pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:pt-2">
@@ -7391,6 +7741,166 @@ export function JobDetailPageContent({
           ) : null}
         </DialogContent>
       </Dialog>
+
+      <Dialog
+        open={shapeLabelLibraryPickerOpen}
+        onOpenChange={setShapeLabelLibraryPickerOpen}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Vyberte model z knihovny</DialogTitle>
+            <DialogDescription>
+              Po výběru klepněte na obrázek a značka se vloží s rozměry modelu.
+            </DialogDescription>
+          </DialogHeader>
+          {annotationModelsSorted.length ? (
+            <ul className="max-h-[min(60dvh,360px)] space-y-1 overflow-y-auto pr-1">
+              {annotationModelsSorted.map((m) => (
+                <li key={m.id}>
+                  <button
+                    type="button"
+                    className="w-full rounded-md border border-border px-3 py-2.5 text-left text-sm hover:bg-accent"
+                    onClick={() => {
+                      setShapeLabelPlacementModel(m);
+                      shapeLabelPlacementModelRef.current = m;
+                      setActiveTool("shapeLabel");
+                      setShapeLabelLibraryPickerOpen(false);
+                    }}
+                  >
+                    <span className="font-medium">{m.name}</span>
+                    <span className="text-muted-foreground">
+                      {" "}
+                      — {m.widthMm} × {m.heightMm} mm
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Zatím nemáte uložené žádné modely. Vytvořte nový přes menu Značka.
+            </p>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShapeLabelLibraryPickerOpen(false)}
+            >
+              Zavřít
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={shapeLabelCreateLibraryOpen}
+        onOpenChange={setShapeLabelCreateLibraryOpen}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Nový model do knihovny</DialogTitle>
+            <DialogDescription>
+              Model půjde opakovaně vkládat do anotací (organizace).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 text-sm">
+            <div className="flex flex-col gap-1">
+              <Label htmlFor="lib-model-name">Název</Label>
+              <Input
+                id="lib-model-name"
+                value={shapeLabelLibraryForm.name}
+                onChange={(e) =>
+                  setShapeLabelLibraryForm((f) => ({ ...f, name: e.target.value }))
+                }
+                placeholder="např. Pračka"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1">
+                <Label>Šířka (mm)</Label>
+                <Input
+                  type="number"
+                  min={0.1}
+                  step={0.1}
+                  value={shapeLabelLibraryForm.widthMm}
+                  onChange={(e) =>
+                    setShapeLabelLibraryForm((f) => ({
+                      ...f,
+                      widthMm: Number(e.target.value) || 0,
+                    }))
+                  }
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label>Výška (mm)</Label>
+                <Input
+                  type="number"
+                  min={0.1}
+                  step={0.1}
+                  value={shapeLabelLibraryForm.heightMm}
+                  onChange={(e) =>
+                    setShapeLabelLibraryForm((f) => ({
+                      ...f,
+                      heightMm: Number(e.target.value) || 0,
+                    }))
+                  }
+                />
+              </div>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label>Tvar</Label>
+              <select
+                className={NATIVE_SELECT_CLASS}
+                value={shapeLabelLibraryForm.shape}
+                onChange={(e) =>
+                  setShapeLabelLibraryForm((f) => ({
+                    ...f,
+                    shape: e.target.value as AnnotationModelShape,
+                  }))
+                }
+              >
+                <option value="square">Čtverec</option>
+                <option value="rectangle">Obdélník</option>
+                <option value="circle">Kruh</option>
+                <option value="point">Bod</option>
+              </select>
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label>Barva (CSS / hex)</Label>
+              <Input
+                value={shapeLabelLibraryForm.color}
+                onChange={(e) =>
+                  setShapeLabelLibraryForm((f) => ({ ...f, color: e.target.value }))
+                }
+                placeholder="#2563eb"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <Label>Poznámka (volitelně)</Label>
+              <Input
+                value={shapeLabelLibraryForm.note}
+                onChange={(e) =>
+                  setShapeLabelLibraryForm((f) => ({ ...f, note: e.target.value }))
+                }
+              />
+            </div>
+          </div>
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShapeLabelCreateLibraryOpen(false)}
+            >
+              Zrušit
+            </Button>
+            <Button type="button" onClick={() => void saveAnnotationModelToLibrary()}>
+              Uložit model
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 
   if (isLoading && !isStandaloneMeasurementEditorRoute) {

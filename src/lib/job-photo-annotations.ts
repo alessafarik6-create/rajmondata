@@ -53,6 +53,8 @@ export type JobPhotoShapeLabelAnnotation = {
   showLabelInline: boolean;
   color: DimensionColor;
   createdAt?: number;
+  /** companies/.../annotationModels/{id} pokud značka vznikla ze šablony */
+  modelId?: string;
 };
 
 export type AnnotationLegendEntry = {
@@ -126,6 +128,7 @@ type SerializedItem =
       showLabelInline: boolean;
       color: DimensionColor;
       createdAt?: number;
+      modelId?: string;
     };
 
 function clamp01(n: number): number {
@@ -242,6 +245,8 @@ export function serializeJobPhotoAnnotations(
       if (typeof s.createdAt === "number" && Number.isFinite(s.createdAt)) {
         row.createdAt = s.createdAt;
       }
+      const mid = typeof s.modelId === "string" ? s.modelId.trim() : "";
+      if (mid) row.modelId = mid;
       out.push(row);
     }
   }
@@ -330,7 +335,7 @@ export function deserializeJobPhotoAnnotations(
         typeof s.pageIndex === "number" && Number.isFinite(s.pageIndex)
           ? Math.max(0, Math.floor(s.pageIndex))
           : defaultPage;
-      out.push({
+      const shapeRow: JobPhotoShapeLabelAnnotation = {
         id: String(s.id || createLocalId()),
         type: "shapeLabel",
         shape: parseShapeKind(s.shape),
@@ -347,7 +352,13 @@ export function deserializeJobPhotoAnnotations(
         showLabelInline: Boolean(s.showLabelInline),
         color: (s.color as DimensionColor) || "blue",
         createdAt: typeof s.createdAt === "number" ? s.createdAt : undefined,
-      });
+      };
+      const mid =
+        typeof (s as { modelId?: string }).modelId === "string"
+          ? (s as { modelId?: string }).modelId?.trim()
+          : "";
+      if (mid) shapeRow.modelId = mid;
+      out.push(shapeRow);
     }
   }
   return out;

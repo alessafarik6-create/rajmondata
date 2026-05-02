@@ -118,6 +118,10 @@ export type JobFolderImageDoc = {
   customerVisible?: boolean;
   customerAnnotatable?: boolean;
   internalOnly?: boolean;
+  /** PNG vytvořený převodem z PDF ve fotodokumentaci — vazba na zdrojový soubor */
+  sourcePdfId?: string;
+  sourcePdfName?: string;
+  sourcePdfUrl?: string;
   /** Schválení konkrétního souboru zákazníkem (klientský portál). */
   requiresCustomerApproval?: boolean;
   approvalStatus?: "pending" | "approved" | "changes_requested";

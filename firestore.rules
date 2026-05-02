@@ -701,6 +701,48 @@ service cloud.firestore {
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 
+      /**
+       * Šablony značek pro anotace (legenda): companies/{companyId}/annotationModels/{modelId}
+       */
+      match /annotationModels/{modelId} {
+        allow read: if signedIn() && sameCompany(companyId) && userRole() != 'customer';
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.organizationId == companyId &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0 &&
+          request.resource.data.name.size() <= 200 &&
+          request.resource.data.widthMm is number &&
+          request.resource.data.heightMm is number &&
+          request.resource.data.shape in ['square', 'rectangle', 'circle', 'point'] &&
+          request.resource.data.color is string &&
+          request.resource.data.color.size() > 0 &&
+          request.resource.data.color.size() <= 64 &&
+          request.resource.data.createdBy == request.auth.uid &&
+          (!('note' in request.resource.data) ||
+            request.resource.data.note == null ||
+            (request.resource.data.note is string &&
+              request.resource.data.note.size() <= 2000));
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.organizationId == companyId &&
+          request.resource.data.organizationId == companyId &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0 &&
+          request.resource.data.name.size() <= 200 &&
+          request.resource.data.widthMm is number &&
+          request.resource.data.heightMm is number &&
+          request.resource.data.shape in ['square', 'rectangle', 'circle', 'point'] &&
+          request.resource.data.color is string &&
+          request.resource.data.color.size() > 0 &&
+          request.resource.data.color.size() <= 64 &&
+          request.resource.data.createdBy == resource.data.createdBy &&
+          (!('note' in request.resource.data) ||
+            request.resource.data.note == null ||
+            (request.resource.data.note is string &&
+              request.resource.data.note.size() <= 2000));
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.organizationId == companyId;
+      }
+
       /** Sklad — položky a pohyby */
       match /inventoryItems/{itemId} {
         allow read: if inventoryReadForProductionOrWarehouse(companyId);

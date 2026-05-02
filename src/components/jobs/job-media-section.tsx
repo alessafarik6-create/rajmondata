@@ -25,8 +25,13 @@ import { getDocsSafe } from "@/lib/firestore-safe-query";
 import { logActivitySafe } from "@/lib/activity-log";
 import { getFirebaseStorage } from "@/firebase/storage";
 import {
+  uploadJobFolderImageBlobViaFirebaseSdk,
   uploadJobFolderImageFileViaFirebaseSdk,
 } from "@/lib/job-photo-upload";
+import {
+  getPdfPageCountFromUrl,
+  renderPdfPagesToPngBlobs,
+} from "@/lib/pdf-to-image-client";
 import {
   formatMediaDate,
   getJobMediaPreviewUrl,
@@ -588,6 +593,16 @@ function UserFolderBlock({
     adminNote?: string;
   };
   const [mediaViewer, setMediaViewer] = useState<FolderMediaViewerOpen | null>(null);
+
+  const [pdfConvertTarget, setPdfConvertTarget] = useState<{
+    pdfDoc: JobFolderImageDoc;
+    openUrl: string;
+    title: string;
+  } | null>(null);
+  const [pdfConvertNumPages, setPdfConvertNumPages] = useState(0);
+  const [pdfConvertMode, setPdfConvertMode] = useState<"all" | "single">("all");
+  const [pdfConvertSinglePage, setPdfConvertSinglePage] = useState(1);
+  const [pdfConvertBusy, setPdfConvertBusy] = useState(false);
 
   const folderType: JobFolderType = folder.type ?? "files";
   const isEmployeeLimited = mediaScope === "employeeLimited";
@@ -1388,6 +1403,161 @@ function UserFolderBlock({
     }
   };
 
+  useEffect(() => {
+    if (!pdfConvertTarget?.openUrl) {
+      setPdfConvertNumPages(0);
+      return;
+    }
+    let cancelled = false;
+    setPdfConvertNumPages(0);
+    void (async () => {
+      try {
+        const n = await getPdfPageCountFromUrl(pdfConvertTarget.openUrl);
+        if (!cancelled) {
+          setPdfConvertNumPages(n);
+          setPdfConvertSinglePage(1);
+        }
+      } catch (e) {
+        console.error(e);
+        toast({
+          variant: "destructive",
+          title: "PDF",
+          description: "Nelze načíst dokument (síť nebo oprávnění k souboru).",
+        });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pdfConvertTarget?.openUrl, toast]);
+
+  const runPdfToImageConversion = async () => {
+    if (!pdfConvertTarget || !firestore || !user) return;
+    const { pdfDoc, openUrl, title } = pdfConvertTarget;
+    const num = pdfConvertNumPages;
+    if (num < 1) {
+      toast({
+        variant: "destructive",
+        title: "Čekejte",
+        description: "Počet stránek se ještě načítá.",
+      });
+      return;
+    }
+    const pages =
+      pdfConvertMode === "all"
+        ? Array.from({ length: num }, (_, i) => i + 1)
+        : [Math.min(Math.max(1, pdfConvertSinglePage), num)];
+    setPdfConvertBusy(true);
+    try {
+      const blobs = await renderPdfPagesToPngBlobs(openUrl, pages, 2);
+      const baseStem =
+        title.replace(/\.pdf$/i, "").replace(/\s+/g, " ").trim() || "dokument";
+      for (let i = 0; i < blobs.length; i++) {
+        const pageNum = pages[i] ?? i + 1;
+        const blob = blobs[i];
+        const { downloadURL, storagePath: resolvedFullPath } =
+          await uploadJobFolderImageBlobViaFirebaseSdk(
+            blob,
+            companyId,
+            jobId,
+            folder.id,
+            `${Date.now()}-${baseStem}-s${pageNum}.png`
+          );
+        const refDoc = doc(imagesColRef);
+        const displayName =
+          pages.length > 1 ? `${baseStem} — str. ${pageNum}.png` : `${baseStem}.png`;
+        await setDoc(refDoc, {
+          id: refDoc.id,
+          companyId,
+          jobId,
+          folderId: folder.id,
+          imageUrl: downloadURL,
+          url: downloadURL,
+          originalImageUrl: downloadURL,
+          downloadURL,
+          fileType: "image" as const,
+          storagePath: resolvedFullPath,
+          path: resolvedFullPath,
+          fileName: displayName,
+          name: displayName,
+          createdAt: serverTimestamp(),
+          createdBy: user.uid,
+          sourcePdfId: pdfDoc.id,
+          sourcePdfName: title,
+          sourcePdfUrl: openUrl,
+          ...(isEmployeeLimited
+            ? {
+                uploadSource: "employee-job-upload" as const,
+                uploadedByEmployeeId: employeeRecordId,
+                uploadedBy: user.uid,
+                uploadedAt: serverTimestamp(),
+                employeeVisible: true,
+              }
+            : {}),
+        });
+        if (!isEmployeeLimited) {
+          await setDoc(
+            companyDocumentRefForJobFolderImage(
+              firestore,
+              companyId,
+              folder.id,
+              refDoc.id
+            ),
+            buildNewJobFolderImageMirrorDocument({
+              companyId,
+              jobId,
+              jobDisplayName,
+              folderId: folder.id,
+              imageId: refDoc.id,
+              userId: user.uid,
+              fileName: displayName,
+              fileType: "image",
+              mimeType: "image/png",
+              fileUrl: downloadURL,
+              storagePath: resolvedFullPath,
+              note: null,
+            }),
+            { merge: true }
+          );
+        }
+        logActivitySafe(firestore, companyId, user, actorProfile, {
+          actionType: "document.upload",
+          actionLabel: "Převod PDF na obrázek ve složce zakázky",
+          entityType: "job_folder_image",
+          entityId: refDoc.id,
+          entityName: displayName,
+          details: `Ze souboru ${title} (str. ${pageNum})`,
+          sourceModule: "jobs",
+          route: `/portal/jobs/${jobId}`,
+          metadata: {
+            jobId,
+            folderId: folder.id,
+            fileName: displayName,
+            fileType: "image",
+            sourcePdfId: pdfDoc.id,
+          },
+        });
+      }
+      toast({
+        title: "Převod dokončen",
+        description:
+          blobs.length === 1
+            ? "Obrázek je ve složce fotodokumentace."
+            : `Vytvořeno ${blobs.length} obrázků.`,
+      });
+      setPdfConvertTarget(null);
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Převod se nepodařil",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPdfConvertBusy(false);
+    }
+  };
+
   const deleteFolder = async () => {
     if (isCustomerScope) {
       toast({
@@ -2005,6 +2175,23 @@ function UserFolderBlock({
                             <Eye className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
                         ) : null}
+                        {kind === "pdf" &&
+                        folderType === "photos" &&
+                        allowFolderStaffFileActions ? (
+                          <JobMediaIconButton
+                            label="Převést na obrázek"
+                            disabled={busy || !openUrl}
+                            onClick={() =>
+                              setPdfConvertTarget({
+                                pdfDoc: img,
+                                openUrl: openUrl || "",
+                                title,
+                              })
+                            }
+                          >
+                            <ImagePlus className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                        ) : null}
                         {openUrl ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -2293,6 +2480,23 @@ function UserFolderBlock({
                             <Eye className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
                         ) : null}
+                        {kind === "pdf" &&
+                        folderType === "photos" &&
+                        allowFolderStaffFileActions ? (
+                          <JobMediaIconButton
+                            label="Převést na obrázek"
+                            disabled={busy || !openUrl}
+                            onClick={() =>
+                              setPdfConvertTarget({
+                                pdfDoc: img,
+                                openUrl: openUrl || "",
+                                title,
+                              })
+                            }
+                          >
+                            <ImagePlus className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                        ) : null}
                         {openUrl ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -2374,6 +2578,98 @@ function UserFolderBlock({
         </CollapsibleContent>
       </Card>
     </Collapsible>
+
+    <Dialog
+      open={!!pdfConvertTarget}
+      onOpenChange={(open) => {
+        if (!open && !pdfConvertBusy) setPdfConvertTarget(null);
+      }}
+    >
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Převést PDF na obrázek</DialogTitle>
+          <DialogDescription>
+            Původní PDF zůstane v úložišti. Nové PNG se uloží do stejné složky a u obrázku
+            bude odkaz na zdrojové PDF.
+          </DialogDescription>
+        </DialogHeader>
+        {pdfConvertNumPages < 1 ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+            Zjišťuji počet stránek…
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">
+              Stránek v dokumentu: <strong>{pdfConvertNumPages}</strong>
+            </p>
+            {pdfConvertNumPages > 1 ? (
+              <div className="space-y-2">
+                <Label htmlFor="pdf-convert-pages">Rozsah</Label>
+                <Select
+                  value={pdfConvertMode}
+                  onValueChange={(v) => setPdfConvertMode(v as "all" | "single")}
+                >
+                  <SelectTrigger id="pdf-convert-pages">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Všechny stránky ({pdfConvertNumPages})</SelectItem>
+                    <SelectItem value="single">Jen vybraná stránka</SelectItem>
+                  </SelectContent>
+                </Select>
+                {pdfConvertMode === "single" ? (
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="pdf-convert-page-num">Číslo stránky (1–{pdfConvertNumPages})</Label>
+                    <Input
+                      id="pdf-convert-page-num"
+                      type="number"
+                      min={1}
+                      max={pdfConvertNumPages}
+                      value={pdfConvertSinglePage}
+                      onChange={(e) =>
+                        setPdfConvertSinglePage(
+                          Math.min(
+                            pdfConvertNumPages,
+                            Math.max(1, Number(e.target.value) || 1)
+                          )
+                        )
+                      }
+                    />
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        )}
+        <DialogFooter className="gap-2 sm:gap-0">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={pdfConvertBusy}
+            onClick={() => setPdfConvertTarget(null)}
+          >
+            Zrušit
+          </Button>
+          <Button
+            type="button"
+            disabled={
+              pdfConvertBusy || pdfConvertNumPages < 1 || !pdfConvertTarget
+            }
+            onClick={() => void runPdfToImageConversion()}
+          >
+            {pdfConvertBusy ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden />
+                Převádím…
+              </>
+            ) : (
+              "Převést"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     {firestore && user && mediaViewer ? (
       <CustomerMediaAnnotationViewer
