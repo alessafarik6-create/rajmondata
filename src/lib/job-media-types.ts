@@ -109,6 +109,8 @@ export type JobFolderImageDoc = {
   ledgerDate?: string;
   /** Viditelnost souboru pro zaměstnance (přepíše výchozí dědění ze složky). */
   employeeVisible?: boolean;
+  /** Zobrazení ve výrobním modulu (náhled výkresu / PDF) — výslovné označení. */
+  visibleInProduction?: boolean;
   /** Audit nahrání zaměstnancem (Firestore pravidla). */
   uploadSource?: string;
   uploadedBy?: string;

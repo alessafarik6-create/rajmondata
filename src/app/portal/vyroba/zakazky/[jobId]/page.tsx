@@ -38,6 +38,7 @@ import {
   Pencil,
   Trash2,
   FileDown,
+  Printer,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -89,6 +90,7 @@ import {
 } from "@/lib/production-job-workflow";
 import {
   filterFoldersForProductionView,
+  isJobFileMarkedForProduction,
   isJobImageVisibleInProductionView,
   resolveJobFolderImageDownloadUrl,
   type ProductionFolderRow,
@@ -104,7 +106,12 @@ import {
 import { JobProductionPdfDocumentationPanel } from "@/components/production/job-production-pdf-documentation";
 import { ProductionWorkbenchSplit } from "@/components/production/production-workbench-split";
 import { useStockPiecesSummaries } from "@/hooks/use-stock-pieces-summaries";
-import { buildProductionWorksheetPdf } from "@/lib/production-worksheet-pdf";
+import {
+  buildProductionWorksheetPdf,
+  downloadProductionWorksheetPdf,
+  openProductionWorksheetPdfInNewTab,
+  type ProductionWorksheetDrawingRef,
+} from "@/lib/production-worksheet-pdf";
 import { Checkbox } from "@/components/ui/checkbox";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
 
@@ -497,6 +504,8 @@ export default function VyrobaZakazkaDetailPage() {
   const [deleteConsumptionTarget, setDeleteConsumptionTarget] = useState<Record<string, unknown> | null>(null);
   const [csvMaterialDialog, setCsvMaterialDialog] = useState<CsvMaterialDialogSource | null>(null);
   const [previewTab, setPreviewTab] = useState<"pdf" | "image">("pdf");
+  const [productionPdfSelectedIndex, setProductionPdfSelectedIndex] = useState(0);
+  const [attachDrawingToExport, setAttachDrawingToExport] = useState(true);
   const [bulkPickIds, setBulkPickIds] = useState<Set<string>>(() => new Set());
 
   const productionPdfRows = useMemo(
@@ -511,6 +520,12 @@ export default function VyrobaZakazkaDetailPage() {
         })),
     [attachmentFiles]
   );
+
+  useEffect(() => {
+    setProductionPdfSelectedIndex((i) =>
+      Math.min(i, Math.max(0, productionPdfRows.length - 1))
+    );
+  }, [productionPdfRows.length]);
 
   const loadApi = useCallback(async () => {
     if (!user || !jobId) return;
@@ -758,6 +773,7 @@ export default function VyrobaZakazkaDetailPage() {
           snap.forEach((d) => {
             const row = d.data() as Record<string, unknown>;
             if (!isJobImageVisibleInProductionView(f, row, isPrivilegedViewer)) return;
+            if (!isJobFileMarkedForProduction(row)) return;
             const url = resolveJobFolderImageDownloadUrl(row);
             const name = String(row.fileName || row.name || "soubor");
             if (!url) return;
@@ -803,6 +819,7 @@ export default function VyrobaZakazkaDetailPage() {
               if (!isJobImageVisibleInProductionView(LEGACY_JOB_PHOTOS_FOLDER_STUB, row, isPrivilegedViewer)) {
                 return;
               }
+              if (!isJobFileMarkedForProduction(row)) return;
               const url = resolveJobFolderImageDownloadUrl(row);
               const name = String(row.fileName || row.name || `Foto-${d.id}`).trim() || d.id;
               if (!url) return;
@@ -827,6 +844,7 @@ export default function VyrobaZakazkaDetailPage() {
                 if (!isJobImageVisibleInProductionView(LEGACY_JOB_PHOTOS_FOLDER_STUB, row, isPrivilegedViewer)) {
                   return;
                 }
+                if (!isJobFileMarkedForProduction(row)) return;
                 const url = resolveJobFolderImageDownloadUrl(row);
                 const name = String(row.fileName || row.name || `Foto-${d.id}`).trim() || d.id;
                 if (!url) return;
@@ -859,6 +877,7 @@ export default function VyrobaZakazkaDetailPage() {
           const row = d.data() as Record<string, unknown>;
           if (isMeasurementPhotoUnassignedForJob(row)) return;
           if (!isMeasurementPhotoVisibleInProduction(row, isPrivilegedViewer)) return;
+          if (!isJobFileMarkedForProduction(row)) return;
           const url = resolveJobFolderImageDownloadUrl(row);
           if (!url) return;
           const name =
@@ -1460,85 +1479,141 @@ export default function VyrobaZakazkaDetailPage() {
     }
   }, [user, jobId, issueQueue, validateIssueQueueAgainstInventory, toast, loadApi]);
 
-  const exportWorksheetPdf = useCallback(() => {
-    if (!jobView) return;
-    const j = jobView as Record<string, unknown>;
-    const jobName = String(jobView.displayLabel || jobView.name || jobId);
-    const customer = String(
-      j.customerName ||
-        j.customerCompanyName ||
-        j.companyName ||
-        j.customerDisplayName ||
-        ""
-    );
-    const pendingLines =
-      issueQueue.length > 0
-        ? issueQueue.map((ln) => {
-            const inv = inventoryById.get(ln.itemId);
-            const cut =
-              inv && String(inv.stockTrackingMode) === "length" && ln.repeatCountStr !== "1"
-                ? `${ln.repeatCountStr}× ${ln.qtyStr}`
-                : ln.qtyStr;
-            return `${inv?.name ?? ln.itemId}: ${cut}`;
-          })
-        : [];
-    const pdfUrl = productionPdfRows.length > 0 ? productionPdfRows[0].fileUrl : "";
-    const imgUrl = firstImageAttachment?.fileUrl || "";
-    const drawingNote = [pdfUrl ? `PDF: ${pdfUrl}` : "", imgUrl ? `Obrázek: ${imgUrl}` : ""]
-      .filter(Boolean)
-      .join("\n");
-
-    const rows = consumptions.map((raw) => {
-      const c = raw as Record<string, unknown>;
-      const itemName = String(c.itemName || "");
-      const qty = String(c.quantity ?? c.quantityUsed ?? "");
-      const unit = String(c.unit || "");
-      const rc = c.repeatCount != null ? String(c.repeatCount) : "—";
-      const rem =
-        c.quantityRemainingOnStock != null ? String(c.quantityRemainingOnStock) : "—";
-      const allocs = c.stockPieceAllocations;
-      let allocStr = "—";
-      if (Array.isArray(allocs)) {
-        allocStr = allocs
-          .map((a: unknown) => {
-            const x = a as Record<string, unknown>;
-            const u = x.usedLengthMm;
-            const r = x.remainingAfterMm;
-            const pid = String(x.pieceId || "").slice(0, 8);
-            return `${pid}… −${u} mm → ${r} mm`;
-          })
-          .join("; ");
-      }
+  const resolveExportDrawing = useCallback((): ProductionWorksheetDrawingRef | null => {
+    if (previewTab === "pdf" && productionPdfRows.length > 0) {
+      const i = Math.min(
+        Math.max(0, productionPdfSelectedIndex),
+        productionPdfRows.length - 1
+      );
+      const r = productionPdfRows[i];
+      return r ? { url: r.fileUrl, fileName: r.fileName, kind: "pdf" } : null;
+    }
+    if (previewTab === "image" && firstImageAttachment) {
+      const k = firstImageAttachment.kind === "pdf" ? "pdf" : "image";
       return {
-        itemName,
-        quantity: qty,
-        unit,
-        repeatCount: rc,
-        remainingOnStock: rem,
-        allocations: allocStr,
-        note: c.note != null ? String(c.note) : "",
-        createdBy: c.createdByName != null ? String(c.createdByName) : "",
-        createdAt: formatConsumptionCreatedAt(c.createdAt),
+        url: firstImageAttachment.fileUrl,
+        fileName: firstImageAttachment.fileName,
+        kind: k,
       };
-    });
+    }
+    if (productionPdfRows.length > 0) {
+      const i = Math.min(
+        Math.max(0, productionPdfSelectedIndex),
+        productionPdfRows.length - 1
+      );
+      const r = productionPdfRows[i];
+      return r ? { url: r.fileUrl, fileName: r.fileName, kind: "pdf" } : null;
+    }
+    if (firstImageAttachment) {
+      const k = firstImageAttachment.kind === "pdf" ? "pdf" : "image";
+      return {
+        url: firstImageAttachment.fileUrl,
+        fileName: firstImageAttachment.fileName,
+        kind: k,
+      };
+    }
+    return null;
+  }, [previewTab, productionPdfRows, productionPdfSelectedIndex, firstImageAttachment]);
 
-    buildProductionWorksheetPdf({
-      jobName,
-      customerLabel: customer,
-      dateLabel: new Date().toLocaleString("cs-CZ"),
-      drawingNote: drawingNote || undefined,
-      rows,
-      pendingLines: pendingLines.length ? pendingLines : undefined,
-    });
-  }, [
-    jobView,
-    jobId,
-    consumptions,
-    issueQueue,
-    inventoryById,
-    productionPdfRows,
-    firstImageAttachment,
-  ]);
+  const runProductionWorksheetPdf = useCallback(
+    async (action: "download" | "print") => {
+      if (!jobView) return;
+      const j = jobView as Record<string, unknown>;
+      const jobName = String(jobView.displayLabel || jobView.name || jobId);
+      const customer = String(
+        j.customerName ||
+          j.customerCompanyName ||
+          j.companyName ||
+          j.customerDisplayName ||
+          ""
+      );
+      const pendingLines =
+        issueQueue.length > 0
+          ? issueQueue.map((ln) => {
+              const inv = inventoryById.get(ln.itemId);
+              const cut =
+                inv && String(inv.stockTrackingMode) === "length" && ln.repeatCountStr !== "1"
+                  ? `${ln.repeatCountStr}× ${ln.qtyStr}`
+                  : ln.qtyStr;
+              return `${inv?.name ?? ln.itemId}: ${cut}`;
+            })
+          : [];
+
+      const drawingRef = resolveExportDrawing();
+      const shouldAttach =
+        attachDrawingToExport && drawingRef != null && (drawingRef.kind === "pdf" || drawingRef.kind === "image");
+      const drawingNote =
+        !shouldAttach && drawingRef
+          ? `Výkres (nepřiloženo v tomto exportu): ${drawingRef.fileName}\n${drawingRef.url}`
+          : undefined;
+
+      const rows = consumptions.map((raw) => {
+        const c = raw as Record<string, unknown>;
+        const itemName = String(c.itemName || "");
+        const qty = String(c.quantity ?? c.quantityUsed ?? "");
+        const unit = String(c.unit || "");
+        const rc = c.repeatCount != null ? String(c.repeatCount) : "—";
+        const rem =
+          c.quantityRemainingOnStock != null ? String(c.quantityRemainingOnStock) : "—";
+        const allocs = c.stockPieceAllocations;
+        let allocStr = "—";
+        if (Array.isArray(allocs)) {
+          allocStr = allocs
+            .map((a: unknown) => {
+              const x = a as Record<string, unknown>;
+              const u = x.usedLengthMm;
+              const r = x.remainingAfterMm;
+              const pid = String(x.pieceId || "").slice(0, 8);
+              return `${pid}… −${u} mm → ${r} mm`;
+            })
+            .join("; ");
+        }
+        return {
+          itemName,
+          quantity: qty,
+          unit,
+          repeatCount: rc,
+          remainingOnStock: rem,
+          allocations: allocStr,
+          note: c.note != null ? String(c.note) : "",
+          createdBy: c.createdByName != null ? String(c.createdByName) : "",
+          createdAt: formatConsumptionCreatedAt(c.createdAt),
+        };
+      });
+
+      const dateLabel = new Date().toLocaleString("cs-CZ");
+      try {
+        const doc = await buildProductionWorksheetPdf({
+          jobName,
+          customerLabel: customer,
+          dateLabel,
+          drawingNote,
+          rows,
+          pendingLines: pendingLines.length ? pendingLines : undefined,
+          attachDrawing: shouldAttach,
+          drawing: shouldAttach ? drawingRef : null,
+        });
+        if (action === "print") openProductionWorksheetPdfInNewTab(doc);
+        else downloadProductionWorksheetPdf(doc, jobName, dateLabel);
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "PDF se nepodařilo vytvořit",
+          description: e instanceof Error ? e.message : "Zkuste to znovu.",
+        });
+      }
+    },
+    [
+      jobView,
+      jobId,
+      consumptions,
+      issueQueue,
+      inventoryById,
+      resolveExportDrawing,
+      attachDrawingToExport,
+      toast,
+    ]
+  );
 
   const toggleBulkPick = useCallback((id: string) => {
     setBulkPickIds((prev) => {
@@ -1919,9 +1994,9 @@ export default function VyrobaZakazkaDetailPage() {
                 storageKeyPrefix={`vyroba-wb-${String(jobId)}`}
                 className="min-h-0"
                 leftPanel={
-                  <div className="flex h-full min-h-0 flex-col bg-white">
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
                     {productionPdfRows.length > 0 || firstImageAttachment ? (
-                      <div className="flex flex-wrap gap-2 border-b border-slate-100 px-2 py-2">
+                      <div className="flex shrink-0 flex-wrap gap-2 border-b border-slate-100 px-2 py-2">
                         {productionPdfRows.length > 0 ? (
                           <Button
                             type="button"
@@ -1946,16 +2021,18 @@ export default function VyrobaZakazkaDetailPage() {
                         ) : null}
                       </div>
                     ) : null}
-                    <div className="min-h-0 flex-1 overflow-auto p-1">
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                       {productionPdfRows.length > 0 && (previewTab === "pdf" || !firstImageAttachment) ? (
                         <JobProductionPdfDocumentationPanel
                           embedded
                           pdfFiles={productionPdfRows}
                           attachmentsLoading={attachmentsLoading}
+                          selectedPdfIndex={productionPdfSelectedIndex}
+                          onSelectedPdfIndexChange={setProductionPdfSelectedIndex}
                         />
                       ) : firstImageAttachment &&
                         (previewTab === "image" || productionPdfRows.length === 0) ? (
-                        <div className="flex min-h-[160px] items-center justify-center p-2">
+                        <div className="flex min-h-0 flex-1 overflow-auto items-center justify-center p-2">
                           {/* eslint-disable-next-line @next/next/no-img-element -- blob/external URL; avoid next/image domain config */}
                           <img
                             src={firstImageAttachment.fileUrl}
@@ -2439,6 +2516,18 @@ export default function VyrobaZakazkaDetailPage() {
                     Přidejte řádky (více skladových položek i různé řezy). Hromadný výdej proběhne v jedné transakci;
                     při nedostatku skladu se nic neuloží.
                   </p>
+                  <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-sm text-slate-800">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <Checkbox
+                        checked={attachDrawingToExport}
+                        onCheckedChange={(c) => setAttachDrawingToExport(c === true)}
+                      />
+                      <span>Přiložit výkres do PDF</span>
+                    </label>
+                    <span className="text-xs text-slate-500">
+                      Aktuální náhled vlevo (PDF nebo obrázek).
+                    </span>
+                  </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
@@ -2486,10 +2575,20 @@ export default function VyrobaZakazkaDetailPage() {
                       variant="outline"
                       size="sm"
                       className="min-h-10 gap-1"
-                      onClick={() => exportWorksheetPdf()}
+                      onClick={() => void runProductionWorksheetPdf("download")}
                     >
                       <FileDown className="h-4 w-4" />
                       Exportovat výrobní podklad do PDF
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10 gap-1"
+                      onClick={() => void runProductionWorksheetPdf("print")}
+                    >
+                      <Printer className="h-4 w-4" />
+                      Vytisknout výrobní podklad
                     </Button>
                   </div>
                   {issueQueue.length === 0 ? (

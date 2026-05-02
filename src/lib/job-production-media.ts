@@ -26,6 +26,16 @@ export type ProductionFolderRow = {
 /**
  * Stejné pole jako u nahrávání v JobMediaSection — legacy záznamy mají často `imageUrl` / `downloadURL`.
  */
+/**
+ * Jednotné pole pro zobrazení souboru ve modulu Výroba (Firestore u dokumentu ve složce / fotkách / měření).
+ * Synonymum: `sendToProduction` (legacy).
+ */
+export function isJobFileMarkedForProduction(row: Record<string, unknown>): boolean {
+  if (row.visibleInProduction === true) return true;
+  if (row.sendToProduction === true) return true;
+  return false;
+}
+
 export function resolveJobFolderImageDownloadUrl(row: Record<string, unknown>): string {
   const candidates = [
     row.fileUrl,

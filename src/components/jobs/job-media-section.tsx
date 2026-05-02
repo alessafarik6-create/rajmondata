@@ -319,24 +319,31 @@ function MediaCompactDocRow({
   title,
   dateLine,
   actions,
+  footer,
 }: {
   icon: React.ReactNode;
   title: string;
   dateLine: string;
   actions: React.ReactNode;
+  footer?: React.ReactNode;
 }) {
   return (
-      <div className="flex min-w-0 items-center gap-3 rounded-lg border border-border/70 bg-card px-4 py-3 shadow-sm sm:gap-4">
-      <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-muted">
-        {icon}
+    <div className="space-y-2 rounded-lg border border-border/70 bg-card px-4 py-3 shadow-sm">
+      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-muted">
+          {icon}
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-gray-900" title={title}>
+            {title}
+          </p>
+          <p className="truncate text-xs text-gray-700">{dateLine}</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">{actions}</div>
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-sm font-medium text-gray-900" title={title}>
-          {title}
-        </p>
-        <p className="truncate text-xs text-gray-700">{dateLine}</p>
-      </div>
-      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">{actions}</div>
+      {footer ? (
+        <div className="border-t border-border/40 pt-2">{footer}</div>
+      ) : null}
     </div>
   );
 }
@@ -475,6 +482,7 @@ function JobMediaFileCard({
   mediaApprovalSummary,
   onResendApprovalEmail,
   resendApprovalBusy,
+  extraFooter,
 }: {
   borderClassName?: string;
   preview: React.ReactNode;
@@ -487,6 +495,8 @@ function JobMediaFileCard({
   mediaApprovalSummary?: ParsedJobMediaApproval | null;
   onResendApprovalEmail?: () => void;
   resendApprovalBusy?: boolean;
+  /** Volitelný řádek nad lištou akcí (např. přepínač „ve výrobě“). */
+  extraFooter?: React.ReactNode;
 }) {
   return (
     <div
@@ -527,6 +537,9 @@ function JobMediaFileCard({
           <p className="line-clamp-2 text-[11px] leading-snug text-foreground/88">
             {note.trim()}
           </p>
+        ) : null}
+        {extraFooter ? (
+          <div className="rounded-md border border-border/40 bg-muted/20 px-2 py-1.5">{extraFooter}</div>
         ) : null}
         <div className="mt-auto flex flex-wrap items-center justify-start gap-2 border-t border-border/45 pt-2">
           {actions}
@@ -669,6 +682,8 @@ function UserFolderBlock({
 
   const isAccountingFolder =
     folderType === "documents" && !isEmployeeLimited && !isCustomerScope;
+  const showProductionToggle = allowFolderStaffFileActions && !isAccountingFolder;
+  const [productionToggleBusyId, setProductionToggleBusyId] = useState<string | null>(null);
   const [folderPermBusy, setFolderPermBusy] = useState(false);
 
   const [accountingOpen, setAccountingOpen] = useState(false);
@@ -1065,6 +1080,7 @@ function UserFolderBlock({
           ledgerAmountNet: amts.amountNet,
           ledgerAmountGross: amts.amountGross,
           ledgerFinanceId: financeId,
+          visibleInProduction: false,
         });
       } else {
         const expenseFt: JobExpenseFileType = fileType === "csv" ? "office" : fileType;
@@ -1108,6 +1124,7 @@ function UserFolderBlock({
           ledgerDate: ledger.date,
           ledgerAmountNet: amts.amountNet,
           ledgerAmountGross: amts.amountGross,
+          visibleInProduction: false,
         });
       }
     } else {
@@ -1127,6 +1144,7 @@ function UserFolderBlock({
         name: safeBaseName,
         createdAt: serverTimestamp(),
         createdBy: user.uid,
+        visibleInProduction: false,
         ...(isEmployeeLimited
           ? {
               uploadSource: "employee-job-upload" as const,
@@ -1402,6 +1420,57 @@ function UserFolderBlock({
       setBusy(false);
     }
   };
+
+  const setFileVisibleInProduction = async (img: JobFolderImageDoc, value: boolean) => {
+    if (!showProductionToggle) return;
+    setProductionToggleBusyId(img.id);
+    try {
+      await updateDoc(
+        doc(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          jobId,
+          "folders",
+          folder.id,
+          "images",
+          img.id
+        ),
+        {
+          visibleInProduction: value,
+          visibleInProductionUpdatedAt: serverTimestamp(),
+        }
+      );
+      toast({
+        title: value ? "Soubor se zobrazí ve výrobě" : "Soubor se ve výrobě nezobrazuje",
+      });
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Uložení se nezdařilo",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setProductionToggleBusyId(null);
+    }
+  };
+
+  const productionFooter = (img: JobFolderImageDoc) =>
+    showProductionToggle ? (
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[11px] text-muted-foreground">Modul Výroba</span>
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-foreground/90">Zobrazit ve výrobě</span>
+          <Switch
+            checked={img.visibleInProduction === true}
+            disabled={busy || productionToggleBusyId === img.id}
+            onCheckedChange={(v) => void setFileVisibleInProduction(img, v)}
+          />
+        </div>
+      </div>
+    ) : null;
 
   useEffect(() => {
     if (!pdfConvertTarget?.openUrl) {
@@ -2148,6 +2217,7 @@ function UserFolderBlock({
                         : undefined
                     }
                     resendApprovalBusy={false}
+                    extraFooter={productionFooter(img)}
                     actions={
                       <>
                         <JobMediaIconButton
@@ -2316,6 +2386,7 @@ function UserFolderBlock({
                       : undefined
                   }
                   resendApprovalBusy={false}
+                  extraFooter={productionFooter(img)}
                   actions={
                     <>
                       <JobMediaIconButton
@@ -2457,6 +2528,7 @@ function UserFolderBlock({
                     }
                     title={title}
                     dateLine={dateLine}
+                    footer={productionFooter(img)}
                     actions={
                       <>
                         <JobMediaIconButton

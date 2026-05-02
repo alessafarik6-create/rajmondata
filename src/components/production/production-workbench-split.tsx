@@ -154,12 +154,12 @@ export function ProductionWorkbenchSplit({
         >
           <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-              Výkres / PDF
+              Výkres / podklady
             </span>
-            <span className="text-[11px] text-slate-400">Výšku měňte táhlem níže</span>
+            <span className="hidden text-[11px] text-slate-400 sm:inline">Výšku: táhlo dole</span>
           </div>
           <div
-            className="min-h-0 overflow-auto"
+            className="flex min-h-0 flex-col overflow-hidden"
             style={{ height: previewH, maxHeight: "min(70vh, 720px)" }}
           >
             {leftPanel}
