@@ -44,6 +44,65 @@ async function loadPdfJsWorker() {
   return pdfjs;
 }
 
+/** Načte PDF dokument z URL (CORS / fetch fallback jako u výkresu). */
+export async function loadPdfDocumentFromUrl(url: string): Promise<import("pdfjs-dist").PDFDocumentProxy> {
+  const pdfjs = await loadPdfJsWorker();
+  const u = String(url || "").trim();
+  if (!u) throw new Error("Prázdná URL PDF");
+  try {
+    const task = pdfjs.getDocument({
+      url: u,
+      withCredentials: false,
+      disableRange: true,
+      disableStream: true,
+    });
+    return await task.promise;
+  } catch {
+    const res = await fetch(u, { mode: "cors", credentials: "omit" });
+    if (!res.ok) throw new Error(String(res.status));
+    const buf = await res.arrayBuffer();
+    const task = pdfjs.getDocument({ data: new Uint8Array(buf), disableRange: true, disableStream: true });
+    return await task.promise;
+  }
+}
+
+/**
+ * Vykreslí jednu stránku PDF.js do obdélníku v dokumentu (jednotky jsPDF — mm).
+ * Canvas → JPEG → addImage (stejná matematika škálování jako dříve u celé stránky).
+ */
+export async function renderPdfJsPageToJsPdfRegion(
+  doc: jsPDF,
+  pdfPage: import("pdfjs-dist").PDFPageProxy,
+  region: { x: number; y: number; maxW: number; maxH: number },
+  jpegQuality = 0.88
+): Promise<void> {
+  const base = pdfPage.getViewport({ scale: 1 });
+  if (base.width < 1 || base.height < 1) return;
+  const { x, y, maxW, maxH } = region;
+  const scale = Math.min(maxW / base.width, maxH / base.height);
+  const vp = pdfPage.getViewport({ scale });
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.floor(vp.width));
+  canvas.height = Math.max(1, Math.floor(vp.height));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  await pdfPage.render({ canvasContext: ctx, viewport: vp }).promise;
+  const dataUrl = canvas.toDataURL("image/jpeg", jpegQuality);
+  const imgProps = doc.getImageProperties(dataUrl);
+  const iw = imgProps.width;
+  const ih = imgProps.height;
+  if (iw < 1 || ih < 1) return;
+  let w = maxW;
+  let h = (ih * w) / iw;
+  if (h > maxH) {
+    h = maxH;
+    w = (iw * h) / ih;
+  }
+  const px = x + (maxW - w) / 2;
+  const py = y + (maxH - h) / 2;
+  doc.addImage(dataUrl, "JPEG", px, py, w, h);
+}
+
 function addImageDataUrlToPage(doc: jsPDF, dataUrl: string, fmt: "JPEG" | "PNG") {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
@@ -91,43 +150,17 @@ async function appendDrawingToDoc(doc: jsPDF, drawing: ProductionWorksheetDrawin
   }
 
   try {
-    const pdfjs = await loadPdfJsWorker();
-    let pdf: import("pdfjs-dist").PDFDocumentProxy;
-    try {
-      const task = pdfjs.getDocument({
-        url: u,
-        withCredentials: false,
-        disableRange: true,
-        disableStream: true,
-      });
-      pdf = await task.promise;
-    } catch {
-      const res = await fetch(u, { mode: "cors", credentials: "omit" });
-      if (!res.ok) throw new Error(String(res.status));
-      const buf = await res.arrayBuffer();
-      const task = pdfjs.getDocument({ data: new Uint8Array(buf), disableRange: true, disableStream: true });
-      pdf = await task.promise;
-    }
+    const pdf = await loadPdfDocumentFromUrl(u);
 
     for (let i = 1; i <= pdf.numPages; i++) {
       doc.addPage();
       const page = await pdf.getPage(i);
-      const base = page.getViewport({ scale: 1 });
       const pageW = doc.internal.pageSize.getWidth();
       const pageH = doc.internal.pageSize.getHeight();
       const margin = 8;
       const maxW = pageW - 2 * margin;
       const maxH = pageH - 2 * margin;
-      const scale = Math.min(maxW / base.width, maxH / base.height);
-      const vp = page.getViewport({ scale });
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.floor(vp.width));
-      canvas.height = Math.max(1, Math.floor(vp.height));
-      const ctx = canvas.getContext("2d");
-      if (!ctx) continue;
-      await page.render({ canvasContext: ctx, viewport: vp }).promise;
-      const dataUrl = canvas.toDataURL("image/jpeg", 0.88);
-      addImageDataUrlToPage(doc, dataUrl, "JPEG");
+      await renderPdfJsPageToJsPdfRegion(doc, page, { x: margin, y: margin, maxW, maxH });
     }
     try {
       pdf.destroy?.();

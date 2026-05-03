@@ -2,17 +2,14 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { PDF_FONT_FAMILY, registerDejaVuFontsForPdf } from "@/lib/pdf/register-dejavu-font";
 import { fetchImageAsDataUrl } from "@/lib/pdf/exportJobsToPdf";
-import type { ProductionWorksheetDrawingRef } from "@/lib/production-worksheet-pdf";
+import {
+  loadPdfDocumentFromUrl,
+  renderPdfJsPageToJsPdfRegion,
+  type ProductionWorksheetDrawingRef,
+} from "@/lib/production-worksheet-pdf";
+import type { ProductionA4MaterialRow } from "@/lib/production-a4-material-rows";
 
-export type ProductionA4MaterialRow = {
-  itemName: string;
-  quantity: string;
-  unit: string;
-  cuts?: string;
-  remainder?: string;
-  note?: string;
-  statusLabel?: string;
-};
+export type { ProductionA4MaterialRow } from "@/lib/production-a4-material-rows";
 
 export type BuildProductionA4WorkListPdfOptions = {
   jobName: string;
@@ -24,94 +21,12 @@ export type BuildProductionA4WorkListPdfOptions = {
   fontBasePath?: string;
 };
 
-async function loadPdfJsWorker() {
-  const pdfjs = await import("pdfjs-dist");
-  const { configurePdfJsWorker } = await import("@/lib/pdfjs-worker");
-  configurePdfJsWorker(pdfjs);
-  return pdfjs;
-}
-
-async function firstPageThumbDataUrl(drawing: ProductionWorksheetDrawingRef): Promise<string | null> {
-  const { url, kind, fileName } = drawing;
-  const u = String(url || "").trim();
-  if (!u) return null;
-  if (kind === "image") {
-    try {
-      return await fetchImageAsDataUrl(u);
-    } catch {
-      return null;
-    }
-  }
-  try {
-    const pdfjs = await loadPdfJsWorker();
-    let pdf: import("pdfjs-dist").PDFDocumentProxy;
-    try {
-      const task = pdfjs.getDocument({ url: u, withCredentials: false, disableRange: true, disableStream: true });
-      pdf = await task.promise;
-    } catch {
-      const res = await fetch(u, { mode: "cors", credentials: "omit" });
-      if (!res.ok) throw new Error(String(res.status));
-      const buf = await res.arrayBuffer();
-      const task = pdfjs.getDocument({ data: new Uint8Array(buf), disableRange: true, disableStream: true });
-      pdf = await task.promise;
-    }
-    if (pdf.numPages < 1) {
-      try {
-        pdf.destroy?.();
-      } catch {
-        /* */
-      }
-      return null;
-    }
-    const page = await pdf.getPage(1);
-    const base = page.getViewport({ scale: 1 });
-    const maxW = 400;
-    const maxH = 560;
-    const scale = Math.min(maxW / base.width, maxH / base.height, 2);
-    const vp = page.getViewport({ scale });
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.max(1, Math.floor(vp.width));
-    canvas.height = Math.max(1, Math.floor(vp.height));
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      try {
-        pdf.destroy?.();
-      } catch {
-        /* */
-      }
-      return null;
-    }
-    await page.render({ canvasContext: ctx, viewport: vp }).promise;
-    const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
-    try {
-      pdf.destroy?.();
-    } catch {
-      /* */
-    }
-    return dataUrl;
-  } catch {
-    return null;
-  }
-}
-
-/**
- * A4 na šířku — jedna stránka (pokud se tabulka nevejde, autoTable přidá stránky).
- * Čeština přes DejaVu.
- */
-export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkListPdfOptions): Promise<jsPDF> {
-  const doc = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
-  await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
-
-  const pageW = doc.internal.pageSize.getWidth();
-  const pageH = doc.internal.pageSize.getHeight();
-  const margin = 10;
+function drawHeaderBlock(doc: jsPDF, margin: number, opts: BuildProductionA4WorkListPdfOptions): number {
   let y = margin;
-
   doc.setFont(PDF_FONT_FAMILY, "bold");
   doc.setFontSize(14);
   doc.text("Výrobní list — výdej", margin, y);
   y += 7;
-
   doc.setFont(PDF_FONT_FAMILY, "normal");
   doc.setFontSize(9);
   doc.text(`Zakázka: ${opts.jobName}`, margin, y);
@@ -119,77 +34,163 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
   doc.text(`Zákazník: ${opts.customerLabel || "—"}`, margin, y);
   y += 4.5;
   doc.text(`Datum: ${opts.dateLabel}`, margin, y);
-  y += 6;
+  y += 7;
+  return y;
+}
 
-  const thumbW = 95;
-  const thumbH = pageH - y - margin - 28;
-  let tableStartX = margin + thumbW + 6;
-  let tableStartY = margin + 22;
+/**
+ * A4 výrobní list: hlavička, všechny stránky PDF výkresu (pdf.js → canvas, celé stránky),
+ * poté tabulka materiálu (autoTable, vlastní stránkování).
+ */
+export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkListPdfOptions): Promise<jsPDF> {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
 
-  if (opts.drawing) {
-    const dataUrl = await firstPageThumbDataUrl(opts.drawing);
-    if (dataUrl) {
+  const margin = 10;
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const maxBoxW = pageW - 2 * margin;
+  const maxBoxH = pageH - 2 * margin;
+
+  const afterHeaderY = drawHeaderBlock(doc, margin, opts);
+
+  const drawing = opts.drawing;
+  const u = drawing ? String(drawing.url || "").trim() : "";
+
+  /** Po výkresech vždy nová stránka pro tabulku; bez výkresu tabulka pod hlavičkou. */
+  let tableOnFreshPage = false;
+
+  if (drawing && u) {
+    if (drawing.kind === "pdf") {
+      tableOnFreshPage = true;
+      let pdf: import("pdfjs-dist").PDFDocumentProxy | null = null;
       try {
-        const fmt: "JPEG" | "PNG" = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
-        const props = doc.getImageProperties(dataUrl);
-        const iw = props.width;
-        const ih = props.height;
-        if (iw > 1 && ih > 1) {
-          let w = thumbW;
-          let h = (ih * w) / iw;
-          if (h > thumbH) {
-            h = thumbH;
-            w = (iw * h) / ih;
+        pdf = await loadPdfDocumentFromUrl(u);
+        const n = pdf.numPages;
+        for (let i = 1; i <= n; i++) {
+          const page = await pdf.getPage(i);
+          if (i === 1) {
+            const hBelowHeader = pageH - afterHeaderY - margin;
+            if (hBelowHeader >= 85) {
+              await renderPdfJsPageToJsPdfRegion(doc, page, {
+                x: margin,
+                y: afterHeaderY,
+                maxW: maxBoxW,
+                maxH: hBelowHeader,
+              });
+            } else {
+              doc.addPage();
+              await renderPdfJsPageToJsPdfRegion(doc, page, { x: margin, y: margin, maxW: maxBoxW, maxH: maxBoxH });
+            }
+          } else {
+            doc.addPage();
+            await renderPdfJsPageToJsPdfRegion(doc, page, { x: margin, y: margin, maxW: maxBoxW, maxH: maxBoxH });
           }
-          doc.addImage(dataUrl, fmt, margin, y, w, h);
+        }
+      } finally {
+        try {
+          pdf?.destroy?.();
+        } catch {
+          /* */
+        }
+      }
+    } else if (drawing.kind === "image") {
+      tableOnFreshPage = true;
+      try {
+        const dataUrl = await fetchImageAsDataUrl(u);
+        if (dataUrl) {
+          const fmt: "JPEG" | "PNG" = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
+          const props = doc.getImageProperties(dataUrl);
+          const iw = props.width;
+          const ih = props.height;
+          if (iw > 1 && ih > 1) {
+            const hBelowHeader = pageH - afterHeaderY - margin;
+            let maxW = maxBoxW;
+            let maxH = maxBoxH;
+            let x0 = margin;
+            let y0 = margin;
+            if (hBelowHeader >= 70) {
+              maxH = hBelowHeader;
+              y0 = afterHeaderY;
+            } else {
+              doc.addPage();
+            }
+            let w = maxW;
+            let h = (ih * w) / iw;
+            if (h > maxH) {
+              h = maxH;
+              w = (iw * h) / ih;
+            }
+            const px = x0 + (maxW - w) / 2;
+            const py = y0 + (maxH - h) / 2;
+            doc.addImage(dataUrl, fmt, px, py, w, h);
+          }
+        } else {
+          doc.setFont(PDF_FONT_FAMILY, "normal");
+          doc.setFontSize(10);
+          doc.text(`Obrázek výkresu se nepodařilo načíst: ${drawing.fileName}`, margin, afterHeaderY + 4);
         }
       } catch {
-        doc.setFontSize(8);
-        doc.text(`Náhled výkresu: ${opts.drawing.fileName}`, margin, y + 4);
+        doc.setFont(PDF_FONT_FAMILY, "normal");
+        doc.setFontSize(10);
+        doc.text(`Obrázek výkresu se nepodařilo načíst: ${drawing.fileName}`, margin, afterHeaderY + 4);
       }
-      doc.setFont(PDF_FONT_FAMILY, "normal");
-      doc.setFontSize(7);
-      doc.setTextColor(70, 70, 70);
-      const cap = doc.splitTextToSize(String(opts.drawing.fileName || ""), thumbW);
-      doc.text(cap, margin, Math.min(y + thumbH - 2, pageH - margin - 14));
-      doc.setTextColor(0, 0, 0);
-    } else {
-      doc.setFontSize(8);
-      doc.text(`Výkres: ${opts.drawing.fileName}`, margin, y + 4);
     }
-  } else {
-    doc.setFontSize(8);
-    doc.text("Bez přiloženého výkresu", margin, y + 4);
   }
 
-  const body = opts.materialRows.map((r) => [
-    r.itemName,
-    r.quantity,
-    r.unit,
-    r.cuts ?? "—",
-    r.remainder ?? "—",
-    r.note ?? "",
-    r.statusLabel ?? "—",
-  ]);
+  const body = opts.materialRows.map((r) => r.cells);
+
+  const head = [
+    [
+      "Položka",
+      "Odebráno (součet)",
+      "j.",
+      "Délka kusu",
+      "Řez / použito",
+      "Zbytek z kusu",
+      "Kusů po řezu",
+      "Celk. zbytek (řádek)",
+      "Pozn.",
+      "Stav výkresu",
+    ],
+  ];
+
+  if (tableOnFreshPage) {
+    doc.addPage();
+  }
+
+  const startY = tableOnFreshPage ? margin : afterHeaderY + 2;
 
   autoTable(doc, {
-    startY: tableStartY,
-    margin: { left: tableStartX, right: margin, top: tableStartY },
-    tableWidth: pageW - tableStartX - margin,
-    head: [["Položka", "Množ.", "j.", "Řezy / opak.", "Zbytek / sklad", "Pozn.", "Stav"]],
+    startY,
+    margin: { left: margin, right: margin },
+    head,
     body,
     styles: {
       font: PDF_FONT_FAMILY,
       fontSize: 7,
-      cellPadding: 1,
+      cellPadding: 1.1,
       overflow: "linebreak",
     },
     headStyles: { font: PDF_FONT_FAMILY, fontStyle: "bold", fillColor: [41, 98, 120], textColor: 255 },
     bodyStyles: { font: PDF_FONT_FAMILY },
+    didParseCell: (data) => {
+      if (data.section !== "body") return;
+      const row = opts.materialRows[data.row.index];
+      if (!row) return;
+      if (row.boldRemainder && data.column.index === 5) {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.textColor = [15, 118, 110];
+      }
+      if (row.boldLineTotal && data.column.index === 7) {
+        data.cell.styles.fontStyle = "bold";
+        data.cell.styles.textColor = [15, 118, 110];
+      }
+    },
   });
 
-  const finalY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? y + thumbH;
-  let footY = Math.max(finalY + 6, pageH - margin - 18);
+  const finalY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? startY + 40;
+  let footY = Math.min(finalY + 6, pageH - margin - 14);
   if (opts.footerNote) {
     doc.setFont(PDF_FONT_FAMILY, "normal");
     doc.setFontSize(8);

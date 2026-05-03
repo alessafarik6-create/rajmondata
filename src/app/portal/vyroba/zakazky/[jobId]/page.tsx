@@ -118,6 +118,7 @@ import {
   downloadProductionA4WorkListPdf,
   openProductionA4WorkListPdfPrint,
 } from "@/lib/production-a4-work-list-pdf";
+import { buildProductionA4MaterialRows } from "@/lib/production-a4-material-rows";
 import {
   PRODUCTION_DRAWING_STATUS_BADGE_CLASS,
   PRODUCTION_DRAWING_STATUS_LABELS,
@@ -1793,35 +1794,6 @@ export default function VyrobaZakazkaDetailPage() {
     [issueQueue]
   );
 
-  const materialRowsForA4 = useCallback(
-    (lines: IssueQueueLine[]) =>
-      lines.map((ln) => {
-        const inv = inventoryById.get(ln.itemId);
-        const unit = inv?.unit || "ks";
-        const cuts =
-          inv && String(inv.stockTrackingMode) === "length"
-            ? ln.repeatCountStr && ln.repeatCountStr !== "1"
-              ? `${ln.repeatCountStr}× ${ln.qtyStr} ${ln.inputLengthUnit || ""}`
-              : `${ln.qtyStr} ${ln.inputLengthUnit || ""}`
-            : "—";
-        const sp = stockPiecesSummaryByItem[ln.itemId];
-        const remainder =
-          inv && String(inv.stockTrackingMode) === "length" && sp && !sp.loading ? sp.label : "—";
-        const stDoc = ln.productionDrawingKey ? drawingStatusByKey.get(ln.productionDrawingKey) : null;
-        const st = (stDoc?.status as ProductionDrawingStatusValue) || "unprepared";
-        return {
-          itemName: String(inv?.name ?? ln.itemId),
-          quantity: ln.qtyStr,
-          unit,
-          cuts,
-          remainder,
-          note: [ln.note, ln.batchNumber ? `Šarže: ${ln.batchNumber}` : ""].filter(Boolean).join(" · "),
-          statusLabel: PRODUCTION_DRAWING_STATUS_LABELS[st],
-        };
-      }),
-    [inventoryById, stockPiecesSummaryByItem, drawingStatusByKey]
-  );
-
   const runA4WorkListExport = useCallback(
     async (
       action: "download" | "print",
@@ -1872,12 +1844,22 @@ export default function VyrobaZakazkaDetailPage() {
         if (st) footerParts.push(`Stav výkresu: ${PRODUCTION_DRAWING_STATUS_LABELS[st]}`);
       }
       try {
+        const materialRows = buildProductionA4MaterialRows(
+          lines,
+          inventoryById,
+          stockPiecesSummaryByItem,
+          (ln) => {
+            const stDoc = ln.productionDrawingKey ? drawingStatusByKey.get(ln.productionDrawingKey) : null;
+            const st = (stDoc?.status as ProductionDrawingStatusValue) || "unprepared";
+            return PRODUCTION_DRAWING_STATUS_LABELS[st];
+          }
+        );
         const doc = await buildProductionA4WorkListPdf({
           jobName,
           customerLabel: customer,
           dateLabel,
           drawing: drawingRef,
-          materialRows: materialRowsForA4(lines),
+          materialRows,
           footerNote: footerParts.length ? footerParts.join(" · ") : undefined,
         });
         if (action === "print") openProductionA4WorkListPdfPrint(doc);
@@ -1894,7 +1876,9 @@ export default function VyrobaZakazkaDetailPage() {
       jobView,
       jobId,
       issueQueueLinesForA4Filter,
-      materialRowsForA4,
+      inventoryById,
+      stockPiecesSummaryByItem,
+      drawingStatusByKey,
       productionPdfRows,
       productionPdfSelectedIndex,
       drawingStatusByKey,
@@ -2437,7 +2421,7 @@ export default function VyrobaZakazkaDetailPage() {
                                   })
                                 }
                               >
-                                Export A4
+                                Export výrobní list (A4)
                               </Button>
                             </div>
                           </div>
@@ -3089,7 +3073,7 @@ export default function VyrobaZakazkaDetailPage() {
                       }
                     >
                       <FileDown className="h-4 w-4" />
-                      Export A4 výrobní list
+                      Export výrobní list (A4)
                     </Button>
                     <Button
                       type="button"
@@ -3099,7 +3083,7 @@ export default function VyrobaZakazkaDetailPage() {
                       disabled={issueQueue.length === 0}
                       onClick={() => void runA4WorkListExport("download", "all", null)}
                     >
-                      Export A4 — všechna PDF
+                      Export výrobní list (A4) — všechna PDF
                     </Button>
                     <Button
                       type="button"
@@ -3114,7 +3098,7 @@ export default function VyrobaZakazkaDetailPage() {
                       }
                     >
                       <Printer className="h-4 w-4" />
-                      Vytisknout A4 výrobní list
+                      Vytisknout výrobní list (A4)
                     </Button>
                   </div>
                   {issueQueue.length === 0 ? (
