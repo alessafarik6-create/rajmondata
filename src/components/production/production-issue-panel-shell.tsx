@@ -16,6 +16,7 @@ export function ProductionIssuePanelShell({ className, children }: ProductionIss
     <div
       className={cn(
         "w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50/40 shadow-sm",
+        "max-lg:border-slate-700 max-lg:bg-slate-900/50 max-lg:shadow-lg",
         className
       )}
     >

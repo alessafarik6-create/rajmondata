@@ -107,6 +107,8 @@ export function ProductionJobTopExtras(props: {
   actorDisplayName: string;
   suggestionEmails?: Array<{ email: string; label: string }>;
   canMutate: boolean;
+  /** Pro externí tlačítko (např. sekce Export na mobilu) — `document.getElementById(id)?.click()` */
+  quickOrderButtonId?: string;
 }) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -364,23 +366,27 @@ export function ProductionJobTopExtras(props: {
   };
 
   return (
-    <div className="mb-4 shrink-0 space-y-3">
-      <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-2.5">
+    <div className="mb-4 shrink-0 space-y-3 max-lg:text-slate-100">
+      <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-2.5 max-lg:border-slate-700 max-lg:bg-slate-800/80">
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Výrobní podklady</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 max-lg:text-orange-100/90">
+            Výrobní podklady
+          </p>
         </div>
         {sheets.length === 0 ? (
-          <p className="text-xs text-slate-500">Zatím žádný uložený výrobní list — použijte export PDF níže.</p>
+          <p className="text-xs text-slate-500 max-lg:text-slate-400">
+            Zatím žádný uložený výrobní list — použijte export PDF níže.
+          </p>
         ) : (
           <ul className="space-y-1.5">
             {sheets.map((s) => (
               <li
                 key={s.id}
-                className="flex flex-col gap-1 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-1 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs sm:flex-row sm:items-center sm:justify-between max-lg:border-slate-600 max-lg:bg-slate-900/90 max-lg:text-slate-100"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-slate-900">{s.fileName}</p>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="truncate font-medium text-slate-900 max-lg:text-slate-50">{s.fileName}</p>
+                  <p className="text-[11px] text-slate-500 max-lg:text-slate-400">
                     {formatTs(s.createdAt)} — {s.createdByName}
                     {s.productionStartedAt ? (
                       <span>
@@ -442,28 +448,37 @@ export function ProductionJobTopExtras(props: {
         )}
       </div>
 
-      <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-2.5">
+      <div className="rounded-lg border border-slate-200 bg-slate-50/90 p-2.5 max-lg:border-slate-700 max-lg:bg-slate-800/80">
         <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Objednávky materiálu</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 max-lg:text-orange-100/90">
+            Objednávky materiálu
+          </p>
           {props.canMutate ? (
-            <Button type="button" size="sm" variant="outline" className="h-7 gap-1 text-[11px]" onClick={openQuick}>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              id={props.quickOrderButtonId}
+              className="h-7 gap-1 text-[11px] max-lg:min-h-10 max-lg:border-orange-500/50 max-lg:bg-orange-600 max-lg:text-white hover:max-lg:bg-orange-500"
+              onClick={openQuick}
+            >
               <Mail className="h-3 w-3" />
               Rychlá objednávka materiálu
             </Button>
           ) : null}
         </div>
         {quickOrders.length === 0 ? (
-          <p className="text-xs text-slate-500">Zatím žádná rychlá objednávka.</p>
+          <p className="text-xs text-slate-500 max-lg:text-slate-400">Zatím žádná rychlá objednávka.</p>
         ) : (
           <ul className="space-y-1.5">
             {quickOrders.map((o) => (
               <li
                 key={o.id}
-                className="flex flex-col gap-1 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs sm:flex-row sm:items-center sm:justify-between"
+                className="flex flex-col gap-1 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs sm:flex-row sm:items-center sm:justify-between max-lg:border-slate-600 max-lg:bg-slate-900/90 max-lg:text-slate-100"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-slate-900">{o.title}</p>
-                  <p className="text-[11px] text-slate-500">
+                  <p className="truncate font-medium text-slate-900 max-lg:text-slate-50">{o.title}</p>
+                  <p className="text-[11px] text-slate-500 max-lg:text-slate-400">
                     Komu: {o.recipientEmail || o.lastEmailSentTo || "—"} · {formatTs(o.sentAt)} ·{" "}
                     {o.sentByName || "—"}
                   </p>

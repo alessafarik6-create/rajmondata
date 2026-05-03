@@ -150,8 +150,18 @@ import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-
 import { ProductionJobTopExtras } from "@/components/production/production-job-top-extras";
 import { isValidEmailAddress } from "@/lib/document-email-outbound";
 import { uploadProductionSheetPdfBlob } from "@/lib/production-sheet-storage-upload";
+import {
+  VYROBA_MOBILE_NESTED_LIGHT_FIX,
+  VYROBA_MOBILE_PAGE_ROOT,
+  VYROBA_MOBILE_PRIMARY,
+  VYROBA_MOBILE_SECONDARY,
+} from "@/lib/production-mobile-ui";
+import { ProductionDrawingFullscreenDialog } from "@/components/production/production-drawing-fullscreen-dialog";
 
-const CARD = "border-slate-200 bg-white text-slate-900";
+const CARD = cn(
+  "border-slate-200 bg-white text-slate-900",
+  "max-lg:border-slate-700 max-lg:bg-slate-900/95 max-lg:text-slate-100 max-lg:shadow-lg"
+);
 const DEFAULT_PRODUCTION_WORKBENCH_TOP_PX = 600;
 const PRODUCTION_TOP_PANEL_VIEWPORT_RESERVE = 160;
 const PRODUCTION_TOP_PANEL_MIN_PX = 420;
@@ -568,6 +578,10 @@ export default function VyrobaZakazkaDetailPage() {
   }, []);
   const [a4IncludeUnassigned, setA4IncludeUnassigned] = useState(false);
   const [queueEditDrawingKey, setQueueEditDrawingKey] = useState<string | null>(null);
+  const [mobileDrawingOpen, setMobileDrawingOpen] = useState(false);
+  const [mobileDrawingUrl, setMobileDrawingUrl] = useState("");
+  const [mobileDrawingTitle, setMobileDrawingTitle] = useState("");
+  const [mobileDrawingKind, setMobileDrawingKind] = useState<"pdf" | "image">("pdf");
 
   const productionPdfRows = useMemo(
     () =>
@@ -1651,6 +1665,75 @@ export default function VyrobaZakazkaDetailPage() {
     }
   }, [user, jobId, issueQueue, validateIssueQueueAgainstInventory, toast, loadApi]);
 
+  const submitSingleQueueLineIssue = useCallback(
+    async (ln: IssueQueueLine) => {
+      if (!user || !jobId) return;
+      const idx = issueQueue.findIndex((l) => l.key === ln.key);
+      if (idx < 0) return;
+      const prior = issueQueue.slice(0, idx);
+      const item = inventoryById.get(ln.itemId);
+      if (!item) {
+        toast({ variant: "destructive", title: "Položka není na skladě." });
+        return;
+      }
+      const total = issueLineTotalInStockUnits(item, ln);
+      if (total == null || !Number.isFinite(total) || total <= 0) {
+        toast({ variant: "destructive", title: "Zkontrolujte množství na řádku." });
+        return;
+      }
+      if (String(item.stockTrackingMode) === "pieces" && !Number.isInteger(total)) {
+        toast({ variant: "destructive", title: "U kusové evidence musí být celé číslo." });
+        return;
+      }
+      const avail = projectedAvailableForItem(item, prior);
+      if (total > avail + 1e-9) {
+        toast({
+          variant: "destructive",
+          title: "Nedostatek skladu",
+          description: `Dostupné ${avail} ${item.unit || "ks"} (řádky nad tímto už zásobu odečítají).`,
+        });
+        return;
+      }
+      setBulkSaving(true);
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch("/api/company/production/issue-material-bulk", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+          body: JSON.stringify({
+            jobId: String(jobId),
+            lines: [
+              {
+                itemId: ln.itemId,
+                quantity: Number(String(ln.qtyStr).replace(",", ".")),
+                repeatCount: Number(String(ln.repeatCountStr ?? "1").replace(",", ".")) || 1,
+                note: ln.note || null,
+                batchNumber: ln.batchNumber || null,
+                inputLengthUnit: ln.inputLengthUnit,
+              },
+            ],
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(typeof data.error === "string" ? data.error : "Výdej se nezdařil.");
+        }
+        toast({ title: "Vyskladněno", description: "Řádek byl zapsán na zakázku a odečten ze skladu." });
+        setIssueQueue((q) => q.filter((l) => l.key !== ln.key));
+        await loadApi();
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "Chyba",
+          description: e instanceof Error ? e.message : "Výdej se nezdařil.",
+        });
+      } finally {
+        setBulkSaving(false);
+      }
+    },
+    [user, jobId, issueQueue, inventoryById, toast, loadApi]
+  );
+
   const resolveExportDrawing = useCallback((): ProductionWorksheetDrawingRef | null => {
     if (previewTab === "pdf" && productionPdfRows.length > 0) {
       const i = Math.min(
@@ -2170,17 +2253,36 @@ export default function VyrobaZakazkaDetailPage() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-[min(100%,1600px)] space-y-6">
-      <div className="flex flex-wrap items-center gap-3">
-        <Button type="button" variant="outline" size="sm" asChild>
-          <Link href="/portal/vyroba/zakazky" className="gap-2">
-            <ArrowLeft className="h-4 w-4" /> Zakázky ve výrobě
-          </Link>
-        </Button>
-        <Button type="button" variant="ghost" size="sm" asChild>
-          <Link href="/portal/vyroba">Výroba</Link>
-        </Button>
-      </div>
+    <div
+      className={cn(
+        "mx-auto w-full max-w-[min(100%,1600px)] space-y-6",
+        VYROBA_MOBILE_PAGE_ROOT,
+        VYROBA_MOBILE_NESTED_LIGHT_FIX
+      )}
+    >
+      {loading || !jobView ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" variant="outline" size="sm" asChild>
+            <Link href="/portal/vyroba/zakazky" className="gap-2">
+              <ArrowLeft className="h-4 w-4" /> Zakázky ve výrobě
+            </Link>
+          </Button>
+          <Button type="button" variant="ghost" size="sm" asChild>
+            <Link href="/portal/vyroba">Výroba</Link>
+          </Button>
+        </div>
+      ) : (
+        <div className="hidden flex-wrap items-center gap-3 lg:flex">
+          <Button type="button" variant="outline" size="sm" asChild>
+            <Link href="/portal/vyroba/zakazky" className="gap-2">
+              <ArrowLeft className="h-4 w-4" /> Zakázky ve výrobě
+            </Link>
+          </Button>
+          <Button type="button" variant="ghost" size="sm" asChild>
+            <Link href="/portal/vyroba">Výroba</Link>
+          </Button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-16">
@@ -2203,11 +2305,45 @@ export default function VyrobaZakazkaDetailPage() {
         </Card>
       ) : (
         <>
-          <div>
+          <div className="space-y-2 rounded-xl border border-slate-700 bg-slate-900/90 p-3 shadow-lg lg:hidden">
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" className={cn(VYROBA_MOBILE_SECONDARY)} asChild>
+                <Link href="/portal/vyroba/zakazky" className="gap-2">
+                  <ArrowLeft className="h-4 w-4" /> Zpět
+                </Link>
+              </Button>
+              <Button type="button" variant="outline" size="sm" className={cn(VYROBA_MOBILE_SECONDARY)} asChild>
+                <Link href="/portal/vyroba">Výroba</Link>
+              </Button>
+            </div>
+            <h1 className="text-lg font-semibold leading-snug text-slate-50 sm:text-xl">
+              {String(jobView.displayLabel || jobView.name || jobId)}
+            </h1>
+            <div className="flex flex-wrap gap-2">
+              {jobView.productionWorkflowStatusLabel ? (
+                <Badge className="bg-orange-600 text-white hover:bg-orange-600">
+                  {String(jobView.productionWorkflowStatusLabel)}
+                </Badge>
+              ) : null}
+              {jobView.productionStatus ? (
+                <Badge variant="secondary" className="border-slate-600 bg-slate-800 text-slate-100">
+                  Stav výroby: {String(jobView.productionStatus)}
+                </Badge>
+              ) : null}
+              {jobView.status ? (
+                <Badge variant="outline" className="border-slate-500 capitalize text-slate-200">
+                  {String(jobView.status)}
+                </Badge>
+              ) : null}
+            </div>
+            <p className="text-xs text-slate-400">Zobrazení bez cen, faktur a obchodních dokladů.</p>
+          </div>
+
+          <div className="max-lg:hidden">
             <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl text-slate-900">
               {String(jobView.displayLabel || jobView.name || jobId)}
             </h1>
-            <div className="flex flex-wrap gap-2 mt-2 items-center">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
               {jobView.productionWorkflowStatusLabel ? (
                 <Badge className="bg-slate-800 text-white hover:bg-slate-800">
                   {String(jobView.productionWorkflowStatusLabel)}
@@ -2224,7 +2360,7 @@ export default function VyrobaZakazkaDetailPage() {
                 </Badge>
               ) : null}
             </div>
-            <p className="portal-page-description text-slate-700 mt-2 text-sm">
+            <p className="portal-page-description mt-2 text-sm text-slate-700">
               Zobrazení bez cen, faktur a obchodních dokladů.
             </p>
           </div>
@@ -2392,40 +2528,43 @@ export default function VyrobaZakazkaDetailPage() {
 
           <ProductionIssuePanelShell>
             <Card className={cn(CARD, "flex min-h-0 flex-1 flex-col overflow-hidden border-0 shadow-none")}>
-              <CardHeader className="shrink-0 border-b border-slate-100">
-                <CardTitle className="text-base text-slate-900 flex items-center gap-2">
+              <CardHeader className="shrink-0 border-b border-slate-100 max-lg:border-slate-700 max-lg:bg-slate-900/40">
+                <CardTitle className="flex items-center gap-2 text-base text-slate-900 max-lg:text-orange-100">
                   <Package className="h-4 w-4" />
                   Výdej ve výrobě
                 </CardTitle>
               </CardHeader>
-              <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-4 pt-6 text-sm sm:px-6 sm:pb-6">
-                <div className="mb-6 max-w-3xl shrink-0 space-y-3">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <CardContent className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden px-4 pb-4 pt-6 text-sm sm:px-6 sm:pb-6 max-lg:flex-col max-lg:gap-4 lg:gap-0">
+                <div className="mb-6 max-w-3xl shrink-0 space-y-3 max-lg:order-1 max-lg:mb-0 max-lg:max-w-none lg:order-1">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 max-lg:text-slate-400">
                     Materiál přiřazený k výrobě
                   </p>
-                  <p className="text-sm leading-relaxed text-slate-700">
+                  <p className="text-sm leading-relaxed text-slate-700 max-lg:text-slate-300">
                     Materiál nemusí být předem přiřazen — při každém výdeji ze skladu se automaticky zapíše spotřeba
                     na tuto zakázku. Volitelné rezervace řeší administrace skladu.
                   </p>
                 </div>
 
                 {companyId && jobId && user ? (
-                  <ProductionJobTopExtras
-                    companyId={companyId}
-                    jobId={String(jobId)}
-                    companyDisplayName={companyDisplayNameForOrders}
-                    jobLabel={jobLabelForExtras}
-                    customerLabel={materialOrderCustomerName}
-                    userId={user.uid}
-                    actorDisplayName={productionActorLabel}
-                    suggestionEmails={quickOrderSuggestionEmails}
-                    canMutate={accessOk}
-                  />
+                  <div className="max-lg:order-50 shrink-0 lg:order-2">
+                    <ProductionJobTopExtras
+                      companyId={companyId}
+                      jobId={String(jobId)}
+                      companyDisplayName={companyDisplayNameForOrders}
+                      jobLabel={jobLabelForExtras}
+                      customerLabel={materialOrderCustomerName}
+                      userId={user.uid}
+                      actorDisplayName={productionActorLabel}
+                      suggestionEmails={quickOrderSuggestionEmails}
+                      canMutate={accessOk}
+                      quickOrderButtonId="prod-quick-material-order-btn"
+                    />
+                  </div>
                 ) : null}
 
                 {productionPdfRows.length > 0 ? (
-                  <div className="mb-4 shrink-0 space-y-2 rounded-lg border border-slate-200 bg-slate-50/90 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <div className="mb-4 shrink-0 space-y-2 rounded-lg border border-slate-200 bg-slate-50/90 p-3 max-lg:order-2 max-lg:mb-0 max-lg:border-slate-600 max-lg:bg-slate-800/70 lg:order-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600 max-lg:text-orange-100/90">
                       PDF výkresy — připravenost materiálu
                     </p>
                     <div className="space-y-2">
@@ -2439,6 +2578,7 @@ export default function VyrobaZakazkaDetailPage() {
                             key={pdfRow.id}
                             className={cn(
                               "flex flex-col gap-2 rounded-md border bg-white p-2 sm:flex-row sm:items-center sm:justify-between",
+                              "max-lg:border-slate-600 max-lg:bg-slate-900/90",
                               active ? "border-emerald-400 ring-1 ring-emerald-200" : "border-slate-200"
                             )}
                           >
@@ -2446,7 +2586,7 @@ export default function VyrobaZakazkaDetailPage() {
                               <div className="flex flex-wrap items-center gap-2">
                                 <button
                                   type="button"
-                                  className="truncate text-left text-sm font-medium text-slate-900 hover:underline"
+                                  className="truncate text-left text-sm font-medium text-slate-900 hover:underline max-lg:text-slate-50"
                                   onClick={() => {
                                     setPreviewTab("pdf");
                                     const idx = productionPdfRows.findIndex((r) => r.id === pdfRow.id);
@@ -2463,7 +2603,9 @@ export default function VyrobaZakazkaDetailPage() {
                                 >
                                   {PRODUCTION_DRAWING_STATUS_LABELS[st]}
                                 </span>
-                                <span className="text-[11px] text-slate-500">Materiál: {matCount} řádků</span>
+                                <span className="text-[11px] text-slate-500 max-lg:text-slate-400">
+                                  Materiál: {matCount} řádků
+                                </span>
                               </div>
                             </div>
                             <div className="flex flex-wrap gap-1">
@@ -2528,20 +2670,81 @@ export default function VyrobaZakazkaDetailPage() {
                                 A4 tisk
                               </Button>
                             </div>
+                            <Button
+                              type="button"
+                              className={cn("w-full md:hidden", VYROBA_MOBILE_PRIMARY)}
+                              onClick={() => {
+                                setMobileDrawingKind("pdf");
+                                setMobileDrawingUrl(pdfRow.fileUrl);
+                                setMobileDrawingTitle(pdfRow.fileName);
+                                setMobileDrawingOpen(true);
+                                setPreviewTab("pdf");
+                                const idx = productionPdfRows.findIndex((r) => r.id === pdfRow.id);
+                                if (idx >= 0) setProductionPdfSelectedIndex(idx);
+                              }}
+                            >
+                              Otevřít výkres
+                            </Button>
                           </div>
                         );
                       })}
                     </div>
-                    <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-700">
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-700 max-lg:text-slate-300">
                       <Checkbox
                         checked={a4IncludeUnassigned}
                         onCheckedChange={(c) => setA4IncludeUnassigned(c === true)}
                       />
                       Při exportu aktuálního PDF zahrnout nepřiřazený materiál
                     </label>
+                    {firstImageAttachment ? (
+                      <div className="mt-3 space-y-2 border-t border-slate-600/80 pt-3 md:hidden">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-orange-100/90">
+                          Podklad (obrázek)
+                        </p>
+                        <p className="truncate text-sm text-slate-100">{firstImageAttachment.fileName}</p>
+                        <Button
+                          type="button"
+                          className={cn("w-full", VYROBA_MOBILE_PRIMARY)}
+                          onClick={() => {
+                            setMobileDrawingKind("image");
+                            setMobileDrawingUrl(firstImageAttachment.fileUrl);
+                            setMobileDrawingTitle(firstImageAttachment.fileName);
+                            setMobileDrawingOpen(true);
+                            setPreviewTab("image");
+                          }}
+                        >
+                          Otevřít výkres
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
                 ) : null}
 
+                {productionPdfRows.length === 0 && firstImageAttachment ? (
+                  <div className="mb-4 shrink-0 space-y-2 rounded-lg border border-slate-200 bg-slate-50/90 p-3 max-lg:order-2 max-lg:mb-0 max-lg:border-slate-600 max-lg:bg-slate-800/70 md:hidden lg:order-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-orange-100/90">
+                      Podklad (obrázek)
+                    </p>
+                    <p className="truncate text-sm text-slate-900 max-lg:text-slate-100">
+                      {firstImageAttachment.fileName}
+                    </p>
+                    <Button
+                      type="button"
+                      className={cn("w-full", VYROBA_MOBILE_PRIMARY)}
+                      onClick={() => {
+                        setMobileDrawingKind("image");
+                        setMobileDrawingUrl(firstImageAttachment.fileUrl);
+                        setMobileDrawingTitle(firstImageAttachment.fileName);
+                        setMobileDrawingOpen(true);
+                        setPreviewTab("image");
+                      }}
+                    >
+                      Otevřít výkres
+                    </Button>
+                  </div>
+                ) : null}
+
+                <div className="flex min-h-0 w-full flex-1 flex-col max-lg:order-3 lg:order-4">
                 <ProductionWorkbenchSplit
                   storageKeyPrefix={`vyroba-wb-${String(jobId)}`}
                   fillContainerHeight
@@ -2550,9 +2753,10 @@ export default function VyrobaZakazkaDetailPage() {
                   onControlledHeightsChange={onWorkbenchHeightsChange}
                   className="min-h-0 w-full flex-1"
                 leftPanel={
-                  <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
-                    <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/95 px-2 py-1.5">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                  <div className="hidden h-full min-h-0 flex-col overflow-hidden md:flex">
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white max-lg:bg-slate-900 max-lg:text-slate-100">
+                    <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/95 px-2 py-1.5 max-lg:border-slate-700 max-lg:bg-slate-800/90">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600 max-lg:text-orange-100/90">
                         Výkres / podklady
                       </span>
                     </div>
@@ -2606,14 +2810,15 @@ export default function VyrobaZakazkaDetailPage() {
                       )}
                     </div>
                   </div>
+                  </div>
                 }
                 rightPanel={
                   <div className="flex h-full min-h-0 flex-col overflow-hidden">
-                    <div className="z-30 shrink-0 space-y-2 border-b border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <div className="z-30 shrink-0 space-y-2 border-b border-slate-200 bg-slate-50 px-3 py-2.5 max-lg:border-slate-600 max-lg:bg-slate-800/90">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <h3
                           id="issue-form-material"
-                          className="text-sm font-semibold leading-tight text-slate-900"
+                          className="text-sm font-semibold leading-tight text-slate-900 max-lg:text-orange-100"
                         >
                           Výběr materiálu
                         </h3>
@@ -2621,20 +2826,23 @@ export default function VyrobaZakazkaDetailPage() {
                           type="button"
                           variant="secondary"
                           size="sm"
-                          className="h-8 shrink-0 px-2 text-xs"
+                          className={cn(
+                            "h-8 shrink-0 px-2 text-xs max-lg:min-h-10 max-lg:px-3",
+                            VYROBA_MOBILE_PRIMARY
+                          )}
                           disabled={bulkPickIds.size === 0}
                           onClick={() => addBulkPickedToQueue()}
                         >
-                          Vložit vybrané ({bulkPickIds.size})
+                          Přidat do seznamu ({bulkPickIds.size})
                         </Button>
                       </div>
                 {/* — Výběr materiálu — */}
                 <section aria-labelledby="issue-form-material" className="space-y-2">
                   <div className="space-y-2">
                     <div className="space-y-1">
-                      <Label className="text-xs font-medium text-slate-700">Kategorie</Label>
+                      <Label className="text-xs font-medium text-slate-700 max-lg:text-slate-300">Kategorie</Label>
                       <Select value={issueCategoryFilter} onValueChange={setIssueCategoryFilter}>
-                        <SelectTrigger className="border-slate-300 bg-white">
+                        <SelectTrigger className="border-slate-300 bg-white max-lg:border-slate-600 max-lg:bg-slate-800 max-lg:text-slate-100">
                           <SelectValue placeholder="Všechny kategorie" />
                         </SelectTrigger>
                         <SelectContent className="bg-white border-slate-200">
@@ -2648,13 +2856,16 @@ export default function VyrobaZakazkaDetailPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <Label htmlFor="issue-item-select" className="text-sm font-semibold text-slate-800">
+                    <Label
+                      htmlFor="issue-item-select"
+                      className="text-sm font-semibold text-slate-800 max-lg:text-slate-200"
+                    >
                       Skladová položka
                     </Label>
                     <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
                       <SelectTrigger
                         id="issue-item-select"
-                        className="min-h-[3.25rem] border-slate-300 bg-white py-2 pl-3 pr-2 text-sm shadow-sm h-auto !items-start"
+                        className="min-h-[3.25rem] border-slate-300 bg-white py-2 pl-3 pr-2 text-sm shadow-sm h-auto !items-start max-lg:border-slate-600 max-lg:bg-slate-800 max-lg:text-slate-100"
                         aria-label={
                           selectedItem
                             ? `Vybraná položka: ${selectedItem.name}, dostupné ${availableQty} ${selectedItem.unit || "ks"}`
@@ -2693,7 +2904,9 @@ export default function VyrobaZakazkaDetailPage() {
                               </div>
                             </>
                           ) : (
-                            <span className="py-1 text-sm text-slate-500">Vyberte materiál nebo zbytek</span>
+                            <span className="py-1 text-sm text-slate-500 max-lg:text-slate-400">
+                              Vyberte materiál nebo zbytek
+                            </span>
                           )}
                         </div>
                       </SelectTrigger>
@@ -2750,7 +2963,9 @@ export default function VyrobaZakazkaDetailPage() {
                     <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 overscroll-contain">
                   {issueableInventoryFiltered.length > 0 ? (
                     <div className="mb-4 space-y-2">
-                      <Label className="text-xs font-medium text-slate-700">Rychlý výběr</Label>
+                      <Label className="text-xs font-medium text-slate-700 max-lg:text-slate-300">
+                        Rychlý výběr
+                      </Label>
                       <div className="flex flex-col gap-2">
                         {issueableInventoryFiltered.slice(0, 80).map((i) => {
                           const q = availableStockQtyForIssueForm(i);
@@ -2768,7 +2983,7 @@ export default function VyrobaZakazkaDetailPage() {
                                 "flex w-full min-w-0 items-stretch gap-2 overflow-hidden rounded-lg border shadow-sm transition-colors",
                                 active
                                   ? "border-emerald-600 bg-emerald-600 text-white ring-1 ring-emerald-700/30"
-                                  : "border-slate-200 bg-white"
+                                  : "border-slate-200 bg-white max-lg:border-slate-600 max-lg:bg-slate-800/90"
                               )}
                             >
                               <div
@@ -3092,15 +3307,15 @@ export default function VyrobaZakazkaDetailPage() {
                 >
                   <h3
                     id="issue-queue-heading"
-                    className="border-b border-slate-200 pb-2 text-base font-semibold text-slate-900"
+                    className="border-b border-slate-200 pb-2 text-base font-semibold text-slate-900 max-lg:border-slate-600 max-lg:text-orange-100"
                   >
                     Materiál pro zakázku
                   </h3>
-                  <p className="text-sm text-slate-600 max-w-3xl">
+                  <p className="max-w-3xl text-sm text-slate-600 max-lg:text-slate-300">
                     Přidejte řádky (více skladových položek i různé řezy). Hromadný výdej proběhne v jedné transakci;
                     při nedostatku skladu se nic neuloží.
                   </p>
-                  <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-sm text-slate-800">
+                  <div className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-100 bg-slate-50/80 px-3 py-2 text-sm text-slate-800 max-lg:border-slate-600 max-lg:bg-slate-800/70 max-lg:text-slate-200">
                     <label className="flex cursor-pointer items-center gap-2">
                       <Checkbox
                         checked={attachDrawingToExport}
@@ -3108,16 +3323,17 @@ export default function VyrobaZakazkaDetailPage() {
                       />
                       <span>Přiložit výkres do PDF</span>
                     </label>
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-slate-500 max-lg:text-slate-400">
                       Aktuální náhled vlevo (PDF nebo obrázek).
                     </span>
                   </div>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-col gap-2">
+                    <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
                       variant="secondary"
                       size="sm"
-                      className="min-h-10 gap-1"
+                      className="min-h-10 gap-1 max-lg:min-h-11"
                       disabled={!selectedItem}
                       onClick={() => addCurrentFormToIssueQueue()}
                     >
@@ -3128,7 +3344,7 @@ export default function VyrobaZakazkaDetailPage() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="min-h-10 gap-1"
+                      className="min-h-10 gap-1 max-lg:min-h-11 max-lg:border-slate-500 max-lg:bg-slate-800 max-lg:text-slate-100 hover:max-lg:bg-slate-700"
                       disabled={!issueItemId}
                       onClick={() => addSameStockLineAgain()}
                     >
@@ -3137,13 +3353,15 @@ export default function VyrobaZakazkaDetailPage() {
                     <Button
                       type="button"
                       size="sm"
-                      className="min-h-10 gap-1 bg-emerald-700 text-white hover:bg-emerald-800"
+                      className="min-h-10 gap-1 bg-emerald-700 text-white hover:bg-emerald-800 max-lg:min-h-11"
                       disabled={bulkSaving || issueQueue.length === 0}
                       onClick={() => void submitBulkIssue()}
                     >
                       {bulkSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                       Odebrat vše ze skladu
                     </Button>
+                    </div>
+                    <div className="max-lg:hidden flex flex-wrap gap-2">
                     <Button
                       type="button"
                       variant="outline"
@@ -3245,9 +3463,41 @@ export default function VyrobaZakazkaDetailPage() {
                       <Printer className="h-4 w-4 shrink-0" />
                       Vytisknout (vysoká kvalita)
                     </Button>
+                    </div>
+                    <div className="flex flex-col gap-2 rounded-lg border border-slate-600 bg-slate-800/80 p-3 lg:hidden">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-orange-100">Export a tisk</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn("min-h-11 w-full justify-center gap-2", VYROBA_MOBILE_SECONDARY)}
+                        onClick={() => void runProductionWorksheetPdf("download", "overview")}
+                      >
+                        <FileDown className="h-4 w-4" />
+                        Export A4 výrobní list
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn("min-h-11 w-full justify-center gap-2", VYROBA_MOBILE_SECONDARY)}
+                        onClick={() => void runProductionWorksheetPdf("print", "print")}
+                      >
+                        <Printer className="h-4 w-4" />
+                        Vytisknout výrobní list
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className={cn("min-h-11 w-full justify-center gap-2", VYROBA_MOBILE_SECONDARY)}
+                        onClick={() => document.getElementById("prod-quick-material-order-btn")?.click()}
+                      >
+                        Rychlá objednávka materiálu
+                      </Button>
+                    </div>
                   </div>
                   {issueQueue.length === 0 ? (
-                    <p className="text-sm text-slate-500">Seznam je prázdný — použijte „Přidat do výdeje“.</p>
+                    <p className="text-sm text-slate-500 max-lg:text-slate-400">
+                      Seznam je prázdný — použijte „Přidat do seznamu“.
+                    </p>
                   ) : (
                     <>
                       <div className="hidden max-w-full overflow-x-auto rounded-lg border border-slate-200 bg-white lg:block">
@@ -3395,31 +3645,35 @@ export default function VyrobaZakazkaDetailPage() {
                           return (
                             <div
                               key={ln.key}
-                              className="rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-sm"
+                              className="rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-sm max-lg:border-slate-600 max-lg:bg-slate-800/90 max-lg:text-slate-100 max-lg:shadow-md"
                             >
                               <div className="flex gap-3">
                                 <InventoryItemThumbnail item={inv} size={44} className="shrink-0" />
                                 <div className="min-w-0 flex-1 space-y-1">
-                                  <p className="font-medium leading-snug text-slate-900">{inv?.name ?? ln.itemId}</p>
-                                  <p className="truncate text-[11px] text-slate-500 font-mono">{ln.itemId}</p>
-                                  <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs text-slate-700">
-                                    <dt className="text-slate-500">Dostupné</dt>
+                                  <p className="font-medium leading-snug text-slate-900 max-lg:text-slate-50">
+                                    {inv?.name ?? ln.itemId}
+                                  </p>
+                                  <p className="truncate font-mono text-[11px] text-slate-500 max-lg:text-slate-400">
+                                    {ln.itemId}
+                                  </p>
+                                  <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs text-slate-700 max-lg:text-slate-200">
+                                    <dt className="text-slate-500 max-lg:text-slate-400">Dostupné</dt>
                                     <dd className="tabular-nums text-right">
                                       {inv ? rowAvail : "—"} {unitLabel}
                                     </dd>
-                                    <dt className="text-slate-500">Sklad / kusy</dt>
-                                    <dd className="text-right text-[11px] leading-snug line-clamp-3">{stockCell}</dd>
-                                    <dt className="text-slate-500">Řez / množství</dt>
+                                    <dt className="text-slate-500 max-lg:text-slate-400">Sklad / kusy</dt>
+                                    <dd className="line-clamp-3 text-right text-[11px] leading-snug">{stockCell}</dd>
+                                    <dt className="text-slate-500 max-lg:text-slate-400">Řez / množství</dt>
                                     <dd className="tabular-nums text-right font-medium">{ln.qtyStr}</dd>
-                                    <dt className="text-slate-500">Opakování</dt>
+                                    <dt className="text-slate-500 max-lg:text-slate-400">Opakování</dt>
                                     <dd className="tabular-nums text-right">
                                       {inv && String(inv.stockTrackingMode) === "length"
                                         ? ln.repeatCountStr || "1"
                                         : "—"}
                                     </dd>
-                                    <dt className="text-slate-500">Jednotka</dt>
+                                    <dt className="text-slate-500 max-lg:text-slate-400">Jednotka</dt>
                                     <dd className="text-right">{lenEd ? (ln.inputLengthUnit || "—") : unitLabel}</dd>
-                                    <dt className="text-slate-500 col-span-2">Výkres PDF</dt>
+                                    <dt className="col-span-2 text-slate-500 max-lg:text-slate-400">Výkres PDF</dt>
                                     <dd className="col-span-2">
                                       <Select
                                         value={ln.productionDrawingKey || "__none__"}
@@ -3433,7 +3687,7 @@ export default function VyrobaZakazkaDetailPage() {
                                           )
                                         }
                                       >
-                                        <SelectTrigger className="h-9 w-full border-slate-300 bg-white text-xs">
+                                        <SelectTrigger className="h-9 w-full border-slate-300 bg-white text-xs max-lg:border-slate-600 max-lg:bg-slate-900 max-lg:text-slate-100">
                                           <SelectValue placeholder="—" />
                                         </SelectTrigger>
                                         <SelectContent className="bg-white border-slate-200">
@@ -3446,37 +3700,51 @@ export default function VyrobaZakazkaDetailPage() {
                                         </SelectContent>
                                       </Select>
                                     </dd>
-                                    <dt className="text-slate-500">Poznámka</dt>
-                                    <dd className="text-right text-[11px] line-clamp-3 break-words">{ln.note || "—"}</dd>
+                                    <dt className="text-slate-500 max-lg:text-slate-400">Poznámka</dt>
+                                    <dd className="line-clamp-3 break-words text-right text-[11px]">{ln.note || "—"}</dd>
                                     {ln.batchNumber ? (
                                       <>
-                                        <dt className="text-slate-500">Šarže</dt>
+                                        <dt className="text-slate-500 max-lg:text-slate-400">Šarže</dt>
                                         <dd className="truncate text-right text-[11px]">{ln.batchNumber}</dd>
                                       </>
                                     ) : null}
-                                    <dt className="text-slate-500">Stav</dt>
-                                    <dd className="text-right font-medium text-amber-800">Připraveno</dd>
+                                    <dt className="text-slate-500 max-lg:text-slate-400">Stav</dt>
+                                    <dd className="text-right font-medium text-amber-800 max-lg:text-amber-200">
+                                      Připraveno
+                                    </dd>
                                   </dl>
                                 </div>
                               </div>
-                              <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-2">
+                              <div className="mt-3 flex flex-col gap-2 border-t border-slate-100 pt-2 max-lg:border-slate-600 sm:flex-row sm:flex-wrap">
                                 <Button
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  className="h-8 flex-1 min-w-[8rem]"
+                                  className="h-10 min-h-10 flex-1 min-w-[8rem] max-lg:border-slate-500 max-lg:bg-slate-800 max-lg:text-slate-100"
                                   onClick={() => openEditIssueQueueLine(ln)}
                                 >
-                                  Upravit množství
+                                  Upravit
                                 </Button>
                                 <Button
                                   type="button"
                                   variant="ghost"
                                   size="sm"
-                                  className="h-8 flex-1 min-w-[8rem] text-red-700 hover:text-red-800"
+                                  className="h-10 min-h-10 flex-1 min-w-[8rem] text-red-700 hover:text-red-800 max-lg:text-red-400 max-lg:hover:text-red-300"
                                   onClick={() => removeIssueQueueLine(ln.key)}
                                 >
                                   Odebrat
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  className={cn(
+                                    "h-10 min-h-10 flex-1 min-w-[8rem] bg-orange-600 text-white hover:bg-orange-500",
+                                    "max-lg:w-full"
+                                  )}
+                                  disabled={bulkSaving}
+                                  onClick={() => void submitSingleQueueLineIssue(ln)}
+                                >
+                                  Vyskladnit
                                 </Button>
                               </div>
                             </div>
@@ -3509,23 +3777,34 @@ export default function VyrobaZakazkaDetailPage() {
               </div>
             }
           />
+                </div>
             </CardContent>
           </Card>
           </ProductionIssuePanelShell>
 
+          <ProductionDrawingFullscreenDialog
+            open={mobileDrawingOpen}
+            onOpenChange={setMobileDrawingOpen}
+            url={mobileDrawingUrl}
+            title={mobileDrawingTitle || "Výkres"}
+            kind={mobileDrawingKind}
+          />
+
           {companyId && jobId && jobView && user ? (
-            <JobMaterialOrdersSection
-              companyId={companyId}
-              companyDisplayName={companyDisplayNameForOrders}
-              jobId={String(jobId)}
-              job={materialOrderJobRecord}
-              customerName={materialOrderCustomerName}
-              customerAddressLines={materialOrderCustomerAddress}
-              userId={user.uid}
-              canManage={accessOk}
-              productionMaterialLines={productionMaterialLinesForOrder}
-              companyDoc={companyDocForOrders}
-            />
+            <div className="max-lg:rounded-xl max-lg:border max-lg:border-slate-700 max-lg:bg-slate-900/40 max-lg:p-3 max-lg:text-slate-100">
+              <JobMaterialOrdersSection
+                companyId={companyId}
+                companyDisplayName={companyDisplayNameForOrders}
+                jobId={String(jobId)}
+                job={materialOrderJobRecord}
+                customerName={materialOrderCustomerName}
+                customerAddressLines={materialOrderCustomerAddress}
+                userId={user.uid}
+                canManage={accessOk}
+                productionMaterialLines={productionMaterialLinesForOrder}
+                companyDoc={companyDocForOrders}
+              />
+            </div>
           ) : null}
 
           <Card className={CARD}>

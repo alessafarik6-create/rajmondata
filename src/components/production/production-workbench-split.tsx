@@ -263,6 +263,7 @@ export function ProductionWorkbenchSplit({
     <div
       className={cn(
         "flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-slate-50/90 shadow-sm",
+        "max-lg:border-slate-700 max-lg:bg-slate-900/95 max-lg:text-slate-100",
         "min-h-[min(52vh,520px)] lg:min-h-0 lg:h-full lg:max-h-none"
       )}
     >
@@ -319,11 +320,21 @@ export function ProductionWorkbenchSplit({
         ) : null}
 
         {!isLg ? (
-          <div ref={rowRef} className="flex min-h-0 w-full flex-1 flex-col gap-0 overflow-hidden lg:min-h-0">
+          <div
+            ref={rowRef}
+            className={cn(
+              "flex min-h-0 w-full flex-1 flex-col gap-2 overflow-hidden lg:min-h-0",
+              "md:max-lg:grid md:max-lg:grid-cols-2 md:max-lg:items-stretch md:max-lg:gap-2",
+              "md:max-lg:min-h-[min(52vh,560px)]"
+            )}
+          >
             {drawingVisible ? (
               <div
-                className="flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm"
-                style={{ minHeight: "min(42vh, 420px)", maxHeight: "48vh" }}
+                className={cn(
+                  "flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm",
+                  "max-lg:border-slate-700 max-lg:bg-slate-900 max-lg:text-slate-100",
+                  "min-h-[min(42vh,420px)] max-h-[48vh] md:max-lg:h-full md:max-lg:max-h-none md:max-lg:min-h-0"
+                )}
               >
                 <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">{leftPanel}</div>
               </div>
@@ -373,6 +384,7 @@ export function ProductionWorkbenchSplit({
       <div
         className={cn(
           "mt-2 w-full rounded-lg border border-slate-200 bg-white shadow-sm sm:mt-3",
+          "max-lg:border-slate-700 max-lg:bg-slate-900/90 max-lg:text-slate-100",
           "lg:mt-0 lg:flex lg:flex-1 lg:flex-col lg:overflow-hidden lg:min-h-[12rem]"
         )}
       >

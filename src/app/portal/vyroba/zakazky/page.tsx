@@ -16,8 +16,13 @@ import { canAccessCompanyModule } from "@/lib/platform-access";
 import { useMergedPlatformModuleCatalog } from "@/contexts/platform-module-catalog-context";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import { isCompanyPrivileged } from "@/lib/company-privilege";
+import { cn } from "@/lib/utils";
+import { VYROBA_MOBILE_NESTED_LIGHT_FIX, VYROBA_MOBILE_PAGE_ROOT } from "@/lib/production-mobile-ui";
 
-const CARD = "border-slate-200 bg-white text-slate-900";
+const CARD = cn(
+  "border-slate-200 bg-white text-slate-900",
+  "max-lg:border-slate-700 max-lg:bg-slate-900/95 max-lg:text-slate-100"
+);
 
 type SafeJob = {
   jobId: string;
@@ -179,7 +184,7 @@ export default function VyrobaZakazkyListPage() {
               <Link
                 key={j.jobId}
                 href={`/portal/vyroba/zakazky/${j.jobId}`}
-                className="block rounded-lg border border-slate-200 bg-slate-50/80 p-4 hover:border-primary/40 transition-colors"
+                className="block rounded-lg border border-slate-200 bg-slate-50/80 p-4 transition-colors hover:border-primary/40 max-lg:border-slate-600 max-lg:bg-slate-800/80 max-lg:text-slate-100"
               >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span className="font-medium text-slate-900">
