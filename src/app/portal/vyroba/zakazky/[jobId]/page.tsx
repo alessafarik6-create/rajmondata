@@ -1995,8 +1995,8 @@ export default function VyrobaZakazkaDetailPage() {
                 Výdej ve výrobě
               </CardTitle>
             </CardHeader>
-            <CardContent className="min-h-0 px-4 pb-4 pt-6 text-sm sm:px-6 sm:pb-6">
-              <div className="mb-6 max-w-3xl space-y-3">
+            <CardContent className="flex min-h-0 flex-col px-4 pb-4 pt-6 text-sm sm:px-6 sm:pb-6">
+              <div className="mb-6 max-w-3xl shrink-0 space-y-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Materiál přiřazený k výrobě
                 </p>
@@ -2008,7 +2008,7 @@ export default function VyrobaZakazkaDetailPage() {
 
               <ProductionWorkbenchSplit
                 storageKeyPrefix={`vyroba-wb-${String(jobId)}`}
-                className="min-h-0"
+                className="min-h-0 w-full shrink-0 lg:min-h-0"
                 leftPanel={
                   <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
                     <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/95 px-2 py-1.5">
