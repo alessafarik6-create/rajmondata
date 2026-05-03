@@ -4,9 +4,10 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
-const TOP_H_MIN = 380;
-const TOP_H_DEFAULT = 550;
-const TOP_VIEWPORT_RESERVE = 240;
+/** Výška horního panelu (PDF + výběr materiálu) — px */
+const TOP_H_MIN = 420;
+const TOP_H_DEFAULT = 600;
+const TOP_VIEWPORT_RESERVE = 180;
 
 export type ProductionWorkbenchHeights = {
   splitPct: number;
@@ -31,12 +32,9 @@ type ProductionWorkbenchSplitProps = {
   leftPanel: React.ReactNode;
   rightPanel: React.ReactNode;
   bottomPanel: React.ReactNode;
-  /** Vyplní výšku rodiče (bez vlastního lg:h-[calc…]) — pro obal s pevnou výškou */
   fillContainerHeight?: boolean;
-  /** Řízené rozměry z Firestore / nadřazeného stavu */
   controlledHeights?: ProductionWorkbenchHeights | null;
   onControlledHeightsChange?: (patch: Partial<ProductionWorkbenchHeights>) => void;
-  /** Nepersistovat do localStorage (persistuje rodič) */
   disableLocalStorage?: boolean;
 };
 
@@ -79,18 +77,23 @@ export function ProductionWorkbenchSplit({
   );
 
   const [topMax, setTopMax] = useState(() =>
-    typeof window !== "undefined" ? Math.max(TOP_H_MIN, window.innerHeight - TOP_VIEWPORT_RESERVE) : 800
+    typeof window !== "undefined"
+      ? Math.max(TOP_H_MIN, window.innerHeight - TOP_VIEWPORT_RESERVE)
+      : TOP_H_DEFAULT + 200
   );
   const [drawingVisible, setDrawingVisible] = useState(true);
 
   const dragW = useRef<{ x: number; pct: number } | null>(null);
-  const dragH = useRef<{ y: number; h: number } | null>(null);
+  const dragHMouse = useRef<{ startY: number; startHeight: number } | null>(null);
   const rowRef = useRef<HTMLDivElement | null>(null);
   const isLg = useIsLg();
 
   useEffect(() => {
     const syncTopMax = () =>
-      Math.max(TOP_H_MIN, typeof window !== "undefined" ? window.innerHeight - TOP_VIEWPORT_RESERVE : TOP_H_MIN);
+      Math.max(
+        TOP_H_MIN,
+        typeof window !== "undefined" ? window.innerHeight - TOP_VIEWPORT_RESERVE : TOP_H_MIN
+      );
     const onResize = () => setTopMax(syncTopMax());
     onResize();
     window.addEventListener("resize", onResize);
@@ -177,38 +180,60 @@ export function ProductionWorkbenchSplit({
     [endW, onMoveW, splitPct]
   );
 
-  const onMoveH = useCallback(
-    (e: PointerEvent) => {
-      const st = dragH.current;
+  const onMouseMoveH = useCallback(
+    (e: MouseEvent) => {
+      const st = dragHMouse.current;
       if (!st) return;
-      const dy = e.clientY - st.y;
-      const next = Math.min(topMax, Math.max(TOP_H_MIN, st.h + dy));
+      const newH = st.startHeight + (e.clientY - st.startY);
+      const next = Math.min(topMax, Math.max(TOP_H_MIN, newH));
       setTopPanelHeight(next);
     },
     [topMax, setTopPanelHeight]
   );
 
-  const endH = useCallback(() => {
-    dragH.current = null;
-    window.removeEventListener("pointermove", onMoveH);
-    window.removeEventListener("pointerup", endH);
-    window.removeEventListener("pointercancel", endH);
-  }, [onMoveH]);
+  const endMouseH = useCallback(() => {
+    dragHMouse.current = null;
+    if (typeof document !== "undefined") {
+      document.body.style.userSelect = "";
+    }
+    window.removeEventListener("mousemove", onMouseMoveH);
+    window.removeEventListener("mouseup", endMouseH);
+  }, [onMouseMoveH]);
 
-  const startH = useCallback(
-    (e: React.PointerEvent) => {
+  const startMouseH = useCallback(
+    (e: React.MouseEvent) => {
       e.preventDefault();
-      dragH.current = { y: e.clientY, h: topPanelHeight };
-      window.addEventListener("pointermove", onMoveH);
-      window.addEventListener("pointerup", endH);
-      window.addEventListener("pointercancel", endH);
-      try {
-        (e.target as HTMLElement).setPointerCapture(e.pointerId);
-      } catch {
-        /* */
+      e.stopPropagation();
+      dragHMouse.current = { startY: e.clientY, startHeight: topPanelHeight };
+      if (typeof document !== "undefined") {
+        document.body.style.userSelect = "none";
       }
+      window.addEventListener("mousemove", onMouseMoveH);
+      window.addEventListener("mouseup", endMouseH);
     },
-    [endH, onMoveH, topPanelHeight]
+    [topPanelHeight, onMouseMoveH, endMouseH]
+  );
+
+  useEffect(() => {
+    return () => {
+      endMouseH();
+      endW();
+    };
+  }, [endMouseH, endW]);
+
+  const applyLargeTopMode = useCallback(() => {
+    setTopPanelHeight(topMax);
+  }, [topMax, setTopPanelHeight]);
+
+  const rightColumn = (
+    <div
+      className={cn(
+        "flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-slate-50/90 shadow-sm",
+        "min-h-[min(52vh,520px)] lg:min-h-0 lg:h-full lg:max-h-none"
+      )}
+    >
+      {rightPanel}
+    </div>
   );
 
   return (
@@ -219,20 +244,34 @@ export function ProductionWorkbenchSplit({
         className
       )}
     >
+      {/* Horní blok: výška = PDF + sklad (nezávislá na spodní frontě) */}
       <div
-        className="flex w-full shrink-0 flex-col overflow-hidden min-h-0"
+        className={cn(
+          "flex w-full shrink-0 flex-col overflow-hidden min-h-0",
+          isLg && "lg:grid lg:grid-rows-[auto_minmax(0,1fr)]"
+        )}
         style={
           isLg
             ? {
                 height: topPanelHeight,
                 minHeight: TOP_H_MIN,
                 maxHeight: topMax,
+                overflow: "hidden",
               }
             : undefined
         }
       >
         {isLg ? (
-          <div className="flex shrink-0 items-center justify-end border-b border-slate-200 bg-slate-50 px-2 py-1">
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-b border-slate-200 bg-slate-50 px-2 py-1 lg:min-h-0">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
+              onClick={applyLargeTopMode}
+            >
+              Velký režim (A4)
+            </Button>
             <Button
               type="button"
               variant="ghost"
@@ -245,61 +284,66 @@ export function ProductionWorkbenchSplit({
           </div>
         ) : null}
 
-        <div
-          ref={rowRef}
-          className={cn(
-            "flex min-h-0 w-full flex-1 flex-col gap-0 overflow-hidden lg:flex-row lg:items-stretch"
-          )}
-        >
-          {drawingVisible ? (
-            <>
+        {!isLg ? (
+          <div ref={rowRef} className="flex min-h-0 w-full flex-1 flex-col gap-0 overflow-hidden lg:min-h-0">
+            {drawingVisible ? (
               <div
-                className="flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm lg:shrink-0"
-                style={
-                  isLg
-                    ? { width: `${splitPct}%`, minWidth: 0, minHeight: 0, height: "100%" }
-                    : { minHeight: "min(42vh, 420px)", maxHeight: "48vh" }
-                }
+                className="flex min-h-0 w-full min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm"
+                style={{ minHeight: "min(42vh, 420px)", maxHeight: "48vh" }}
               >
                 <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">{leftPanel}</div>
               </div>
-
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="Změnit šířku panelů výkres a sklad"
-                className="hidden w-2 shrink-0 cursor-col-resize flex-col items-center justify-center border-y border-slate-200 bg-slate-100 hover:bg-slate-200 lg:flex"
-                onPointerDown={startW}
-              />
-            </>
-          ) : null}
-
-          <div
-            className={cn(
-              "flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-slate-50/90 shadow-sm",
-              "min-h-[min(52vh,520px)] lg:min-h-0 lg:max-h-none",
-              isLg && "h-full min-h-0"
-            )}
-          >
-            {rightPanel}
+            ) : null}
+            {rightColumn}
           </div>
-        </div>
+        ) : drawingVisible ? (
+          <div
+            ref={rowRef}
+            className="grid min-h-0 w-full flex-1 overflow-hidden"
+            style={{
+              gridTemplateColumns: `${splitPct}fr 8px ${100 - splitPct}fr`,
+              height: "100%",
+              minHeight: 0,
+            }}
+          >
+            <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
+              <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">{leftPanel}</div>
+            </div>
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Změnit šířku panelů výkres a sklad"
+              className="flex min-h-0 w-2 cursor-col-resize flex-col items-center justify-center border-y border-slate-200 bg-slate-100 hover:bg-slate-200"
+              onPointerDown={startW}
+            />
+            {rightColumn}
+          </div>
+        ) : (
+          <div ref={rowRef} className="grid min-h-0 w-full flex-1 grid-cols-1 overflow-hidden">
+            {rightColumn}
+          </div>
+        )}
       </div>
 
       {isLg ? (
         <div
           role="separator"
           aria-orientation="horizontal"
-          aria-label="Změnit výšku horního panelu (výkres a sklad) oproti seznamu materiálu"
-          className="flex h-2 w-full shrink-0 cursor-row-resize items-center justify-center border-y border-slate-200 bg-slate-100 hover:bg-slate-200"
-          onPointerDown={startH}
-        />
+          aria-label="Změnit výšku panelu výkres a výběr materiálu"
+          className="flex min-h-[10px] w-full shrink-0 cursor-row-resize select-none flex-col items-center justify-center gap-0.5 border-y border-slate-300 bg-slate-200 py-1.5 hover:bg-slate-300"
+          onMouseDown={startMouseH}
+        >
+          <span className="text-[10px] font-medium text-slate-700">⋮</span>
+          <span className="hidden px-2 text-center text-[10px] leading-tight text-slate-600 sm:inline">
+            Tažením změníte výšku celého panelu (výkres + výběr materiálu)
+          </span>
+        </div>
       ) : null}
 
       <div
         className={cn(
           "mt-2 w-full rounded-lg border border-slate-200 bg-white shadow-sm sm:mt-3",
-          "lg:flex lg:flex-1 lg:flex-col lg:overflow-hidden lg:min-h-[12rem]"
+          "lg:mt-0 lg:flex lg:flex-1 lg:flex-col lg:overflow-hidden lg:min-h-[12rem]"
         )}
       >
         <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain lg:flex-1">{bottomPanel}</div>

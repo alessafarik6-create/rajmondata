@@ -18,6 +18,31 @@ export function productionIssueLayoutLocalKey(companyId: string, userId: string)
   return `${LS_PREFIX}:${companyId}:${userId}`;
 }
 
+/** Okamžitý fallback výšky horního panelu (PDF + sklad) — přesně podle zadání klíče. */
+export function productionTopPanelHeightLocalKey(companyId: string, userId: string) {
+  return `productionIssuePanelHeight_${companyId}_${userId}`;
+}
+
+export function readProductionTopPanelHeightFromLocalStorage(companyId: string, userId: string): number | null {
+  try {
+    const raw = localStorage.getItem(productionTopPanelHeightLocalKey(companyId, userId));
+    if (raw == null) return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    return n;
+  } catch {
+    return null;
+  }
+}
+
+export function writeProductionTopPanelHeightToLocalStorage(companyId: string, userId: string, px: number): void {
+  try {
+    localStorage.setItem(productionTopPanelHeightLocalKey(companyId, userId), String(Math.round(px)));
+  } catch {
+    /* ignore */
+  }
+}
+
 export function readProductionIssueLayoutFromLocalStorage(companyId: string, userId: string): ProductionIssueUserLayoutDoc | null {
   try {
     const raw = localStorage.getItem(productionIssueLayoutLocalKey(companyId, userId));

@@ -433,12 +433,17 @@ export function JobProductionPdfDocumentationPanel({
             {loadError ? <span className="text-slate-500"> ({loadError})</span> : null}
           </p>
           {openUrl ? (
-            <div className="overflow-auto rounded-lg border border-slate-200 bg-white shadow-sm">
+            <div
+              className={cn(
+                "overflow-auto rounded-lg border border-slate-200 bg-white shadow-sm",
+                embedded && "flex min-h-0 flex-1 flex-col"
+              )}
+            >
               <iframe
                 src={openUrl}
                 title={current?.fileName || "PDF"}
-                className="block min-h-[240px] w-full"
-                style={embedded ? { height: "min(80vh, 720px)" } : { height: "min(1000px, 90vh)" }}
+                className={embedded ? "block h-full min-h-[240px] w-full max-h-full flex-1" : "block min-h-[240px] w-full"}
+                style={embedded ? undefined : { height: "min(1000px, 90vh)" }}
                 loading="lazy"
               />
             </div>

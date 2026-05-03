@@ -128,8 +128,10 @@ import {
 import {
   loadProductionIssueUserLayout,
   readProductionIssueLayoutFromLocalStorage,
+  readProductionTopPanelHeightFromLocalStorage,
   saveProductionIssueUserLayout,
   writeProductionIssueLayoutToLocalStorage,
+  writeProductionTopPanelHeightToLocalStorage,
 } from "@/lib/production-issue-user-layout";
 import {
   buildProductionWorksheetPdf,
@@ -141,7 +143,9 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
-const DEFAULT_PRODUCTION_WORKBENCH_TOP_PX = 550;
+const DEFAULT_PRODUCTION_WORKBENCH_TOP_PX = 600;
+const PRODUCTION_TOP_PANEL_VIEWPORT_RESERVE = 180;
+const PRODUCTION_TOP_PANEL_MIN_PX = 420;
 
 /** Kompaktní řádek kusů pro metráž (bez výpisu všech zbytků v kartě). */
 function compactLengthStockSummary(sp: StockPiecesSummary | undefined): string | null {
@@ -546,8 +550,6 @@ export default function VyrobaZakazkaDetailPage() {
   const [productionPdfSelectedIndex, setProductionPdfSelectedIndex] = useState(0);
   const [attachDrawingToExport, setAttachDrawingToExport] = useState(true);
   const [bulkPickIds, setBulkPickIds] = useState<Set<string>>(() => new Set());
-  /** Celková výška panelu „Výdej ve výrobě“ (px), desktop */
-  const [issuePanelOuterHeight, setIssuePanelOuterHeight] = useState<number | null>(null);
   const [workbenchHeights, setWorkbenchHeights] = useState<ProductionWorkbenchHeights>({
     splitPct: 46,
     topPanelHeight: DEFAULT_PRODUCTION_WORKBENCH_TOP_PX,
@@ -1169,21 +1171,22 @@ export default function VyrobaZakazkaDetailPage() {
       const merged = { ...ls, ...remote };
       if (cancelled) return;
       const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-      const defaultOuter = Math.min(820, Math.max(560, Math.floor(vh * 0.82)));
-      if (typeof merged.productionIssuePanelHeight === "number" && merged.productionIssuePanelHeight >= 500) {
-        setIssuePanelOuterHeight(Math.min(vh - 72, merged.productionIssuePanelHeight));
-      } else {
-        setIssuePanelOuterHeight(defaultOuter);
-      }
+      const topMax = Math.max(PRODUCTION_TOP_PANEL_MIN_PX, vh - PRODUCTION_TOP_PANEL_VIEWPORT_RESERVE);
+      const topFromDedicated = readProductionTopPanelHeightFromLocalStorage(companyId, user.uid);
+      const topFromMerged =
+        typeof merged.productionWorkbenchTopPx === "number" && Number.isFinite(merged.productionWorkbenchTopPx)
+          ? merged.productionWorkbenchTopPx
+          : topFromDedicated;
+      const topClamped =
+        typeof topFromMerged === "number" && Number.isFinite(topFromMerged)
+          ? Math.min(Math.max(PRODUCTION_TOP_PANEL_MIN_PX, topFromMerged), topMax)
+          : Math.min(Math.max(PRODUCTION_TOP_PANEL_MIN_PX, DEFAULT_PRODUCTION_WORKBENCH_TOP_PX), topMax);
       setWorkbenchHeights((prev) => ({
         splitPct:
           typeof merged.productionPdfPanelWidth === "number" && Number.isFinite(merged.productionPdfPanelWidth)
             ? Math.min(72, Math.max(28, merged.productionPdfPanelWidth))
             : prev.splitPct,
-        topPanelHeight:
-          typeof merged.productionWorkbenchTopPx === "number" && Number.isFinite(merged.productionWorkbenchTopPx)
-            ? Math.min(Math.max(380, merged.productionWorkbenchTopPx), vh - 240)
-            : prev.topPanelHeight,
+        topPanelHeight: topClamped,
       }));
     })();
     return () => {
@@ -1192,11 +1195,14 @@ export default function VyrobaZakazkaDetailPage() {
   }, [firestore, companyId, user?.uid]);
 
   useEffect(() => {
+    if (!companyId || !user?.uid) return;
+    writeProductionTopPanelHeightToLocalStorage(companyId, user.uid, workbenchHeights.topPanelHeight);
+  }, [companyId, user?.uid, workbenchHeights.topPanelHeight]);
+
+  useEffect(() => {
     if (!firestore || !companyId || !user?.uid) return;
-    if (issuePanelOuterHeight == null) return;
     const t = window.setTimeout(() => {
       const patch = {
-        productionIssuePanelHeight: issuePanelOuterHeight,
         productionPdfPanelWidth: workbenchHeights.splitPct,
         productionMaterialPanelWidth: 100 - workbenchHeights.splitPct,
         productionWorkbenchTopPx: workbenchHeights.topPanelHeight,
@@ -1205,7 +1211,7 @@ export default function VyrobaZakazkaDetailPage() {
       writeProductionIssueLayoutToLocalStorage(companyId, user.uid, patch);
     }, 800);
     return () => window.clearTimeout(t);
-  }, [firestore, companyId, user?.uid, issuePanelOuterHeight, workbenchHeights]);
+  }, [firestore, companyId, user?.uid, workbenchHeights]);
 
   const lengthUnitEditable = useMemo(() => lengthUnitEditableForItem(selectedItem), [selectedItem]);
 
@@ -2324,10 +2330,7 @@ export default function VyrobaZakazkaDetailPage() {
             </CardContent>
           </Card>
 
-          <ProductionIssuePanelShell
-            heightPx={issuePanelOuterHeight}
-            onHeightPxChange={setIssuePanelOuterHeight}
-          >
+          <ProductionIssuePanelShell>
             <Card className={cn(CARD, "flex min-h-0 flex-1 flex-col overflow-hidden border-0 shadow-none")}>
               <CardHeader className="shrink-0 border-b border-slate-100">
                 <CardTitle className="text-base text-slate-900 flex items-center gap-2">
