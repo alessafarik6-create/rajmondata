@@ -106,6 +106,8 @@ import {
 import { JobProductionPdfDocumentationPanel } from "@/components/production/job-production-pdf-documentation";
 import { ProductionWorkbenchSplit } from "@/components/production/production-workbench-split";
 import { useStockPiecesSummaries } from "@/hooks/use-stock-pieces-summaries";
+import type { StockPiecesSummary } from "@/hooks/use-stock-pieces-summaries";
+import { formatMmCs } from "@/lib/stock-pieces-display";
 import {
   buildProductionWorksheetPdf,
   downloadProductionWorksheetPdf,
@@ -116,6 +118,17 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
+
+/** Kompaktní řádek kusů pro metráž (bez výpisu všech zbytků v kartě). */
+function compactLengthStockSummary(sp: StockPiecesSummary | undefined): string | null {
+  if (!sp || sp.loading) return null;
+  const parts: string[] = [];
+  if (sp.full > 0) parts.push(`plné ${sp.full}`);
+  if (sp.partial > 0) parts.push(`načaté ${sp.partial}`);
+  const sumMm = (sp.partialLengthsMm || []).reduce((a, b) => a + (Number(b) || 0), 0);
+  if (sumMm > 0) parts.push(`zbytek ${formatMmCs(sumMm)} mm`);
+  return parts.length ? parts.join(" · ") : null;
+}
 
 /** Legacy jobs/.../photos — bez nadřazené složky; po job-level legacyPhotosEmployeeVisible řídí viditelnost souboru. */
 const LEGACY_JOB_PHOTOS_FOLDER_STUB: ProductionFolderRow = {
@@ -1654,8 +1667,11 @@ export default function VyrobaZakazkaDetailPage() {
     });
     setBulkPickIds(new Set());
     toast({
-      title: "Přidáno do seznamu",
-      description: `${added} řádků — zkontrolujte množství a řezy.`,
+      title: "Položky byly přidány",
+      description:
+        added > 0
+          ? `${added} ${added === 1 ? "položka" : added < 5 ? "položky" : "položek"} v seznamu „Materiál pro zakázku“ — zkontrolujte množství a řezy.`
+          : "Nic nebylo přidáno.",
     });
   }, [bulkPickIds, inventoryById, toast]);
 
@@ -1995,8 +2011,13 @@ export default function VyrobaZakazkaDetailPage() {
                 className="min-h-0"
                 leftPanel={
                   <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
+                    <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/95 px-2 py-1.5">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        Výkres / podklady
+                      </span>
+                    </div>
                     {productionPdfRows.length > 0 || firstImageAttachment ? (
-                      <div className="flex shrink-0 flex-wrap gap-2 border-b border-slate-100 px-2 py-2">
+                      <div className="flex shrink-0 flex-wrap gap-2 border-b border-slate-100 px-2 py-1.5">
                         {productionPdfRows.length > 0 ? (
                           <Button
                             type="button"
@@ -2047,19 +2068,31 @@ export default function VyrobaZakazkaDetailPage() {
                   </div>
                 }
                 rightPanel={
-                  <div className="space-y-8">
+                  <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                    <div className="z-30 shrink-0 space-y-2 border-b border-slate-200 bg-slate-50 px-3 py-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h3
+                          id="issue-form-material"
+                          className="text-sm font-semibold leading-tight text-slate-900"
+                        >
+                          Výběr materiálu
+                        </h3>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="h-8 shrink-0 px-2 text-xs"
+                          disabled={bulkPickIds.size === 0}
+                          onClick={() => addBulkPickedToQueue()}
+                        >
+                          Vložit vybrané ({bulkPickIds.size})
+                        </Button>
+                      </div>
                 {/* — Výběr materiálu — */}
-                <section aria-labelledby="issue-form-material" className="space-y-8 pb-4">
-                  <h3
-                    id="issue-form-material"
-                    className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
-                  >
-                    Výběr materiálu
-                  </h3>
-
-                  <div className="space-y-3">
-                    <div className="space-y-2">
-                      <Label className="text-sm font-semibold text-slate-800">Kategorie</Label>
+                <section aria-labelledby="issue-form-material" className="space-y-2">
+                  <div className="space-y-2">
+                    <div className="space-y-1">
+                      <Label className="text-xs font-medium text-slate-700">Kategorie</Label>
                       <Select value={issueCategoryFilter} onValueChange={setIssueCategoryFilter}>
                         <SelectTrigger className="border-slate-300 bg-white">
                           <SelectValue placeholder="Všechny kategorie" />
@@ -2081,37 +2114,37 @@ export default function VyrobaZakazkaDetailPage() {
                     <Select value={issueItemId || undefined} onValueChange={setIssueItemId}>
                       <SelectTrigger
                         id="issue-item-select"
-                        className="min-h-[4.5rem] border-slate-300 bg-white py-3 pl-4 pr-3 text-base shadow-sm h-auto !items-start"
+                        className="min-h-[3.25rem] border-slate-300 bg-white py-2 pl-3 pr-2 text-sm shadow-sm h-auto !items-start"
                         aria-label={
                           selectedItem
                             ? `Vybraná položka: ${selectedItem.name}, dostupné ${availableQty} ${selectedItem.unit || "ks"}`
                             : "Vyberte skladovou položku nebo zbytek"
                         }
                       >
-                        <div className="flex min-w-0 flex-1 items-start gap-4 py-0.5 text-left">
+                        <div className="flex min-w-0 flex-1 items-start gap-2 py-0.5 text-left">
                           {selectedItem ? (
                             <>
                               <div className="shrink-0 self-start">
                                 <InventoryItemThumbnail
                                   item={selectedItem}
-                                  size={110}
+                                  size={48}
                                   enableLightbox
                                   lightboxTitle={String(selectedItem.name ?? "Skladová položka")}
                                 />
                               </div>
                               <div className="min-w-0 flex-1 overflow-hidden pr-1">
-                                <p className="line-clamp-2 text-left text-sm font-semibold leading-snug text-slate-900 sm:text-base">
+                                <p className="truncate text-left text-sm font-semibold leading-snug text-slate-900">
                                   {selectedItem.name}
                                   {selectedItem.isRemainder ? (
                                     <span className="font-medium text-slate-600"> · zbytek</span>
                                   ) : null}
                                 </p>
-                                <p className="mt-2 block text-left text-xs leading-relaxed text-slate-500 sm:text-sm">
+                                <p className="mt-0.5 block text-left text-[11px] leading-snug text-slate-500">
                                   {selectedItem.sku ? (
-                                    <span className="block truncate">SKU {selectedItem.sku}</span>
+                                    <span className="block truncate font-mono">{selectedItem.sku}</span>
                                   ) : null}
-                                  <span className="mt-0.5 block text-slate-600">
-                                    Dostupné: <strong className="text-slate-800">{availableQty}</strong>{" "}
+                                  <span className="mt-0.5 block truncate text-slate-600">
+                                    <strong className="text-slate-800">{availableQty}</strong>{" "}
                                     {selectedItem.unit || "ks"}
                                     <span className="text-slate-400"> · </span>
                                     {stockModeShortLabel(selectedItem.stockTrackingMode)}
@@ -2120,7 +2153,7 @@ export default function VyrobaZakazkaDetailPage() {
                               </div>
                             </>
                           ) : (
-                            <span className="py-2 text-base text-slate-500">Vyberte materiál nebo zbytek</span>
+                            <span className="py-1 text-sm text-slate-500">Vyberte materiál nebo zbytek</span>
                           )}
                         </div>
                       </SelectTrigger>
@@ -2172,36 +2205,41 @@ export default function VyrobaZakazkaDetailPage() {
                       </SelectContent>
                     </Select>
                   </div>
-
+                </section>
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-3 py-2 overscroll-contain">
                   {issueableInventoryFiltered.length > 0 ? (
-                    <div className="space-y-5">
-                      <Label className="text-sm font-semibold text-slate-800">
-                        Rychlý výběr — klikněte na skladovou položku
-                      </Label>
-                      <div className="grid max-h-[min(30rem,65vh)] auto-rows-min grid-cols-1 gap-6 overflow-x-hidden overflow-y-auto px-0.5 pb-2 sm:grid-cols-2 sm:gap-6">
-                        {issueableInventoryFiltered.slice(0, 48).map((i) => {
+                    <div className="mb-4 space-y-2">
+                      <Label className="text-xs font-medium text-slate-700">Rychlý výběr</Label>
+                      <div className="flex flex-col gap-2">
+                        {issueableInventoryFiltered.slice(0, 80).map((i) => {
                           const q = availableStockQtyForIssueForm(i);
                           const active = issueItemId === i.id;
                           const spSum = stockPiecesSummaryByItem[i.id];
+                          const compact =
+                            String(i.stockTrackingMode) === "length"
+                              ? compactLengthStockSummary(spSum)
+                              : null;
+                          const fullLabel = spSum && !spSum.loading ? spSum.label : "";
                           return (
                             <div
                               key={i.id}
                               className={cn(
-                                "flex w-full min-w-0 shrink-0 flex-col overflow-hidden rounded-xl border-2 shadow-sm transition-colors sm:flex-row sm:items-stretch",
+                                "flex w-full min-w-0 items-stretch gap-2 overflow-hidden rounded-lg border shadow-sm transition-colors",
                                 active
                                   ? "border-emerald-600 bg-emerald-600 text-white ring-1 ring-emerald-700/30"
                                   : "border-slate-200 bg-white"
                               )}
                             >
                               <div
-                                className="flex shrink-0 items-start justify-center border-b border-slate-200/80 p-2 sm:flex-col sm:border-b-0 sm:border-r sm:border-slate-200/80"
+                                className="flex shrink-0 items-center justify-center border-r border-slate-200/80 px-2 py-2"
                                 onClick={(e) => e.stopPropagation()}
                                 onPointerDown={(e) => e.stopPropagation()}
                               >
                                 <Checkbox
                                   checked={bulkPickIds.has(i.id)}
                                   onCheckedChange={() => toggleBulkPick(i.id)}
-                                  aria-label={`Zařadit ${String(i.name ?? "položka")} do hromadného výběru`}
+                                  aria-label={`Vybrat ${String(i.name ?? "položka")}`}
                                   className={cn(
                                     "border-slate-400 data-[state=checked]:border-emerald-700 data-[state=checked]:bg-emerald-700",
                                     active && "border-white/70 data-[state=checked]:border-white data-[state=checked]:bg-white data-[state=checked]:text-emerald-700"
@@ -2212,33 +2250,32 @@ export default function VyrobaZakazkaDetailPage() {
                                 type="button"
                                 onClick={() => setIssueItemId(i.id)}
                                 className={cn(
-                                  "flex min-w-0 flex-1 flex-col items-stretch gap-4 overflow-hidden p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 sm:flex-row sm:items-start sm:p-5",
-                                  active
-                                    ? ""
-                                    : "hover:border-slate-300 hover:bg-slate-50/90 active:bg-slate-100"
+                                  "flex min-w-0 flex-1 items-center gap-2 overflow-hidden py-2 pr-2 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-1",
+                                  active ? "" : "hover:bg-slate-50/90 active:bg-slate-100"
                                 )}
                               >
-                                <div className="flex justify-center sm:block">
+                                <div className="shrink-0">
                                   <InventoryItemThumbnail
                                     item={i}
-                                    size={140}
+                                    size={52}
                                     enableLightbox
                                     lightboxTitle={String(i.name ?? "Skladová položka")}
                                     className={cn(active && "border-white/40 ring-1 ring-white/20")}
                                   />
                                 </div>
-                                <div className="flex min-h-0 min-w-0 flex-1 flex-col items-stretch justify-start gap-0 overflow-hidden text-left">
+                                <div className="min-w-0 flex-1 overflow-hidden text-left">
                                   <p
                                     className={cn(
-                                      "line-clamp-2 text-base font-semibold leading-snug tracking-tight",
+                                      "truncate text-sm font-semibold leading-tight",
                                       active ? "text-white" : "text-slate-900"
                                     )}
+                                    title={String(i.name ?? "")}
                                   >
                                     {i.name}
                                     {i.isRemainder ? (
                                       <span
                                         className={cn(
-                                          "font-medium",
+                                          "font-normal",
                                           active ? "text-emerald-100" : "text-slate-600"
                                         )}
                                       >
@@ -2247,39 +2284,46 @@ export default function VyrobaZakazkaDetailPage() {
                                       </span>
                                     ) : null}
                                   </p>
-                                  <div
-                                    className={cn(
-                                      "mt-auto space-y-1 border-t pt-2 text-xs leading-relaxed sm:text-sm",
-                                      active ? "border-white/25 text-emerald-50" : "border-slate-100 text-slate-500"
-                                    )}
-                                  >
-                                    {i.sku ? (
-                                      <p className={cn("truncate", active ? "text-emerald-100/95" : "")}>
-                                        SKU {i.sku}
-                                      </p>
-                                    ) : null}
-                                    <p className={active ? "text-emerald-50" : "text-slate-600"}>
-                                      <span className={active ? "text-emerald-100" : "text-slate-500"}>
-                                        Zásoba:{" "}
-                                      </span>
-                                      <strong className={active ? "text-white" : "text-slate-800"}>{q}</strong>{" "}
-                                      {i.unit || "ks"}
-                                      <span className={active ? "text-emerald-200/90" : "text-slate-400"}>
-                                        {" "}
-                                        · {stockModeShortLabel(i.stockTrackingMode)}
-                                      </span>
+                                  {i.sku ? (
+                                    <p
+                                      className={cn(
+                                        "truncate text-[11px] tabular-nums",
+                                        active ? "text-emerald-100/90" : "text-slate-500"
+                                      )}
+                                    >
+                                      {i.sku}
                                     </p>
-                                    {String(i.stockTrackingMode) === "length" && spSum ? (
-                                      <p
-                                        className={cn(
-                                          "text-[11px] leading-snug",
-                                          active ? "text-emerald-100/95" : "text-slate-600"
-                                        )}
-                                      >
-                                        {spSum.loading ? "Načítám kusy…" : spSum.label}
+                                  ) : null}
+                                  <p className={cn("truncate text-[11px]", active ? "text-emerald-50" : "text-slate-600")}>
+                                    <strong className={active ? "text-white" : "text-slate-800"}>{q}</strong>{" "}
+                                    {i.unit || "ks"}
+                                    <span className={active ? "text-emerald-200/90" : "text-slate-400"}>
+                                      {" "}
+                                      · {stockModeShortLabel(i.stockTrackingMode)}
+                                    </span>
+                                  </p>
+                                  {String(i.stockTrackingMode) === "length" && spSum ? (
+                                    spSum.loading ? (
+                                      <p className={cn("text-[10px]", active ? "text-emerald-100" : "text-slate-500")}>
+                                        Načítám kusy…
                                       </p>
-                                    ) : null}
-                                  </div>
+                                    ) : compact ? (
+                                      fullLabel.length > compact.length + 8 ? (
+                                        <details className={cn("text-[10px] leading-snug", active ? "text-emerald-100" : "text-slate-600")}>
+                                          <summary className="cursor-pointer select-none hover:underline">
+                                            {compact}
+                                          </summary>
+                                          <p className="mt-1 whitespace-pre-wrap break-words pl-1 text-[10px] opacity-90">
+                                            {fullLabel}
+                                          </p>
+                                        </details>
+                                      ) : (
+                                        <p className={cn("text-[10px] leading-snug", active ? "text-emerald-100" : "text-slate-600")}>
+                                          {compact}
+                                        </p>
+                                      )
+                                    ) : null
+                                  ) : null}
                                 </div>
                               </button>
                             </div>
@@ -2290,52 +2334,51 @@ export default function VyrobaZakazkaDetailPage() {
                   ) : null}
 
                   {selectedItem ? (
-                    <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-4 sm:p-5">
-                      <p className="mb-3 text-xs font-semibold uppercase tracking-wide text-emerald-900/90">
-                        Dostupné množství
+                    <div className="rounded-lg border border-emerald-200/80 bg-emerald-50/50 p-3">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-900/90">
+                        Vybraná položka
                       </p>
-                      <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
+                      <div className="flex items-start gap-2">
                         <InventoryItemThumbnail
                           item={selectedItem}
-                          size={140}
+                          size={56}
                           enableLightbox
                           lightboxTitle={String(selectedItem.name ?? "Skladová položka")}
                           className="shrink-0"
                         />
-                        <div className="min-w-0 flex-1 space-y-2 text-sm leading-relaxed text-slate-800">
+                        <div className="min-w-0 flex-1 space-y-1 text-xs leading-snug text-slate-800">
+                          <p className="truncate font-medium text-slate-900" title={String(selectedItem.name ?? "")}>
+                            {selectedItem.name}
+                          </p>
                           <p>
-                            Na skladě je k dispozici:{" "}
-                            <strong className="text-base text-slate-900">
+                            Dostupné:{" "}
+                            <strong className="text-sm text-slate-900">
                               {availableQty} {selectedItem.unit || "ks"}
                             </strong>
                           </p>
                           {String(selectedItem.stockTrackingMode || "") === "length" ? (
-                            <p className="text-sm text-slate-700">
-                              U metráže lze odebrat část — zůstatek zůstane na stejné skladové řádce (u starších
-                              výdejů můžete vidět i samostatné řádky „zbytek“).
+                            <p className="line-clamp-2 text-[11px] text-slate-600">
+                              Metráž: zůstatek zůstane na řádce skladu.
                             </p>
                           ) : null}
                           {issueQueue.some((l) => l.itemId === selectedItem.id) ? (
-                            <p className="text-xs text-slate-600 mt-2">
-                              Sklad celkem: <strong>{shelfAvailableQty}</strong> {selectedItem.unit || "ks"} — po
-                              odečtení seznamu „Materiál k výdeji“ zbývá pro další řádek:{" "}
-                              <strong>{availableQty}</strong> {selectedItem.unit || "ks"}.
+                            <p className="line-clamp-2 text-[11px] text-slate-600">
+                              Po seznamu výdeje zbývá: <strong>{availableQty}</strong> {selectedItem.unit || "ks"}.
                             </p>
                           ) : null}
                         </div>
                       </div>
                     </div>
                   ) : null}
-                </section>
 
                 {/* — Množství a řez — */}
                 <section
                   aria-labelledby="issue-form-qty"
-                  className="space-y-8 border-t-2 border-slate-200/90 pt-12 sm:pt-14"
+                  className="space-y-3 border-t border-slate-200 pt-4"
                 >
                   <h3
                     id="issue-form-qty"
-                    className="border-b border-slate-200 pb-3 text-base font-semibold text-slate-900"
+                    className="border-b border-slate-200 pb-1.5 text-sm font-semibold text-slate-900"
                   >
                     Množství a řez
                   </h3>
@@ -2350,7 +2393,7 @@ export default function VyrobaZakazkaDetailPage() {
                   ) : null}
 
                   <div
-                    className={`grid grid-cols-1 gap-8 lg:gap-10 ${
+                    className={`grid grid-cols-1 gap-3 sm:gap-4 ${
                       selectedItem &&
                       String(selectedItem.stockTrackingMode) === "length" &&
                       lengthUnitEditable
@@ -2469,7 +2512,6 @@ export default function VyrobaZakazkaDetailPage() {
                       ) : null}
                     </div>
                   ) : null}
-                </section>
 
                     <div className="grid grid-cols-1 gap-3 border-t border-slate-200 pt-4 sm:grid-cols-2">
                       <div className="space-y-1">
@@ -2496,6 +2538,8 @@ export default function VyrobaZakazkaDetailPage() {
                           placeholder="Doplňující informace k výdeji…"
                         />
                       </div>
+                    </div>
+                </section>
                     </div>
                   </div>
                 }
@@ -2552,16 +2596,6 @@ export default function VyrobaZakazkaDetailPage() {
                     </Button>
                     <Button
                       type="button"
-                      variant="outline"
-                      size="sm"
-                      className="min-h-10 gap-1"
-                      disabled={bulkPickIds.size === 0}
-                      onClick={() => addBulkPickedToQueue()}
-                    >
-                      Zařadit zaškrtnuté
-                    </Button>
-                    <Button
-                      type="button"
                       size="sm"
                       className="min-h-10 gap-1 bg-emerald-700 text-white hover:bg-emerald-800"
                       disabled={bulkSaving || issueQueue.length === 0}
@@ -2594,95 +2628,187 @@ export default function VyrobaZakazkaDetailPage() {
                   {issueQueue.length === 0 ? (
                     <p className="text-sm text-slate-500">Seznam je prázdný — použijte „Přidat do výdeje“.</p>
                   ) : (
-                    <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-                      <table className="w-full min-w-[56rem] text-sm">
-                        <thead>
-                          <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase text-slate-600">
-                            <th className="w-14 p-2 font-semibold" aria-label="Náhled" />
-                            <th className="p-2 font-semibold">Položka</th>
-                            <th className="p-2 font-semibold">Dostupné</th>
-                            <th className="min-w-[12rem] p-2 font-semibold">Sklad / kusy</th>
-                            <th className="p-2 font-semibold">Řez / množství</th>
-                            <th className="p-2 font-semibold">Opak.</th>
-                            <th className="p-2 font-semibold">Zadání</th>
-                            <th className="p-2 font-semibold">Poznámka</th>
-                            <th className="p-2 font-semibold">Stav</th>
-                            <th className="p-2 font-semibold w-40">Akce</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {issueQueue.map((ln, rowIdx) => {
-                            const inv = inventoryById.get(ln.itemId);
-                            const prior = issueQueue.slice(0, rowIdx);
-                            const rowAvail = inv ? projectedAvailableForItem(inv, prior) : 0;
-                            const unitLabel = inv?.unit || "ks";
-                            const lenEd = inv ? lengthUnitEditableForItem(inv) : false;
-                            const spRow = stockPiecesSummaryByItem[ln.itemId];
-                            return (
-                              <tr key={ln.key} className="border-t border-slate-100 align-top">
-                                <td className="p-2">
-                                  <InventoryItemThumbnail item={inv} size={48} />
-                                </td>
-                                <td className="p-2">
-                                  <p className="font-medium text-slate-900">{inv?.name ?? ln.itemId}</p>
-                                  <p className="text-[11px] text-slate-500 font-mono break-all">{ln.itemId}</p>
-                                </td>
-                                <td className="p-2 tabular-nums text-slate-800">
-                                  {inv ? rowAvail : "—"} {unitLabel}
-                                </td>
-                                <td className="p-2 text-xs text-slate-700 max-w-[14rem]">
-                                  {inv && String(inv.stockTrackingMode) === "length" && spRow
-                                    ? spRow.loading
-                                      ? "…"
-                                      : spRow.label
-                                    : "—"}
-                                </td>
-                                <td className="p-2 tabular-nums font-medium">{ln.qtyStr}</td>
-                                <td className="p-2 tabular-nums text-slate-700">
-                                  {inv && String(inv.stockTrackingMode) === "length"
-                                    ? ln.repeatCountStr || "1"
-                                    : "—"}
-                                </td>
-                                <td className="p-2 text-xs text-slate-600">
-                                  {lenEd ? (ln.inputLengthUnit || "—") : "—"}
-                                </td>
-                                <td className="p-2 text-xs text-slate-700 max-w-[14rem]">
-                                  {ln.note || "—"}
-                                  {ln.batchNumber ? (
-                                    <span className="block text-slate-500 mt-0.5">Šarže: {ln.batchNumber}</span>
-                                  ) : null}
-                                </td>
-                                <td className="p-2 text-xs font-medium text-amber-800 whitespace-nowrap">
-                                  Připraveno
-                                </td>
-                                <td className="p-2">
-                                  <div className="flex flex-wrap gap-1">
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="sm"
-                                      className="h-8"
-                                      onClick={() => openEditIssueQueueLine(ln)}
-                                    >
-                                      Upravit množství
-                                    </Button>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-8 text-red-700 hover:text-red-800"
-                                      onClick={() => removeIssueQueueLine(ln.key)}
-                                    >
-                                      Odebrat
-                                    </Button>
-                                  </div>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
+                    <>
+                      <div className="hidden max-w-full overflow-x-auto rounded-lg border border-slate-200 bg-white lg:block">
+                        <table className="w-full min-w-[44rem] text-sm">
+                          <thead>
+                            <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase text-slate-600">
+                              <th className="w-12 p-1.5 font-semibold" aria-label="Náhled" />
+                              <th className="max-w-[10rem] p-1.5 font-semibold">Položka</th>
+                              <th className="p-1.5 font-semibold whitespace-nowrap">Dostupné</th>
+                              <th className="max-w-[11rem] p-1.5 font-semibold">Sklad / kusy</th>
+                              <th className="p-1.5 font-semibold whitespace-nowrap">Řez / množství</th>
+                              <th className="p-1.5 font-semibold whitespace-nowrap">Opak.</th>
+                              <th className="p-1.5 font-semibold whitespace-nowrap">Jednotka</th>
+                              <th className="max-w-[9rem] p-1.5 font-semibold">Poznámka</th>
+                              <th className="p-1.5 font-semibold whitespace-nowrap">Stav</th>
+                              <th className="w-36 p-1.5 font-semibold">Akce</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {issueQueue.map((ln, rowIdx) => {
+                              const inv = inventoryById.get(ln.itemId);
+                              const prior = issueQueue.slice(0, rowIdx);
+                              const rowAvail = inv ? projectedAvailableForItem(inv, prior) : 0;
+                              const unitLabel = inv?.unit || "ks";
+                              const lenEd = inv ? lengthUnitEditableForItem(inv) : false;
+                              const spRow = stockPiecesSummaryByItem[ln.itemId];
+                              const stockCell =
+                                inv && String(inv.stockTrackingMode) === "length" && spRow
+                                  ? spRow.loading
+                                    ? "…"
+                                    : spRow.label
+                                  : "—";
+                              return (
+                                <tr key={ln.key} className="border-t border-slate-100 align-top">
+                                  <td className="p-1.5">
+                                    <InventoryItemThumbnail item={inv} size={40} />
+                                  </td>
+                                  <td className="max-w-[10rem] p-1.5">
+                                    <p className="truncate font-medium text-slate-900" title={inv?.name ?? ln.itemId}>
+                                      {inv?.name ?? ln.itemId}
+                                    </p>
+                                    <p className="truncate text-[10px] text-slate-500 font-mono" title={ln.itemId}>
+                                      {ln.itemId}
+                                    </p>
+                                  </td>
+                                  <td className="p-1.5 tabular-nums text-slate-800 whitespace-nowrap">
+                                    {inv ? rowAvail : "—"} {unitLabel}
+                                  </td>
+                                  <td className="max-w-[11rem] p-1.5 text-xs text-slate-700">
+                                    <p className="line-clamp-2 break-words" title={stockCell === "—" ? undefined : stockCell}>
+                                      {stockCell}
+                                    </p>
+                                  </td>
+                                  <td className="p-1.5 tabular-nums font-medium whitespace-nowrap">{ln.qtyStr}</td>
+                                  <td className="p-1.5 tabular-nums text-slate-700 whitespace-nowrap">
+                                    {inv && String(inv.stockTrackingMode) === "length"
+                                      ? ln.repeatCountStr || "1"
+                                      : "—"}
+                                  </td>
+                                  <td className="p-1.5 text-xs text-slate-600 whitespace-nowrap">
+                                    {lenEd ? (ln.inputLengthUnit || "—") : unitLabel}
+                                  </td>
+                                  <td className="max-w-[9rem] p-1.5 text-xs text-slate-700">
+                                    <p className="line-clamp-2 break-words" title={ln.note || undefined}>
+                                      {ln.note || "—"}
+                                    </p>
+                                    {ln.batchNumber ? (
+                                      <span className="mt-0.5 block truncate text-[10px] text-slate-500" title={ln.batchNumber}>
+                                        Šarže: {ln.batchNumber}
+                                      </span>
+                                    ) : null}
+                                  </td>
+                                  <td className="p-1.5 text-xs font-medium text-amber-800 whitespace-nowrap">
+                                    Připraveno
+                                  </td>
+                                  <td className="p-1.5">
+                                    <div className="flex flex-col gap-1">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        className="h-7 px-2 text-xs"
+                                        onClick={() => openEditIssueQueueLine(ln)}
+                                      >
+                                        Upravit
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-7 px-2 text-xs text-red-700 hover:text-red-800"
+                                        onClick={() => removeIssueQueueLine(ln.key)}
+                                      >
+                                        Odebrat
+                                      </Button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="space-y-2 lg:hidden">
+                        {issueQueue.map((ln, rowIdx) => {
+                          const inv = inventoryById.get(ln.itemId);
+                          const prior = issueQueue.slice(0, rowIdx);
+                          const rowAvail = inv ? projectedAvailableForItem(inv, prior) : 0;
+                          const unitLabel = inv?.unit || "ks";
+                          const lenEd = inv ? lengthUnitEditableForItem(inv) : false;
+                          const spRow = stockPiecesSummaryByItem[ln.itemId];
+                          const stockCell =
+                            inv && String(inv.stockTrackingMode) === "length" && spRow
+                              ? spRow.loading
+                                ? "…"
+                                : spRow.label
+                              : "—";
+                          return (
+                            <div
+                              key={ln.key}
+                              className="rounded-lg border border-slate-200 bg-white p-3 text-sm shadow-sm"
+                            >
+                              <div className="flex gap-3">
+                                <InventoryItemThumbnail item={inv} size={44} className="shrink-0" />
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <p className="font-medium leading-snug text-slate-900">{inv?.name ?? ln.itemId}</p>
+                                  <p className="truncate text-[11px] text-slate-500 font-mono">{ln.itemId}</p>
+                                  <dl className="grid grid-cols-2 gap-x-2 gap-y-1 text-xs text-slate-700">
+                                    <dt className="text-slate-500">Dostupné</dt>
+                                    <dd className="tabular-nums text-right">
+                                      {inv ? rowAvail : "—"} {unitLabel}
+                                    </dd>
+                                    <dt className="text-slate-500">Sklad / kusy</dt>
+                                    <dd className="text-right text-[11px] leading-snug line-clamp-3">{stockCell}</dd>
+                                    <dt className="text-slate-500">Řez / množství</dt>
+                                    <dd className="tabular-nums text-right font-medium">{ln.qtyStr}</dd>
+                                    <dt className="text-slate-500">Opakování</dt>
+                                    <dd className="tabular-nums text-right">
+                                      {inv && String(inv.stockTrackingMode) === "length"
+                                        ? ln.repeatCountStr || "1"
+                                        : "—"}
+                                    </dd>
+                                    <dt className="text-slate-500">Jednotka</dt>
+                                    <dd className="text-right">{lenEd ? (ln.inputLengthUnit || "—") : unitLabel}</dd>
+                                    <dt className="text-slate-500">Poznámka</dt>
+                                    <dd className="text-right text-[11px] line-clamp-3 break-words">{ln.note || "—"}</dd>
+                                    {ln.batchNumber ? (
+                                      <>
+                                        <dt className="text-slate-500">Šarže</dt>
+                                        <dd className="truncate text-right text-[11px]">{ln.batchNumber}</dd>
+                                      </>
+                                    ) : null}
+                                    <dt className="text-slate-500">Stav</dt>
+                                    <dd className="text-right font-medium text-amber-800">Připraveno</dd>
+                                  </dl>
+                                </div>
+                              </div>
+                              <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="h-8 flex-1 min-w-[8rem]"
+                                  onClick={() => openEditIssueQueueLine(ln)}
+                                >
+                                  Upravit množství
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 flex-1 min-w-[8rem] text-red-700 hover:text-red-800"
+                                  onClick={() => removeIssueQueueLine(ln.key)}
+                                >
+                                  Odebrat
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </>
                   )}
                 </section>
 
