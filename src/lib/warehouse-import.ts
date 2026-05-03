@@ -174,8 +174,8 @@ export function parseWarehouseImportCsv(text: string): WarehouseImportDraftRow[]
  */
 export async function extractTextFromPdfBuffer(buffer: ArrayBuffer): Promise<string> {
   const pdfjs = await import("pdfjs-dist");
-  const version = pdfjs.version || "4.10.38";
-  pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${version}/build/pdf.worker.min.mjs`;
+  const { configurePdfJsWorker } = await import("@/lib/pdfjs-worker");
+  configurePdfJsWorker(pdfjs);
 
   const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer), useSystemFonts: true });
   const pdf = await loadingTask.promise;

@@ -143,31 +143,35 @@ export function ProductionWorkbenchSplit({
   );
 
   return (
-    <div className={cn("flex min-h-0 w-full flex-col gap-3", className)}>
+    <div className={cn("flex h-[min(100dvh,100svh)] min-h-0 w-full flex-col gap-0 overflow-hidden", className)}>
       <div
         ref={rowRef}
-        className="flex min-h-0 w-full flex-col gap-2 lg:flex-row lg:items-stretch lg:gap-0"
+        className="flex min-h-0 w-full flex-1 flex-col gap-0 lg:flex-row lg:items-stretch lg:gap-0"
       >
         <div
-          className="flex min-h-0 w-full min-w-0 flex-col rounded-lg border border-slate-200 bg-white shadow-sm lg:shrink-0"
-          style={isLg ? { width: `${splitPct}%` } : undefined}
+          className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm lg:max-h-none lg:shrink-0"
+          style={isLg ? { width: `${splitPct}%`, minHeight: 0 } : { minHeight: 0 }}
         >
-          <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2">
+          <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-3 py-2">
             <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
               Výkres / podklady
             </span>
             <span className="hidden text-[11px] text-slate-400 sm:inline">Výšku: táhlo dole</span>
           </div>
           <div
-            className="flex min-h-0 flex-col overflow-hidden"
-            style={{ height: previewH, maxHeight: "min(70vh, 720px)" }}
+            className="flex min-h-0 flex-1 flex-col overflow-hidden"
+            style={
+              isLg
+                ? { minHeight: previewH, flex: "1 1 50%" }
+                : { height: previewH, maxHeight: "min(52dvh, 560px)" }
+            }
           >
             {leftPanel}
           </div>
           <button
             type="button"
             aria-label="Změnit výšku panelu náhledu"
-            className="flex h-3 w-full cursor-row-resize items-center justify-center border-t border-slate-200 bg-slate-100 hover:bg-slate-200"
+            className="flex h-3 w-full shrink-0 cursor-row-resize items-center justify-center border-t border-slate-200 bg-slate-100 hover:bg-slate-200"
             onPointerDown={startH}
           >
             <GripVertical className="h-3 w-3 rotate-90 text-slate-500" aria-hidden />
@@ -182,12 +186,12 @@ export function ProductionWorkbenchSplit({
           onPointerDown={startW}
         />
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/80 p-3 shadow-sm sm:p-4">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-lg border border-slate-200 bg-slate-50/80 p-3 shadow-sm sm:p-4 lg:min-h-0">
           {rightPanel}
         </div>
       </div>
 
-      <div className="w-full shrink-0 rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-4">
+      <div className="mt-2 w-full shrink-0 rounded-lg border border-slate-200 bg-white p-3 shadow-sm sm:p-4 lg:mt-3">
         {bottomPanel}
       </div>
     </div>

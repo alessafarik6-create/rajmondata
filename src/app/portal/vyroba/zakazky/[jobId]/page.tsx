@@ -1979,8 +1979,8 @@ export default function VyrobaZakazkaDetailPage() {
                 Výdej ve výrobě
               </CardTitle>
             </CardHeader>
-            <CardContent className="px-4 pb-10 pt-6 text-sm sm:px-6">
-              <div className="mb-8 max-w-3xl space-y-3">
+            <CardContent className="min-h-0 px-4 pb-4 pt-6 text-sm sm:px-6 sm:pb-6">
+              <div className="mb-6 max-w-3xl space-y-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                   Materiál přiřazený k výrobě
                 </p>

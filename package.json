@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "postinstall": "node scripts/copy-pdf-fonts.mjs",
+    "postinstall": "node scripts/copy-pdf-fonts.mjs && node scripts/copy-pdf-worker.mjs",
     "generate-pwa-icons": "node scripts/generate-pwa-icons.mjs",
     "seed-superadmin": "node scripts/seed-superadmin.js"
   },

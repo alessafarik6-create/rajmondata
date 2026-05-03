@@ -4,12 +4,8 @@
 
 export async function loadPdfJsForRasterExport() {
   const pdfjs = await import("pdfjs-dist");
-  const ver = pdfjs.version || "4.10.38";
-  const major = Number(String(ver).split(".")[0] || "4");
-  pdfjs.GlobalWorkerOptions.workerSrc =
-    major === 3
-      ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
-      : `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`;
+  const { configurePdfJsWorker } = await import("@/lib/pdfjs-worker");
+  configurePdfJsWorker(pdfjs);
   return pdfjs;
 }
 

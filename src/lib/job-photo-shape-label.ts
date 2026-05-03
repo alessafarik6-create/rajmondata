@@ -150,11 +150,11 @@ export function estimateLegendStripHeight(
   width: number
 ): number {
   if (!entries.length) return 0;
-  const pad = 16;
-  const lineH = 28;
-  const titleH = 32;
+  const pad = 18;
+  const lineH = 32;
+  const titleH = 38;
   ctx.save();
-  ctx.font = "16px ui-sans-serif, system-ui, sans-serif";
+  ctx.font = "18px ui-sans-serif, system-ui, sans-serif";
   let lines = 1;
   for (const e of entries) {
     const text = formatLegendEntryLine(e);
@@ -183,21 +183,22 @@ export function drawLegendStrip(
   height: number
 ): void {
   ctx.save();
-  ctx.fillStyle = "#f8fafc";
+  ctx.fillStyle = "#0b1220";
   ctx.fillRect(0, y0, width, height);
-  ctx.strokeStyle = "#cbd5e1";
+  ctx.strokeStyle = "#334155";
   ctx.lineWidth = 1;
   ctx.strokeRect(0.5, y0 + 0.5, width - 1, height - 1);
-  let y = y0 + 16;
-  ctx.fillStyle = "#0f172a";
-  ctx.font = "600 20px ui-sans-serif, system-ui, sans-serif";
-  ctx.fillText("Legenda", 14, y);
-  y += 30;
-  ctx.font = "16px ui-sans-serif, system-ui, sans-serif";
+  let y = y0 + 20;
+  ctx.fillStyle = "#f8fafc";
+  ctx.font = "700 22px ui-sans-serif, system-ui, sans-serif";
+  ctx.fillText("Legenda", 16, y);
+  y += 36;
+  ctx.font = "500 18px ui-sans-serif, system-ui, sans-serif";
+  ctx.fillStyle = "#e2e8f0";
   for (const e of entries) {
     const line = formatLegendEntryLine(e);
-    wrapFillText(ctx, line, 14, y, width - 28, 26);
-    y += 28;
+    wrapFillText(ctx, line, 16, y, width - 32, 30);
+    y += 30;
   }
   ctx.restore();
 }

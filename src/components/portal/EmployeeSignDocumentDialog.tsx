@@ -40,12 +40,8 @@ async function renderPdfToJspdfImages(opts: {
   signatureMetaText?: string;
 }): Promise<Blob> {
   const pdfjs = await import("pdfjs-dist");
-  const ver = (pdfjs as any).version || "4.10.38";
-  const major = Number(String(ver).split(".")[0] || "4");
-  (pdfjs as any).GlobalWorkerOptions.workerSrc =
-    major === 3
-      ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
-      : `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`;
+  const { configurePdfJsWorker } = await import("@/lib/pdfjs-worker");
+  configurePdfJsWorker(pdfjs as { GlobalWorkerOptions: { workerSrc: string } });
 
   const task = (pdfjs as any).getDocument(opts.pdfUrl);
   const pdf = await task.promise;

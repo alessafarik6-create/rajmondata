@@ -11,6 +11,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Maximize2, ExternalLink } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export type JobProductionPdfRow = {
   id: string;
@@ -21,12 +22,8 @@ export type JobProductionPdfRow = {
 
 async function loadPdfJs() {
   const pdfjs = await import("pdfjs-dist");
-  const ver = pdfjs.version || "4.10.38";
-  const major = Number(String(ver).split(".")[0] || "4");
-  pdfjs.GlobalWorkerOptions.workerSrc =
-    major === 3
-      ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
-      : `//unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.js`;
+  const { configurePdfJsWorker } = await import("@/lib/pdfjs-worker");
+  configurePdfJsWorker(pdfjs);
   return pdfjs;
 }
 
@@ -57,7 +54,7 @@ export function JobProductionPdfDocumentationPanel({
   const [page, setPage] = useState(1);
   const [numPages, setNumPages] = useState(0);
   /** Fit = přizpůsobit šířce (A4) + pevné zoom kroky. */
-  const [zoomPreset, setZoomPreset] = useState<"fit" | "100" | "125" | "150">("fit");
+  const [zoomPreset, setZoomPreset] = useState<"fit" | "100" | "125" | "135" | "150">("135");
   const [containerWidth, setContainerWidth] = useState(0);
   const [docLoading, setDocLoading] = useState(false);
   const [pageRendering, setPageRendering] = useState(false);
@@ -159,7 +156,7 @@ export function JobProductionPdfDocumentationPanel({
         pdfRef.current = pdf;
         setNumPages(pdf.numPages || 0);
         setPage(1);
-        setZoomPreset("fit");
+        setZoomPreset("135");
       } catch (e) {
         console.error("[JobProductionPdfDocumentationPanel] load PDF", e);
         if (!cancelled) {
@@ -193,12 +190,15 @@ export function JobProductionPdfDocumentationPanel({
       const p = await pdf.getPage(page);
       const base = p.getViewport({ scale: 1 });
 
-      const pad = 16; // wrapper padding
+      const pad = embedded ? 8 : 16;
       const maxW = Math.max(320, cw - pad * 2);
       const isDesktop = typeof window !== "undefined" ? window.innerWidth >= 1024 : true;
-      const targetCssW = isDesktop ? Math.min(maxW, 1100) : maxW;
-      const pageCssW = isDesktop ? Math.max(950, targetCssW) : targetCssW;
-      const pageCssWClamped = Math.min(pageCssW, maxW);
+      const pageCssWClamped = embedded
+        ? maxW
+        : Math.min(
+            isDesktop ? Math.max(950, Math.min(maxW, 1100)) : maxW,
+            maxW
+          );
 
       const a4Ratio = 210 / 297;
       const pageCssH = Math.round(pageCssWClamped / a4Ratio);
@@ -209,7 +209,16 @@ export function JobProductionPdfDocumentationPanel({
         frame.style.height = `${pageCssH}px`;
       }
 
-      const presetMul = zoomPreset === "fit" ? 1 : zoomPreset === "125" ? 1.25 : zoomPreset === "150" ? 1.5 : 1;
+      const presetMul =
+        zoomPreset === "fit"
+          ? 1
+          : zoomPreset === "125"
+            ? 1.25
+            : zoomPreset === "135"
+              ? 1.35
+              : zoomPreset === "150"
+                ? 1.5
+                : 1;
       const dpr = typeof window !== "undefined" ? Math.min(2, window.devicePixelRatio || 1) : 1;
       const scale = ((pageCssWClamped * dpr) / base.width) * presetMul;
 
@@ -235,7 +244,7 @@ export function JobProductionPdfDocumentationPanel({
     } finally {
       setPageRendering(false);
     }
-  }, [containerWidth, numPages, page, zoomPreset]);
+  }, [containerWidth, numPages, page, zoomPreset, embedded]);
 
   useEffect(() => {
     void renderPage();
@@ -259,7 +268,7 @@ export function JobProductionPdfDocumentationPanel({
         onValueChange={(v) => {
           setPdfIndex(Number(v));
           setPage(1);
-          setZoomPreset("fit");
+          setZoomPreset("135");
           setLoadError(null);
           setRenderFailed(false);
         }}
@@ -355,6 +364,17 @@ export function JobProductionPdfDocumentationPanel({
           size="sm"
           className={embedded ? "h-8 px-1.5 text-[10px]" : "h-9 gap-1 px-2"}
           disabled={busy}
+          onClick={() => setZoomPreset("135")}
+          aria-label="Zoom 135 %"
+        >
+          135%
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className={embedded ? "h-8 px-1.5 text-[10px]" : "h-9 gap-1 px-2"}
+          disabled={busy}
           onClick={() => setZoomPreset("150")}
           aria-label="Zoom 150 %"
         >
@@ -425,7 +445,7 @@ export function JobProductionPdfDocumentationPanel({
           ) : null}
         </div>
       ) : (
-        <div className="flex w-full min-w-0 justify-center pb-2">
+        <div className={cn("flex w-full min-w-0 justify-center", embedded ? "pb-0" : "pb-2")}>
           <div
             ref={pageFrameRef}
             className="mx-auto bg-white shadow-lg ring-1 ring-slate-200"

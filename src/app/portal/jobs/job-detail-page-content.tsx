@@ -25,6 +25,8 @@ import {
   uploadMeasurementPhotoBlobViaFirebaseSdk,
   uploadMeasurementPhotoFileViaFirebaseSdk,
 } from "@/lib/job-photo-upload";
+import { renderPdfPagesToPngBlobs } from "@/lib/pdf-to-image-client";
+import { withTimeout } from "@/lib/async-with-timeout";
 import {
   isAllowedJobMediaFile,
   isAllowedJobImageFile,
@@ -39,6 +41,7 @@ import { JobCustomerTasksAdminSection } from "@/components/jobs/job-customer-tas
 import { JobProductCatalogsSection } from "@/components/jobs/job-product-catalogs-section";
 import {
   buildJobMediaMirrorAnnotatedUrlPatch,
+  buildNewJobFolderImageMirrorDocument,
   buildNewJobLegacyPhotoMirrorDocument,
   companyDocumentRefForJobFolderImage,
   companyDocumentRefForJobLegacyPhoto,
@@ -252,6 +255,7 @@ import {
   hitTestShapeLabel,
 } from "@/lib/job-photo-shape-label";
 import { AnnotationModelsSettingsDialog } from "@/components/annotations/annotation-models-settings-dialog";
+import { UnifiedAnnotationEditor } from "@/components/annotations/UnifiedAnnotationEditor";
 import {
   dimensionColorFromModelColor,
   type AnnotationModelDoc,
@@ -311,12 +315,8 @@ function annotationTargetLooksPdf(
 
 async function loadPdfJsForAnnotationEditor() {
   const pdfjs = await import("pdfjs-dist");
-  const ver = pdfjs.version || "4.10.38";
-  const major = Number(String(ver).split(".")[0] || "4");
-  pdfjs.GlobalWorkerOptions.workerSrc =
-    major === 3
-      ? "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js"
-      : `https://unpkg.com/pdfjs-dist@${ver}/build/pdf.worker.min.mjs`;
+  const { configurePdfJsWorker } = await import("@/lib/pdfjs-worker");
+  configurePdfJsWorker(pdfjs);
   return pdfjs;
 }
 
@@ -1425,6 +1425,7 @@ export function JobDetailPageContent({
 
   const [isUploading, setIsUploading] = useState(false);
   const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
+  const [pdfPageRasterBusy, setPdfPageRasterBusy] = useState(false);
   const [measurementCaptureBusy, setMeasurementCaptureBusy] = useState(false);
   const [customerAccessEmailSending, setCustomerAccessEmailSending] = useState(false);
   const measurementGalleryInputRef = useRef<HTMLInputElement>(null);
@@ -1613,7 +1614,7 @@ export function JobDetailPageContent({
         annotationSource: picked,
         thumbnailUrl: thumb,
         annotatedUrl: target.annotatedImageUrl,
-        editor: "UniversalAnnotationEditor",
+        editor: "UnifiedAnnotationEditor",
       });
       openPhotoAnnotationEditor(target);
     },
@@ -2745,7 +2746,7 @@ export function JobDetailPageContent({
           storageUrl: dbg.storageUrl,
           thumbnailUrl: dbg.thumbnailUrl,
           resolvedImageUrl: dbg.resolvedImageUrl,
-          editor: "UniversalAnnotationEditor",
+          editor: "UnifiedAnnotationEditor",
         });
         const target = measurementDocToAnnotationTarget(rowFull);
         if (!annotationTargetHasResolvableUrl(target)) {
@@ -6089,6 +6090,13 @@ export function JobDetailPageContent({
         exportCanvas.height,
         { pageIndex: isPdfSave ? pdfPage - 1 : 0 }
       );
+      if (
+        !annotationData ||
+        typeof annotationData !== "object" ||
+        !Array.isArray((annotationData as { items?: unknown }).items)
+      ) {
+        throw new Error("Interní chyba: anotace se nepodařilo serializovat.");
+      }
 
       const target = photoToEdit.annotationTarget;
       let annotatedPath: string;
@@ -6116,14 +6124,26 @@ export function JobDetailPageContent({
         const rawPatch = {
           originalImageUrl:
             photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+          imageUrl: annotatedUrl,
           annotatedImageUrl: annotatedUrl,
           annotatedStoragePath: annotatedPath,
           annotationData,
           updatedAt: serverTimestamp(),
         };
         const cleanPayload = removeUndefinedDeep(rawPatch);
+        if (
+          typeof (cleanPayload as { annotatedImageUrl?: unknown }).annotatedImageUrl !==
+            "string" ||
+          !(cleanPayload as { annotatedImageUrl: string }).annotatedImageUrl.trim()
+        ) {
+          throw new Error("Chybí platná URL uloženého obrázku (annotatedImageUrl).");
+        }
         console.log("ANNOTATION SAVE PAYLOAD", cleanPayload);
-        await setDoc(photoRef, cleanPayload, { merge: true });
+        await withTimeout(
+          setDoc(photoRef, cleanPayload, { merge: true }),
+          120_000,
+          "Uložení fotky do Firestore"
+        );
       } else if (target.kind === "folderImages") {
         const jobKey = jobFirestoreId as string;
         const up = await uploadJobFolderImageBlobViaFirebaseSdk(
@@ -6149,14 +6169,27 @@ export function JobDetailPageContent({
         const rawPatch = {
           originalImageUrl:
             photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+          imageUrl: annotatedUrl,
+          url: annotatedUrl,
           annotatedImageUrl: annotatedUrl,
           annotatedStoragePath: annotatedPath,
           annotationData,
           updatedAt: serverTimestamp(),
         };
         const cleanPayload = removeUndefinedDeep(rawPatch);
+        if (
+          typeof (cleanPayload as { annotatedImageUrl?: unknown }).annotatedImageUrl !==
+            "string" ||
+          !(cleanPayload as { annotatedImageUrl: string }).annotatedImageUrl.trim()
+        ) {
+          throw new Error("Chybí platná URL uloženého obrázku (annotatedImageUrl).");
+        }
         console.log("ANNOTATION SAVE PAYLOAD", cleanPayload);
-        await setDoc(imageRef, cleanPayload, { merge: true });
+        await withTimeout(
+          setDoc(imageRef, cleanPayload, { merge: true }),
+          120_000,
+          "Uložení souboru ve složce do Firestore"
+        );
       } else if (target.kind === "measurementPhotos") {
         const isPendingDraft =
           Boolean(pendingFileForSave) && photoToEdit.id.startsWith("pending-");
@@ -6212,9 +6245,13 @@ export function JobDetailPageContent({
           const pMid = photoToEdit.pendingMeasurementRecordId?.trim();
           if (pMid) firestorePayload.measurementId = pMid;
 
-          await setDoc(
-            photoRef,
-            removeUndefinedDeep(firestorePayload) as Record<string, unknown>
+          await withTimeout(
+            setDoc(
+              photoRef,
+              removeUndefinedDeep(firestorePayload) as Record<string, unknown>
+            ),
+            120_000,
+            "Uložení nového měření do Firestore"
           );
 
           console.log("[MeasurementPhoto] save: Firestore doc written", {
@@ -6256,14 +6293,26 @@ export function JobDetailPageContent({
           const rawMeasPatch = {
             originalImageUrl:
               photoToEdit.originalImageUrl || photoToEdit.imageUrl || null,
+            imageUrl: annotatedUrl,
             annotatedImageUrl: annotatedUrl,
             annotatedStoragePath: annotatedPath,
             annotationData,
             updatedAt: serverTimestamp(),
           };
           const cleanMeas = removeUndefinedDeep(rawMeasPatch);
+          if (
+            typeof (cleanMeas as { annotatedImageUrl?: unknown }).annotatedImageUrl !==
+              "string" ||
+            !(cleanMeas as { annotatedImageUrl: string }).annotatedImageUrl.trim()
+          ) {
+            throw new Error("Chybí platná URL uloženého obrázku (annotatedImageUrl).");
+          }
           console.log("ANNOTATION SAVE PAYLOAD", cleanMeas);
-          await setDoc(measRef, cleanMeas, { merge: true });
+          await withTimeout(
+            setDoc(measRef, cleanMeas, { merge: true }),
+            120_000,
+            "Uložení měření do Firestore"
+          );
         }
       } else {
         throw new Error("Neznámý cíl anotace.");
@@ -6278,25 +6327,33 @@ export function JobDetailPageContent({
             })
           ) as Record<string, unknown>;
           if (target.kind === "photos") {
-            await setDoc(
-              companyDocumentRefForJobLegacyPhoto(
-                firestore,
-                companyId,
-                photoToEdit.id
+            await withTimeout(
+              setDoc(
+                companyDocumentRefForJobLegacyPhoto(
+                  firestore,
+                  companyId,
+                  photoToEdit.id
+                ),
+                mirrorPatch,
+                { merge: true }
               ),
-              mirrorPatch,
-              { merge: true }
+              120_000,
+              "Aktualizace globálního dokladu (fotka)"
             );
           } else {
-            await setDoc(
-              companyDocumentRefForJobFolderImage(
-                firestore,
-                companyId,
-                target.folderId,
-                photoToEdit.id
+            await withTimeout(
+              setDoc(
+                companyDocumentRefForJobFolderImage(
+                  firestore,
+                  companyId,
+                  target.folderId,
+                  photoToEdit.id
+                ),
+                mirrorPatch,
+                { merge: true }
               ),
-              mirrorPatch,
-              { merge: true }
+              120_000,
+              "Aktualizace globálního dokladu (složka)"
             );
           }
         } catch (mirrorErr) {
@@ -6357,6 +6414,238 @@ export function JobDetailPageContent({
       setIsSavingAnnotation(false);
     }
   };
+
+  const handleConvertPdfPageToImage = useCallback(async () => {
+    if (editorMediaKind !== "pdf" || !baseImageLoaded) {
+      toast({
+        variant: "destructive",
+        title: "PDF není připraveno",
+        description: "Počkejte na načtení stránky a zkuste to znovu.",
+      });
+      return;
+    }
+    const pe = photoToEdit;
+    const t = pe?.annotationTarget;
+    if (
+      !companyId ||
+      !user?.uid ||
+      !firestore ||
+      !pe ||
+      !jobFirestoreId ||
+      (t?.kind !== "folderImages" && t?.kind !== "photos")
+    ) {
+      toast({
+        variant: "destructive",
+        title: "Převod není dostupný",
+        description:
+          "Převod aktuální stránky PDF na PNG je možný jen u podkladů zakázky (složka nebo fotodokumentace).",
+      });
+      return;
+    }
+    const srcRaw = (annotationSource || "").trim();
+    if (!srcRaw) {
+      toast({ variant: "destructive", title: "Chybí zdroj PDF." });
+      return;
+    }
+    setPdfPageRasterBusy(true);
+    try {
+      const url = await resolveAnnotationImageUrl(srcRaw);
+      const blobs = await renderPdfPagesToPngBlobs(url, [pdfPage], 2);
+      const blob = blobs[0];
+      if (!blob) throw new Error("Nepodařilo se vygenerovat obrázek.");
+
+      const jobKey = jobFirestoreId as string;
+      const baseStem = String(pe.fileName || pe.name || "pdf")
+        .replace(/\.pdf$/i, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const stamp = Date.now();
+      const displayName = `${baseStem || "pdf"} — str. ${pdfPage}.png`;
+
+      if (t.kind === "folderImages") {
+        const folderId = t.folderId;
+        const refDoc = doc(
+          collection(
+            firestore,
+            "companies",
+            companyId,
+            "jobs",
+            jobKey,
+            "folders",
+            folderId,
+            "images"
+          )
+        );
+        const up = await uploadJobFolderImageBlobViaFirebaseSdk(
+          blob,
+          companyId,
+          jobKey,
+          folderId,
+          `${refDoc.id}-${stamp}.png`
+        );
+        await withTimeout(
+          setDoc(refDoc, {
+            id: refDoc.id,
+            companyId,
+            jobId: jobKey,
+            folderId,
+            imageUrl: up.downloadURL,
+            url: up.downloadURL,
+            originalImageUrl: up.downloadURL,
+            downloadURL: up.downloadURL,
+            fileType: "image" as const,
+            storagePath: up.storagePath,
+            path: up.storagePath,
+            fileName: displayName,
+            name: displayName,
+            sourcePdfId: pe.id,
+            sourcePdfPage: pdfPage,
+            createdAt: serverTimestamp(),
+            createdBy: user.uid,
+            updatedAt: serverTimestamp(),
+          }),
+          120_000,
+          "Zápis nového obrázku ze stránky PDF"
+        );
+        await withTimeout(
+          setDoc(
+            companyDocumentRefForJobFolderImage(
+              firestore,
+              companyId,
+              folderId,
+              refDoc.id
+            ),
+            removeUndefinedDeep(
+              buildNewJobFolderImageMirrorDocument({
+                companyId,
+                jobId: jobKey,
+                jobDisplayName: job?.name?.trim() ?? null,
+                folderId,
+                imageId: refDoc.id,
+                userId: user.uid,
+                fileName: displayName,
+                fileType: "image",
+                mimeType: "image/png",
+                fileUrl: up.downloadURL,
+                storagePath: up.storagePath,
+                note: null,
+              })
+            ) as Record<string, unknown>
+          ),
+          120_000,
+          "Globální doklad k obrázku ze stránky PDF"
+        );
+        openPhotoAnnotationEditor({
+          id: refDoc.id,
+          imageUrl: up.downloadURL,
+          url: up.downloadURL,
+          downloadURL: up.downloadURL,
+          originalImageUrl: up.downloadURL,
+          storagePath: up.storagePath,
+          path: up.storagePath,
+          fileName: displayName,
+          name: displayName,
+          fileType: "image",
+          annotationTarget: { kind: "folderImages", folderId },
+        });
+      } else {
+        const refDoc = doc(
+          collection(firestore, "companies", companyId, "jobs", jobKey, "photos")
+        );
+        const up = await uploadJobPhotoBlobViaFirebaseSdk(
+          blob,
+          companyId,
+          jobKey,
+          `${refDoc.id}-${stamp}.png`
+        );
+        await withTimeout(
+          setDoc(refDoc, {
+            id: refDoc.id,
+            imageUrl: up.downloadURL,
+            url: up.downloadURL,
+            originalImageUrl: up.downloadURL,
+            downloadURL: up.downloadURL,
+            fileType: "image" as const,
+            storagePath: up.storagePath,
+            path: up.storagePath,
+            fileName: displayName,
+            name: displayName,
+            sourcePdfId: pe.id,
+            sourcePdfPage: pdfPage,
+            createdAt: serverTimestamp(),
+            uploadedBy: user.uid,
+            updatedAt: serverTimestamp(),
+          }),
+          120_000,
+          "Zápis nového obrázku ze stránky PDF (fotodokumentace)"
+        );
+        await withTimeout(
+          setDoc(
+            companyDocumentRefForJobLegacyPhoto(firestore, companyId, refDoc.id),
+            removeUndefinedDeep(
+              buildNewJobLegacyPhotoMirrorDocument({
+                companyId,
+                jobId: jobKey,
+                jobDisplayName: job?.name?.trim() ?? null,
+                photoId: refDoc.id,
+                userId: user.uid,
+                fileName: displayName,
+                fileType: "image",
+                mimeType: "image/png",
+                fileUrl: up.downloadURL,
+                storagePath: up.storagePath,
+                note: null,
+              })
+            ) as Record<string, unknown>
+          ),
+          120_000,
+          "Globální doklad k obrázku ze stránky PDF (fotky)"
+        );
+        openPhotoAnnotationEditor({
+          id: refDoc.id,
+          imageUrl: up.downloadURL,
+          url: up.downloadURL,
+          downloadURL: up.downloadURL,
+          originalImageUrl: up.downloadURL,
+          storagePath: up.storagePath,
+          path: up.storagePath,
+          fileName: displayName,
+          name: displayName,
+          fileType: "image",
+          annotationTarget: { kind: "photos" },
+        });
+      }
+
+      toast({
+        title: "PDF převedeno na obrázek",
+        description:
+          "Právě zobrazená stránka je uložena jako PNG ve stejné zakázce. Otevřel se editor nového obrázku.",
+      });
+    } catch (e) {
+      console.error("[JobDetailPage] PDF → PNG", e);
+      toast({
+        variant: "destructive",
+        title: "Převod se nezdařil",
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setPdfPageRasterBusy(false);
+    }
+  }, [
+    editorMediaKind,
+    baseImageLoaded,
+    photoToEdit,
+    companyId,
+    user?.uid,
+    firestore,
+    jobFirestoreId,
+    annotationSource,
+    pdfPage,
+    resolveAnnotationImageUrl,
+    toast,
+    job?.name,
+    openPhotoAnnotationEditor,
+  ]);
 
   const handleDeleteMeasurementPhoto = async (
     row: Record<string, unknown> & { id: string; createdBy?: string }
@@ -6977,64 +7266,37 @@ export function JobDetailPageContent({
 
   const measurementAnnotationEditorDialog = (
     <>
-      <Dialog
+      <UnifiedAnnotationEditor
         open={editorOpen}
         onOpenChange={(open) => {
           if (!open) dismissAnnotationEditor();
         }}
+        isTouchUI={isAnnotTouchUI}
+        desktopPanel={
+          !isAnnotTouchUI
+            ? { w: annotPanelSizeLg.w, h: annotPanelSizeLg.h }
+            : null
+        }
+        onDesktopResizePointerDown={
+          !isAnnotTouchUI
+            ? (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                annotPanelResizeRef.current = {
+                  startX: ev.clientX,
+                  startY: ev.clientY,
+                  startW: annotPanelSizeLg.w,
+                  startH: annotPanelSizeLg.h,
+                };
+                setAnnotPanelResizing(true);
+              }
+            : undefined
+        }
       >
-        <DialogContent
-          className={cn(
-            "!flex min-h-0 flex-col gap-0 !overflow-hidden overscroll-contain",
-            "max-lg:!fixed max-lg:!inset-0 max-lg:!left-0 max-lg:!top-0 max-lg:z-[200] max-lg:h-[100dvh] max-lg:min-h-[100dvh] max-lg:max-h-[100dvh] max-lg:w-[100vw] max-lg:max-w-[100vw] max-lg:!translate-x-0 max-lg:!translate-y-0 max-lg:rounded-none max-lg:border-0 max-lg:bg-slate-950 max-lg:p-0 max-lg:text-white max-lg:shadow-none max-lg:pointer-events-auto",
-            "data-[state=open]:max-lg:zoom-in-100",
-            "lg:!fixed lg:!inset-0 lg:!left-0 lg:!top-0 lg:!h-full lg:!max-h-none lg:!w-full lg:!max-w-none lg:!translate-x-0 lg:!translate-y-0 lg:z-[260] lg:items-center lg:justify-center lg:bg-transparent lg:border-0 lg:p-4 lg:text-foreground lg:shadow-none lg:ring-0 lg:!overflow-y-auto lg:!overflow-x-hidden lg:pointer-events-none",
-            "lg:data-[state=open]:zoom-in-100 lg:data-[state=closed]:zoom-out-100"
-          )}
-        >
-          <div
-            className={cn(
-              "relative flex min-h-0 flex-1 flex-col overflow-hidden",
-              "max-lg:h-full max-lg:max-h-[100dvh] max-lg:w-full max-lg:min-h-0 max-lg:flex-1",
-              "lg:pointer-events-auto lg:flex-none lg:overflow-hidden lg:rounded-lg lg:border lg:border-slate-200 lg:bg-background lg:shadow-xl lg:ring-1 lg:ring-slate-950/[0.08]"
-            )}
-            style={
-              !isAnnotTouchUI
-                ? {
-                    width: annotPanelSizeLg.w,
-                    height: annotPanelSizeLg.h,
-                    maxWidth: "calc(100vw - 32px)",
-                    maxHeight: "calc(100vh - 32px)",
-                  }
-                : undefined
-            }
-          >
-            {!isAnnotTouchUI ? (
-              <button
-                type="button"
-                aria-label="Změnit velikost okna editoru"
-                className="absolute bottom-2 right-2 z-[300] hidden h-9 w-9 cursor-nwse-resize items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-md hover:bg-accent lg:flex"
-                onPointerDown={(ev) => {
-                  ev.preventDefault();
-                  ev.stopPropagation();
-                  annotPanelResizeRef.current = {
-                    startX: ev.clientX,
-                    startY: ev.clientY,
-                    startW: annotPanelSizeLg.w,
-                    startH: annotPanelSizeLg.h,
-                  };
-                  setAnnotPanelResizing(true);
-                }}
-              >
-                <span className="select-none text-sm leading-none" aria-hidden>
-                  ⤡
-                </span>
-              </button>
-            ) : null}
             <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/15 bg-slate-900 px-2 py-1.5 pt-[max(0.25rem,env(safe-area-inset-top))] text-white lg:hidden">
                 <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-white hover:bg-white/10" onClick={() => dismissAnnotationEditor()}>Zavřít</Button>
                 <span className="min-w-0 truncate text-center text-xs font-semibold">Anotace</span>
-                <Button type="button" size="sm" className="h-8 shrink-0 bg-primary px-2 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={handleSaveAnnotated} disabled={!baseImageLoaded || isSavingAnnotation}>{isSavingAnnotation ? "…" : "Uložit"}</Button>
+                <Button type="button" size="sm" className="h-8 shrink-0 bg-primary px-2 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={handleSaveAnnotated} disabled={!baseImageLoaded || isSavingAnnotation || pdfPageRasterBusy}>{isSavingAnnotation ? "…" : "Uložit"}</Button>
             </div>
               <DialogHeader className="hidden shrink-0 space-y-1 pb-2 pr-8 text-left lg:block">
                 <DialogTitle className="text-base sm:text-lg">
@@ -7169,6 +7431,30 @@ export function JobDetailPageContent({
                 >
                   <ZoomOut className="h-4 w-4" />
                 </Button>
+                {editorMediaKind === "pdf" &&
+                jobFirestoreId &&
+                photoToEdit &&
+                (photoToEdit.annotationTarget?.kind === "folderImages" ||
+                  photoToEdit.annotationTarget?.kind === "photos") ? (
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    className="min-h-[36px] shrink-0 text-xs sm:text-sm"
+                    disabled={!baseImageLoaded || pdfPageRasterBusy || isSavingAnnotation}
+                    onClick={() => void handleConvertPdfPageToImage()}
+                    title="Uloží aktuální stránku PDF jako PNG do zakázky a otevře ji v editoru"
+                  >
+                    {pdfPageRasterBusy ? (
+                      <>
+                        <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden />
+                        Převod…
+                      </>
+                    ) : (
+                      "PDF → obrázek"
+                    )}
+                  </Button>
+                ) : null}
 
                 <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
 
@@ -7307,16 +7593,16 @@ export function JobDetailPageContent({
                 </div>
               )}
               {annotationLegendEntries.length ? (
-                <div className="pointer-events-auto absolute bottom-3 left-2 z-10 max-w-[min(calc(100vw-1rem),28rem)]">
-                  <div className="max-h-[min(40dvh,340px)] overflow-y-auto rounded-lg border border-white/35 bg-black/88 px-3 py-3 text-left text-base leading-relaxed text-white shadow-lg backdrop-blur-sm max-lg:text-[15px] lg:border-border lg:bg-card/95 lg:text-card-foreground lg:shadow-md">
-                    <p className="mb-2 text-sm font-semibold uppercase tracking-wide text-white/85 lg:text-muted-foreground">
+                <div className="pointer-events-auto absolute bottom-2 left-1/2 z-10 w-[min(calc(100vw-1rem),36rem)] max-w-[calc(100%-0.5rem)] -translate-x-1/2">
+                  <div className="max-h-[min(42dvh,380px)] overflow-y-auto rounded-md border border-slate-700 bg-[#0b1220] px-3 py-3 text-left shadow-xl sm:px-4 sm:py-3.5">
+                    <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-300 sm:text-sm">
                       Legenda
                     </p>
-                    <ul className="space-y-2.5">
+                    <ul className="space-y-2 sm:space-y-2.5">
                       {annotationLegendEntries.map((e) => (
                         <li
                           key={`leg-${e.legendNumber}-${e.label}-${e.widthMm}`}
-                          className="border-l-2 border-primary/70 pl-2.5 text-[15px] sm:text-base"
+                          className="border-l-2 border-amber-400/90 pl-2.5 text-[15px] font-medium leading-snug text-slate-100 sm:text-lg"
                         >
                           {formatLegendEntryLine(e)}
                         </li>
@@ -7444,13 +7730,12 @@ export function JobDetailPageContent({
                 <Button
                   className="min-h-[36px]"
                   onClick={handleSaveAnnotated}
-                  disabled={!baseImageLoaded || isSavingAnnotation}
+                  disabled={!baseImageLoaded || isSavingAnnotation || pdfPageRasterBusy}
                 >
                   {isSavingAnnotation ? "Ukládám…" : "Uložit anotaci"}
                 </Button>
               </div>
             </div>
-          </div>
           </div>
           {shapeLabelDialogOpen ? (
             <div
@@ -7598,8 +7883,7 @@ export function JobDetailPageContent({
               </div>
             </div>
           ) : null}
-        </DialogContent>
-      </Dialog>
+      </UnifiedAnnotationEditor>
 
       <Dialog
         open={shapeLabelLibraryPickerOpen}
