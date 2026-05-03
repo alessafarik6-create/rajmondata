@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils";
 /** Výška horního panelu (PDF + výběr materiálu) — px */
 const TOP_H_MIN = 420;
 const TOP_H_DEFAULT = 600;
-const TOP_VIEWPORT_RESERVE = 180;
+/** Max výška horního panelu = vh minus rezerva (shodně s tahem) */
+const TOP_VIEWPORT_RESERVE = 160;
 
 export type ProductionWorkbenchHeights = {
   splitPct: number;
@@ -76,6 +77,11 @@ export function ProductionWorkbenchSplit({
     [controlledHeights, onControlledHeightsChange]
   );
 
+  const setTopPanelHeightRef = useRef(setTopPanelHeight);
+  useEffect(() => {
+    setTopPanelHeightRef.current = setTopPanelHeight;
+  }, [setTopPanelHeight]);
+
   const [topMax, setTopMax] = useState(() =>
     typeof window !== "undefined"
       ? Math.max(TOP_H_MIN, window.innerHeight - TOP_VIEWPORT_RESERVE)
@@ -84,9 +90,74 @@ export function ProductionWorkbenchSplit({
   const [drawingVisible, setDrawingVisible] = useState(true);
 
   const dragW = useRef<{ x: number; pct: number } | null>(null);
-  const dragHMouse = useRef<{ startY: number; startHeight: number } | null>(null);
   const rowRef = useRef<HTMLDivElement | null>(null);
   const isLg = useIsLg();
+
+  /** Vertikální resize: refy musí přežít re-render, aby window listenery nebyly shozeny. */
+  const isResizingVerticalRef = useRef(false);
+  const startYRef = useRef(0);
+  const startHeightRef = useRef(0);
+  const verticalMoveImplRef = useRef<(e: MouseEvent) => void>(() => {});
+  const verticalUpImplRef = useRef<() => void>(() => {});
+
+  const onStableVerticalMove = useCallback((e: MouseEvent) => {
+    verticalMoveImplRef.current(e);
+  }, []);
+
+  const onStableVerticalUp = useCallback(() => {
+    verticalUpImplRef.current();
+  }, []);
+
+  useEffect(() => {
+    verticalMoveImplRef.current = (e: MouseEvent) => {
+      if (!isResizingVerticalRef.current) return;
+      const delta = e.clientY - startYRef.current;
+      let newHeight = startHeightRef.current + delta;
+      const maxH = Math.max(TOP_H_MIN, window.innerHeight - TOP_VIEWPORT_RESERVE);
+      newHeight = Math.min(maxH, Math.max(TOP_H_MIN, newHeight));
+      setTopPanelHeightRef.current(newHeight);
+    };
+    verticalUpImplRef.current = () => {
+      if (!isResizingVerticalRef.current) return;
+      isResizingVerticalRef.current = false;
+      if (typeof document !== "undefined") {
+        document.body.style.userSelect = "";
+        document.body.style.cursor = "";
+      }
+      window.removeEventListener("mousemove", onStableVerticalMove);
+      window.removeEventListener("mouseup", onStableVerticalUp);
+    };
+  }, [onStableVerticalMove, onStableVerticalUp]);
+
+  const onPointerMoveWImplRef = useRef<(e: PointerEvent) => void>(() => {});
+  const onPointerEndWImplRef = useRef<() => void>(() => {});
+
+  const onStablePointerMoveW = useCallback((e: PointerEvent) => {
+    onPointerMoveWImplRef.current(e);
+  }, []);
+
+  const onStablePointerEndW = useCallback(() => {
+    onPointerEndWImplRef.current();
+  }, []);
+
+  useEffect(() => {
+    onPointerMoveWImplRef.current = (e: PointerEvent) => {
+      const st = dragW.current;
+      const row = rowRef.current;
+      if (!st || !row) return;
+      const rect = row.getBoundingClientRect();
+      const dx = e.clientX - st.x;
+      const deltaPct = (dx / rect.width) * 100;
+      setSplitPct(Math.min(72, Math.max(28, st.pct + deltaPct)));
+    };
+    onPointerEndWImplRef.current = () => {
+      if (dragW.current === null) return;
+      dragW.current = null;
+      window.removeEventListener("pointermove", onStablePointerMoveW);
+      window.removeEventListener("pointerup", onStablePointerEndW);
+      window.removeEventListener("pointercancel", onStablePointerEndW);
+    };
+  }, [onStablePointerMoveW, onStablePointerEndW, setSplitPct]);
 
   useEffect(() => {
     const syncTopMax = () =>
@@ -144,86 +215,49 @@ export function ProductionWorkbenchSplit({
     }
   }, [storageKeyPrefix, topPanelHeight, disableLocalStorage]);
 
-  const onMoveW = useCallback(
-    (e: PointerEvent) => {
-      const st = dragW.current;
-      const row = rowRef.current;
-      if (!st || !row) return;
-      const rect = row.getBoundingClientRect();
-      const dx = e.clientX - st.x;
-      const deltaPct = (dx / rect.width) * 100;
-      setSplitPct(Math.min(72, Math.max(28, st.pct + deltaPct)));
-    },
-    [setSplitPct]
-  );
-
-  const endW = useCallback(() => {
-    dragW.current = null;
-    window.removeEventListener("pointermove", onMoveW);
-    window.removeEventListener("pointerup", endW);
-    window.removeEventListener("pointercancel", endW);
-  }, [onMoveW]);
-
   const startW = useCallback(
     (e: React.PointerEvent) => {
       e.preventDefault();
       dragW.current = { x: e.clientX, pct: splitPct };
-      window.addEventListener("pointermove", onMoveW);
-      window.addEventListener("pointerup", endW);
-      window.addEventListener("pointercancel", endW);
+      window.addEventListener("pointermove", onStablePointerMoveW);
+      window.addEventListener("pointerup", onStablePointerEndW);
+      window.addEventListener("pointercancel", onStablePointerEndW);
       try {
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
       } catch {
         /* */
       }
     },
-    [endW, onMoveW, splitPct]
+    [onStablePointerMoveW, onStablePointerEndW, splitPct]
   );
 
-  const onMouseMoveH = useCallback(
-    (e: MouseEvent) => {
-      const st = dragHMouse.current;
-      if (!st) return;
-      const newH = st.startHeight + (e.clientY - st.startY);
-      const next = Math.min(topMax, Math.max(TOP_H_MIN, newH));
-      setTopPanelHeight(next);
-    },
-    [topMax, setTopPanelHeight]
-  );
-
-  const endMouseH = useCallback(() => {
-    dragHMouse.current = null;
-    if (typeof document !== "undefined") {
-      document.body.style.userSelect = "";
-    }
-    window.removeEventListener("mousemove", onMouseMoveH);
-    window.removeEventListener("mouseup", endMouseH);
-  }, [onMouseMoveH]);
-
-  const startMouseH = useCallback(
+  const startVerticalResize = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
-      dragHMouse.current = { startY: e.clientY, startHeight: topPanelHeight };
+      isResizingVerticalRef.current = true;
+      startYRef.current = e.clientY;
+      startHeightRef.current = topPanelHeight;
       if (typeof document !== "undefined") {
         document.body.style.userSelect = "none";
+        document.body.style.cursor = "row-resize";
       }
-      window.addEventListener("mousemove", onMouseMoveH);
-      window.addEventListener("mouseup", endMouseH);
+      window.addEventListener("mousemove", onStableVerticalMove);
+      window.addEventListener("mouseup", onStableVerticalUp);
     },
-    [topPanelHeight, onMouseMoveH, endMouseH]
+    [topPanelHeight, onStableVerticalMove, onStableVerticalUp]
   );
-
-  useEffect(() => {
-    return () => {
-      endMouseH();
-      endW();
-    };
-  }, [endMouseH, endW]);
 
   const applyLargeTopMode = useCallback(() => {
     setTopPanelHeight(topMax);
   }, [topMax, setTopPanelHeight]);
+
+  useEffect(() => {
+    return () => {
+      verticalUpImplRef.current();
+      onPointerEndWImplRef.current();
+    };
+  }, []);
 
   const rightColumn = (
     <div
@@ -330,14 +364,10 @@ export function ProductionWorkbenchSplit({
           role="separator"
           aria-orientation="horizontal"
           aria-label="Změnit výšku panelu výkres a výběr materiálu"
-          className="flex min-h-[10px] w-full shrink-0 cursor-row-resize select-none flex-col items-center justify-center gap-0.5 border-y border-slate-300 bg-slate-200 py-1.5 hover:bg-slate-300"
-          onMouseDown={startMouseH}
-        >
-          <span className="text-[10px] font-medium text-slate-700">⋮</span>
-          <span className="hidden px-2 text-center text-[10px] leading-tight text-slate-600 sm:inline">
-            Tažením změníte výšku celého panelu (výkres + výběr materiálu)
-          </span>
-        </div>
+          title="Tažením změníte výšku celého panelu (výkres + výběr materiálu)"
+          className="h-2 w-full shrink-0 cursor-row-resize select-none bg-transparent hover:bg-black/10"
+          onMouseDown={startVerticalResize}
+        />
       ) : null}
 
       <div

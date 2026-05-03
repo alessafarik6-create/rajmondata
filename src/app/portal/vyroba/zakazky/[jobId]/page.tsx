@@ -144,7 +144,7 @@ import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 const DEFAULT_PRODUCTION_WORKBENCH_TOP_PX = 600;
-const PRODUCTION_TOP_PANEL_VIEWPORT_RESERVE = 180;
+const PRODUCTION_TOP_PANEL_VIEWPORT_RESERVE = 160;
 const PRODUCTION_TOP_PANEL_MIN_PX = 420;
 
 /** Kompaktní řádek kusů pro metráž (bez výpisu všech zbytků v kartě). */
@@ -554,6 +554,9 @@ export default function VyrobaZakazkaDetailPage() {
     splitPct: 46,
     topPanelHeight: DEFAULT_PRODUCTION_WORKBENCH_TOP_PX,
   });
+  const onWorkbenchHeightsChange = useCallback((patch: Partial<ProductionWorkbenchHeights>) => {
+    setWorkbenchHeights((prev) => ({ ...prev, ...patch }));
+  }, []);
   const [a4IncludeUnassigned, setA4IncludeUnassigned] = useState(false);
   const [queueEditDrawingKey, setQueueEditDrawingKey] = useState<string | null>(null);
 
@@ -2456,9 +2459,7 @@ export default function VyrobaZakazkaDetailPage() {
                   fillContainerHeight
                   disableLocalStorage
                   controlledHeights={workbenchHeights}
-                  onControlledHeightsChange={(patch) =>
-                    setWorkbenchHeights((prev) => ({ ...prev, ...patch }))
-                  }
+                  onControlledHeightsChange={onWorkbenchHeightsChange}
                   className="min-h-0 w-full flex-1"
                 leftPanel={
                   <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
