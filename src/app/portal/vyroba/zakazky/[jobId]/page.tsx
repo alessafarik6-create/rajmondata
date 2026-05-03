@@ -10,6 +10,7 @@ import {
   limit,
   orderBy,
   query,
+  serverTimestamp,
   where,
 } from "firebase/firestore";
 import {
@@ -104,10 +105,32 @@ import {
   type CsvMaterialDialogSource,
 } from "@/components/production/csv-material-proposal-dialog";
 import { JobProductionPdfDocumentationPanel } from "@/components/production/job-production-pdf-documentation";
-import { ProductionWorkbenchSplit } from "@/components/production/production-workbench-split";
+import { ProductionIssuePanelShell } from "@/components/production/production-issue-panel-shell";
+import {
+  ProductionWorkbenchSplit,
+  type ProductionWorkbenchHeights,
+} from "@/components/production/production-workbench-split";
 import { useStockPiecesSummaries } from "@/hooks/use-stock-pieces-summaries";
 import type { StockPiecesSummary } from "@/hooks/use-stock-pieces-summaries";
 import { formatMmCs } from "@/lib/stock-pieces-display";
+import {
+  buildProductionA4WorkListPdf,
+  downloadProductionA4WorkListPdf,
+  openProductionA4WorkListPdfPrint,
+} from "@/lib/production-a4-work-list-pdf";
+import {
+  PRODUCTION_DRAWING_STATUS_BADGE_CLASS,
+  PRODUCTION_DRAWING_STATUS_LABELS,
+  type ProductionDrawingStatusDoc,
+  type ProductionDrawingStatusValue,
+  upsertProductionDrawingStatus,
+} from "@/lib/production-drawing-status";
+import {
+  loadProductionIssueUserLayout,
+  readProductionIssueLayoutFromLocalStorage,
+  saveProductionIssueUserLayout,
+  writeProductionIssueLayoutToLocalStorage,
+} from "@/lib/production-issue-user-layout";
 import {
   buildProductionWorksheetPdf,
   downloadProductionWorksheetPdf,
@@ -118,6 +141,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
+const DEFAULT_PRODUCTION_WORKBENCH_TOP_PX = 550;
 
 /** Kompaktní řádek kusů pro metráž (bez výpisu všech zbytků v kartě). */
 function compactLengthStockSummary(sp: StockPiecesSummary | undefined): string | null {
@@ -236,6 +260,8 @@ type IssueQueueLine = {
   note: string;
   batchNumber: string;
   inputLengthUnit: "mm" | "cm" | "m" | null;
+  /** Klíč PDF řádku (`folderId-id`), nebo null = nepřiřazeno */
+  productionDrawingKey?: string | null;
 };
 
 function issueLineTotalInStockUnits(item: InventoryItemRow, ln: IssueQueueLine): number | null {
@@ -520,6 +546,14 @@ export default function VyrobaZakazkaDetailPage() {
   const [productionPdfSelectedIndex, setProductionPdfSelectedIndex] = useState(0);
   const [attachDrawingToExport, setAttachDrawingToExport] = useState(true);
   const [bulkPickIds, setBulkPickIds] = useState<Set<string>>(() => new Set());
+  /** Celková výška panelu „Výdej ve výrobě“ (px), desktop */
+  const [issuePanelOuterHeight, setIssuePanelOuterHeight] = useState<number | null>(null);
+  const [workbenchHeights, setWorkbenchHeights] = useState<ProductionWorkbenchHeights>({
+    splitPct: 46,
+    topPanelHeight: DEFAULT_PRODUCTION_WORKBENCH_TOP_PX,
+  });
+  const [a4IncludeUnassigned, setA4IncludeUnassigned] = useState(false);
+  const [queueEditDrawingKey, setQueueEditDrawingKey] = useState<string | null>(null);
 
   const productionPdfRows = useMemo(
     () =>
@@ -1011,6 +1045,41 @@ export default function VyrobaZakazkaDetailPage() {
     return m;
   }, [inventoryItems]);
 
+  const pdfAttachmentByDrawingKey = useMemo(() => {
+    const m = new Map<string, JobAttachmentFile>();
+    for (const f of attachmentFiles) {
+      if (f.kind === "pdf") m.set(`${f.folderId}-${f.id}`, f);
+    }
+    return m;
+  }, [attachmentFiles]);
+
+  const drawingStatusCol = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? collection(firestore, "companies", String(companyId), "jobs", String(jobId), "productionDrawingStatus")
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: drawingStatusDocsRaw = [] } = useCollection<
+    ProductionDrawingStatusDoc & { id?: string }
+  >(drawingStatusCol, { suppressGlobalPermissionError: true as const });
+
+  const drawingStatusByKey = useMemo(() => {
+    const m = new Map<string, ProductionDrawingStatusDoc & { id?: string }>();
+    const rows = Array.isArray(drawingStatusDocsRaw) ? drawingStatusDocsRaw : [];
+    for (const d of rows) {
+      const id = String((d as { id?: string }).id ?? d.drawingKey ?? "");
+      if (id) m.set(id, d);
+    }
+    return m;
+  }, [drawingStatusDocsRaw]);
+
+  const activeProductionDrawingKey = useMemo((): string | null => {
+    if (previewTab !== "pdf" || productionPdfRows.length === 0) return null;
+    const i = Math.min(Math.max(0, productionPdfSelectedIndex), productionPdfRows.length - 1);
+    return productionPdfRows[i]?.id ?? null;
+  }, [previewTab, productionPdfRows, productionPdfSelectedIndex]);
+
   const stockPieceMetas = useMemo(() => {
     const ids = new Set<string>();
     for (const ln of issueQueue) ids.add(ln.itemId);
@@ -1078,6 +1147,65 @@ export default function VyrobaZakazkaDetailPage() {
     () => (selectedItem ? projectedAvailableForItem(selectedItem, issueQueue) : 0),
     [selectedItem, issueQueue]
   );
+
+  const productionActorLabel = useMemo(
+    () =>
+      String(
+        profile?.displayName ||
+          profile?.name ||
+          (user?.email as string | undefined) ||
+          profile?.email ||
+          ""
+      ).trim(),
+    [profile?.displayName, profile?.name, profile?.email, user?.email]
+  );
+
+  useEffect(() => {
+    if (!firestore || !companyId || !user?.uid) return;
+    let cancelled = false;
+    void (async () => {
+      const remote = await loadProductionIssueUserLayout(firestore, user.uid, companyId);
+      const ls = readProductionIssueLayoutFromLocalStorage(companyId, user.uid);
+      const merged = { ...ls, ...remote };
+      if (cancelled) return;
+      const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+      const defaultOuter = Math.min(820, Math.max(560, Math.floor(vh * 0.82)));
+      if (typeof merged.productionIssuePanelHeight === "number" && merged.productionIssuePanelHeight >= 500) {
+        setIssuePanelOuterHeight(Math.min(vh - 72, merged.productionIssuePanelHeight));
+      } else {
+        setIssuePanelOuterHeight(defaultOuter);
+      }
+      setWorkbenchHeights((prev) => ({
+        splitPct:
+          typeof merged.productionPdfPanelWidth === "number" && Number.isFinite(merged.productionPdfPanelWidth)
+            ? Math.min(72, Math.max(28, merged.productionPdfPanelWidth))
+            : prev.splitPct,
+        topPanelHeight:
+          typeof merged.productionWorkbenchTopPx === "number" && Number.isFinite(merged.productionWorkbenchTopPx)
+            ? Math.min(Math.max(380, merged.productionWorkbenchTopPx), vh - 240)
+            : prev.topPanelHeight,
+      }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [firestore, companyId, user?.uid]);
+
+  useEffect(() => {
+    if (!firestore || !companyId || !user?.uid) return;
+    if (issuePanelOuterHeight == null) return;
+    const t = window.setTimeout(() => {
+      const patch = {
+        productionIssuePanelHeight: issuePanelOuterHeight,
+        productionPdfPanelWidth: workbenchHeights.splitPct,
+        productionMaterialPanelWidth: 100 - workbenchHeights.splitPct,
+        productionWorkbenchTopPx: workbenchHeights.topPanelHeight,
+      };
+      void saveProductionIssueUserLayout(firestore, user.uid, companyId, patch);
+      writeProductionIssueLayoutToLocalStorage(companyId, user.uid, patch);
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [firestore, companyId, user?.uid, issuePanelOuterHeight, workbenchHeights]);
 
   const lengthUnitEditable = useMemo(() => lengthUnitEditableForItem(selectedItem), [selectedItem]);
 
@@ -1357,6 +1485,7 @@ export default function VyrobaZakazkaDetailPage() {
         note: issueNote.trim(),
         batchNumber: issueBatch.trim(),
         inputLengthUnit: inputUnitForLine,
+        productionDrawingKey: activeProductionDrawingKey,
       },
     ]);
     setIssueQty("");
@@ -1371,6 +1500,7 @@ export default function VyrobaZakazkaDetailPage() {
     issueInputLengthUnit,
     issueQueue,
     toast,
+    activeProductionDrawingKey,
   ]);
 
   const addSameStockLineAgain = useCallback(() => {
@@ -1399,6 +1529,7 @@ export default function VyrobaZakazkaDetailPage() {
     setQueueEditLine(ln);
     setQueueEditQtyStr(ln.qtyStr);
     setQueueEditRepeatStr(ln.repeatCountStr ?? "1");
+    setQueueEditDrawingKey(ln.productionDrawingKey ?? null);
     setQueueEditOpen(true);
   }, []);
 
@@ -1439,12 +1570,22 @@ export default function VyrobaZakazkaDetailPage() {
     const repStr = String(item.stockTrackingMode) === "length" ? String(Math.floor(rep)) : "1";
     setIssueQueue((q) =>
       q.map((l) =>
-        l.key === queueEditLine.key ? { ...l, qtyStr: trimmed, repeatCountStr: repStr } : l
+        l.key === queueEditLine.key
+          ? { ...l, qtyStr: trimmed, repeatCountStr: repStr, productionDrawingKey: queueEditDrawingKey }
+          : l
       )
     );
     setQueueEditOpen(false);
     setQueueEditLine(null);
-  }, [queueEditLine, queueEditQtyStr, queueEditRepeatStr, issueQueue, inventoryById, toast]);
+  }, [
+    queueEditLine,
+    queueEditQtyStr,
+    queueEditRepeatStr,
+    queueEditDrawingKey,
+    issueQueue,
+    inventoryById,
+    toast,
+  ]);
 
   const submitBulkIssue = useCallback(async () => {
     if (!user || !jobId) return;
@@ -1628,6 +1769,200 @@ export default function VyrobaZakazkaDetailPage() {
     ]
   );
 
+  const issueQueueLinesForA4Filter = useCallback(
+    (scope: "single" | "all", drawingKey: string | null, includeUnassigned: boolean): IssueQueueLine[] => {
+      if (scope === "all") return issueQueue;
+      if (!drawingKey) {
+        if (!includeUnassigned) return [];
+        return issueQueue.filter((l) => !l.productionDrawingKey);
+      }
+      const forPdf = issueQueue.filter((l) => l.productionDrawingKey === drawingKey);
+      if (!includeUnassigned) return forPdf;
+      const unass = issueQueue.filter((l) => !l.productionDrawingKey);
+      return [...forPdf, ...unass];
+    },
+    [issueQueue]
+  );
+
+  const materialRowsForA4 = useCallback(
+    (lines: IssueQueueLine[]) =>
+      lines.map((ln) => {
+        const inv = inventoryById.get(ln.itemId);
+        const unit = inv?.unit || "ks";
+        const cuts =
+          inv && String(inv.stockTrackingMode) === "length"
+            ? ln.repeatCountStr && ln.repeatCountStr !== "1"
+              ? `${ln.repeatCountStr}× ${ln.qtyStr} ${ln.inputLengthUnit || ""}`
+              : `${ln.qtyStr} ${ln.inputLengthUnit || ""}`
+            : "—";
+        const sp = stockPiecesSummaryByItem[ln.itemId];
+        const remainder =
+          inv && String(inv.stockTrackingMode) === "length" && sp && !sp.loading ? sp.label : "—";
+        const stDoc = ln.productionDrawingKey ? drawingStatusByKey.get(ln.productionDrawingKey) : null;
+        const st = (stDoc?.status as ProductionDrawingStatusValue) || "unprepared";
+        return {
+          itemName: String(inv?.name ?? ln.itemId),
+          quantity: ln.qtyStr,
+          unit,
+          cuts,
+          remainder,
+          note: [ln.note, ln.batchNumber ? `Šarže: ${ln.batchNumber}` : ""].filter(Boolean).join(" · "),
+          statusLabel: PRODUCTION_DRAWING_STATUS_LABELS[st],
+        };
+      }),
+    [inventoryById, stockPiecesSummaryByItem, drawingStatusByKey]
+  );
+
+  const runA4WorkListExport = useCallback(
+    async (
+      action: "download" | "print",
+      scope: "single" | "all",
+      drawingKey: string | null,
+      opts?: { includeUnassigned?: boolean }
+    ) => {
+      if (!jobView) return;
+      const j = jobView as Record<string, unknown>;
+      const jobName = String(jobView.displayLabel || jobView.name || jobId);
+      const customer = String(
+        j.customerName ||
+          j.customerCompanyName ||
+          j.companyName ||
+          j.customerDisplayName ||
+          ""
+      );
+      const dateLabel = new Date().toLocaleString("cs-CZ");
+      const lines = issueQueueLinesForA4Filter(scope, drawingKey, opts?.includeUnassigned === true);
+      if (lines.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "Žádný materiál",
+          description:
+            scope === "single"
+              ? "K tomuto výkresu není přiřazen žádný řádek — přidejte materiál nebo zapněte „Zahrnout nepřiřazený materiál“."
+              : "Seznam „Materiál pro zakázku“ je prázdný.",
+        });
+        return;
+      }
+      let drawingRef: ProductionWorksheetDrawingRef | null = null;
+      if (scope === "single" && drawingKey) {
+        const row = productionPdfRows.find((r) => r.id === drawingKey);
+        if (row) drawingRef = { url: row.fileUrl, fileName: row.fileName, kind: "pdf" };
+      } else if (scope === "all" && productionPdfRows.length > 0) {
+        const i = Math.min(Math.max(0, productionPdfSelectedIndex), productionPdfRows.length - 1);
+        const row = productionPdfRows[i];
+        if (row)
+          drawingRef = {
+            url: row.fileUrl,
+            fileName: `Souhrn výkresů (aktuální: ${row.fileName})`,
+            kind: "pdf",
+          };
+      }
+      const footerParts: string[] = [];
+      if (scope === "single" && drawingKey) {
+        const st = drawingStatusByKey.get(drawingKey)?.status as ProductionDrawingStatusValue | undefined;
+        if (st) footerParts.push(`Stav výkresu: ${PRODUCTION_DRAWING_STATUS_LABELS[st]}`);
+      }
+      try {
+        const doc = await buildProductionA4WorkListPdf({
+          jobName,
+          customerLabel: customer,
+          dateLabel,
+          drawing: drawingRef,
+          materialRows: materialRowsForA4(lines),
+          footerNote: footerParts.length ? footerParts.join(" · ") : undefined,
+        });
+        if (action === "print") openProductionA4WorkListPdfPrint(doc);
+        else downloadProductionA4WorkListPdf(doc, jobName, dateLabel);
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "Export A4 se nezdařil",
+          description: e instanceof Error ? e.message : "Zkuste to znovu.",
+        });
+      }
+    },
+    [
+      jobView,
+      jobId,
+      issueQueueLinesForA4Filter,
+      materialRowsForA4,
+      productionPdfRows,
+      productionPdfSelectedIndex,
+      drawingStatusByKey,
+      toast,
+      a4IncludeUnassigned,
+      activeProductionDrawingKey,
+    ]
+  );
+
+  const setDrawingStatusFlow = useCallback(
+    async (drawingKey: string, status: ProductionDrawingStatusValue) => {
+      if (!firestore || !companyId || !jobId || !user) return;
+      const att = pdfAttachmentByDrawingKey.get(drawingKey);
+      const row = productionPdfRows.find((r) => r.id === drawingKey);
+      const fileName = row?.fileName || att?.fileName || drawingKey;
+      const fileId = att?.id || "";
+      const folderId = att?.folderId || "";
+      if (!fileId || !folderId) {
+        toast({
+          variant: "destructive",
+          title: "Chybí metadata souboru",
+          description: "Obnovte stránku a zkuste znovu.",
+        });
+        return;
+      }
+      const payload: {
+        drawingKey: string;
+        fileId: string;
+        folderId: string;
+        fileName: string;
+        status: ProductionDrawingStatusValue;
+        materialPreparedAt?: ReturnType<typeof serverTimestamp>;
+        materialPreparedBy?: string;
+        materialPreparedByName?: string;
+        issuedAt?: ReturnType<typeof serverTimestamp>;
+        issuedBy?: string;
+        issuedByName?: string;
+      } = {
+        drawingKey,
+        fileId,
+        folderId,
+        fileName,
+        status,
+      };
+      if (status === "material_ready") {
+        payload.materialPreparedAt = serverTimestamp();
+        payload.materialPreparedBy = user.uid;
+        if (productionActorLabel) payload.materialPreparedByName = productionActorLabel;
+      }
+      if (status === "issued") {
+        payload.issuedAt = serverTimestamp();
+        payload.issuedBy = user.uid;
+        if (productionActorLabel) payload.issuedByName = productionActorLabel;
+      }
+      try {
+        await upsertProductionDrawingStatus(firestore, companyId, String(jobId), payload);
+        toast({ title: "Uloženo", description: PRODUCTION_DRAWING_STATUS_LABELS[status] });
+      } catch (e) {
+        toast({
+          variant: "destructive",
+          title: "Stav se nepodařilo uložit",
+          description: e instanceof Error ? e.message : "Zkuste to znovu.",
+        });
+      }
+    },
+    [
+      firestore,
+      companyId,
+      jobId,
+      user,
+      pdfAttachmentByDrawingKey,
+      productionPdfRows,
+      toast,
+      productionActorLabel,
+    ]
+  );
+
   const toggleBulkPick = useCallback((id: string) => {
     setBulkPickIds((prev) => {
       const n = new Set(prev);
@@ -1660,6 +1995,7 @@ export default function VyrobaZakazkaDetailPage() {
           note: "",
           batchNumber: "",
           inputLengthUnit: lengthUnitEditableForItem(inv) ? "mm" : null,
+          productionDrawingKey: activeProductionDrawingKey,
         });
         added++;
       }
@@ -1673,7 +2009,7 @@ export default function VyrobaZakazkaDetailPage() {
           ? `${added} ${added === 1 ? "položka" : added < 5 ? "položky" : "položek"} v seznamu „Materiál pro zakázku“ — zkontrolujte množství a řezy.`
           : "Nic nebylo přidáno.",
     });
-  }, [bulkPickIds, inventoryById, toast]);
+  }, [bulkPickIds, inventoryById, toast, activeProductionDrawingKey]);
 
   const productionMaterialLinesForOrder = useMemo(() => {
     return issueQueue.map((ln) => {
@@ -1988,27 +2324,139 @@ export default function VyrobaZakazkaDetailPage() {
             </CardContent>
           </Card>
 
-          <Card className={CARD}>
-            <CardHeader className="border-b border-slate-100">
-              <CardTitle className="text-base text-slate-900 flex items-center gap-2">
-                <Package className="h-4 w-4" />
-                Výdej ve výrobě
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="flex min-h-0 flex-col px-4 pb-4 pt-6 text-sm sm:px-6 sm:pb-6">
-              <div className="mb-6 max-w-3xl shrink-0 space-y-3">
-                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  Materiál přiřazený k výrobě
-                </p>
-                <p className="text-sm leading-relaxed text-slate-700">
-                  Materiál nemusí být předem přiřazen — při každém výdeji ze skladu se automaticky zapíše spotřeba
-                  na tuto zakázku. Volitelné rezervace řeší administrace skladu.
-                </p>
-              </div>
+          <ProductionIssuePanelShell
+            heightPx={issuePanelOuterHeight}
+            onHeightPxChange={setIssuePanelOuterHeight}
+          >
+            <Card className={cn(CARD, "flex min-h-0 flex-1 flex-col overflow-hidden border-0 shadow-none")}>
+              <CardHeader className="shrink-0 border-b border-slate-100">
+                <CardTitle className="text-base text-slate-900 flex items-center gap-2">
+                  <Package className="h-4 w-4" />
+                  Výdej ve výrobě
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-4 pt-6 text-sm sm:px-6 sm:pb-6">
+                <div className="mb-6 max-w-3xl shrink-0 space-y-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Materiál přiřazený k výrobě
+                  </p>
+                  <p className="text-sm leading-relaxed text-slate-700">
+                    Materiál nemusí být předem přiřazen — při každém výdeji ze skladu se automaticky zapíše spotřeba
+                    na tuto zakázku. Volitelné rezervace řeší administrace skladu.
+                  </p>
+                </div>
 
-              <ProductionWorkbenchSplit
-                storageKeyPrefix={`vyroba-wb-${String(jobId)}`}
-                className="min-h-0 w-full shrink-0 lg:min-h-0"
+                {productionPdfRows.length > 0 ? (
+                  <div className="mb-4 shrink-0 space-y-2 rounded-lg border border-slate-200 bg-slate-50/90 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                      PDF výkresy — připravenost materiálu
+                    </p>
+                    <div className="space-y-2">
+                      {productionPdfRows.map((pdfRow) => {
+                        const st = (drawingStatusByKey.get(pdfRow.id)?.status ||
+                          "unprepared") as ProductionDrawingStatusValue;
+                        const matCount = issueQueue.filter((l) => l.productionDrawingKey === pdfRow.id).length;
+                        const active = productionPdfRows[productionPdfSelectedIndex]?.id === pdfRow.id;
+                        return (
+                          <div
+                            key={pdfRow.id}
+                            className={cn(
+                              "flex flex-col gap-2 rounded-md border bg-white p-2 sm:flex-row sm:items-center sm:justify-between",
+                              active ? "border-emerald-400 ring-1 ring-emerald-200" : "border-slate-200"
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  type="button"
+                                  className="truncate text-left text-sm font-medium text-slate-900 hover:underline"
+                                  onClick={() => {
+                                    setPreviewTab("pdf");
+                                    const idx = productionPdfRows.findIndex((r) => r.id === pdfRow.id);
+                                    if (idx >= 0) setProductionPdfSelectedIndex(idx);
+                                  }}
+                                >
+                                  {pdfRow.fileName}
+                                </button>
+                                <span
+                                  className={cn(
+                                    "inline-flex shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                                    PRODUCTION_DRAWING_STATUS_BADGE_CLASS[st]
+                                  )}
+                                >
+                                  {PRODUCTION_DRAWING_STATUS_LABELS[st]}
+                                </span>
+                                <span className="text-[11px] text-slate-500">Materiál: {matCount} řádků</span>
+                              </div>
+                            </div>
+                            <div className="flex flex-wrap gap-1">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="secondary"
+                                className="h-8 px-2 text-[11px]"
+                                disabled={st === "material_ready" || st === "issued" || st === "done"}
+                                onClick={() => void setDrawingStatusFlow(pdfRow.id, "material_ready")}
+                              >
+                                Materiál připraven
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 px-2 text-[11px]"
+                                disabled={st === "issued" || st === "done"}
+                                onClick={() => void setDrawingStatusFlow(pdfRow.id, "issued")}
+                              >
+                                Vyskladněno
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8 text-xs"
+                                disabled={st === "done"}
+                                onClick={() => void setDrawingStatusFlow(pdfRow.id, "done")}
+                              >
+                                Hotovo
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 text-xs"
+                                onClick={() =>
+                                  void runA4WorkListExport("download", "single", pdfRow.id, {
+                                    includeUnassigned: a4IncludeUnassigned,
+                                  })
+                                }
+                              >
+                                Export A4
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-700">
+                      <Checkbox
+                        checked={a4IncludeUnassigned}
+                        onCheckedChange={(c) => setA4IncludeUnassigned(c === true)}
+                      />
+                      Při exportu aktuálního PDF zahrnout nepřiřazený materiál
+                    </label>
+                  </div>
+                ) : null}
+
+                <ProductionWorkbenchSplit
+                  storageKeyPrefix={`vyroba-wb-${String(jobId)}`}
+                  fillContainerHeight
+                  disableLocalStorage
+                  controlledHeights={workbenchHeights}
+                  onControlledHeightsChange={(patch) =>
+                    setWorkbenchHeights((prev) => ({ ...prev, ...patch }))
+                  }
+                  className="min-h-0 w-full flex-1"
                 leftPanel={
                   <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
                     <div className="flex shrink-0 items-center justify-between border-b border-slate-100 bg-slate-50/95 px-2 py-1.5">
@@ -2624,13 +3072,53 @@ export default function VyrobaZakazkaDetailPage() {
                       <Printer className="h-4 w-4" />
                       Vytisknout výrobní podklad
                     </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10 gap-1"
+                      disabled={issueQueue.length === 0}
+                      onClick={() =>
+                        void runA4WorkListExport("download", "single", activeProductionDrawingKey, {
+                          includeUnassigned: a4IncludeUnassigned,
+                        })
+                      }
+                    >
+                      <FileDown className="h-4 w-4" />
+                      Export A4 výrobní list
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10 gap-1"
+                      disabled={issueQueue.length === 0}
+                      onClick={() => void runA4WorkListExport("download", "all", null)}
+                    >
+                      Export A4 — všechna PDF
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10 gap-1"
+                      disabled={issueQueue.length === 0}
+                      onClick={() =>
+                        void runA4WorkListExport("print", "single", activeProductionDrawingKey, {
+                          includeUnassigned: a4IncludeUnassigned,
+                        })
+                      }
+                    >
+                      <Printer className="h-4 w-4" />
+                      Vytisknout A4 výrobní list
+                    </Button>
                   </div>
                   {issueQueue.length === 0 ? (
                     <p className="text-sm text-slate-500">Seznam je prázdný — použijte „Přidat do výdeje“.</p>
                   ) : (
                     <>
                       <div className="hidden max-w-full overflow-x-auto rounded-lg border border-slate-200 bg-white lg:block">
-                        <table className="w-full min-w-[44rem] text-sm">
+                        <table className="w-full min-w-[52rem] text-sm">
                           <thead>
                             <tr className="border-b border-slate-100 bg-slate-50 text-left text-xs uppercase text-slate-600">
                               <th className="w-12 p-1.5 font-semibold" aria-label="Náhled" />
@@ -2640,6 +3128,7 @@ export default function VyrobaZakazkaDetailPage() {
                               <th className="p-1.5 font-semibold whitespace-nowrap">Řez / množství</th>
                               <th className="p-1.5 font-semibold whitespace-nowrap">Opak.</th>
                               <th className="p-1.5 font-semibold whitespace-nowrap">Jednotka</th>
+                              <th className="max-w-[9rem] p-1.5 font-semibold">Výkres PDF</th>
                               <th className="max-w-[9rem] p-1.5 font-semibold">Poznámka</th>
                               <th className="p-1.5 font-semibold whitespace-nowrap">Stav</th>
                               <th className="w-36 p-1.5 font-semibold">Akce</th>
@@ -2688,6 +3177,32 @@ export default function VyrobaZakazkaDetailPage() {
                                   </td>
                                   <td className="p-1.5 text-xs text-slate-600 whitespace-nowrap">
                                     {lenEd ? (ln.inputLengthUnit || "—") : unitLabel}
+                                  </td>
+                                  <td className="max-w-[9rem] p-1 align-top">
+                                    <Select
+                                      value={ln.productionDrawingKey || "__none__"}
+                                      onValueChange={(v) =>
+                                        setIssueQueue((q) =>
+                                          q.map((x) =>
+                                            x.key === ln.key
+                                              ? { ...x, productionDrawingKey: v === "__none__" ? null : v }
+                                              : x
+                                          )
+                                        )
+                                      }
+                                    >
+                                      <SelectTrigger className="h-8 border-slate-300 bg-white text-[10px]">
+                                        <SelectValue placeholder="—" />
+                                      </SelectTrigger>
+                                      <SelectContent className="bg-white border-slate-200">
+                                        <SelectItem value="__none__">Nepřiřazeno</SelectItem>
+                                        {productionPdfRows.map((r) => (
+                                          <SelectItem key={r.id} value={r.id} className="text-xs">
+                                            {r.fileName}
+                                          </SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
                                   </td>
                                   <td className="max-w-[9rem] p-1.5 text-xs text-slate-700">
                                     <p className="line-clamp-2 break-words" title={ln.note || undefined}>
@@ -2771,6 +3286,33 @@ export default function VyrobaZakazkaDetailPage() {
                                     </dd>
                                     <dt className="text-slate-500">Jednotka</dt>
                                     <dd className="text-right">{lenEd ? (ln.inputLengthUnit || "—") : unitLabel}</dd>
+                                    <dt className="text-slate-500 col-span-2">Výkres PDF</dt>
+                                    <dd className="col-span-2">
+                                      <Select
+                                        value={ln.productionDrawingKey || "__none__"}
+                                        onValueChange={(v) =>
+                                          setIssueQueue((q) =>
+                                            q.map((x) =>
+                                              x.key === ln.key
+                                                ? { ...x, productionDrawingKey: v === "__none__" ? null : v }
+                                                : x
+                                            )
+                                          )
+                                        }
+                                      >
+                                        <SelectTrigger className="h-9 w-full border-slate-300 bg-white text-xs">
+                                          <SelectValue placeholder="—" />
+                                        </SelectTrigger>
+                                        <SelectContent className="bg-white border-slate-200">
+                                          <SelectItem value="__none__">Nepřiřazeno</SelectItem>
+                                          {productionPdfRows.map((r) => (
+                                            <SelectItem key={r.id} value={r.id}>
+                                              {r.fileName}
+                                            </SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                    </dd>
                                     <dt className="text-slate-500">Poznámka</dt>
                                     <dd className="text-right text-[11px] line-clamp-3 break-words">{ln.note || "—"}</dd>
                                     {ln.batchNumber ? (
@@ -2836,6 +3378,7 @@ export default function VyrobaZakazkaDetailPage() {
           />
             </CardContent>
           </Card>
+          </ProductionIssuePanelShell>
 
           {companyId && jobId && jobView && user ? (
             <JobMaterialOrdersSection
@@ -3370,6 +3913,7 @@ export default function VyrobaZakazkaDetailPage() {
                 setQueueEditOpen(false);
                 setQueueEditLine(null);
                 setQueueEditRepeatStr("1");
+                setQueueEditDrawingKey(null);
               }
             }}
           >
@@ -3400,6 +3944,25 @@ export default function VyrobaZakazkaDetailPage() {
                     />
                   </div>
                 ) : null}
+                <div className="space-y-1">
+                  <Label>Výkres PDF (řádek materiálu)</Label>
+                  <Select
+                    value={queueEditDrawingKey || "__none__"}
+                    onValueChange={(v) => setQueueEditDrawingKey(v === "__none__" ? null : v)}
+                  >
+                    <SelectTrigger className="bg-white border-slate-300">
+                      <SelectValue placeholder="Nepřiřazeno" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-white border-slate-200">
+                      <SelectItem value="__none__">Nepřiřazeno</SelectItem>
+                      {productionPdfRows.map((r) => (
+                        <SelectItem key={r.id} value={r.id}>
+                          {r.fileName}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
                 <p className="text-xs text-slate-500">
                   Jednotka zadání odpovídá řádku ve frontě (mm/cm/m u metráže, jinak přímo ve skladové jednotce).
                 </p>
@@ -3412,6 +3975,7 @@ export default function VyrobaZakazkaDetailPage() {
                   onClick={() => {
                     setQueueEditOpen(false);
                     setQueueEditLine(null);
+                    setQueueEditDrawingKey(null);
                   }}
                 >
                   Zrušit

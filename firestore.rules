@@ -1032,6 +1032,31 @@ service cloud.firestore {
           allow write: if false;
         }
 
+        /**
+         * Stav připravenosti materiálu podle výkresu/PDF ve výrobě.
+         * companies/{companyId}/jobs/{jobId}/productionDrawingStatus/{drawingKey}
+         */
+        match /productionDrawingStatus/{drawingKey} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          );
+          allow create, update: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          ) &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.drawingKey == drawingKey &&
+            request.resource.data.fileId is string &&
+            request.resource.data.folderId is string &&
+            request.resource.data.fileName is string &&
+            request.resource.data.status in ['unprepared', 'material_ready', 'issued', 'done'];
+          allow delete: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          );
+        }
+
         /** Bezpečný náhled zakázky pro zaměstnance (bez rozpočtu). */
         match /employeeSummary/summary {
           allow read: if signedIn() && sameCompany(companyId) && (

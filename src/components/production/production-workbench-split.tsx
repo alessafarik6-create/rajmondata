@@ -6,8 +6,12 @@ import { cn } from "@/lib/utils";
 
 const TOP_H_MIN = 380;
 const TOP_H_DEFAULT = 550;
-/** Max výška horní sekce (px): viewport mínus rezerva pro spodek a UI */
 const TOP_VIEWPORT_RESERVE = 240;
+
+export type ProductionWorkbenchHeights = {
+  splitPct: number;
+  topPanelHeight: number;
+};
 
 function useIsLg() {
   const [lg, setLg] = useState(false);
@@ -22,29 +26,58 @@ function useIsLg() {
 }
 
 type ProductionWorkbenchSplitProps = {
-  /** Klíč do localStorage pro šířku panelů a výšku horní sekce (desktop) */
   storageKeyPrefix: string;
   className?: string;
   leftPanel: React.ReactNode;
   rightPanel: React.ReactNode;
   bottomPanel: React.ReactNode;
+  /** Vyplní výšku rodiče (bez vlastního lg:h-[calc…]) — pro obal s pevnou výškou */
+  fillContainerHeight?: boolean;
+  /** Řízené rozměry z Firestore / nadřazeného stavu */
+  controlledHeights?: ProductionWorkbenchHeights | null;
+  onControlledHeightsChange?: (patch: Partial<ProductionWorkbenchHeights>) => void;
+  /** Nepersistovat do localStorage (persistuje rodič) */
+  disableLocalStorage?: boolean;
 };
 
-/**
- * Výrobní dílna: nahoře PDF + sklad (fixní / měnitelná výška), dole fronta materiálu se scrollem.
- * Desktop: horizontální rozdělovač šířky + vertikální rozdělovač výšky horní vs. spodek.
- * Horní výška nezávisí na obsahu fronty — řeší dřívější „sbalení“ po přidání řádků.
- * Mobil: sloupec bez resize.
- */
 export function ProductionWorkbenchSplit({
   storageKeyPrefix,
   className,
   leftPanel,
   rightPanel,
   bottomPanel,
+  fillContainerHeight = false,
+  controlledHeights = null,
+  onControlledHeightsChange,
+  disableLocalStorage = false,
 }: ProductionWorkbenchSplitProps) {
-  const [splitPct, setSplitPct] = useState(46);
-  const [topPanelHeight, setTopPanelHeight] = useState(TOP_H_DEFAULT);
+  const [splitPctInternal, setSplitPctInternal] = useState(46);
+  const [topPanelHeightInternal, setTopPanelHeightInternal] = useState(TOP_H_DEFAULT);
+  const splitPct = controlledHeights?.splitPct ?? splitPctInternal;
+  const topPanelHeight = controlledHeights?.topPanelHeight ?? topPanelHeightInternal;
+
+  const setSplitPct = useCallback(
+    (v: number) => {
+      if (controlledHeights && onControlledHeightsChange) {
+        onControlledHeightsChange({ splitPct: v });
+      } else {
+        setSplitPctInternal(v);
+      }
+    },
+    [controlledHeights, onControlledHeightsChange]
+  );
+
+  const setTopPanelHeight = useCallback(
+    (v: number) => {
+      if (controlledHeights && onControlledHeightsChange) {
+        onControlledHeightsChange({ topPanelHeight: v });
+      } else {
+        setTopPanelHeightInternal(v);
+      }
+    },
+    [controlledHeights, onControlledHeightsChange]
+  );
+
   const [topMax, setTopMax] = useState(() =>
     typeof window !== "undefined" ? Math.max(TOP_H_MIN, window.innerHeight - TOP_VIEWPORT_RESERVE) : 800
   );
@@ -65,54 +98,61 @@ export function ProductionWorkbenchSplit({
   }, []);
 
   useEffect(() => {
-    setTopPanelHeight((h) => Math.min(Math.max(h, TOP_H_MIN), topMax));
-  }, [topMax]);
+    if (controlledHeights) return;
+    setTopPanelHeightInternal((h) => Math.min(Math.max(h, TOP_H_MIN), topMax));
+  }, [topMax, controlledHeights]);
 
   useEffect(() => {
+    if (disableLocalStorage) return;
     try {
       const w = localStorage.getItem(`${storageKeyPrefix}-w`);
-      if (w) {
+      if (w && !controlledHeights) {
         const n = Number(w);
-        if (Number.isFinite(n)) setSplitPct(Math.min(72, Math.max(28, n)));
+        if (Number.isFinite(n)) setSplitPctInternal(Math.min(72, Math.max(28, n)));
       }
       const t = localStorage.getItem(`${storageKeyPrefix}-top`);
-      if (t) {
+      if (t && !controlledHeights) {
         const n = Number(t);
         if (Number.isFinite(n)) {
           const max = Math.max(TOP_H_MIN, window.innerHeight - TOP_VIEWPORT_RESERVE);
-          setTopPanelHeight(Math.min(Math.max(n, TOP_H_MIN), max));
+          setTopPanelHeightInternal(Math.min(Math.max(n, TOP_H_MIN), max));
         }
       }
     } catch {
       /* ignore */
     }
-  }, [storageKeyPrefix]);
+  }, [storageKeyPrefix, disableLocalStorage, controlledHeights]);
 
   useEffect(() => {
+    if (disableLocalStorage) return;
     try {
       localStorage.setItem(`${storageKeyPrefix}-w`, String(splitPct));
     } catch {
       /* ignore */
     }
-  }, [storageKeyPrefix, splitPct]);
+  }, [storageKeyPrefix, splitPct, disableLocalStorage]);
 
   useEffect(() => {
+    if (disableLocalStorage) return;
     try {
       localStorage.setItem(`${storageKeyPrefix}-top`, String(topPanelHeight));
     } catch {
       /* ignore */
     }
-  }, [storageKeyPrefix, topPanelHeight]);
+  }, [storageKeyPrefix, topPanelHeight, disableLocalStorage]);
 
-  const onMoveW = useCallback((e: PointerEvent) => {
-    const st = dragW.current;
-    const row = rowRef.current;
-    if (!st || !row) return;
-    const rect = row.getBoundingClientRect();
-    const dx = e.clientX - st.x;
-    const deltaPct = (dx / rect.width) * 100;
-    setSplitPct(Math.min(72, Math.max(28, st.pct + deltaPct)));
-  }, []);
+  const onMoveW = useCallback(
+    (e: PointerEvent) => {
+      const st = dragW.current;
+      const row = rowRef.current;
+      if (!st || !row) return;
+      const rect = row.getBoundingClientRect();
+      const dx = e.clientX - st.x;
+      const deltaPct = (dx / rect.width) * 100;
+      setSplitPct(Math.min(72, Math.max(28, st.pct + deltaPct)));
+    },
+    [setSplitPct]
+  );
 
   const endW = useCallback(() => {
     dragW.current = null;
@@ -145,7 +185,7 @@ export function ProductionWorkbenchSplit({
       const next = Math.min(topMax, Math.max(TOP_H_MIN, st.h + dy));
       setTopPanelHeight(next);
     },
-    [topMax]
+    [topMax, setTopPanelHeight]
   );
 
   const endH = useCallback(() => {
@@ -175,13 +215,13 @@ export function ProductionWorkbenchSplit({
     <div
       className={cn(
         "flex min-h-0 w-full flex-col gap-0 overflow-hidden",
-        /* Mobil: přirozená výška; desktop: pevná výška dílny → horní px + spodek scroll, bez kolapsu */
-        "lg:h-[min(900px,calc(100dvh-200px))] lg:max-h-[calc(100dvh-7rem)]",
+        fillContainerHeight ? "h-full min-h-0 flex-1" : "lg:h-[min(900px,calc(100dvh-200px))] lg:max-h-[calc(100dvh-7rem)]",
         className
       )}
     >
-      {/* Horní sekce — na lg fixní výška (nezávislá na obsahu fronty dole) */}
-      <div className="flex w-full shrink-0 flex-col overflow-hidden min-h-0" style={
+      <div
+        className="flex w-full shrink-0 flex-col overflow-hidden min-h-0"
+        style={
           isLg
             ? {
                 height: topPanelHeight,
@@ -262,9 +302,7 @@ export function ProductionWorkbenchSplit({
           "lg:flex lg:flex-1 lg:flex-col lg:overflow-hidden lg:min-h-[12rem]"
         )}
       >
-        <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain lg:flex-1">
-          {bottomPanel}
-        </div>
+        <div className="min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain lg:flex-1">{bottomPanel}</div>
       </div>
     </div>
   );
