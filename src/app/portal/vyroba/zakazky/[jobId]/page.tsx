@@ -117,6 +117,7 @@ import {
   buildProductionA4WorkListPdf,
   downloadProductionA4WorkListPdf,
   openProductionA4WorkListPdfPrint,
+  type ProductionA4ExportVariant,
 } from "@/lib/production-a4-work-list-pdf";
 import { buildProductionA4MaterialRows } from "@/lib/production-a4-material-rows";
 import {
@@ -1799,7 +1800,7 @@ export default function VyrobaZakazkaDetailPage() {
       action: "download" | "print",
       scope: "single" | "all",
       drawingKey: string | null,
-      opts?: { includeUnassigned?: boolean }
+      opts?: { includeUnassigned?: boolean; exportVariant?: ProductionA4ExportVariant }
     ) => {
       if (!jobView) return;
       const j = jobView as Record<string, unknown>;
@@ -1854,6 +1855,8 @@ export default function VyrobaZakazkaDetailPage() {
             return PRODUCTION_DRAWING_STATUS_LABELS[st];
           }
         );
+        const variant: ProductionA4ExportVariant =
+          action === "print" ? "print" : opts?.exportVariant ?? "overview";
         const doc = await buildProductionA4WorkListPdf({
           jobName,
           customerLabel: customer,
@@ -1861,9 +1864,10 @@ export default function VyrobaZakazkaDetailPage() {
           drawing: drawingRef,
           materialRows,
           footerNote: footerParts.length ? footerParts.join(" · ") : undefined,
+          variant,
         });
         if (action === "print") openProductionA4WorkListPdfPrint(doc);
-        else downloadProductionA4WorkListPdf(doc, jobName, dateLabel);
+        else downloadProductionA4WorkListPdf(doc, jobName, dateLabel, variant);
       } catch (e) {
         toast({
           variant: "destructive",
@@ -1881,7 +1885,6 @@ export default function VyrobaZakazkaDetailPage() {
       drawingStatusByKey,
       productionPdfRows,
       productionPdfSelectedIndex,
-      drawingStatusByKey,
       toast,
       a4IncludeUnassigned,
       activeProductionDrawingKey,
@@ -2414,14 +2417,31 @@ export default function VyrobaZakazkaDetailPage() {
                                 type="button"
                                 size="sm"
                                 variant="ghost"
-                                className="h-8 text-xs"
+                                className="h-8 px-1.5 text-[10px]"
+                                title="Export A4 – přehled"
                                 onClick={() =>
                                   void runA4WorkListExport("download", "single", pdfRow.id, {
                                     includeUnassigned: a4IncludeUnassigned,
+                                    exportVariant: "overview",
                                   })
                                 }
                               >
-                                Export výrobní list (A4)
+                                A4 přehled
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                className="h-8 px-1.5 text-[10px]"
+                                title="Export A4 – tisk / vysoká kvalita"
+                                onClick={() =>
+                                  void runA4WorkListExport("download", "single", pdfRow.id, {
+                                    includeUnassigned: a4IncludeUnassigned,
+                                    exportVariant: "print",
+                                  })
+                                }
+                              >
+                                A4 tisk
                               </Button>
                             </div>
                           </div>
@@ -3064,32 +3084,63 @@ export default function VyrobaZakazkaDetailPage() {
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="min-h-10 gap-1"
+                      className="min-h-10 gap-1 px-2 text-xs leading-tight"
                       disabled={issueQueue.length === 0}
                       onClick={() =>
                         void runA4WorkListExport("download", "single", activeProductionDrawingKey, {
                           includeUnassigned: a4IncludeUnassigned,
+                          exportVariant: "overview",
                         })
                       }
                     >
-                      <FileDown className="h-4 w-4" />
-                      Export výrobní list (A4)
+                      <FileDown className="h-4 w-4 shrink-0" />
+                      Export A4 – přehled
                     </Button>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="min-h-10 gap-1"
+                      className="min-h-10 gap-1 px-2 text-xs leading-tight"
                       disabled={issueQueue.length === 0}
-                      onClick={() => void runA4WorkListExport("download", "all", null)}
+                      onClick={() =>
+                        void runA4WorkListExport("download", "single", activeProductionDrawingKey, {
+                          includeUnassigned: a4IncludeUnassigned,
+                          exportVariant: "print",
+                        })
+                      }
                     >
-                      Export výrobní list (A4) — všechna PDF
+                      <FileDown className="h-4 w-4 shrink-0" />
+                      Export A4 – tisk / vysoká kvalita
                     </Button>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="min-h-10 gap-1"
+                      className="min-h-10 gap-1 px-2 text-xs leading-tight"
+                      disabled={issueQueue.length === 0}
+                      onClick={() =>
+                        void runA4WorkListExport("download", "all", null, { exportVariant: "overview" })
+                      }
+                    >
+                      Export A4 – přehled (vše PDF)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10 gap-1 px-2 text-xs leading-tight"
+                      disabled={issueQueue.length === 0}
+                      onClick={() =>
+                        void runA4WorkListExport("download", "all", null, { exportVariant: "print" })
+                      }
+                    >
+                      Export A4 – tisk (vše PDF)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-10 gap-1 px-2 text-xs leading-tight"
                       disabled={issueQueue.length === 0}
                       onClick={() =>
                         void runA4WorkListExport("print", "single", activeProductionDrawingKey, {
@@ -3097,8 +3148,8 @@ export default function VyrobaZakazkaDetailPage() {
                         })
                       }
                     >
-                      <Printer className="h-4 w-4" />
-                      Vytisknout výrobní list (A4)
+                      <Printer className="h-4 w-4 shrink-0" />
+                      Vytisknout (vysoká kvalita)
                     </Button>
                   </div>
                   {issueQueue.length === 0 ? (

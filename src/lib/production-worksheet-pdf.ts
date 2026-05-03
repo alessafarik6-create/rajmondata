@@ -66,28 +66,67 @@ export async function loadPdfDocumentFromUrl(url: string): Promise<import("pdfjs
   }
 }
 
+/** Parametry vykreslení jedné stránky PDF.js do jsPDF (mm). */
+export type RenderPdfPageToJsPdfRegionParams = {
+  x: number;
+  y: number;
+  maxW: number;
+  maxH: number;
+  /**
+   * Násobič rozlišení canvasu oproti minimálnímu „vejde do boxu“.
+   * Min. 2.5 pro čitelný text na tisku; 3 u varianty vysoká kvalita.
+   */
+  resolutionScale?: number;
+  imageFormat?: "png" | "jpeg";
+  /** Použije se jen při imageFormat jpeg (0.92–0.98). */
+  jpegQuality?: number;
+};
+
+const RENDER_MAX_CANVAS_EDGE_PX = 9000;
+
 /**
- * Vykreslí jednu stránku PDF.js do obdélníku v dokumentu (jednotky jsPDF — mm).
- * Canvas → JPEG → addImage (stejná matematika škálování jako dříve u celé stránky).
+ * Vykreslí jednu stránku PDF.js do canvasu ve zvýšeném rozlišení a vloží do PDF jako PNG/JPEG.
+ * Výstupní rozměr v mm zůstává maxW×maxH (ostřejší bitmapa při stejném layoutu).
  */
 export async function renderPdfJsPageToJsPdfRegion(
   doc: jsPDF,
   pdfPage: import("pdfjs-dist").PDFPageProxy,
-  region: { x: number; y: number; maxW: number; maxH: number },
-  jpegQuality = 0.88
+  params: RenderPdfPageToJsPdfRegionParams
 ): Promise<void> {
+  const {
+    x,
+    y,
+    maxW,
+    maxH,
+    resolutionScale: resolutionScaleIn = 2.5,
+    imageFormat = "jpeg",
+    jpegQuality = 0.95,
+  } = params;
+
   const base = pdfPage.getViewport({ scale: 1 });
   if (base.width < 1 || base.height < 1) return;
-  const { x, y, maxW, maxH } = region;
-  const scale = Math.min(maxW / base.width, maxH / base.height);
-  const vp = pdfPage.getViewport({ scale });
+
+  const fitScale = Math.min(maxW / base.width, maxH / base.height);
+  let resMul = Math.max(resolutionScaleIn, 2.5);
+  let vp = pdfPage.getViewport({ scale: fitScale * resMul });
+  while ((vp.width > RENDER_MAX_CANVAS_EDGE_PX || vp.height > RENDER_MAX_CANVAS_EDGE_PX) && resMul > 2.5) {
+    resMul -= 0.2;
+    vp = pdfPage.getViewport({ scale: fitScale * resMul });
+  }
+
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.floor(vp.width));
   canvas.height = Math.max(1, Math.floor(vp.height));
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
   await pdfPage.render({ canvasContext: ctx, viewport: vp }).promise;
-  const dataUrl = canvas.toDataURL("image/jpeg", jpegQuality);
+
+  const dataUrl =
+    imageFormat === "png"
+      ? canvas.toDataURL("image/png")
+      : canvas.toDataURL("image/jpeg", jpegQuality);
+  const fmt: "PNG" | "JPEG" = imageFormat === "png" ? "PNG" : "JPEG";
+
   const imgProps = doc.getImageProperties(dataUrl);
   const iw = imgProps.width;
   const ih = imgProps.height;
@@ -100,7 +139,7 @@ export async function renderPdfJsPageToJsPdfRegion(
   }
   const px = x + (maxW - w) / 2;
   const py = y + (maxH - h) / 2;
-  doc.addImage(dataUrl, "JPEG", px, py, w, h);
+  doc.addImage(dataUrl, fmt, px, py, w, h);
 }
 
 function addImageDataUrlToPage(doc: jsPDF, dataUrl: string, fmt: "JPEG" | "PNG") {
@@ -160,7 +199,15 @@ async function appendDrawingToDoc(doc: jsPDF, drawing: ProductionWorksheetDrawin
       const margin = 8;
       const maxW = pageW - 2 * margin;
       const maxH = pageH - 2 * margin;
-      await renderPdfJsPageToJsPdfRegion(doc, page, { x: margin, y: margin, maxW, maxH });
+      await renderPdfJsPageToJsPdfRegion(doc, page, {
+        x: margin,
+        y: margin,
+        maxW,
+        maxH,
+        resolutionScale: 2.5,
+        imageFormat: "jpeg",
+        jpegQuality: 0.95,
+      });
     }
     try {
       pdf.destroy?.();
