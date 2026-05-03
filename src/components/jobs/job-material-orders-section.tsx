@@ -256,7 +256,9 @@ export function JobMaterialOrdersSection(props: {
 
   const orders = useMemo(() => {
     const rows = Array.isArray(ordersRaw) ? (ordersRaw as MaterialOrderDoc[]) : [];
-    return rows.map((r) => ({
+    return rows
+      .filter((r) => String((r as { orderKind?: unknown }).orderKind ?? "") !== "quick_text")
+      .map((r) => ({
       ...r,
       id: String((r as { id?: string }).id ?? ""),
       documentNumber: trim((r as { documentNumber?: unknown }).documentNumber),

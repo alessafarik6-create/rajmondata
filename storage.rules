@@ -39,6 +39,15 @@ service firebase.storage {
       );
     }
 
+    /** Zápis médií u zakázky (náklady / staré job-photos) — dříve chybějící funkce v pravidlech. */
+    function storageJobMediaWriteOk() {
+      return request.auth != null;
+    }
+
+    function storageJobCompanyWriteOk(companyId) {
+      return request.auth != null && storageSameCompany(companyId);
+    }
+
     // Profilové fotky: pouze vlastní složka podle UID
     match /profile_images/{userId}/{fileName} {
       allow read: if request.auth != null;
@@ -68,6 +77,18 @@ service firebase.storage {
         storageIsPrivileged() ||
         (storageUserRole() == 'employee' && storageFolderAllowEmployeeUpload(companyId, jobId, folderId))
       );
+    }
+
+    /** PDF výrobních podkladů nahrané z portálu výroby. */
+    match /companies/{companyId}/jobs/{jobId}/productionSheets/{allPaths=**} {
+      allow read: if request.auth != null && storageSameCompany(companyId);
+      allow write: if storageJobCompanyWriteOk(companyId);
+    }
+
+    /** PDF rychlých objednávek — zápis jen přes Admin SDK (server); čtení firma. */
+    match /companies/{companyId}/jobs/{jobId}/materialOrderPdfExports/{allPaths=**} {
+      allow read: if request.auth != null && storageSameCompany(companyId);
+      allow write: if false;
     }
 
     /** Přílohy nákladů zakázky (foto / PDF). */

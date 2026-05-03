@@ -1057,6 +1057,86 @@ service cloud.firestore {
           );
         }
 
+        /**
+         * Uložené PDF výrobních podkladů (export z výroby).
+         * companies/{companyId}/jobs/{jobId}/productionSheets/{sheetId}
+         */
+        match /productionSheets/{sheetId} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          );
+          allow create: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          ) &&
+            request.resource.data.organizationId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.type == 'productionSheet' &&
+            request.resource.data.fileName is string &&
+            request.resource.data.fileUrl is string &&
+            request.resource.data.status in ['ready', 'inProduction', 'done'] &&
+            request.resource.data.createdBy == request.auth.uid;
+          allow update: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          ) &&
+            resource.data.organizationId == companyId &&
+            resource.data.jobId == jobId &&
+            request.resource.data.organizationId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'status', 'productionStartedAt', 'productionStartedBy', 'productionStartedByName'
+            ]) &&
+            request.resource.data.status in ['ready', 'inProduction', 'done'];
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        }
+
+        /**
+         * Objednávky materiálu (klasické i rychlé z výroby).
+         * companies/{companyId}/jobs/{jobId}/materialOrders/{orderId}
+         */
+        match /materialOrders/{orderId} {
+          allow read: if signedIn() && sameCompany(companyId) && (
+            isPrivileged() ||
+            jobFinancialReadAccess(companyId, jobId) ||
+            (userRole() == 'employee' && jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId))
+          );
+          allow create: if signedIn() && sameCompany(companyId) && (
+            (isPrivileged() && jobDetailReadAccess(companyId, jobId)) ||
+            (
+              userRole() == 'employee' &&
+              jobAssignedForProduction(companyId, jobId) &&
+              employeeProductionFlag(companyId) &&
+              request.resource.data.orderKind == 'quick_text' &&
+              request.resource.data.organizationId == companyId &&
+              request.resource.data.jobId == jobId &&
+              request.resource.data.createdBy == request.auth.uid &&
+              request.resource.data.pdfHtml is string &&
+              request.resource.data.pdfHtml.size() > 0 &&
+              request.resource.data.pdfHtml.size() <= 900000 &&
+              request.resource.data.documentNumber is string &&
+              request.resource.data.documentNumber.size() > 0 &&
+              request.resource.data.documentNumber.size() <= 80
+            )
+          );
+          allow update: if signedIn() && sameCompany(companyId) && (
+            (isPrivileged() && jobDetailReadAccess(companyId, jobId)) ||
+            (
+              userRole() == 'employee' &&
+              jobAssignedForProduction(companyId, jobId) &&
+              employeeProductionFlag(companyId) &&
+              resource.data.orderKind == 'quick_text' &&
+              request.resource.data.orderKind == 'quick_text' &&
+              request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+                'quickOrderStatus', 'orderedAt', 'orderedBy', 'orderedByName'
+              ]) &&
+              request.resource.data.quickOrderStatus in ['ordered', 'received', 'canceled', 'sent', 'draft']
+            )
+          );
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged() && jobDetailReadAccess(companyId, jobId);
+        }
+
         /** Bezpečný náhled zakázky pro zaměstnance (bez rozpočtu). */
         match /employeeSummary/summary {
           allow read: if signedIn() && sameCompany(companyId) && (

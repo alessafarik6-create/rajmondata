@@ -337,6 +337,16 @@ export function downloadProductionWorksheetPdf(doc: jsPDF, jobName: string, date
   doc.save(fn);
 }
 
+export function getProductionWorksheetPdfBlob(doc: jsPDF): Blob {
+  return doc.output("blob");
+}
+
+export function buildProductionWorksheetFileName(jobName: string, dateLabel: string): string {
+  const safeJob = jobName.replace(/[^\w\-]+/g, "_").slice(0, 40);
+  const safeDate = dateLabel.replace(/\./g, "-").replace(/[^\w\-]+/g, "_").slice(0, 40);
+  return `vyrobni-podklad-${safeJob}-${safeDate}.pdf`;
+}
+
 export function openProductionWorksheetPdfInNewTab(doc: jsPDF): void {
   const blob = doc.output("blob");
   const u = URL.createObjectURL(blob);

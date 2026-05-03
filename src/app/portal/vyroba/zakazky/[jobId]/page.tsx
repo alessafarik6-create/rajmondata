@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
+  addDoc,
   collection,
   doc,
   getDocs,
@@ -137,12 +138,17 @@ import {
 } from "@/lib/production-issue-user-layout";
 import {
   buildProductionWorksheetPdf,
+  buildProductionWorksheetFileName,
   downloadProductionWorksheetPdf,
+  getProductionWorksheetPdfBlob,
   openProductionWorksheetPdfInNewTab,
   type ProductionWorksheetDrawingRef,
 } from "@/lib/production-worksheet-pdf";
 import { Checkbox } from "@/components/ui/checkbox";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
+import { ProductionJobTopExtras } from "@/components/production/production-job-top-extras";
+import { isValidEmailAddress } from "@/lib/document-email-outbound";
+import { uploadProductionSheetPdfBlob } from "@/lib/production-sheet-storage-upload";
 
 const CARD = "border-slate-200 bg-white text-slate-900";
 const DEFAULT_PRODUCTION_WORKBENCH_TOP_PX = 600;
@@ -1758,8 +1764,50 @@ export default function VyrobaZakazkaDetailPage() {
           attachDrawing: shouldAttach,
           drawing: shouldAttach ? drawingRef : null,
         });
-        if (action === "print") openProductionWorksheetPdfInNewTab(doc);
-        else downloadProductionWorksheetPdf(doc, jobName, dateLabel);
+        if (action === "print") {
+          openProductionWorksheetPdfInNewTab(doc);
+        } else {
+          if (firestore && companyId && user?.uid) {
+            try {
+              const fn = buildProductionWorksheetFileName(jobName, dateLabel);
+              const blob = getProductionWorksheetPdfBlob(doc);
+              const { fileUrl, storagePath } = await uploadProductionSheetPdfBlob({
+                companyId,
+                jobId: String(jobId),
+                fileName: fn,
+                blob,
+              });
+              await addDoc(
+                collection(firestore, "companies", companyId, "jobs", String(jobId), "productionSheets"),
+                {
+                  organizationId: companyId,
+                  jobId: String(jobId),
+                  type: "productionSheet",
+                  fileName: fn,
+                  fileUrl,
+                  storagePath,
+                  status: "ready",
+                  createdAt: serverTimestamp(),
+                  createdBy: user.uid,
+                  createdByName: productionActorLabel || null,
+                }
+              );
+              toast({
+                title: "Výrobní podklad uložen",
+                description: "PDF je nahoře v sekci „Výrobní podklady“.",
+              });
+            } catch (persistErr) {
+              console.error(persistErr);
+              toast({
+                variant: "destructive",
+                title: "Uložení PDF se nezdařilo",
+                description:
+                  persistErr instanceof Error ? persistErr.message : "Soubor se stáhl, ale neuložil se k zakázce.",
+              });
+            }
+          }
+          downloadProductionWorksheetPdf(doc, jobName, dateLabel);
+        }
       } catch (e) {
         toast({
           variant: "destructive",
@@ -1777,6 +1825,10 @@ export default function VyrobaZakazkaDetailPage() {
       resolveExportDrawing,
       attachDrawingToExport,
       toast,
+      firestore,
+      companyId,
+      user?.uid,
+      productionActorLabel,
     ]
   );
 
@@ -2068,6 +2120,22 @@ export default function VyrobaZakazkaDetailPage() {
     [company]
   );
 
+  const jobLabelForExtras = useMemo(
+    () =>
+      jobView
+        ? String(jobView.displayLabel || jobView.name || jobId)
+        : String(jobId),
+    [jobView, jobId]
+  );
+
+  const quickOrderSuggestionEmails = useMemo(() => {
+    if (!jobView) return [];
+    const j = jobView as Record<string, unknown>;
+    const email = String(j.customerEmail || j.contactEmail || j.customerContactEmail || "").trim();
+    if (!email || !isValidEmailAddress(email)) return [];
+    return [{ email, label: "Zákazník" }];
+  }, [jobView]);
+
   if (!user || !companyId || !jobId) {
     return (
       <div className="flex justify-center py-16">
@@ -2338,6 +2406,20 @@ export default function VyrobaZakazkaDetailPage() {
                     na tuto zakázku. Volitelné rezervace řeší administrace skladu.
                   </p>
                 </div>
+
+                {companyId && jobId && user ? (
+                  <ProductionJobTopExtras
+                    companyId={companyId}
+                    jobId={String(jobId)}
+                    companyDisplayName={companyDisplayNameForOrders}
+                    jobLabel={jobLabelForExtras}
+                    customerLabel={materialOrderCustomerName}
+                    userId={user.uid}
+                    actorDisplayName={productionActorLabel}
+                    suggestionEmails={quickOrderSuggestionEmails}
+                    canMutate={accessOk}
+                  />
+                ) : null}
 
                 {productionPdfRows.length > 0 ? (
                   <div className="mb-4 shrink-0 space-y-2 rounded-lg border border-slate-200 bg-slate-50/90 p-3">

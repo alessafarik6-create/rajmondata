@@ -50,6 +50,11 @@ type Body = {
   materialOrderId?: string | null;
 };
 
+function storageDownloadUrl(bucketName: string, storagePath: string, token: string): string {
+  const enc = encodeURIComponent(storagePath);
+  return `https://firebasestorage.googleapis.com/v0/b/${bucketName}/o/${enc}?alt=media&token=${token}`;
+}
+
 async function downloadStorageAttachment(params: {
   storagePath: string;
   filename: string;
@@ -257,12 +262,16 @@ export async function POST(request: NextRequest) {
     }
 
     let sentByEmail: string | null = null;
+    let sentByDisplayName: string | null = null;
     try {
       const u = await auth.getUser(caller.uid);
       sentByEmail = String(u.email ?? "").trim() || null;
+      const dn = String(u.displayName ?? "").trim();
+      sentByDisplayName = dn || sentByEmail;
     } catch (authUserErr) {
       console.warn(ROUTE_LOG, "auth.getUser failed", serializeUnknownForLog(authUserErr));
       sentByEmail = null;
+      sentByDisplayName = null;
     }
 
     const pdfJobId = resolvedJobId || "";
@@ -339,6 +348,7 @@ export async function POST(request: NextRequest) {
           type,
           contractId,
           invoiceId,
+          materialOrderId: type === "material_order" ? materialOrderIdRaw : null,
         });
       } catch (error) {
         const msg = errorMessageFromUnknown(error);
@@ -449,24 +459,66 @@ export async function POST(request: NextRequest) {
 
     if (type === "material_order" && materialOrderIdRaw && resolvedJobId) {
       try {
-        await db
+        const moRef = db
           .collection(COMPANIES_COLLECTION)
           .doc(companyId)
           .collection("jobs")
           .doc(resolvedJobId)
           .collection("materialOrders")
-          .doc(materialOrderIdRaw)
-          .set(
-            {
-              lastEmailSentAt: FieldValue.serverTimestamp(),
-              lastEmailSentTo: to.trim().toLowerCase(),
-              lastEmailSentCc: ccExtra,
-              lastEmailSentByUid: caller.uid,
-              lastEmailSubject: subject.trim(),
-              emailStatus: "sent",
-            },
-            { merge: true }
-          );
+          .doc(materialOrderIdRaw);
+        const moSnap = await moRef.get();
+        const odata = (moSnap.data() ?? {}) as Record<string, unknown>;
+        const isQuick = String(odata.orderKind ?? "") === "quick_text";
+
+        let fileUrl: string | null = null;
+        let storagePathOut: string | null = null;
+        let fileNameOut: string | null = null;
+        if (isQuick && attachments.length > 0) {
+          const first = attachments[0];
+          const buf = first?.content;
+          if (buf && Buffer.isBuffer(buf)) {
+            const bucket = getAdminStorageBucket();
+            if (bucket) {
+              const token = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : String(Date.now());
+              const storagePath = `companies/${companyId}/jobs/${resolvedJobId}/materialOrderPdfExports/${materialOrderIdRaw}.pdf`;
+              const file = bucket.file(storagePath);
+              await file.save(buf, {
+                contentType: "application/pdf",
+                metadata: {
+                  metadata: { firebaseStorageDownloadTokens: token },
+                  cacheControl: "public, max-age=31536000",
+                },
+                resumable: false,
+              });
+              storagePathOut = storagePath;
+              fileNameOut = String(first.filename || `objednavka-materialu.pdf`).trim() || "objednavka-materialu.pdf";
+              fileUrl = storageDownloadUrl(bucket.name, storagePath, token);
+            } else {
+              console.warn(ROUTE_LOG, "quick material order: storage bucket missing, skip file upload");
+            }
+          }
+        }
+
+        const merge: Record<string, unknown> = {
+          lastEmailSentAt: FieldValue.serverTimestamp(),
+          lastEmailSentTo: to.trim().toLowerCase(),
+          lastEmailSentCc: ccExtra,
+          lastEmailSentByUid: caller.uid,
+          lastEmailSubject: subject.trim(),
+          emailStatus: "sent",
+        };
+        if (isQuick) {
+          merge.quickOrderStatus = "sent";
+          merge.sentAt = FieldValue.serverTimestamp();
+          merge.sentBy = caller.uid;
+          merge.sentByName = sentByDisplayName;
+          merge.recipientEmail = to.trim().toLowerCase();
+          merge.cc = ccExtra.length ? ccExtra.join(", ") : null;
+          if (fileUrl) merge.fileUrl = fileUrl;
+          if (storagePathOut) merge.storagePath = storagePathOut;
+          if (fileNameOut) merge.fileName = fileNameOut;
+        }
+        await moRef.set(merge, { merge: true });
       } catch (moErr) {
         console.error(ROUTE_LOG, "materialOrders merge failed", serializeUnknownForLog(moErr));
       }
