@@ -143,6 +143,7 @@ import {
   getProductionWorksheetPdfBlob,
   openProductionWorksheetPdfInNewTab,
   type ProductionWorksheetDrawingRef,
+  type ProductionWorksheetExportVariant,
 } from "@/lib/production-worksheet-pdf";
 import { Checkbox } from "@/components/ui/checkbox";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
@@ -1687,7 +1688,7 @@ export default function VyrobaZakazkaDetailPage() {
   }, [previewTab, productionPdfRows, productionPdfSelectedIndex, firstImageAttachment]);
 
   const runProductionWorksheetPdf = useCallback(
-    async (action: "download" | "print") => {
+    async (action: "download" | "print", worksheetVariant: ProductionWorksheetExportVariant = "overview") => {
       if (!jobView) return;
       const j = jobView as Record<string, unknown>;
       const jobName = String(jobView.displayLabel || jobView.name || jobId);
@@ -1763,13 +1764,14 @@ export default function VyrobaZakazkaDetailPage() {
           pendingLines: pendingLines.length ? pendingLines : undefined,
           attachDrawing: shouldAttach,
           drawing: shouldAttach ? drawingRef : null,
+          variant: worksheetVariant,
         });
         if (action === "print") {
           openProductionWorksheetPdfInNewTab(doc);
         } else {
           if (firestore && companyId && user?.uid) {
             try {
-              const fn = buildProductionWorksheetFileName(jobName, dateLabel);
+              const fn = buildProductionWorksheetFileName(jobName, dateLabel, worksheetVariant);
               const blob = getProductionWorksheetPdfBlob(doc);
               const { fileUrl, storagePath } = await uploadProductionSheetPdfBlob({
                 companyId,
@@ -1806,7 +1808,7 @@ export default function VyrobaZakazkaDetailPage() {
               });
             }
           }
-          downloadProductionWorksheetPdf(doc, jobName, dateLabel);
+          downloadProductionWorksheetPdf(doc, jobName, dateLabel, worksheetVariant);
         }
       } catch (e) {
         toast({
@@ -3147,7 +3149,7 @@ export default function VyrobaZakazkaDetailPage() {
                       variant="outline"
                       size="sm"
                       className="min-h-10 gap-1"
-                      onClick={() => void runProductionWorksheetPdf("download")}
+                      onClick={() => void runProductionWorksheetPdf("download", "overview")}
                     >
                       <FileDown className="h-4 w-4" />
                       Exportovat výrobní podklad do PDF
@@ -3156,8 +3158,18 @@ export default function VyrobaZakazkaDetailPage() {
                       type="button"
                       variant="outline"
                       size="sm"
+                      className="min-h-10 gap-1 px-2 text-xs leading-tight"
+                      onClick={() => void runProductionWorksheetPdf("download", "print")}
+                    >
+                      <FileDown className="h-4 w-4 shrink-0" />
+                      Export A4 – tisková kvalita
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
                       className="min-h-10 gap-1"
-                      onClick={() => void runProductionWorksheetPdf("print")}
+                      onClick={() => void runProductionWorksheetPdf("print", "print")}
                     >
                       <Printer className="h-4 w-4" />
                       Vytisknout výrobní podklad

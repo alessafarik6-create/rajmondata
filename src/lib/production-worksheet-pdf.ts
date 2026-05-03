@@ -3,6 +3,9 @@ import autoTable from "jspdf-autotable";
 import { PDF_FONT_FAMILY, registerDejaVuFontsForPdf } from "@/lib/pdf/register-dejavu-font";
 import { fetchImageAsDataUrl } from "@/lib/pdf/exportJobsToPdf";
 
+/** pdf.js viewport (scale 1) ≈ PDF body v „bodech“; převod na mm jako u 72 dpi tisku. */
+const PDF_CSS_PX_TO_MM = 25.4 / 72;
+
 export type ProductionWorksheetConsumptionRow = {
   itemName: string;
   quantity: string;
@@ -23,6 +26,9 @@ export type ProductionWorksheetDrawingRef = {
   kind: "pdf" | "image";
 };
 
+/** „overview“ = rychlejší JPEG; „print“ = PNG + vyšší pdf.js násobič (ostřejší tisk A4). */
+export type ProductionWorksheetExportVariant = "overview" | "print";
+
 export type BuildProductionWorksheetPdfOptions = {
   jobName: string;
   customerLabel: string;
@@ -30,11 +36,10 @@ export type BuildProductionWorksheetPdfOptions = {
   drawingNote?: string;
   rows: ProductionWorksheetConsumptionRow[];
   pendingLines?: string[];
-  /** Přiložit aktuální výkres (PDF jako náhled stránek, obrázek jako obrázek). */
   attachDrawing?: boolean;
   drawing?: ProductionWorksheetDrawingRef | null;
-  /** Kořen pro /fonts/DejaVu*.ttf */
   fontBasePath?: string;
+  variant?: ProductionWorksheetExportVariant;
 };
 
 async function loadPdfJsWorker() {
@@ -73,20 +78,26 @@ export type RenderPdfPageToJsPdfRegionParams = {
   maxW: number;
   maxH: number;
   /**
-   * Násobič rozlišení canvasu oproti minimálnímu „vejde do boxu“.
-   * Min. 2.5 pro čitelný text na tisku; 3 u varianty vysoká kvalita.
+   * Násobič kvality nad „vejde do rámečku“ (pdf.js viewport scale).
+   * Minimum 3; u tiskové varianty výrobního listu se používá 4.
    */
   resolutionScale?: number;
   imageFormat?: "png" | "jpeg";
-  /** Použije se jen při imageFormat jpeg (0.92–0.98). */
   jpegQuality?: number;
 };
 
-const RENDER_MAX_CANVAS_EDGE_PX = 9000;
+const RENDER_MAX_CANVAS_EDGE_PX = 12000;
+
+function viewportCssPxToMm(vp: { width: number; height: number }): { wMm: number; hMm: number } {
+  return {
+    wMm: Math.max(0.01, vp.width * PDF_CSS_PX_TO_MM),
+    hMm: Math.max(0.01, vp.height * PDF_CSS_PX_TO_MM),
+  };
+}
 
 /**
  * Vykreslí jednu stránku PDF.js do canvasu ve zvýšeném rozlišení a vloží do PDF jako PNG/JPEG.
- * Výstupní rozměr v mm zůstává maxW×maxH (ostřejší bitmapa při stejném layoutu).
+ * Správně převádí mm rámeček ↔ rozměry viewportu (dříve se mm dělily přímo „px“ viewportu → rozmazaný tisk).
  */
 export async function renderPdfJsPageToJsPdfRegion(
   doc: jsPDF,
@@ -98,20 +109,26 @@ export async function renderPdfJsPageToJsPdfRegion(
     y,
     maxW,
     maxH,
-    resolutionScale: resolutionScaleIn = 2.5,
-    imageFormat = "jpeg",
+    resolutionScale: resolutionScaleIn = 3,
+    imageFormat = "png",
     jpegQuality = 0.95,
   } = params;
 
-  const base = pdfPage.getViewport({ scale: 1 });
-  if (base.width < 1 || base.height < 1) return;
+  const vp1 = pdfPage.getViewport({ scale: 1 });
+  const { wMm, hMm } = viewportCssPxToMm(vp1);
+  if (wMm < 0.5 || hMm < 0.5) return;
 
-  const fitScale = Math.min(maxW / base.width, maxH / base.height);
-  let resMul = Math.max(resolutionScaleIn, 2.5);
-  let vp = pdfPage.getViewport({ scale: fitScale * resMul });
-  while ((vp.width > RENDER_MAX_CANVAS_EDGE_PX || vp.height > RENDER_MAX_CANVAS_EDGE_PX) && resMul > 2.5) {
-    resMul -= 0.2;
-    vp = pdfPage.getViewport({ scale: fitScale * resMul });
+  const qualityMul = Math.max(Number(resolutionScaleIn) || 3, 3);
+  const fit = Math.min(maxW / wMm, maxH / hMm);
+  let renderScale = fit * qualityMul;
+
+  let vp = pdfPage.getViewport({ scale: renderScale });
+  while (
+    (vp.width > RENDER_MAX_CANVAS_EDGE_PX || vp.height > RENDER_MAX_CANVAS_EDGE_PX) &&
+    renderScale > fit * 2.2
+  ) {
+    renderScale -= fit * 0.2;
+    vp = pdfPage.getViewport({ scale: renderScale });
   }
 
   const canvas = document.createElement("canvas");
@@ -119,6 +136,8 @@ export async function renderPdfJsPageToJsPdfRegion(
   canvas.height = Math.max(1, Math.floor(vp.height));
   const ctx = canvas.getContext("2d");
   if (!ctx) return;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high";
   await pdfPage.render({ canvasContext: ctx, viewport: vp }).promise;
 
   const dataUrl =
@@ -127,76 +146,133 @@ export async function renderPdfJsPageToJsPdfRegion(
       : canvas.toDataURL("image/jpeg", jpegQuality);
   const fmt: "PNG" | "JPEG" = imageFormat === "png" ? "PNG" : "JPEG";
 
-  const imgProps = doc.getImageProperties(dataUrl);
-  const iw = imgProps.width;
-  const ih = imgProps.height;
-  if (iw < 1 || ih < 1) return;
-  let w = maxW;
-  let h = (ih * w) / iw;
-  if (h > maxH) {
-    h = maxH;
-    w = (iw * h) / ih;
+  const ar = wMm / hMm;
+  const boxAr = maxW / maxH;
+  let drawW = maxW;
+  let drawH = maxH;
+  if (ar > boxAr) {
+    drawH = maxH;
+    drawW = maxH * ar;
+  } else {
+    drawW = maxW;
+    drawH = maxW / ar;
   }
-  const px = x + (maxW - w) / 2;
-  const py = y + (maxH - h) / 2;
-  doc.addImage(dataUrl, fmt, px, py, w, h);
+  const px = x + (maxW - drawW) / 2;
+  const py = y + (maxH - drawH) / 2;
+  doc.addImage(dataUrl, fmt, px, py, drawW, drawH);
 }
 
-function addImageDataUrlToPage(doc: jsPDF, dataUrl: string, fmt: "JPEG" | "PNG") {
+function addImageDataUrlLetterboxed(doc: jsPDF, dataUrl: string, fmt: "JPEG" | "PNG", marginMm: number) {
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const margin = 10;
-  const maxW = pageW - 2 * margin;
-  const maxH = pageH - 2 * margin;
+  const maxW = pageW - 2 * marginMm;
+  const maxH = pageH - 2 * marginMm;
   const imgProps = doc.getImageProperties(dataUrl);
   const iw = imgProps.width;
   const ih = imgProps.height;
   if (iw < 1 || ih < 1) return;
-  let w = maxW;
-  let h = (ih * w) / iw;
-  if (h > maxH) {
-    h = maxH;
-    w = (iw * h) / ih;
+  const wMm = iw * PDF_CSS_PX_TO_MM;
+  const hMm = ih * PDF_CSS_PX_TO_MM;
+  const ar = wMm / hMm;
+  const boxAr = maxW / maxH;
+  let drawW = maxW;
+  let drawH = maxH;
+  if (ar > boxAr) {
+    drawH = maxH;
+    drawW = maxH * ar;
+  } else {
+    drawW = maxW;
+    drawH = maxW / ar;
   }
-  const x = margin + (maxW - w) / 2;
-  const y = margin + (maxH - h) / 2;
-  doc.addImage(dataUrl, fmt, x, y, w, h);
+  const x = marginMm + (maxW - drawW) / 2;
+  const y = marginMm + (maxH - drawH) / 2;
+  doc.addImage(dataUrl, fmt, x, y, drawW, drawH);
 }
 
-async function appendDrawingToDoc(doc: jsPDF, drawing: ProductionWorksheetDrawingRef): Promise<void> {
-  const { url, fileName, kind } = drawing;
+/**
+ * Ostrý obrázek výkresu (ne náhled z UI): přenačte URL, vykreslí na canvas ve zvýšeném rozlišení.
+ */
+async function appendRasterDrawingFullPage(
+  doc: jsPDF,
+  url: string,
+  fileName: string,
+  variant: ProductionWorksheetExportVariant
+): Promise<void> {
+  const u = String(url || "").trim();
+  if (!u) return;
+  try {
+    const dataUrlIn = await fetchImageAsDataUrl(u);
+    if (!dataUrlIn) throw new Error("fetch");
+    await new Promise<void>((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.onload = () => {
+        try {
+          const nw = Math.max(1, img.naturalWidth || img.width);
+          const nh = Math.max(1, img.naturalHeight || img.height);
+          const orient: "portrait" | "landscape" = nw >= nh ? "landscape" : "portrait";
+          doc.addPage("a4", orient);
+          const qualityMul = variant === "print" ? 4 : 3;
+          const capW = Math.min(12000, Math.floor(nw * qualityMul));
+          const capH = Math.floor((nh / nw) * capW);
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, capW);
+          canvas.height = Math.max(1, capH);
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            resolve();
+            return;
+          }
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+          const out =
+            variant === "print" ? canvas.toDataURL("image/png") : canvas.toDataURL("image/jpeg", 0.95);
+          const fmt: "PNG" | "JPEG" = variant === "print" ? "PNG" : "JPEG";
+          addImageDataUrlLetterboxed(doc, out, fmt, 4);
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      };
+      img.onerror = () => reject(new Error("image-load"));
+      img.src = dataUrlIn;
+    });
+  } catch {
+    doc.addPage("a4", "portrait");
+    doc.setFont(PDF_FONT_FAMILY, "normal");
+    doc.setFontSize(10);
+    const lines = doc.splitTextToSize(
+      `Výkres (obrázek) se nepodařilo vložit. Soubor: ${fileName}\nOdkaz: ${u}`,
+      doc.internal.pageSize.getWidth() - 20
+    );
+    doc.text(lines, 14, 20);
+  }
+}
+
+async function appendPdfDrawingPages(
+  doc: jsPDF,
+  drawing: ProductionWorksheetDrawingRef,
+  variant: ProductionWorksheetExportVariant
+): Promise<void> {
+  const { url, fileName } = drawing;
   const u = String(url || "").trim();
   if (!u) return;
 
-  if (kind === "image") {
-    try {
-      const dataUrl = await fetchImageAsDataUrl(u);
-      if (!dataUrl) throw new Error("fetch");
-      const fmt: "JPEG" | "PNG" = dataUrl.startsWith("data:image/png") ? "PNG" : "JPEG";
-      doc.addPage();
-      addImageDataUrlToPage(doc, dataUrl, fmt);
-    } catch {
-      doc.addPage();
-      doc.setFont(PDF_FONT_FAMILY, "normal");
-      doc.setFontSize(10);
-      const lines = doc.splitTextToSize(
-        `Výkres (obrázek) se nepodařilo vložit. Soubor: ${fileName}\nOdkaz: ${u}`,
-        doc.internal.pageSize.getWidth() - 20
-      );
-      doc.text(lines, 14, 20);
-    }
-    return;
-  }
+  const resScale = variant === "print" ? 4 : 3;
+  const imageFormat = variant === "print" ? "png" : "jpeg";
+  const jpegQ = 0.95;
 
   try {
     const pdf = await loadPdfDocumentFromUrl(u);
-
     for (let i = 1; i <= pdf.numPages; i++) {
-      doc.addPage();
       const page = await pdf.getPage(i);
+      const vp1 = page.getViewport({ scale: 1 });
+      const orient: "portrait" | "landscape" = vp1.width >= vp1.height ? "landscape" : "portrait";
+      doc.addPage("a4", orient);
       const pageW = doc.internal.pageSize.getWidth();
       const pageH = doc.internal.pageSize.getHeight();
-      const margin = 8;
+      const margin = 4;
       const maxW = pageW - 2 * margin;
       const maxH = pageH - 2 * margin;
       await renderPdfJsPageToJsPdfRegion(doc, page, {
@@ -204,9 +280,9 @@ async function appendDrawingToDoc(doc: jsPDF, drawing: ProductionWorksheetDrawin
         y: margin,
         maxW,
         maxH,
-        resolutionScale: 2.5,
-        imageFormat: "jpeg",
-        jpegQuality: 0.95,
+        resolutionScale: resScale,
+        imageFormat,
+        jpegQuality: jpegQ,
       });
     }
     try {
@@ -215,25 +291,30 @@ async function appendDrawingToDoc(doc: jsPDF, drawing: ProductionWorksheetDrawin
       /* */
     }
   } catch {
-    doc.addPage();
+    doc.addPage("a4", "portrait");
     doc.setFont(PDF_FONT_FAMILY, "normal");
     doc.setFontSize(10);
     const lines = doc.splitTextToSize(
-      `Výkres (PDF) se nepodařilo vložit jako náhled. Soubor: ${fileName}\nOdkaz: ${u}`,
+      `Výkres (PDF) se nepodařilo vložit. Soubor: ${fileName}\nOdkaz: ${u}`,
       doc.internal.pageSize.getWidth() - 20
     );
     doc.text(lines, 14, 20);
   }
 }
 
-/**
- * Výrobní podklad pro tisk — zakázka, zákazník, datum, tabulka spotřeb.
- * Font DejaVu Sans (UTF-8 / čeština).
- */
-export async function buildProductionWorksheetPdf(opts: BuildProductionWorksheetPdfOptions): Promise<jsPDF> {
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
+async function appendDrawingSection(
+  doc: jsPDF,
+  drawing: ProductionWorksheetDrawingRef,
+  variant: ProductionWorksheetExportVariant
+): Promise<void> {
+  if (drawing.kind === "image") {
+    await appendRasterDrawingFullPage(doc, drawing.url, drawing.fileName, variant);
+    return;
+  }
+  await appendPdfDrawingPages(doc, drawing, variant);
+}
 
+function drawWorksheetCoverPage(doc: jsPDF, opts: BuildProductionWorksheetPdfOptions): void {
   const pageW = doc.internal.pageSize.getWidth();
   let y = 14;
 
@@ -249,7 +330,20 @@ export async function buildProductionWorksheetPdf(opts: BuildProductionWorksheet
   doc.text(`Zákazník: ${opts.customerLabel || "—"}`, 14, y);
   y += 5;
   doc.text(`Datum: ${opts.dateLabel}`, 14, y);
-  y += 6;
+  y += 7;
+
+  doc.setFontSize(9);
+  doc.setTextColor(55, 55, 55);
+  doc.text(
+    opts.attachDrawing && opts.drawing
+      ? "Výkres je na následujících stránkách (každá stránka PDF zvlášť, formát A4). Tabulka spotřeby materiálu je na samostatné stránce."
+      : "Tabulka spotřeby materiálu je na následující stránce.",
+    14,
+    y,
+    { maxWidth: pageW - 28 }
+  );
+  y += 12;
+  doc.setTextColor(0, 0, 0);
 
   if (opts.drawingNote) {
     doc.setFontSize(9);
@@ -266,16 +360,29 @@ export async function buildProductionWorksheetPdf(opts: BuildProductionWorksheet
     doc.text("Připraveno k výdeji (ještě neodebráno)", 14, y);
     y += 5;
     doc.setFont(PDF_FONT_FAMILY, "normal");
-    for (const ln of opts.pendingLines.slice(0, 30)) {
+    for (const ln of opts.pendingLines.slice(0, 40)) {
       doc.text(`• ${ln}`, 16, y);
       y += 4;
-      if (y > 270) {
-        doc.addPage();
+      if (y > 275) {
+        doc.addPage("a4", "portrait");
         y = 14;
       }
     }
-    y += 4;
   }
+}
+
+function addMaterialTablePage(doc: jsPDF, opts: BuildProductionWorksheetPdfOptions): void {
+  doc.addPage("a4", "portrait");
+  const variant = opts.variant ?? "overview";
+  const tableFont = variant === "print" ? 9 : 7;
+  const headFont = variant === "print" ? 9 : 7;
+  const pad = variant === "print" ? 1.6 : 1.2;
+
+  let y = 12;
+  doc.setFont(PDF_FONT_FAMILY, "bold");
+  doc.setFontSize(12);
+  doc.text("Spotřeba materiálu — řezy a kusy", 14, y);
+  y += 8;
 
   const tableBody = opts.rows.map((r) => [
     r.itemName,
@@ -308,13 +415,14 @@ export async function buildProductionWorksheetPdf(opts: BuildProductionWorksheet
     styles: {
       font: PDF_FONT_FAMILY,
       fontStyle: "normal",
-      fontSize: 7,
-      cellPadding: 1.2,
+      fontSize: tableFont,
+      cellPadding: pad,
       overflow: "linebreak",
     },
     headStyles: {
       font: PDF_FONT_FAMILY,
       fontStyle: "bold",
+      fontSize: headFont,
       fillColor: [41, 98, 120],
       textColor: [255, 255, 255],
     },
@@ -324,27 +432,48 @@ export async function buildProductionWorksheetPdf(opts: BuildProductionWorksheet
     },
     margin: { left: 10, right: 10 },
   });
+}
+
+/**
+ * Výrobní podklad — více stran A4: hlavička → výkres (pdf.js / ostrý rastr) → tabulka materiálu (text DejaVu).
+ */
+export async function buildProductionWorksheetPdf(opts: BuildProductionWorksheetPdfOptions): Promise<jsPDF> {
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
+
+  drawWorksheetCoverPage(doc, opts);
 
   if (opts.attachDrawing && opts.drawing) {
-    await appendDrawingToDoc(doc, opts.drawing);
+    await appendDrawingSection(doc, opts.drawing, opts.variant ?? "overview");
   }
+
+  addMaterialTablePage(doc, opts);
 
   return doc;
 }
 
-export function downloadProductionWorksheetPdf(doc: jsPDF, jobName: string, dateLabel: string): void {
-  const fn = `vyrobni-podklad-${jobName.replace(/[^\w\-]+/g, "_").slice(0, 40)}-${dateLabel.replace(/\./g, "-")}.pdf`;
-  doc.save(fn);
+export function downloadProductionWorksheetPdf(
+  doc: jsPDF,
+  jobName: string,
+  dateLabel: string,
+  variant?: ProductionWorksheetExportVariant
+): void {
+  doc.save(buildProductionWorksheetFileName(jobName, dateLabel, variant));
 }
 
 export function getProductionWorksheetPdfBlob(doc: jsPDF): Blob {
   return doc.output("blob");
 }
 
-export function buildProductionWorksheetFileName(jobName: string, dateLabel: string): string {
+export function buildProductionWorksheetFileName(
+  jobName: string,
+  dateLabel: string,
+  variant?: ProductionWorksheetExportVariant
+): string {
   const safeJob = jobName.replace(/[^\w\-]+/g, "_").slice(0, 40);
   const safeDate = dateLabel.replace(/\./g, "-").replace(/[^\w\-]+/g, "_").slice(0, 40);
-  return `vyrobni-podklad-${safeJob}-${safeDate}.pdf`;
+  const suffix = variant === "print" ? "-A4-tiskova-kvalita" : "";
+  return `vyrobni-podklad-${safeJob}-${safeDate}${suffix}.pdf`;
 }
 
 export function openProductionWorksheetPdfInNewTab(doc: jsPDF): void {
