@@ -30,6 +30,7 @@ import {
 import {
   collection,
   query,
+  limit,
   Timestamp,
   updateDoc,
   deleteDoc,
@@ -45,7 +46,9 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
   isValidCompanyScheduleEvent,
+  parseInstallationStatus,
   type CompanyScheduleCalendarEvent,
+  type InstallationStatus,
   type MeetingStatus,
 } from "@/lib/company-schedule-events";
 import { useCompanyScheduleMonthEvents } from "@/hooks/use-company-schedule-month-events";
@@ -89,6 +92,7 @@ import {
   syncCalendarEmailRemindersFromBrowser,
 } from "@/lib/email-notifications/client";
 import { mergeEmailNotifications } from "@/lib/email-notifications/schema";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
 
@@ -158,7 +162,7 @@ function ScheduleMobileEventCard({
               darkCards ? "text-white" : "text-slate-900"
             )}
           >
-            <span className={cn(ev.kind === "meeting" ? ev.titleClass : "")}>
+            <span className={cn(ev.kind === "meeting" || ev.kind === "installation" ? ev.titleClass : "")}>
               {ev.headline}
             </span>
             {ev.sentToAllEmployees ? (
@@ -188,6 +192,7 @@ function ScheduleMobileEventCard({
               )}
             >
               {format(ev.at, "HH:mm")}
+              {ev.endsAt ? ` – ${format(ev.endsAt, "HH:mm")}` : ""}
             </p>
           </div>
           <div className="space-y-1">
@@ -212,6 +217,17 @@ function ScheduleMobileEventCard({
             </p>
             <p className={cn("text-sm leading-relaxed", darkCards ? "text-slate-200" : "text-slate-800")}>
               {ev.address}
+            </p>
+          </div>
+        ) : null}
+
+        {ev.eventNote ? (
+          <div className="space-y-1">
+            <p className={cn("text-xs font-semibold", darkCards ? "text-slate-400" : "text-slate-500")}>
+              Poznámka
+            </p>
+            <p className={cn("text-sm leading-relaxed", darkCards ? "text-slate-200" : "text-slate-800")}>
+              {ev.eventNote}
             </p>
           </div>
         ) : null}
@@ -251,12 +267,20 @@ function ScheduleMobileEventCard({
           <span
             className={cn(
               "inline-flex rounded-full border px-3 py-1.5 text-xs font-semibold",
-              ev.kind === "meeting"
-                ? "border-orange-300 bg-orange-50 text-orange-900"
-                : "border-emerald-300 bg-emerald-50 text-emerald-900"
+              ev.kind === "installation"
+                ? darkCards
+                  ? "border-violet-400/50 bg-violet-500/15 text-violet-100"
+                  : "border-violet-300 bg-violet-50 text-violet-950"
+                : ev.kind === "meeting"
+                  ? "border-orange-300 bg-orange-50 text-orange-900"
+                  : "border-emerald-300 bg-emerald-50 text-emerald-900"
             )}
           >
-            {ev.kind === "meeting" ? "Schůzka" : "Zaměření"}
+            {ev.kind === "installation"
+              ? "Montáž"
+              : ev.kind === "meeting"
+                ? "Schůzka"
+                : "Zaměření"}
           </span>
         </div>
       </div>
@@ -282,6 +306,7 @@ export function CompanyScheduleCalendar({
   appearance = "default",
   readOnly = false,
   restrictEmployeeEvents = false,
+  scheduleFilter = "all",
 }: {
   companyId: string;
   /** `compact` = vždy mobilní rozhraní (např. mobilní dashboard pod breakpointem lg). */
@@ -293,8 +318,10 @@ export function CompanyScheduleCalendar({
   appearance?: "default" | "darkPortal";
   /** Pouze zobrazení (např. zaměstnanec bez práv plánování). */
   readOnly?: boolean;
-  /** Zaměstnanec: zúžit schůzky na vlastní / rozeslané týmu; zaměření ponechat. */
+  /** Zaměstnanec: zúžit schůzky na vlastní / rozeslané týmu; montáže dle přiřazení; zaměření ponechat. */
   restrictEmployeeEvents?: boolean;
+  /** `installationsOnly` = jen montáže (např. sekce „Moje montáže“). */
+  scheduleFilter?: "all" | "installationsOnly";
 }) {
   const firestore = useFirestore();
   const router = useRouter();
@@ -327,6 +354,49 @@ export function CompanyScheduleCalendar({
     return collection(firestore, "companies", companyId, "employees");
   }, [firestore, companyId, canSendToAllEmployees]);
   const { data: employeesRaw = [] } = useCollection(employeesQuery);
+  const jobsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || readOnly) return null;
+    return query(
+      collection(firestore, "companies", companyId, "jobs"),
+      limit(500)
+    );
+  }, [firestore, companyId, readOnly]);
+  const { data: jobsRaw = [] } = useCollection(jobsQuery);
+  const jobOptions = useMemo(() => {
+    const list = Array.isArray(jobsRaw) ? jobsRaw : [];
+    return list
+      .map((j) => {
+        const r = j as { id?: string; name?: string };
+        if (!r.id) return null;
+        return {
+          id: r.id,
+          name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : r.id,
+        };
+      })
+      .filter((x): x is { id: string; name: string } => x != null);
+  }, [jobsRaw]);
+  const employeeOptions = useMemo(() => {
+    const list = Array.isArray(employeesRaw) ? employeesRaw : [];
+    return list
+      .map((e) => {
+        const r = e as {
+          id?: string;
+          firstName?: string;
+          lastName?: string;
+          displayName?: string;
+          email?: string;
+        };
+        if (!r.id) return null;
+        const name =
+          [r.firstName, r.lastName].filter(Boolean).join(" ").trim() ||
+          (typeof r.displayName === "string" && r.displayName.trim()
+            ? r.displayName.trim()
+            : null) ||
+          (typeof r.email === "string" && r.email.trim() ? r.email.trim() : r.id);
+        return { id: r.id, name };
+      })
+      .filter((x): x is { id: string; name: string } => x != null);
+  }, [employeesRaw]);
   const employeeIds = useMemo(() => {
     const raw = Array.isArray(employeesRaw) ? employeesRaw : [];
     return raw
@@ -350,7 +420,7 @@ export function CompanyScheduleCalendar({
   const [meetingNote, setMeetingNote] = useState("");
   const [meetingDate, setMeetingDate] = useState(() => format(new Date(), "yyyy-MM-dd"));
   const [meetingTime, setMeetingTime] = useState(() => format(new Date(), "HH:mm"));
-  const [meetingStatus, setMeetingStatus] = useState<MeetingStatus>("planned");
+  const [meetingStatus, setMeetingStatus] = useState<string>("planned");
   const [sendToAllEmployees, setSendToAllEmployees] = useState(false);
   const [notificationType, setNotificationType] =
     useState<EmployeeNotificationType>("info");
@@ -359,6 +429,11 @@ export function CompanyScheduleCalendar({
     "lead_meeting" | "installation" | "calendar_task"
   >("lead_meeting");
   const [meetingTimeEnd, setMeetingTimeEnd] = useState("");
+  const [installJobId, setInstallJobId] = useState("");
+  const [installJobName, setInstallJobName] = useState("");
+  const [installCustomerId, setInstallCustomerId] = useState("");
+  const [selectedInstallEmployeeIds, setSelectedInstallEmployeeIds] = useState<string[]>([]);
+  const [notifyInstallAssignees, setNotifyInstallAssignees] = useState(true);
 
   const monthStart = startOfMonth(visibleMonth);
   const monthEnd = endOfMonth(visibleMonth);
@@ -367,18 +442,28 @@ export function CompanyScheduleCalendar({
     useCompanyScheduleMonthEvents(companyId, visibleMonth);
 
   const viewerUid = String(user?.uid ?? "").trim();
+  const viewerEmployeeId = String(profile?.employeeId ?? "").trim();
   const events = useMemo(() => {
-    if (!restrictEmployeeEvents || !viewerUid) return eventsRaw;
-    return eventsRaw.filter((ev) => {
+    let list = eventsRaw;
+    if (scheduleFilter === "installationsOnly") {
+      list = list.filter((ev) => isValidCompanyScheduleEvent(ev) && ev.kind === "installation");
+    }
+    if (!restrictEmployeeEvents || !viewerUid) return list;
+    return list.filter((ev) => {
       if (!isValidCompanyScheduleEvent(ev)) return false;
       if (ev.kind === "measurement") return true;
+      if (ev.kind === "installation") {
+        if (!viewerEmployeeId) return false;
+        const ids = ev.assignedEmployeeIds ?? [];
+        return Array.isArray(ids) && ids.includes(viewerEmployeeId);
+      }
       if (ev.kind === "meeting") {
         if (ev.sentToAllEmployees) return true;
         return ev.createdByUid === viewerUid;
       }
       return true;
     });
-  }, [eventsRaw, restrictEmployeeEvents, viewerUid]);
+  }, [eventsRaw, restrictEmployeeEvents, viewerUid, viewerEmployeeId, scheduleFilter]);
 
   React.useEffect(() => {
     setMobileSelectedDay((prev) => {
@@ -423,7 +508,10 @@ export function CompanyScheduleCalendar({
 
   const loading = meetingsMeasurementsLoading;
 
-  const openCreateForDay = (day: Date) => {
+  const openCreateForDay = (
+    day: Date,
+    presetKind: "lead_meeting" | "installation" = "lead_meeting"
+  ) => {
     if (readOnly) {
       toast({
         variant: "destructive",
@@ -432,7 +520,7 @@ export function CompanyScheduleCalendar({
       });
       return;
     }
-    console.log("[calendar] open create for day", format(day, "yyyy-MM-dd"));
+    console.log("[calendar] open create for day", format(day, "yyyy-MM-dd"), presetKind);
     setEditingEvent(null);
     setMeetingStatus("planned");
     setMeetingTitle("");
@@ -442,29 +530,34 @@ export function CompanyScheduleCalendar({
     setMeetingNote("");
     setMeetingDate(format(day, "yyyy-MM-dd"));
     setMeetingTime("09:00");
-    setMeetingTimeEnd("");
-    setCalendarEventKind("lead_meeting");
+    setMeetingTimeEnd(presetKind === "installation" ? "17:00" : "");
+    setInstallJobId("");
+    setInstallJobName("");
+    setInstallCustomerId("");
+    setSelectedInstallEmployeeIds([]);
+    setNotifyInstallAssignees(true);
+    setCalendarEventKind(presetKind);
     setSendToAllEmployees(false);
     setNotificationType("info");
     setNotificationText("");
     setFormOpen(true);
   };
 
+  const toggleInstallEmployee = (empId: string) => {
+    setSelectedInstallEmployeeIds((prev) =>
+      prev.includes(empId) ? prev.filter((x) => x !== empId) : [...prev, empId]
+    );
+  };
+
   const openEditMeeting = (ev: CalendarEvent) => {
-    if (readOnly) {
-      toast({
-        title: "Jen zobrazení",
-        description: "Úpravy schůzek máte pro svou roli vypnuté.",
-      });
-      return;
-    }
-    if (ev.kind !== "meeting") return;
+    if (ev.kind !== "meeting" && ev.kind !== "installation") return;
     console.log("[calendar] open edit meeting", {
       calendarId: ev.id,
       sourceId: ev.sourceId,
+      kind: ev.kind,
     });
     setEditingEvent(ev);
-    setMeetingStatus((ev.status as MeetingStatus) ?? "planned");
+    setMeetingStatus(String(ev.status ?? "planned"));
     setMeetingTitle(ev.headline || "");
     setMeetingCustomerName(ev.title || "");
     setMeetingPlace(ev.address || "");
@@ -472,7 +565,14 @@ export function CompanyScheduleCalendar({
     setMeetingNote(ev.eventNote ?? "");
     setMeetingDate(format(ev.at, "yyyy-MM-dd"));
     setMeetingTime(format(ev.at, "HH:mm"));
-    setMeetingTimeEnd("");
+    setMeetingTimeEnd(ev.endsAt ? format(ev.endsAt, "HH:mm") : "");
+    setInstallJobId(ev.jobId ?? "");
+    setInstallJobName(ev.jobName ?? "");
+    setInstallCustomerId(ev.customerId ?? "");
+    setSelectedInstallEmployeeIds(
+      Array.isArray(ev.assignedEmployeeIds) ? [...ev.assignedEmployeeIds] : []
+    );
+    setNotifyInstallAssignees(false);
     {
       const ct = String(ev.calendarEventType ?? "lead_meeting");
       setCalendarEventKind(
@@ -531,7 +631,6 @@ export function CompanyScheduleCalendar({
         endsAtField = Timestamp.fromDate(endD);
       }
     }
-    const status: MeetingStatus = meetingStatus;
     const title = meetingTitle.trim() || "Schůzka";
     const customerName = meetingCustomerName.trim() || "—";
     const calendarEventTypeStr =
@@ -540,47 +639,126 @@ export function CompanyScheduleCalendar({
         : calendarEventKind === "calendar_task"
           ? "calendar_task"
           : "lead_meeting";
+    const isInstallation = calendarEventTypeStr === "installation";
+
+    if (isInstallation) {
+      if (selectedInstallEmployeeIds.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "Vyberte montéry",
+          description: "Montáž musí mít alespoň jednoho přiřazeného zaměstnance.",
+        });
+        return;
+      }
+      if (!endsAtField) {
+        toast({
+          variant: "destructive",
+          title: "Čas do je povinný",
+          description: "U montáže zadejte čas od i čas do.",
+        });
+        return;
+      }
+    }
+
+    const instStatus: InstallationStatus = parseInstallationStatus(meetingStatus);
+    const meetingSt: MeetingStatus =
+      meetingStatus === "done" || meetingStatus === "cancelled" || meetingStatus === "planned"
+        ? (meetingStatus as MeetingStatus)
+        : "planned";
+
+    const statusForPayload = isInstallation ? instStatus : meetingSt;
+
     setSaving(true);
     try {
       console.log("[calendar] saveMeeting start", {
         companyId,
         isEdit: Boolean(editingEvent?.sourceId),
+        calendarEventTypeStr,
         sendToAllEmployees,
         employeeTargetCount: employeeIds.length,
       });
-      const payloadCommon = {
-        companyId,
-        organizationId: companyId,
-        customerName,
-        place: meetingPlace.trim(),
-        note: meetingNote.trim(),
-        phone: meetingPhone.trim(),
-        scheduledAt: Timestamp.fromDate(d),
-        calendarEventType: calendarEventTypeStr,
-        title,
-        status,
-        sentToAllEmployees: sendToAllEmployees === true,
-        notificationType: notificationType,
-        notificationMessage: notificationText.trim() || null,
-        updatedAt: serverTimestamp(),
-        ...(endsAtField ? { endsAt: endsAtField } : {}),
-        ...(status === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
-        ...(status === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
-      } as Record<string, unknown>;
+
+      const assignedNames = selectedInstallEmployeeIds.map((id) => {
+        const row = employeeOptions.find((e) => e.id === id);
+        return row?.name ?? id;
+      });
+
+      let payloadCommon: Record<string, unknown>;
+
+      if (isInstallation) {
+        payloadCommon = {
+          companyId,
+          organizationId: companyId,
+          customerName,
+          place: meetingPlace.trim(),
+          note: meetingNote.trim(),
+          phone: meetingPhone.trim(),
+          scheduledAt: Timestamp.fromDate(d),
+          calendarEventType: "installation",
+          title,
+          status: statusForPayload,
+          sentToAllEmployees: false,
+          notificationType,
+          notificationMessage: null,
+          updatedAt: serverTimestamp(),
+          endsAt: endsAtField,
+          assignedEmployeeIds: selectedInstallEmployeeIds,
+          assignedEmployeeNames: assignedNames,
+          ...(installJobId.trim() ? { jobId: installJobId.trim() } : {}),
+          ...(installJobName.trim() ? { jobName: installJobName.trim() } : {}),
+          ...(installCustomerId.trim() ? { customerId: installCustomerId.trim() } : {}),
+          ...(instStatus === "done"
+            ? { completedAt: serverTimestamp(), cancelledAt: null }
+            : {}),
+          ...(instStatus === "canceled"
+            ? { cancelledAt: serverTimestamp(), completedAt: null }
+            : {}),
+          ...(
+            instStatus === "planned" || instStatus === "inProgress"
+              ? { completedAt: null, cancelledAt: null }
+              : {}
+          ),
+        };
+      } else {
+        payloadCommon = {
+          companyId,
+          organizationId: companyId,
+          customerName,
+          place: meetingPlace.trim(),
+          note: meetingNote.trim(),
+          phone: meetingPhone.trim(),
+          scheduledAt: Timestamp.fromDate(d),
+          calendarEventType: calendarEventTypeStr,
+          title,
+          status: statusForPayload,
+          sentToAllEmployees: sendToAllEmployees === true,
+          notificationType: notificationType,
+          notificationMessage: notificationText.trim() || null,
+          updatedAt: serverTimestamp(),
+          ...(endsAtField ? { endsAt: endsAtField } : {}),
+          ...(meetingSt === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
+          ...(meetingSt === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
+        };
+      }
 
       const eventIdExisting =
-        editingEvent?.kind === "meeting" && editingEvent.sourceId
+        editingEvent &&
+        (editingEvent.kind === "meeting" || editingEvent.kind === "installation") &&
+        editingEvent.sourceId
           ? editingEvent.sourceId
           : null;
       let createdEventId: string | null = null;
 
-      if (editingEvent?.kind === "meeting" && editingEvent.sourceId) {
-        console.log("[calendar] lead_meeting update", editingEvent.sourceId);
+      if (eventIdExisting) {
+        console.log("[calendar] lead_meeting update", eventIdExisting);
         await updateDoc(
-          doc(firestore, "companies", companyId, "lead_meetings", editingEvent.sourceId),
-          payloadCommon as UpdateData<DocumentData>
+          doc(firestore, "companies", companyId, "lead_meetings", eventIdExisting),
+          { ...payloadCommon, updatedBy: user.uid } as UpdateData<DocumentData>
         );
-        toast({ title: "Uloženo", description: "Schůzka byla upravena." });
+        toast({
+          title: "Uloženo",
+          description: isInstallation ? "Montáž byla upravena." : "Schůzka byla upravena.",
+        });
       } else {
         const keys = newCalendarManualLeadKeys();
         const created = await addDoc(collection(firestore, "companies", companyId, "lead_meetings"), {
@@ -592,14 +770,17 @@ export function CompanyScheduleCalendar({
         });
         createdEventId = created.id;
         console.log("[calendar] lead_meeting created", createdEventId);
-        toast({ title: "Uloženo", description: "Schůzka byla vytvořena." });
+        toast({
+          title: "Uloženo",
+          description: isInstallation ? "Montáž byla vytvořena." : "Schůzka byla vytvořena.",
+        });
       }
 
-      const realEventId =
-        eventIdExisting ?? createdEventId;
+      const realEventId = eventIdExisting ?? createdEventId;
 
       const wasSentBefore = editingEvent?.sentToAllEmployees === true;
       const shouldFanout =
+        !isInstallation &&
         canSendToAllEmployees &&
         user?.uid &&
         realEventId &&
@@ -632,6 +813,7 @@ export function CompanyScheduleCalendar({
           description: `Upozornění odesláno: ${res.upserted} zaměstnancům.`,
         });
       } else if (
+        !isInstallation &&
         canSendToAllEmployees &&
         user?.uid &&
         realEventId &&
@@ -647,11 +829,40 @@ export function CompanyScheduleCalendar({
           title: "Akce uložena",
           description: "Upozornění bylo deaktivováno (smazáno) pro zaměstnance.",
         });
-      } else if (sendToAllEmployees && !canSendToAllEmployees) {
+      } else if (!isInstallation && sendToAllEmployees && !canSendToAllEmployees) {
         toast({
           variant: "destructive",
           title: "Nelze odeslat upozornění",
           description: "Hromadné upozornění může odeslat jen admin / vedoucí / účetní.",
+        });
+      }
+
+      if (
+        isInstallation &&
+        realEventId &&
+        notifyInstallAssignees &&
+        selectedInstallEmployeeIds.length > 0 &&
+        user?.uid
+      ) {
+        const msg =
+          notificationText.trim() ||
+          buildDefaultNotificationText(title, dateStr, timeStr);
+        const res = await upsertEmployeeNotificationsForEvent({
+          firestore,
+          companyId,
+          eventId: realEventId,
+          employeeIds: selectedInstallEmployeeIds,
+          title: `Montáž: ${title}`,
+          message: msg,
+          type: "meeting",
+          eventDate: dateStr,
+          eventTime: timeStr,
+          sentBy: user.uid,
+          linkUrl: "/portal/employee",
+        });
+        toast({
+          title: "Upozornění pro montéry",
+          description: `Odesláno ${res.upserted} přiřazeným zaměstnancům.`,
         });
       }
 
@@ -716,7 +927,10 @@ export function CompanyScheduleCalendar({
       return;
     }
     const eventId = editingEvent?.sourceId;
-    if (editingEvent?.kind !== "meeting" || !eventId) {
+    if (
+      (editingEvent?.kind !== "meeting" && editingEvent?.kind !== "installation") ||
+      !eventId
+    ) {
       setDeleteConfirmOpen(false);
       return;
     }
@@ -792,15 +1006,76 @@ export function CompanyScheduleCalendar({
   const setMeetingQuickStatus = async (ev: CalendarEvent, st: MeetingStatus) => {
     if (!firestore || !companyId) return;
     if (ev.kind !== "meeting" || !ev.sourceId) return;
+    if (!user?.uid) return;
     try {
       await updateDoc(doc(firestore, "companies", companyId, "lead_meetings", ev.sourceId), {
         status: st,
         updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
         ...(st === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
         ...(st === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
       });
       toast({
         title: st === "done" ? "Označeno jako vyřízeno" : "Označeno jako zrušeno",
+      });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Změna stavu se nezdařila",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    }
+  };
+
+  const isAssignedInstaller = (ev: CalendarEvent) =>
+    Boolean(
+      viewerEmployeeId &&
+        ev.kind === "installation" &&
+        Array.isArray(ev.assignedEmployeeIds) &&
+        ev.assignedEmployeeIds.includes(viewerEmployeeId)
+    );
+
+  const setInstallationQuickStatus = async (ev: CalendarEvent, st: InstallationStatus) => {
+    if (!firestore || !companyId || !user?.uid) return;
+    if (ev.kind !== "installation" || !ev.sourceId) return;
+    const allowedForEmployee = st === "inProgress" || st === "done";
+    if (!canSendToAllEmployees && !isAssignedInstaller(ev)) {
+      toast({ variant: "destructive", title: "Pouze pro přiřazené montéry." });
+      return;
+    }
+    if (!canSendToAllEmployees && !allowedForEmployee) {
+      toast({ variant: "destructive", title: "Tento stav může změnit vedení." });
+      return;
+    }
+    try {
+      const patch: Record<string, unknown> = {
+        status: st,
+        updatedAt: serverTimestamp(),
+        updatedBy: user.uid,
+      };
+      if (st === "done") {
+        patch.completedAt = serverTimestamp();
+        patch.cancelledAt = null;
+      } else if (st === "canceled") {
+        patch.cancelledAt = serverTimestamp();
+        patch.completedAt = null;
+      } else {
+        patch.completedAt = null;
+        patch.cancelledAt = null;
+      }
+      await updateDoc(
+        doc(firestore, "companies", companyId, "lead_meetings", ev.sourceId),
+        patch as UpdateData<DocumentData>
+      );
+      toast({
+        title:
+          st === "done"
+            ? "Montáž označena jako hotovo"
+            : st === "inProgress"
+              ? "Montáž probíhá"
+              : st === "canceled"
+                ? "Montáž zrušena"
+                : "Stav uložen",
       });
     } catch (e) {
       toast({
@@ -839,10 +1114,12 @@ export function CompanyScheduleCalendar({
             {titleText}
           </h2>
           <p className={cn("text-sm", dark ? "text-slate-300" : "text-slate-800")}>
-            Schůzky z poptávek a naplánovaná zaměření — měsíční přehled.
+            {scheduleFilter === "installationsOnly"
+              ? "Montáže přiřazené vám — měsíční přehled."
+              : "Schůzky, montáže a zaměření — měsíční přehled."}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button
             type="button"
             className={cn("h-9 gap-2", showFull && !readOnly ? "inline-flex" : "hidden")}
@@ -850,6 +1127,21 @@ export function CompanyScheduleCalendar({
           >
             <Plus className="h-4 w-4" />
             Nová schůzka
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            className={cn(
+              "h-9 gap-2 border",
+              showFull && !readOnly ? "inline-flex" : "hidden",
+              dark
+                ? "border-violet-400/40 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25"
+                : "border-violet-300 bg-violet-50 text-violet-950 hover:bg-violet-100"
+            )}
+            onClick={() => openCreateForDay(new Date(), "installation")}
+          >
+            <Plus className="h-4 w-4" />
+            Nová montáž
           </Button>
           <Button
             type="button"
@@ -937,6 +1229,10 @@ export function CompanyScheduleCalendar({
                   Schůzka (poptávka)
                 </span>
                 <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-sm bg-violet-100 ring-1 ring-violet-200" />
+                  Montáž
+                </span>
+                <span className="inline-flex items-center gap-2">
                   <span className="h-3 w-3 rounded-sm bg-emerald-100 ring-1 ring-emerald-200" />
                   Zaměření
                 </span>
@@ -947,6 +1243,10 @@ export function CompanyScheduleCalendar({
                 <span className="inline-flex items-center gap-2">
                   <span className="h-3 w-3 rounded-sm bg-orange-100 ring-1 ring-orange-200" />
                   Schůzka
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-3 w-3 rounded-sm bg-violet-100 ring-1 ring-violet-200" />
+                  Montáž
                 </span>
                 <span className="inline-flex items-center gap-2">
                   <span className="h-3 w-3 rounded-sm bg-emerald-100 ring-1 ring-emerald-200" />
@@ -973,16 +1273,29 @@ export function CompanyScheduleCalendar({
             {/* Mobil / compact: pás dní, seznam akcí, měsíční mřížka */}
             <div className={showCompact ? "block" : "hidden"}>
               {!readOnly ? (
-                <div className="mb-3 flex items-center justify-between gap-2">
+                <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <Button
                     type="button"
                     className={cn(
-                      "w-full min-h-[44px] gap-2",
+                      "min-h-[44px] w-full gap-2",
                       dark && "bg-orange-500 text-slate-950 hover:bg-orange-400"
                     )}
                     onClick={() => openCreateForDay(mobileSelectedDay)}
                   >
-                    <Plus className="h-4 w-4" /> + Nová schůzka
+                    <Plus className="h-4 w-4" /> Nová schůzka
+                  </Button>
+                  <Button
+                    type="button"
+                    className={cn(
+                      "min-h-[44px] w-full gap-2",
+                      dark
+                        ? "border border-violet-400/50 bg-violet-500/20 text-violet-50 hover:bg-violet-500/30"
+                        : "border border-violet-300 bg-violet-50 text-violet-950 hover:bg-violet-100"
+                    )}
+                    variant="outline"
+                    onClick={() => openCreateForDay(mobileSelectedDay, "installation")}
+                  >
+                    <Plus className="h-4 w-4" /> Nová montáž
                   </Button>
                 </div>
               ) : null}
@@ -1098,14 +1411,73 @@ export function CompanyScheduleCalendar({
                             ev={ev}
                             darkCards={dark}
                             onCardClick={
-                              readOnly
-                                ? undefined
-                                : ev.kind === "meeting"
-                                  ? () => openEditMeeting(ev)
-                                  : () => router.push("/portal/jobs/measurements")
+                              ev.kind === "meeting" || ev.kind === "installation"
+                                ? () => openEditMeeting(ev)
+                                : () => router.push("/portal/jobs/measurements")
                             }
                           />
-                          {ev.kind === "meeting" ? (
+                          {ev.kind === "installation" ? (
+                            <div className="flex flex-wrap gap-2">
+                              {!readOnly ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className={cn(
+                                    "min-h-[44px] gap-2",
+                                    dark &&
+                                      "border-white/20 bg-transparent text-slate-100 hover:bg-white/10"
+                                  )}
+                                  onClick={() => openEditMeeting(ev)}
+                                >
+                                  Upravit
+                                </Button>
+                              ) : null}
+                              {canSendToAllEmployees || isAssignedInstaller(ev) ? (
+                                <>
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    className={cn(
+                                      "min-h-[44px] gap-2",
+                                      dark &&
+                                        "border-white/10 bg-white/10 text-white hover:bg-white/15"
+                                    )}
+                                    onClick={() =>
+                                      void setInstallationQuickStatus(ev, "inProgress")
+                                    }
+                                  >
+                                    Probíhá
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    className={cn(
+                                      "min-h-[44px] gap-2",
+                                      dark &&
+                                        "border-white/10 bg-white/10 text-white hover:bg-white/15"
+                                    )}
+                                    onClick={() => void setInstallationQuickStatus(ev, "done")}
+                                  >
+                                    <CheckCircle2 className="h-4 w-4" />
+                                    Hotovo
+                                  </Button>
+                                  {canSendToAllEmployees ? (
+                                    <Button
+                                      type="button"
+                                      variant="destructive"
+                                      className="min-h-[44px] gap-2"
+                                      onClick={() =>
+                                        void setInstallationQuickStatus(ev, "canceled")
+                                      }
+                                    >
+                                      <XCircle className="h-4 w-4" />
+                                      Zrušit montáž
+                                    </Button>
+                                  ) : null}
+                                </>
+                              ) : null}
+                            </div>
+                          ) : ev.kind === "meeting" ? (
                             <div className="flex flex-wrap gap-2">
                               {!readOnly ? (
                                 <Button
@@ -1267,15 +1639,21 @@ export function CompanyScheduleCalendar({
                             className={cn(
                               "w-full min-h-[44px] cursor-pointer truncate rounded border px-1.5 py-1 text-left text-[10px] leading-tight transition-colors sm:min-h-[36px] sm:text-[11px] text-slate-900",
                               "hover:ring-2 hover:ring-orange-300/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500",
-                              ev.kind === "meeting"
+                              ev.kind === "installation"
                                 ? ev.status === "done"
                                   ? "border-emerald-200 bg-emerald-100"
-                                  : ev.status === "cancelled"
+                                  : ev.status === "canceled"
                                     ? "border-slate-200 bg-slate-100 text-slate-600 line-through"
-                                    : "border-orange-200 bg-orange-100"
-                                : ev.badgeClass.includes("slate")
-                                  ? "border-slate-200 bg-slate-100 text-slate-700"
-                                  : "border-emerald-200 bg-emerald-100"
+                                    : "border-violet-200 bg-violet-100"
+                                : ev.kind === "meeting"
+                                  ? ev.status === "done"
+                                    ? "border-emerald-200 bg-emerald-100"
+                                    : ev.status === "cancelled"
+                                      ? "border-slate-200 bg-slate-100 text-slate-600 line-through"
+                                      : "border-orange-200 bg-orange-100"
+                                  : ev.badgeClass.includes("slate")
+                                    ? "border-slate-200 bg-slate-100 text-slate-700"
+                                    : "border-emerald-200 bg-emerald-100"
                             )}
                             title={`${format(ev.at, "HH:mm")} — ${ev.title} — ${ev.detail ?? ""}`}
                             onClick={() => {
@@ -1283,7 +1661,7 @@ export function CompanyScheduleCalendar({
                                 id: ev.id,
                                 kind: ev.kind,
                               });
-                              if (ev.kind === "meeting") {
+                              if (ev.kind === "meeting" || ev.kind === "installation") {
                                 openEditMeeting(ev);
                               } else {
                                 toast({
@@ -1295,7 +1673,7 @@ export function CompanyScheduleCalendar({
                             }}
                           >
                             <span className="font-semibold tabular-nums">{format(ev.at, "HH:mm")}</span>{" "}
-                            <span className="font-medium">{ev.title}</span>
+                            <span className="font-medium">{ev.headline || ev.title}</span>
                             {ev.sentToAllEmployees ? (
                               <span className="ml-1 text-[9px] font-semibold text-indigo-900">
                                 · rozesláno
@@ -1306,7 +1684,7 @@ export function CompanyScheduleCalendar({
                                 {ev.detail}
                               </span>
                             ) : null}
-                            {ev.kind === "meeting" ? (
+                            {ev.kind === "meeting" || ev.kind === "installation" ? (
                               <span className="ml-1 text-[9px] opacity-80">
                                 · {ev.statusLabel}
                               </span>
@@ -1329,20 +1707,36 @@ export function CompanyScheduleCalendar({
       </div>
 
       {showCompact && !readOnly && !formOpen ? (
-        <button
-          type="button"
-          className={cn(
-            "fixed right-4 z-[65] flex min-h-[52px] items-center gap-2 rounded-full border px-5 py-3 text-sm font-semibold shadow-lg transition-colors",
-            dark
-              ? "border-orange-500/40 bg-orange-500 text-slate-950 hover:bg-orange-400"
-              : "border-slate-300 bg-orange-500 text-white hover:bg-orange-600"
-          )}
-          style={{ bottom: "calc(96px + env(safe-area-inset-bottom, 0px) + 12px)" }}
-          onClick={() => openCreateForDay(mobileSelectedDay)}
-        >
-          <Plus className="h-5 w-5" />
-          Naplánovat
-        </button>
+        <>
+          <button
+            type="button"
+            className={cn(
+              "fixed right-4 z-[65] flex min-h-[52px] items-center gap-2 rounded-full border px-5 py-3 text-sm font-semibold shadow-lg transition-colors",
+              dark
+                ? "border-orange-500/40 bg-orange-500 text-slate-950 hover:bg-orange-400"
+                : "border-slate-300 bg-orange-500 text-white hover:bg-orange-600"
+            )}
+            style={{ bottom: "calc(144px + env(safe-area-inset-bottom, 0px) + 12px)" }}
+            onClick={() => openCreateForDay(mobileSelectedDay)}
+          >
+            <Plus className="h-5 w-5" />
+            Schůzka
+          </button>
+          <button
+            type="button"
+            className={cn(
+              "fixed right-4 z-[65] flex min-h-[52px] items-center gap-2 rounded-full border px-5 py-3 text-sm font-semibold shadow-lg transition-colors",
+              dark
+                ? "border-violet-400/50 bg-violet-600 text-white hover:bg-violet-500"
+                : "border-violet-300 bg-violet-600 text-white hover:bg-violet-500"
+            )}
+            style={{ bottom: "calc(96px + env(safe-area-inset-bottom, 0px) + 12px)" }}
+            onClick={() => openCreateForDay(mobileSelectedDay, "installation")}
+          >
+            <Plus className="h-5 w-5" />
+            Montáž
+          </button>
+        </>
       ) : null}
 
       <Sheet
@@ -1367,20 +1761,31 @@ export function CompanyScheduleCalendar({
         >
           <SheetHeader>
             <SheetTitle className={dark ? "text-white" : undefined}>
-              {editingEvent ? "Upravit schůzku / akci" : "Nová schůzka / akce"}
+              {editingEvent && calendarEventKind === "installation"
+                ? "Upravit montáž"
+                : editingEvent
+                  ? "Upravit schůzku / akci"
+                  : calendarEventKind === "installation"
+                    ? "Nová montáž"
+                    : "Nová schůzka / akce"}
             </SheetTitle>
             <SheetDescription className={dark ? "text-slate-400" : undefined}>
-              {showCompact
-                ? "Formulář v dolním panelu — datum a čas pohodlně na výšku."
-                : "Boční panel — úpravy schůzky, stav a upozornění pro zaměstnance."}
+              {calendarEventKind === "installation"
+                ? "Montáž se uloží do kalendáře a uvidí ji jen přiřazení montéři."
+                : showCompact
+                  ? "Formulář v dolním panelu — datum a čas pohodlně na výšku."
+                  : "Boční panel — úpravy schůzky, stav a upozornění pro zaměstnance."}
             </SheetDescription>
           </SheetHeader>
 
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2 space-y-1">
-              <Label className={dark ? "text-slate-200" : undefined}>Název</Label>
+              <Label className={dark ? "text-slate-200" : undefined}>
+                {calendarEventKind === "installation" ? "Název montáže" : "Název"}
+              </Label>
               <Input
                 className={fc}
+                disabled={readOnly}
                 value={meetingTitle}
                 onChange={(e) => setMeetingTitle(e.target.value)}
               />
@@ -1389,9 +1794,12 @@ export function CompanyScheduleCalendar({
               <Label className={dark ? "text-slate-200" : undefined}>Typ události</Label>
               <Select
                 value={calendarEventKind}
-                onValueChange={(v) =>
-                  setCalendarEventKind(v as "lead_meeting" | "installation" | "calendar_task")
-                }
+                disabled={readOnly}
+                onValueChange={(v) => {
+                  const nk = v as "lead_meeting" | "installation" | "calendar_task";
+                  setCalendarEventKind(nk);
+                  setMeetingStatus("planned");
+                }}
               >
                 <SelectTrigger className={cn("min-h-11", fc)}>
                   <SelectValue />
@@ -1403,10 +1811,132 @@ export function CompanyScheduleCalendar({
                 </SelectContent>
               </Select>
             </div>
+            {calendarEventKind === "installation" && canSendToAllEmployees ? (
+              <>
+                <div className="sm:col-span-2 space-y-1">
+                  <Label className={dark ? "text-slate-200" : undefined}>Zakázka</Label>
+                  <Select
+                    value={installJobId ? installJobId : "__none__"}
+                    disabled={readOnly}
+                    onValueChange={(v) => {
+                      if (v === "__none__") {
+                        setInstallJobId("");
+                        setInstallJobName("");
+                        return;
+                      }
+                      setInstallJobId(v);
+                      const j = jobOptions.find((x) => x.id === v);
+                      if (j) setInstallJobName(j.name);
+                    }}
+                  >
+                    <SelectTrigger className={cn("min-h-11", fc)}>
+                      <SelectValue placeholder="Vyberte zakázku" />
+                    </SelectTrigger>
+                    <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
+                      <SelectItem value="__none__">— bez zakázky —</SelectItem>
+                      {jobOptions.map((j) => (
+                        <SelectItem key={j.id} value={j.id}>
+                          {j.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="sm:col-span-2 space-y-1">
+                  <Label className={dark ? "text-slate-200" : undefined}>ID zákazníka (volitelně)</Label>
+                  <Input
+                    className={fc}
+                    disabled={readOnly}
+                    value={installCustomerId}
+                    onChange={(e) => setInstallCustomerId(e.target.value)}
+                    placeholder="Firestore / CRM id"
+                  />
+                </div>
+                <div className="sm:col-span-2 space-y-2">
+                  <Label className={dark ? "text-slate-200" : undefined}>Montéři</Label>
+                  <div
+                    className={cn(
+                      "max-h-44 space-y-2 overflow-y-auto rounded-lg border p-3",
+                      dark ? "border-white/10 bg-slate-900/80" : "border-slate-200 bg-slate-50"
+                    )}
+                  >
+                    {employeeOptions.length === 0 ? (
+                      <p className={cn("text-sm", dark ? "text-slate-400" : "text-slate-600")}>
+                        Žádní zaměstnanci — zkontrolujte kolekci zaměstnanců.
+                      </p>
+                    ) : (
+                      employeeOptions.map((emp) => (
+                        <label
+                          key={emp.id}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-3 text-sm",
+                            dark ? "text-slate-100" : "text-slate-900"
+                          )}
+                        >
+                          <Checkbox
+                            checked={selectedInstallEmployeeIds.includes(emp.id)}
+                            disabled={readOnly}
+                            onCheckedChange={() => toggleInstallEmployee(emp.id)}
+                          />
+                          <span>{emp.name}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div
+                  className={cn(
+                    "sm:col-span-2 rounded-lg border p-3",
+                    dark ? "border-white/10 bg-slate-900/80" : "border-slate-200 bg-slate-50"
+                  )}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <p className={cn("text-sm font-semibold", dark ? "text-slate-100" : "text-slate-900")}>
+                        Upozornit přiřazené montéry
+                      </p>
+                      <p className={cn("text-xs", dark ? "text-slate-400" : "text-slate-700")}>
+                        Každý vybraný zaměstnanec dostane upozornění v profilu.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={notifyInstallAssignees}
+                      onCheckedChange={setNotifyInstallAssignees}
+                      disabled={readOnly}
+                    />
+                  </div>
+                </div>
+              </>
+            ) : null}
+            {calendarEventKind === "installation" &&
+            !canSendToAllEmployees &&
+            editingEvent?.kind === "installation" ? (
+              <div
+                className={cn(
+                  "sm:col-span-2 rounded-lg border p-3 text-sm",
+                  dark ? "border-white/10 bg-slate-900/80 text-slate-200" : "border-slate-200 bg-slate-50"
+                )}
+              >
+                <p className={cn("text-xs font-semibold", dark ? "text-slate-300" : "text-slate-600")}>
+                  Přiřazení
+                </p>
+                <p className="mt-1">
+                  {(editingEvent.assignedEmployeeNames ?? []).join(", ") ||
+                    (editingEvent.assignedEmployeeIds ?? []).join(", ") ||
+                    "—"}
+                </p>
+                {editingEvent.jobName ? (
+                  <p className="mt-2">
+                    <span className="font-medium">Zakázka:</span> {editingEvent.jobName}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="sm:col-span-2 space-y-1">
               <Label className={dark ? "text-slate-200" : undefined}>Zákazník / subjekt</Label>
               <Input
                 className={fc}
+                disabled={readOnly}
                 value={meetingCustomerName}
                 onChange={(e) => setMeetingCustomerName(e.target.value)}
               />
@@ -1416,6 +1946,7 @@ export function CompanyScheduleCalendar({
               <Input
                 className={cn("min-h-11", fc)}
                 type="date"
+                disabled={readOnly}
                 value={meetingDate}
                 onChange={(e) => setMeetingDate(e.target.value)}
               />
@@ -1425,108 +1956,149 @@ export function CompanyScheduleCalendar({
               <Input
                 className={cn("min-h-11", fc)}
                 type="time"
+                disabled={readOnly}
                 value={meetingTime}
                 onChange={(e) => setMeetingTime(e.target.value)}
               />
             </div>
             <div className="space-y-1">
-              <Label className={dark ? "text-slate-200" : undefined}>Čas do (volitelně)</Label>
+              <Label className={dark ? "text-slate-200" : undefined}>
+                {calendarEventKind === "installation" ? "Čas do (povinně)" : "Čas do (volitelně)"}
+              </Label>
               <Input
                 className={cn("min-h-11", fc)}
                 type="time"
+                disabled={readOnly}
                 value={meetingTimeEnd}
                 onChange={(e) => setMeetingTimeEnd(e.target.value)}
               />
             </div>
             <div className="sm:col-span-2 space-y-1">
               <Label className={dark ? "text-slate-200" : undefined}>Místo / adresa</Label>
-              <Input className={fc} value={meetingPlace} onChange={(e) => setMeetingPlace(e.target.value)} />
+              <Input
+                className={fc}
+                disabled={readOnly}
+                value={meetingPlace}
+                onChange={(e) => setMeetingPlace(e.target.value)}
+              />
             </div>
             <div className="sm:col-span-2 space-y-1">
               <Label className={dark ? "text-slate-200" : undefined}>Telefon</Label>
-              <Input className={fc} value={meetingPhone} onChange={(e) => setMeetingPhone(e.target.value)} />
+              <Input
+                className={fc}
+                disabled={readOnly}
+                value={meetingPhone}
+                onChange={(e) => setMeetingPhone(e.target.value)}
+              />
             </div>
             <div className="sm:col-span-2 space-y-1">
               <Label className={dark ? "text-slate-200" : undefined}>Popis / poznámka</Label>
               <Textarea
                 className={fc}
                 rows={3}
+                disabled={readOnly}
                 value={meetingNote}
                 onChange={(e) => setMeetingNote(e.target.value)}
               />
             </div>
-            <div
-              className={cn(
-                "sm:col-span-2 rounded-lg border p-3",
-                dark ? "border-white/10 bg-slate-900/80" : "border-slate-200 bg-slate-50"
-              )}
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="space-y-0.5">
-                  <p className={cn("text-sm font-semibold", dark ? "text-slate-100" : "text-slate-900")}>
-                    Odeslat jako upozornění všem zaměstnancům
-                  </p>
-                  <p className={cn("text-xs", dark ? "text-slate-400" : "text-slate-700")}>
-                    Upozornění se zobrazí v profilu zaměstnance a v jeho sekci Upozornění.
-                  </p>
-                </div>
-                <Switch
-                  checked={sendToAllEmployees}
-                  onCheckedChange={setSendToAllEmployees}
-                  disabled={!canSendToAllEmployees}
-                />
-              </div>
-              {sendToAllEmployees ? (
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <Label className={dark ? "text-slate-200" : undefined}>Typ upozornění</Label>
-                    <Select
-                      value={notificationType}
-                      onValueChange={(v) =>
-                        setNotificationType(v as EmployeeNotificationType)
-                      }
-                    >
-                      <SelectTrigger className={cn("min-h-11", fc)}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
-                        <SelectItem value="info">Informace</SelectItem>
-                        <SelectItem value="important">Důležité</SelectItem>
-                        <SelectItem value="training">Školení</SelectItem>
-                        <SelectItem value="meeting">Porada</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  <div className="space-y-1 sm:col-span-2">
-                    <Label className={dark ? "text-slate-200" : undefined}>Text upozornění (volitelné)</Label>
-                    <Textarea
-                      className={fc}
-                      rows={2}
-                      value={notificationText}
-                      onChange={(e) => setNotificationText(e.target.value)}
-                      placeholder="Pokud necháte prázdné, použije se název a datum/čas akce."
-                    />
-                  </div>
-                  {!canSendToAllEmployees ? (
-                    <p className="text-xs text-rose-700 sm:col-span-2">
-                      Hromadné upozornění může odeslat jen admin / vedoucí / účetní.
+            {calendarEventKind !== "installation" ? (
+              <div
+                className={cn(
+                  "sm:col-span-2 rounded-lg border p-3",
+                  dark ? "border-white/10 bg-slate-900/80" : "border-slate-200 bg-slate-50"
+                )}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="space-y-0.5">
+                    <p className={cn("text-sm font-semibold", dark ? "text-slate-100" : "text-slate-900")}>
+                      Odeslat jako upozornění všem zaměstnancům
                     </p>
-                  ) : null}
+                    <p className={cn("text-xs", dark ? "text-slate-400" : "text-slate-700")}>
+                      Upozornění se zobrazí v profilu zaměstnance a v jeho sekci Upozornění.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={sendToAllEmployees}
+                    onCheckedChange={setSendToAllEmployees}
+                    disabled={readOnly || !canSendToAllEmployees}
+                  />
                 </div>
-              ) : null}
-            </div>
+                {sendToAllEmployees ? (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1">
+                      <Label className={dark ? "text-slate-200" : undefined}>Typ upozornění</Label>
+                      <Select
+                        value={notificationType}
+                        disabled={readOnly}
+                        onValueChange={(v) =>
+                          setNotificationType(v as EmployeeNotificationType)
+                        }
+                      >
+                        <SelectTrigger className={cn("min-h-11", fc)}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
+                          <SelectItem value="info">Informace</SelectItem>
+                          <SelectItem value="important">Důležité</SelectItem>
+                          <SelectItem value="training">Školení</SelectItem>
+                          <SelectItem value="meeting">Porada</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1 sm:col-span-2">
+                      <Label className={dark ? "text-slate-200" : undefined}>Text upozornění (volitelné)</Label>
+                      <Textarea
+                        className={fc}
+                        rows={2}
+                        disabled={readOnly}
+                        value={notificationText}
+                        onChange={(e) => setNotificationText(e.target.value)}
+                        placeholder="Pokud necháte prázdné, použije se název a datum/čas akce."
+                      />
+                    </div>
+                    {!canSendToAllEmployees ? (
+                      <p className="text-xs text-rose-700 sm:col-span-2">
+                        Hromadné upozornění může odeslat jen admin / vedoucí / účetní.
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <div className="sm:col-span-2 space-y-1">
               <Label className={dark ? "text-slate-200" : undefined}>Stav</Label>
-              <Select value={meetingStatus} onValueChange={(v) => setMeetingStatus(v as MeetingStatus)}>
-                <SelectTrigger className={cn("min-h-11", fc)}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
-                  <SelectItem value="planned">Plánováno</SelectItem>
-                  <SelectItem value="done">Vyřízeno</SelectItem>
-                  <SelectItem value="cancelled">Zrušeno</SelectItem>
-                </SelectContent>
-              </Select>
+              {calendarEventKind === "installation" ? (
+                <Select
+                  value={meetingStatus}
+                  disabled={readOnly}
+                  onValueChange={(v) => setMeetingStatus(v)}
+                >
+                  <SelectTrigger className={cn("min-h-11", fc)}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
+                    <SelectItem value="planned">Naplánováno</SelectItem>
+                    <SelectItem value="inProgress">Probíhá</SelectItem>
+                    <SelectItem value="done">Hotovo</SelectItem>
+                    <SelectItem value="canceled">Zrušeno</SelectItem>
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Select
+                  value={meetingStatus}
+                  disabled={readOnly}
+                  onValueChange={(v) => setMeetingStatus(v)}
+                >
+                  <SelectTrigger className={cn("min-h-11", fc)}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
+                    <SelectItem value="planned">Plánováno</SelectItem>
+                    <SelectItem value="done">Vyřízeno</SelectItem>
+                    <SelectItem value="cancelled">Zrušeno</SelectItem>
+                  </SelectContent>
+                </Select>
+              )}
             </div>
           </div>
 
@@ -1540,12 +2112,15 @@ export function CompanyScheduleCalendar({
             >
               Zrušit
             </Button>
-            {editingEvent?.kind === "meeting" && editingEvent.sourceId ? (
+            {canSendToAllEmployees &&
+            editingEvent &&
+            (editingEvent.kind === "meeting" || editingEvent.kind === "installation") &&
+            editingEvent.sourceId ? (
               <Button
                 type="button"
                 variant="destructive"
                 className="min-h-[44px]"
-                disabled={saving || isDeleting}
+                disabled={saving || isDeleting || readOnly}
                 onClick={() => {
                   console.log("[calendar] delete button → confirm");
                   setDeleteConfirmOpen(true);
@@ -1557,7 +2132,7 @@ export function CompanyScheduleCalendar({
             <Button
               type="button"
               className="min-h-[44px]"
-              disabled={saving || isDeleting}
+              disabled={saving || isDeleting || readOnly}
               onClick={() => void saveMeeting()}
             >
               {saving ? <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent" /> : null}

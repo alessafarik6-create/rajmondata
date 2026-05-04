@@ -80,6 +80,42 @@ service cloud.firestore {
       return hasUser() ? userDoc().employeeId : null;
     }
 
+    /** Montáž v kalendáři — zaměstnanec smí měnit jen stav a auditová pole. */
+    function leadMeetingInstallationEmployeeStatusOnly() {
+      return userRole() == 'employee' &&
+        'calendarEventType' in resource.data &&
+        resource.data.calendarEventType == 'installation' &&
+        ownEmployeeId() != null &&
+        'assignedEmployeeIds' in resource.data &&
+        resource.data.assignedEmployeeIds is list &&
+        ownEmployeeId() in resource.data.assignedEmployeeIds &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status',
+          'updatedAt',
+          'updatedBy',
+          'completedAt',
+          'cancelledAt'
+        ]) &&
+        request.resource.data.importLeadId == resource.data.importLeadId &&
+        request.resource.data.leadKey == resource.data.leadKey &&
+        request.resource.data.createdBy == resource.data.createdBy &&
+        request.resource.data.companyId == resource.data.companyId &&
+        request.resource.data.calendarEventType == 'installation' &&
+        request.resource.data.scheduledAt == resource.data.scheduledAt &&
+        request.resource.data.customerName == resource.data.customerName &&
+        request.resource.data.title == resource.data.title &&
+        request.resource.data.assignedEmployeeIds == resource.data.assignedEmployeeIds &&
+        (!('jobId' in resource.data) || request.resource.data.jobId == resource.data.jobId) &&
+        (!('jobName' in resource.data) || request.resource.data.jobName == resource.data.jobName) &&
+        (!('customerId' in resource.data) || request.resource.data.customerId == resource.data.customerId) &&
+        (!('place' in resource.data) || request.resource.data.place == resource.data.place) &&
+        (!('phone' in resource.data) || request.resource.data.phone == resource.data.phone) &&
+        (!('note' in resource.data) || request.resource.data.note == resource.data.note) &&
+        (!('endsAt' in resource.data) || request.resource.data.endsAt == resource.data.endsAt) &&
+        (!('sentToAllEmployees' in resource.data) ||
+          request.resource.data.sentToAllEmployees == resource.data.sentToAllEmployees);
+    }
+
     function isSuperAdminFirebase() {
       return hasUser() &&
         'globalRoles' in userDoc() &&
@@ -2016,6 +2052,17 @@ service cloud.firestore {
           request.resource.data.customerName.size() <= 300 &&
           request.resource.data.createdBy == request.auth.uid &&
           request.resource.data.scheduledAt is timestamp &&
+          (!('organizationId' in request.resource.data) || request.resource.data.organizationId == companyId) &&
+          (!('calendarEventType' in request.resource.data) ||
+            request.resource.data.calendarEventType is string) &&
+          (!('jobId' in request.resource.data) || request.resource.data.jobId is string) &&
+          (!('jobName' in request.resource.data) || request.resource.data.jobName is string) &&
+          (!('customerId' in request.resource.data) || request.resource.data.customerId is string) &&
+          (!('assignedEmployeeIds' in request.resource.data) ||
+            request.resource.data.assignedEmployeeIds is list) &&
+          (!('assignedEmployeeNames' in request.resource.data) ||
+            request.resource.data.assignedEmployeeNames is list) &&
+          (!('endsAt' in request.resource.data) || request.resource.data.endsAt is timestamp) &&
           (!('phone' in request.resource.data) || request.resource.data.phone is string) &&
           (!('email' in request.resource.data) || request.resource.data.email is string) &&
           (!('note' in request.resource.data) ||
@@ -2023,21 +2070,48 @@ service cloud.firestore {
           (!('place' in request.resource.data) ||
             (request.resource.data.place is string && request.resource.data.place.size() <= 500));
         allow update: if signedIn() && sameCompany(companyId) &&
-          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
           resource.data.companyId == companyId &&
           request.resource.data.companyId == companyId &&
-          request.resource.data.importLeadId == resource.data.importLeadId &&
-          request.resource.data.leadKey == resource.data.leadKey &&
-          request.resource.data.createdBy == resource.data.createdBy &&
-          (!('phone' in request.resource.data) || request.resource.data.phone is string) &&
-          (!('email' in request.resource.data) || request.resource.data.email is string) &&
-          (!('note' in request.resource.data) ||
-            (request.resource.data.note is string && request.resource.data.note.size() <= 8000)) &&
-          (!('place' in request.resource.data) ||
-            (request.resource.data.place is string && request.resource.data.place.size() <= 500)) &&
-          request.resource.data.scheduledAt is timestamp;
+          (
+            (userRole() in ['owner', 'admin', 'manager', 'accountant']) &&
+              request.resource.data.importLeadId == resource.data.importLeadId &&
+              request.resource.data.leadKey == resource.data.leadKey &&
+              request.resource.data.createdBy == resource.data.createdBy &&
+              (!('phone' in request.resource.data) || request.resource.data.phone is string) &&
+              (!('email' in request.resource.data) || request.resource.data.email is string) &&
+              (!('note' in request.resource.data) ||
+                (request.resource.data.note is string && request.resource.data.note.size() <= 8000)) &&
+              (!('place' in request.resource.data) ||
+                (request.resource.data.place is string && request.resource.data.place.size() <= 500)) &&
+              request.resource.data.scheduledAt is timestamp
+            ) ||
+            (
+              userRole() == 'employee' &&
+              leadMeetingInstallationEmployeeStatusOnly()
+            ) ||
+            (
+              userRole() == 'employee' &&
+              (!('calendarEventType' in resource.data) || resource.data.calendarEventType != 'installation') &&
+              request.resource.data.importLeadId == resource.data.importLeadId &&
+              request.resource.data.leadKey == resource.data.leadKey &&
+              request.resource.data.createdBy == resource.data.createdBy &&
+              (!('phone' in request.resource.data) || request.resource.data.phone is string) &&
+              (!('email' in request.resource.data) || request.resource.data.email is string) &&
+              (!('note' in request.resource.data) ||
+                (request.resource.data.note is string && request.resource.data.note.size() <= 8000)) &&
+              (!('place' in request.resource.data) ||
+                (request.resource.data.place is string && request.resource.data.place.size() <= 500)) &&
+              request.resource.data.scheduledAt is timestamp
+            )
+          );
         allow delete: if signedIn() && sameCompany(companyId) &&
-          (isPrivileged() || resource.data.createdBy == request.auth.uid);
+          (
+            isPrivileged() ||
+            (
+              resource.data.createdBy == request.auth.uid &&
+              (!('calendarEventType' in resource.data) || resource.data.calendarEventType != 'installation')
+            )
+          );
       }
 
       /**

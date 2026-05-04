@@ -6,18 +6,23 @@ import type { EmployeeNotificationType } from "@/lib/employee-notifications";
 
 export type MeetingStatus = "planned" | "done" | "cancelled";
 
+/** Stav v `lead_meetings.status` pro calendarEventType installation */
+export type InstallationStatus = "planned" | "inProgress" | "done" | "canceled";
+
 export type CompanyScheduleCalendarEvent = {
   id: string;
   at: Date;
+  /** Konec intervalu (čas do), pokud je uložen ve Firestore. */
+  endsAt?: Date;
   /** Autor záznamu ve Firestore (`lead_meetings.createdBy`) — pro filtrování u zaměstnance. */
   createdByUid?: string;
   title: string;
   headline: string;
-  kind: "meeting" | "measurement";
+  kind: "meeting" | "measurement" | "installation";
   detail?: string;
   phone?: string;
   address?: string;
-  status: MeetingStatus | "measurement";
+  status: MeetingStatus | "measurement" | InstallationStatus;
   statusLabel: string;
   badgeClass: string;
   accentClass: string;
@@ -29,6 +34,12 @@ export type CompanyScheduleCalendarEvent = {
   titleClass?: string;
   /** Hodnota z `lead_meetings.calendarEventType` */
   calendarEventType?: string;
+  jobId?: string;
+  jobName?: string;
+  customerId?: string;
+  /** Pro montáže — kdo montáž uvidí a může měnit stav. */
+  assignedEmployeeIds?: string[];
+  assignedEmployeeNames?: string[];
 };
 
 function isMeasurementDeleted(m: { deletedAt?: unknown }): boolean {
@@ -103,6 +114,52 @@ function meetingVisuals(status: MeetingStatus | undefined): {
   }
 }
 
+function installationVisuals(status: InstallationStatus | undefined): {
+  statusLabel: string;
+  badgeClass: string;
+  accentClass: string;
+  titleClass: string;
+} {
+  switch (status) {
+    case "inProgress":
+      return {
+        statusLabel: "Probíhá",
+        badgeClass: "border-amber-200 bg-amber-100 text-amber-950",
+        accentClass: "border-l-amber-500",
+        titleClass: "",
+      };
+    case "done":
+      return {
+        statusLabel: "Hotovo",
+        badgeClass: "border-emerald-200 bg-emerald-100 text-emerald-950",
+        accentClass: "border-l-emerald-500",
+        titleClass: "opacity-80",
+      };
+    case "canceled":
+      return {
+        statusLabel: "Zrušeno",
+        badgeClass: "border-rose-200 bg-rose-50 text-rose-900",
+        accentClass: "border-l-rose-400",
+        titleClass: "line-through text-slate-500",
+      };
+    default:
+      return {
+        statusLabel: "Naplánováno",
+        badgeClass: "border-violet-200 bg-violet-100 text-violet-950",
+        accentClass: "border-l-violet-500",
+        titleClass: "",
+      };
+  }
+}
+
+export function parseInstallationStatus(raw: string): InstallationStatus {
+  const s = raw.trim();
+  if (s === "inProgress") return "inProgress";
+  if (s === "done") return "done";
+  if (s === "canceled" || s === "cancelled") return "canceled";
+  return "planned";
+}
+
 export function isValidCompanyScheduleEvent(e: unknown): e is CompanyScheduleCalendarEvent {
   if (e == null || typeof e !== "object") return false;
   const o = e as Partial<CompanyScheduleCalendarEvent>;
@@ -125,17 +182,14 @@ export function buildCompanyScheduleEvents(
     if (!id) continue;
     const at = parseFirestoreScheduledAt(raw.scheduledAt);
     if (!at) continue;
+    const endsAt = parseFirestoreScheduledAt(raw.endsAt);
     const customerName = String(raw.customerName ?? "—");
     const note = String(raw.note ?? "").trim();
     const phone = String(raw.phone ?? "").trim();
     const place = String(raw.place ?? "").trim();
-    const stRaw = String(raw.status ?? "").trim();
-    const st: MeetingStatus =
-      stRaw === "done" || stRaw === "cancelled" || stRaw === "planned"
-        ? (stRaw as MeetingStatus)
-        : "planned";
-    const v = meetingVisuals(st);
-    const headline = String(raw.title ?? "").trim() || note || "Schůzka";
+    const calendarEventTypeRaw = String(raw?.calendarEventType ?? "lead_meeting").trim();
+    const isInstallation = calendarEventTypeRaw === "installation";
+
     const sentToAllEmployees = raw?.sentToAllEmployees === true;
     const notificationType =
       String(raw?.notificationType ?? "").trim() as EmployeeNotificationType;
@@ -152,10 +206,72 @@ export function buildCompanyScheduleEvents(
         : null;
     const createdByUid =
       typeof raw?.createdBy === "string" && raw.createdBy.trim() ? raw.createdBy.trim() : undefined;
-    const calendarEventTypeRaw = String(raw?.calendarEventType ?? "lead_meeting").trim();
+
+    const assignedEmployeeIdsRaw = raw?.assignedEmployeeIds;
+    const assignedEmployeeIds = Array.isArray(assignedEmployeeIdsRaw)
+      ? assignedEmployeeIdsRaw.map((x) => String(x ?? "").trim()).filter(Boolean)
+      : undefined;
+    const assignedEmployeeNamesRaw = raw?.assignedEmployeeNames;
+    const assignedEmployeeNames = Array.isArray(assignedEmployeeNamesRaw)
+      ? assignedEmployeeNamesRaw.map((x) => String(x ?? "").trim()).filter(Boolean)
+      : undefined;
+
+    const jobId =
+      typeof raw.jobId === "string" && raw.jobId.trim() ? raw.jobId.trim() : undefined;
+    const jobName =
+      typeof raw.jobName === "string" && raw.jobName.trim() ? raw.jobName.trim() : undefined;
+    const customerId =
+      typeof raw.customerId === "string" && raw.customerId.trim()
+        ? raw.customerId.trim()
+        : undefined;
+
+    if (isInstallation) {
+      const stRaw = String(raw.status ?? "").trim();
+      const instSt = parseInstallationStatus(stRaw);
+      const v = installationVisuals(instSt);
+      const headline = String(raw.title ?? "").trim() || note || "Montáž";
+      out.push({
+        id: `m-${id}`,
+        at,
+        endsAt: endsAt ?? undefined,
+        createdByUid,
+        title: customerName,
+        headline,
+        kind: "installation",
+        calendarEventType: "installation",
+        detail: note || "Montáž",
+        phone: phone || undefined,
+        address: place || undefined,
+        status: instSt,
+        statusLabel: v.statusLabel,
+        badgeClass: v.badgeClass,
+        accentClass: v.accentClass,
+        sourceId: id,
+        eventNote: note,
+        sentToAllEmployees,
+        notificationType: nt,
+        notificationMessage,
+        titleClass: v.titleClass,
+        jobId,
+        jobName,
+        customerId,
+        assignedEmployeeIds,
+        assignedEmployeeNames,
+      });
+      continue;
+    }
+
+    const stRaw = String(raw.status ?? "").trim();
+    const st: MeetingStatus =
+      stRaw === "done" || stRaw === "cancelled" || stRaw === "planned"
+        ? (stRaw as MeetingStatus)
+        : "planned";
+    const v = meetingVisuals(st);
+    const headline = String(raw.title ?? "").trim() || note || "Schůzka";
     out.push({
       id: `m-${id}`,
       at,
+      endsAt: endsAt ?? undefined,
       createdByUid,
       title: customerName,
       headline,

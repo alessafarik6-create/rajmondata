@@ -28,6 +28,7 @@ import { Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { DashboardOpenTasks } from "@/components/tasks/dashboard-open-tasks";
+import { CompanyScheduleCalendar } from "@/components/portal/company-schedule-calendar";
 import { EmployeeAttendanceOverview } from "./employee-attendance-overview";
 import { isFirestoreIndexError } from "@/firebase/firestore/firestore-query-errors";
 import { EmployeeNotificationsPanel } from "@/components/employee/EmployeeNotificationsPanel";
@@ -252,6 +253,27 @@ export default function EmployeeHomePage() {
         employeeId={employeeId}
         isPrivileged={false}
       />
+
+      <Card className={cn(panel)}>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-semibold text-neutral-950">
+            Moje montáže
+          </CardTitle>
+          <p className="mt-1 text-sm text-neutral-800">
+            Naplánované montáže přiřazené vám. Klepnutím na událost otevřete detail.
+          </p>
+        </CardHeader>
+        <CardContent className="pt-0">
+          <CompanyScheduleCalendar
+            companyId={companyId}
+            headingTitle="Moje montáže"
+            layout="full"
+            readOnly
+            restrictEmployeeEvents
+            scheduleFilter="installationsOnly"
+          />
+        </CardContent>
+      </Card>
 
       <EmployeeNotificationsPanel
         companyId={companyId}

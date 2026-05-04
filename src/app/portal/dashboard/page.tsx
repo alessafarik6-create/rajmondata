@@ -79,6 +79,7 @@ import { MobileDashboard } from "@/components/portal/mobile-dashboard/MobileDash
 import { MobileBottomNav } from "@/components/portal/mobile-dashboard/MobileBottomNav";
 import { MobileSchedulePreviewCard } from "@/components/portal/mobile-dashboard/MobileSchedulePreviewCard";
 import { useIsBelowLg, useIsMobile } from "@/hooks/use-mobile";
+import { useInstallationCalendarBadgeCount } from "@/hooks/use-installation-calendar-badge-count";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 
@@ -205,6 +206,12 @@ export default function CompanyDashboard() {
   /** Přehledové KPI (zakázky, mzdy, finance, zprávy) — vedení a účetní. */
   const showAdminDashboard =
     (isManagement || isAccountant) && !isCustomer;
+
+  const { count: installationCalendarBadge } = useInstallationCalendarBadgeCount({
+    companyId,
+    employeeId: typedProfile?.employeeId,
+    isPrivileged: isManagement || isAccountant,
+  });
 
   const belowLg = useIsBelowLg();
   const isPhoneLayout = useIsMobile();
@@ -922,6 +929,9 @@ export default function CompanyDashboard() {
         platformCatalog={platformCatalog}
         schedulePreview={schedulePreviewSlot}
         tasksSection={undefined}
+        extraModuleBadgeCounts={
+          installationCalendarBadge > 0 ? { calendar: installationCalendarBadge } : undefined
+        }
         onOpenScheduleModal={
           companyId && !isCustomer && belowLg ? () => setScheduleModalOpen(true) : undefined
         }
@@ -958,7 +968,7 @@ export default function CompanyDashboard() {
             )}
           >
             <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
-              <p className="text-sm font-semibold text-white">Schůzky a zaměření</p>
+              <p className="text-sm font-semibold text-white">Kalendář — schůzky a montáže</p>
               <Button
                 type="button"
                 variant="outline"
