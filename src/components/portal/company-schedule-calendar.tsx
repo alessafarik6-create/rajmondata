@@ -33,6 +33,9 @@ import {
   collection,
   query,
   limit,
+  where,
+  getDoc,
+  getDocs,
   Timestamp,
   updateDoc,
   deleteDoc,
@@ -40,6 +43,7 @@ import {
   serverTimestamp,
   addDoc,
   type DocumentData,
+  type Firestore,
   type UpdateData,
 } from "firebase/firestore";
 import { useFirestore, useMemoFirebase, useCollection, useUser, useDoc, useCompany } from "@/firebase";
@@ -107,22 +111,96 @@ type InstallationJobPickRow = {
   address: string;
   phone: string;
   customerId: string;
+  /** E-mail zákazníka na zakázce — fallback vyhledání v `customers`. */
+  customerEmail: string;
   searchBlob: string;
 };
+
+function pickJobString(j: Record<string, unknown>, keys: string[]): string {
+  for (const k of keys) {
+    const v = j[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "";
+}
 
 function mapFirestoreJobToPickRow(raw: unknown): InstallationJobPickRow | null {
   if (raw == null || typeof raw !== "object") return null;
   const j = raw as Record<string, unknown> & { id?: string };
   const id = String(j.id ?? "").trim();
   if (!id) return null;
-  const name =
-    typeof j.name === "string" && j.name.trim() ? j.name.trim() : id;
-  const customerName = String(j.customerName ?? "").trim() || "—";
-  const address = String(j.customerAddress ?? "").trim();
-  const phone = String(j.customerPhone ?? j.phone ?? "").trim();
-  const customerId = String(j.customerId ?? "").trim();
-  const searchBlob = `${name} ${customerName} ${address}`.toLowerCase();
-  return { id, name, customerName, address, phone, customerId, searchBlob };
+  const name = pickJobString(j, ["name", "title", "jobName"]) || id;
+  const customerName = pickJobString(j, ["customerName", "clientName"]) || "—";
+  const address = pickJobString(j, [
+    "customerAddress",
+    "address",
+    "installationAddress",
+    "siteAddress",
+    "place",
+  ]);
+  const phone = pickJobString(j, [
+    "customerPhone",
+    "phone",
+    "contactPhone",
+    "mobilePhone",
+    "customerMobile",
+  ]);
+  const customerId = pickJobString(j, ["customerId"]);
+  const customerEmail = pickJobString(j, ["customerEmail", "email"]);
+  const searchBlob = `${name} ${customerName} ${address} ${phone} ${customerEmail}`.toLowerCase();
+  return { id, name, customerName, address, phone, customerId, customerEmail, searchBlob };
+}
+
+/** Doplní chybějící jméno / adresu / telefon z dokumentu zákazníka (`companies/.../customers`). */
+async function mergeInstallationJobWithCustomerDoc(
+  firestore: Firestore,
+  companyId: string,
+  row: InstallationJobPickRow
+): Promise<{
+  customerName: string;
+  address: string;
+  phone: string;
+  customerId: string;
+}> {
+  let customerName =
+    row.customerName.trim() && row.customerName !== "—" ? row.customerName.trim() : "";
+  let address = row.address.trim();
+  let phone = row.phone.trim();
+  let customerId = row.customerId.trim();
+
+  let data: Record<string, unknown> | null = null;
+
+  try {
+    if (customerId) {
+      const snap = await getDoc(doc(firestore, "companies", companyId, "customers", customerId));
+      if (snap.exists()) data = snap.data() as Record<string, unknown>;
+    } else if (row.customerEmail.trim()) {
+      const qs = query(
+        collection(firestore, "companies", companyId, "customers"),
+        where("email", "==", row.customerEmail.trim()),
+        limit(1)
+      );
+      const res = await getDocs(qs);
+      const d = res.docs[0];
+      if (d) {
+        data = d.data() as Record<string, unknown>;
+        customerId = d.id;
+      }
+    }
+  } catch {
+    data = null;
+  }
+
+  if (data) {
+    const fromCustomer =
+      pickJobString(data, ["companyName"]) ||
+      `${pickJobString(data, ["firstName"])} ${pickJobString(data, ["lastName"])}`.trim();
+    if (!customerName && fromCustomer) customerName = fromCustomer;
+    if (!address) address = pickJobString(data, ["address"]);
+    if (!phone) phone = pickJobString(data, ["phone", "mobilePhone", "tel", "cell"]);
+  }
+
+  return { customerName, address, phone, customerId };
 }
 
 type CalendarEvent = CompanyScheduleCalendarEvent;
@@ -379,9 +457,9 @@ export function CompanyScheduleCalendar({
     role === "owner" || role === "admin" || role === "manager" || role === "accountant";
 
   const employeesQuery = useMemoFirebase(() => {
-    if (!firestore || !companyId || !canSendToAllEmployees) return null;
+    if (!firestore || !companyId || readOnly) return null;
     return collection(firestore, "companies", companyId, "employees");
-  }, [firestore, companyId, canSendToAllEmployees]);
+  }, [firestore, companyId, readOnly]);
   const { data: employeesRaw = [] } = useCollection(employeesQuery);
   const jobsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || readOnly) return null;
@@ -477,24 +555,55 @@ export function CompanyScheduleCalendar({
     return fallback || installJobId;
   }, [installJobId, installJobName, installationJobRows]);
 
-  const applyInstallationJobRow = React.useCallback((row: InstallationJobPickRow | null) => {
-    if (!row) {
-      setInstallJobId("");
-      setInstallJobName("");
-      return;
-    }
-    setInstallJobId(row.id);
-    setInstallJobName(row.name);
-    setMeetingCustomerName(row.customerName);
-    setMeetingPlace(row.address);
-    setMeetingPhone(row.phone);
-    setInstallCustomerId(row.customerId);
-    setMeetingTitle((prev) => {
-      const p = prev.trim();
-      if (!p) return row.name;
-      return prev;
-    });
+  const clearInstallationJobSelection = React.useCallback(() => {
+    setInstallJobId("");
+    setInstallJobName("");
   }, []);
+
+  const selectInstallationJob = React.useCallback(
+    async (row: InstallationJobPickRow | null) => {
+      if (!row) {
+        clearInstallationJobSelection();
+        return;
+      }
+      setInstallJobId(row.id);
+      setInstallJobName(row.name);
+      setMeetingTitle(row.name);
+      setMeetingCustomerName(row.customerName !== "—" ? row.customerName : "");
+      setMeetingPlace(row.address);
+      setMeetingPhone(row.phone);
+      setInstallCustomerId(row.customerId);
+
+      let merged = {
+        customerName: row.customerName !== "—" ? row.customerName : "",
+        address: row.address,
+        phone: row.phone,
+        customerId: row.customerId,
+      };
+
+      if (firestore && companyId) {
+        try {
+          merged = await mergeInstallationJobWithCustomerDoc(firestore, companyId, row);
+          setMeetingCustomerName(merged.customerName);
+          setMeetingPlace(merged.address);
+          setMeetingPhone(merged.phone);
+          if (merged.customerId.trim()) setInstallCustomerId(merged.customerId.trim());
+        } catch {
+          /* keep snapshot from job row */
+        }
+      }
+
+      console.log("SELECTED JOB FOR INSTALLATION", {
+        jobId: row.id,
+        jobName: row.name,
+        customerId: merged.customerId.trim() || row.customerId,
+        customerName: merged.customerName,
+        address: merged.address,
+        customerPhone: merged.phone,
+      });
+    },
+    [firestore, companyId, clearInstallationJobSelection]
+  );
 
   const monthStart = startOfMonth(visibleMonth);
   const monthEnd = endOfMonth(visibleMonth);
@@ -751,15 +860,21 @@ export function CompanyScheduleCalendar({
       let payloadCommon: Record<string, unknown>;
 
       if (isInstallation) {
+        const placeTrim = meetingPlace.trim();
+        const phoneTrim = meetingPhone.trim();
         payloadCommon = {
           companyId,
           organizationId: companyId,
           customerName,
-          place: meetingPlace.trim(),
+          place: placeTrim,
+          address: placeTrim,
           note: meetingNote.trim(),
-          phone: meetingPhone.trim(),
+          phone: phoneTrim,
+          customerPhone: phoneTrim,
           scheduledAt: Timestamp.fromDate(d),
+          startAt: Timestamp.fromDate(d),
           calendarEventType: "installation",
+          eventType: "installation",
           title,
           status: statusForPayload,
           sentToAllEmployees: false,
@@ -767,6 +882,7 @@ export function CompanyScheduleCalendar({
           notificationMessage: null,
           updatedAt: serverTimestamp(),
           endsAt: endsAtField,
+          ...(endsAtField ? { endAt: endsAtField } : {}),
           assignedEmployeeIds: selectedInstallEmployeeIds,
           assignedEmployeeNames: assignedNames,
           ...(installJobId.trim() ? { jobId: installJobId.trim() } : {}),
@@ -1876,7 +1992,7 @@ export function CompanyScheduleCalendar({
                 </SelectContent>
               </Select>
             </div>
-            {calendarEventKind === "installation" && canSendToAllEmployees ? (
+            {calendarEventKind === "installation" && !readOnly ? (
               <>
                 <div className="sm:col-span-2 space-y-1">
                   <Label className={dark ? "text-slate-200" : undefined}>Zakázka</Label>
@@ -1928,7 +2044,7 @@ export function CompanyScheduleCalendar({
                             dark ? "hover:bg-white/10" : "hover:bg-slate-100"
                           )}
                           onClick={() => {
-                            applyInstallationJobRow(null);
+                            clearInstallationJobSelection();
                             setInstallJobPickerOpen(false);
                           }}
                         >
@@ -1961,7 +2077,7 @@ export function CompanyScheduleCalendar({
                                       : "hover:bg-slate-100"
                                 )}
                                 onClick={() => {
-                                  applyInstallationJobRow(row);
+                                  void selectInstallationJob(row);
                                   setInstallJobPickerOpen(false);
                                   setInstallJobSearch("");
                                 }}
