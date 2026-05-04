@@ -3,7 +3,7 @@ import { FieldValue } from "firebase-admin/firestore";
 import type { Firestore } from "firebase-admin/firestore";
 import { verifyCompanyBearer } from "@/lib/api-company-auth";
 import { csvMaterialDraftDocId } from "@/lib/csv-material-draft-id";
-import { executeMaterialIssueInAdminTransaction } from "@/lib/production-issue-material-in-tx";
+import { executeBulkMaterialIssueInAdminTransaction } from "@/lib/production-issue-material-in-tx";
 import { canIssueMaterialToJob } from "@/lib/production-material-issue-access";
 
 type DraftLine = {
@@ -124,8 +124,7 @@ export async function POST(request: NextRequest) {
 
       const csvFileName = typeof d.csvFileName === "string" ? d.csvFileName.trim() : "";
 
-      const out: { consumptionId: string; lineId: string }[] = [];
-      for (const line of lines) {
+      const issueParams = lines.map((line) => {
         const itemId = line.inventoryItemId as string;
         const noteParts = [
           noteGlobal,
@@ -133,37 +132,43 @@ export async function POST(request: NextRequest) {
           `Řádek: ${line.csvLabel}`,
         ].filter((x) => x.length > 0);
         const note = noteParts.join(" · ").slice(0, 2000);
-
-        const r = await executeMaterialIssueInAdminTransaction(
-          tx,
-          {
-            db,
-            companyId: caller.companyId,
-            jobId,
-            jobName,
-            callerUid: caller.uid,
-            callerEmployeeId: caller.employeeId,
-            createdByName,
+        return {
+          itemId,
+          quantity: line.quantity,
+          inputLengthUnit: line.inputLengthUnit ?? null,
+          note,
+          batchNumber: "",
+          consumptionExtras: {
+            issuedFromCsvDraft: true,
+            csvDraftDocId: draftId,
+            csvFolderId: folderId,
+            csvJobFolderImageId: jobFolderImageId,
+            csvFileName: csvFileName || null,
+            csvDraftLineId: line.id,
+            csvSourceLabel: line.csvLabel,
           },
-          {
-            itemId,
-            quantity: line.quantity,
-            inputLengthUnit: line.inputLengthUnit ?? null,
-            note,
-            batchNumber: "",
-            consumptionExtras: {
-              issuedFromCsvDraft: true,
-              csvDraftDocId: draftId,
-              csvFolderId: folderId,
-              csvJobFolderImageId: jobFolderImageId,
-              csvFileName: csvFileName || null,
-              csvDraftLineId: line.id,
-              csvSourceLabel: line.csvLabel,
-            },
-          }
-        );
-        out.push({ consumptionId: r.consumptionId, lineId: line.id });
-      }
+        };
+      });
+
+      const bulkResults = await executeBulkMaterialIssueInAdminTransaction(
+        tx,
+        {
+          db,
+          companyId: caller.companyId,
+          jobId,
+          jobName,
+          callerUid: caller.uid,
+          callerEmployeeId: caller.employeeId,
+          createdByName,
+        },
+        issueParams,
+        "csv-material-confirm"
+      );
+
+      const out: { consumptionId: string; lineId: string }[] = lines.map((line, i) => ({
+        consumptionId: bulkResults[i]!.consumptionId,
+        lineId: line.id,
+      }));
 
       tx.update(draftRef, {
         status: "confirmed",

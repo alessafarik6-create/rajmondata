@@ -137,6 +137,12 @@ import {
   writeProductionTopPanelHeightToLocalStorage,
 } from "@/lib/production-issue-user-layout";
 import {
+  clearProductionMaterialDraft,
+  loadProductionMaterialDraft,
+  saveProductionMaterialDraft,
+  type ProductionMaterialDraftLine,
+} from "@/lib/production-material-issue-draft";
+import {
   buildProductionWorksheetPdf,
   buildProductionWorksheetFileName,
   downloadProductionWorksheetPdf,
@@ -577,6 +583,8 @@ export default function VyrobaZakazkaDetailPage() {
     setWorkbenchHeights((prev) => ({ ...prev, ...patch }));
   }, []);
   const [a4IncludeUnassigned, setA4IncludeUnassigned] = useState(false);
+  const [issueMaterialDraftHydrated, setIssueMaterialDraftHydrated] = useState(false);
+  const [issueMaterialDraftRestoredBanner, setIssueMaterialDraftRestoredBanner] = useState(false);
   const [queueEditDrawingKey, setQueueEditDrawingKey] = useState<string | null>(null);
   const [mobileDrawingOpen, setMobileDrawingOpen] = useState(false);
   const [mobileDrawingUrl, setMobileDrawingUrl] = useState("");
@@ -601,6 +609,49 @@ export default function VyrobaZakazkaDetailPage() {
       Math.min(i, Math.max(0, productionPdfRows.length - 1))
     );
   }, [productionPdfRows.length]);
+
+  useEffect(() => {
+    if (!companyId || !jobId) return;
+    const raw = loadProductionMaterialDraft(companyId, String(jobId));
+    if (raw && raw.issueQueue.length > 0) {
+      setIssueQueue(
+        raw.issueQueue.map((ln) => ({
+          ...ln,
+          key: typeof ln.key === "string" && ln.key.trim() ? ln.key : newIssueQueueLineKey(),
+        }))
+      );
+      setAttachDrawingToExport(raw.attachDrawingToExport);
+      setA4IncludeUnassigned(raw.a4IncludeUnassigned);
+      setIssueMaterialDraftRestoredBanner(true);
+    }
+    setIssueMaterialDraftHydrated(true);
+  }, [companyId, jobId]);
+
+  useEffect(() => {
+    if (!issueMaterialDraftHydrated || !companyId || !jobId) return;
+    const t = window.setTimeout(() => {
+      saveProductionMaterialDraft(companyId, String(jobId), {
+        issueQueue: issueQueue as ProductionMaterialDraftLine[],
+        attachDrawingToExport,
+        a4IncludeUnassigned,
+      });
+      if (process.env.NODE_ENV !== "production") {
+        console.log("[production-material-draft] autosave", {
+          organizationId: companyId,
+          jobId: String(jobId),
+          rows: issueQueue.length,
+        });
+      }
+    }, 420);
+    return () => window.clearTimeout(t);
+  }, [
+    issueMaterialDraftHydrated,
+    companyId,
+    jobId,
+    issueQueue,
+    attachDrawingToExport,
+    a4IncludeUnassigned,
+  ]);
 
   const loadApi = useCallback(async () => {
     if (!user || !jobId) return;
@@ -1557,6 +1608,12 @@ export default function VyrobaZakazkaDetailPage() {
     setIssueQueue((q) => q.filter((l) => l.key !== key));
   }, []);
 
+  const clearMaterialIssueDraft = useCallback(() => {
+    setIssueQueue([]);
+    if (companyId && jobId) clearProductionMaterialDraft(companyId, String(jobId));
+    setIssueMaterialDraftRestoredBanner(false);
+  }, [companyId, jobId]);
+
   const openEditIssueQueueLine = useCallback((ln: IssueQueueLine) => {
     setQueueEditLine(ln);
     setQueueEditQtyStr(ln.qtyStr);
@@ -1653,6 +1710,8 @@ export default function VyrobaZakazkaDetailPage() {
         description: `Zapsáno ${issueQueue.length} řádků na zakázku a do skladu.`,
       });
       setIssueQueue([]);
+      if (companyId) clearProductionMaterialDraft(companyId, String(jobId));
+      setIssueMaterialDraftRestoredBanner(false);
       await loadApi();
     } catch (e) {
       toast({
@@ -1663,7 +1722,7 @@ export default function VyrobaZakazkaDetailPage() {
     } finally {
       setBulkSaving(false);
     }
-  }, [user, jobId, issueQueue, validateIssueQueueAgainstInventory, toast, loadApi]);
+  }, [user, jobId, companyId, issueQueue, validateIssueQueueAgainstInventory, toast, loadApi]);
 
   const submitSingleQueueLineIssue = useCallback(
     async (ln: IssueQueueLine) => {
@@ -3311,6 +3370,26 @@ export default function VyrobaZakazkaDetailPage() {
                   >
                     Materiál pro zakázku
                   </h3>
+                  {issueMaterialDraftRestoredBanner ? (
+                    <div
+                      role="status"
+                      className="flex flex-col gap-3 rounded-lg border border-orange-400/55 bg-slate-900/90 px-4 py-3 text-sm text-slate-100 shadow-sm sm:flex-row sm:items-center sm:justify-between max-lg:border-orange-400/40"
+                    >
+                      <span>Máte rozpracovaný materiál – obnoveno z uloženého návrhu.</span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className={cn(
+                          "shrink-0 border-orange-400/60 text-orange-100 hover:bg-orange-950/40",
+                          VYROBA_MOBILE_SECONDARY
+                        )}
+                        onClick={() => clearMaterialIssueDraft()}
+                      >
+                        Vymazat rozpracovaný seznam
+                      </Button>
+                    </div>
+                  ) : null}
                   <p className="max-w-3xl text-sm text-slate-600 max-lg:text-slate-300">
                     Přidejte řádky (více skladových položek i různé řezy). Hromadný výdej proběhne v jedné transakci;
                     při nedostatku skladu se nic neuloží.

@@ -3,8 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { Firestore } from "firebase-admin/firestore";
 import { verifyCompanyBearer } from "@/lib/api-company-auth";
 import { canIssueMaterialToJob } from "@/lib/production-material-issue-access";
-import { executeMaterialIssueInAdminTransaction } from "@/lib/production-issue-material-in-tx";
-import { getOrderedStockPieceRefsForIssue } from "@/lib/stock-pieces-admin";
+import { executeBulkMaterialIssueInAdminTransaction } from "@/lib/production-issue-material-in-tx";
 
 const MAX_LINES = 40;
 
@@ -148,54 +147,24 @@ export async function POST(request: NextRequest) {
     createdByName,
   };
 
-  const uniqueItemIds = [...new Set(normalized.map((l) => l.itemId))];
-  const stockPieceRefsByItem = new Map<string, Awaited<ReturnType<typeof getOrderedStockPieceRefsForIssue>>>();
-  for (const uid of uniqueItemIds) {
-    const s = await db
-      .collection("companies")
-      .doc(caller.companyId)
-      .collection("inventoryItems")
-      .doc(uid)
-      .get();
-    if (s.exists && String((s.data() as Record<string, unknown>)?.stockTrackingMode || "") === "length") {
-      const refs = await getOrderedStockPieceRefsForIssue(db as Firestore, caller.companyId, uid);
-      if (refs.length > 0) stockPieceRefsByItem.set(uid, refs);
-    }
-  }
+  const issueLines = normalized.map((line, i) => ({
+    itemId: line.itemId,
+    quantity: line.quantity,
+    inputLengthUnit: line.inputLengthUnit,
+    note: line.note,
+    batchNumber: line.batchNumber,
+    repeatCount: line.repeatCount,
+    consumptionExtras: {
+      bulkIssueGroupId,
+      bulkIssueLineIndex: i,
+      bulkIssueLineCount,
+      isBulkMaterialIssue: true,
+    },
+  }));
 
   try {
     const results = await (db as Firestore).runTransaction(async (tx) => {
-      const out: Awaited<ReturnType<typeof executeMaterialIssueInAdminTransaction>>[] = [];
-      for (let i = 0; i < normalized.length; i++) {
-        const line = normalized[i];
-        try {
-          const refs = stockPieceRefsByItem.get(line.itemId);
-          const r = await executeMaterialIssueInAdminTransaction(
-            tx,
-            ctx,
-            {
-              itemId: line.itemId,
-              quantity: line.quantity,
-              inputLengthUnit: line.inputLengthUnit,
-              note: line.note,
-              batchNumber: line.batchNumber,
-              repeatCount: line.repeatCount,
-              consumptionExtras: {
-                bulkIssueGroupId,
-                bulkIssueLineIndex: i,
-                bulkIssueLineCount,
-                isBulkMaterialIssue: true,
-              },
-            },
-            refs?.length ? { stockPieceRefs: refs } : undefined
-          );
-          out.push(r);
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : "Výdej se nezdařil.";
-          throw new Error(`Řádek ${i + 1} (${line.itemId}): ${msg}`);
-        }
-      }
-      return out;
+      return executeBulkMaterialIssueInAdminTransaction(tx, ctx, issueLines, "issue-material-bulk");
     });
 
     return NextResponse.json({
