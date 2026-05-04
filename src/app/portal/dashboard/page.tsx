@@ -210,7 +210,7 @@ export default function CompanyDashboard() {
   const isPhoneLayout = useIsMobile();
 
   const schedulePreviewSlot =
-    companyId && showAdminDashboard && belowLg ? (
+    companyId && !isCustomer && belowLg ? (
       <MobileSchedulePreviewCard
         companyId={companyId}
         onOpenCalendar={() => setScheduleModalOpen(true)}
@@ -923,9 +923,7 @@ export default function CompanyDashboard() {
         schedulePreview={schedulePreviewSlot}
         tasksSection={undefined}
         onOpenScheduleModal={
-          companyId && showAdminDashboard && belowLg
-            ? () => setScheduleModalOpen(true)
-            : undefined
+          companyId && !isCustomer && belowLg ? () => setScheduleModalOpen(true) : undefined
         }
         unreadMessages={unreadEmployeeChatCount}
         overduePlatformInvoices={platformInvoiceOverdue}
@@ -947,7 +945,7 @@ export default function CompanyDashboard() {
       />
       <MobileBottomNav unreadMessages={unreadEmployeeChatCount} role={role} />
 
-      {companyId && showAdminDashboard && belowLg ? (
+      {companyId && !isCustomer && belowLg ? (
         <Dialog open={scheduleModalOpen} onOpenChange={setScheduleModalOpen}>
           <DialogContent
             className={cn(
@@ -976,6 +974,8 @@ export default function CompanyDashboard() {
                   companyId={companyId}
                   layout="compact"
                   appearance="darkPortal"
+                  readOnly={!showAdminDashboard}
+                  restrictEmployeeEvents={isEmployee}
                 />
               ) : null}
             </div>

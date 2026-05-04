@@ -264,6 +264,15 @@ function ScheduleMobileEventCard({
   );
 }
 
+/** Jedinečné klíče pro ruční schůzku z kalendáře (Firestore rules vyžadují importLeadId + leadKey). */
+function newCalendarManualLeadKeys(): { leadKey: string; importLeadId: string } {
+  const id =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `k-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+  return { leadKey: `cal-${id}`, importLeadId: `manual-${id}` };
+}
+
 export function CompanyScheduleCalendar({
   companyId,
   layout = "auto",
@@ -271,6 +280,8 @@ export function CompanyScheduleCalendar({
   id: rootId,
   className: rootClassName,
   appearance = "default",
+  readOnly = false,
+  restrictEmployeeEvents = false,
 }: {
   companyId: string;
   /** `compact` = vždy mobilní rozhraní (např. mobilní dashboard pod breakpointem lg). */
@@ -280,6 +291,10 @@ export function CompanyScheduleCalendar({
   className?: string;
   /** Tmavý portálový vzhled (modal na mobilu/tabletu). Desktop ponechte `default`. */
   appearance?: "default" | "darkPortal";
+  /** Pouze zobrazení (např. zaměstnanec bez práv plánování). */
+  readOnly?: boolean;
+  /** Zaměstnanec: zúžit schůzky na vlastní / rozeslané týmu; zaměření ponechat. */
+  restrictEmployeeEvents?: boolean;
 }) {
   const firestore = useFirestore();
   const router = useRouter();
@@ -340,12 +355,30 @@ export function CompanyScheduleCalendar({
   const [notificationType, setNotificationType] =
     useState<EmployeeNotificationType>("info");
   const [notificationText, setNotificationText] = useState("");
+  const [calendarEventKind, setCalendarEventKind] = useState<
+    "lead_meeting" | "installation" | "calendar_task"
+  >("lead_meeting");
+  const [meetingTimeEnd, setMeetingTimeEnd] = useState("");
 
   const monthStart = startOfMonth(visibleMonth);
   const monthEnd = endOfMonth(visibleMonth);
 
-  const { events, loading: meetingsMeasurementsLoading } =
+  const { events: eventsRaw, loading: meetingsMeasurementsLoading } =
     useCompanyScheduleMonthEvents(companyId, visibleMonth);
+
+  const viewerUid = String(user?.uid ?? "").trim();
+  const events = useMemo(() => {
+    if (!restrictEmployeeEvents || !viewerUid) return eventsRaw;
+    return eventsRaw.filter((ev) => {
+      if (!isValidCompanyScheduleEvent(ev)) return false;
+      if (ev.kind === "measurement") return true;
+      if (ev.kind === "meeting") {
+        if (ev.sentToAllEmployees) return true;
+        return ev.createdByUid === viewerUid;
+      }
+      return true;
+    });
+  }, [eventsRaw, restrictEmployeeEvents, viewerUid]);
 
   React.useEffect(() => {
     setMobileSelectedDay((prev) => {
@@ -391,6 +424,14 @@ export function CompanyScheduleCalendar({
   const loading = meetingsMeasurementsLoading;
 
   const openCreateForDay = (day: Date) => {
+    if (readOnly) {
+      toast({
+        variant: "destructive",
+        title: "Nelze plánovat",
+        description: "Nové schůzky může zakládat vedení nebo účetní.",
+      });
+      return;
+    }
     console.log("[calendar] open create for day", format(day, "yyyy-MM-dd"));
     setEditingEvent(null);
     setMeetingStatus("planned");
@@ -401,6 +442,8 @@ export function CompanyScheduleCalendar({
     setMeetingNote("");
     setMeetingDate(format(day, "yyyy-MM-dd"));
     setMeetingTime("09:00");
+    setMeetingTimeEnd("");
+    setCalendarEventKind("lead_meeting");
     setSendToAllEmployees(false);
     setNotificationType("info");
     setNotificationText("");
@@ -408,6 +451,13 @@ export function CompanyScheduleCalendar({
   };
 
   const openEditMeeting = (ev: CalendarEvent) => {
+    if (readOnly) {
+      toast({
+        title: "Jen zobrazení",
+        description: "Úpravy schůzek máte pro svou roli vypnuté.",
+      });
+      return;
+    }
     if (ev.kind !== "meeting") return;
     console.log("[calendar] open edit meeting", {
       calendarId: ev.id,
@@ -422,6 +472,13 @@ export function CompanyScheduleCalendar({
     setMeetingNote(ev.eventNote ?? "");
     setMeetingDate(format(ev.at, "yyyy-MM-dd"));
     setMeetingTime(format(ev.at, "HH:mm"));
+    setMeetingTimeEnd("");
+    {
+      const ct = String(ev.calendarEventType ?? "lead_meeting");
+      setCalendarEventKind(
+        ct === "installation" ? "installation" : ct === "calendar_task" ? "calendar_task" : "lead_meeting"
+      );
+    }
     setSendToAllEmployees(ev.sentToAllEmployees === true);
     setNotificationType(ev.notificationType ?? "info");
     setNotificationText(ev.notificationMessage ?? "");
@@ -435,7 +492,15 @@ export function CompanyScheduleCalendar({
   };
 
   const saveMeeting = async () => {
+    if (readOnly) {
+      toast({ variant: "destructive", title: "Úpravy nejsou povoleny." });
+      return;
+    }
     if (!firestore || !companyId) return;
+    if (!user?.uid) {
+      toast({ variant: "destructive", title: "Nejste přihlášeni." });
+      return;
+    }
     const dateStr = meetingDate.trim();
     const timeStr = meetingTime.trim();
     if (!dateStr) {
@@ -451,9 +516,30 @@ export function CompanyScheduleCalendar({
       toast({ variant: "destructive", title: "Neplatný datum a čas" });
       return;
     }
+    const endTrim = meetingTimeEnd.trim();
+    let endsAtField: Timestamp | null = null;
+    if (/^\d{2}:\d{2}$/.test(endTrim)) {
+      const endD = new Date(`${dateStr}T${endTrim}:00`);
+      if (!Number.isNaN(endD.getTime())) {
+        if (endD.getTime() <= d.getTime()) {
+          toast({
+            variant: "destructive",
+            title: "Čas do musí být po času od",
+          });
+          return;
+        }
+        endsAtField = Timestamp.fromDate(endD);
+      }
+    }
     const status: MeetingStatus = meetingStatus;
     const title = meetingTitle.trim() || "Schůzka";
     const customerName = meetingCustomerName.trim() || "—";
+    const calendarEventTypeStr =
+      calendarEventKind === "installation"
+        ? "installation"
+        : calendarEventKind === "calendar_task"
+          ? "calendar_task"
+          : "lead_meeting";
     setSaving(true);
     try {
       console.log("[calendar] saveMeeting start", {
@@ -462,20 +548,22 @@ export function CompanyScheduleCalendar({
         sendToAllEmployees,
         employeeTargetCount: employeeIds.length,
       });
-      const payload = {
+      const payloadCommon = {
         companyId,
+        organizationId: companyId,
         customerName,
         place: meetingPlace.trim(),
         note: meetingNote.trim(),
         phone: meetingPhone.trim(),
         scheduledAt: Timestamp.fromDate(d),
-        calendarEventType: "lead_meeting",
+        calendarEventType: calendarEventTypeStr,
         title,
         status,
         sentToAllEmployees: sendToAllEmployees === true,
         notificationType: notificationType,
         notificationMessage: notificationText.trim() || null,
         updatedAt: serverTimestamp(),
+        ...(endsAtField ? { endsAt: endsAtField } : {}),
         ...(status === "done" ? { completedAt: serverTimestamp(), cancelledAt: null } : {}),
         ...(status === "cancelled" ? { cancelledAt: serverTimestamp(), completedAt: null } : {}),
       } as Record<string, unknown>;
@@ -490,14 +578,17 @@ export function CompanyScheduleCalendar({
         console.log("[calendar] lead_meeting update", editingEvent.sourceId);
         await updateDoc(
           doc(firestore, "companies", companyId, "lead_meetings", editingEvent.sourceId),
-          payload as UpdateData<DocumentData>
+          payloadCommon as UpdateData<DocumentData>
         );
         toast({ title: "Uloženo", description: "Schůzka byla upravena." });
       } else {
+        const keys = newCalendarManualLeadKeys();
         const created = await addDoc(collection(firestore, "companies", companyId, "lead_meetings"), {
-          ...payload,
+          ...payloadCommon,
+          leadKey: keys.leadKey,
+          importLeadId: keys.importLeadId,
           createdAt: serverTimestamp(),
-          createdBy: "dashboard",
+          createdBy: user.uid,
         });
         createdEventId = created.id;
         console.log("[calendar] lead_meeting created", createdEventId);
@@ -616,6 +707,10 @@ export function CompanyScheduleCalendar({
   };
 
   const performDeleteMeeting = async () => {
+    if (readOnly) {
+      setDeleteConfirmOpen(false);
+      return;
+    }
     if (!firestore || !companyId) {
       setDeleteConfirmOpen(false);
       return;
@@ -718,6 +813,9 @@ export function CompanyScheduleCalendar({
 
   const titleText = headingTitle ?? "Schůzky a zaměření";
   const dark = appearance === "darkPortal";
+  const fc = dark
+    ? "border-white/20 bg-slate-900 text-slate-50 placeholder:text-slate-500"
+    : "";
 
   return (
     <div
@@ -747,11 +845,11 @@ export function CompanyScheduleCalendar({
         <div className="flex items-center gap-2">
           <Button
             type="button"
-            className={cn("h-9 gap-2", showFull ? "inline-flex" : "hidden")}
+            className={cn("h-9 gap-2", showFull && !readOnly ? "inline-flex" : "hidden")}
             onClick={() => openCreateForDay(new Date())}
           >
             <Plus className="h-4 w-4" />
-            Přidat
+            Nová schůzka
           </Button>
           <Button
             type="button"
@@ -874,18 +972,20 @@ export function CompanyScheduleCalendar({
 
             {/* Mobil / compact: pás dní, seznam akcí, měsíční mřížka */}
             <div className={showCompact ? "block" : "hidden"}>
-              <div className="mb-3 flex items-center justify-between gap-2">
-                <Button
-                  type="button"
-                  className={cn(
-                    "w-full min-h-[44px] gap-2",
-                    dark && "bg-orange-500 text-slate-950 hover:bg-orange-400"
-                  )}
-                  onClick={() => openCreateForDay(mobileSelectedDay)}
-                >
-                  <Plus className="h-4 w-4" /> Přidat schůzku / akci
-                </Button>
-              </div>
+              {!readOnly ? (
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <Button
+                    type="button"
+                    className={cn(
+                      "w-full min-h-[44px] gap-2",
+                      dark && "bg-orange-500 text-slate-950 hover:bg-orange-400"
+                    )}
+                    onClick={() => openCreateForDay(mobileSelectedDay)}
+                  >
+                    <Plus className="h-4 w-4" /> + Nová schůzka
+                  </Button>
+                </div>
+              ) : null}
 
               <div
                 className="-mx-1 mb-4 min-w-0 overflow-x-auto pb-1"
@@ -966,16 +1066,29 @@ export function CompanyScheduleCalendar({
                   </p>
                 </div>
                 {mobileDayEvents.length === 0 ? (
-                  <p
+                  <div
                     className={cn(
-                      "rounded-2xl border border-dashed px-4 py-10 text-center text-base leading-relaxed",
+                      "space-y-4 rounded-2xl border border-dashed px-4 py-10 text-center text-base leading-relaxed",
                       dark
                         ? "border-white/15 bg-slate-900/50 text-slate-300"
                         : "border-slate-200 bg-slate-50 text-slate-600"
                     )}
                   >
-                    Tento den nemáte žádné naplánované schůzky ani zaměření.
-                  </p>
+                    <p>Tento den nemáte žádné naplánované schůzky ani zaměření.</p>
+                    {!readOnly ? (
+                      <Button
+                        type="button"
+                        className={cn(
+                          "min-h-12 w-full max-w-sm gap-2",
+                          dark && "bg-orange-500 text-slate-950 hover:bg-orange-400"
+                        )}
+                        onClick={() => openCreateForDay(mobileSelectedDay)}
+                      >
+                        <Plus className="h-4 w-4" />
+                        Naplánovat na tento den
+                      </Button>
+                    ) : null}
+                  </div>
                 ) : (
                   <ul className="space-y-4">
                     {mobileDayEvents.map((ev) => (
@@ -985,25 +1098,29 @@ export function CompanyScheduleCalendar({
                             ev={ev}
                             darkCards={dark}
                             onCardClick={
-                              ev.kind === "meeting"
-                                ? () => openEditMeeting(ev)
-                                : () => router.push("/portal/jobs/measurements")
+                              readOnly
+                                ? undefined
+                                : ev.kind === "meeting"
+                                  ? () => openEditMeeting(ev)
+                                  : () => router.push("/portal/jobs/measurements")
                             }
                           />
                           {ev.kind === "meeting" ? (
                             <div className="flex flex-wrap gap-2">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className={cn(
-                                  "min-h-[44px] gap-2",
-                                  dark &&
-                                    "border-white/20 bg-transparent text-slate-100 hover:bg-white/10"
-                                )}
-                                onClick={() => openEditMeeting(ev)}
-                              >
-                                Upravit
-                              </Button>
+                              {!readOnly ? (
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  className={cn(
+                                    "min-h-[44px] gap-2",
+                                    dark &&
+                                      "border-white/20 bg-transparent text-slate-100 hover:bg-white/10"
+                                  )}
+                                  onClick={() => openEditMeeting(ev)}
+                                >
+                                  Upravit
+                                </Button>
+                              ) : null}
                               <Button
                                 type="button"
                                 variant="secondary"
@@ -1211,6 +1328,23 @@ export function CompanyScheduleCalendar({
         )}
       </div>
 
+      {showCompact && !readOnly && !formOpen ? (
+        <button
+          type="button"
+          className={cn(
+            "fixed right-4 z-[65] flex min-h-[52px] items-center gap-2 rounded-full border px-5 py-3 text-sm font-semibold shadow-lg transition-colors",
+            dark
+              ? "border-orange-500/40 bg-orange-500 text-slate-950 hover:bg-orange-400"
+              : "border-slate-300 bg-orange-500 text-white hover:bg-orange-600"
+          )}
+          style={{ bottom: "calc(96px + env(safe-area-inset-bottom, 0px) + 12px)" }}
+          onClick={() => openCreateForDay(mobileSelectedDay)}
+        >
+          <Plus className="h-5 w-5" />
+          Naplánovat
+        </button>
+      ) : null}
+
       <Sheet
         open={formOpen}
         onOpenChange={(open) => {
@@ -1226,12 +1360,16 @@ export function CompanyScheduleCalendar({
           side={showCompact ? "bottom" : "right"}
           className={cn(
             "flex w-full flex-col overflow-y-auto sm:max-w-lg",
-            showCompact ? "max-h-[92vh]" : "h-full max-h-screen"
+            showCompact ? "max-h-[92vh]" : "h-full max-h-screen",
+            dark && "border-white/10 bg-slate-950 text-slate-50",
+            showCompact && "pb-[calc(96px+env(safe-area-inset-bottom))]"
           )}
         >
           <SheetHeader>
-            <SheetTitle>{editingEvent ? "Upravit schůzku / akci" : "Nová schůzka / akce"}</SheetTitle>
-            <SheetDescription>
+            <SheetTitle className={dark ? "text-white" : undefined}>
+              {editingEvent ? "Upravit schůzku / akci" : "Nová schůzka / akce"}
+            </SheetTitle>
+            <SheetDescription className={dark ? "text-slate-400" : undefined}>
               {showCompact
                 ? "Formulář v dolním panelu — datum a čas pohodlně na výšku."
                 : "Boční panel — úpravy schůzky, stav a upozornění pro zaměstnance."}
@@ -1240,40 +1378,95 @@ export function CompanyScheduleCalendar({
 
           <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="sm:col-span-2 space-y-1">
-              <Label>Název</Label>
-              <Input value={meetingTitle} onChange={(e) => setMeetingTitle(e.target.value)} />
+              <Label className={dark ? "text-slate-200" : undefined}>Název</Label>
+              <Input
+                className={fc}
+                value={meetingTitle}
+                onChange={(e) => setMeetingTitle(e.target.value)}
+              />
             </div>
             <div className="sm:col-span-2 space-y-1">
-              <Label>Zákazník / subjekt</Label>
-              <Input value={meetingCustomerName} onChange={(e) => setMeetingCustomerName(e.target.value)} />
+              <Label className={dark ? "text-slate-200" : undefined}>Typ události</Label>
+              <Select
+                value={calendarEventKind}
+                onValueChange={(v) =>
+                  setCalendarEventKind(v as "lead_meeting" | "installation" | "calendar_task")
+                }
+              >
+                <SelectTrigger className={cn("min-h-11", fc)}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
+                  <SelectItem value="lead_meeting">Schůzka</SelectItem>
+                  <SelectItem value="installation">Montáž</SelectItem>
+                  <SelectItem value="calendar_task">Úkol</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="sm:col-span-2 space-y-1">
+              <Label className={dark ? "text-slate-200" : undefined}>Zákazník / subjekt</Label>
+              <Input
+                className={fc}
+                value={meetingCustomerName}
+                onChange={(e) => setMeetingCustomerName(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
-              <Label>Datum</Label>
-              <Input type="date" value={meetingDate} onChange={(e) => setMeetingDate(e.target.value)} />
+              <Label className={dark ? "text-slate-200" : undefined}>Datum</Label>
+              <Input
+                className={cn("min-h-11", fc)}
+                type="date"
+                value={meetingDate}
+                onChange={(e) => setMeetingDate(e.target.value)}
+              />
             </div>
             <div className="space-y-1">
-              <Label>Čas</Label>
-              <Input type="time" value={meetingTime} onChange={(e) => setMeetingTime(e.target.value)} />
+              <Label className={dark ? "text-slate-200" : undefined}>Čas od</Label>
+              <Input
+                className={cn("min-h-11", fc)}
+                type="time"
+                value={meetingTime}
+                onChange={(e) => setMeetingTime(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label className={dark ? "text-slate-200" : undefined}>Čas do (volitelně)</Label>
+              <Input
+                className={cn("min-h-11", fc)}
+                type="time"
+                value={meetingTimeEnd}
+                onChange={(e) => setMeetingTimeEnd(e.target.value)}
+              />
             </div>
             <div className="sm:col-span-2 space-y-1">
-              <Label>Místo / adresa</Label>
-              <Input value={meetingPlace} onChange={(e) => setMeetingPlace(e.target.value)} />
+              <Label className={dark ? "text-slate-200" : undefined}>Místo / adresa</Label>
+              <Input className={fc} value={meetingPlace} onChange={(e) => setMeetingPlace(e.target.value)} />
             </div>
             <div className="sm:col-span-2 space-y-1">
-              <Label>Telefon</Label>
-              <Input value={meetingPhone} onChange={(e) => setMeetingPhone(e.target.value)} />
+              <Label className={dark ? "text-slate-200" : undefined}>Telefon</Label>
+              <Input className={fc} value={meetingPhone} onChange={(e) => setMeetingPhone(e.target.value)} />
             </div>
             <div className="sm:col-span-2 space-y-1">
-              <Label>Popis / poznámka</Label>
-              <Textarea rows={3} value={meetingNote} onChange={(e) => setMeetingNote(e.target.value)} />
+              <Label className={dark ? "text-slate-200" : undefined}>Popis / poznámka</Label>
+              <Textarea
+                className={fc}
+                rows={3}
+                value={meetingNote}
+                onChange={(e) => setMeetingNote(e.target.value)}
+              />
             </div>
-            <div className="sm:col-span-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <div
+              className={cn(
+                "sm:col-span-2 rounded-lg border p-3",
+                dark ? "border-white/10 bg-slate-900/80" : "border-slate-200 bg-slate-50"
+              )}
+            >
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-0.5">
-                  <p className="text-sm font-semibold text-slate-900">
+                  <p className={cn("text-sm font-semibold", dark ? "text-slate-100" : "text-slate-900")}>
                     Odeslat jako upozornění všem zaměstnancům
                   </p>
-                  <p className="text-xs text-slate-700">
+                  <p className={cn("text-xs", dark ? "text-slate-400" : "text-slate-700")}>
                     Upozornění se zobrazí v profilu zaměstnance a v jeho sekci Upozornění.
                   </p>
                 </div>
@@ -1286,17 +1479,17 @@ export function CompanyScheduleCalendar({
               {sendToAllEmployees ? (
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
-                    <Label>Typ upozornění</Label>
+                    <Label className={dark ? "text-slate-200" : undefined}>Typ upozornění</Label>
                     <Select
                       value={notificationType}
                       onValueChange={(v) =>
                         setNotificationType(v as EmployeeNotificationType)
                       }
                     >
-                      <SelectTrigger>
+                      <SelectTrigger className={cn("min-h-11", fc)}>
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
                         <SelectItem value="info">Informace</SelectItem>
                         <SelectItem value="important">Důležité</SelectItem>
                         <SelectItem value="training">Školení</SelectItem>
@@ -1305,8 +1498,9 @@ export function CompanyScheduleCalendar({
                     </Select>
                   </div>
                   <div className="space-y-1 sm:col-span-2">
-                    <Label>Text upozornění (volitelné)</Label>
+                    <Label className={dark ? "text-slate-200" : undefined}>Text upozornění (volitelné)</Label>
                     <Textarea
+                      className={fc}
                       rows={2}
                       value={notificationText}
                       onChange={(e) => setNotificationText(e.target.value)}
@@ -1322,12 +1516,12 @@ export function CompanyScheduleCalendar({
               ) : null}
             </div>
             <div className="sm:col-span-2 space-y-1">
-              <Label>Stav</Label>
+              <Label className={dark ? "text-slate-200" : undefined}>Stav</Label>
               <Select value={meetingStatus} onValueChange={(v) => setMeetingStatus(v as MeetingStatus)}>
-                <SelectTrigger>
+                <SelectTrigger className={cn("min-h-11", fc)}>
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
                   <SelectItem value="planned">Plánováno</SelectItem>
                   <SelectItem value="done">Vyřízeno</SelectItem>
                   <SelectItem value="cancelled">Zrušeno</SelectItem>

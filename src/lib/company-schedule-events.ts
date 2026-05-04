@@ -9,6 +9,8 @@ export type MeetingStatus = "planned" | "done" | "cancelled";
 export type CompanyScheduleCalendarEvent = {
   id: string;
   at: Date;
+  /** Autor záznamu ve Firestore (`lead_meetings.createdBy`) — pro filtrování u zaměstnance. */
+  createdByUid?: string;
   title: string;
   headline: string;
   kind: "meeting" | "measurement";
@@ -25,6 +27,8 @@ export type CompanyScheduleCalendarEvent = {
   notificationType?: EmployeeNotificationType;
   notificationMessage?: string | null;
   titleClass?: string;
+  /** Hodnota z `lead_meetings.calendarEventType` */
+  calendarEventType?: string;
 };
 
 function isMeasurementDeleted(m: { deletedAt?: unknown }): boolean {
@@ -146,12 +150,17 @@ export function buildCompanyScheduleEvents(
       typeof raw?.notificationMessage === "string" && raw.notificationMessage.trim()
         ? raw.notificationMessage.trim()
         : null;
+    const createdByUid =
+      typeof raw?.createdBy === "string" && raw.createdBy.trim() ? raw.createdBy.trim() : undefined;
+    const calendarEventTypeRaw = String(raw?.calendarEventType ?? "lead_meeting").trim();
     out.push({
       id: `m-${id}`,
       at,
+      createdByUid,
       title: customerName,
       headline,
       kind: "meeting",
+      calendarEventType: calendarEventTypeRaw || "lead_meeting",
       detail: note || "Schůzka",
       phone: phone || undefined,
       address: place || undefined,
