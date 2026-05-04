@@ -109,12 +109,13 @@ function stockAvailablePiecesCount(pieces: StockPieceRow[]): number {
   return c.full + c.partial;
 }
 
+/** Nižší = výš v seznamu: nejdřív délky vhodné na řez (rem ≥ řez), pak ostatní načaté, pak plné. */
 function remainderBucketSortRank(p: StockPieceRow, cutMm: number): number {
   const rem = Number(p.remainingLength);
   const orig = Number(p.originalLength);
   if (!Number.isFinite(rem) || rem <= 0 || String(p.status) === "empty") return 99;
+  if (rem + STOCK_DISPLAY_EPS_MM >= cutMm) return 0;
   const isFull = Math.abs(rem - orig) <= STOCK_DISPLAY_EPS_MM;
-  if (!isFull && rem + STOCK_DISPLAY_EPS_MM >= cutMm) return 0;
   if (!isFull) return 1;
   return 2;
 }
@@ -145,17 +146,18 @@ function formatStockRemainderDetail(pieces: StockPieceRow[], cutMm: number): str
   return list.map((b) => `${formatMmCs(b.mm)} mm × ${b.count} ks`).join("\n");
 }
 
+/**
+ * Doporučení: pokud existuje kus s remainingLength ≥ délka řezu → „Použít zbytek“ (oranžový řádek).
+ * Pro text volíme nejdelší takový kus (typicky nejvýhodnější zbytek).
+ */
 function recommendationForCut(pieces: StockPieceRow[], cutMm: number): { text: string; highlight: boolean } {
   const EPS = STOCK_DISPLAY_EPS_MM;
   let best: number | null = null;
   for (const p of pieces) {
     const rem = Number(p.remainingLength);
-    const orig = Number(p.originalLength);
     if (!Number.isFinite(rem) || rem <= 0) continue;
     if (String(p.status) === "empty") continue;
     if (rem + EPS < cutMm) continue;
-    const isFull = Math.abs(rem - orig) <= EPS;
-    if (isFull) continue;
     if (best == null || rem > best) best = rem;
   }
   if (best != null) {

@@ -146,19 +146,17 @@ function variantRenderOpts(variant: ProductionA4ExportVariant): {
   };
 }
 
-/**
- * Vloží rastr výkresu přes canvas ve zvýšeném rozlišení (ne nízký náhled).
- */
+/** Vloží rastr výkresu přes canvas ve zvýšeném rozlišení. Vrací spodní okraj obrázku (mm), nebo null. */
 async function embedRasterImageHighRes(
   doc: jsPDF,
   url: string,
   region: { x: number; y: number; maxW: number; maxH: number },
   variant: ProductionA4ExportVariant
-): Promise<void> {
+): Promise<number | null> {
   const dataUrl = await fetchImageAsDataUrl(url);
-  if (!dataUrl) return;
+  if (!dataUrl) return null;
 
-  await new Promise<void>((resolve, reject) => {
+  return await new Promise<number | null>((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
       try {
@@ -172,7 +170,7 @@ async function embedRasterImageHighRes(
         canvas.height = Math.max(1, targetH);
         const ctx = canvas.getContext("2d");
         if (!ctx) {
-          resolve();
+          resolve(null);
           return;
         }
         ctx.imageSmoothingEnabled = true;
@@ -188,7 +186,7 @@ async function embedRasterImageHighRes(
         const iw = imgProps.width;
         const ih = imgProps.height;
         if (iw < 1 || ih < 1) {
-          resolve();
+          resolve(null);
           return;
         }
         let w = maxW;
@@ -200,18 +198,31 @@ async function embedRasterImageHighRes(
         const px = x + (maxW - w) / 2;
         const py = y + (maxH - h) / 2;
         doc.addImage(out, fmt, px, py, w, h);
-        resolve();
+        resolve(py + h);
       } catch (e) {
         reject(e);
       }
     };
     img.onerror = () => reject(new Error("image-load"));
     img.src = dataUrl;
-  });
+  }).catch(() => null);
 }
 
 function pageOrientFromPdfViewport(vp: { width: number; height: number }): "portrait" | "landscape" {
   return vp.width >= vp.height ? "landscape" : "portrait";
+}
+
+/** Odhad výšky bloku „Materiál + tabulka + podpis“ pro rozhodnutí, zda se vejde pod výkres. */
+function estimateMaterialSectionHeightMm(
+  rowCount: number,
+  ro: ReturnType<typeof variantRenderOpts>
+): number {
+  const rowLine = ro.tableFont + ro.cellPadding * 2 + 2.4;
+  const headBlock = ro.tableHeadFont + ro.cellPadding * 2 + 5;
+  const titleBlock = 8;
+  const tableFooter = 16;
+  const raw = titleBlock + headBlock + Math.max(1, rowCount) * rowLine + tableFooter;
+  return raw * 1.12;
 }
 
 function addMaterialTable(
@@ -327,6 +338,8 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
   }
 
   let doc: jsPDF | null = null;
+  /** Spodní okraj výkresu na stránce 1 (mm) — pro případné sloučení s tabulkou materiálu. */
+  let firstPageDrawingBottom: number | null = null;
 
   if (drawing.kind === "pdf") {
     let pdf: import("pdfjs-dist").PDFDocumentProxy | null = null;
@@ -354,6 +367,9 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
             imageFormat: ro.imageFormat,
             jpegQuality: ro.jpegQuality,
           });
+          if (n === 1) {
+            firstPageDrawingBottom = headerEnd + maxH;
+          }
         } else {
           const vp = page.getViewport({ scale: 1 });
           const o = pageOrientFromPdfViewport(vp);
@@ -404,8 +420,20 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
     const maxW = lw - 2 * DRAW_MARGIN_MM;
     const maxH = lh - headerEnd - DRAW_MARGIN_MM;
     try {
-      await embedRasterImageHighRes(doc, u, { x: DRAW_MARGIN_MM, y: headerEnd, maxW, maxH }, variant);
+      const imgBottom = await embedRasterImageHighRes(
+        doc,
+        u,
+        { x: DRAW_MARGIN_MM, y: headerEnd, maxW, maxH },
+        variant
+      );
+      firstPageDrawingBottom = imgBottom ?? headerEnd + maxH;
+      if (imgBottom == null) {
+        doc.setFont(PDF_FONT_FAMILY, "normal");
+        doc.setFontSize(10);
+        doc.text(`Obrázek výkresu se nepodařilo načíst: ${drawing.fileName}`, DRAW_MARGIN_MM, headerEnd + 4);
+      }
     } catch {
+      firstPageDrawingBottom = headerEnd + maxH;
       doc.setFont(PDF_FONT_FAMILY, "normal");
       doc.setFontSize(10);
       doc.text(`Obrázek výkresu se nepodařilo načíst: ${drawing.fileName}`, DRAW_MARGIN_MM, headerEnd + 4);
@@ -415,6 +443,25 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
   if (!doc) {
     doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
     await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
+  }
+
+  const rowCount = opts.materialRows.length;
+  const estMaterialH = estimateMaterialSectionHeightMm(rowCount, ro);
+  const page1H = doc.internal.pageSize.getHeight();
+
+  if (
+    firstPageDrawingBottom != null &&
+    firstPageDrawingBottom + estMaterialH <= page1H - DRAW_MARGIN_MM
+  ) {
+    doc.setPage(1);
+    const m = DRAW_MARGIN_MM;
+    const yTitle = firstPageDrawingBottom + 3;
+    doc.setFont(PDF_FONT_FAMILY, "bold");
+    doc.setFontSize(9.5);
+    doc.setTextColor(25, 35, 45);
+    doc.text("Materiál — řezy a zbytky", m, yTitle);
+    addMaterialTable(doc, opts, m, yTitle + 5.5, ro);
+    return doc;
   }
 
   doc.addPage("a4", "portrait");
