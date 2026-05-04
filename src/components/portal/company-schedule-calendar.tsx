@@ -20,7 +20,9 @@ import {
 } from "date-fns";
 import { cs } from "date-fns/locale";
 import {
+  Check,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Loader2,
@@ -93,8 +95,35 @@ import {
 } from "@/lib/email-notifications/client";
 import { mergeEmailNotifications } from "@/lib/email-notifications/schema";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 const WEEKDAYS = ["Po", "Út", "St", "Čt", "Pá", "So", "Ne"];
+
+/** Řádek zakázky pro výběr montáže — mapováno z `companies/.../jobs`. */
+type InstallationJobPickRow = {
+  id: string;
+  name: string;
+  customerName: string;
+  address: string;
+  phone: string;
+  customerId: string;
+  searchBlob: string;
+};
+
+function mapFirestoreJobToPickRow(raw: unknown): InstallationJobPickRow | null {
+  if (raw == null || typeof raw !== "object") return null;
+  const j = raw as Record<string, unknown> & { id?: string };
+  const id = String(j.id ?? "").trim();
+  if (!id) return null;
+  const name =
+    typeof j.name === "string" && j.name.trim() ? j.name.trim() : id;
+  const customerName = String(j.customerName ?? "").trim() || "—";
+  const address = String(j.customerAddress ?? "").trim();
+  const phone = String(j.customerPhone ?? j.phone ?? "").trim();
+  const customerId = String(j.customerId ?? "").trim();
+  const searchBlob = `${name} ${customerName} ${address}`.toLowerCase();
+  return { id, name, customerName, address, phone, customerId, searchBlob };
+}
 
 type CalendarEvent = CompanyScheduleCalendarEvent;
 
@@ -361,19 +390,16 @@ export function CompanyScheduleCalendar({
       limit(500)
     );
   }, [firestore, companyId, readOnly]);
-  const { data: jobsRaw = [] } = useCollection(jobsQuery);
-  const jobOptions = useMemo(() => {
-    const list = Array.isArray(jobsRaw) ? jobsRaw : [];
-    return list
-      .map((j) => {
-        const r = j as { id?: string; name?: string };
-        if (!r.id) return null;
-        return {
-          id: r.id,
-          name: typeof r.name === "string" && r.name.trim() ? r.name.trim() : r.id,
-        };
-      })
-      .filter((x): x is { id: string; name: string } => x != null);
+  const { data: jobsData } = useCollection(jobsQuery);
+  const jobsRaw = Array.isArray(jobsData) ? jobsData : [];
+  const installationJobRows = useMemo(() => {
+    const rows: InstallationJobPickRow[] = [];
+    for (const raw of jobsRaw) {
+      const row = mapFirestoreJobToPickRow(raw);
+      if (row) rows.push(row);
+    }
+    rows.sort((a, b) => a.name.localeCompare(b.name, "cs"));
+    return rows;
   }, [jobsRaw]);
   const employeeOptions = useMemo(() => {
     const list = Array.isArray(employeesRaw) ? employeesRaw : [];
@@ -434,6 +460,41 @@ export function CompanyScheduleCalendar({
   const [installCustomerId, setInstallCustomerId] = useState("");
   const [selectedInstallEmployeeIds, setSelectedInstallEmployeeIds] = useState<string[]>([]);
   const [notifyInstallAssignees, setNotifyInstallAssignees] = useState(true);
+  const [installJobPickerOpen, setInstallJobPickerOpen] = useState(false);
+  const [installJobSearch, setInstallJobSearch] = useState("");
+
+  const filteredInstallationJobs = useMemo(() => {
+    const q = installJobSearch.trim().toLowerCase();
+    if (!q) return installationJobRows;
+    return installationJobRows.filter((row) => row.searchBlob.includes(q));
+  }, [installationJobRows, installJobSearch]);
+
+  const selectedInstallationJobLabel = useMemo(() => {
+    if (!installJobId.trim()) return null;
+    const row = installationJobRows.find((r) => r.id === installJobId);
+    if (row) return row.name;
+    const fallback = installJobName.trim();
+    return fallback || installJobId;
+  }, [installJobId, installJobName, installationJobRows]);
+
+  const applyInstallationJobRow = React.useCallback((row: InstallationJobPickRow | null) => {
+    if (!row) {
+      setInstallJobId("");
+      setInstallJobName("");
+      return;
+    }
+    setInstallJobId(row.id);
+    setInstallJobName(row.name);
+    setMeetingCustomerName(row.customerName);
+    setMeetingPlace(row.address);
+    setMeetingPhone(row.phone);
+    setInstallCustomerId(row.customerId);
+    setMeetingTitle((prev) => {
+      const p = prev.trim();
+      if (!p) return row.name;
+      return prev;
+    });
+  }, []);
 
   const monthStart = startOfMonth(visibleMonth);
   const monthEnd = endOfMonth(visibleMonth);
@@ -540,6 +601,8 @@ export function CompanyScheduleCalendar({
     setSendToAllEmployees(false);
     setNotificationType("info");
     setNotificationText("");
+    setInstallJobSearch("");
+    setInstallJobPickerOpen(false);
     setFormOpen(true);
   };
 
@@ -582,6 +645,8 @@ export function CompanyScheduleCalendar({
     setSendToAllEmployees(ev.sentToAllEmployees === true);
     setNotificationType(ev.notificationType ?? "info");
     setNotificationText(ev.notificationMessage ?? "");
+    setInstallJobSearch("");
+    setInstallJobPickerOpen(false);
     setFormOpen(true);
   };
 
@@ -1815,32 +1880,133 @@ export function CompanyScheduleCalendar({
               <>
                 <div className="sm:col-span-2 space-y-1">
                   <Label className={dark ? "text-slate-200" : undefined}>Zakázka</Label>
-                  <Select
-                    value={installJobId ? installJobId : "__none__"}
-                    disabled={readOnly}
-                    onValueChange={(v) => {
-                      if (v === "__none__") {
-                        setInstallJobId("");
-                        setInstallJobName("");
-                        return;
-                      }
-                      setInstallJobId(v);
-                      const j = jobOptions.find((x) => x.id === v);
-                      if (j) setInstallJobName(j.name);
+                  <Popover
+                    open={readOnly ? false : installJobPickerOpen}
+                    onOpenChange={(o) => {
+                      if (readOnly) return;
+                      setInstallJobPickerOpen(o);
+                      if (!o) setInstallJobSearch("");
                     }}
                   >
-                    <SelectTrigger className={cn("min-h-11", fc)}>
-                      <SelectValue placeholder="Vyberte zakázku" />
-                    </SelectTrigger>
-                    <SelectContent className={dark ? "border-white/10 bg-slate-900 text-slate-50" : undefined}>
-                      <SelectItem value="__none__">— bez zakázky —</SelectItem>
-                      {jobOptions.map((j) => (
-                        <SelectItem key={j.id} value={j.id}>
-                          {j.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={readOnly}
+                        className={cn(
+                          "min-h-11 w-full justify-between gap-2 font-normal",
+                          dark ? fc : ""
+                        )}
+                      >
+                        <span className="truncate text-left">
+                          {selectedInstallationJobLabel ?? "Vyberte zakázku"}
+                        </span>
+                        <ChevronDown className="h-4 w-4 shrink-0 opacity-60" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent
+                      align="start"
+                      className={cn(
+                        "w-[min(22rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)] p-0",
+                        dark ? "border-white/10 bg-slate-950 text-slate-50" : ""
+                      )}
+                    >
+                      <div className={cn("border-b p-2", dark ? "border-white/10" : "border-slate-200")}>
+                        <Input
+                          value={installJobSearch}
+                          onChange={(e) => setInstallJobSearch(e.target.value)}
+                          placeholder="Hledat podle zakázky nebo zákazníka…"
+                          className={cn("min-h-10", fc)}
+                          disabled={readOnly}
+                        />
+                      </div>
+                      <div className="max-h-[min(17rem,40vh)] overflow-y-auto p-1">
+                        <button
+                          type="button"
+                          className={cn(
+                            "flex w-full flex-col rounded-md px-2 py-2.5 text-left text-sm transition-colors",
+                            dark ? "hover:bg-white/10" : "hover:bg-slate-100"
+                          )}
+                          onClick={() => {
+                            applyInstallationJobRow(null);
+                            setInstallJobPickerOpen(false);
+                          }}
+                        >
+                          — bez zakázky —
+                        </button>
+                        {filteredInstallationJobs.length === 0 ? (
+                          <p
+                            className={cn(
+                              "px-2 py-4 text-center text-sm",
+                              dark ? "text-slate-400" : "text-slate-600"
+                            )}
+                          >
+                            Žádná zakázka neodpovídá hledání.
+                          </p>
+                        ) : (
+                          filteredInstallationJobs.map((row) => {
+                            const active = installJobId === row.id;
+                            return (
+                              <button
+                                key={row.id}
+                                type="button"
+                                className={cn(
+                                  "flex w-full items-start gap-2 rounded-md px-2 py-2.5 text-left text-sm transition-colors",
+                                  dark
+                                    ? active
+                                      ? "bg-orange-500/20"
+                                      : "hover:bg-white/10"
+                                    : active
+                                      ? "bg-orange-50"
+                                      : "hover:bg-slate-100"
+                                )}
+                                onClick={() => {
+                                  applyInstallationJobRow(row);
+                                  setInstallJobPickerOpen(false);
+                                  setInstallJobSearch("");
+                                }}
+                              >
+                                {active ? (
+                                  <Check className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />
+                                ) : (
+                                  <span className="mt-0.5 h-4 w-4 shrink-0" />
+                                )}
+                                <span className="min-w-0 flex-1">
+                                  <span className="block font-medium leading-snug">
+                                    {row.name}
+                                  </span>
+                                  <span
+                                    className={cn(
+                                      "mt-0.5 block text-xs",
+                                      dark ? "text-slate-300" : "text-slate-600"
+                                    )}
+                                  >
+                                    {row.customerName}
+                                  </span>
+                                  {row.address ? (
+                                    <span
+                                      className={cn(
+                                        "mt-0.5 line-clamp-2 block text-[11px] leading-snug",
+                                        dark ? "text-slate-500" : "text-slate-500"
+                                      )}
+                                    >
+                                      {row.address}
+                                    </span>
+                                  ) : null}
+                                </span>
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </PopoverContent>
+                  </Popover>
+                  <p
+                    className={cn("text-xs", dark ? "text-slate-500" : "text-slate-600")}
+                  >
+                    Po výběru se doplní zákazník, adresa a telefon z zakázky — můžete je upravit
+                    níže.
+                  </p>
                 </div>
                 <div className="sm:col-span-2 space-y-1">
                   <Label className={dark ? "text-slate-200" : undefined}>ID zákazníka (volitelně)</Label>
