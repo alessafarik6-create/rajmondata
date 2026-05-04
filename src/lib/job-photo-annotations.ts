@@ -69,6 +69,12 @@ export type AnnotationLegendEntry = {
   note?: string;
 };
 
+/** Vložené instance modelů z knihovny (odkaz na anotaci + model). */
+export type AnnotationPlacedModelRef = {
+  annotationId: string;
+  modelId: string;
+};
+
 export type JobPhotoAnnotation =
   | JobPhotoDimensionAnnotation
   | JobPhotoNoteAnnotation
@@ -87,6 +93,8 @@ export type JobPhotoAnnotationPayload = {
   items: SerializedItem[];
   /** Odvozitelné ze značek, uloženo pro export a zobrazení mimo editor. */
   legend?: AnnotationLegendEntry[];
+  /** Značky vzniklé ze šablony modelu (duplicitní informace k items pro export/reporty). */
+  placedModels?: AnnotationPlacedModelRef[];
 };
 
 type SerializedItem =
@@ -267,6 +275,14 @@ export function serializeJobPhotoAnnotations(
   }
 
   const legend = buildLegendPayload(items);
+  const placedModels: AnnotationPlacedModelRef[] = items
+    .filter((a): a is JobPhotoShapeLabelAnnotation => a.type === "shapeLabel")
+    .map((a) => {
+      const mid = typeof a.modelId === "string" ? a.modelId.trim() : "";
+      if (!mid) return null;
+      return { annotationId: a.id, modelId: mid };
+    })
+    .filter((x): x is AnnotationPlacedModelRef => x != null);
   const version = hasShape || (legend && legend.length > 0) ? JOB_PHOTO_ANNOTATION_VERSION : JOB_PHOTO_ANNOTATION_VERSION_LEGACY;
 
   return {
@@ -276,6 +292,7 @@ export function serializeJobPhotoAnnotations(
     pageIndex,
     items: out,
     ...(legend && legend.length ? { legend } : {}),
+    ...(placedModels.length ? { placedModels } : {}),
   };
 }
 

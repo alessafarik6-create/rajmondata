@@ -1,6 +1,6 @@
 import { lengthToMillimeters, millimetersToUnit } from "@/lib/job-production-settings";
-import type { InventoryItemRow } from "@/lib/inventory-types";
-import { STOCK_DISPLAY_EPS_MM, formatMmCs } from "@/lib/stock-pieces-display";
+import type { InventoryItemRow, StockPieceRow } from "@/lib/inventory-types";
+import { STOCK_DISPLAY_EPS_MM, countPiecesExact, formatMmCs } from "@/lib/stock-pieces-display";
 import type { StockPiecesSummary } from "@/hooks/use-stock-pieces-summaries";
 
 /** Minimální data řádku fronty výdeje pro export A4 (shodné s IssueQueueLine na stránce výroby). */
@@ -17,9 +17,11 @@ export type IssueLineForA4Material = {
 
 export type ProductionA4MaterialRow = {
   cells: string[];
-  /** Tučné zvýraznění ve sloupcích „Zbytek z kusu“ a „Celk. zbytek (řádek)“. */
+  /** Legacy pole pro PDF styler */
   boldRemainder: boolean;
   boldLineTotal: boolean;
+  /** Oranžové zvýraznění — doporučení „Použít zbytek“ */
+  highlightUseScrap?: boolean;
 };
 
 function stockUnitLower(item: InventoryItemRow): string {
@@ -91,8 +93,118 @@ function perCutLengthMm(item: InventoryItemRow, ln: IssueLineForA4Material): num
   return mm != null && Number.isFinite(mm) ? mm : null;
 }
 
+function sumRemainingStockMm(pieces: StockPieceRow[]): number {
+  let s = 0;
+  for (const p of pieces) {
+    const rem = Number(p.remainingLength);
+    if (!Number.isFinite(rem) || rem <= 0) continue;
+    if (String(p.status) === "empty") continue;
+    s += rem;
+  }
+  return s;
+}
+
+function stockAvailablePiecesCount(pieces: StockPieceRow[]): number {
+  const c = countPiecesExact(pieces);
+  return c.full + c.partial;
+}
+
+function remainderBucketSortRank(p: StockPieceRow, cutMm: number): number {
+  const rem = Number(p.remainingLength);
+  const orig = Number(p.originalLength);
+  if (!Number.isFinite(rem) || rem <= 0 || String(p.status) === "empty") return 99;
+  const isFull = Math.abs(rem - orig) <= STOCK_DISPLAY_EPS_MM;
+  if (!isFull && rem + STOCK_DISPLAY_EPS_MM >= cutMm) return 0;
+  if (!isFull) return 1;
+  return 2;
+}
+
+/** Popis zbytků; použitelné délky první. */
+function formatStockRemainderDetail(pieces: StockPieceRow[], cutMm: number): string {
+  type Bucket = { mm: number; count: number; minRank: number; maxSortMm: number };
+  const map = new Map<number, Bucket>();
+  for (const p of pieces) {
+    const rem = Number(p.remainingLength);
+    if (!Number.isFinite(rem) || rem <= 0 || String(p.status) === "empty") continue;
+    const mm = Math.round(rem * 100) / 100;
+    const r = remainderBucketSortRank(p, cutMm);
+    const cur = map.get(mm);
+    if (!cur) {
+      map.set(mm, { mm, count: 1, minRank: r, maxSortMm: mm });
+    } else {
+      cur.count++;
+      cur.minRank = Math.min(cur.minRank, r);
+      cur.maxSortMm = Math.max(cur.maxSortMm, mm);
+    }
+  }
+  const list = Array.from(map.values()).sort((a, b) => {
+    if (a.minRank !== b.minRank) return a.minRank - b.minRank;
+    return b.maxSortMm - a.maxSortMm;
+  });
+  if (list.length === 0) return "—";
+  return list.map((b) => `${formatMmCs(b.mm)} mm × ${b.count} ks`).join("\n");
+}
+
+function recommendationForCut(pieces: StockPieceRow[], cutMm: number): { text: string; highlight: boolean } {
+  const EPS = STOCK_DISPLAY_EPS_MM;
+  let best: number | null = null;
+  for (const p of pieces) {
+    const rem = Number(p.remainingLength);
+    const orig = Number(p.originalLength);
+    if (!Number.isFinite(rem) || rem <= 0) continue;
+    if (String(p.status) === "empty") continue;
+    if (rem + EPS < cutMm) continue;
+    const isFull = Math.abs(rem - orig) <= EPS;
+    if (isFull) continue;
+    if (best == null || rem > best) best = rem;
+  }
+  if (best != null) {
+    return {
+      text: `♻ Použít zbytek\n⚠ Použij zbytek ze skladu\nZbytek ${formatMmCs(best)} mm – vhodné použít`,
+      highlight: true,
+    };
+  }
+  return { text: "Nový kus", highlight: false };
+}
+
+type StockCols = {
+  zbKs: string;
+  plné: string;
+  načaté: string;
+  celkMm: string;
+  zbytky: string;
+  recText: string;
+  highlight: boolean;
+};
+
+function buildStockCols(pieces: StockPieceRow[], cutMm: number): StockCols {
+  const c = countPiecesExact(pieces);
+  const zbKs = String(stockAvailablePiecesCount(pieces));
+  const plné = String(c.full);
+  const načaté = String(c.partial);
+  const celkMm = `${formatMmCs(sumRemainingStockMm(pieces))} mm`;
+  const zbytky = formatStockRemainderDetail(pieces, cutMm);
+  const rec = recommendationForCut(pieces, cutMm);
+  return {
+    zbKs,
+    plné,
+    načaté,
+    celkMm,
+    zbytky,
+    recText: rec.text,
+    highlight: rec.highlight,
+  };
+}
+
+function materiálBlock(name: string, ln: IssueLineForA4Material, stLabel: string): string {
+  const noteLine =
+    [ln.note?.trim(), ln.batchNumber ? `Šarže: ${ln.batchNumber}` : ""].filter(Boolean).join(" · ") || "";
+  if (noteLine) return `${name}\n${noteLine}\nStav výkresu: ${stLabel}`;
+  return `${name}\nStav výkresu: ${stLabel}`;
+}
+
 /**
- * Sestaví řádky tabulky materiálu pro výrobní list A4 (včetně více řádků u metráže přes více kusů).
+ * Sloupce: Materiál, Výdej, Zbytek po řezu, Zbývá ks, Plné ks, Načaté ks, Celkem zbývá (mm), Zbytky, Doporučení
  */
 export function buildProductionA4MaterialRows(
   lines: IssueLineForA4Material[],
@@ -105,31 +217,34 @@ export function buildProductionA4MaterialRows(
 
   for (const ln of lines) {
     const inv = inventoryById.get(ln.itemId);
-    const unit = inv?.unit || "ks";
     const stLabel = statusOf(ln);
+    const name = String(inv?.name ?? ln.itemId);
 
     if (!inv || String(inv.stockTrackingMode) !== "length") {
-      const note = [ln.note, ln.batchNumber ? `Šarže: ${ln.batchNumber}` : ""].filter(Boolean).join(" · ");
+      const pieces = stockPiecesSummaryByItem[ln.itemId]?.pieces ?? [];
+      const sc = pieces.length ? buildStockCols(pieces, Number.POSITIVE_INFINITY) : null;
       out.push({
         cells: [
-          String(inv?.name ?? ln.itemId),
+          materiálBlock(name, ln, stLabel),
           `${ln.qtyStr}`.trim(),
-          unit,
           "—",
+          sc?.zbKs ?? "—",
+          sc?.plné ?? "—",
+          sc?.načaté ?? "—",
+          sc?.celkMm ?? "—",
+          sc?.zbytky ?? "—",
           "—",
-          "—",
-          "—",
-          "—",
-          note,
-          stLabel,
         ],
         boldRemainder: false,
         boldLineTotal: false,
+        highlightUseScrap: false,
       });
       continue;
     }
 
     const sp = stockPiecesSummaryByItem[ln.itemId];
+    const pieces: StockPieceRow[] = sp?.pieces ?? [];
+
     const pieceLenMm =
       sp?.pieceLengthMm != null && Number.isFinite(sp.pieceLengthMm) && sp.pieceLengthMm > 0
         ? sp.pieceLengthMm
@@ -142,95 +257,91 @@ export function buildProductionA4MaterialRows(
     const cutMm = perCutLengthMm(inv, ln);
 
     if (!repOk || cutMm == null || cutMm <= 0) {
-      const note = [ln.note, ln.batchNumber ? `Šarže: ${ln.batchNumber}` : ""].filter(Boolean).join(" · ");
+      const sc = buildStockCols(pieces, Number.POSITIVE_INFINITY);
       out.push({
         cells: [
-          String(inv.name ?? ln.itemId),
+          materiálBlock(String(inv.name ?? ln.itemId), ln, stLabel),
           `${ln.qtyStr} (${ln.repeatCountStr}×)`.trim(),
-          unit,
-          pieceLenMm != null ? `${formatMmCs(pieceLenMm)} mm` : "—",
           "—",
+          sc.zbKs,
+          sc.plné,
+          sc.načaté,
+          sc.celkMm,
+          sc.zbytky,
           "—",
-          "—",
-          "—",
-          note,
-          stLabel,
         ],
         boldRemainder: false,
         boldLineTotal: false,
+        highlightUseScrap: false,
       });
       continue;
     }
 
-    const totalCutMm = cutMm * rep;
-    const removedSummary = `${formatMmCs(totalCutMm)} mm (${rep}× ${formatMmCs(cutMm)} mm)`;
+    const sc = buildStockCols(pieces, cutMm);
+    const removedSummary = `${formatMmCs(cutMm * rep)} mm (${rep}× ${formatMmCs(cutMm)} mm)`;
 
     if (pieceLenMm == null) {
       const cutsLabel = `${rep}× ${formatMmCs(cutMm)} mm`;
-      const note = [ln.note, ln.batchNumber ? `Šarže: ${ln.batchNumber}` : ""].filter(Boolean).join(" · ");
       out.push({
         cells: [
-          String(inv.name ?? ln.itemId),
+          materiálBlock(String(inv.name ?? ln.itemId), ln, stLabel),
           removedSummary,
-          unit,
           "—",
-          cutsLabel,
-          "—",
-          "—",
-          "—",
-          note,
-          stLabel,
+          sc.zbKs,
+          sc.plné,
+          sc.načaté,
+          sc.celkMm,
+          sc.zbytky,
+          `${sc.recText}\nŘez: ${cutsLabel}`,
         ],
         boldRemainder: false,
         boldLineTotal: false,
+        highlightUseScrap: sc.highlight,
       });
       continue;
     }
 
     const dist = splitLengthCutsAcrossStandardPieces(pieceLenMm, cutMm, rep);
-    const totalRem = dist.reduce((a, r) => a + r.remainderMm, 0);
-    const note = [ln.note, ln.batchNumber ? `Šarže: ${ln.batchNumber}` : ""].filter(Boolean).join(" · ");
 
     if (dist.length === 0) {
       out.push({
         cells: [
-          String(inv.name ?? ln.itemId),
+          materiálBlock(String(inv.name ?? ln.itemId), ln, stLabel),
           removedSummary,
-          unit,
-          `${formatMmCs(pieceLenMm)} mm`,
-          `${rep}× ${formatMmCs(cutMm)} mm`,
           "—",
-          "—",
-          "—",
-          note,
-          stLabel,
+          sc.zbKs,
+          sc.plné,
+          sc.načaté,
+          sc.celkMm,
+          sc.zbytky,
+          sc.recText,
         ],
         boldRemainder: false,
         boldLineTotal: false,
+        highlightUseScrap: sc.highlight,
       });
       continue;
     }
 
     dist.forEach((row, idx) => {
+      const výdejNaKusu = `${formatMmCs(row.cutsOnThisPiece * cutMm)} mm`;
       const cutsLabel = `${row.cutsOnThisPiece}× ${formatMmCs(cutMm)} mm`;
       const remLabel = `${formatMmCs(row.remainderMm)} mm`;
-      const pieceCountLabel = "1";
-      const lineTotalLabel = idx === 0 ? `${formatMmCs(totalRem)} mm` : "";
       out.push({
         cells: [
-          idx === 0 ? String(inv.name ?? ln.itemId) : "",
-          idx === 0 ? removedSummary : "",
-          idx === 0 ? unit : "",
-          `${formatMmCs(pieceLenMm)} mm`,
-          cutsLabel,
+          idx === 0 ? materiálBlock(String(inv.name ?? ln.itemId), ln, stLabel) : "",
+          idx === 0 ? removedSummary : `${výdejNaKusu}\n(${cutsLabel})`,
           remLabel,
-          pieceCountLabel,
-          lineTotalLabel,
-          idx === 0 ? note : "",
-          idx === 0 ? stLabel : "",
+          idx === 0 ? sc.zbKs : "",
+          idx === 0 ? sc.plné : "",
+          idx === 0 ? sc.načaté : "",
+          idx === 0 ? sc.celkMm : "",
+          idx === 0 ? sc.zbytky : "",
+          idx === 0 ? sc.recText : "",
         ],
         boldRemainder: true,
         boldLineTotal: idx === 0,
+        highlightUseScrap: sc.highlight && idx === 0,
       });
     });
   }

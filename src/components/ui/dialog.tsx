@@ -31,12 +31,17 @@ const DialogOverlay = React.forwardRef<
 ))
 DialogOverlay.displayName = DialogPrimitive.Overlay.displayName
 
+type DialogContentProps = React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+  /** Volitelné — např. vyšší z-index, když je dialog nad jiným (editor anotací). */
+  overlayClassName?: string;
+};
+
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
-  React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content>
->(({ className, children, ...props }, ref) => (
+  DialogContentProps
+>(({ className, overlayClassName, children, ...props }, ref) => (
   <DialogPortal>
-    <DialogOverlay />
+    <DialogOverlay className={overlayClassName} />
     {/* Jen Overlay + Content v portálu (bez extra wrapperu) — méně konfliktů React vs. Radix při unmountu (removeChild). */}
     <DialogPrimitive.Content
       ref={ref}

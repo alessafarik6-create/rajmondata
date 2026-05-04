@@ -2053,10 +2053,35 @@ export default function VyrobaZakazkaDetailPage() {
         );
         const variant: ProductionA4ExportVariant =
           action === "print" ? "print" : opts?.exportVariant ?? "overview";
+        const jc = j as Record<string, unknown>;
+        const jobAddressPdf = String(jc.address || jc.customerAddress || jc.installAddress || "").trim();
+        const organizationPdf =
+          company != null
+            ? {
+                organizationName: String(
+                  (company as { name?: string }).name ||
+                    (company as { companyName?: string }).companyName ||
+                    "Organizace"
+                ),
+                organizationLogoUrl: (company as { organizationLogoUrl?: string | null }).organizationLogoUrl ?? null,
+                organizationAddress: (() => {
+                  const c = company as Record<string, unknown>;
+                  const parts = [
+                    c.companyAddressStreetAndNumber,
+                    [c.companyAddressPostalCode, c.companyAddressCity].filter(Boolean).join(" "),
+                    c.companyAddressCountry,
+                  ].filter(Boolean);
+                  if (parts.length) return parts.join(", ");
+                  return String(c.registeredOfficeAddress || c.address || "").trim();
+                })(),
+                jobAddress: jobAddressPdf || undefined,
+              }
+            : undefined;
         const doc = await buildProductionA4WorkListPdf({
           jobName,
           customerLabel: customer,
           dateLabel,
+          organization: organizationPdf,
           drawing: drawingRef,
           materialRows,
           footerNote: footerParts.length ? footerParts.join(" · ") : undefined,
@@ -2075,6 +2100,7 @@ export default function VyrobaZakazkaDetailPage() {
     [
       jobView,
       jobId,
+      company,
       issueQueueLinesForA4Filter,
       inventoryById,
       stockPiecesSummaryByItem,

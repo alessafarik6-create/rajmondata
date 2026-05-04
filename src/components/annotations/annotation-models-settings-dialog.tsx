@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import type { AnnotationModelDoc, AnnotationModelShape } from "@/lib/annotation-models";
+import { removeUndefinedDeep } from "@/lib/firestore-clean-payload";
 import { Pencil, Trash2 } from "lucide-react";
 
 const SELECT_CLASS =
@@ -130,7 +131,7 @@ export function AnnotationModelsSettingsDialog({
         };
         await updateDoc(
           doc(firestore, "companies", companyId, "annotationModels", editingId),
-          patch
+          removeUndefinedDeep(patch) as DocumentData
         );
         toast({ title: "Model uložen", description: n });
       } else {
@@ -149,7 +150,7 @@ export function AnnotationModelsSettingsDialog({
         if (nt) docData.note = nt;
         await addDoc(
           collection(firestore, "companies", companyId, "annotationModels"),
-          docData
+          removeUndefinedDeep(docData) as DocumentData
         );
         toast({ title: "Model uložen", description: n });
       }
@@ -194,7 +195,10 @@ export function AnnotationModelsSettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="flex max-h-[min(90dvh,720px)] flex-col gap-0 overflow-hidden sm:max-w-lg">
+      <DialogContent
+        overlayClassName="z-[560]"
+        className="!z-[570] flex max-h-[min(90dvh,720px)] flex-col gap-0 overflow-hidden sm:max-w-lg"
+      >
         <DialogHeader>
           <DialogTitle>Nastavení modelů</DialogTitle>
           <DialogDescription>

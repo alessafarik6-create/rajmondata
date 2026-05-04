@@ -19,6 +19,8 @@ export type StockPiecesSummary = {
   /** Délky načatých zbytků (mm) */
   partialLengthsMm: number[];
   pieceLengthMm: number | null;
+  /** Surová data kusů (export PDF / přesné součty) */
+  pieces: StockPieceRow[];
   loading: boolean;
 };
 
@@ -44,6 +46,7 @@ function summarizePieces(pieces: StockPieceRow[], pieceLengthMm: number | null):
     label,
     partialLengthsMm: partialLengths,
     pieceLengthMm,
+    pieces,
     loading: false,
   };
 }
@@ -111,6 +114,7 @@ export function useStockPiecesSummaries(
                 meta.pieceLengthMm != null && Number.isFinite(Number(meta.pieceLengthMm))
                   ? Number(meta.pieceLengthMm)
                   : null,
+              pieces: [],
               loading: false,
             };
           }

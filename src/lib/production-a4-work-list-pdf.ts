@@ -14,10 +14,21 @@ export type { ProductionA4MaterialRow } from "@/lib/production-a4-material-rows"
 /** „Přehled“ = menší násobič / JPEG; „Tisk“ = vyšší rozlišení, PNG výkresu, větší tabulka. */
 export type ProductionA4ExportVariant = "overview" | "print";
 
+export type ProductionA4HeaderBranding = {
+  organizationName: string;
+  organizationLogoUrl?: string | null;
+  /** Adresa organizace (1–2 řádky) */
+  organizationAddress?: string;
+  /** Adresa zakázky / montáže */
+  jobAddress?: string;
+};
+
 export type BuildProductionA4WorkListPdfOptions = {
   jobName: string;
   customerLabel: string;
   dateLabel: string;
+  /** Logo, firma, adresa dodavatele */
+  organization?: ProductionA4HeaderBranding | null;
   drawing: ProductionWorksheetDrawingRef | null;
   materialRows: ProductionA4MaterialRow[];
   footerNote?: string;
@@ -25,43 +36,85 @@ export type BuildProductionA4WorkListPdfOptions = {
   variant?: ProductionA4ExportVariant;
 };
 
-const DRAW_MARGIN_MM = 6;
+const DRAW_MARGIN_MM = 5;
 
-function drawHeaderPortrait(doc: jsPDF, margin: number, opts: BuildProductionA4WorkListPdfOptions): number {
-  let y = margin;
-  doc.setFont(PDF_FONT_FAMILY, "bold");
-  doc.setFontSize(14);
-  doc.text("Výrobní list — výdej", margin, y);
-  y += 7;
-  doc.setFont(PDF_FONT_FAMILY, "normal");
-  doc.setFontSize(9);
-  doc.text(`Zakázka: ${opts.jobName}`, margin, y);
-  y += 4.5;
-  doc.text(`Zákazník: ${opts.customerLabel || "—"}`, margin, y);
-  y += 4.5;
-  doc.text(`Datum: ${opts.dateLabel}`, margin, y);
-  y += 7;
-  return y;
+function formatAddressOneLine(s: string | undefined): string {
+  const t = String(s || "")
+    .trim()
+    .replace(/\s+/g, " ");
+  return t;
 }
 
-/** Kompaktní hlavička na první landscape stránce (nad výkresem). */
-function drawHeaderLandscape(
+/**
+ * Hlavička: 1) logo + organizace, 2) zakázka, 3) zákazník / datum / adresa
+ * Vrátí Y pod hlavičkou.
+ */
+function drawBrandedHeader(
   doc: jsPDF,
   margin: number,
+  contentW: number,
   opts: BuildProductionA4WorkListPdfOptions,
-  textMaxW: number
+  logoDataUrl: string | null
 ): number {
-  let y = margin + 3;
+  let y = margin;
+  const orgName = String(opts.organization?.organizationName || "").trim() || "Organizace";
+  const orgAddr = formatAddressOneLine(opts.organization?.organizationAddress);
+  const jobAddr = formatAddressOneLine(opts.organization?.jobAddress);
+
+  let logoBottom = y;
+  if (logoDataUrl) {
+    try {
+      const maxH = 12;
+      const maxW = 22;
+      const prop = doc.getImageProperties(logoDataUrl);
+      const iw = Math.max(1, prop.width);
+      const ih = Math.max(1, prop.height);
+      let w = maxW;
+      let h = (ih * w) / iw;
+      if (h > maxH) {
+        h = maxH;
+        w = (iw * h) / ih;
+      }
+      const fmt: "PNG" | "JPEG" = logoDataUrl.includes("image/png") ? "PNG" : "JPEG";
+      doc.addImage(logoDataUrl, fmt, margin, y, w, h);
+      logoBottom = y + h;
+    } catch {
+      /* */
+    }
+  }
+  const textX = logoDataUrl ? margin + 24 : margin;
+  const textW = contentW - (textX - margin);
+
+  doc.setFont(PDF_FONT_FAMILY, "bold");
+  doc.setFontSize(12);
+  doc.setTextColor(20, 30, 40);
+  const orgLines = doc.splitTextToSize(orgName, textW);
+  const orgStartY = y + 4;
+  doc.text(orgLines, textX, orgStartY);
+  y = Math.max(logoBottom, orgStartY + orgLines.length * 4.3) + 2;
+
   doc.setFont(PDF_FONT_FAMILY, "bold");
   doc.setFontSize(11);
-  doc.text("Výrobní list — výdej", margin, y);
-  y += 5;
+  const jobLines = doc.splitTextToSize(String(opts.jobName), contentW);
+  doc.text(jobLines, margin, y);
+  y += jobLines.length * 4.3 + 2;
+
+  const line3Parts = [
+    `Zákazník: ${opts.customerLabel || "—"}`,
+    `Datum: ${opts.dateLabel}`,
+    jobAddr ? `Adresa: ${jobAddr}` : "",
+  ].filter(Boolean);
+  let line3 = line3Parts.join("  ·  ");
+  if (orgAddr) {
+    line3 = `${line3}\nProvoz / firma: ${orgAddr}`;
+  }
   doc.setFont(PDF_FONT_FAMILY, "normal");
   doc.setFontSize(8.5);
-  const one = `${opts.jobName} · ${opts.customerLabel || "—"} · ${opts.dateLabel}`;
-  const lines = doc.splitTextToSize(one, textMaxW);
-  doc.text(lines, margin, y);
-  y += lines.length * 3.8 + 4;
+  doc.setTextColor(45, 55, 65);
+  const l3 = doc.splitTextToSize(line3, contentW);
+  doc.text(l3, margin, y);
+  y += l3.length * 3.5 + 2;
+  doc.setTextColor(0, 0, 0);
   return y;
 }
 
@@ -78,18 +131,18 @@ function variantRenderOpts(variant: ProductionA4ExportVariant): {
       resolutionScale: 3,
       imageFormat: "png",
       jpegQuality: 0.95,
-      tableFont: 10,
-      tableHeadFont: 10,
-      cellPadding: 2,
+      tableFont: 8.5,
+      tableHeadFont: 8.5,
+      cellPadding: 1.2,
     };
   }
   return {
     resolutionScale: 2.5,
     imageFormat: "jpeg",
     jpegQuality: 0.95,
-    tableFont: 9,
-    tableHeadFont: 9,
-    cellPadding: 1.4,
+    tableFont: 7.5,
+    tableHeadFont: 7.5,
+    cellPadding: 1,
   };
 }
 
@@ -157,6 +210,10 @@ async function embedRasterImageHighRes(
   });
 }
 
+function pageOrientFromPdfViewport(vp: { width: number; height: number }): "portrait" | "landscape" {
+  return vp.width >= vp.height ? "landscape" : "portrait";
+}
+
 function addMaterialTable(
   doc: jsPDF,
   opts: BuildProductionA4WorkListPdfOptions,
@@ -170,16 +227,15 @@ function addMaterialTable(
 
   const head = [
     [
-      "Položka",
-      "Odebráno (součet)",
-      "j.",
-      "Délka kusu",
-      "Řez / použito",
-      "Zbytek z kusu",
-      "Kusů po řezu",
-      "Celk. zbytek (řádek)",
-      "Pozn.",
-      "Stav výkresu",
+      "Materiál",
+      "Výdej",
+      "Zbytek po řezu",
+      "Zbývá ks",
+      "Plné ks",
+      "Načaté ks",
+      "Celkem zbývá (mm)",
+      "Zbytky",
+      "Doporučení",
     ],
   ];
 
@@ -193,7 +249,6 @@ function addMaterialTable(
       fontSize: ro.tableFont,
       cellPadding: ro.cellPadding,
       overflow: "linebreak",
-      minCellHeight: ro.tableFont + ro.cellPadding * 2,
     },
     headStyles: {
       font: PDF_FONT_FAMILY,
@@ -207,25 +262,31 @@ function addMaterialTable(
       if (data.section !== "body") return;
       const row = opts.materialRows[data.row.index];
       if (!row) return;
-      if (row.boldRemainder && data.column.index === 5) {
-        data.cell.styles.fontStyle = "bold";
-        data.cell.styles.textColor = [15, 118, 110];
+      if (row.highlightUseScrap) {
+        data.cell.styles.fillColor = [255, 237, 213];
+        data.cell.styles.textColor = [120, 53, 15];
       }
-      if (row.boldLineTotal && data.column.index === 7) {
+      if (row.boldRemainder && data.column.index === 2) {
         data.cell.styles.fontStyle = "bold";
-        data.cell.styles.textColor = [15, 118, 110];
+        if (!row.highlightUseScrap) data.cell.styles.textColor = [15, 118, 110];
+      }
+      if (row.boldLineTotal && data.column.index === 6) {
+        data.cell.styles.fontStyle = "bold";
+        if (!row.highlightUseScrap) data.cell.styles.textColor = [15, 118, 110];
       }
     },
   });
 
   const finalY = (doc as unknown as { lastAutoTable?: { finalY?: number } }).lastAutoTable?.finalY ?? startY + 40;
-  let footY = Math.min(finalY + 6, pageH - margin - 14);
+  let footY = Math.min(finalY + 5, pageH - margin - 12);
   if (opts.footerNote) {
     doc.setFont(PDF_FONT_FAMILY, "normal");
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
+    doc.setTextColor(70, 70, 70);
     const lines = doc.splitTextToSize(opts.footerNote, pageW - 2 * margin);
     doc.text(lines, margin, footY);
-    footY += lines.length * 3.6 + 4;
+    footY += lines.length * 3.4 + 3;
+    doc.setTextColor(0, 0, 0);
   }
   doc.setFont(PDF_FONT_FAMILY, "normal");
   doc.setFontSize(8);
@@ -233,12 +294,21 @@ function addMaterialTable(
 }
 
 /**
- * Výrobní list: výkres(y) na **A4 landscape** (ostrý render pdf.js), tabulka materiálu na **A4 portrait**
- * jako skutečný text (DejaVu), větší písmo u varianty tisk.
+ * Výrobní list: výkres(y) podle orientace stránky PDF, tabulka materiálu (kompaktní, bez zbytečných mezer).
  */
 export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkListPdfOptions): Promise<jsPDF> {
   const variant: ProductionA4ExportVariant = opts.variant ?? "overview";
   const ro = variantRenderOpts(variant);
+
+  let logoDataUrl: string | null = null;
+  const logoUrl = String(opts.organization?.organizationLogoUrl || "").trim();
+  if (logoUrl) {
+    try {
+      logoDataUrl = await fetchImageAsDataUrl(logoUrl);
+    } catch {
+      logoDataUrl = null;
+    }
+  }
 
   const drawing = opts.drawing;
   const u = drawing ? String(drawing.url || "").trim() : "";
@@ -247,16 +317,16 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
     const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
     await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
     const margin = 10;
-    const afterY = drawHeaderPortrait(doc, margin, opts);
-    addMaterialTable(doc, opts, margin, afterY + 2, ro);
+    const pageW = doc.internal.pageSize.getWidth();
+    const afterY = drawBrandedHeader(doc, margin, pageW - 2 * margin, opts, logoDataUrl);
+    doc.setFont(PDF_FONT_FAMILY, "bold");
+    doc.setFontSize(10);
+    doc.text("Materiál — řezy a zbytky", margin, afterY + 2);
+    addMaterialTable(doc, opts, margin, afterY + 8, ro);
     return doc;
   }
 
-  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
-  await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
-
-  let lw = doc.internal.pageSize.getWidth();
-  let lh = doc.internal.pageSize.getHeight();
+  let doc: jsPDF | null = null;
 
   if (drawing.kind === "pdf") {
     let pdf: import("pdfjs-dist").PDFDocumentProxy | null = null;
@@ -264,11 +334,15 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
       pdf = await loadPdfDocumentFromUrl(u);
       const n = pdf.numPages;
       for (let i = 1; i <= n; i++) {
-        lw = doc.internal.pageSize.getWidth();
-        lh = doc.internal.pageSize.getHeight();
         const page = await pdf.getPage(i);
+        const vp1 = page.getViewport({ scale: 1 });
+        const orient = pageOrientFromPdfViewport(vp1);
         if (i === 1) {
-          const headerEnd = drawHeaderLandscape(doc, DRAW_MARGIN_MM, opts, lw - 2 * DRAW_MARGIN_MM);
+          doc = new jsPDF({ unit: "mm", format: "a4", orientation: orient });
+          await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
+          const lw = doc.internal.pageSize.getWidth();
+          const lh = doc.internal.pageSize.getHeight();
+          const headerEnd = drawBrandedHeader(doc, DRAW_MARGIN_MM, lw - 2 * DRAW_MARGIN_MM, opts, logoDataUrl);
           const maxW = lw - 2 * DRAW_MARGIN_MM;
           const maxH = lh - headerEnd - DRAW_MARGIN_MM;
           await renderPdfJsPageToJsPdfRegion(doc, page, {
@@ -281,12 +355,14 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
             jpegQuality: ro.jpegQuality,
           });
         } else {
-          doc.addPage("a4", "landscape");
-          lw = doc.internal.pageSize.getWidth();
-          lh = doc.internal.pageSize.getHeight();
+          const vp = page.getViewport({ scale: 1 });
+          const o = pageOrientFromPdfViewport(vp);
+          doc!.addPage("a4", o);
+          const lw = doc!.internal.pageSize.getWidth();
+          const lh = doc!.internal.pageSize.getHeight();
           const maxW = lw - 2 * DRAW_MARGIN_MM;
           const maxH = lh - 2 * DRAW_MARGIN_MM;
-          await renderPdfJsPageToJsPdfRegion(doc, page, {
+          await renderPdfJsPageToJsPdfRegion(doc!, page, {
             x: DRAW_MARGIN_MM,
             y: DRAW_MARGIN_MM,
             maxW,
@@ -305,7 +381,26 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
       }
     }
   } else if (drawing.kind === "image") {
-    const headerEnd = drawHeaderLandscape(doc, DRAW_MARGIN_MM, opts, lw - 2 * DRAW_MARGIN_MM);
+    const dataUrl = await fetchImageAsDataUrl(u);
+    let orient: "portrait" | "landscape" = "landscape";
+    if (dataUrl) {
+      await new Promise<void>((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const nw = Math.max(1, img.naturalWidth || img.width);
+          const nh = Math.max(1, img.naturalHeight || img.height);
+          orient = nw >= nh ? "landscape" : "portrait";
+          resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = dataUrl;
+      });
+    }
+    doc = new jsPDF({ unit: "mm", format: "a4", orientation: orient });
+    await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
+    let lw = doc.internal.pageSize.getWidth();
+    let lh = doc.internal.pageSize.getHeight();
+    const headerEnd = drawBrandedHeader(doc, DRAW_MARGIN_MM, lw - 2 * DRAW_MARGIN_MM, opts, logoDataUrl);
     const maxW = lw - 2 * DRAW_MARGIN_MM;
     const maxH = lh - headerEnd - DRAW_MARGIN_MM;
     try {
@@ -317,13 +412,19 @@ export async function buildProductionA4WorkListPdf(opts: BuildProductionA4WorkLi
     }
   }
 
+  if (!doc) {
+    doc = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    await registerDejaVuFontsForPdf(doc, opts.fontBasePath ?? "/fonts");
+  }
+
   doc.addPage("a4", "portrait");
   const margin = 10;
-  const titleY = margin + 2;
+  const pageW = doc.internal.pageSize.getWidth();
+  const headerBottom = drawBrandedHeader(doc, margin, pageW - 2 * margin, opts, logoDataUrl);
   doc.setFont(PDF_FONT_FAMILY, "bold");
-  doc.setFontSize(11);
-  doc.text("Materiál — řezy a zbytky", margin, titleY);
-  addMaterialTable(doc, opts, margin, titleY + 6, ro);
+  doc.setFontSize(10);
+  doc.text("Materiál — řezy a zbytky", margin, headerBottom + 2);
+  addMaterialTable(doc, opts, margin, headerBottom + 8, ro);
 
   return doc;
 }
