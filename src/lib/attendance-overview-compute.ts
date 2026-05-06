@@ -397,7 +397,7 @@ export type JobSegmentDetailRow = {
   durationH: number;
   rateKcPerH: number | null;
   earningsKc: number;
-  /** Automaticky schválený výdělek z terminálu — orientační částka se nekopíruje (je ve schváleném bloku). */
+  /** Automaticky schválený výdělek z terminálu — používá se jen pro UI (badge / informace). */
   autoApproved?: boolean;
 };
 
@@ -596,7 +596,7 @@ export function buildEmployeeDailyDetailRows(params: {
           autoApproved: autoAp,
         });
         sumJobH += durationH;
-        if (!autoAp) orientacniKcJob += earningsKc;
+        orientacniKcJob += earningsKc;
       }
     }
 
