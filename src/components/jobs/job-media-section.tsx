@@ -1524,17 +1524,17 @@ function UserFolderBlock({
       for (let i = 0; i < blobs.length; i++) {
         const pageNum = pages[i] ?? i + 1;
         const blob = blobs[i];
+        const outFileName = `${baseStem}-strana-${pageNum}.png`;
         const { downloadURL, storagePath: resolvedFullPath } =
           await uploadJobFolderImageBlobViaFirebaseSdk(
             blob,
             companyId,
             jobId,
             folder.id,
-            `${Date.now()}-${baseStem}-s${pageNum}.png`
+            `${Date.now()}-${outFileName}`
           );
         const refDoc = doc(imagesColRef);
-        const displayName =
-          pages.length > 1 ? `${baseStem} — str. ${pageNum}.png` : `${baseStem}.png`;
+        const displayName = outFileName;
         await setDoc(refDoc, {
           id: refDoc.id,
           companyId,
@@ -1554,6 +1554,7 @@ function UserFolderBlock({
           sourcePdfId: pdfDoc.id,
           sourcePdfName: title,
           sourcePdfUrl: openUrl,
+          sourcePdfPageNumber: pageNum,
           ...(isEmployeeLimited
             ? {
                 uploadSource: "employee-job-upload" as const,
@@ -2245,9 +2246,7 @@ function UserFolderBlock({
                             <Eye className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
                         ) : null}
-                        {kind === "pdf" &&
-                        folderType === "photos" &&
-                        allowFolderStaffFileActions ? (
+                        {kind === "pdf" && allowFolderStaffFileActions ? (
                           <JobMediaIconButton
                             label="Převést na obrázek"
                             disabled={busy || !openUrl}
@@ -2552,9 +2551,7 @@ function UserFolderBlock({
                             <Eye className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
                         ) : null}
-                        {kind === "pdf" &&
-                        folderType === "photos" &&
-                        allowFolderStaffFileActions ? (
+                        {kind === "pdf" && allowFolderStaffFileActions ? (
                           <JobMediaIconButton
                             label="Převést na obrázek"
                             disabled={busy || !openUrl}

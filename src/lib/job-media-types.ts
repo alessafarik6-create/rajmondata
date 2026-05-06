@@ -148,6 +148,8 @@ export function getJobMediaPreviewUrl(row: {
   annotatedImageUrl?: string;
   imageUrl?: string;
   url?: string;
+  /** Synonymum z některých kolekcí (např. dokumenty / měření). */
+  fileUrl?: string;
   downloadURL?: string;
   originalImageUrl?: string;
 }): string {
@@ -155,6 +157,7 @@ export function getJobMediaPreviewUrl(row: {
     row.annotatedImageUrl,
     row.imageUrl,
     row.url,
+    row.fileUrl,
     row.downloadURL,
     row.originalImageUrl,
   ];
@@ -275,14 +278,22 @@ export function inferJobMediaItemType(row: {
   fileType?: string | null;
   fileName?: string | null;
   name?: string | null;
+  mimeType?: string | null;
+  url?: string | null;
+  fileUrl?: string | null;
+  downloadURL?: string | null;
 }): JobMediaFileType {
   if (row.fileType === "pdf") return "pdf";
   if (row.fileType === "image") return "image";
   if (row.fileType === "office") return "office";
   if (row.fileType === "csv") return "csv";
+  const mt = String(row.mimeType ?? "").trim().toLowerCase();
+  if (mt === "application/pdf") return "pdf";
   const base = String(row.fileName || row.name || "").toLowerCase();
   if (base.endsWith(".csv")) return "csv";
   if (base.endsWith(".pdf")) return "pdf";
+  const u = String(row.url || row.fileUrl || row.downloadURL || "").toLowerCase();
+  if (u.includes(".pdf")) return "pdf";
   if (isOfficeFileName(base)) return "office";
   return "image";
 }
