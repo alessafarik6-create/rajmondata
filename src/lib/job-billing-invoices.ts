@@ -389,16 +389,6 @@ export async function createAdvanceInvoiceFromContract(params: {
   const vatRate = normalizeVatRate(params.budget.vatRate);
   const { amountNet, vatAmount, amountGross } = splitGrossToNetVat(gross, vatRate);
 
-  const dup = await findExistingAdvanceForContract(
-    params.firestore,
-    params.companyId,
-    params.jobId,
-    params.contract.id
-  );
-  if (dup) {
-    throw new Error("Pro tuto smlouvu již existuje zálohová faktura.");
-  }
-
   const issueDate = new Date().toISOString().slice(0, 10);
   const due = new Date();
   due.setDate(due.getDate() + 14);

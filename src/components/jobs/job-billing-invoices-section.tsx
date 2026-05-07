@@ -35,7 +35,6 @@ import type { JobBudgetBreakdown } from "@/lib/vat-calculations";
 import { normalizeVatRate, resolveJobPaidFromFirestore } from "@/lib/vat-calculations";
 import {
   computeSettlementAmounts,
-  createAdvanceInvoiceFromContract,
   createFinalSettlementInvoice,
   createManualAdvanceInvoice,
   createTaxReceiptForAdvancePayment,
@@ -192,6 +191,8 @@ export function JobBillingInvoicesSection({
   );
 
   const [creatingAdvance, setCreatingAdvance] = useState(false);
+  const [advanceDialogOpen, setAdvanceDialogOpen] = useState(false);
+  const [advanceGrossInput, setAdvanceGrossInput] = useState("");
   const [taxDialogOpen, setTaxDialogOpen] = useState(false);
   const [taxTarget, setTaxTarget] = useState<{
     id: string;
@@ -274,6 +275,44 @@ export function JobBillingInvoicesSection({
     [job]
   );
 
+  const advanceInvoices = useMemo(() => {
+    return jobInvoices.filter(
+      (inv) => String((inv as { type?: string }).type ?? "") === JOB_INVOICE_TYPES.ADVANCE
+    ) as Array<Record<string, unknown> & { id: string }>;
+  }, [jobInvoices]);
+
+  const advanceInvoicesTotal = useMemo(() => {
+    let s = 0;
+    for (const inv of advanceInvoices) {
+      s += Number((inv as { amountGross?: unknown }).amountGross) || 0;
+    }
+    return Math.round(s * 100) / 100;
+  }, [advanceInvoices]);
+
+  const remainingAfterAdvancesGross = useMemo(() => {
+    if (budgetGross == null) return null;
+    return Math.max(0, Math.round((budgetGross - advanceInvoicesTotal) * 100) / 100);
+  }, [budgetGross, advanceInvoicesTotal]);
+
+  const advanceOrdinalById = useMemo(() => {
+    const sorted = [...advanceInvoices].sort((a, b) => {
+      const ta = (a as { createdAt?: unknown }).createdAt;
+      const tb = (b as { createdAt?: unknown }).createdAt;
+      const na =
+        ta && typeof ta === "object" && "toMillis" in (ta as object)
+          ? (ta as { toMillis: () => number }).toMillis()
+          : 0;
+      const nb =
+        tb && typeof tb === "object" && "toMillis" in (tb as object)
+          ? (tb as { toMillis: () => number }).toMillis()
+          : 0;
+      return na - nb;
+    });
+    const m = new Map<string, number>();
+    sorted.forEach((inv, idx) => m.set(inv.id, idx + 1));
+    return m;
+  }, [advanceInvoices]);
+
   const remainingGross = useMemo(() => {
     if (jobBudgetBreakdown == null) return null;
     return Math.max(
@@ -328,7 +367,6 @@ export function JobBillingInvoicesSection({
   const canCreateAdvance =
     canManage &&
     Boolean(customerId && String(customerId).trim()) &&
-    primaryContract != null &&
     jobBudgetBreakdown != null;
 
   const canCreateManualAdvance =
@@ -336,29 +374,63 @@ export function JobBillingInvoicesSection({
     Boolean(customerId && String(customerId).trim()) &&
     jobBudgetBreakdown != null;
 
+  const openAdvanceDialog = () => {
+    setAdvanceGrossInput("");
+    setAdvanceDialogOpen(true);
+  };
+
   const handleCreateAdvance = async () => {
-    if (!user || !primaryContract || !jobBudgetBreakdown || !customerId) return;
+    if (!user || !jobBudgetBreakdown || !customerId) return;
+    const raw = String(advanceGrossInput).trim().replace(/\s/g, "").replace(",", ".");
+    const gross = Number(raw);
+    if (!Number.isFinite(gross) || gross <= 0) {
+      toast({
+        variant: "destructive",
+        title: "Neplatná částka",
+        description: "Zadejte kladnou částku zálohy (s DPH).",
+      });
+      return;
+    }
+    if (budgetGross != null && advanceInvoicesTotal + gross > budgetGross + 0.01) {
+      toast({
+        variant: "destructive",
+        title: "Součet záloh je vyšší než rozpočet",
+        description:
+          `Aktuální součet záloh je ${advanceInvoicesTotal.toLocaleString("cs-CZ")} Kč a nová záloha by součet zvýšila na ${(advanceInvoicesTotal + gross).toLocaleString("cs-CZ")} Kč, což překračuje rozpočet ${budgetGross.toLocaleString("cs-CZ")} Kč.`,
+      });
+      return;
+    }
+
+    const vatRate = normalizeVatRate(jobBudgetBreakdown.vatRate);
+    const amountNet = Math.round((gross / (1 + vatRate / 100)) * 100) / 100;
+
     setCreatingAdvance(true);
     try {
-      const { pdfHtml } = await createAdvanceInvoiceFromContract({
+      const { pdfHtml } = await createManualAdvanceInvoice({
         firestore,
         companyId,
         jobId,
         jobName,
         customerId: String(customerId),
         customerName,
-        customerAddressLines:
-          customerAddressLines || customerName,
+        customerAddressLines: customerAddressLines || customerName,
         customerPhone,
         customerEmail,
         supplierName,
-        supplierAddressLines:
-          supplierAddressLines || supplierName,
-        contract: primaryContract,
-        jobBank,
-        budget: jobBudgetBreakdown,
+        supplierAddressLines: supplierAddressLines || supplierName,
         userId: user.uid,
         logoUrl: organizationLogoUrl,
+        lines: [
+          {
+            description: `Záloha na zakázku ${jobName}`,
+            quantity: 1,
+            unit: "ks",
+            unitPriceNet: amountNet,
+            vatRate,
+          },
+        ],
+        primaryWorkContract: primaryContract,
+        jobBank,
         orgBankAccounts,
         legacyCompanyBankAccount: legacyCompanyBank,
         supplierIco,
@@ -370,6 +442,7 @@ export function JobBillingInvoicesSection({
         title: "Zálohová faktura vytvořena",
         description: "Dokument je v seznamu níže a v Dokladech (Vydané doklady).",
       });
+      setAdvanceDialogOpen(false);
       if (pdfHtml) printDocHtml("Zálohová faktura", pdfHtml);
     } catch (e) {
       toast({
@@ -651,12 +724,12 @@ export function JobBillingInvoicesSection({
                 ? `${jobBudgetBreakdown.budgetGross.toLocaleString("cs-CZ")} Kč`
                 : "—"}
             </strong>
-            {" · "}Přijato celkem:{" "}
-            <strong>{jobPaid.paidGross.toLocaleString("cs-CZ")} Kč</strong>
+            {" · "}Přijaté zálohy celkem:{" "}
+            <strong>{advanceInvoicesTotal.toLocaleString("cs-CZ")} Kč</strong>
             {" · "}Zbývá doplatit:{" "}
             <strong>
-              {remainingGross != null
-                ? `${remainingGross.toLocaleString("cs-CZ")} Kč`
+              {remainingAfterAdvancesGross != null
+                ? `${remainingAfterAdvancesGross.toLocaleString("cs-CZ")} Kč`
                 : "—"}
             </strong>
           </p>
@@ -711,7 +784,7 @@ export function JobBillingInvoicesSection({
                     type="button"
                     className="gap-2"
                     disabled={creatingAdvance}
-                    onClick={() => void handleCreateAdvance()}
+                    onClick={() => openAdvanceDialog()}
                   >
                     {creatingAdvance ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -781,7 +854,7 @@ export function JobBillingInvoicesSection({
                   const t = String(row.type ?? "");
                   const label =
                     t === JOB_INVOICE_TYPES.ADVANCE
-                      ? "Zálohová faktura"
+                      ? `Zálohová faktura ${advanceOrdinalById.get(row.id) ?? ""}`.trim()
                       : t === JOB_INVOICE_TYPES.TAX_RECEIPT
                         ? "Daňový doklad k přijaté platbě"
                         : t === JOB_INVOICE_TYPES.FINAL_INVOICE
@@ -806,7 +879,7 @@ export function JobBillingInvoicesSection({
                         <div className="font-medium text-neutral-950">{label}</div>
                         <div className="text-xs text-neutral-800">
                           {num} · stav: {st || "—"} · částka s DPH:{" "}
-                          {Number(row.amountGross ?? row.paidAmount ?? 0).toLocaleString("cs-CZ")}{" "}
+                          {displayGross.toLocaleString("cs-CZ")}{" "}
                           Kč
                         </div>
                       </div>
@@ -887,6 +960,54 @@ export function JobBillingInvoicesSection({
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={advanceDialogOpen} onOpenChange={setAdvanceDialogOpen}>
+        <DialogContent className="max-w-md border-neutral-200 bg-white text-neutral-950">
+          <DialogHeader>
+            <DialogTitle>Nová zálohová faktura</DialogTitle>
+            <DialogDescription className="text-neutral-800">
+              Zadejte částku zálohy (s DPH). Každá záloha se vytvoří jako samostatná zálohová faktura s vlastním číslem.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 py-2">
+            <div>
+              <Label>Částka zálohy (s DPH)</Label>
+              <Input
+                value={advanceGrossInput}
+                onChange={(e) => setAdvanceGrossInput(e.target.value)}
+                placeholder="např. 200000"
+                className="border-neutral-950"
+              />
+            </div>
+            {budgetGross != null ? (
+              <div className="text-xs text-neutral-700">
+                Rozpočet: <strong>{budgetGross.toLocaleString("cs-CZ")} Kč</strong>
+                {" · "}Zálohy celkem: <strong>{advanceInvoicesTotal.toLocaleString("cs-CZ")} Kč</strong>
+                {" · "}Zbývá:{" "}
+                <strong>
+                  {remainingAfterAdvancesGross != null
+                    ? `${remainingAfterAdvancesGross.toLocaleString("cs-CZ")} Kč`
+                    : "—"}
+                </strong>
+              </div>
+            ) : null}
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              className="border-neutral-950"
+              onClick={() => setAdvanceDialogOpen(false)}
+              disabled={creatingAdvance}
+            >
+              Zrušit
+            </Button>
+            <Button type="button" disabled={creatingAdvance} onClick={() => void handleCreateAdvance()}>
+              {creatingAdvance ? <Loader2 className="h-4 w-4 animate-spin" /> : "Vytvořit"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={taxDialogOpen} onOpenChange={setTaxDialogOpen}>
         <DialogContent className="max-w-md border-neutral-200 bg-white text-neutral-950">
