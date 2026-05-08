@@ -203,6 +203,7 @@ export function JobCommentsThread(props: {
         authorName: props.authorName,
         authorRole: props.authorRole,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
         readBy: [props.userId],
       };
       const ref = await addDoc(base, payload);

@@ -139,7 +139,6 @@ import {
   Loader2,
   MessageSquare,
   Pencil,
-  StickyNote,
   Trash2,
   Upload,
   UserCheck,
@@ -2418,22 +2417,6 @@ function UserFolderBlock({
                         )}
                         {allowFolderStaffFileActions ? (
                           <>
-                            <JobMediaIconButton
-                              label="Poznámka"
-                              onClick={() =>
-                                onNoteDialogOpen({
-                                  path: {
-                                    kind: "folderImages",
-                                    folderId: folder.id,
-                                  },
-                                  imageId: img.id,
-                                  currentNote: img.note || "",
-                                  fileNameHint: title,
-                                })
-                              }
-                            >
-                              <StickyNote className="size-[18px]" aria-hidden />
-                            </JobMediaIconButton>
                             {!isCustomerScope &&
                             onOpenMediaApprovalDialog &&
                             kind !== "office" ? (
@@ -2603,22 +2586,6 @@ function UserFolderBlock({
                       )}
                       {allowFolderStaffFileActions ? (
                         <>
-                          <JobMediaIconButton
-                            label="Poznámka"
-                            onClick={() =>
-                              onNoteDialogOpen({
-                                path: {
-                                  kind: "folderImages",
-                                  folderId: folder.id,
-                                },
-                                imageId: img.id,
-                                currentNote: img.note || "",
-                                fileNameHint: title,
-                              })
-                            }
-                          >
-                            <StickyNote className="size-[18px]" aria-hidden />
-                          </JobMediaIconButton>
                           {!isCustomerScope && onOpenMediaApprovalDialog ? (
                             <JobMediaIconButton
                               label="Schválení zákazníkem"
@@ -2740,22 +2707,6 @@ function UserFolderBlock({
                         ) : null}
                         {allowFolderStaffFileActions ? (
                           <>
-                            <JobMediaIconButton
-                              label="Poznámka"
-                              onClick={() =>
-                                onNoteDialogOpen({
-                                  path: {
-                                    kind: "folderImages",
-                                    folderId: folder.id,
-                                  },
-                                  imageId: img.id,
-                                  currentNote: img.note || "",
-                                  fileNameHint: title,
-                                })
-                              }
-                            >
-                              <StickyNote className="size-[18px]" aria-hidden />
-                            </JobMediaIconButton>
                             <JobMediaIconButton
                               label="Smazat"
                               disabled={busy}
@@ -3829,19 +3780,6 @@ export function JobMediaSection({
                             )}
                             {!hideJobMediaAdminUi ? (
                               <>
-                                <JobMediaIconButton
-                                  label="Poznámka"
-                                  onClick={() =>
-                                    openNoteEditor({
-                                      path: { kind: "photos" },
-                                      imageId: p.id,
-                                      currentNote: p.note || "",
-                                      fileNameHint: title,
-                                    })
-                                  }
-                                >
-                                  <StickyNote className="size-[18px]" aria-hidden />
-                                </JobMediaIconButton>
                                 {kind !== "office" ? (
                                   <JobMediaIconButton
                                     label="Schválení zákazníkem"
@@ -3976,19 +3914,6 @@ export function JobMediaSection({
                           {!hideJobMediaAdminUi ? (
                             <>
                               <JobMediaIconButton
-                                label="Poznámka"
-                                onClick={() =>
-                                  openNoteEditor({
-                                    path: { kind: "photos" },
-                                    imageId: p.id,
-                                    currentNote: p.note || "",
-                                    fileNameHint: title,
-                                  })
-                                }
-                              >
-                                <StickyNote className="size-[18px]" aria-hidden />
-                              </JobMediaIconButton>
-                              <JobMediaIconButton
                                 label="Schválení zákazníkem"
                                 onClick={() =>
                                   openMediaApprovalDialog({
@@ -4086,19 +4011,6 @@ export function JobMediaSection({
                                     ) : null}
                                     {!hideJobMediaAdminUi ? (
                                       <>
-                                        <JobMediaIconButton
-                                          label="Poznámka"
-                                          onClick={() =>
-                                            openNoteEditor({
-                                              path: { kind: "photos" },
-                                              imageId: p.id,
-                                              currentNote: p.note || "",
-                                              fileNameHint: title,
-                                            })
-                                          }
-                                        >
-                                          <StickyNote className="size-[18px]" aria-hidden />
-                                        </JobMediaIconButton>
                                         {kind !== "office" ? (
                                           <JobMediaIconButton
                                             label="Schválení zákazníkem"
