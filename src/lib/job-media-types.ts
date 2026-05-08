@@ -65,6 +65,11 @@ export type JobFolderDoc = {
    * Kanonické pole: `allowEmployeeUpload`.
    */
   allowEmployeeUpload?: boolean;
+  /**
+   * Povolit úpravy anotací zaměstnanci (nový editor).
+   * Default = false (read-only).
+   */
+  employeeCanEdit?: boolean;
   /** Legacy (zpětná kompatibilita) — nahrazeno `allowEmployeeUpload`. */
   employeeUploadAllowed?: boolean;
   /** Klientský portál — výslovně povolit zobrazení zákazníkovi (jinak interní). */
@@ -109,6 +114,8 @@ export type JobFolderImageDoc = {
   ledgerDate?: string;
   /** Viditelnost souboru pro zaměstnance (přepíše výchozí dědění ze složky). */
   employeeVisible?: boolean;
+  /** (Volitelně) povolit edit anotací zaměstnanci na úrovni souboru; bez něj platí složka. */
+  employeeCanEdit?: boolean;
   /** Zobrazení ve výrobním modulu (náhled výkresu / PDF) — výslovné označení. */
   visibleInProduction?: boolean;
   /** Audit nahrání zaměstnancem (Firestore pravidla). */

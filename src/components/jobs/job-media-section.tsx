@@ -909,6 +909,7 @@ function UserFolderBlock({
   const persistFolderEmployeeFlags = async (patch: {
     employeeVisible: boolean;
     allowEmployeeUpload: boolean;
+    employeeCanEdit: boolean;
   }) => {
     if (!firestore || folderPermBusy) return;
     setFolderPermBusy(true);
@@ -926,6 +927,7 @@ function UserFolderBlock({
         {
           employeeVisible: patch.employeeVisible,
           allowEmployeeUpload: patch.allowEmployeeUpload,
+          employeeCanEdit: patch.employeeCanEdit,
           /** Legacy (zpětná kompatibilita během přechodu) */
           employeeUploadAllowed: patch.allowEmployeeUpload,
         }
@@ -2047,6 +2049,7 @@ function UserFolderBlock({
                           ? ((folder as { allowEmployeeUpload?: unknown }).allowEmployeeUpload === true ||
                               (folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true)
                           : false,
+                        employeeCanEdit: v ? folder.employeeCanEdit === true : false,
                       })
                     }
                   />
@@ -2071,6 +2074,7 @@ function UserFolderBlock({
                       void persistFolderEmployeeFlags({
                         employeeVisible: folder.employeeVisible === true,
                         allowEmployeeUpload: v,
+                        employeeCanEdit: folder.employeeCanEdit === true,
                       })
                     }
                   />
@@ -2079,6 +2083,28 @@ function UserFolderBlock({
                     className="cursor-pointer text-sm font-normal"
                   >
                     Zaměstnanec může nahrávat
+                  </Label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id={`emp-edit-${folder.id}`}
+                    checked={folder.employeeCanEdit === true}
+                    disabled={folderPermBusy || folder.employeeVisible !== true}
+                    onCheckedChange={(v) =>
+                      void persistFolderEmployeeFlags({
+                        employeeVisible: folder.employeeVisible === true,
+                        allowEmployeeUpload:
+                          (folder as { allowEmployeeUpload?: unknown }).allowEmployeeUpload === true ||
+                          (folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true,
+                        employeeCanEdit: v,
+                      })
+                    }
+                  />
+                  <Label
+                    htmlFor={`emp-edit-${folder.id}`}
+                    className="cursor-pointer text-sm font-normal"
+                  >
+                    Zaměstnanec může upravovat
                   </Label>
                 </div>
               </div>
