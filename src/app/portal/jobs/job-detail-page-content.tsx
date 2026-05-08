@@ -47,6 +47,7 @@ import {
 } from "@/lib/job-linked-document-sync";
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
 import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoices-section";
+import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
 import { JobDocumentEmailSection } from "@/components/jobs/job-document-email-section";
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
@@ -8897,6 +8898,48 @@ export function JobDetailPageContent({
                   ? String((job as { status: string }).status)
                   : ""
               }
+            />
+          ) : null}
+
+          {companyId && jobFirestoreId && user && firestore ? (
+            <JobCommentsThread
+              firestore={firestore}
+              companyId={companyId}
+              jobId={String(jobId)}
+              userId={user.uid}
+              authorName={
+                String(
+                  (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
+                    (profile as { name?: unknown })?.name ??
+                    (profile as { email?: unknown })?.email ??
+                    user.email ??
+                    ""
+                ).trim() || "Admin"
+              }
+              authorRole="admin"
+              canPost={true}
+              title="Poznámky / chat k zakázce"
+              target={{ targetType: "job" }}
+              onAfterSend={async () => {
+                // Notifikace řešíme přes API (Admin SDK), aby šlo dohledat cílové uživatele.
+                try {
+                  const token = await user.getIdToken();
+                  await fetch("/api/jobs/comments/notify", {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      companyId,
+                      jobId: String(jobId),
+                      targetType: "job",
+                    }),
+                  });
+                } catch {
+                  // ignore
+                }
+              }}
             />
           ) : null}
 

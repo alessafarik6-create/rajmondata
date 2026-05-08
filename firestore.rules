@@ -1190,6 +1190,76 @@ service cloud.firestore {
           allow create, update, delete: if signedIn() && sameCompany(companyId) && isPrivileged();
         }
 
+        /**
+         * Poznámky / chat k zakázce a k souborům.
+         * companies/{companyId}/jobs/{jobId}/comments/{commentId}
+         */
+        match /comments/{commentId} {
+          function jobCommentsEmployeeWriteAllowed() {
+            return userRole() == 'employee' &&
+              ownEmployeeId() != null &&
+              jobPortalEmployeeEligible(companyId, jobId) &&
+              (
+                /** Výroba (přiřazená zakázka) */
+                (jobAssignedForProduction(companyId, jobId) && employeeProductionFlag(companyId)) ||
+                /** Přímé oprávnění u zakázky */
+                (
+                  get(/databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/jobMembers/$(ownEmployeeId())).data.accessMode == 'full_internal' ||
+                  get(/databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/jobMembers/$(ownEmployeeId())).data.jobPermissions.canUploadFiles == true
+                )
+              );
+          }
+
+          function jobCommentsStaffOrEmployeeOk() {
+            return signedIn() && sameCompany(companyId) && (
+              isPrivileged() || jobCommentsEmployeeWriteAllowed()
+            );
+          }
+
+          allow read: if jobCommentsStaffOrEmployeeOk();
+
+          allow create: if jobCommentsStaffOrEmployeeOk() &&
+            request.resource.data.organizationId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.targetType in ['job', 'file'] &&
+            request.resource.data.message is string &&
+            request.resource.data.message.size() > 0 &&
+            request.resource.data.message.size() <= 4000 &&
+            request.resource.data.authorId == request.auth.uid &&
+            request.resource.data.authorName is string &&
+            request.resource.data.authorName.size() > 0 &&
+            request.resource.data.authorName.size() <= 200 &&
+            request.resource.data.authorRole in ['admin', 'employee'] &&
+            request.resource.data.createdAt is timestamp &&
+            (
+              request.resource.data.targetType == 'job' ||
+              (
+                request.resource.data.targetType == 'file' &&
+                request.resource.data.fileId is string &&
+                request.resource.data.fileId.size() > 0 &&
+                (!('folderId' in request.resource.data) || request.resource.data.folderId == null || (request.resource.data.folderId is string && request.resource.data.folderId.size() > 0))
+              )
+            ) &&
+            (!('readBy' in request.resource.data) || request.resource.data.readBy is list);
+
+          /** Update jen pro readBy (přečteno) — žádné přepisování historie. */
+          allow update: if jobCommentsStaffOrEmployeeOk() &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['readBy']) &&
+            (!('readBy' in request.resource.data) || request.resource.data.readBy is list) &&
+            request.resource.data.organizationId == resource.data.organizationId &&
+            request.resource.data.jobId == resource.data.jobId &&
+            request.resource.data.targetType == resource.data.targetType &&
+            request.resource.data.authorId == resource.data.authorId &&
+            request.resource.data.authorName == resource.data.authorName &&
+            request.resource.data.authorRole == resource.data.authorRole &&
+            request.resource.data.message == resource.data.message &&
+            request.resource.data.createdAt == resource.data.createdAt &&
+            (!('fileId' in resource.data) || request.resource.data.fileId == resource.data.fileId) &&
+            (!('folderId' in resource.data) || request.resource.data.folderId == resource.data.folderId);
+
+          allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+        }
+
         match /photos/{photoId} {
           allow read: if terminalCompanyMatches(companyId) ||
             jobFinancialReadAccess(companyId, jobId) ||

@@ -8,9 +8,12 @@ import {
   deleteField,
   doc,
   getDoc,
+  limit,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
+  where,
   writeBatch,
 } from "firebase/firestore";
 import { ref, deleteObject } from "firebase/storage";
@@ -117,6 +120,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
 import {
   Tooltip,
   TooltipContent,
@@ -133,6 +137,7 @@ import {
   FolderPlus,
   ImagePlus,
   Loader2,
+  MessageSquare,
   Pencil,
   StickyNote,
   Trash2,
@@ -712,6 +717,47 @@ function UserFolderBlock({
     [firestore, companyId, jobId, folder.id]
   );
   const { data: imagesRaw } = useCollection<JobFolderImageDoc>(imagesColRef);
+
+  const [fileChatOpen, setFileChatOpen] = useState(false);
+  const [fileChatTarget, setFileChatTarget] = useState<{
+    fileId: string;
+    folderId: string;
+    fileName: string;
+  } | null>(null);
+
+  const fileCommentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !jobId) return null;
+    if (isCustomerScope) return null;
+    const base = collection(firestore, "companies", companyId, "jobs", jobId, "comments");
+    return query(
+      base,
+      where("targetType", "==", "file"),
+      where("folderId", "==", folder.id),
+      limit(400)
+    );
+  }, [firestore, companyId, jobId, isCustomerScope, folder.id]);
+
+  const { data: fileCommentsRaw = [] } = useCollection(fileCommentsQuery);
+
+  const fileCommentStats = useMemo(() => {
+    const uid = user?.uid || "";
+    const m = new Map<string, { count: number; unread: number }>();
+    const list = (Array.isArray(fileCommentsRaw) ? fileCommentsRaw : []) as Array<
+      Record<string, unknown> & { id: string }
+    >;
+    for (const c of list) {
+      const fid = String(c.fileId ?? "").trim();
+      if (!fid) continue;
+      const key = fid;
+      const prev = m.get(key) ?? { count: 0, unread: 0 };
+      prev.count += 1;
+      const readBy = (c.readBy as unknown) as string[] | undefined;
+      const read = uid && Array.isArray(readBy) && readBy.includes(uid);
+      if (!read) prev.unread += 1;
+      m.set(key, prev);
+    }
+    return m;
+  }, [fileCommentsRaw, user?.uid]);
 
   const images = useMemo(() => {
     const list = (imagesRaw || []) as JobFolderImageDoc[];
@@ -1874,6 +1920,66 @@ function UserFolderBlock({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={fileChatOpen} onOpenChange={setFileChatOpen}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-border/60 bg-surface">
+          <DialogHeader>
+            <DialogTitle>Poznámky k souboru</DialogTitle>
+            <DialogDescription>
+              Chat zůstává uložený u daného souboru. Zprávy vidí zaměstnanec i administrátor.
+            </DialogDescription>
+          </DialogHeader>
+          {fileChatTarget ? (
+            <JobCommentsThread
+              firestore={firestore}
+              companyId={companyId}
+              jobId={jobId}
+              userId={user.uid}
+              authorName={
+                String(
+                  (actorProfile as { displayName?: unknown; name?: unknown })?.displayName ??
+                    (actorProfile as { name?: unknown })?.name ??
+                    user.email ??
+                    ""
+                ).trim() || "Uživatel"
+              }
+              authorRole={isEmployeeLimited ? "employee" : "admin"}
+              canPost={true}
+              title={fileChatTarget.fileName || "Soubor"}
+              target={{
+                targetType: "file",
+                fileId: fileChatTarget.fileId,
+                folderId: fileChatTarget.folderId,
+                fileName: fileChatTarget.fileName,
+              }}
+              dense
+              onAfterSend={async () => {
+                try {
+                  const token = await user.getIdToken();
+                  await fetch("/api/jobs/comments/notify", {
+                    method: "POST",
+                    headers: {
+                      Authorization: `Bearer ${token}`,
+                      "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                      companyId,
+                      jobId,
+                      targetType: "file",
+                      fileId: fileChatTarget.fileId,
+                      folderId: fileChatTarget.folderId,
+                      fileName: fileChatTarget.fileName,
+                    }),
+                  });
+                } catch {
+                  // ignore
+                }
+              }}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
     <Collapsible open={folderOpen} onOpenChange={setFolderOpen}>
       <Card className="border-border/60 bg-surface">
         <CardHeader className="space-y-3 pb-2">
@@ -2235,6 +2341,27 @@ function UserFolderBlock({
                         >
                           <ExternalLink className="size-[18px]" aria-hidden />
                         </JobMediaIconButton>
+                        <JobMediaIconButton
+                          label={`Poznámky (${fileCommentStats.get(img.id)?.count ?? 0})`}
+                          disabled={!user?.uid}
+                          onClick={() => {
+                            setFileChatTarget({
+                              fileId: img.id,
+                              folderId: folder.id,
+                              fileName: title,
+                            });
+                            setFileChatOpen(true);
+                          }}
+                        >
+                          <span className="relative inline-flex items-center">
+                            <MessageSquare className="size-[18px]" aria-hidden />
+                            {(fileCommentStats.get(img.id)?.unread ?? 0) > 0 ? (
+                              <span className="absolute -right-2 -top-2 rounded-full bg-orange-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                                {fileCommentStats.get(img.id)?.unread ?? 0}
+                              </span>
+                            ) : null}
+                          </span>
+                        </JobMediaIconButton>
                         {kind === "pdf" ? (
                           <JobMediaIconButton
                             label="Celá obrazovka"
@@ -2388,6 +2515,27 @@ function UserFolderBlock({
                   extraFooter={productionFooter(img)}
                   actions={
                     <>
+                      <JobMediaIconButton
+                        label={`Poznámky (${fileCommentStats.get(img.id)?.count ?? 0})`}
+                        disabled={!user?.uid}
+                        onClick={() => {
+                          setFileChatTarget({
+                            fileId: img.id,
+                            folderId: folder.id,
+                            fileName: title,
+                          });
+                          setFileChatOpen(true);
+                        }}
+                      >
+                        <span className="relative inline-flex items-center">
+                          <MessageSquare className="size-[18px]" aria-hidden />
+                          {(fileCommentStats.get(img.id)?.unread ?? 0) > 0 ? (
+                            <span className="absolute -right-2 -top-2 rounded-full bg-orange-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                              {fileCommentStats.get(img.id)?.unread ?? 0}
+                            </span>
+                          ) : null}
+                        </span>
+                      </JobMediaIconButton>
                       <JobMediaIconButton
                         label="Náhled"
                         disabled={!openUrl}

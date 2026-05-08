@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, ChevronLeft, MapPin, Calendar } from "lucide-react";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
+import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
 import type { JobMemberPermissions } from "@/lib/job-employee-access";
 import {
   DEFAULT_LIMITED_MEMBER_PERMISSIONS,
@@ -62,6 +63,14 @@ export default function EmployeeJobDetailPage() {
     [firestore, companyId, employeeId]
   );
   const { data: employeeDoc, isLoading: employeeLoading } = useDoc(employeeRef);
+
+  const employeeDisplayName = useMemo(() => {
+    const e = employeeDoc as Record<string, unknown> | null | undefined;
+    const first = String(e?.firstName ?? "").trim();
+    const last = String(e?.lastName ?? "").trim();
+    const full = [first, last].filter(Boolean).join(" ").trim();
+    return full || String(e?.email ?? "").trim() || "Zaměstnanec";
+  }, [employeeDoc]);
 
   const { assignedJobIds, jobsLoading } = useAssignedWorklogJobs(
     firestore,
@@ -405,6 +414,37 @@ export default function EmployeeJobDetailPage() {
                 memberPermissions={permissionsForMedia}
                 employeeRecordId={employeeId}
                 showLegacyPhotosForEmployee={showLegacyPhotos}
+              />
+
+              <JobCommentsThread
+                firestore={firestore}
+                companyId={companyId}
+                jobId={jobId}
+                userId={user.uid}
+                authorName={employeeDisplayName}
+                authorRole="employee"
+                canPost={true}
+                title="Poznámky / chat k zakázce"
+                target={{ targetType: "job" }}
+                onAfterSend={async () => {
+                  try {
+                    const token = await user.getIdToken();
+                    await fetch("/api/jobs/comments/notify", {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        companyId,
+                        jobId,
+                        targetType: "job",
+                      }),
+                    });
+                  } catch {
+                    // ignore
+                  }
+                }}
               />
               {showDocEmpty ? (
                 <p className="text-sm text-muted-foreground">
