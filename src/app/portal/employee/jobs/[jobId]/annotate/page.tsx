@@ -37,16 +37,46 @@ export default function EmployeeJobAnnotatePage() {
   const fileType = String(searchParams.get("fileType") || "").trim(); // image|pdf
   const canEdit = String(searchParams.get("canEdit") || "").trim() === "1";
 
+  const mediaRef = useMemoFirebase(() => {
+    if (!firestore || !companyId || !jobId || !mediaId) return null;
+    if (kind === "photos") {
+      return doc(firestore, "companies", companyId, "jobs", jobId, "photos", mediaId);
+    }
+    if (kind === "folderImages" && folderId) {
+      return doc(
+        firestore,
+        "companies",
+        companyId,
+        "jobs",
+        jobId,
+        "folders",
+        folderId,
+        "images",
+        mediaId
+      );
+    }
+    return null;
+  }, [firestore, companyId, jobId, kind, folderId, mediaId]);
+
+  const { data: mediaDoc, isLoading: mediaLoading } = useDoc(mediaRef);
+
   const initialTarget: JobPhotoAnnotationTarget | null = useMemo(() => {
     if (!mediaId || (kind !== "folderImages" && kind !== "photos")) return null;
     if (kind === "folderImages" && !folderId) return null;
+    if (!mediaDoc || typeof mediaDoc !== "object") return null;
+
+    // Build the same shape the admin/editor expects: include URL/storage fields from Firestore doc.
+    const base = mediaDoc as Record<string, unknown>;
     return {
+      ...(base as any),
       id: mediaId,
       fileType: fileType === "pdf" ? "pdf" : "image",
       annotationTarget:
-        kind === "photos" ? { kind: "photos" } : { kind: "folderImages", folderId },
-    };
-  }, [mediaId, kind, folderId, fileType]);
+        kind === "photos"
+          ? { kind: "photos" }
+          : { kind: "folderImages", folderId },
+    } as JobPhotoAnnotationTarget;
+  }, [mediaDoc, mediaId, kind, folderId, fileType]);
 
   useEffect(() => {
     if (profileLoading) return;
@@ -56,7 +86,7 @@ export default function EmployeeJobAnnotatePage() {
     }
   }, [profileLoading, profile, router, jobId, user]);
 
-  if (!user || profileLoading) {
+  if (!user || profileLoading || mediaLoading) {
     return (
       <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -65,11 +95,21 @@ export default function EmployeeJobAnnotatePage() {
     );
   }
 
-  if (!jobId || !companyId || !employeeId || !initialTarget) {
+  if (!jobId || !companyId || !employeeId || !mediaId) {
     return (
       <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 p-6">
         <p className="text-sm text-muted-foreground">
           Nelze otevřít editor anotací (chybí parametry).
+        </p>
+      </div>
+    );
+  }
+
+  if (!initialTarget) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 p-6">
+        <p className="text-sm text-muted-foreground">
+          Nelze otevřít editor anotací (soubor nebyl nalezen).
         </p>
       </div>
     );
