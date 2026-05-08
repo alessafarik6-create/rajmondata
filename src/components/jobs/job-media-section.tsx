@@ -1923,7 +1923,9 @@ function UserFolderBlock({
       </Dialog>
 
       <Dialog open={fileChatOpen} onOpenChange={setFileChatOpen}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto border-border/60 bg-surface">
+        <DialogContent
+          className="w-[95vw] max-w-[680px] border border-border bg-background text-foreground shadow-2xl sm:rounded-xl sm:p-6 max-h-[80vh] overflow-hidden"
+        >
           <DialogHeader>
             <DialogTitle>Poznámky k souboru</DialogTitle>
             <DialogDescription>

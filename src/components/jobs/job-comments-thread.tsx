@@ -301,8 +301,12 @@ export function JobCommentsThread(props: {
     toast,
   ]);
 
+  const containerHeightClassName = props.dense
+    ? "h-[56vh] max-h-[56vh]"
+    : "h-[62vh] max-h-[62vh]";
+
   return (
-    <Card className={cn("border-border/60 bg-surface", props.className)}>
+    <Card className={cn("border border-border bg-background text-foreground shadow-sm", props.className)}>
       <CardHeader className={cn(props.dense ? "pb-2" : "")}>
         <CardTitle className="flex items-center justify-between gap-2 text-base">
           <span>{props.title}</span>
@@ -317,8 +321,8 @@ export function JobCommentsThread(props: {
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className={cn("space-y-3", props.dense ? "pt-0" : "")}>
-        <div className={cn("space-y-2", props.dense ? "max-h-[45vh]" : "max-h-[55vh]", "overflow-y-auto pr-1")}>
+      <CardContent className={cn("flex flex-col gap-3", containerHeightClassName, props.dense ? "pt-0" : "")}>
+        <div className={cn("flex-1 space-y-2 overflow-y-auto pr-1")}>
           {error ? (
             <>
               {console.error("[JobCommentsThread] load failed", error)}
@@ -339,6 +343,7 @@ export function JobCommentsThread(props: {
               const dt = formatDateSafe(c.createdAt);
               const readBy = (c.readBy as unknown) as string[] | undefined;
               const read = Array.isArray(readBy) && readBy.includes(props.userId);
+              const isAdmin = role === "admin";
               return (
                 <div
                   key={c.id}
@@ -349,26 +354,31 @@ export function JobCommentsThread(props: {
                 >
                   <div
                     className={cn(
-                      "max-w-[92%] rounded-xl border px-3 py-2 text-sm sm:max-w-[75%]",
-                      mine
-                        ? "border-primary/25 bg-primary/10 text-foreground"
-                        : "border-border/60 bg-muted/30 text-foreground"
+                      "max-w-[92%] rounded-2xl border px-3 py-2 text-sm sm:max-w-[75%]",
+                      isAdmin
+                        ? "border-orange-200 bg-orange-50 text-orange-950 dark:border-orange-800/60 dark:bg-orange-950/30 dark:text-orange-50"
+                        : "border-slate-200 bg-slate-50 text-slate-950 dark:border-slate-700/60 dark:bg-slate-900/50 dark:text-slate-50",
+                      mine ? "rounded-br-md" : "rounded-bl-md"
                     )}
                   >
-                    <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                      <span className="font-medium text-foreground/80">{author}</span>
+                    <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground dark:text-muted-foreground">
+                      <span className="font-medium text-foreground/90">{author}</span>
                       <Badge
-                        variant={role === "admin" ? "default" : "secondary"}
-                        className="h-5 px-2 text-[10px]"
+                        className={cn(
+                          "h-5 px-2 text-[10px] font-semibold",
+                          isAdmin
+                            ? "bg-orange-600 text-white hover:bg-orange-600"
+                            : "bg-sky-600 text-white hover:bg-sky-600"
+                        )}
                       >
-                        {role === "admin" ? "admin" : "zaměstnanec"}
+                        {isAdmin ? "admin" : "zaměstnanec"}
                       </Badge>
-                      <span>{dt}</span>
-                      <span className="ml-auto">
+                      <span className="text-foreground/70">{dt}</span>
+                      <span className="ml-auto text-foreground/70">
                         {read ? "přečteno" : "nepřečteno"}
                       </span>
                     </div>
-                    <div className="whitespace-pre-wrap break-words">{msg}</div>
+                    <div className="whitespace-pre-wrap break-words text-foreground">{msg}</div>
                   </div>
                 </div>
               );
@@ -377,12 +387,12 @@ export function JobCommentsThread(props: {
         </div>
 
         {props.canPost ? (
-          <div className="flex gap-2">
+          <div className="sticky bottom-0 flex gap-2 border-t border-border bg-background/95 pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
             <Input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="Napište zprávu…"
-              className="min-h-[44px]"
+              className="min-h-[44px] bg-background text-foreground placeholder:text-muted-foreground"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -392,7 +402,7 @@ export function JobCommentsThread(props: {
             />
             <Button
               type="button"
-              className="min-h-[44px]"
+              className="min-h-[44px] shrink-0"
               disabled={sending || !draft.trim()}
               onClick={() => void send()}
             >
