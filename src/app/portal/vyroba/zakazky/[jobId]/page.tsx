@@ -347,10 +347,12 @@ function formatConsumptionCreatedAt(raw: unknown): string {
       return "";
     }
   }
-  const o = raw as { seconds?: number; _seconds?: number };
-  const sec =
-    typeof o.seconds === "number" ? o.seconds : typeof o._seconds === "number" ? o._seconds : null;
-  if (sec != null) return formatIsoCs(new Date(sec * 1000).toISOString());
+  if (typeof raw === "object" && raw !== null && "toMillis" in raw) {
+    const ms = (raw as { toMillis?: () => number }).toMillis?.();
+    if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) {
+      return formatIsoCs(new Date(ms).toISOString());
+    }
+  }
   return "";
 }
 
@@ -1031,12 +1033,14 @@ export default function VyrobaZakazkaDetailPage() {
               return 0;
             }
           }
+          if (raw && typeof raw === "object" && "toMillis" in raw && typeof (raw as { toMillis?: () => number }).toMillis === "function") {
+            const ms = (raw as { toMillis: () => number }).toMillis();
+            return Number.isFinite(ms) ? ms : 0;
+          }
           if (typeof raw === "string") {
             const t = new Date(raw).getTime();
             return Number.isFinite(t) ? t : 0;
           }
-          const o = raw as { seconds?: number } | undefined;
-          if (o && typeof o.seconds === "number") return o.seconds * 1000;
           return 0;
         };
         all.sort((a, b) => ts(b) - ts(a));
