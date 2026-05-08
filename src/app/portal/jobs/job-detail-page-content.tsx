@@ -7305,44 +7305,28 @@ export function JobDetailPageContent({
                 >
                   Poznámka
                 </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant={activeTool === "shapeLabel" ? "default" : "outline"}
-                      size="sm"
-                      className="min-h-[36px] gap-0.5 pr-2"
-                      title="Značka / modely z knihovny"
-                    >
-                      Značka
-                      <ChevronDown className="h-4 w-4 opacity-80" aria-hidden />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-[min(100vw-2rem,18rem)]">
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setShapeLabelPlacementModel(null);
-                        shapeLabelPlacementModelRef.current = null;
-                        setActiveTool("shapeLabel");
-                      }}
-                    >
-                      Vložit značku (klepnutím na plán)
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        setActiveTool("shapeLabel");
-                        setShapeLabelLibraryPickerOpen(true);
-                      }}
-                    >
-                      Vybrat uložený model…
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => setAnnotationModelsSettingsOpen(true)}
-                    >
-                      Nastavení modelů…
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                <Button
+                  type="button"
+                  variant={activeTool === "shapeLabel" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px] gap-1 pr-2"
+                  title="Značka / modely z knihovny"
+                  onClick={() => {
+                    // Always activate the tool immediately (fix: button must react).
+                    setShapeLabelPlacementModel(null);
+                    shapeLabelPlacementModelRef.current = null;
+                    setActiveTool("shapeLabel");
+                    // If models exist, open picker right away. Otherwise open settings to create one.
+                    if (annotationModelsSorted.length > 0) {
+                      setShapeLabelLibraryPickerOpen(true);
+                    } else {
+                      setAnnotationModelsSettingsOpen(true);
+                    }
+                  }}
+                >
+                  Značka
+                  <ChevronDown className="h-4 w-4 opacity-80" aria-hidden />
+                </Button>
                 <Button
                   type="button"
                   variant={activeTool === "select" ? "default" : "outline"}
