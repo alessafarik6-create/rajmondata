@@ -731,10 +731,9 @@ function UserFolderBlock({
     return query(
       base,
       where("targetType", "==", "file"),
-      where("folderId", "==", folder.id),
       limit(400)
     );
-  }, [firestore, companyId, jobId, isCustomerScope, folder.id]);
+  }, [firestore, companyId, jobId, isCustomerScope]);
 
   const { data: fileCommentsRaw = [] } = useCollection(fileCommentsQuery);
 
@@ -745,6 +744,9 @@ function UserFolderBlock({
       Record<string, unknown> & { id: string }
     >;
     for (const c of list) {
+      const folderIdRaw = c.folderId;
+      const folderId = folderIdRaw != null ? String(folderIdRaw).trim() : "";
+      if (folderId !== folder.id) continue;
       const fid = String(c.fileId ?? "").trim();
       if (!fid) continue;
       const key = fid;
@@ -756,7 +758,7 @@ function UserFolderBlock({
       m.set(key, prev);
     }
     return m;
-  }, [fileCommentsRaw, user?.uid]);
+  }, [fileCommentsRaw, user?.uid, folder.id]);
 
   const images = useMemo(() => {
     const list = (imagesRaw || []) as JobFolderImageDoc[];

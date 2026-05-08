@@ -43,11 +43,58 @@ function fmtDateTimeCs(d: Date): string {
   }
 }
 
+export function formatDateSafe(value: unknown): string {
+  try {
+    if (value == null) return "bez data";
+    // Firestore Timestamp
+    if (
+      typeof value === "object" &&
+      value &&
+      "toDate" in (value as object) &&
+      typeof (value as { toDate?: () => Date }).toDate === "function"
+    ) {
+      const d = (value as { toDate: () => Date }).toDate();
+      return Number.isNaN(d.getTime()) ? "bez data" : fmtDateTimeCs(d);
+    }
+    if (value instanceof Date) {
+      return Number.isNaN(value.getTime()) ? "bez data" : fmtDateTimeCs(value);
+    }
+    if (typeof value === "string" || typeof value === "number") {
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? "bez data" : fmtDateTimeCs(d);
+    }
+    // Legacy timestamp-like {seconds}
+    if (typeof value === "object" && value && "seconds" in (value as object)) {
+      const sec = Number((value as { seconds?: unknown }).seconds ?? 0);
+      if (Number.isFinite(sec) && sec > 0) return fmtDateTimeCs(new Date(sec * 1000));
+    }
+    // Firestore Timestamp-like {toMillis}
+    if (typeof value === "object" && value && "toMillis" in (value as object)) {
+      const ms = (value as { toMillis?: () => number }).toMillis?.();
+      if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) {
+        return fmtDateTimeCs(new Date(ms));
+      }
+    }
+    return "bez data";
+  } catch {
+    return "bez data";
+  }
+}
+
 function millisFromTimestampLike(ts: unknown): number {
   if (!ts) return 0;
   if (typeof ts === "object" && ts && "toMillis" in (ts as object)) {
     const fn = (ts as { toMillis?: () => number }).toMillis;
     if (typeof fn === "function") return fn();
+  }
+  if (typeof ts === "object" && ts && "seconds" in (ts as object)) {
+    const sec = Number((ts as { seconds?: unknown }).seconds ?? 0);
+    if (Number.isFinite(sec) && sec > 0) return sec * 1000;
+  }
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts === "string") {
+    const d = new Date(ts);
+    if (!Number.isNaN(d.getTime())) return d.getTime();
   }
   if (typeof ts === "number") return ts;
   return 0;
@@ -112,17 +159,13 @@ export function JobCommentsThread(props: {
       return query(
         base,
         where("targetType", "==", "job"),
-        orderBy("createdAt", "asc"),
         limit(200)
       );
     }
     const folderId = props.target.folderId ?? null;
     return query(
       base,
-      where("targetType", "==", "file"),
       where("fileId", "==", props.target.fileId),
-      where("folderId", "==", folderId),
-      orderBy("createdAt", "asc"),
       limit(200)
     );
   }, [
@@ -134,15 +177,34 @@ export function JobCommentsThread(props: {
     props.target.targetType === "file" ? String(props.target.folderId ?? "") : "",
   ]);
 
-  const { data: commentsRaw = [], isLoading } = useCollection(commentsQuery);
+  const {
+    data: commentsRaw = [],
+    isLoading,
+    error,
+  } = useCollection(commentsQuery);
 
   const comments = useMemo(() => {
-    const list = (Array.isArray(commentsRaw) ? commentsRaw : []) as CommentRow[];
+    const listAll = (Array.isArray(commentsRaw) ? commentsRaw : []) as CommentRow[];
+    const list = listAll.filter((c) => c && typeof c.id === "string");
+
+    // Avoid composite index requirements:
+    // - job: query is targetType=job (no orderBy), sort in JS
+    // - file: query is fileId only (no orderBy), filter+sort in JS
+    if (props.target.targetType === "job") {
+      return list
+        .filter((c) => String(c.targetType ?? "") === "job")
+        .slice()
+        .sort((a, b) => millisFromTimestampLike(a.createdAt) - millisFromTimestampLike(b.createdAt));
+    }
+    const fileId = props.target.fileId;
+    const folderId = props.target.folderId ?? null;
     return list
-      .filter((c) => c && typeof c.id === "string")
+      .filter((c) => String(c.targetType ?? "") === "file")
+      .filter((c) => String(c.fileId ?? "") === fileId)
+      .filter((c) => (c.folderId ?? null) === folderId)
       .slice()
       .sort((a, b) => millisFromTimestampLike(a.createdAt) - millisFromTimestampLike(b.createdAt));
-  }, [commentsRaw]);
+  }, [commentsRaw, props.target]);
 
   const unreadCount = useMemo(
     () => computeUnreadCountForTarget({ comments, userId: props.userId }),
@@ -257,7 +319,14 @@ export function JobCommentsThread(props: {
       </CardHeader>
       <CardContent className={cn("space-y-3", props.dense ? "pt-0" : "")}>
         <div className={cn("space-y-2", props.dense ? "max-h-[45vh]" : "max-h-[55vh]", "overflow-y-auto pr-1")}>
-          {isLoading ? (
+          {error ? (
+            <>
+              {console.error("[JobCommentsThread] load failed", error)}
+              <p className="text-sm text-destructive">
+                Poznámky se nepodařilo načíst.
+              </p>
+            </>
+          ) : isLoading ? (
             <p className="text-sm text-muted-foreground">Načítám…</p>
           ) : comments.length === 0 ? (
             <p className="text-sm text-muted-foreground">Zatím žádné zprávy.</p>
@@ -267,8 +336,7 @@ export function JobCommentsThread(props: {
               const role = String(c.authorRole ?? "");
               const author = String(c.authorName ?? "—");
               const msg = String(c.message ?? "");
-              const dtMillis = millisFromTimestampLike(c.createdAt);
-              const dt = dtMillis ? fmtDateTimeCs(new Date(dtMillis)) : "";
+              const dt = formatDateSafe(c.createdAt);
               const readBy = (c.readBy as unknown) as string[] | undefined;
               const read = Array.isArray(readBy) && readBy.includes(props.userId);
               return (
@@ -295,7 +363,7 @@ export function JobCommentsThread(props: {
                       >
                         {role === "admin" ? "admin" : "zaměstnanec"}
                       </Badge>
-                      {dt ? <span>{dt}</span> : null}
+                      <span>{dt}</span>
                       <span className="ml-auto">
                         {read ? "přečteno" : "nepřečteno"}
                       </span>
