@@ -20,10 +20,11 @@ export function serializePlatformInvoiceRowForApi(row: Record<string, unknown>):
           /* ignore */
         }
       } else if (
-        typeof (v as { seconds?: number }).seconds === "number" ||
-        typeof (v as { _seconds?: number })._seconds === "number"
+        typeof (v as Record<string, unknown>)["seconds"] === "number" ||
+        typeof (v as Record<string, unknown>)["_seconds"] === "number"
       ) {
-        const s = Number((v as { seconds?: number }).seconds ?? (v as { _seconds?: number })._seconds);
+        const vv = v as Record<string, unknown>;
+        const s = Number(vv["seconds"] ?? vv["_seconds"]);
         if (Number.isFinite(s)) out[k] = new Date(s * 1000).toISOString();
       }
     }

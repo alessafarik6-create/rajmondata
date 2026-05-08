@@ -5,6 +5,7 @@ import {
   type ModuleKey,
 } from "@/lib/license-modules";
 import type { PlatformModuleCode } from "@/lib/platform-config";
+import { safeTime } from "@/lib/date-safe";
 
 /**
  * Jednotný model licence na dokumentu organizace / firmy (`license` ve Firestore).
@@ -69,25 +70,11 @@ export function isModuleEnabledForPlatformFromLegacyKeys(
 function licenseExpirationIsPast(exp: unknown): boolean {
   if (exp == null) return false;
   if (typeof exp === "string" && exp.trim() === "") return false;
-  let ms: number | null = null;
-  if (
-    typeof exp === "object" &&
-    exp !== null &&
-    "toMillis" in exp &&
-    typeof (exp as { toMillis: () => number }).toMillis === "function"
-  ) {
-    ms = (exp as { toMillis: () => number }).toMillis();
-  } else if (
-    typeof exp === "object" &&
-    exp !== null &&
-    typeof (exp as { seconds?: number }).seconds === "number"
-  ) {
-    ms = (exp as { seconds: number }).seconds * 1000;
-  } else {
+  const ms = safeTime(exp) || (() => {
     const t = Date.parse(String(exp));
-    ms = Number.isNaN(t) ? null : t;
-  }
-  return ms != null && ms <= Date.now();
+    return Number.isNaN(t) ? 0 : t;
+  })();
+  return ms > 0 && ms <= Date.now();
 }
 
 export type CompanyLicenseEvaluationInput = {

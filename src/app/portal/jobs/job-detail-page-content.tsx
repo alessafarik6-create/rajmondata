@@ -1282,7 +1282,9 @@ export function JobDetailPageContent({
     const raw = (customer as { customerAccessEmailSentAt?: any } | null | undefined)
       ?.customerAccessEmailSentAt;
     if (raw && typeof raw.toDate === "function") return raw.toDate() as Date;
-    if (raw && typeof raw.seconds === "number") return new Date(raw.seconds * 1000);
+    if (raw && typeof (raw as Record<string, unknown>)["seconds"] === "number") {
+      return new Date(Number((raw as Record<string, unknown>)["seconds"]) * 1000);
+    }
     return null;
   })();
 

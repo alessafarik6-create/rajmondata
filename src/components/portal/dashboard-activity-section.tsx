@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { formatDateSafe } from "@/lib/date-safe";
 
 export type DashboardActivityRow = {
   id: string;
@@ -20,32 +21,8 @@ export type DashboardActivityRow = {
 };
 
 export function formatDashboardActivityTime(raw: unknown): string {
-  if (raw == null) return "—";
-  if (
-    typeof raw === "object" &&
-    "toMillis" in (raw as object) &&
-    typeof (raw as { toMillis: () => number }).toMillis === "function"
-  ) {
-    const ms = (raw as { toMillis: () => number }).toMillis();
-    if (Number.isFinite(ms)) return new Date(ms).toLocaleString("cs-CZ");
-  }
-  if (
-    typeof raw === "object" &&
-    "toDate" in (raw as object) &&
-    typeof (raw as { toDate: () => Date }).toDate === "function"
-  ) {
-    const d = (raw as { toDate: () => Date }).toDate();
-    if (!Number.isNaN(d.getTime())) return d.toLocaleString("cs-CZ");
-  }
-  if (typeof raw === "object" && raw && "seconds" in (raw as { seconds?: unknown })) {
-    const sec = Number((raw as { seconds?: unknown }).seconds ?? 0);
-    if (Number.isFinite(sec) && sec > 0) return new Date(sec * 1000).toLocaleString("cs-CZ");
-  }
-  if (typeof raw === "string" || typeof raw === "number") {
-    const d = new Date(raw);
-    if (!Number.isNaN(d.getTime())) return d.toLocaleString("cs-CZ");
-  }
-  return "—";
+  const s = formatDateSafe(raw);
+  return s === "bez data" ? "—" : s;
 }
 
 type Props = {

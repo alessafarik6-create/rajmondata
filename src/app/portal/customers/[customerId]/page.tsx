@@ -150,8 +150,8 @@ export default function CustomerDetailPage() {
     typeof crm.customerAccessEmailSentAt.toDate === 'function'
       ? crm.customerAccessEmailSentAt.toDate()
       : crm.customerAccessEmailSentAt &&
-          typeof crm.customerAccessEmailSentAt.seconds === 'number'
-        ? new Date(crm.customerAccessEmailSentAt.seconds * 1000)
+          typeof (crm.customerAccessEmailSentAt as Record<string, unknown>)['seconds'] === 'number'
+        ? new Date(Number((crm.customerAccessEmailSentAt as Record<string, unknown>)['seconds']) * 1000)
         : null;
 
   const handleTransferMeasurementPhotoToJob = async () => {

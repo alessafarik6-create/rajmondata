@@ -193,8 +193,8 @@ export function parseDocumentMediaReview(
   const cat = raw?.customerCommentAt;
   if (cat && typeof (cat as { toMillis?: () => number }).toMillis === "function") {
     atMs = (cat as { toMillis: () => number }).toMillis();
-  } else if (cat && typeof (cat as { seconds?: number }).seconds === "number") {
-    atMs = (cat as { seconds: number }).seconds * 1000;
+  } else if (cat && typeof (cat as Record<string, unknown>)["seconds"] === "number") {
+    atMs = Number((cat as Record<string, unknown>)["seconds"]) * 1000;
   } else if (typeof cat === "number" && Number.isFinite(cat)) {
     atMs = cat;
   }

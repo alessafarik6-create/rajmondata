@@ -284,8 +284,8 @@ export function platformInvoiceRecencyMs(row: Record<string, unknown>): number {
     const n = (v as { toMillis: () => number }).toMillis();
     return Number.isFinite(n) ? n : 0;
   }
-  if (v && typeof (v as { seconds?: number }).seconds === "number") {
-    return (v as { seconds: number }).seconds * 1000;
+  if (v && typeof (v as Record<string, unknown>)["seconds"] === "number") {
+    return Number((v as Record<string, unknown>)["seconds"]) * 1000;
   }
   const issue = String(row.issueDate || row.issuedAt || "").slice(0, 10);
   if (/^\d{4}-\d{2}-\d{2}$/.test(issue)) {

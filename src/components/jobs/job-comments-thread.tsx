@@ -20,6 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { formatDateSafe, safeTime } from "@/lib/date-safe";
 
 export type JobCommentsTarget =
   | { targetType: "job" }
@@ -32,73 +33,7 @@ export type JobCommentsTarget =
 
 type CommentRow = Record<string, unknown> & { id: string };
 
-function fmtDateTimeCs(d: Date): string {
-  try {
-    return new Intl.DateTimeFormat("cs-CZ", {
-      dateStyle: "short",
-      timeStyle: "short",
-    }).format(d);
-  } catch {
-    return d.toISOString();
-  }
-}
-
-export function formatDateSafe(value: unknown): string {
-  try {
-    if (value == null) return "bez data";
-    // Firestore Timestamp
-    if (
-      typeof value === "object" &&
-      value &&
-      "toDate" in (value as object) &&
-      typeof (value as { toDate?: () => Date }).toDate === "function"
-    ) {
-      const d = (value as { toDate: () => Date }).toDate();
-      return Number.isNaN(d.getTime()) ? "bez data" : fmtDateTimeCs(d);
-    }
-    if (value instanceof Date) {
-      return Number.isNaN(value.getTime()) ? "bez data" : fmtDateTimeCs(value);
-    }
-    if (typeof value === "string" || typeof value === "number") {
-      const d = new Date(value);
-      return Number.isNaN(d.getTime()) ? "bez data" : fmtDateTimeCs(d);
-    }
-    // Legacy timestamp-like {seconds}
-    if (typeof value === "object" && value && "seconds" in (value as object)) {
-      const sec = Number((value as { seconds?: unknown }).seconds ?? 0);
-      if (Number.isFinite(sec) && sec > 0) return fmtDateTimeCs(new Date(sec * 1000));
-    }
-    // Firestore Timestamp-like {toMillis}
-    if (typeof value === "object" && value && "toMillis" in (value as object)) {
-      const ms = (value as { toMillis?: () => number }).toMillis?.();
-      if (typeof ms === "number" && Number.isFinite(ms) && ms > 0) {
-        return fmtDateTimeCs(new Date(ms));
-      }
-    }
-    return "bez data";
-  } catch {
-    return "bez data";
-  }
-}
-
-function millisFromTimestampLike(ts: unknown): number {
-  if (!ts) return 0;
-  if (typeof ts === "object" && ts && "toMillis" in (ts as object)) {
-    const fn = (ts as { toMillis?: () => number }).toMillis;
-    if (typeof fn === "function") return fn();
-  }
-  if (typeof ts === "object" && ts && "seconds" in (ts as object)) {
-    const sec = Number((ts as { seconds?: unknown }).seconds ?? 0);
-    if (Number.isFinite(sec) && sec > 0) return sec * 1000;
-  }
-  if (ts instanceof Date) return ts.getTime();
-  if (typeof ts === "string") {
-    const d = new Date(ts);
-    if (!Number.isNaN(d.getTime())) return d.getTime();
-  }
-  if (typeof ts === "number") return ts;
-  return 0;
-}
+const millisFromTimestampLike = safeTime;
 
 export function computeUnreadCountForTarget(params: {
   comments: CommentRow[];

@@ -403,8 +403,8 @@ export default function CompanyDashboard() {
       if (t && typeof (t as { toMillis?: () => number }).toMillis === "function") {
         return (t as { toMillis: () => number }).toMillis();
       }
-      if (t && typeof (t as { seconds?: number }).seconds === "number") {
-        return (t as { seconds: number }).seconds * 1000;
+      if (t && typeof (t as Record<string, unknown>)["seconds"] === "number") {
+        return Number((t as Record<string, unknown>)["seconds"]) * 1000;
       }
       return 0;
     };

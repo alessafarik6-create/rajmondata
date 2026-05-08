@@ -26,6 +26,7 @@ import { Loader2, Send } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { cn } from "@/lib/utils";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
+import { formatDateSafe } from "@/lib/date-safe";
 
 export type CompanyChatSenderMode = "employee" | "admin";
 
@@ -50,30 +51,8 @@ type Props = {
 };
 
 function formatMessageTime(createdAt: unknown): string {
-  let d: Date | null = null;
-  if (
-    createdAt &&
-    typeof createdAt === "object" &&
-    "toDate" in createdAt &&
-    typeof (createdAt as { toDate?: () => Date }).toDate === "function"
-  ) {
-    d = (createdAt as { toDate: () => Date }).toDate();
-  } else if (
-    createdAt &&
-    typeof createdAt === "object" &&
-    "seconds" in createdAt &&
-    typeof (createdAt as { seconds?: unknown }).seconds === "number"
-  ) {
-    d = new Date((createdAt as { seconds: number }).seconds * 1000);
-  }
-  if (!d || Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString("cs-CZ", {
-    day: "numeric",
-    month: "numeric",
-    year: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  const s = formatDateSafe(createdAt);
+  return s === "bez data" ? "" : s;
 }
 
 function buildSenderNameFromProfile(profile: Record<string, unknown> | null | undefined): string {

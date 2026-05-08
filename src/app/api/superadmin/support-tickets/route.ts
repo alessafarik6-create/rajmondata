@@ -13,7 +13,8 @@ function tsToIso(v: unknown): string | null {
     }
   }
   if (typeof v === "object" && v !== null) {
-    const s = Number((v as { seconds?: number }).seconds ?? (v as { _seconds?: number })._seconds);
+    const vv = v as Record<string, unknown>;
+    const s = Number(vv["seconds"] ?? vv["_seconds"]);
     if (Number.isFinite(s)) return new Date(s * 1000).toISOString();
   }
   return null;

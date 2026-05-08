@@ -11,6 +11,7 @@ import {
   type JobProductSelectionDoc,
   type ProductCatalogDoc,
 } from "@/lib/product-catalogs";
+import { formatDateSafe } from "@/lib/date-safe";
 
 type Props = {
   companyId: string;
@@ -20,17 +21,8 @@ type Props = {
 export function JobProductCatalogsSection({ companyId, jobId }: Props) {
   const { toast } = useToast();
   const formatAnyDate = (value: unknown): string => {
-    if (!value) return "";
-    if (typeof value === "string" || typeof value === "number") {
-      const d = new Date(value);
-      return Number.isNaN(d.getTime()) ? "" : d.toLocaleString("cs-CZ");
-    }
-    if (typeof value === "object" && value && "seconds" in (value as { seconds?: unknown })) {
-      const sec = Number((value as { seconds?: unknown }).seconds ?? 0);
-      if (!Number.isFinite(sec) || sec <= 0) return "";
-      return new Date(sec * 1000).toLocaleString("cs-CZ");
-    }
-    return "";
+    const s = formatDateSafe(value);
+    return s === "bez data" ? "" : s;
   };
   const { user } = useUser();
   const firestore = useFirestore();
