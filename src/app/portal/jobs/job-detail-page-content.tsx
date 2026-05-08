@@ -852,8 +852,22 @@ type CompanyBankAccountDoc = {
 
 export function JobDetailPageContent({
   measurementAnnotationShell = false,
+  /**
+   * Employee-only: render just the new annotation editor (no full job detail).
+   * This reuses the SAME editor implementation as admin.
+   */
+  employeeAnnotationShell = false,
+  employeeAnnotationShellJobId = null,
+  employeeAnnotationInitialTarget = null,
+  employeeAnnotationReturnTo = null,
+  employeeAnnotationReadOnly = false,
 }: {
   measurementAnnotationShell?: boolean;
+  employeeAnnotationShell?: boolean;
+  employeeAnnotationShellJobId?: string | null;
+  employeeAnnotationInitialTarget?: JobPhotoAnnotationTarget | null;
+  employeeAnnotationReturnTo?: string | null;
+  employeeAnnotationReadOnly?: boolean;
 } = {}) {
   const { jobId } = useParams();
   const router = useRouter();
@@ -886,7 +900,11 @@ export function JobDetailPageContent({
       : Array.isArray(jobId)
         ? String(jobId[0] ?? "").trim()
         : String(jobId ?? "").trim();
-  const jobIdParam = measurementAnnotationShell ? "" : jobIdParamFromRoute;
+  const jobIdParam = measurementAnnotationShell
+    ? ""
+    : employeeAnnotationShell && employeeAnnotationShellJobId
+      ? String(employeeAnnotationShellJobId).trim()
+      : jobIdParamFromRoute;
   const isStandaloneMeasurementEditorRoute =
     measurementAnnotationShell ||
     jobIdParamFromRoute === MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID;
@@ -1447,6 +1465,9 @@ export function JobDetailPageContent({
   );
   /** Jeden zdroj pravdy: editor je otevřený právě tehdy, je-li vybrané médium k anotaci. */
   const editorOpen = Boolean(photoToEdit);
+  const annotationReadOnly = employeeAnnotationShell
+    ? employeeAnnotationReadOnly === true
+    : false;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const annotationTransformRef = useRef<HTMLDivElement | null>(null);
@@ -1572,6 +1593,14 @@ export function JobDetailPageContent({
     },
     []
   );
+
+  // Employee annotation-only entry: open editor immediately.
+  useEffect(() => {
+    if (!employeeAnnotationShell) return;
+    if (photoToEdit) return;
+    if (!employeeAnnotationInitialTarget) return;
+    openPhotoAnnotationEditor(employeeAnnotationInitialTarget);
+  }, [employeeAnnotationShell, employeeAnnotationInitialTarget, openPhotoAnnotationEditor, photoToEdit]);
 
   const openMeasurementPhotoAnnotationFromRow = useCallback(
     (row: Record<string, unknown> & { id: string }) => {
@@ -1954,6 +1983,10 @@ export function JobDetailPageContent({
       return null;
     });
     resetAnnotationState();
+    if (employeeAnnotationShell) {
+      const back = employeeAnnotationReturnTo?.trim();
+      if (back) router.replace(back);
+    }
   }, [resetAnnotationState]);
 
   const annotationSource = useMemo(() => {
@@ -4735,6 +4768,7 @@ export function JobDetailPageContent({
 
   const deleteSelectedAnnotation = useCallback(() => {
     if (!selectedAnnotationId) return;
+    if (annotationReadOnly) return;
     setAnnotations((prev) =>
       syncShapeLabelLegendNumbers(prev.filter((a) => a.id !== selectedAnnotationId))
     );
@@ -4742,7 +4776,7 @@ export function JobDetailPageContent({
     setDraftAnnotationId(null);
     setDragMode("none");
     setDragLastPoint(null);
-  }, [selectedAnnotationId]);
+  }, [selectedAnnotationId, annotationReadOnly]);
 
   const commitShapeLabelFromDialog = useCallback(() => {
     const point = pendingShapePointRef.current;
@@ -4850,6 +4884,7 @@ export function JobDetailPageContent({
     if (!canvasRef.current) return;
     if (editorMediaKindRef.current !== "pdf" && !imageForCanvas) return;
     e.preventDefault();
+    if (annotationReadOnly) return;
 
     pointerMapRef.current.set(e.pointerId, {
       clientX: e.clientX,
@@ -5836,6 +5871,14 @@ export function JobDetailPageContent({
   };
 
   const handleSaveAnnotated = async () => {
+    if (annotationReadOnly) {
+      toast({
+        variant: "destructive",
+        title: "Režim jen pro čtení",
+        description: "Nemáte oprávnění upravovat anotace u tohoto souboru.",
+      });
+      return;
+    }
     const isPdfSave = editorMediaKind === "pdf";
     if (!baseImageLoaded) {
       toast({
@@ -7255,7 +7298,7 @@ export function JobDetailPageContent({
             <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/15 bg-slate-900 px-2 py-1.5 pt-[max(0.25rem,env(safe-area-inset-top))] text-white lg:hidden">
                 <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-white hover:bg-white/10" onClick={() => dismissAnnotationEditor()}>Zavřít</Button>
                 <span className="min-w-0 truncate text-center text-xs font-semibold">Anotace</span>
-                <Button type="button" size="sm" className="h-8 shrink-0 bg-primary px-2 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={handleSaveAnnotated} disabled={!baseImageLoaded || isSavingAnnotation || pdfPageRasterBusy}>{isSavingAnnotation ? "…" : "Uložit"}</Button>
+                <Button type="button" size="sm" className="h-8 shrink-0 bg-primary px-2 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={handleSaveAnnotated} disabled={annotationReadOnly || !baseImageLoaded || isSavingAnnotation || pdfPageRasterBusy}>{isSavingAnnotation ? "…" : "Uložit"}</Button>
             </div>
               <DialogHeader className="hidden shrink-0 space-y-1 pb-2 pr-8 text-left lg:block">
                 <DialogTitle className="text-base sm:text-lg">
@@ -7284,6 +7327,7 @@ export function JobDetailPageContent({
                     setAnnotationModelsSettingsOpen(true);
                   }}
                   title="Nastavení modelů pro legendu"
+                  disabled={annotationReadOnly}
                 >
                   Modely
                 </Button>
@@ -7293,6 +7337,7 @@ export function JobDetailPageContent({
                   size="sm"
                   className="min-h-[36px]"
                   onClick={() => setActiveTool("dimension")}
+                  disabled={annotationReadOnly}
                 >
                   Kóty
                 </Button>
@@ -7302,6 +7347,7 @@ export function JobDetailPageContent({
                   size="sm"
                   className="min-h-[36px]"
                   onClick={() => setActiveTool("note")}
+                  disabled={annotationReadOnly}
                 >
                   Poznámka
                 </Button>
@@ -7323,6 +7369,7 @@ export function JobDetailPageContent({
                       setAnnotationModelsSettingsOpen(true);
                     }
                   }}
+                  disabled={annotationReadOnly}
                 >
                   Značka
                   <ChevronDown className="h-4 w-4 opacity-80" aria-hidden />

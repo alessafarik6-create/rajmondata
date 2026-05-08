@@ -55,11 +55,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: "Neplatné tělo." }, { status: 400 });
   }
   const companyId = String(body.companyId ?? "").trim();
-  const module = String(body.module ?? "").trim();
+  const moduleKey = String(body.module ?? "").trim();
   if (!companyId || !callerCanAccessCompany(caller, companyId)) {
     return NextResponse.json({ ok: false, error: "Neplatná organizace." }, { status: 400 });
   }
-  if (!isModuleKey(module)) {
+  if (!isModuleKey(moduleKey)) {
     return NextResponse.json({ ok: false, error: "Neplatný modul." }, { status: 400 });
   }
 
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest) {
   if (!loaded) {
     return NextResponse.json({ ok: false, error: "Organizace nenalezena." }, { status: 404 });
   }
-  const recipients = await resolveNotificationEmailsForModule(db, companyId, loaded, module);
+  const recipients = await resolveNotificationEmailsForModule(db, companyId, loaded, moduleKey);
   if (recipients.length === 0) {
     return NextResponse.json(
       { ok: false, error: "Pro tento modul nejsou nastavení žádní příjemci e-mailů." },
@@ -75,10 +75,10 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const subject = `Test e-mailu — ${moduleLabelCs(module)}`;
+  const subject = `Test e-mailu — ${moduleLabelCs(moduleKey)}`;
   const html = buildNotificationHtml({
-    moduleLabel: moduleLabelCs(module),
-    title: `Test notifikací: ${moduleLabelCs(module)}`,
+    moduleLabel: moduleLabelCs(moduleKey),
+    title: `Test notifikací: ${moduleLabelCs(moduleKey)}`,
     lines: [
       "Toto je zkušební zpráva pro vybraný modul.",
       "Příjemci odpovídají aktuálnímu nastavení (globální nebo vlastní příjemci modulu, bez automatického přidání administrátorů).",

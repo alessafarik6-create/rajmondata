@@ -59,17 +59,17 @@ export async function POST(request: NextRequest) {
   }
 
   const companyId = String(body.companyId ?? "").trim();
-  const module = body.module as EmailModuleKey;
+  const moduleKey = body.module as EmailModuleKey;
   const eventKey = String(body.eventKey ?? "").trim();
   const title = String(body.title ?? "").trim();
 
-  if (!companyId || !module || !eventKey || !title) {
+  if (!companyId || !moduleKey || !eventKey || !title) {
     return NextResponse.json({ ok: false, error: "Chybí povinná pole." }, { status: 400 });
   }
   if (!callerCanAccessCompany(caller, companyId)) {
     return NextResponse.json({ ok: false, error: "Nemáte přístup k organizaci." }, { status: 403 });
   }
-  if (!MODULES.includes(module)) {
+  if (!MODULES.includes(moduleKey)) {
     return NextResponse.json({ ok: false, error: "Neplatný modul." }, { status: 400 });
   }
 
@@ -88,7 +88,7 @@ export async function POST(request: NextRequest) {
 
   const result = await sendModuleNotification(db, {
     companyId,
-    module,
+    module: moduleKey,
     eventKey,
     entityId,
     title,

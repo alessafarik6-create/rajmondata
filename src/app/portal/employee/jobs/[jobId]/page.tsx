@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useMemo } from "react";
+import React, { useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   useUser,
   useFirestore,
@@ -42,6 +43,7 @@ function safeJobOverviewFields(job: Record<string, unknown> | null | undefined) 
 
 export default function EmployeeJobDetailPage() {
   const params = useParams();
+  const router = useRouter();
   const jobIdRaw = params?.jobId;
   const jobId = Array.isArray(jobIdRaw) ? jobIdRaw[0] : jobIdRaw;
   const { user } = useUser();
@@ -196,6 +198,34 @@ export default function EmployeeJobDetailPage() {
     );
     return filterFoldersForLimitedEmployee(list, permissionsForMedia);
   }, [foldersRaw, permissionsForMedia]);
+
+  const onAnnotatePhoto = useCallback(
+    (t: any) => {
+      if (!jobId || typeof jobId !== "string") return;
+      const kind = t?.annotationTarget?.kind;
+      if (kind !== "folderImages" && kind !== "photos") return;
+      const id = String(t?.id ?? "").trim();
+      if (!id) return;
+      const folderId =
+        kind === "folderImages" ? String(t?.annotationTarget?.folderId ?? "").trim() : "";
+      const ft = t?.fileType === "pdf" ? "pdf" : "image";
+      // Employee edit permission is controlled by folder toggle employeeCanEdit (default false).
+      const canEdit =
+        kind === "folderImages"
+          ? visibleFolders.find((f) => f.id === folderId)?.employeeCanEdit === true
+          : false;
+      const qs = new URLSearchParams();
+      qs.set("kind", kind);
+      qs.set("id", id);
+      qs.set("fileType", ft);
+      if (folderId) qs.set("folderId", folderId);
+      if (canEdit) qs.set("canEdit", "1");
+      router.push(
+        `/portal/employee/jobs/${encodeURIComponent(jobId)}/annotate?${qs.toString()}`
+      );
+    },
+    [jobId, router, visibleFolders]
+  );
 
   const overview = useMemo(() => {
     const fromJob = safeJobOverviewFields(
@@ -408,7 +438,7 @@ export default function EmployeeJobDetailPage() {
                 photos={legacyPhotos}
                 uploadLegacyPhoto={async () => {}}
                 legacyUploading={false}
-                onAnnotatePhoto={() => {}}
+                onAnnotatePhoto={onAnnotatePhoto}
                 layout="jobDetailWide"
                 mediaScope="employeeLimited"
                 memberPermissions={permissionsForMedia}

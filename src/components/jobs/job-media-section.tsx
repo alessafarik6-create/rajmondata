@@ -634,11 +634,12 @@ function UserFolderBlock({
         if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
         return;
       }
-      /** Interní zakázka (majitel/admin) — stejný editor jako měření / dashboard, ne CustomerMediaAnnotationViewer. */
-      if (
-        allowFolderStaffFileActions &&
-        (kind === "image" || kind === "pdf")
-      ) {
+      /**
+       * Interní zakázka (majitel/admin) nebo zaměstnanec v portálu:
+       * vždy použij nový editor anotací (JobDetailPageContent / unified flow).
+       * Starý fullscreen editor (CustomerMediaAnnotationViewer) je jen pro klientský portál.
+       */
+      if ((kind === "image" || kind === "pdf") && !isCustomerScope) {
         onAnnotatePhoto({
           id: img.id,
           imageUrl: img.imageUrl,
@@ -679,7 +680,7 @@ function UserFolderBlock({
         adminNote: typeof img.note === "string" ? img.note : "",
       });
     },
-    [folder, mediaScope, allowFolderStaffFileActions, onAnnotatePhoto]
+    [folder, mediaScope, isCustomerScope, onAnnotatePhoto]
   );
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -2869,7 +2870,7 @@ function UserFolderBlock({
       </DialogContent>
     </Dialog>
 
-    {firestore && user && mediaViewer ? (
+    {firestore && user && mediaViewer && !isEmployeeLimited ? (
       <CustomerMediaAnnotationViewer
         key={mediaViewer.mediaDocumentId}
         open={!!mediaViewer}
@@ -4212,7 +4213,7 @@ export function JobMediaSection({
         </DialogContent>
       </Dialog>
 
-      {firestore && user && legacyMediaViewer ? (
+      {firestore && user && legacyMediaViewer && mediaScope !== "employeeLimited" ? (
         <CustomerMediaAnnotationViewer
           key={legacyMediaViewer.mediaDocumentId}
           open={!!legacyMediaViewer}
