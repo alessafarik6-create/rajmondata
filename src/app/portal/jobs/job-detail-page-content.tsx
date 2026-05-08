@@ -1479,6 +1479,7 @@ export function JobDetailPageContent({
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [activeTool, setActiveTool] = useState<AnnotationTool>("dimension");
   const [activeColor, setActiveColor] = useState<DimensionColor>("red");
+  const [activeStrokeWidth, setActiveStrokeWidth] = useState<2 | 4 | 6>(4);
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [draftAnnotationId, setDraftAnnotationId] = useState<string | null>(null);
   const [dragMode, setDragMode] = useState<DragMode>("none");
@@ -4467,7 +4468,8 @@ export function JobDetailPageContent({
       const ex = a.endX * coordScale;
       const ey = a.endY * coordScale;
       const stroke = colorToHex(a.color);
-      ctx.lineWidth = isSelected ? lineWidth + 2 : lineWidth;
+      const lw = typeof (a as any).strokeWidth === "number" ? Number((a as any).strokeWidth) : lineWidth;
+      ctx.lineWidth = (isSelected ? lw + 2 : lw) * coordScale;
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.strokeStyle = stroke;
@@ -4538,13 +4540,20 @@ export function JobDetailPageContent({
               };
         drawNoteAnnotationOnCanvas(ctx, canvas, scaled, isSelected, {
           fontSize,
-          lineWidth,
+          lineWidth:
+            ((typeof (na as any).strokeWidth === "number"
+              ? Number((na as any).strokeWidth)
+              : lineWidth) * coordScale) || lineWidth,
           endpointRadius,
           arrowLen,
           colorToHex,
         });
       }
       if (a.type === "shapeLabel") {
+        const slw =
+          (typeof (a as any).strokeWidth === "number"
+            ? Number((a as any).strokeWidth)
+            : lineWidth) * coordScale;
         drawShapeLabelOnCanvas(
           ctx,
           a as ShapeLabelAnnotation,
@@ -4552,7 +4561,7 @@ export function JobDetailPageContent({
           coordScale,
           colorToHex,
           fontSize,
-          lineWidth
+          slw || lineWidth
         );
       }
     });
@@ -4587,6 +4596,15 @@ export function JobDetailPageContent({
   useEffect(() => {
     redrawCanvas();
   }, [redrawCanvas]);
+
+  useEffect(() => {
+    if (!selectedAnnotationId) return;
+    const a = annotations.find((x) => x.id === selectedAnnotationId) as any;
+    if (!a) return;
+    if (typeof a.strokeWidth === "number" && (a.strokeWidth === 2 || a.strokeWidth === 4 || a.strokeWidth === 6)) {
+      setActiveStrokeWidth(a.strokeWidth);
+    }
+  }, [annotations, selectedAnnotationId]);
 
   const getCanvasCoordsFromClient = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
@@ -4715,6 +4733,22 @@ export function JobDetailPageContent({
             a.type === "note" ||
             a.type === "shapeLabel")
             ? { ...a, color: newColor }
+            : a
+        )
+      );
+    },
+    [selectedAnnotationId]
+  );
+
+  const updateSelectedStrokeWidth = useCallback(
+    (w: 2 | 4 | 6) => {
+      setActiveStrokeWidth(w);
+      if (!selectedAnnotationId) return;
+      setAnnotations((prev) =>
+        prev.map((a) =>
+          a.id === selectedAnnotationId &&
+          (a.type === "dimension" || a.type === "note" || a.type === "shapeLabel")
+            ? ({ ...(a as any), strokeWidth: w } as any)
             : a
         )
       );
@@ -4979,6 +5013,23 @@ export function JobDetailPageContent({
     const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
     const hit = ptStrict ? hitTestAnnotation(ptStrict.x, ptStrict.y) : null;
 
+    // Allow selecting/moving existing shape labels even when another tool is active.
+    if (
+      hit &&
+      ((hit as any).part === "shape-move" || (hit as any).part === "shape-resize-br")
+    ) {
+      setSelectedAnnotationId(hit.id);
+      setDraftAnnotationId(hit.id);
+      setDragMode((hit as any).part as DragMode);
+      setDragLastPoint(pt);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
     if (activeTool === "dimension") {
       if (
         hit &&
@@ -5003,6 +5054,7 @@ export function JobDetailPageContent({
         endY: pt.y,
         label: "",
         color: activeColor,
+        strokeWidth: activeStrokeWidth,
         pageIndex:
           editorMediaKindRef.current === "pdf" ? Math.max(0, pdfPageRef.current - 1) : 0,
       };
@@ -5044,11 +5096,11 @@ export function JobDetailPageContent({
     if (activeTool === "shapeLabel") {
       if (
         hit &&
-        (hit.part === "shape-move" || hit.part === "shape-resize-br")
+        ((hit as any).part === "shape-move" || (hit as any).part === "shape-resize-br")
       ) {
         setSelectedAnnotationId(hit.id);
         setDraftAnnotationId(hit.id);
-        setDragMode(hit.part as DragMode);
+        setDragMode((hit as any).part as DragMode);
         setDragLastPoint(pt);
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -5097,6 +5149,7 @@ export function JobDetailPageContent({
             legendNumber: 1,
             showLabelInline: false,
             color: col,
+            strokeWidth: activeStrokeWidth,
             createdAt: Date.now(),
             modelId: plm.id,
           };
@@ -5411,6 +5464,7 @@ export function JobDetailPageContent({
         targetY: cy,
         text,
         color: activeColor,
+        strokeWidth: activeStrokeWidth,
         showArrow: false,
         pageIndex:
           editorMediaKindRef.current === "pdf" ? Math.max(0, pdfPageRef.current - 1) : 0,
@@ -5999,7 +6053,11 @@ export function JobDetailPageContent({
 
       annotations.forEach((a) => {
         const stroke = colorToHex(a.color);
-        targetCtx.lineWidth = lineWidth;
+        const lw =
+          typeof (a as any).strokeWidth === "number"
+            ? Number((a as any).strokeWidth)
+            : lineWidth;
+        targetCtx.lineWidth = lw;
         targetCtx.lineCap = "round";
         targetCtx.lineJoin = "round";
         targetCtx.strokeStyle = stroke;
@@ -6049,7 +6107,7 @@ export function JobDetailPageContent({
         if (a.type === "note") {
           drawNoteAnnotationOnCanvas(targetCtx, canvas, a, false, {
             fontSize,
-            lineWidth,
+            lineWidth: lw,
             endpointRadius,
             arrowLen,
             colorToHex,
@@ -6064,7 +6122,7 @@ export function JobDetailPageContent({
             1,
             colorToHex,
             fontSize,
-            lineWidth
+            lw
           );
         }
       });
@@ -7481,6 +7539,31 @@ export function JobDetailPageContent({
 
                 <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
 
+                <div className="flex items-center gap-1">
+                  {(
+                    [
+                      { id: 2 as const, label: "Slabá", title: "Tloušťka: slabá (2px)" },
+                      { id: 4 as const, label: "Střední", title: "Tloušťka: střední (4px)" },
+                      { id: 6 as const, label: "Silná", title: "Tloušťka: silná (6px)" },
+                    ] as const
+                  ).map((w) => (
+                    <Button
+                      key={w.id}
+                      type="button"
+                      variant={activeStrokeWidth === w.id ? "default" : "outline"}
+                      size="sm"
+                      className="min-h-[36px] px-2.5 text-xs sm:text-sm"
+                      title={w.title}
+                      onClick={() => updateSelectedStrokeWidth(w.id)}
+                      disabled={annotationReadOnly}
+                    >
+                      {w.label}
+                    </Button>
+                  ))}
+                </div>
+
+                <Separator orientation="vertical" className="mx-0.5 hidden h-6 sm:mx-1 md:inline-block" />
+
                 <Button
                   type="button"
                   variant="outline"
@@ -7586,16 +7669,16 @@ export function JobDetailPageContent({
                 </div>
               )}
               {annotationLegendEntries.length ? (
-                <div className="pointer-events-auto absolute bottom-2 left-1/2 z-10 w-[min(calc(100vw-0.75rem),42rem)] max-w-[calc(100%-0.5rem)] -translate-x-1/2">
-                  <div className="max-h-[min(48dvh,440px)] overflow-y-auto rounded-lg border-2 border-slate-600/90 bg-[#070d18] px-3 py-3.5 text-left shadow-2xl ring-1 ring-black/40 sm:px-5 sm:py-4">
-                    <p className="mb-2.5 text-sm font-bold uppercase tracking-wide text-slate-200 sm:text-base">
+                <div className="pointer-events-auto absolute bottom-2 left-1/2 z-10 w-[min(calc(100vw-0.75rem),36rem)] max-w-[calc(100%-0.5rem)] -translate-x-1/2">
+                  <div className="max-h-[min(36dvh,320px)] overflow-y-auto rounded-md border border-slate-600/80 bg-[#070d18] px-2.5 py-2.5 text-left shadow-2xl ring-1 ring-black/40 sm:px-3 sm:py-3">
+                    <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-200 sm:text-sm">
                       Legenda
                     </p>
-                    <ul className="space-y-2.5 sm:space-y-3">
+                    <ul className="space-y-1.5 sm:space-y-2">
                       {annotationLegendEntries.map((e) => (
                         <li
                           key={`leg-${e.legendNumber}-${e.label}-${e.widthMm}`}
-                          className="border-l-[3px] border-amber-400 pl-3 text-base font-semibold leading-snug text-slate-50 sm:text-lg md:text-xl"
+                          className="border-l-2 border-amber-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
                         >
                           {formatLegendEntryLine(e)}
                         </li>

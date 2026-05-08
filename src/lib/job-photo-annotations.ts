@@ -15,6 +15,8 @@ export type JobPhotoDimensionAnnotation = {
   endY: number;
   label: string;
   color: DimensionColor;
+  /** Volitelná tloušťka čáry v px (v souřadnicích dokumentu). */
+  strokeWidth?: number;
   /** 0-based; u PDF stránka dokumentu (volitelné, výchozí 0). */
   pageIndex?: number;
 };
@@ -28,6 +30,8 @@ export type JobPhotoNoteAnnotation = {
   boxY: number;
   text: string;
   color: DimensionColor;
+  /** Volitelná tloušťka stroke pro box/šipku v px. */
+  strokeWidth?: number;
   boxWidth?: number;
   boxHeight?: number;
   showArrow?: boolean;
@@ -54,6 +58,8 @@ export type JobPhotoShapeLabelAnnotation = {
   legendNumber: number;
   showLabelInline: boolean;
   color: DimensionColor;
+  /** Volitelná tloušťka obrysu značky v px. */
+  strokeWidth?: number;
   createdAt?: number;
   /** companies/.../annotationModels/{id} pokud značka vznikla ze šablony */
   modelId?: string;
@@ -107,6 +113,7 @@ type SerializedItem =
       ey: number;
       label: string;
       color: DimensionColor;
+      lw?: number;
       pi?: number;
     }
   | {
@@ -118,6 +125,7 @@ type SerializedItem =
       ty: number;
       text: string;
       color: DimensionColor;
+      lw?: number;
       bw?: number;
       bh?: number;
       arrow?: boolean;
@@ -140,6 +148,7 @@ type SerializedItem =
       legendNumber: number;
       showLabelInline: boolean;
       color: DimensionColor;
+      lw?: number;
       createdAt?: number;
       modelId?: string;
     };
@@ -208,6 +217,7 @@ export function serializeJobPhotoAnnotations(
         ey: clamp01(a.endY / ih),
         label: a.label ?? "",
         color: a.color,
+        ...(typeof a.strokeWidth === "number" && Number.isFinite(a.strokeWidth) ? { lw: a.strokeWidth } : {}),
         pi,
       });
     } else if (a.type === "note") {
@@ -226,6 +236,7 @@ export function serializeJobPhotoAnnotations(
         text: note.text ?? "",
         color: note.color,
         arrow: note.showArrow !== false,
+        ...(typeof note.strokeWidth === "number" && Number.isFinite(note.strokeWidth) ? { lw: note.strokeWidth } : {}),
         pi,
       };
       if (
@@ -260,6 +271,7 @@ export function serializeJobPhotoAnnotations(
         legendNumber: Math.max(1, Math.floor(s.legendNumber || 1)),
         showLabelInline: Boolean(s.showLabelInline),
         color: s.color,
+        ...(typeof s.strokeWidth === "number" && Number.isFinite(s.strokeWidth) ? { lw: s.strokeWidth } : {}),
       };
       const nt = s.note?.trim();
       if (nt) row.note = nt;
@@ -337,6 +349,7 @@ export function deserializeJobPhotoAnnotations(
         endY: d.ey * ih,
         label: String(d.label ?? ""),
         color: (d.color as DimensionColor) || "red",
+        strokeWidth: typeof (d as { lw?: unknown }).lw === "number" ? (d as { lw: number }).lw : undefined,
         pageIndex: pi,
       });
     } else if (t === "note") {
@@ -353,6 +366,7 @@ export function deserializeJobPhotoAnnotations(
         targetY: n.ty * ih,
         text: String(n.text ?? ""),
         color: (n.color as DimensionColor) || "yellow",
+        strokeWidth: typeof (n as { lw?: unknown }).lw === "number" ? (n as { lw: number }).lw : undefined,
         showArrow: n.arrow !== false,
         pageIndex: pi,
       };
@@ -387,6 +401,7 @@ export function deserializeJobPhotoAnnotations(
         legendNumber: Math.max(1, Math.floor(Number(s.legendNumber) || 1)),
         showLabelInline: Boolean(s.showLabelInline),
         color: (s.color as DimensionColor) || "blue",
+        strokeWidth: typeof (s as { lw?: unknown }).lw === "number" ? (s as { lw: number }).lw : undefined,
         createdAt: typeof s.createdAt === "number" ? s.createdAt : undefined,
       };
       const mid =
