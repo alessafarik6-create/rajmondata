@@ -925,7 +925,11 @@ export function JobDetailPageContent({
   const annotationModelsColRef = useMemoFirebase(
     () =>
       firestore && companyId
-        ? collection(firestore, "companies", companyId, "annotationModels")
+        ? query(
+            collection(firestore, "annotationModels"),
+            where("organizationId", "==", companyId),
+            limit(500)
+          )
         : null,
     [firestore, companyId]
   );

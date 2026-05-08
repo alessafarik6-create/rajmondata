@@ -130,7 +130,7 @@ export function AnnotationModelsSettingsDialog({
           note: nt ? nt : deleteField(),
         };
         await updateDoc(
-          doc(firestore, "companies", companyId, "annotationModels", editingId),
+          doc(firestore, "annotationModels", editingId),
           removeUndefinedDeep(patch) as DocumentData
         );
         toast({ title: "Model uložen", description: n });
@@ -149,7 +149,7 @@ export function AnnotationModelsSettingsDialog({
         if (ld) docData.legendDescription = ld;
         if (nt) docData.note = nt;
         await addDoc(
-          collection(firestore, "companies", companyId, "annotationModels"),
+          collection(firestore, "annotationModels"),
           removeUndefinedDeep(docData) as DocumentData
         );
         toast({ title: "Model uložen", description: n });
@@ -174,7 +174,7 @@ export function AnnotationModelsSettingsDialog({
       if (!window.confirm(`Smazat model „${name}“?`)) return;
       setDeletingId(id);
       try {
-        await deleteDoc(doc(firestore, "companies", companyId, "annotationModels", id));
+        await deleteDoc(doc(firestore, "annotationModels", id));
         toast({ title: "Model smazán" });
         if (editingId === id) {
           setEditingId(null);
