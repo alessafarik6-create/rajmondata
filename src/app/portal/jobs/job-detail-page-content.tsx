@@ -213,13 +213,16 @@ import Link from "next/link";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
   deserializeJobPhotoAnnotations,
+  formatMeasuredMmCs,
   readAnnotationPayloadFromPhotoDoc,
   readAnnotationPayloadReferenceSize,
+  readImageCalibrationFromPayload,
   serializeJobPhotoAnnotations,
   syncShapeLabelLegendNumbers,
   type DimensionColor,
   type JobPhotoAnnotation as Annotation,
   type JobPhotoDimensionAnnotation as DimensionAnnotation,
+  type JobPhotoMeterAnnotation as MeterAnnotation,
   type JobPhotoNoteAnnotation as NoteAnnotation,
   type JobPhotoShapeLabelAnnotation as ShapeLabelAnnotation,
 } from "@/lib/job-photo-annotations";
@@ -265,7 +268,14 @@ import {
   shapeLabelAnnotationPixelRect,
 } from "@/lib/shape-label-mm-scale";
 
-type AnnotationTool = "dimension" | "note" | "select" | "pan" | "shapeLabel";
+type AnnotationTool =
+  | "dimension"
+  | "note"
+  | "select"
+  | "pan"
+  | "shapeLabel"
+  | "meter"
+  | "calibrate";
 
 type DragMode =
   | "none"
@@ -279,7 +289,12 @@ type DragMode =
   | "note-resize-br"
   | "shape-move"
   | "shape-resize-br"
-  | "view-pan";
+  | "view-pan"
+  | "meter-draw"
+  | "meter-start"
+  | "meter-end"
+  | "meter-move"
+  | "calibration-draw";
 
 type AnnotationPinchSession = {
   anchorDist: number;
@@ -1527,6 +1542,24 @@ export function JobDetailPageContent({
   const noteRectDraftRef = useRef(noteRectDraft);
   noteRectDraftRef.current = noteRectDraft;
 
+  /** Velikost písma popisku kóty (px, 1–100). */
+  const [dimensionLabelFontSize, setDimensionLabelFontSize] = useState(16);
+  /** Kalibrace měřítka: pixely na 1 mm v prostoru dokumentu. */
+  const [imageCalibration, setImageCalibration] = useState<{
+    pxPerMm: number;
+  } | null>(null);
+  const imageCalibrationRef = useRef<{ pxPerMm: number } | null>(null);
+  imageCalibrationRef.current = imageCalibration;
+
+  const [calibrationDraft, setCalibrationDraft] = useState<{
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  } | null>(null);
+  const calibrationDraftRef = useRef(calibrationDraft);
+  calibrationDraftRef.current = calibrationDraft;
+
   /** Klik na plán — po potvrzení dialogu se vloží značka do středu tohoto bodu. */
   const pendingShapePointRef = useRef<{
     x: number;
@@ -1989,6 +2022,9 @@ export function JobDetailPageContent({
     setDragMode("none");
     setDragLastPoint(null);
     setNoteRectDraft(null);
+    setCalibrationDraft(null);
+    setImageCalibration(null);
+    setDimensionLabelFontSize(16);
     pendingShapePointRef.current = null;
     setShapeLabelDialogOpen(false);
     setShapeLabelEditingId(null);
@@ -4217,6 +4253,7 @@ export function JobDetailPageContent({
           pdfAnnotationsByPageRef.current.clear();
           pdfAnnotationsByPageRef.current.set(initialPage, synced as Annotation[]);
           setAnnotations(synced as Annotation[]);
+          setImageCalibration(readImageCalibrationFromPayload(rawPayload));
 
           setImageForCanvas(null);
           setImageError(null);
@@ -4333,6 +4370,7 @@ export function JobDetailPageContent({
         setAnnotations(
           syncShapeLabelLegendNumbers(loaded as Annotation[]) as Annotation[]
         );
+        setImageCalibration(readImageCalibrationFromPayload(raw));
         setEditorMediaKind("image");
       } catch (error) {
         if (cancelled) return;
@@ -4479,7 +4517,8 @@ export function JobDetailPageContent({
     const { fontSize, lineWidth, endpointRadius, arrowLen } =
       getScaleAwareSizes(canvas);
 
-    const drawArrowHead = (x: number, y: number, ang: number) => {
+    const drawArrowHead = (x: number, y: number, ang: number, fill: string) => {
+      ctx.fillStyle = fill;
       ctx.beginPath();
       ctx.moveTo(x, y);
       ctx.lineTo(
@@ -4505,55 +4544,86 @@ export function JobDetailPageContent({
       ctx.lineCap = "round";
       ctx.lineJoin = "round";
       ctx.strokeStyle = stroke;
-      ctx.fillStyle = stroke;
 
       ctx.beginPath();
       ctx.moveTo(sx, sy);
       ctx.lineTo(ex, ey);
       ctx.stroke();
 
-      ctx.beginPath();
-      ctx.arc(sx, sy, endpointRadius, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.arc(ex, ey, endpointRadius, 0, Math.PI * 2);
-      ctx.fill();
-
       const angle = Math.atan2(ey - sy, ex - sx);
-      drawArrowHead(sx, sy, angle + Math.PI);
-      drawArrowHead(ex, ey, angle);
+      drawArrowHead(sx, sy, angle + Math.PI, stroke);
+      drawArrowHead(ex, ey, angle, stroke);
 
+      const label = (a.label || "").trim();
+      if (label) {
+        const lfRaw = (a as DimensionAnnotation).labelFontSize;
+        const labelFs =
+          typeof lfRaw === "number" && Number.isFinite(lfRaw)
+            ? Math.max(1, Math.min(100, lfRaw))
+            : dimensionLabelFontSize;
+        const labelPx = Math.max(1, labelFs) * coordScale;
+        const midX = (sx + ex) / 2;
+        const midY = (sy + ey) / 2;
+        const offset = Math.max(10, labelPx * 0.85);
+        const tx = midX - (offset * Math.sin(angle));
+        const ty = midY + (offset * Math.cos(angle));
+        ctx.font = `700 ${labelPx}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineWidth = Math.max(2, labelPx * 0.12);
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        ctx.strokeText(label, tx, ty);
+        ctx.fillStyle = stroke;
+        ctx.fillText(label, tx, ty);
+      }
+    };
+
+    const drawMeter = (a: MeterAnnotation, isSelected: boolean) => {
+      const sx = a.startX * coordScale;
+      const sy = a.startY * coordScale;
+      const ex = a.endX * coordScale;
+      const ey = a.endY * coordScale;
+      const stroke = colorToHex(a.color);
+      const lw =
+        typeof (a as MeterAnnotation).strokeWidth === "number"
+          ? Number((a as MeterAnnotation).strokeWidth)
+          : lineWidth;
+      ctx.save();
+      ctx.setLineDash([5 * coordScale, 4 * coordScale]);
+      ctx.lineWidth = (isSelected ? lw + 2 : lw) * coordScale;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = stroke;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      ctx.setLineDash([]);
       const label = (a.label || "").trim();
       if (label) {
         const midX = (sx + ex) / 2;
         const midY = (sy + ey) / 2;
-        const paddingX = Math.round(fontSize * 0.6);
-        const paddingY = Math.round(fontSize * 0.45);
-        const offset = Math.round(fontSize * 0.6);
-
-        ctx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
-        ctx.textBaseline = "alphabetic";
-        const textWidth = ctx.measureText(label).width;
-        const boxWidth = textWidth + paddingX * 2;
-        const boxHeight = fontSize + paddingY * 2;
-        const boxX = midX - boxWidth / 2;
-        const boxY = midY - boxHeight / 2 - offset;
-
-        ctx.fillStyle = "rgba(0,0,0,0.75)";
-        ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
-
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = isSelected ? stroke : "rgba(255,255,255,0.35)";
-        ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
-
-        ctx.fillStyle = "#ffffff";
-        ctx.fillText(label, boxX + paddingX, boxY + paddingY + fontSize);
+        const ang = Math.atan2(ey - sy, ex - sx);
+        const perp = ang - Math.PI / 2;
+        const off = Math.max(12, fontSize * 0.55) * coordScale;
+        const tx = midX + Math.cos(perp) * off;
+        const ty = midY + Math.sin(perp) * off;
+        const fontPx = Math.max(10, Math.round(fontSize * 0.72 * coordScale));
+        ctx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.lineWidth = Math.max(2, fontPx * 0.12);
+        ctx.strokeStyle = "rgba(0,0,0,0.55)";
+        ctx.strokeText(label, tx, ty);
+        ctx.fillStyle = "#f1f5f9";
+        ctx.fillText(label, tx, ty);
       }
+      ctx.restore();
     };
 
     annotations.forEach((a) => {
       const isSelected = a.id === selectedAnnotationId;
       if (a.type === "dimension") drawDimension(a, isSelected);
+      if (a.type === "meter") drawMeter(a as MeterAnnotation, isSelected);
       if (a.type === "note") {
         const na = a as NoteAnnotation;
         const scaled: NoteAnnotation =
@@ -4614,12 +4684,29 @@ export function JobDetailPageContent({
       ctx.setLineDash([]);
     }
 
+    if (calibrationDraft) {
+      const cd = calibrationDraft;
+      const bx = Math.min(cd.x0, cd.x1) * coordScale;
+      const by = Math.min(cd.y0, cd.y1) * coordScale;
+      const bw = Math.abs(cd.x1 - cd.x0) * coordScale;
+      const bh = Math.abs(cd.y1 - cd.y0) * coordScale;
+      ctx.strokeStyle = "rgba(34,197,94,0.95)";
+      ctx.fillStyle = "rgba(34,197,94,0.12)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.fillRect(bx, by, bw, bh);
+      ctx.strokeRect(bx, by, bw, bh);
+      ctx.setLineDash([]);
+    }
+
   }, [
     imageForCanvas,
     baseImageLoaded,
     annotations,
     selectedAnnotationId,
     noteRectDraft,
+    calibrationDraft,
+    dimensionLabelFontSize,
     colorToHex,
     editorMediaKind,
     pdfScale,
@@ -4635,6 +4722,17 @@ export function JobDetailPageContent({
     if (!a) return;
     if (typeof a.strokeWidth === "number" && (a.strokeWidth === 2 || a.strokeWidth === 4 || a.strokeWidth === 6)) {
       setActiveStrokeWidth(a.strokeWidth);
+    }
+  }, [annotations, selectedAnnotationId]);
+
+  useEffect(() => {
+    if (!selectedAnnotationId) return;
+    const a = annotations.find((x) => x.id === selectedAnnotationId);
+    if (a?.type === "dimension") {
+      const lf = (a as DimensionAnnotation).labelFontSize;
+      if (typeof lf === "number" && Number.isFinite(lf)) {
+        setDimensionLabelFontSize(Math.max(1, Math.min(100, Math.round(lf))));
+      }
     }
   }, [annotations, selectedAnnotationId]);
 
@@ -4702,6 +4800,23 @@ export function JobDetailPageContent({
           if (dLine <= hrDim) return { id: a.id, part: "dim-move" as const };
         }
 
+        if (a.type === "meter") {
+          const m = a as MeterAnnotation;
+          const nearStart = distance(x, y, m.startX, m.startY) <= hrDim;
+          if (nearStart) return { id: a.id, part: "meter-start" as const };
+          const nearEnd = distance(x, y, m.endX, m.endY) <= hrDim;
+          if (nearEnd) return { id: a.id, part: "meter-end" as const };
+          const dLine = distancePointToSegment(
+            x,
+            y,
+            m.startX,
+            m.startY,
+            m.endX,
+            m.endY
+          );
+          if (dLine <= hrDim) return { id: a.id, part: "meter-move" as const };
+        }
+
         if (a.type === "note") {
           const na = a as NoteAnnotation;
           const noteForLayout: NoteAnnotation = isPdf
@@ -4763,7 +4878,8 @@ export function JobDetailPageContent({
           a.id === selectedAnnotationId &&
           (a.type === "dimension" ||
             a.type === "note" ||
-            a.type === "shapeLabel")
+            a.type === "shapeLabel" ||
+            a.type === "meter")
             ? { ...a, color: newColor }
             : a
         )
@@ -4779,8 +4895,27 @@ export function JobDetailPageContent({
       setAnnotations((prev) =>
         prev.map((a) =>
           a.id === selectedAnnotationId &&
-          (a.type === "dimension" || a.type === "note" || a.type === "shapeLabel")
+          (a.type === "dimension" ||
+            a.type === "note" ||
+            a.type === "shapeLabel" ||
+            a.type === "meter")
             ? ({ ...(a as any), strokeWidth: w } as any)
+            : a
+        )
+      );
+    },
+    [selectedAnnotationId]
+  );
+
+  const updateDimensionLabelFontSize = useCallback(
+    (px: number) => {
+      const v = Math.max(1, Math.min(100, Math.round(Number(px) || 16)));
+      setDimensionLabelFontSize(v);
+      if (!selectedAnnotationId) return;
+      setAnnotations((prev) =>
+        prev.map((a) =>
+          a.id === selectedAnnotationId && a.type === "dimension"
+            ? { ...(a as DimensionAnnotation), labelFontSize: v }
             : a
         )
       );
@@ -4815,6 +4950,18 @@ export function JobDetailPageContent({
       setAnnotations((prev) =>
         prev.map((x) =>
           x.id === a.id && x.type === "dimension"
+            ? { ...x, label: next.trim() }
+            : x
+        )
+      );
+      return;
+    }
+    if (a.type === "meter") {
+      const next = window.prompt("Upravit popisek měření:", a.label || "") ?? null;
+      if (next === null) return;
+      setAnnotations((prev) =>
+        prev.map((x) =>
+          x.id === a.id && x.type === "meter"
             ? { ...x, label: next.trim() }
             : x
         )
@@ -5010,13 +5157,17 @@ export function JobDetailPageContent({
         }
         const dId = draftAnnotationIdRef.current;
         setNoteRectDraft(null);
+        setCalibrationDraft(null);
         setDragMode("none");
         setDragLastPoint(null);
         if (dId) {
           setAnnotations((prev) => {
             if (!prev.length) return prev;
             const last = prev[prev.length - 1];
-            if (last?.type === "dimension" && last.id === dId) {
+            if (
+              (last?.type === "dimension" || last?.type === "meter") &&
+              last.id === dId
+            ) {
               const len = Math.hypot(
                 last.endX - last.startX,
                 last.endY - last.startY
@@ -5072,6 +5223,20 @@ export function JobDetailPageContent({
     const pt = getCanvasCoordsFromClient(e.clientX, e.clientY);
     const hit = ptStrict ? hitTestAnnotation(ptStrict.x, ptStrict.y) : null;
 
+    if (activeTool === "calibrate") {
+      setSelectedAnnotationId(null);
+      setDraftAnnotationId(null);
+      setCalibrationDraft({ x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y });
+      setDragMode("calibration-draw");
+      setDragLastPoint(pt);
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      return;
+    }
+
     // Allow selecting/moving existing shape labels even when another tool is active.
     if (
       hit &&
@@ -5121,6 +5286,49 @@ export function JobDetailPageContent({
       setSelectedAnnotationId(id);
       setDraftAnnotationId(id);
       setDragMode("dim-draw");
+      setDragLastPoint(pt);
+      return;
+    }
+
+    if (activeTool === "meter") {
+      if (
+        hit &&
+        (hit.part === "meter-start" ||
+          hit.part === "meter-end" ||
+          hit.part === "meter-move")
+      ) {
+        setSelectedAnnotationId(hit.id);
+        setDraftAnnotationId(hit.id);
+        setDragMode(hit.part as DragMode);
+        setDragLastPoint(pt);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+
+      const id = createId();
+      const pageIxM =
+        editorMediaKindRef.current === "pdf" ? Math.max(0, pdfPageRef.current - 1) : 0;
+      const a: MeterAnnotation = {
+        id,
+        type: "meter",
+        startX: pt.x,
+        startY: pt.y,
+        endX: pt.x,
+        endY: pt.y,
+        measuredMm: 0,
+        label: "",
+        color: activeColor,
+        strokeWidth: activeStrokeWidth,
+        pageIndex: pageIxM,
+      };
+      setAnnotations((prev) => [...prev, a]);
+      setSelectedAnnotationId(id);
+      setDraftAnnotationId(id);
+      setDragMode("meter-draw");
       setDragLastPoint(pt);
       return;
     }
@@ -5371,6 +5579,15 @@ export function JobDetailPageContent({
       return;
     }
 
+    if (dragMode === "calibration-draw") {
+      e.preventDefault();
+      setCalibrationDraft((d) =>
+        d ? { ...d, x1: pt.x, y1: pt.y } : { x0: pt.x, y0: pt.y, x1: pt.x, y1: pt.y }
+      );
+      setDragLastPoint(pt);
+      return;
+    }
+
     if (dragMode === "none") return;
     if (!draftAnnotationId) return;
     if (!dragLastPoint) return;
@@ -5391,6 +5608,24 @@ export function JobDetailPageContent({
             return { ...a, startX: pt.x, startY: pt.y };
           }
           if (dragMode === "dim-move") {
+            return {
+              ...a,
+              startX: a.startX + dx,
+              startY: a.startY + dy,
+              endX: a.endX + dx,
+              endY: a.endY + dy,
+            };
+          }
+        }
+
+        if (a.type === "meter") {
+          if (dragMode === "meter-draw" || dragMode === "meter-end") {
+            return { ...a, endX: pt.x, endY: pt.y };
+          }
+          if (dragMode === "meter-start") {
+            return { ...a, startX: pt.x, startY: pt.y };
+          }
+          if (dragMode === "meter-move") {
             return {
               ...a,
               startX: a.startX + dx,
@@ -5537,6 +5772,46 @@ export function JobDetailPageContent({
       return;
     }
 
+    if (dragMode === "calibration-draw") {
+      e.preventDefault();
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      const d = calibrationDraftRef.current;
+      setCalibrationDraft(null);
+      setDragMode("none");
+      setDragLastPoint(null);
+      if (!d) return;
+      const len = Math.hypot(d.x1 - d.x0, d.y1 - d.y0);
+      if (len < 8) {
+        toast({
+          variant: "destructive",
+          title: "Měřítko",
+          description: "Usečka je příliš krátká. Zkuste to znovu.",
+        });
+        return;
+      }
+      const raw = window.prompt("Skutečná délka úsečky v mm:", "") ?? null;
+      if (raw === null) return;
+      const mm = parseFloat(String(raw).replace(/\s/g, "").replace(",", "."));
+      if (!Number.isFinite(mm) || mm <= 0) {
+        toast({
+          variant: "destructive",
+          title: "Měřítko",
+          description: "Zadejte kladné číslo v milimetrech.",
+        });
+        return;
+      }
+      setImageCalibration({ pxPerMm: len / mm });
+      toast({
+        title: "Měřítko uloženo",
+        description: `Kalibrace: ${len.toFixed(1)} px odpovídá ${mm} mm.`,
+      });
+      return;
+    }
+
     if (!draftAnnotationId) {
       setDragMode("none");
       setDragLastPoint(null);
@@ -5564,6 +5839,60 @@ export function JobDetailPageContent({
               ? { ...x, label: label.trim() }
               : x
           )
+        );
+      }
+    }
+
+    if (a?.type === "meter" && dragMode === "meter-draw") {
+      const len = distance(a.startX, a.startY, a.endX, a.endY);
+      if (len < 8) {
+        setAnnotations((prev) => prev.filter((x) => x.id !== a.id));
+        setSelectedAnnotationId(null);
+        setDraftAnnotationId(null);
+        setDragMode("none");
+        setDragLastPoint(null);
+        return;
+      }
+      const cal = imageCalibrationRef.current;
+      if (!cal || !Number.isFinite(cal.pxPerMm) || cal.pxPerMm <= 0) {
+        toast({
+          variant: "destructive",
+          title: "Metr",
+          description:
+            "Nejprve nastavte měřítko: označte známou vzdálenost a zadejte hodnotu v mm.",
+        });
+        setAnnotations((prev) => prev.filter((x) => x.id !== a.id));
+        setSelectedAnnotationId(null);
+        setDraftAnnotationId(null);
+        setDragMode("none");
+        setDragLastPoint(null);
+        return;
+      }
+      const measuredMm = len / cal.pxPerMm;
+      const label = formatMeasuredMmCs(measuredMm);
+      setAnnotations((prev) =>
+        prev.map((x) =>
+          x.id === a.id && x.type === "meter" ? { ...x, measuredMm, label } : x
+        )
+      );
+    }
+
+    if (
+      a?.type === "meter" &&
+      dragMode !== "meter-draw" &&
+      (dragMode === "meter-start" ||
+        dragMode === "meter-end" ||
+        dragMode === "meter-move")
+    ) {
+      const cal = imageCalibrationRef.current;
+      if (cal && Number.isFinite(cal.pxPerMm) && cal.pxPerMm > 0) {
+        setAnnotations((prev) =>
+          prev.map((x) => {
+            if (x.id !== a.id || x.type !== "meter") return x;
+            const len = Math.hypot(x.endX - x.startX, x.endY - x.startY);
+            const mm = len / cal.pxPerMm;
+            return { ...x, measuredMm: mm, label: formatMeasuredMmCs(mm) };
+          })
         );
       }
     }
@@ -6131,39 +6460,66 @@ export function JobDetailPageContent({
           targetCtx.lineTo(a.endX, a.endY);
           targetCtx.stroke();
 
-          targetCtx.beginPath();
-          targetCtx.arc(a.startX, a.startY, endpointRadius, 0, Math.PI * 2);
-          targetCtx.fill();
-          targetCtx.beginPath();
-          targetCtx.arc(a.endX, a.endY, endpointRadius, 0, Math.PI * 2);
-          targetCtx.fill();
-
           const angle = Math.atan2(a.endY - a.startY, a.endX - a.startX);
           drawArrowHead(a.startX, a.startY, angle + Math.PI, stroke);
           drawArrowHead(a.endX, a.endY, angle, stroke);
 
           const label = (a.label || "").trim();
           if (label) {
+            const dim = a as DimensionAnnotation;
+            const lfRaw = dim.labelFontSize;
+            const labelFs =
+              typeof lfRaw === "number" && Number.isFinite(lfRaw)
+                ? Math.max(1, Math.min(100, lfRaw))
+                : 16;
+            const labelPx = Math.max(1, labelFs);
             const midX = (a.startX + a.endX) / 2;
             const midY = (a.startY + a.endY) / 2;
-            const paddingX = Math.round(fontSize * 0.6);
-            const paddingY = Math.round(fontSize * 0.45);
-            const offset = Math.round(fontSize * 0.6);
-            targetCtx.font = `700 ${fontSize}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
-            const textWidth = targetCtx.measureText(label).width;
-            const boxWidth = textWidth + paddingX * 2;
-            const boxHeight = fontSize + paddingY * 2;
-            const boxX = midX - boxWidth / 2;
-            const boxY = midY - boxHeight / 2 - offset;
-
-            targetCtx.fillStyle = "rgba(0,0,0,0.75)";
-            targetCtx.fillRect(boxX, boxY, boxWidth, boxHeight);
-            targetCtx.lineWidth = 2;
-            targetCtx.strokeStyle = stroke;
-            targetCtx.strokeRect(boxX, boxY, boxWidth, boxHeight);
-            targetCtx.fillStyle = "#ffffff";
-            targetCtx.fillText(label, boxX + paddingX, boxY + paddingY + fontSize);
+            const offset = Math.max(10, labelPx * 0.85);
+            const tx = midX - offset * Math.sin(angle);
+            const ty = midY + offset * Math.cos(angle);
+            targetCtx.font = `700 ${labelPx}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
+            targetCtx.textAlign = "center";
+            targetCtx.textBaseline = "middle";
+            targetCtx.lineWidth = Math.max(2, labelPx * 0.12);
+            targetCtx.strokeStyle = "rgba(0,0,0,0.55)";
+            targetCtx.strokeText(label, tx, ty);
+            targetCtx.fillStyle = stroke;
+            targetCtx.fillText(label, tx, ty);
           }
+        }
+
+        if (a.type === "meter") {
+          const m = a as MeterAnnotation;
+          targetCtx.save();
+          targetCtx.setLineDash([5, 4]);
+          targetCtx.lineWidth = lw;
+          targetCtx.strokeStyle = stroke;
+          targetCtx.beginPath();
+          targetCtx.moveTo(m.startX, m.startY);
+          targetCtx.lineTo(m.endX, m.endY);
+          targetCtx.stroke();
+          targetCtx.setLineDash([]);
+          const lab = (m.label || "").trim();
+          if (lab) {
+            const midX = (m.startX + m.endX) / 2;
+            const midY = (m.startY + m.endY) / 2;
+            const ang = Math.atan2(m.endY - m.startY, m.endX - m.startX);
+            const perp = ang - Math.PI / 2;
+            const off = Math.max(12, fontSize * 0.55);
+            const tx = midX + Math.cos(perp) * off;
+            const ty = midY + Math.sin(perp) * off;
+            const fontPx = Math.max(10, Math.round(fontSize * 0.72));
+            targetCtx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+            targetCtx.textAlign = "center";
+            targetCtx.textBaseline = "middle";
+            targetCtx.lineWidth = Math.max(2, fontPx * 0.12);
+            targetCtx.strokeStyle = "rgba(0,0,0,0.55)";
+            targetCtx.strokeText(lab, tx, ty);
+            targetCtx.fillStyle = "#f1f5f9";
+            targetCtx.fillText(lab, tx, ty);
+          }
+          targetCtx.restore();
         }
 
         if (a.type === "note") {
@@ -6229,7 +6585,10 @@ export function JobDetailPageContent({
         annotations,
         exportCanvas.width,
         exportCanvas.height,
-        { pageIndex: isPdfSave ? pdfPage - 1 : 0 }
+        {
+          pageIndex: isPdfSave ? pdfPage - 1 : 0,
+          imageCalibration: imageCalibrationRef.current,
+        }
       );
       if (
         !annotationData ||
@@ -6984,11 +7343,14 @@ export function JobDetailPageContent({
   const canvasCursor = useMemo(() => {
     if (dragMode === "shape-resize-br") return "nwse-resize";
     if (dragMode === "note-rect-draw") return "crosshair";
+    if (dragMode === "calibration-draw") return "crosshair";
     if (dragMode === "note-resize-br") return "nwse-resize";
     if (dragMode === "view-pan") return "grabbing";
     if (dragMode !== "none") return "grabbing";
     if (activeTool === "pan") return "grab";
     if (activeTool === "dimension") return "crosshair";
+    if (activeTool === "meter") return "crosshair";
+    if (activeTool === "calibrate") return "crosshair";
     if (activeTool === "note") return "crosshair";
     if (activeTool === "shapeLabel") return "crosshair";
     return "default";
@@ -7461,6 +7823,62 @@ export function JobDetailPageContent({
                 >
                   Kóty
                 </Button>
+                {!annotationReadOnly &&
+                (activeTool === "dimension" ||
+                  annotations.some(
+                    (x) =>
+                      x.id === selectedAnnotationId && x.type === "dimension"
+                  )) ? (
+                  <label className="flex min-h-[36px] items-center gap-1.5 rounded-md border border-white/20 bg-slate-900/80 px-2 py-1 text-xs text-slate-200 max-lg:border-slate-700 lg:border-border lg:bg-background lg:text-foreground">
+                    <span className="shrink-0 whitespace-nowrap">Font kóty</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      className="h-8 w-[4.25rem] px-1.5 text-center text-xs"
+                      value={dimensionLabelFontSize}
+                      onChange={(ev) =>
+                        updateDimensionLabelFontSize(
+                          parseInt(ev.target.value, 10)
+                        )
+                      }
+                      aria-label="Velikost písma kóty v pixelech"
+                    />
+                    <span className="shrink-0 text-muted-foreground max-lg:text-slate-400">
+                      px
+                    </span>
+                  </label>
+                ) : null}
+                <Button
+                  type="button"
+                  variant={activeTool === "meter" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("meter")}
+                  disabled={annotationReadOnly}
+                  title="Měření vzdálenosti v mm (vyžaduje měřítko)"
+                >
+                  Metr
+                </Button>
+                <Button
+                  type="button"
+                  variant={activeTool === "calibrate" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("calibrate")}
+                  disabled={annotationReadOnly}
+                  title="Nastavit měřítko: tažením usečky a zadáním skutečné délky v mm"
+                >
+                  Měřítko
+                </Button>
+                {imageCalibration ? (
+                  <span
+                    className="text-xs text-emerald-600 max-lg:text-emerald-400"
+                    title={`${imageCalibration.pxPerMm.toFixed(4)} px/mm`}
+                  >
+                    měřítko OK
+                  </span>
+                ) : null}
                 <Button
                   type="button"
                   variant={activeTool === "note" ? "default" : "outline"}

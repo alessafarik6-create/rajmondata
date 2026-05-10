@@ -22,7 +22,26 @@ export type JobPhotoDimensionAnnotation = {
   color: DimensionColor;
   /** Volitelná tloušťka čáry v px (v souřadnicích dokumentu). */
   strokeWidth?: number;
+  /** Velikost písma popisku kóty v px (1–100, dokumentové souřadnice). */
+  labelFontSize?: number;
   /** 0-based; u PDF stránka dokumentu (volitelné, výchozí 0). */
+  pageIndex?: number;
+};
+
+/** Měření vzdálenosti v mm (vyžaduje {@link JobPhotoAnnotationPayload.imageCalibration}). */
+export type JobPhotoMeterAnnotation = {
+  id: string;
+  type: "meter";
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  /** Vzdálenost v mm (uloženo pro konzistentní zobrazení). */
+  measuredMm: number;
+  /** Zobrazený text (např. „1 250 mm“). */
+  label: string;
+  color: DimensionColor;
+  strokeWidth?: number;
   pageIndex?: number;
 };
 
@@ -89,10 +108,13 @@ export type AnnotationPlacedModelRef = {
 export type JobPhotoAnnotation =
   | JobPhotoDimensionAnnotation
   | JobPhotoNoteAnnotation
-  | JobPhotoShapeLabelAnnotation;
+  | JobPhotoShapeLabelAnnotation
+  | JobPhotoMeterAnnotation;
 
-/** Verze payloadu; 2 = značky / legenda. */
-export const JOB_PHOTO_ANNOTATION_VERSION = 2;
+/** Verze payloadu; 3 = měřítko / metr / font kóty; 2 = značky / legenda; 1 = starší. */
+export const JOB_PHOTO_ANNOTATION_VERSION = 3;
+/** Uložené soubory pouze se značkami (zpětná kompatibilita). */
+export const JOB_PHOTO_ANNOTATION_VERSION_SHAPE_LABELS = 2;
 export const JOB_PHOTO_ANNOTATION_VERSION_LEGACY = 1;
 
 export type JobPhotoAnnotationPayload = {
@@ -106,6 +128,11 @@ export type JobPhotoAnnotationPayload = {
   legend?: AnnotationLegendEntry[];
   /** Značky vzniklé ze šablony modelu (duplicitní informace k items pro export/reporty). */
   placedModels?: AnnotationPlacedModelRef[];
+  /**
+   * Kalibrace měřítka: pixely na 1 mm v prostoru dokumentu (`mm = px / pxPerMm`).
+   * Společné pro nástroj Metr a případné další výpočty.
+   */
+  imageCalibration?: { pxPerMm: number };
 };
 
 type SerializedItem =
@@ -117,6 +144,21 @@ type SerializedItem =
       ex: number;
       ey: number;
       label: string;
+      color: DimensionColor;
+      lw?: number;
+      /** Velikost fontu popisku kóty (px). */
+      lf?: number;
+      pi?: number;
+    }
+  | {
+      type: "meter";
+      id: string;
+      sx: number;
+      sy: number;
+      ex: number;
+      ey: number;
+      mm: number;
+      lab: string;
       color: DimensionColor;
       lw?: number;
       pi?: number;
@@ -193,11 +235,31 @@ function buildLegendPayload(
   return out.length ? out : undefined;
 }
 
+export function formatMeasuredMmCs(mm: number): string {
+  if (!Number.isFinite(mm) || mm <= 0) return "0 mm";
+  return `${Math.round(mm).toLocaleString("cs-CZ")} mm`;
+}
+
+export function readImageCalibrationFromPayload(
+  raw: unknown
+): { pxPerMm: number } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const p = raw as Record<string, unknown>;
+  const ic = p.imageCalibration;
+  if (!ic || typeof ic !== "object") return null;
+  const pxPerMm = Number((ic as { pxPerMm?: unknown }).pxPerMm);
+  if (!Number.isFinite(pxPerMm) || pxPerMm <= 0) return null;
+  return { pxPerMm };
+}
+
 export function serializeJobPhotoAnnotations(
   items: JobPhotoAnnotation[],
   imageWidth: number,
   imageHeight: number,
-  opts?: { pageIndex?: number }
+  opts?: {
+    pageIndex?: number;
+    imageCalibration?: { pxPerMm: number } | null;
+  }
 ): JobPhotoAnnotationPayload {
   const iw = Math.max(1, Math.round(imageWidth));
   const ih = Math.max(1, Math.round(imageHeight));
@@ -208,12 +270,14 @@ export function serializeJobPhotoAnnotations(
 
   const out: SerializedItem[] = [];
   let hasShape = false;
+  let hasMeter = false;
   for (const a of items) {
     if (a.type === "dimension") {
       const pi =
         typeof a.pageIndex === "number" && Number.isFinite(a.pageIndex)
           ? Math.max(0, Math.floor(a.pageIndex))
           : pageIndex;
+      const d = a as JobPhotoDimensionAnnotation;
       out.push({
         type: "dimension",
         id: a.id,
@@ -224,6 +288,32 @@ export function serializeJobPhotoAnnotations(
         label: a.label ?? "",
         color: a.color,
         ...(typeof a.strokeWidth === "number" && Number.isFinite(a.strokeWidth) ? { lw: a.strokeWidth } : {}),
+        ...(typeof d.labelFontSize === "number" &&
+        Number.isFinite(d.labelFontSize) &&
+        d.labelFontSize >= 1 &&
+        d.labelFontSize <= 100
+          ? { lf: d.labelFontSize }
+          : {}),
+        pi,
+      });
+    } else if (a.type === "meter") {
+      hasMeter = true;
+      const m = a as JobPhotoMeterAnnotation;
+      const pi =
+        typeof m.pageIndex === "number" && Number.isFinite(m.pageIndex)
+          ? Math.max(0, Math.floor(m.pageIndex))
+          : pageIndex;
+      out.push({
+        type: "meter",
+        id: m.id,
+        sx: clamp01(m.startX / iw),
+        sy: clamp01(m.startY / ih),
+        ex: clamp01(m.endX / iw),
+        ey: clamp01(m.endY / ih),
+        mm: Number.isFinite(m.measuredMm) ? m.measuredMm : 0,
+        lab: String(m.label ?? ""),
+        color: m.color,
+        ...(typeof m.strokeWidth === "number" && Number.isFinite(m.strokeWidth) ? { lw: m.strokeWidth } : {}),
         pi,
       });
     } else if (a.type === "note") {
@@ -301,7 +391,27 @@ export function serializeJobPhotoAnnotations(
       return { annotationId: a.id, modelId: mid };
     })
     .filter((x): x is AnnotationPlacedModelRef => x != null);
-  const version = hasShape || (legend && legend.length > 0) ? JOB_PHOTO_ANNOTATION_VERSION : JOB_PHOTO_ANNOTATION_VERSION_LEGACY;
+  const cal =
+    opts?.imageCalibration &&
+    typeof opts.imageCalibration.pxPerMm === "number" &&
+    Number.isFinite(opts.imageCalibration.pxPerMm) &&
+    opts.imageCalibration.pxPerMm > 0
+      ? { pxPerMm: opts.imageCalibration.pxPerMm }
+      : null;
+  const hasCalib = cal != null;
+  const hasDimFont = items.some(
+    (x) =>
+      x.type === "dimension" &&
+      typeof (x as JobPhotoDimensionAnnotation).labelFontSize === "number" &&
+      Number.isFinite((x as JobPhotoDimensionAnnotation).labelFontSize)
+  );
+  const needV3 = hasMeter || hasCalib || hasDimFont;
+  const needV2 = hasShape || (legend && legend.length > 0);
+  const version = needV3
+    ? JOB_PHOTO_ANNOTATION_VERSION
+    : needV2
+      ? JOB_PHOTO_ANNOTATION_VERSION_SHAPE_LABELS
+      : JOB_PHOTO_ANNOTATION_VERSION_LEGACY;
 
   return {
     version,
@@ -311,6 +421,7 @@ export function serializeJobPhotoAnnotations(
     items: out,
     ...(legend && legend.length ? { legend } : {}),
     ...(placedModels.length ? { placedModels } : {}),
+    ...(hasCalib ? { imageCalibration: cal! } : {}),
   };
 }
 
@@ -346,6 +457,11 @@ export function deserializeJobPhotoAnnotations(
     if (t === "dimension") {
       const d = it as Extract<SerializedItem, { type: "dimension" }>;
       const pi = typeof d.pi === "number" && Number.isFinite(d.pi) ? Math.max(0, Math.floor(d.pi)) : defaultPage;
+      const lfRaw = (d as { lf?: unknown }).lf;
+      const labelFontSize =
+        typeof lfRaw === "number" && Number.isFinite(lfRaw)
+          ? Math.max(1, Math.min(100, Math.round(lfRaw)))
+          : undefined;
       out.push({
         id: String(d.id || createLocalId()),
         type: "dimension",
@@ -356,6 +472,25 @@ export function deserializeJobPhotoAnnotations(
         label: String(d.label ?? ""),
         color: (d.color as DimensionColor) || "red",
         strokeWidth: typeof (d as { lw?: unknown }).lw === "number" ? (d as { lw: number }).lw : undefined,
+        ...(labelFontSize != null ? { labelFontSize } : {}),
+        pageIndex: pi,
+      });
+    } else if (t === "meter") {
+      const m = it as Extract<SerializedItem, { type: "meter" }>;
+      const pi = typeof m.pi === "number" && Number.isFinite(m.pi) ? Math.max(0, Math.floor(m.pi)) : defaultPage;
+      const mm = Number.isFinite(m.mm) ? m.mm : 0;
+      const lab = String(m.lab ?? "").trim() || formatMeasuredMmCs(mm);
+      out.push({
+        id: String(m.id || createLocalId()),
+        type: "meter",
+        startX: m.sx * iw,
+        startY: m.sy * ih,
+        endX: m.ex * iw,
+        endY: m.ey * ih,
+        measuredMm: mm,
+        label: lab,
+        color: (m.color as DimensionColor) || "white",
+        strokeWidth: typeof (m as { lw?: unknown }).lw === "number" ? (m as { lw: number }).lw : undefined,
         pageIndex: pi,
       });
     } else if (t === "note") {
