@@ -32,6 +32,7 @@ import {
 } from "@/lib/job-photo-annotations";
 import { drawNoteAnnotationOnCanvas } from "@/lib/job-photo-annotation-canvas";
 import type {
+  JobPhotoArrowNoteAnnotation,
   JobPhotoDimensionAnnotation,
   JobPhotoNoteAnnotation,
   JobPhotoShapeLabelAnnotation,
@@ -171,6 +172,63 @@ function drawDimensionOnCtx(
     ctx.fillStyle = "#fff";
     ctx.fillText(label, boxX + paddingX, boxY + paddingY + fontSize);
   }
+}
+
+function drawArrowNoteOnCtx(
+  ctx: CanvasRenderingContext2D,
+  a: JobPhotoArrowNoteAnnotation,
+  _cw: number,
+  _ch: number
+) {
+  const { fontSize, lineWidth, arrowLen } = scaleSizes(_cw, _ch);
+  const stroke = dimColorHex(a.color);
+  const lw =
+    typeof a.strokeWidth === "number" && Number.isFinite(a.strokeWidth)
+      ? Number(a.strokeWidth)
+      : lineWidth;
+  const sx = a.startX;
+  const sy = a.startY;
+  const ex = a.endX;
+  const ey = a.endY;
+  const angle = Math.atan2(ey - sy, ex - sx);
+  ctx.lineWidth = lw;
+  ctx.lineCap = "round";
+  ctx.strokeStyle = stroke;
+  ctx.beginPath();
+  ctx.moveTo(sx, sy);
+  ctx.lineTo(ex, ey);
+  ctx.stroke();
+  ctx.fillStyle = stroke;
+  ctx.beginPath();
+  ctx.moveTo(ex, ey);
+  ctx.lineTo(
+    ex - arrowLen * Math.cos(angle - Math.PI / 6),
+    ey - arrowLen * Math.sin(angle - Math.PI / 6)
+  );
+  ctx.lineTo(
+    ex - arrowLen * Math.cos(angle + Math.PI / 6),
+    ey - arrowLen * Math.sin(angle + Math.PI / 6)
+  );
+  ctx.closePath();
+  ctx.fill();
+  const nfsRaw = a.numFontSize;
+  const nfs =
+    typeof nfsRaw === "number" && Number.isFinite(nfsRaw)
+      ? Math.max(8, Math.min(28, nfsRaw))
+      : Math.min(18, Math.max(10, Math.round(fontSize * 0.52)));
+  const r = Math.max(nfs * 0.72, 9);
+  ctx.beginPath();
+  ctx.arc(sx, sy, r, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.94)";
+  ctx.fill();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = Math.max(1.25, 1.5);
+  ctx.stroke();
+  ctx.font = `700 ${nfs}px ui-sans-serif, system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = stroke;
+  ctx.fillText(String(a.arrowNumber ?? ""), sx, sy);
 }
 
 function distToSeg(
@@ -826,6 +884,8 @@ export function CustomerMediaAnnotationViewer({
           fontSize,
           lineWidth
         );
+      } else if (a.type === "arrowNote") {
+        drawArrowNoteOnCtx(mctx, a as JobPhotoArrowNoteAnnotation, cw, ch);
       }
     }
     const selectedItem = items.find((it) => it.id === selectedId) ?? null;

@@ -212,8 +212,10 @@ import { FirebaseError } from "firebase/app";
 import Link from "next/link";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
+  buildArrowNoteLegendEntries,
   deserializeJobPhotoAnnotations,
   formatMeasuredMmCs,
+  nextArrowNoteNumber,
   readAnnotationPayloadFromPhotoDoc,
   readAnnotationPayloadReferenceSize,
   readImageCalibrationFromPayload,
@@ -221,6 +223,7 @@ import {
   syncShapeLabelLegendNumbers,
   type DimensionColor,
   type JobPhotoAnnotation as Annotation,
+  type JobPhotoArrowNoteAnnotation as ArrowNoteAnnotation,
   type JobPhotoDimensionAnnotation as DimensionAnnotation,
   type JobPhotoMeterAnnotation as MeterAnnotation,
   type JobPhotoNoteAnnotation as NoteAnnotation,
@@ -271,6 +274,7 @@ import {
 type AnnotationTool =
   | "dimension"
   | "note"
+  | "arrow"
   | "select"
   | "pan"
   | "shapeLabel"
@@ -294,7 +298,11 @@ type DragMode =
   | "meter-start"
   | "meter-end"
   | "meter-move"
-  | "calibration-draw";
+  | "calibration-draw"
+  | "arrow-draw"
+  | "arrow-start"
+  | "arrow-end"
+  | "arrow-move";
 
 type AnnotationPinchSession = {
   anchorDist: number;
@@ -1530,6 +1538,8 @@ export function JobDetailPageContent({
   const [selectedAnnotationId, setSelectedAnnotationId] = useState<string | null>(null);
   const [draftAnnotationId, setDraftAnnotationId] = useState<string | null>(null);
   const [dragMode, setDragMode] = useState<DragMode>("none");
+  const dragModeRef = useRef<DragMode>("none");
+  dragModeRef.current = dragMode;
   const [dragLastPoint, setDragLastPoint] = useState<{ x: number; y: number } | null>(null);
   const [imageObjectUrl, setImageObjectUrl] = useState<string | null>(null);
   /** Tažení nové poznámky jako obdélník (x0,y0) → (x1,y1) v souřadnicích canvasu. */
@@ -1568,6 +1578,10 @@ export function JobDetailPageContent({
   } | null>(null);
 
   const [shapeLabelDialogOpen, setShapeLabelDialogOpen] = useState(false);
+  const [arrowNoteDialogOpen, setArrowNoteDialogOpen] = useState(false);
+  const [arrowNoteEditId, setArrowNoteEditId] = useState<string | null>(null);
+  const [arrowNoteEditText, setArrowNoteEditText] = useState("");
+  const [arrowNoteIsNew, setArrowNoteIsNew] = useState(false);
   const [shapeLabelEditingId, setShapeLabelEditingId] = useState<string | null>(null);
   const [shapeLabelForm, setShapeLabelForm] = useState<{
     shape: ShapeLabelAnnotation["shape"];
@@ -2027,6 +2041,10 @@ export function JobDetailPageContent({
     setDimensionLabelFontSize(16);
     pendingShapePointRef.current = null;
     setShapeLabelDialogOpen(false);
+    setArrowNoteDialogOpen(false);
+    setArrowNoteEditId(null);
+    setArrowNoteEditText("");
+    setArrowNoteIsNew(false);
     setShapeLabelEditingId(null);
     setImageObjectUrl((prev) => {
       if (prev) {
@@ -4620,10 +4638,53 @@ export function JobDetailPageContent({
       ctx.restore();
     };
 
+    const drawArrowNote = (a: ArrowNoteAnnotation, isSelected: boolean) => {
+      const sx = a.startX * coordScale;
+      const sy = a.startY * coordScale;
+      const ex = a.endX * coordScale;
+      const ey = a.endY * coordScale;
+      const stroke = colorToHex(a.color);
+      const lw =
+        typeof a.strokeWidth === "number" && Number.isFinite(a.strokeWidth)
+          ? Number(a.strokeWidth)
+          : lineWidth;
+      const angle = Math.atan2(ey - sy, ex - sx);
+      ctx.save();
+      ctx.lineWidth = (isSelected ? lw + 2 : lw) * coordScale;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = stroke;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(ex, ey);
+      ctx.stroke();
+      drawArrowHead(ex, ey, angle, stroke);
+      const nfsRaw = a.numFontSize;
+      const nfs =
+        typeof nfsRaw === "number" && Number.isFinite(nfsRaw)
+          ? Math.max(8, Math.min(28, nfsRaw))
+          : Math.min(18, Math.max(10, Math.round(fontSize * 0.52)));
+      const fontPx = nfs * coordScale;
+      const r = Math.max(fontPx * 0.72, 9 * coordScale);
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.94)";
+      ctx.fill();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = Math.max(1.25, 1.5 * coordScale);
+      ctx.stroke();
+      ctx.font = `700 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = stroke;
+      ctx.fillText(String(a.arrowNumber ?? ""), sx, sy);
+      ctx.restore();
+    };
+
     annotations.forEach((a) => {
       const isSelected = a.id === selectedAnnotationId;
       if (a.type === "dimension") drawDimension(a, isSelected);
       if (a.type === "meter") drawMeter(a as MeterAnnotation, isSelected);
+      if (a.type === "arrowNote") drawArrowNote(a as ArrowNoteAnnotation, isSelected);
       if (a.type === "note") {
         const na = a as NoteAnnotation;
         const scaled: NoteAnnotation =
@@ -4817,6 +4878,29 @@ export function JobDetailPageContent({
           if (dLine <= hrDim) return { id: a.id, part: "meter-move" as const };
         }
 
+        if (a.type === "arrowNote") {
+          const ar = a as ArrowNoteAnnotation;
+          const nfsRaw = ar.numFontSize;
+          const nfs =
+            typeof nfsRaw === "number" && Number.isFinite(nfsRaw)
+              ? Math.max(8, Math.min(28, nfsRaw))
+              : Math.min(18, Math.max(10, Math.round(fontSize * 0.52)));
+          const rDoc = Math.max(nfs * 0.85, 11, hrDim * 0.9);
+          const nearStart = distance(x, y, ar.startX, ar.startY) <= rDoc;
+          if (nearStart) return { id: a.id, part: "arrow-start" as const };
+          const nearEnd = distance(x, y, ar.endX, ar.endY) <= hrDim;
+          if (nearEnd) return { id: a.id, part: "arrow-end" as const };
+          const dLine = distancePointToSegment(
+            x,
+            y,
+            ar.startX,
+            ar.startY,
+            ar.endX,
+            ar.endY
+          );
+          if (dLine <= hrDim) return { id: a.id, part: "arrow-move" as const };
+        }
+
         if (a.type === "note") {
           const na = a as NoteAnnotation;
           const noteForLayout: NoteAnnotation = isPdf
@@ -4879,7 +4963,8 @@ export function JobDetailPageContent({
           (a.type === "dimension" ||
             a.type === "note" ||
             a.type === "shapeLabel" ||
-            a.type === "meter")
+            a.type === "meter" ||
+            a.type === "arrowNote")
             ? { ...a, color: newColor }
             : a
         )
@@ -4898,7 +4983,8 @@ export function JobDetailPageContent({
           (a.type === "dimension" ||
             a.type === "note" ||
             a.type === "shapeLabel" ||
-            a.type === "meter")
+            a.type === "meter" ||
+            a.type === "arrowNote")
             ? ({ ...(a as any), strokeWidth: w } as any)
             : a
         )
@@ -4968,6 +5054,14 @@ export function JobDetailPageContent({
       );
       return;
     }
+    if (a.type === "arrowNote") {
+      const ar = a as ArrowNoteAnnotation;
+      setArrowNoteEditId(ar.id);
+      setArrowNoteEditText(ar.description || "");
+      setArrowNoteIsNew(false);
+      setArrowNoteDialogOpen(true);
+      return;
+    }
     if (a.type === "note") {
       const next = window.prompt("Upravit poznámku:", a.text || "") ?? null;
       if (next === null) return;
@@ -4990,6 +5084,50 @@ export function JobDetailPageContent({
     setDragMode("none");
     setDragLastPoint(null);
   }, [selectedAnnotationId, annotationReadOnly]);
+
+  const arrowNoteSavedRef = useRef(false);
+
+  const closeArrowNoteDialogUi = useCallback(() => {
+    setArrowNoteDialogOpen(false);
+    setArrowNoteEditId(null);
+    setArrowNoteEditText("");
+    setArrowNoteIsNew(false);
+  }, []);
+
+  const cancelArrowNoteDialog = useCallback(() => {
+    const id = arrowNoteEditId;
+    const wasNew = arrowNoteIsNew;
+    if (wasNew && id) {
+      setAnnotations((prev) => prev.filter((x) => x.id !== id));
+      setSelectedAnnotationId(null);
+    }
+    closeArrowNoteDialogUi();
+  }, [arrowNoteEditId, arrowNoteIsNew, closeArrowNoteDialogUi]);
+
+  const saveArrowNoteDialog = useCallback(() => {
+    const id = arrowNoteEditId;
+    if (!id) return;
+    const t = arrowNoteEditText.trim();
+    if (!t) {
+      toast({
+        variant: "destructive",
+        title: "Popis šipky",
+        description: "Zadejte neprázdný popis.",
+      });
+      return;
+    }
+    const now = Date.now();
+    arrowNoteSavedRef.current = true;
+    setAnnotations((prev) =>
+      prev.map((x) =>
+        x.id === id && x.type === "arrowNote"
+          ? { ...(x as ArrowNoteAnnotation), description: t, updatedAt: now }
+          : x
+      )
+    );
+    closeArrowNoteDialogUi();
+    setDraftAnnotationId(null);
+  }, [arrowNoteEditId, arrowNoteEditText, closeArrowNoteDialogUi, toast]);
 
   const commitShapeLabelFromDialog = useCallback(() => {
     const point = pendingShapePointRef.current;
@@ -5165,7 +5303,9 @@ export function JobDetailPageContent({
             if (!prev.length) return prev;
             const last = prev[prev.length - 1];
             if (
-              (last?.type === "dimension" || last?.type === "meter") &&
+              (last?.type === "dimension" ||
+                last?.type === "meter" ||
+                last?.type === "arrowNote") &&
               last.id === dId
             ) {
               const len = Math.hypot(
@@ -5329,6 +5469,53 @@ export function JobDetailPageContent({
       setSelectedAnnotationId(id);
       setDraftAnnotationId(id);
       setDragMode("meter-draw");
+      setDragLastPoint(pt);
+      return;
+    }
+
+    if (activeTool === "arrow") {
+      if (
+        hit &&
+        (hit.part === "arrow-start" ||
+          hit.part === "arrow-end" ||
+          hit.part === "arrow-move")
+      ) {
+        setSelectedAnnotationId(hit.id);
+        setDraftAnnotationId(hit.id);
+        setDragMode(hit.part as DragMode);
+        setDragLastPoint(pt);
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+
+      const id = createId();
+      const pageIxAr =
+        editorMediaKindRef.current === "pdf" ? Math.max(0, pdfPageRef.current - 1) : 0;
+      setAnnotations((prev) => {
+        const num = nextArrowNoteNumber(prev);
+        const row: ArrowNoteAnnotation = {
+          id,
+          type: "arrowNote",
+          startX: pt.x,
+          startY: pt.y,
+          endX: pt.x,
+          endY: pt.y,
+          arrowNumber: num,
+          description: "",
+          color: activeColor,
+          strokeWidth: activeStrokeWidth,
+          pageIndex: pageIxAr,
+          createdAt: Date.now(),
+        };
+        return [...prev, row];
+      });
+      setSelectedAnnotationId(id);
+      setDraftAnnotationId(id);
+      setDragMode("arrow-draw");
       setDragLastPoint(pt);
       return;
     }
@@ -5636,6 +5823,24 @@ export function JobDetailPageContent({
           }
         }
 
+        if (a.type === "arrowNote") {
+          if (dragMode === "arrow-draw" || dragMode === "arrow-end") {
+            return { ...a, endX: pt.x, endY: pt.y };
+          }
+          if (dragMode === "arrow-start") {
+            return { ...a, startX: pt.x, startY: pt.y };
+          }
+          if (dragMode === "arrow-move") {
+            return {
+              ...a,
+              startX: a.startX + dx,
+              startY: a.startY + dy,
+              endX: a.endX + dx,
+              endY: a.endY + dy,
+            };
+          }
+        }
+
         if (a.type === "note") {
           if (dragMode === "note-target") {
             return { ...a, targetX: pt.x, targetY: pt.y };
@@ -5875,6 +6080,22 @@ export function JobDetailPageContent({
           x.id === a.id && x.type === "meter" ? { ...x, measuredMm, label } : x
         )
       );
+    }
+
+    if (a?.type === "arrowNote" && dragMode === "arrow-draw") {
+      const len = distance(a.startX, a.startY, a.endX, a.endY);
+      if (len < 8) {
+        setAnnotations((prev) => prev.filter((x) => x.id !== a.id));
+        setSelectedAnnotationId(null);
+        setDraftAnnotationId(null);
+        setDragMode("none");
+        setDragLastPoint(null);
+        return;
+      }
+      setArrowNoteEditId(a.id);
+      setArrowNoteEditText("");
+      setArrowNoteIsNew(true);
+      setArrowNoteDialogOpen(true);
     }
 
     if (
@@ -6522,6 +6743,40 @@ export function JobDetailPageContent({
           targetCtx.restore();
         }
 
+        if (a.type === "arrowNote") {
+          const ar = a as ArrowNoteAnnotation;
+          const sx = ar.startX;
+          const sy = ar.startY;
+          const ex = ar.endX;
+          const ey = ar.endY;
+          const angle = Math.atan2(ey - sy, ex - sx);
+          targetCtx.lineWidth = lw;
+          targetCtx.strokeStyle = stroke;
+          targetCtx.beginPath();
+          targetCtx.moveTo(sx, sy);
+          targetCtx.lineTo(ex, ey);
+          targetCtx.stroke();
+          drawArrowHead(ex, ey, angle, stroke);
+          const nfsRaw = ar.numFontSize;
+          const nfs =
+            typeof nfsRaw === "number" && Number.isFinite(nfsRaw)
+              ? Math.max(8, Math.min(28, nfsRaw))
+              : Math.min(18, Math.max(10, Math.round(fontSize * 0.52)));
+          const r = Math.max(nfs * 0.72, 9);
+          targetCtx.beginPath();
+          targetCtx.arc(sx, sy, r, 0, Math.PI * 2);
+          targetCtx.fillStyle = "rgba(255,255,255,0.94)";
+          targetCtx.fill();
+          targetCtx.strokeStyle = stroke;
+          targetCtx.lineWidth = Math.max(1.25, 1.5);
+          targetCtx.stroke();
+          targetCtx.font = `700 ${nfs}px ui-sans-serif, system-ui, sans-serif`;
+          targetCtx.textAlign = "center";
+          targetCtx.textBaseline = "middle";
+          targetCtx.fillStyle = stroke;
+          targetCtx.fillText(String(ar.arrowNumber ?? ""), sx, sy);
+        }
+
         if (a.type === "note") {
           drawNoteAnnotationOnCanvas(targetCtx, canvas, a, false, {
             fontSize,
@@ -6551,7 +6806,10 @@ export function JobDetailPageContent({
     const legendShapes = annotations.filter(
       (a): a is ShapeLabelAnnotation => a.type === "shapeLabel"
     );
-    const leg = buildLegendFromShapeLabels(legendShapes);
+    const leg = [
+      ...buildLegendFromShapeLabels(legendShapes),
+      ...buildArrowNoteLegendEntries(annotations),
+    ];
     let uploadCanvas: HTMLCanvasElement = exportCanvas;
     if (leg.length > 0 && ctx) {
       const legH = estimateLegendStripHeight(ctx, leg, exportCanvas.width);
@@ -7352,16 +7610,26 @@ export function JobDetailPageContent({
     if (activeTool === "meter") return "crosshair";
     if (activeTool === "calibrate") return "crosshair";
     if (activeTool === "note") return "crosshair";
+    if (activeTool === "arrow") return "crosshair";
     if (activeTool === "shapeLabel") return "crosshair";
     return "default";
   }, [activeTool, dragMode]);
 
-  const annotationLegendEntries = useMemo(() => {
+  const annotationShapeLegendEntries = useMemo(() => {
     const shapes = annotations.filter(
       (a): a is ShapeLabelAnnotation => a.type === "shapeLabel"
     );
     return buildLegendFromShapeLabels(shapes);
   }, [annotations]);
+
+  const annotationArrowLegendEntries = useMemo(
+    () => buildArrowNoteLegendEntries(annotations),
+    [annotations]
+  );
+
+  const annotationLegendHasContent =
+    annotationShapeLegendEntries.length > 0 ||
+    annotationArrowLegendEntries.length > 0;
 
   const openEditJobDialog = useCallback(() => {
     if (!isAdmin) {
@@ -7891,6 +8159,17 @@ export function JobDetailPageContent({
                 </Button>
                 <Button
                   type="button"
+                  variant={activeTool === "arrow" ? "default" : "outline"}
+                  size="sm"
+                  className="min-h-[36px]"
+                  onClick={() => setActiveTool("arrow")}
+                  disabled={annotationReadOnly}
+                  title="Šipka s číslem a popisem v legendě"
+                >
+                  Šipka
+                </Button>
+                <Button
+                  type="button"
                   variant={activeTool === "shapeLabel" ? "default" : "outline"}
                   size="sm"
                   className="min-h-[36px] gap-1 pr-2"
@@ -8122,6 +8401,23 @@ export function JobDetailPageContent({
                         pointerMapRef.current.clear();
                         pinchSessionRef.current = null;
                         viewPanStartRef.current = null;
+                        const dId = draftAnnotationIdRef.current;
+                        const dm = dragModeRef.current;
+                        if (dId && (dm === "arrow-draw" || dm === "dim-draw" || dm === "meter-draw")) {
+                          setAnnotations((prev) => {
+                            if (!prev.length) return prev;
+                            const last = prev[prev.length - 1];
+                            if (
+                              (last?.type === "arrowNote" ||
+                                last?.type === "dimension" ||
+                                last?.type === "meter") &&
+                              last.id === dId
+                            ) {
+                              return prev.slice(0, -1);
+                            }
+                            return prev;
+                          });
+                        }
                         setDragMode("none");
                         setDragLastPoint(null);
                         setNoteRectDraft(null);
@@ -8148,22 +8444,45 @@ export function JobDetailPageContent({
                   </div>
                 </div>
               )}
-              {annotationLegendEntries.length ? (
+              {annotationLegendHasContent ? (
                 <div className="pointer-events-auto absolute bottom-2 left-1/2 z-10 w-[min(calc(100vw-0.75rem),36rem)] max-w-[calc(100%-0.5rem)] -translate-x-1/2">
                   <div className="max-h-[min(36dvh,320px)] overflow-y-auto rounded-md border border-slate-600/80 bg-[#070d18] px-2.5 py-2.5 text-left shadow-2xl ring-1 ring-black/40 sm:px-3 sm:py-3">
                     <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-200 sm:text-sm">
                       Legenda
                     </p>
-                    <ul className="space-y-1.5 sm:space-y-2">
-                      {annotationLegendEntries.map((e) => (
-                        <li
-                          key={`leg-${e.legendNumber}-${e.label}-${e.widthMm}`}
-                          className="border-l-2 border-amber-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
-                        >
-                          {formatLegendEntryLine(e)}
-                        </li>
-                      ))}
-                    </ul>
+                    {annotationShapeLegendEntries.length ? (
+                      <ul className="space-y-1.5 sm:space-y-2">
+                        {annotationShapeLegendEntries.map((e) => (
+                          <li
+                            key={`leg-s-${e.legendNumber}-${e.label}-${e.widthMm}`}
+                            className="border-l-2 border-amber-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                          >
+                            {formatLegendEntryLine(e)}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                    {annotationArrowLegendEntries.length ? (
+                      <div
+                        className={
+                          annotationShapeLegendEntries.length ? "mt-3 border-t border-slate-600/80 pt-2" : ""
+                        }
+                      >
+                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 sm:text-sm">
+                          Poznámky / Šipky
+                        </p>
+                        <ul className="space-y-1.5 sm:space-y-2">
+                          {annotationArrowLegendEntries.map((e) => (
+                            <li
+                              key={`leg-a-${e.legendNumber}-${e.label}`}
+                              className="border-l-2 border-sky-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                            >
+                              {formatLegendEntryLine(e)}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
@@ -8449,6 +8768,60 @@ export function JobDetailPageContent({
             </div>
           ) : null}
       </UnifiedAnnotationEditor>
+
+      <Dialog
+        open={arrowNoteDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            if (arrowNoteSavedRef.current) {
+              arrowNoteSavedRef.current = false;
+              return;
+            }
+            cancelArrowNoteDialog();
+          }
+        }}
+      >
+        <DialogContent
+          overlayClassName="z-[560]"
+          className="!z-[575] max-w-md border-slate-200 bg-white text-slate-900 max-lg:border-slate-700 max-lg:bg-slate-950 max-lg:text-slate-50"
+          onPointerDownOutside={(e) => {
+            if (arrowNoteIsNew) e.preventDefault();
+          }}
+          onEscapeKeyDown={(e) => {
+            if (arrowNoteIsNew) {
+              e.preventDefault();
+              cancelArrowNoteDialog();
+            }
+          }}
+        >
+          <DialogHeader>
+            <DialogTitle>Popis šipky</DialogTitle>
+            <DialogDescription>
+              Text se zobrazí v legendě ve tvaru číslo – popis (např. „4 – upravit příčku na šířku
+              225“).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 py-2">
+            <Label htmlFor="arrow-note-desc">Popis</Label>
+            <Textarea
+              id="arrow-note-desc"
+              rows={3}
+              value={arrowNoteEditText}
+              onChange={(e) => setArrowNoteEditText(e.target.value)}
+              placeholder="např. upravit příčku na šířku 225"
+              className="resize-y"
+            />
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button type="button" variant="outline" onClick={() => cancelArrowNoteDialog()}>
+              Zrušit
+            </Button>
+            <Button type="button" onClick={() => void saveArrowNoteDialog()}>
+              Uložit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog
         open={shapeLabelLibraryPickerOpen}

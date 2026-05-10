@@ -11,6 +11,9 @@ import { effectiveShapeLabelMm } from "@/lib/shape-label-mm-scale";
 
 /** Jeden řádek legendy (editor + export PNG). */
 export function formatLegendEntryLine(e: AnnotationLegendEntry): string {
+  if (e.arrowNote) {
+    return `${e.legendNumber} – ${(e.label || "").trim()}`;
+  }
   let s = `${e.legendNumber} – ${e.label}, ${e.widthMm} × ${e.heightMm} mm`;
   const ld = e.legendDescription?.trim();
   if (ld) s += `, ${ld}`;
@@ -156,6 +159,25 @@ export function hitTestShapeLabel(
 }
 
 /** Spodní pruh legendy pod exportovaným obrázkem (px výška). */
+function countWrappedLines(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number
+): number {
+  let lines = 0;
+  let lineW = 0;
+  for (const ch of text) {
+    const cw = ctx.measureText(ch).width;
+    if (lineW + cw > maxW && lineW > 0) {
+      lines++;
+      lineW = cw;
+    } else {
+      lineW += cw;
+    }
+  }
+  return lines + (lineW > 0 ? 1 : 0);
+}
+
 export function estimateLegendStripHeight(
   ctx: CanvasRenderingContext2D,
   entries: AnnotationLegendEntry[],
@@ -163,28 +185,30 @@ export function estimateLegendStripHeight(
 ): number {
   if (!entries.length) return 0;
   const pad = 18;
-  const lineH = 32;
-  const titleH = 38;
+  const lineH = 30;
+  const mainTitleH = 38;
+  const subTitleH = 28;
+  const shapes = entries.filter((e) => !e.arrowNote);
+  const arrows = entries.filter((e) => e.arrowNote);
   ctx.save();
   ctx.font = "18px ui-sans-serif, system-ui, sans-serif";
+  const maxW = Math.max(80, width - pad * 2);
   let lines = 1;
-  for (const e of entries) {
-    const text = formatLegendEntryLine(e);
-    const maxW = Math.max(80, width - pad * 2);
-    let lineW = 0;
-    for (const ch of text) {
-      const cw = ctx.measureText(ch).width;
-      if (lineW + cw > maxW && lineW > 0) {
-        lines++;
-        lineW = cw;
-      } else {
-        lineW += cw;
-      }
+  for (const e of shapes) {
+    lines += countWrappedLines(ctx, formatLegendEntryLine(e), maxW);
+  }
+  if (arrows.length) {
+    lines += 1;
+    ctx.font = "600 17px ui-sans-serif, system-ui, sans-serif";
+    lines += countWrappedLines(ctx, "Poznámky / Šipky", maxW);
+    ctx.font = "18px ui-sans-serif, system-ui, sans-serif";
+    for (const e of arrows) {
+      lines += countWrappedLines(ctx, formatLegendEntryLine(e), maxW);
     }
-    lines++;
   }
   ctx.restore();
-  return pad * 2 + titleH + lines * lineH;
+  const titleBlock = mainTitleH + (arrows.length ? subTitleH : 0);
+  return pad * 2 + titleBlock + lines * lineH;
 }
 
 export function drawLegendStrip(
@@ -207,10 +231,26 @@ export function drawLegendStrip(
   y += 36;
   ctx.font = "500 18px ui-sans-serif, system-ui, sans-serif";
   ctx.fillStyle = "#e2e8f0";
-  for (const e of entries) {
+  const shapes = entries.filter((e) => !e.arrowNote);
+  const arrows = entries.filter((e) => e.arrowNote);
+  for (const e of shapes) {
     const line = formatLegendEntryLine(e);
     wrapFillText(ctx, line, 16, y, width - 32, 30);
     y += 30;
+  }
+  if (arrows.length) {
+    y += 6;
+    ctx.fillStyle = "#94a3b8";
+    ctx.font = "600 17px ui-sans-serif, system-ui, sans-serif";
+    wrapFillText(ctx, "Poznámky / Šipky", 16, y, width - 32, 26);
+    y += 28;
+    ctx.font = "500 18px ui-sans-serif, system-ui, sans-serif";
+    ctx.fillStyle = "#e2e8f0";
+    for (const e of arrows) {
+      const line = formatLegendEntryLine(e);
+      wrapFillText(ctx, line, 16, y, width - 32, 30);
+      y += 30;
+    }
   }
   ctx.restore();
 }

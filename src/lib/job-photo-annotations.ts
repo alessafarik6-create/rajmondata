@@ -45,6 +45,30 @@ export type JobPhotoMeterAnnotation = {
   pageIndex?: number;
 };
 
+/**
+ * Šipka s číslem u štítku a popisem v legendě.
+ * Start = pozice čísla/štítku, end = hrot šipky (směřuje na detail).
+ */
+export type JobPhotoArrowNoteAnnotation = {
+  id: string;
+  type: "arrowNote";
+  startX: number;
+  startY: number;
+  endX: number;
+  endY: number;
+  /** Pořadové číslo šipky (legenda i výkres). */
+  arrowNumber: number;
+  /** Popis do legendy (řádek „číslo – popis“). */
+  description: string;
+  color: DimensionColor;
+  strokeWidth?: number;
+  /** Velikost písma čísla v px (dokument), volitelné. */
+  numFontSize?: number;
+  pageIndex?: number;
+  createdAt?: number;
+  updatedAt?: number;
+};
+
 export type JobPhotoNoteAnnotation = {
   id: string;
   type: "note";
@@ -97,6 +121,8 @@ export type AnnotationLegendEntry = {
   /** Popis v legendě za rozměry. */
   legendDescription?: string;
   note?: string;
+  /** Řádek šipky: „číslo – popis“ bez mm (podsekce v legendě). */
+  arrowNote?: boolean;
 };
 
 /** Vložené instance modelů z knihovny (odkaz na anotaci + model). */
@@ -109,7 +135,8 @@ export type JobPhotoAnnotation =
   | JobPhotoDimensionAnnotation
   | JobPhotoNoteAnnotation
   | JobPhotoShapeLabelAnnotation
-  | JobPhotoMeterAnnotation;
+  | JobPhotoMeterAnnotation
+  | JobPhotoArrowNoteAnnotation;
 
 /** Verze payloadu; 3 = měřítko / metr / font kóty; 2 = značky / legenda; 1 = starší. */
 export const JOB_PHOTO_ANNOTATION_VERSION = 3;
@@ -198,6 +225,22 @@ type SerializedItem =
       lw?: number;
       createdAt?: number;
       modelId?: string;
+    }
+  | {
+      type: "arrowNote";
+      id: string;
+      sx: number;
+      sy: number;
+      ex: number;
+      ey: number;
+      num: number;
+      desc: string;
+      color: DimensionColor;
+      lw?: number;
+      nfs?: number;
+      pi?: number;
+      ca?: number;
+      ua?: number;
     };
 
 function clamp01(n: number): number {
@@ -205,16 +248,46 @@ function clamp01(n: number): number {
   return Math.max(0, Math.min(1, n));
 }
 
+/** Řádky legendy pro šipky (řazeno podle čísla). */
+export function buildArrowNoteLegendEntries(
+  items: JobPhotoAnnotation[]
+): AnnotationLegendEntry[] {
+  const arrows = items.filter((a): a is JobPhotoArrowNoteAnnotation => a.type === "arrowNote");
+  if (!arrows.length) return [];
+  return [...arrows]
+    .sort(
+      (a, b) =>
+        (a.arrowNumber || 0) - (b.arrowNumber || 0) || a.id.localeCompare(b.id)
+    )
+    .map((a) => ({
+      legendNumber: Math.max(1, Math.floor(a.arrowNumber || 1)),
+      label: (a.description || "").trim(),
+      widthMm: 0,
+      heightMm: 0,
+      arrowNote: true as const,
+    }));
+}
+
+/** Další volné číslo šipky (max existujících + 1, bez přečíslování po smazání). */
+export function nextArrowNoteNumber(items: JobPhotoAnnotation[]): number {
+  let max = 0;
+  for (const a of items) {
+    if (a.type !== "arrowNote") continue;
+    const n = Math.floor(Number((a as JobPhotoArrowNoteAnnotation).arrowNumber) || 0);
+    if (n > max) max = n;
+  }
+  return max + 1;
+}
+
 function buildLegendPayload(
   items: JobPhotoAnnotation[]
 ): AnnotationLegendEntry[] | undefined {
   const shapes = items.filter((a): a is JobPhotoShapeLabelAnnotation => a.type === "shapeLabel");
-  if (!shapes.length) return undefined;
   const sorted = [...shapes].sort(
     (a, b) => a.legendNumber - b.legendNumber || a.id.localeCompare(b.id)
   );
   const seen = new Set<number>();
-  const out: AnnotationLegendEntry[] = [];
+  const shapeEntries: AnnotationLegendEntry[] = [];
   for (const s of sorted) {
     const ln = Math.max(1, Math.floor(s.legendNumber || 1));
     if (seen.has(ln)) continue;
@@ -230,8 +303,10 @@ function buildLegendPayload(
     if (ld) entry.legendDescription = ld;
     const nt = s.note?.trim();
     if (nt) entry.note = nt;
-    out.push(entry);
+    shapeEntries.push(entry);
   }
+  const arrowEntries = buildArrowNoteLegendEntries(items);
+  const out = [...shapeEntries, ...arrowEntries];
   return out.length ? out : undefined;
 }
 
@@ -271,6 +346,7 @@ export function serializeJobPhotoAnnotations(
   const out: SerializedItem[] = [];
   let hasShape = false;
   let hasMeter = false;
+  let hasArrowNote = false;
   for (const a of items) {
     if (a.type === "dimension") {
       const pi =
@@ -345,6 +421,41 @@ export function serializeJobPhotoAnnotations(
         row.bh = clamp01(note.boxHeight / ih);
       }
       out.push(row);
+    } else if (a.type === "arrowNote") {
+      hasArrowNote = true;
+      const ar = a as JobPhotoArrowNoteAnnotation;
+      const pi =
+        typeof ar.pageIndex === "number" && Number.isFinite(ar.pageIndex)
+          ? Math.max(0, Math.floor(ar.pageIndex))
+          : pageIndex;
+      const row: Extract<SerializedItem, { type: "arrowNote" }> = {
+        type: "arrowNote",
+        id: ar.id,
+        sx: clamp01(ar.startX / iw),
+        sy: clamp01(ar.startY / ih),
+        ex: clamp01(ar.endX / iw),
+        ey: clamp01(ar.endY / ih),
+        num: Math.max(1, Math.floor(ar.arrowNumber || 1)),
+        desc: String(ar.description ?? ""),
+        color: ar.color,
+        ...(typeof ar.strokeWidth === "number" && Number.isFinite(ar.strokeWidth)
+          ? { lw: ar.strokeWidth }
+          : {}),
+        ...(typeof ar.numFontSize === "number" &&
+        Number.isFinite(ar.numFontSize) &&
+        ar.numFontSize >= 8 &&
+        ar.numFontSize <= 28
+          ? { nfs: ar.numFontSize }
+          : {}),
+        pi,
+        ...(typeof ar.createdAt === "number" && Number.isFinite(ar.createdAt)
+          ? { ca: ar.createdAt }
+          : {}),
+        ...(typeof ar.updatedAt === "number" && Number.isFinite(ar.updatedAt)
+          ? { ua: ar.updatedAt }
+          : {}),
+      };
+      out.push(row);
     } else if (a.type === "shapeLabel") {
       hasShape = true;
       const s = a as JobPhotoShapeLabelAnnotation;
@@ -405,7 +516,7 @@ export function serializeJobPhotoAnnotations(
       typeof (x as JobPhotoDimensionAnnotation).labelFontSize === "number" &&
       Number.isFinite((x as JobPhotoDimensionAnnotation).labelFontSize)
   );
-  const needV3 = hasMeter || hasCalib || hasDimFont;
+  const needV3 = hasMeter || hasCalib || hasDimFont || hasArrowNote;
   const needV2 = hasShape || (legend && legend.length > 0);
   const version = needV3
     ? JOB_PHOTO_ANNOTATION_VERSION
@@ -564,6 +675,32 @@ export function deserializeJobPhotoAnnotations(
           : "";
       if (mid) shapeRow.modelId = mid;
       out.push(shapeRow);
+    } else if (t === "arrowNote") {
+      const ar = it as Extract<SerializedItem, { type: "arrowNote" }>;
+      const pi = typeof ar.pi === "number" && Number.isFinite(ar.pi) ? Math.max(0, Math.floor(ar.pi)) : defaultPage;
+      const nfsRaw = (ar as { nfs?: unknown }).nfs;
+      const numFontSize =
+        typeof nfsRaw === "number" && Number.isFinite(nfsRaw)
+          ? Math.max(8, Math.min(28, Math.round(nfsRaw)))
+          : undefined;
+      const caRaw = (ar as { ca?: unknown }).ca;
+      const uaRaw = (ar as { ua?: unknown }).ua;
+      out.push({
+        id: String(ar.id || createLocalId()),
+        type: "arrowNote",
+        startX: ar.sx * iw,
+        startY: ar.sy * ih,
+        endX: ar.ex * iw,
+        endY: ar.ey * ih,
+        arrowNumber: Math.max(1, Math.floor(Number(ar.num) || 1)),
+        description: String(ar.desc ?? ""),
+        color: (ar.color as DimensionColor) || "red",
+        strokeWidth: typeof (ar as { lw?: unknown }).lw === "number" ? (ar as { lw: number }).lw : undefined,
+        ...(numFontSize != null ? { numFontSize } : {}),
+        pageIndex: pi,
+        ...(typeof caRaw === "number" && Number.isFinite(caRaw) ? { createdAt: caRaw } : {}),
+        ...(typeof uaRaw === "number" && Number.isFinite(uaRaw) ? { updatedAt: uaRaw } : {}),
+      });
     }
   }
   return out;
