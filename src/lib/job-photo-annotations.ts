@@ -2,6 +2,11 @@
  * Editovatelné anotace u fotek zakázky — serializace do Firestore (normalizované souřadnice 0–1).
  */
 
+import {
+  effectiveShapeLabelMm,
+  shapeLabelAnnotationPixelRect,
+} from "@/lib/shape-label-mm-scale";
+
 export type DimensionColor = "red" | "yellow" | "white" | "black" | "blue";
 
 export type ShapeLabelKind = "square" | "rectangle" | "circle" | "point";
@@ -172,11 +177,12 @@ function buildLegendPayload(
     const ln = Math.max(1, Math.floor(s.legendNumber || 1));
     if (seen.has(ln)) continue;
     seen.add(ln);
+    const effMm = effectiveShapeLabelMm(s.widthMm, s.heightMm);
     const entry: AnnotationLegendEntry = {
       legendNumber: ln,
       label: s.label || "",
-      widthMm: s.widthMm,
-      heightMm: s.heightMm,
+      widthMm: effMm.widthMm,
+      heightMm: effMm.heightMm,
     };
     const ld = s.legendDescription?.trim();
     if (ld) entry.legendDescription = ld;
@@ -381,17 +387,30 @@ export function deserializeJobPhotoAnnotations(
         typeof s.pageIndex === "number" && Number.isFinite(s.pageIndex)
           ? Math.max(0, Math.floor(s.pageIndex))
           : defaultPage;
+      const cx = (s.sx + s.sw / 2) * iw;
+      const cy = (s.sy + s.sh / 2) * ih;
+      const rawWm = typeof s.widthMm === "number" ? s.widthMm : 0;
+      const rawHm = typeof s.heightMm === "number" ? s.heightMm : 0;
+      const effMm = effectiveShapeLabelMm(rawWm, rawHm);
+      const shapeKind = parseShapeKind(s.shape);
+      const rect = shapeLabelAnnotationPixelRect(
+        shapeKind,
+        effMm.widthMm,
+        effMm.heightMm,
+        iw,
+        ih
+      );
       const shapeRow: JobPhotoShapeLabelAnnotation = {
         id: String(s.id || createLocalId()),
         type: "shapeLabel",
-        shape: parseShapeKind(s.shape),
+        shape: shapeKind,
         pageIndex: pi,
-        x: s.sx * iw,
-        y: s.sy * ih,
-        width: Math.max(1, s.sw * iw),
-        height: Math.max(1, s.sh * ih),
-        widthMm: typeof s.widthMm === "number" ? s.widthMm : 0,
-        heightMm: typeof s.heightMm === "number" ? s.heightMm : 0,
+        x: cx - rect.width / 2,
+        y: cy - rect.height / 2,
+        width: rect.width,
+        height: rect.height,
+        widthMm: effMm.widthMm,
+        heightMm: effMm.heightMm,
         label: String(s.label ?? ""),
         note: typeof s.note === "string" ? s.note : undefined,
         legendDescription:

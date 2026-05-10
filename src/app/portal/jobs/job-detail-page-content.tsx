@@ -260,6 +260,10 @@ import {
   dimensionColorFromModelColor,
   type AnnotationModelDoc,
 } from "@/lib/annotation-models";
+import {
+  effectiveShapeLabelMm,
+  shapeLabelAnnotationPixelRect,
+} from "@/lib/shape-label-mm-scale";
 
 type AnnotationTool = "dimension" | "note" | "select" | "pan" | "shapeLabel";
 
@@ -435,6 +439,34 @@ function getScaleAwareSizes(canvas: HTMLCanvasElement) {
   const arrowLen = Math.max(18, Math.round(18 * scale));
   const hitRadius = Math.max(18, Math.round(18 * scale));
   return { fontSize, lineWidth, endpointRadius, arrowLen, hitRadius };
+}
+
+/** Rozměr dokumentu v px (stejný prostor jako souřadnice anotací). */
+function readAnnotationDocumentDimensions(
+  canvas: HTMLCanvasElement | null,
+  mediaKind: "image" | "pdf",
+  pdfScale: number,
+  imageFallback: HTMLImageElement | null
+): { docW: number; docH: number } {
+  if (canvas) {
+    if (mediaKind === "pdf") {
+      const s = Math.max(1e-6, pdfScale);
+      return {
+        docW: Math.max(1, canvas.width / s),
+        docH: Math.max(1, canvas.height / s),
+      };
+    }
+    return {
+      docW: Math.max(1, canvas.width),
+      docH: Math.max(1, canvas.height),
+    };
+  }
+  if (imageFallback) {
+    const w = imageFallback.naturalWidth || imageFallback.width;
+    const h = imageFallback.naturalHeight || imageFallback.height;
+    return { docW: Math.max(1, w), docH: Math.max(1, h) };
+  }
+  return { docW: 1, docH: 1 };
 }
 
 function getPhotoStorageFullPath(
@@ -4827,12 +4859,35 @@ export function JobDetailPageContent({
             const cur = a as ShapeLabelAnnotation;
             const mid = shapeLabelForm.modelId?.trim() || cur.modelId?.trim();
             const fromLibrary = Boolean(mid);
+            const wm = fromLibrary ? cur.widthMm : Number(shapeLabelForm.widthMm) || 0;
+            const hm = fromLibrary ? cur.heightMm : Number(shapeLabelForm.heightMm) || 0;
+            const eff = effectiveShapeLabelMm(wm, hm);
+            const { docW, docH } = readAnnotationDocumentDimensions(
+              canvasRef.current,
+              editorMediaKindRef.current === "pdf" ? "pdf" : "image",
+              pdfScaleRef.current,
+              imageForCanvas
+            );
+            const shape = (fromLibrary ? cur.shape : shapeLabelForm.shape) as ShapeLabelAnnotation["shape"];
+            const rect = shapeLabelAnnotationPixelRect(
+              shape,
+              eff.widthMm,
+              eff.heightMm,
+              docW,
+              docH
+            );
+            const cx = cur.x + cur.width / 2;
+            const cy = cur.y + cur.height / 2;
             return {
               ...cur,
-              shape: fromLibrary ? cur.shape : shapeLabelForm.shape,
+              shape,
               label: shapeLabelForm.label.trim(),
-              widthMm: fromLibrary ? cur.widthMm : Number(shapeLabelForm.widthMm) || 0,
-              heightMm: fromLibrary ? cur.heightMm : Number(shapeLabelForm.heightMm) || 0,
+              widthMm: eff.widthMm,
+              heightMm: eff.heightMm,
+              width: rect.width,
+              height: rect.height,
+              x: cx - rect.width / 2,
+              y: cy - rect.height / 2,
               note: shapeLabelForm.note.trim() || undefined,
               legendDescription: shapeLabelForm.legendDescription.trim() || undefined,
               showLabelInline: shapeLabelForm.showLabelInline,
@@ -4843,21 +4898,25 @@ export function JobDetailPageContent({
         )
       );
     } else if (point) {
-      const wm = Number(shapeLabelForm.widthMm) || 1;
-      const hm = Number(shapeLabelForm.heightMm) || 1;
-      const aspect = wm / Math.max(0.001, hm);
-      let boxW = 96;
-      let boxH = boxW / aspect;
-      const cvs = canvasRef.current;
-      if (cvs) {
-        const maxBox = Math.min(cvs.width, cvs.height) * 0.35;
-        if (boxW > maxBox) {
-          boxW = maxBox;
-          boxH = boxW / aspect;
-        }
-      }
-      const bx = point.x - boxW / 2;
-      const by = point.y - boxH / 2;
+      const { docW, docH } = readAnnotationDocumentDimensions(
+        canvasRef.current,
+        editorMediaKindRef.current === "pdf" ? "pdf" : "image",
+        pdfScaleRef.current,
+        imageForCanvas
+      );
+      const eff = effectiveShapeLabelMm(
+        Number(shapeLabelForm.widthMm),
+        Number(shapeLabelForm.heightMm)
+      );
+      const rect = shapeLabelAnnotationPixelRect(
+        shapeLabelForm.shape,
+        eff.widthMm,
+        eff.heightMm,
+        docW,
+        docH
+      );
+      const bx = point.x - rect.width / 2;
+      const by = point.y - rect.height / 2;
       const id = createId();
       const mid = shapeLabelForm.modelId?.trim();
       const row: ShapeLabelAnnotation = {
@@ -4867,10 +4926,10 @@ export function JobDetailPageContent({
         pageIndex: point.pageIndex,
         x: bx,
         y: by,
-        width: Math.max(8, boxW),
-        height: Math.max(8, boxH),
-        widthMm: Number(shapeLabelForm.widthMm) || 0,
-        heightMm: Number(shapeLabelForm.heightMm) || 0,
+        width: rect.width,
+        height: rect.height,
+        widthMm: eff.widthMm,
+        heightMm: eff.heightMm,
         label: shapeLabelForm.label.trim(),
         note: shapeLabelForm.note.trim() || undefined,
         legendDescription: shapeLabelForm.legendDescription.trim() || undefined,
@@ -4885,7 +4944,7 @@ export function JobDetailPageContent({
     pendingShapePointRef.current = null;
     setShapeLabelDialogOpen(false);
     setShapeLabelEditingId(null);
-  }, [activeColor, shapeLabelForm, shapeLabelEditingId]);
+  }, [activeColor, shapeLabelForm, shapeLabelEditingId, imageForCanvas]);
 
   const undoLast = useCallback(() => {
     setAnnotations((prev) => prev.slice(0, -1));
@@ -5115,22 +5174,25 @@ export function JobDetailPageContent({
           editorMediaKindRef.current === "pdf"
             ? Math.max(0, pdfPageRef.current - 1)
             : 0;
-        const aspect = plm.widthMm / Math.max(0.001, plm.heightMm);
-        let boxW = 96;
-        let boxH = boxW / aspect;
-        const cvs = canvasRef.current;
-        if (cvs) {
-          const maxBox = Math.min(cvs.width, cvs.height) * 0.35;
-          if (boxW > maxBox) {
-            boxW = maxBox;
-            boxH = boxW / aspect;
-          }
-        }
-        const bx = pt.x - boxW / 2;
-        const by = pt.y - boxH / 2;
-        const id = createId();
+        const { docW, docH } = readAnnotationDocumentDimensions(
+          canvasRef.current,
+          editorMediaKindRef.current === "pdf" ? "pdf" : "image",
+          pdfScaleRef.current,
+          imageForCanvas
+        );
         const sh = plm.shape as ShapeLabelAnnotation["shape"];
+        const rect = shapeLabelAnnotationPixelRect(
+          sh,
+          plm.widthMm,
+          plm.heightMm,
+          docW,
+          docH
+        );
+        const bx = pt.x - rect.width / 2;
+        const by = pt.y - rect.height / 2;
+        const id = createId();
         const col = dimensionColorFromModelColor(plm.color);
+        const effPlm = effectiveShapeLabelMm(plm.widthMm, plm.heightMm);
         setAnnotations((prev) => {
           const nextShape: ShapeLabelAnnotation = {
             id,
@@ -5139,10 +5201,10 @@ export function JobDetailPageContent({
             pageIndex: pageIxPl,
             x: bx,
             y: by,
-            width: Math.max(8, boxW),
-            height: Math.max(8, boxH),
-            widthMm: plm.widthMm,
-            heightMm: plm.heightMm,
+            width: rect.width,
+            height: rect.height,
+            widthMm: effPlm.widthMm,
+            heightMm: effPlm.heightMm,
             label: plm.name.trim() || "Model",
             legendDescription: plm.legendDescription?.trim() || undefined,
             note: undefined,
@@ -5387,8 +5449,8 @@ export function JobDetailPageContent({
             const chBase = isPdf ? canvas.height / pdfS : canvas.height;
             const maxW = cwBase - sh.x;
             const maxH = chBase - sh.y;
-            let newW = Math.max(8, Math.min(pt.x - sh.x, maxW));
-            let newH = Math.max(8, Math.min(pt.y - sh.y, maxH));
+            let newW = Math.max(0.25, Math.min(pt.x - sh.x, maxW));
+            let newH = Math.max(0.25, Math.min(pt.y - sh.y, maxH));
             if (sh.shape === "square" || sh.shape === "circle") {
               const side = Math.min(newW, newH);
               newW = side;

@@ -7,6 +7,7 @@ import type {
   DimensionColor,
   JobPhotoShapeLabelAnnotation,
 } from "@/lib/job-photo-annotations";
+import { effectiveShapeLabelMm } from "@/lib/shape-label-mm-scale";
 
 /** Jeden řádek legendy (editor + export PNG). */
 export function formatLegendEntryLine(e: AnnotationLegendEntry): string {
@@ -30,11 +31,12 @@ export function buildLegendFromShapeLabels(
     const ln = Math.max(1, Math.floor(s.legendNumber || 1));
     if (seen.has(ln)) continue;
     seen.add(ln);
+    const effMm = effectiveShapeLabelMm(s.widthMm, s.heightMm);
     out.push({
       legendNumber: ln,
       label: s.label || "",
-      widthMm: s.widthMm,
-      heightMm: s.heightMm,
+      widthMm: effMm.widthMm,
+      heightMm: effMm.heightMm,
       legendDescription: s.legendDescription?.trim() ? s.legendDescription.trim() : undefined,
       note: s.note?.trim() ? s.note.trim() : undefined,
     });
@@ -48,7 +50,7 @@ export function drawShapeLabelOnCanvas(
   isSelected: boolean,
   coordScale: number,
   colorToHex: (c: DimensionColor) => string,
-  fontSize: number,
+  _fontSize: number,
   lineWidth: number
 ): void {
   const x = a.x * coordScale;
@@ -63,7 +65,7 @@ export function drawShapeLabelOnCanvas(
   ctx.fillStyle = `${stroke}33`;
 
   if (a.shape === "point") {
-    const r = Math.max(4, Math.min(w, h) / 2 || 4);
+    const r = Math.max(0.5, Math.min(w, h) / 2);
     const cx = x + w / 2;
     const cy = y + h / 2;
     ctx.beginPath();
@@ -85,22 +87,24 @@ export function drawShapeLabelOnCanvas(
 
   const labelText = (a.showLabelInline ? a.label : String(a.legendNumber)).trim();
   if (labelText) {
-    const pad = Math.max(3, Math.round(fontSize * 0.25));
-    ctx.font = `700 ${Math.max(10, Math.round(fontSize * 0.55))}px ui-sans-serif, system-ui, sans-serif`;
+    const short = Math.max(1e-6, Math.min(w, h));
+    let fontPx = Math.round(short * 0.48);
+    fontPx = Math.max(8, Math.min(56, fontPx));
+    ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    const tw = ctx.measureText(labelText).width;
-    const boxW = tw + pad * 2;
-    const boxH = Math.max(14, Math.round(fontSize * 0.75));
-    const bx = x + w / 2 - boxW / 2;
-    let by = y - boxH - 4;
-    if (by < 2) by = y + h + 4;
-    ctx.fillStyle = "rgba(0,0,0,0.78)";
-    ctx.fillRect(bx, by, boxW, boxH);
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = 1;
-    ctx.strokeRect(bx, by, boxW, boxH);
-    ctx.fillStyle = "#fff";
-    ctx.fillText(labelText, bx + pad, by + boxH / 2);
+    ctx.font = `700 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+    const maxTw = Math.max(1, w * 0.9);
+    while (fontPx > 8 && ctx.measureText(labelText).width > maxTw) {
+      fontPx -= 1;
+      ctx.font = `700 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
+    }
+    const cx = x + w / 2;
+    const cy = y + h / 2;
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "rgba(0,0,0,0.55)";
+    ctx.lineWidth = Math.max(1, fontPx * 0.08);
+    ctx.strokeText(labelText, cx, cy);
+    ctx.fillText(labelText, cx, cy);
   }
 
   ctx.restore();
@@ -123,7 +127,7 @@ export function hitTestShapeLabel(
   if (a.shape === "circle" || a.shape === "point") {
     const cx = ax + aw / 2;
     const cy = ay + ah / 2;
-    const r = a.shape === "point" ? Math.max(aw, ah) / 2 : Math.min(aw, ah) / 2;
+    const r = Math.min(aw, ah) / 2;
     const dist = Math.hypot(x - cx, y - cy);
     if (dist <= r + hitRadius) return "move";
     return null;
@@ -139,7 +143,15 @@ export function hitTestShapeLabel(
   ) {
     return "resize-br";
   }
-  if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) return "move";
+  const pad = hitRadius * 1.35;
+  if (
+    x >= ax - pad &&
+    x <= ax + aw + pad &&
+    y >= ay - pad &&
+    y <= ay + ah + pad
+  ) {
+    return "move";
+  }
   return null;
 }
 
