@@ -48,6 +48,14 @@ export function shapeLabelDocumentPixelsFromMm(
   };
 }
 
+/** Úhel značky ve stupních 0–360 (360 a 0 ekvivalentní). */
+export function normalizeShapeLabelRotationDeg(deg: number): number {
+  if (!Number.isFinite(deg)) return 0;
+  let x = deg % 360;
+  if (x < 0) x += 360;
+  return x;
+}
+
 export function shapeLabelAnnotationPixelRect(
   shape: ShapeLabelKind,
   widthMm: number | undefined,

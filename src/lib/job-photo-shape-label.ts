@@ -7,7 +7,10 @@ import type {
   DimensionColor,
   JobPhotoShapeLabelAnnotation,
 } from "@/lib/job-photo-annotations";
-import { effectiveShapeLabelMm } from "@/lib/shape-label-mm-scale";
+import {
+  effectiveShapeLabelMm,
+  normalizeShapeLabelRotationDeg,
+} from "@/lib/shape-label-mm-scale";
 
 /** Jeden řádek legendy (editor + export PNG). */
 export function formatLegendEntryLine(e: AnnotationLegendEntry): string {
@@ -47,6 +50,42 @@ export function buildLegendFromShapeLabels(
   return out;
 }
 
+function shapeLabelRotationRad(a: JobPhotoShapeLabelAnnotation): number {
+  return (normalizeShapeLabelRotationDeg(Number(a.rotation ?? 0)) * Math.PI) / 180;
+}
+
+/** Dokumentové souřadnice středu úchopu rotace (nad horní hranou ve směru „nahoru“ od boxu). */
+export function shapeLabelRotateHandleDoc(
+  a: JobPhotoShapeLabelAnnotation
+): { hx: number; hy: number } {
+  const cx = a.x + a.width / 2;
+  const cy = a.y + a.height / 2;
+  const aw = a.width;
+  const ah = a.height;
+  const R = shapeLabelRotationRad(a);
+  const pad = Math.max(8, Math.min(aw, ah) * 0.1);
+  const lx = 0;
+  const ly = -(ah / 2 + pad);
+  const hx = cx + lx * Math.cos(R) - ly * Math.sin(R);
+  const hy = cy + lx * Math.sin(R) + ly * Math.cos(R);
+  return { hx, hy };
+}
+
+function docPointToShapeLocal(
+  a: JobPhotoShapeLabelAnnotation,
+  x: number,
+  y: number
+): { lx: number; ly: number } {
+  const cx = a.x + a.width / 2;
+  const cy = a.y + a.height / 2;
+  const R = shapeLabelRotationRad(a);
+  const dx = x - cx;
+  const dy = y - cy;
+  const lx = dx * Math.cos(R) + dy * Math.sin(R);
+  const ly = -dx * Math.sin(R) + dy * Math.cos(R);
+  return { lx, ly };
+}
+
 export function drawShapeLabelOnCanvas(
   ctx: CanvasRenderingContext2D,
   a: JobPhotoShapeLabelAnnotation,
@@ -61,31 +100,38 @@ export function drawShapeLabelOnCanvas(
   const w = a.width * coordScale;
   const h = a.height * coordScale;
   const stroke = colorToHex(a.color);
+  const R = shapeLabelRotationRad(a);
+  const cx = x + w / 2;
+  const cy = y + h / 2;
 
   ctx.save();
   ctx.lineWidth = isSelected ? lineWidth + 1 : lineWidth;
   ctx.strokeStyle = stroke;
   ctx.fillStyle = `${stroke}33`;
 
+  ctx.translate(cx, cy);
+  ctx.rotate(R);
+  ctx.translate(-w / 2, -h / 2);
+
   if (a.shape === "point") {
     const r = Math.max(0.5, Math.min(w, h) / 2);
-    const cx = x + w / 2;
-    const cy = y + h / 2;
+    const pcx = w / 2;
+    const pcy = h / 2;
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.arc(pcx, pcy, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   } else if (a.shape === "circle") {
-    const cx = x + w / 2;
-    const cy = y + h / 2;
+    const pcx = w / 2;
+    const pcy = h / 2;
     const r = Math.max(1, Math.min(w, h) / 2);
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.arc(pcx, pcy, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   } else {
-    ctx.fillRect(x, y, w, h);
-    ctx.strokeRect(x, y, w, h);
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeRect(0, 0, w, h);
   }
 
   const labelText = (a.showLabelInline ? a.label : String(a.legendNumber)).trim();
@@ -101,16 +147,38 @@ export function drawShapeLabelOnCanvas(
       fontPx -= 1;
       ctx.font = `700 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
     }
-    const cx = x + w / 2;
-    const cy = y + h / 2;
+    const tcx = w / 2;
+    const tcy = h / 2;
     ctx.fillStyle = "#ffffff";
     ctx.strokeStyle = "rgba(0,0,0,0.55)";
     ctx.lineWidth = Math.max(1, fontPx * 0.08);
-    ctx.strokeText(labelText, cx, cy);
-    ctx.fillText(labelText, cx, cy);
+    ctx.strokeText(labelText, tcx, tcy);
+    ctx.fillText(labelText, tcx, tcy);
   }
 
   ctx.restore();
+
+  if (isSelected) {
+    const { hx, hy } = shapeLabelRotateHandleDoc(a);
+    const hsx = hx * coordScale;
+    const hsy = hy * coordScale;
+    const hr = Math.max(4, 5 * Math.min(1.2, coordScale));
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(hsx, hsy, hr, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#2563eb";
+    ctx.lineWidth = Math.max(1, 1.25 * coordScale);
+    ctx.fill();
+    ctx.stroke();
+    const deg = Math.round(normalizeShapeLabelRotationDeg(Number(a.rotation ?? 0)));
+    ctx.font = `${Math.max(9, Math.round(11 * coordScale))}px ui-sans-serif, system-ui, sans-serif`;
+    ctx.fillStyle = "#0f172a";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "bottom";
+    ctx.fillText(`${deg}°`, hsx + hr + 3, hsy + 3);
+    ctx.restore();
+  }
 }
 
 /** x,y v prostoru dokumentu (jako u kót), stejně jako a.x / a.width. */
@@ -119,19 +187,28 @@ export function hitTestShapeLabel(
   x: number,
   y: number,
   hitRadius: number,
-  opts?: { lockResize?: boolean }
-): "move" | "resize-br" | null {
+  opts?: { lockResize?: boolean; enableRotateHandle?: boolean }
+): "rotate" | "move" | "resize-br" | null {
+  const lockResize = opts?.lockResize === true;
+  const enableRotate = opts?.enableRotateHandle === true;
   const ax = a.x;
   const ay = a.y;
   const aw = a.width;
   const ah = a.height;
-  const lockResize = opts?.lockResize === true;
+
+  if (enableRotate) {
+    const { hx, hy } = shapeLabelRotateHandleDoc(a);
+    const handleR = Math.max(5, hitRadius * 0.9);
+    if (Math.hypot(x - hx, y - hy) <= handleR + hitRadius) {
+      return "rotate";
+    }
+  }
+
+  const { lx, ly } = docPointToShapeLocal(a, x, y);
 
   if (a.shape === "circle" || a.shape === "point") {
-    const cx = ax + aw / 2;
-    const cy = ay + ah / 2;
     const r = Math.min(aw, ah) / 2;
-    const dist = Math.hypot(x - cx, y - cy);
+    const dist = Math.hypot(lx, ly);
     if (dist <= r + hitRadius) return "move";
     return null;
   }
@@ -139,20 +216,15 @@ export function hitTestShapeLabel(
   const br = hitRadius * 2;
   if (
     !lockResize &&
-    x >= ax + aw - br &&
-    x <= ax + aw + hitRadius &&
-    y >= ay + ah - br &&
-    y <= ay + ah + hitRadius
+    lx >= aw / 2 - br &&
+    lx <= aw / 2 + hitRadius &&
+    ly >= ah / 2 - br &&
+    ly <= ah / 2 + hitRadius
   ) {
     return "resize-br";
   }
   const pad = hitRadius * 1.35;
-  if (
-    x >= ax - pad &&
-    x <= ax + aw + pad &&
-    y >= ay - pad &&
-    y <= ay + ah + pad
-  ) {
+  if (lx >= -aw / 2 - pad && lx <= aw / 2 + pad && ly >= -ah / 2 - pad && ly <= ah / 2 + pad) {
     return "move";
   }
   return null;

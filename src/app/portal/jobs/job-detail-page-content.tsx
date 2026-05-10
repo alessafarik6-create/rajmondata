@@ -268,6 +268,7 @@ import {
 } from "@/lib/annotation-models";
 import {
   effectiveShapeLabelMm,
+  normalizeShapeLabelRotationDeg,
   shapeLabelAnnotationPixelRect,
 } from "@/lib/shape-label-mm-scale";
 
@@ -293,6 +294,7 @@ type DragMode =
   | "note-resize-br"
   | "shape-move"
   | "shape-resize-br"
+  | "shape-rotate"
   | "view-pan"
   | "meter-draw"
   | "meter-start"
@@ -1575,6 +1577,13 @@ export function JobDetailPageContent({
     x: number;
     y: number;
     pageIndex: number;
+  } | null>(null);
+
+  const shapeRotateDragRef = useRef<{
+    pointerRad0: number;
+    rotation0: number;
+    cx: number;
+    cy: number;
   } | null>(null);
 
   const [shapeLabelDialogOpen, setShapeLabelDialogOpen] = useState(false);
@@ -4832,9 +4841,13 @@ export function JobDetailPageContent({
         const a = annotations[i];
         if (a.type === "shapeLabel") {
           const sl = a as ShapeLabelAnnotation;
+          const selHere = a.id === selectedAnnotationId;
           const part = hitTestShapeLabel(sl, x, y, hrDim, {
             lockResize: Boolean(sl.modelId?.trim()),
+            enableRotateHandle: selHere,
           });
+          if (part === "rotate")
+            return { id: a.id, part: "shape-rotate" as const };
           if (part === "resize-br")
             return { id: a.id, part: "shape-resize-br" as const };
           if (part === "move") return { id: a.id, part: "shape-move" as const };
@@ -5178,6 +5191,7 @@ export function JobDetailPageContent({
               showLabelInline: shapeLabelForm.showLabelInline,
               color: activeColor,
               modelId: mid || cur.modelId,
+              rotation: cur.rotation,
             };
           })
         )
@@ -5380,11 +5394,32 @@ export function JobDetailPageContent({
     // Allow selecting/moving existing shape labels even when another tool is active.
     if (
       hit &&
-      ((hit as any).part === "shape-move" || (hit as any).part === "shape-resize-br")
+      ((hit as any).part === "shape-move" ||
+        (hit as any).part === "shape-resize-br" ||
+        (hit as any).part === "shape-rotate")
     ) {
       setSelectedAnnotationId(hit.id);
       setDraftAnnotationId(hit.id);
-      setDragMode((hit as any).part as DragMode);
+      const part = (hit as { part: string }).part;
+      if (part === "shape-rotate") {
+        const ann = annotations.find((x) => x.id === hit.id);
+        if (ann?.type === "shapeLabel") {
+          const sh = ann as ShapeLabelAnnotation;
+          const cx = sh.x + sh.width / 2;
+          const cy = sh.y + sh.height / 2;
+          shapeRotateDragRef.current = {
+            cx,
+            cy,
+            pointerRad0: Math.atan2(pt.y - cy, pt.x - cx),
+            rotation0: normalizeShapeLabelRotationDeg(Number(sh.rotation ?? 0)),
+          };
+        } else {
+          shapeRotateDragRef.current = null;
+        }
+      } else {
+        shapeRotateDragRef.current = null;
+      }
+      setDragMode(part as DragMode);
       setDragLastPoint(pt);
       try {
         e.currentTarget.setPointerCapture(e.pointerId);
@@ -5550,11 +5585,32 @@ export function JobDetailPageContent({
     if (activeTool === "shapeLabel") {
       if (
         hit &&
-        ((hit as any).part === "shape-move" || (hit as any).part === "shape-resize-br")
+        ((hit as any).part === "shape-move" ||
+          (hit as any).part === "shape-resize-br" ||
+          (hit as any).part === "shape-rotate")
       ) {
         setSelectedAnnotationId(hit.id);
         setDraftAnnotationId(hit.id);
-        setDragMode((hit as any).part as DragMode);
+        const part = (hit as { part: string }).part;
+        if (part === "shape-rotate") {
+          const ann = annotations.find((x) => x.id === hit.id);
+          if (ann?.type === "shapeLabel") {
+            const sh = ann as ShapeLabelAnnotation;
+            const cx = sh.x + sh.width / 2;
+            const cy = sh.y + sh.height / 2;
+            shapeRotateDragRef.current = {
+              cx,
+              cy,
+              pointerRad0: Math.atan2(pt.y - cy, pt.x - cx),
+              rotation0: normalizeShapeLabelRotationDeg(Number(sh.rotation ?? 0)),
+            };
+          } else {
+            shapeRotateDragRef.current = null;
+          }
+        } else {
+          shapeRotateDragRef.current = null;
+        }
+        setDragMode(part as DragMode);
         setDragLastPoint(pt);
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -5878,6 +5934,20 @@ export function JobDetailPageContent({
 
         if (a.type === "shapeLabel") {
           const sh = a as ShapeLabelAnnotation;
+          if (dragMode === "shape-rotate") {
+            const run = shapeRotateDragRef.current;
+            if (!run) return sh;
+            const cx = sh.x + sh.width / 2;
+            const cy = sh.y + sh.height / 2;
+            const cur = Math.atan2(pt.y - cy, pt.x - cx);
+            let delta = cur - run.pointerRad0;
+            while (delta > Math.PI) delta -= 2 * Math.PI;
+            while (delta < -Math.PI) delta += 2 * Math.PI;
+            const next = normalizeShapeLabelRotationDeg(
+              run.rotation0 + (delta * 180) / Math.PI
+            );
+            return { ...sh, rotation: next };
+          }
           if (dragMode === "shape-move") {
             return { ...sh, x: sh.x + dx, y: sh.y + dy };
           }
@@ -6118,6 +6188,7 @@ export function JobDetailPageContent({
       }
     }
 
+    shapeRotateDragRef.current = null;
     setDragMode("none");
     setDragLastPoint(null);
   };
@@ -7599,6 +7670,7 @@ export function JobDetailPageContent({
   };
 
   const canvasCursor = useMemo(() => {
+    if (dragMode === "shape-rotate") return "crosshair";
     if (dragMode === "shape-resize-br") return "nwse-resize";
     if (dragMode === "note-rect-draw") return "crosshair";
     if (dragMode === "calibration-draw") return "crosshair";

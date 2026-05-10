@@ -4,6 +4,7 @@
 
 import {
   effectiveShapeLabelMm,
+  normalizeShapeLabelRotationDeg,
   shapeLabelAnnotationPixelRect,
 } from "@/lib/shape-label-mm-scale";
 
@@ -111,6 +112,8 @@ export type JobPhotoShapeLabelAnnotation = {
   createdAt?: number;
   /** companies/.../annotationModels/{id} pokud značka vznikla ze šablony */
   modelId?: string;
+  /** Úhel natočení ve stupních 0–360 (kolem středu boxu; rozměry v mm beze změny). */
+  rotation?: number;
 };
 
 export type AnnotationLegendEntry = {
@@ -225,6 +228,8 @@ type SerializedItem =
       lw?: number;
       createdAt?: number;
       modelId?: string;
+      /** Úhel ve stupních (uložený klíč `rot`). */
+      rot?: number;
     }
   | {
       type: "arrowNote";
@@ -489,6 +494,11 @@ export function serializeJobPhotoAnnotations(
       }
       const mid = typeof s.modelId === "string" ? s.modelId.trim() : "";
       if (mid) row.modelId = mid;
+      const rotDeg = Number((s as { rotation?: unknown }).rotation);
+      if (Number.isFinite(rotDeg)) {
+        const rn = normalizeShapeLabelRotationDeg(rotDeg);
+        if (rn !== 0) row.rot = rn;
+      }
       out.push(row);
     }
   }
@@ -674,6 +684,11 @@ export function deserializeJobPhotoAnnotations(
           ? (s as { modelId?: string }).modelId?.trim()
           : "";
       if (mid) shapeRow.modelId = mid;
+      const rotRaw = (s as { rot?: unknown }).rot;
+      const rotNum = Number(rotRaw);
+      if (Number.isFinite(rotNum)) {
+        shapeRow.rotation = normalizeShapeLabelRotationDeg(rotNum);
+      }
       out.push(shapeRow);
     } else if (t === "arrowNote") {
       const ar = it as Extract<SerializedItem, { type: "arrowNote" }>;
@@ -719,23 +734,56 @@ export function groupKeyForShapeLabel(s: JobPhotoShapeLabelAnnotation): string {
   return `f:${lab}|${Number(s.widthMm) || 0}|${Number(s.heightMm) || 0}|${note}|${leg}`;
 }
 
-/** Přiřadí legendNumber podle skupin (model / stejné parametry); čísla 1…k bez mezer. */
+/**
+ * Přiřadí legendNumber podle skupin (model / stejné ruční parametry).
+ * Zachová existující čísla ve skupině (min. legendNumber), nové skupiny dostanou neobsazené číslo.
+ */
 export function syncShapeLabelLegendNumbers(items: JobPhotoAnnotation[]): JobPhotoAnnotation[] {
   const shapes = items.filter((a): a is JobPhotoShapeLabelAnnotation => a.type === "shapeLabel");
-  const sorted = [...shapes].sort(
-    (a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0) || a.id.localeCompare(b.id)
-  );
-  const keyToNum = new Map<string, number>();
-  let next = 1;
-  for (const s of sorted) {
+  if (!shapes.length) return items;
+
+  const byKey = new Map<string, JobPhotoShapeLabelAnnotation[]>();
+  for (const s of shapes) {
     const k = groupKeyForShapeLabel(s);
-    if (!keyToNum.has(k)) {
-      keyToNum.set(k, next++);
-    }
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k)!.push(s);
   }
+
+  const keysSorted = [...byKey.keys()].sort((ka, kb) => {
+    const minCreated = (arr: JobPhotoShapeLabelAnnotation[]) =>
+      Math.min(...arr.map((x) => (typeof x.createdAt === "number" ? x.createdAt : 0)));
+    const ca = minCreated(byKey.get(ka)!);
+    const cb = minCreated(byKey.get(kb)!);
+    return ca - cb || ka.localeCompare(kb);
+  });
+
+  const candidateForKey = (k: string): number => {
+    const arr = byKey.get(k)!;
+    let mn = Infinity;
+    for (const s of arr) {
+      const n = Math.floor(Number(s.legendNumber));
+      if (Number.isFinite(n) && n >= 1) mn = Math.min(mn, n);
+    }
+    return mn === Infinity ? -1 : mn;
+  };
+
+  const finalNum = new Map<string, number>();
+  const taken = new Set<number>();
+
+  for (const k of keysSorted) {
+    let want = candidateForKey(k);
+    if (want < 1 || taken.has(want)) {
+      let x = taken.size ? Math.max(...taken) + 1 : 1;
+      while (taken.has(x)) x += 1;
+      want = x;
+    }
+    finalNum.set(k, want);
+    taken.add(want);
+  }
+
   return items.map((a) => {
     if (a.type !== "shapeLabel") return a;
-    const num = keyToNum.get(groupKeyForShapeLabel(a));
+    const num = finalNum.get(groupKeyForShapeLabel(a as JobPhotoShapeLabelAnnotation));
     return num != null ? { ...a, legendNumber: num } : a;
   });
 }
