@@ -32,3 +32,33 @@ export function useIsBelowLg(): boolean {
     () => false
   )
 }
+
+/** Editor anotací: mobilní úzký layout (≤640px). */
+const ANNOT_EDITOR_MOBILE_MAX_PX = 640
+export function useIsAnnotEditorMobile(): boolean {
+  const query = `(max-width: ${ANNOT_EDITOR_MOBILE_MAX_PX}px)`
+  return React.useSyncExternalStore(
+    (onStoreChange) => {
+      const mql = window.matchMedia(query)
+      mql.addEventListener("change", onStoreChange)
+      return () => mql.removeEventListener("change", onStoreChange)
+    },
+    () => window.matchMedia(query).matches,
+    () => false
+  )
+}
+
+/** Editor anotací: mobil + tablet — kompaktní toolbar a větší plocha (≤1024px). */
+const ANNOT_EDITOR_COMPACT_MAX_PX = 1024
+export function useIsAnnotEditorCompact(): boolean {
+  const query = `(max-width: ${ANNOT_EDITOR_COMPACT_MAX_PX}px)`
+  return React.useSyncExternalStore(
+    (onStoreChange) => {
+      const mql = window.matchMedia(query)
+      mql.addEventListener("change", onStoreChange)
+      return () => mql.removeEventListener("change", onStoreChange)
+    },
+    () => window.matchMedia(query).matches,
+    () => false
+  )
+}

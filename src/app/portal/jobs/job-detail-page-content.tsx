@@ -103,7 +103,11 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
-import { useIsBelowLg } from "@/hooks/use-mobile";
+import {
+  useIsBelowLg,
+  useIsAnnotEditorCompact,
+  useIsAnnotEditorMobile,
+} from "@/hooks/use-mobile";
 import {
   Select,
   SelectContent,
@@ -939,6 +943,8 @@ export function JobDetailPageContent({
   const firestore = useFirestore();
   const { toast } = useToast();
   const isAnnotTouchUI = useIsBelowLg();
+  const isAnnotEditorCompact = useIsAnnotEditorCompact();
+  const isAnnotEditorMobile = useIsAnnotEditorMobile();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -1520,6 +1526,9 @@ export function JobDetailPageContent({
   const [photoToEdit, setPhotoToEdit] = useState<JobPhotoAnnotationTarget | null>(
     null
   );
+  /** Na mobilu/tabletu sbalená nápověda a legenda, aby zbytek editoru zůstal větší. */
+  const [annotationHelpOpen, setAnnotationHelpOpen] = useState(false);
+  const [annotationLegendOpen, setAnnotationLegendOpen] = useState(true);
   /** Jeden zdroj pravdy: editor je otevřený právě tehdy, je-li vybrané médium k anotaci. */
   const editorOpen = Boolean(photoToEdit);
   const annotationReadOnly = employeeAnnotationShell
@@ -1753,13 +1762,23 @@ export function JobDetailPageContent({
   }, [editorOpen]);
 
   useEffect(() => {
-    if (!editorOpen || !isAnnotTouchUI) return;
+    if (!editorOpen) return;
+    if (isAnnotEditorCompact) {
+      setAnnotationLegendOpen(false);
+      setAnnotationHelpOpen(false);
+    } else {
+      setAnnotationLegendOpen(true);
+    }
+  }, [editorOpen, isAnnotEditorCompact]);
+
+  useEffect(() => {
+    if (!editorOpen || !isAnnotEditorCompact) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [editorOpen, isAnnotTouchUI]);
+  }, [editorOpen, isAnnotEditorCompact]);
 
   useEffect(() => {
     if (!editorOpen) return;
@@ -1832,7 +1851,7 @@ export function JobDetailPageContent({
       const c = canvasRef.current;
       if (!wrap || !c || !c.width || !c.height) return;
       const wr = wrap.getBoundingClientRect();
-      const pad = 40;
+      const pad = isAnnotEditorMobile ? 6 : isAnnotEditorCompact ? 14 : 40;
       const aw = Math.max(80, wr.width - pad);
       const ah = Math.max(80, wr.height - pad);
       const cw = Math.max(1, c.offsetWidth);
@@ -1847,7 +1866,14 @@ export function JobDetailPageContent({
       window.cancelAnimationFrame(id);
       window.clearTimeout(t);
     };
-  }, [editorOpen, baseImageLoaded, editorMediaKind, imageForCanvas]);
+  }, [
+    editorOpen,
+    baseImageLoaded,
+    editorMediaKind,
+    imageForCanvas,
+    isAnnotEditorCompact,
+    isAnnotEditorMobile,
+  ]);
 
   const bumpAnnotZoom = useCallback((dir: 1 | -1) => {
     if (editorMediaKindRef.current === "pdf") {
@@ -8107,6 +8133,41 @@ export function JobDetailPageContent({
     ) as (Record<string, unknown> & { id: string }) | undefined;
   }, [measurementLightboxDocId, measurementPhotosRaw]);
 
+  const annotToolbarBtnClassName = useMemo(
+    () =>
+      cn(
+        "min-h-[36px] shrink-0",
+        isAnnotEditorCompact && "h-8 min-h-8 px-1.5 text-[11px] sm:px-2 sm:text-xs"
+      ),
+    [isAnnotEditorCompact]
+  );
+
+  const annotToolbarIconBtnClassName = useMemo(
+    () =>
+      cn(
+        "min-h-[36px] shrink-0 px-2",
+        isAnnotEditorCompact && "h-8 min-h-8 px-1.5 sm:px-2"
+      ),
+    [isAnnotEditorCompact]
+  );
+
+  const annotCanvasMaxClass = useMemo(
+    () =>
+      isAnnotEditorCompact
+        ? "max-lg:max-h-[min(100dvh-9.5rem,92dvh)] max-lg:max-w-[min(100vw-0.35rem,99vw)]"
+        : "max-lg:max-h-[min(100dvh-14rem,86dvh)] max-lg:max-w-[min(100vw-0.75rem,96vw)]",
+    [isAnnotEditorCompact]
+  );
+
+  const annotBottomBarBtnClass = useMemo(
+    () =>
+      cn(
+        "min-h-[36px] shrink-0",
+        isAnnotEditorCompact && "h-8 min-h-8 gap-0.5 px-1.5 text-[11px] sm:px-2 sm:text-xs"
+      ),
+    [isAnnotEditorCompact]
+  );
+
   const measurementAnnotationEditorDialog = (
     <>
       <UnifiedAnnotationEditor
@@ -8117,10 +8178,33 @@ export function JobDetailPageContent({
         isTouchUI={isAnnotTouchUI}
         persistenceKey={annotationEditorPersistenceKey}
       >
-            <div className="flex min-h-0 shrink-0 items-center justify-between gap-2 border-b border-white/15 bg-slate-900 px-2 py-1.5 pt-[max(0.25rem,env(safe-area-inset-top))] text-white lg:hidden">
-                <Button type="button" variant="ghost" size="sm" className="h-8 shrink-0 px-2 text-white hover:bg-white/10" onClick={() => dismissAnnotationEditor()}>Zavřít</Button>
-                <span className="min-w-0 truncate text-center text-xs font-semibold">Anotace</span>
-                <Button type="button" size="sm" className="h-8 shrink-0 bg-primary px-2 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50" onClick={handleSaveAnnotated} disabled={annotationReadOnly || !baseImageLoaded || isSavingAnnotation || pdfPageRasterBusy}>{isSavingAnnotation ? "…" : "Uložit"}</Button>
+            <div className="flex min-h-0 shrink-0 items-center justify-between gap-1.5 border-b border-white/15 bg-slate-900 px-2 py-1 pt-[max(0.25rem,env(safe-area-inset-top))] text-white lg:hidden">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 shrink-0 px-2 text-[11px] text-white hover:bg-white/10 sm:text-xs"
+                  onClick={() => dismissAnnotationEditor()}
+                >
+                  Zavřít
+                </Button>
+                <span className="min-w-0 truncate text-center text-[11px] font-semibold sm:text-xs">
+                  Anotace
+                </span>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8 shrink-0 bg-primary px-2 text-[11px] text-primary-foreground hover:bg-primary/90 disabled:opacity-50 sm:text-xs"
+                  onClick={handleSaveAnnotated}
+                  disabled={
+                    annotationReadOnly ||
+                    !baseImageLoaded ||
+                    isSavingAnnotation ||
+                    pdfPageRasterBusy
+                  }
+                >
+                  {isSavingAnnotation ? "…" : "Uložit"}
+                </Button>
             </div>
               <DialogHeader className="hidden shrink-0 space-y-1 pb-2 pr-8 text-left lg:block">
                 <DialogTitle className="text-base sm:text-lg">
@@ -8128,22 +8212,58 @@ export function JobDetailPageContent({
                 </DialogTitle>
               </DialogHeader>
 
-              <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:min-h-0 max-lg:flex-1 max-lg:overflow-hidden max-lg:bg-slate-950 max-lg:px-1 max-lg:pb-[max(0.5rem,calc(env(safe-area-inset-bottom)+5.25rem))] lg:min-h-0 lg:overflow-hidden lg:p-3">
-            <div className="shrink-0 space-y-1.5 sm:space-y-2">
-              <p className="text-xs leading-snug text-muted-foreground max-lg:text-slate-300 sm:text-sm sm:leading-normal lg:text-muted-foreground">
-                Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
-                Značka / model: klepněte na plán, zadejte název a rozměry v mm; číslo
-                značky na obrázku a legenda dole vlevo. Stejný model z knihovny se v
-                legendě neopakuje. Výběr: přesun a úpravy. Kolečko myši nebo +/− přibližuje podklad
-                v souřadnicích dokumentu. Dotyk i myš.
-              </p>
+              <div
+                className={cn(
+                  "flex min-h-0 flex-1 flex-col gap-2 overflow-hidden sm:gap-3 max-lg:min-h-0 max-lg:flex-1 max-lg:overflow-hidden max-lg:bg-slate-950 max-lg:px-1 lg:min-h-0 lg:overflow-hidden lg:p-3",
+                  isAnnotEditorCompact
+                    ? "max-lg:pb-[max(0.35rem,calc(env(safe-area-inset-bottom)+3.25rem))]"
+                    : "max-lg:pb-[max(0.5rem,calc(env(safe-area-inset-bottom)+5.25rem))]"
+                )}
+              >
+            <div className="shrink-0 space-y-1 max-sm:space-y-1 sm:space-y-2">
+              {isAnnotEditorCompact ? (
+                <div className="max-lg:space-y-1">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 border-white/25 bg-slate-800/80 px-2 text-[11px] text-slate-100 hover:bg-slate-700 sm:h-8 sm:text-xs lg:hidden"
+                    onClick={() => setAnnotationHelpOpen((o) => !o)}
+                  >
+                    {annotationHelpOpen ? "Skrýt nápovědu" : "Nápověda"}
+                  </Button>
+                  {annotationHelpOpen ? (
+                    <p className="text-[11px] leading-snug text-slate-300 sm:text-xs lg:hidden">
+                      Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
+                      Značka / model: klepněte na plán, zadejte název a rozměry v mm; číslo značky na
+                      obrázku a legenda (tlačítko Legenda). Stejný model z knihovny se v legendě
+                      neopakuje. Výběr: přesun a úpravy. Kolečko myši nebo +/− přibližuje podklad.
+                      Dotyk i myš.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <p className="text-xs leading-snug text-muted-foreground sm:text-sm sm:leading-normal lg:text-muted-foreground">
+                  Kóty: tažením čáry, poté zadejte hodnotu. Poznámka: obdélník a text.
+                  Značka / model: klepněte na plán, zadejte název a rozměry v mm; číslo značky na
+                  obrázku a legenda dole vlevo. Stejný model z knihovny se v legendě neopakuje. Výběr:
+                  přesun a úpravy. Kolečko myši nebo +/− přibližuje podklad v souřadnicích dokumentu.
+                  Dotyk i myš.
+                </p>
+              )}
 
-              <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+              <div
+                className={cn(
+                  "flex flex-wrap items-center gap-1.5 sm:gap-2",
+                  isAnnotEditorCompact &&
+                    "max-w-full flex-nowrap gap-1 overflow-x-auto pb-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                )}
+              >
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={(ev) => {
                     ev.stopPropagation();
                     setAnnotationModelsSettingsOpen(true);
@@ -8157,7 +8277,7 @@ export function JobDetailPageContent({
                   type="button"
                   variant={activeTool === "dimension" ? "default" : "outline"}
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={() => setActiveTool("dimension")}
                   disabled={annotationReadOnly}
                 >
@@ -8169,13 +8289,26 @@ export function JobDetailPageContent({
                     (x) =>
                       x.id === selectedAnnotationId && x.type === "dimension"
                   )) ? (
-                  <label className="flex min-h-[36px] items-center gap-1.5 rounded-md border border-white/20 bg-slate-900/80 px-2 py-1 text-xs text-slate-200 max-lg:border-slate-700 lg:border-border lg:bg-background lg:text-foreground">
-                    <span className="shrink-0 whitespace-nowrap">Font kóty</span>
+                  <label
+                    className={cn(
+                      "flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-md border border-white/20 bg-slate-900/80 px-2 py-1 text-xs text-slate-200 max-lg:border-slate-700 lg:border-border lg:bg-background lg:text-foreground",
+                      isAnnotEditorCompact && "min-h-8 gap-1 px-1.5 py-0.5 text-[11px]"
+                    )}
+                  >
+                    <span className="shrink-0 whitespace-nowrap max-sm:sr-only sm:inline">
+                      Font kóty
+                    </span>
+                    <span className="shrink-0 sm:hidden" title="Font kóty">
+                      F
+                    </span>
                     <Input
                       type="number"
                       min={1}
                       max={100}
-                      className="h-8 w-[4.25rem] px-1.5 text-center text-xs"
+                      className={cn(
+                        "h-8 w-[4.25rem] px-1.5 text-center text-xs",
+                        isAnnotEditorCompact && "h-7 w-[3.5rem] text-[11px]"
+                      )}
                       value={dimensionLabelFontSize}
                       onChange={(ev) =>
                         updateDimensionLabelFontSize(
@@ -8193,7 +8326,7 @@ export function JobDetailPageContent({
                   type="button"
                   variant={activeTool === "meter" ? "default" : "outline"}
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={() => setActiveTool("meter")}
                   disabled={annotationReadOnly}
                   title="Měření vzdálenosti v mm (vyžaduje měřítko)"
@@ -8204,12 +8337,12 @@ export function JobDetailPageContent({
                   type="button"
                   variant={activeTool === "calibrate" ? "default" : "outline"}
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={() => setActiveTool("calibrate")}
                   disabled={annotationReadOnly}
                   title="Nastavit měřítko: tažením usečky a zadáním skutečné délky v mm"
                 >
-                  Měřítko
+                  {isAnnotEditorMobile ? "Měř." : "Měřítko"}
                 </Button>
                 {imageCalibration ? (
                   <span
@@ -8223,17 +8356,17 @@ export function JobDetailPageContent({
                   type="button"
                   variant={activeTool === "note" ? "default" : "outline"}
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={() => setActiveTool("note")}
                   disabled={annotationReadOnly}
                 >
-                  Poznámka
+                  {isAnnotEditorMobile ? "Pozn." : "Poznámka"}
                 </Button>
                 <Button
                   type="button"
                   variant={activeTool === "arrow" ? "default" : "outline"}
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={() => setActiveTool("arrow")}
                   disabled={annotationReadOnly}
                   title="Šipka s číslem a popisem v legendě"
@@ -8244,7 +8377,7 @@ export function JobDetailPageContent({
                   type="button"
                   variant={activeTool === "shapeLabel" ? "default" : "outline"}
                   size="sm"
-                  className="min-h-[36px] gap-1 pr-2"
+                  className={cn(annotToolbarBtnClassName, "gap-1 pr-2")}
                   title="Značka / modely z knihovny"
                   onClick={() => {
                     // Always activate the tool immediately (fix: button must react).
@@ -8260,14 +8393,14 @@ export function JobDetailPageContent({
                   }}
                   disabled={annotationReadOnly}
                 >
-                  Značka
-                  <ChevronDown className="h-4 w-4 opacity-80" aria-hidden />
+                  {isAnnotEditorMobile ? "Zn." : "Značka"}
+                  <ChevronDown className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
                 </Button>
                 <Button
                   type="button"
                   variant={activeTool === "select" ? "default" : "outline"}
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={() => setActiveTool("select")}
                 >
                   Výběr
@@ -8276,18 +8409,19 @@ export function JobDetailPageContent({
                   type="button"
                   variant={activeTool === "pan" ? "default" : "outline"}
                   size="sm"
-                  className="min-h-[36px] gap-1"
+                  className={cn(annotToolbarBtnClassName, "gap-1")}
                   onClick={() => setActiveTool("pan")}
                   title="Posun přiblíženého náhledu (nebo kolečko myši, prostřední tlačítko)"
+                  aria-label="Posun náhledu"
                 >
                   <Hand className="h-4 w-4 shrink-0" />
-                  Posun
+                  {isAnnotEditorMobile ? null : "Posun"}
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px] px-2"
+                  className={annotToolbarIconBtnClassName}
                   onClick={() => bumpAnnotZoom(1)}
                   disabled={
                     editorMediaKind === "pdf"
@@ -8302,7 +8436,7 @@ export function JobDetailPageContent({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px] px-2"
+                  className={annotToolbarIconBtnClassName}
                   onClick={() => bumpAnnotZoom(-1)}
                   disabled={
                     editorMediaKind === "pdf"
@@ -8322,16 +8456,22 @@ export function JobDetailPageContent({
                     type="button"
                     variant="secondary"
                     size="sm"
-                    className="min-h-[36px] shrink-0 text-xs sm:text-sm"
+                    className={cn(
+                      annotToolbarBtnClassName,
+                      "text-xs sm:text-sm",
+                      isAnnotEditorMobile && "max-w-[5.5rem] truncate px-1"
+                    )}
                     disabled={!baseImageLoaded || pdfPageRasterBusy || isSavingAnnotation}
                     onClick={() => void handleConvertPdfPageToImage()}
                     title="Uloží aktuální stránku PDF jako PNG do zakázky a otevře ji v editoru"
                   >
                     {pdfPageRasterBusy ? (
                       <>
-                        <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden />
-                        Převod…
+                        <Loader2 className="mr-1 h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        {isAnnotEditorMobile ? "…" : "Převod…"}
                       </>
+                    ) : isAnnotEditorMobile ? (
+                      "PDF→PNG"
                     ) : (
                       "PDF → obrázek"
                     )}
@@ -8355,11 +8495,11 @@ export function JobDetailPageContent({
                     aria-label={c.label}
                     title={c.label}
                     onClick={() => updateSelectedColor(c.id)}
-                    className={`h-9 w-9 rounded-md border ${
-                      activeColor === c.id
-                        ? "ring-2 ring-primary ring-offset-2"
-                        : ""
-                    }`}
+                    className={cn(
+                      "shrink-0 rounded-md border",
+                      isAnnotEditorCompact ? "h-7 w-7" : "h-9 w-9",
+                      activeColor === c.id ? "ring-2 ring-primary ring-offset-2" : ""
+                    )}
                     style={{
                       backgroundColor: colorToHex(c.id),
                       borderColor:
@@ -8383,12 +8523,16 @@ export function JobDetailPageContent({
                       type="button"
                       variant={activeStrokeWidth === w.id ? "default" : "outline"}
                       size="sm"
-                      className="min-h-[36px] px-2.5 text-xs sm:text-sm"
+                      className={cn(
+                        annotToolbarBtnClassName,
+                        "px-2.5 text-xs sm:text-sm",
+                        isAnnotEditorCompact && "min-w-0 px-2"
+                      )}
                       title={w.title}
                       onClick={() => updateSelectedStrokeWidth(w.id)}
                       disabled={annotationReadOnly}
                     >
-                      {w.label}
+                      {isAnnotEditorCompact ? String(w.id) : w.label}
                     </Button>
                   ))}
                 </div>
@@ -8399,21 +8543,21 @@ export function JobDetailPageContent({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={editSelectedText}
                   disabled={!selectedAnnotationId}
                 >
-                  Upravit text
+                  {isAnnotEditorMobile ? "Text" : "Upravit text"}
                 </Button>
                 <Button
                   type="button"
                   variant="destructive"
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotToolbarBtnClassName}
                   onClick={deleteSelectedAnnotation}
                   disabled={!selectedAnnotationId}
                 >
-                  Smazat
+                  {isAnnotEditorMobile ? "Smaž." : "Smazat"}
                 </Button>
               </div>
               {shapeLabelPlacementModel ? (
@@ -8427,15 +8571,16 @@ export function JobDetailPageContent({
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
-                "relative z-0 flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-auto bg-black",
+                "relative z-0 flex min-h-0 min-w-0 flex-1 touch-none items-center justify-center overflow-auto overscroll-none bg-black",
                 "max-lg:min-h-0 max-lg:flex-1",
                 "lg:min-h-0 lg:flex-1",
                 "max-lg:rounded-none max-lg:border-0 max-lg:p-0",
                 "lg:rounded-md lg:border lg:bg-black/80 lg:p-0.5 lg:sm:p-1"
               )}
+              style={{ touchAction: "none" as const }}
             >
               <div
-                className="flex h-full min-h-0 max-h-full w-full max-w-full items-center justify-center overflow-auto"
+                className="flex h-full min-h-0 max-h-full w-full max-w-full items-center justify-center overflow-auto overscroll-none"
                 style={{ touchAction: "none" as const }}
               >
                 <div
@@ -8446,10 +8591,11 @@ export function JobDetailPageContent({
                         ? `translate(${annotationView.panX}px, ${annotationView.panY}px)`
                         : `translate(${annotationView.panX}px, ${annotationView.panY}px) scale(${annotationView.zoom})`,
                     transformOrigin: "center center",
+                    touchAction: "none",
                   }}
                   className={cn(
                     "flex min-h-0 items-center justify-center",
-                    "max-lg:max-h-[min(100dvh-14rem,86dvh)] max-lg:max-w-[min(100vw-0.75rem,96vw)]",
+                    annotCanvasMaxClass,
                     "lg:h-full lg:max-h-full lg:w-full lg:max-w-full"
                   )}
                 >
@@ -8458,7 +8604,7 @@ export function JobDetailPageContent({
                       ref={setCanvasNode}
                       className={cn(
                         "pointer-events-none block h-auto w-auto object-contain",
-                        "max-lg:max-h-[min(100dvh-14rem,86dvh)] max-lg:max-w-[min(100vw-0.75rem,96vw)]",
+                        annotCanvasMaxClass,
                         "lg:max-h-full lg:max-w-full",
                         baseImageLoaded ? "opacity-100" : "opacity-0"
                       )}
@@ -8517,57 +8663,117 @@ export function JobDetailPageContent({
                 </div>
               )}
               {annotationLegendHasContent ? (
-                <div className="pointer-events-auto absolute bottom-2 left-1/2 z-10 w-[min(calc(100vw-0.75rem),36rem)] max-w-[calc(100%-0.5rem)] -translate-x-1/2">
-                  <div className="max-h-[min(36dvh,320px)] overflow-y-auto rounded-md border border-slate-600/80 bg-[#070d18] px-2.5 py-2.5 text-left shadow-2xl ring-1 ring-black/40 sm:px-3 sm:py-3">
-                    <p className="mb-1.5 text-xs font-bold uppercase tracking-wide text-slate-200 sm:text-sm">
-                      Legenda
-                    </p>
-                    {annotationShapeLegendEntries.length ? (
-                      <ul className="space-y-1.5 sm:space-y-2">
-                        {annotationShapeLegendEntries.map((e) => (
-                          <li
-                            key={`leg-s-${e.legendNumber}-${e.label}-${e.widthMm}`}
-                            className="border-l-2 border-amber-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
-                          >
-                            {formatLegendEntryLine(e)}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : null}
-                    {annotationArrowLegendEntries.length ? (
-                      <div
-                        className={
-                          annotationShapeLegendEntries.length ? "mt-3 border-t border-slate-600/80 pt-2" : ""
-                        }
+                <>
+                  {isAnnotEditorCompact && !annotationLegendOpen ? (
+                    <div className="pointer-events-auto absolute bottom-[max(5rem,calc(env(safe-area-inset-bottom)+4.5rem))] left-1/2 z-20 max-w-[calc(100%-1rem)] -translate-x-1/2 lg:bottom-3">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        className="h-8 border border-amber-500/40 bg-[#070d18] px-3 text-xs font-semibold text-amber-100 shadow-lg"
+                        onClick={() => setAnnotationLegendOpen(true)}
                       >
-                        <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 sm:text-sm">
-                          Poznámky / Šipky
-                        </p>
-                        <ul className="space-y-1.5 sm:space-y-2">
-                          {annotationArrowLegendEntries.map((e) => (
-                            <li
-                              key={`leg-a-${e.legendNumber}-${e.label}`}
-                              className="border-l-2 border-sky-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                        Legenda
+                      </Button>
+                    </div>
+                  ) : null}
+                  {(!isAnnotEditorCompact || annotationLegendOpen) && (
+                    <div
+                      className={cn(
+                        "pointer-events-auto absolute left-1/2 z-10 w-[min(calc(100vw-0.75rem),36rem)] max-w-[calc(100%-0.5rem)] -translate-x-1/2",
+                        isAnnotEditorCompact
+                          ? "bottom-[max(5.25rem,calc(env(safe-area-inset-bottom)+4.75rem))] max-lg:bottom-[max(4.75rem,calc(env(safe-area-inset-bottom)+4.25rem))]"
+                          : "bottom-2"
+                      )}
+                    >
+                      <div
+                        className={cn(
+                          "overflow-y-auto overscroll-contain rounded-md border border-slate-600/80 bg-[#070d18] px-2.5 py-2 text-left shadow-2xl ring-1 ring-black/40 sm:px-3 sm:py-3",
+                          isAnnotEditorCompact
+                            ? "max-h-[min(42dvh,380px)]"
+                            : "max-h-[min(36dvh,320px)]"
+                        )}
+                      >
+                        <div className="mb-1.5 flex items-center justify-between gap-2">
+                          <p className="text-xs font-bold uppercase tracking-wide text-slate-200 sm:text-sm">
+                            Legenda
+                          </p>
+                          {isAnnotEditorCompact ? (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 shrink-0 px-2 text-[11px] text-slate-200 hover:bg-white/10"
+                              onClick={() => setAnnotationLegendOpen(false)}
                             >
-                              {formatLegendEntryLine(e)}
-                            </li>
-                          ))}
-                        </ul>
+                              Skrýt
+                            </Button>
+                          ) : null}
+                        </div>
+                        {annotationShapeLegendEntries.length ? (
+                          <ul className="space-y-1.5 sm:space-y-2">
+                            {annotationShapeLegendEntries.map((e) => (
+                              <li
+                                key={`leg-s-${e.legendNumber}-${e.label}-${e.widthMm}`}
+                                className="border-l-2 border-amber-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                              >
+                                {formatLegendEntryLine(e)}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                        {annotationArrowLegendEntries.length ? (
+                          <div
+                            className={
+                              annotationShapeLegendEntries.length
+                                ? "mt-3 border-t border-slate-600/80 pt-2"
+                                : ""
+                            }
+                          >
+                            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 sm:text-sm">
+                              Poznámky / Šipky
+                            </p>
+                            <ul className="space-y-1.5 sm:space-y-2">
+                              {annotationArrowLegendEntries.map((e) => (
+                                <li
+                                  key={`leg-a-${e.legendNumber}-${e.label}`}
+                                  className="border-l-2 border-sky-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                                >
+                                  {formatLegendEntryLine(e)}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </div>
-                </div>
+                    </div>
+                  )}
+                </>
               ) : null}
             </div>
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border pt-2 pb-0.5 sm:pt-2.5 max-lg:border-white/10 max-lg:bg-slate-900 max-lg:text-white max-lg:pb-[max(0.5rem,env(safe-area-inset-bottom))] max-lg:pt-2">
-              <div className="flex flex-wrap gap-1.5 sm:gap-2">
+            <div
+              className={cn(
+                "flex shrink-0 border-t border-border max-lg:border-white/10 max-lg:bg-slate-900 max-lg:text-white max-lg:pb-[max(0.35rem,env(safe-area-inset-bottom))]",
+                isAnnotEditorCompact
+                  ? "flex-col gap-1.5 pt-1.5 pb-0.5 max-lg:pt-1.5"
+                  : "flex-wrap items-center justify-between gap-2 pt-2 pb-0.5 sm:pt-2.5 max-lg:pt-2 max-lg:pb-[max(0.5rem,env(safe-area-inset-bottom))]"
+              )}
+            >
+              <div
+                className={cn(
+                  "flex items-center",
+                  isAnnotEditorCompact
+                    ? "w-full min-w-0 flex-nowrap justify-between gap-1 overflow-x-auto overscroll-x-contain [-webkit-overflow-scrolling:touch] [scrollbar-width:thin]"
+                    : "flex-wrap gap-1.5 sm:gap-2"
+                )}
+              >
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px] gap-1"
+                  className={cn(annotBottomBarBtnClass, !isAnnotEditorCompact && "gap-1")}
                   onClick={() => {
                     setPdfScale(1);
                     setAnnotationView({ zoom: 1, panX: 0, panY: 0 });
@@ -8579,15 +8785,18 @@ export function JobDetailPageContent({
                     annotationView.panX === 0 &&
                     annotationView.panY === 0
                   }
+                  title="Původní měřítko (1:1)"
                 >
-                  <RotateCcw className="h-4 w-4 shrink-0" />
-                  1:1
+                  <RotateCcw
+                    className={cn("shrink-0", isAnnotEditorCompact ? "h-3.5 w-3.5" : "h-4 w-4")}
+                  />
+                  {!isAnnotEditorMobile ? "1:1" : null}
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px] px-2"
+                  className={annotBottomBarBtnClass}
                   onClick={() => bumpAnnotZoom(1)}
                   disabled={
                     editorMediaKind === "pdf"
@@ -8596,13 +8805,13 @@ export function JobDetailPageContent({
                   }
                   title="Přiblížit"
                 >
-                  <ZoomIn className="h-4 w-4" />
+                  <ZoomIn className={isAnnotEditorCompact ? "h-3.5 w-3.5" : "h-4 w-4"} />
                 </Button>
                 <Button
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px] px-2"
+                  className={annotBottomBarBtnClass}
                   onClick={() => bumpAnnotZoom(-1)}
                   disabled={
                     editorMediaKind === "pdf"
@@ -8611,34 +8820,39 @@ export function JobDetailPageContent({
                   }
                   title="Oddálit"
                 >
-                  <ZoomOut className="h-4 w-4" />
+                  <ZoomOut className={isAnnotEditorCompact ? "h-3.5 w-3.5" : "h-4 w-4"} />
                 </Button>
                 {editorMediaKind === "pdf" && pdfNumPages > 1 ? (
-                  <div className="flex items-center gap-0.5">
+                  <div className="flex shrink-0 items-center gap-0.5">
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="min-h-[36px] px-2"
+                      className={annotBottomBarBtnClass}
                       onClick={() => goPdfPage(-1)}
                       disabled={pdfPage <= 1}
                       title="Předchozí stránka"
                     >
-                      <ChevronLeft className="h-4 w-4" />
+                      <ChevronLeft className={isAnnotEditorCompact ? "h-3.5 w-3.5" : "h-4 w-4"} />
                     </Button>
-                    <span className="text-xs tabular-nums text-muted-foreground">
+                    <span
+                      className={cn(
+                        "shrink-0 tabular-nums text-muted-foreground max-lg:text-white/70",
+                        isAnnotEditorCompact ? "text-[10px]" : "text-xs"
+                      )}
+                    >
                       {pdfPage}/{pdfNumPages}
                     </span>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="min-h-[36px] px-2"
+                      className={annotBottomBarBtnClass}
                       onClick={() => goPdfPage(1)}
                       disabled={pdfPage >= pdfNumPages}
                       title="Další stránka"
                     >
-                      <ChevronRight className="h-4 w-4" />
+                      <ChevronRight className={isAnnotEditorCompact ? "h-3.5 w-3.5" : "h-4 w-4"} />
                     </Button>
                   </div>
                 ) : null}
@@ -8646,9 +8860,10 @@ export function JobDetailPageContent({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotBottomBarBtnClass}
                   onClick={undoLast}
                   disabled={!annotations.length}
+                  title="Zpět — poslední krok"
                 >
                   Zpět
                 </Button>
@@ -8657,29 +8872,45 @@ export function JobDetailPageContent({
                   type="button"
                   variant="outline"
                   size="sm"
-                  className="min-h-[36px]"
+                  className={annotBottomBarBtnClass}
                   onClick={clearAllAnnotations}
                   disabled={!annotations.length}
+                  title="Vymazat všechny anotace"
                 >
-                  Vymazat vše
+                  {isAnnotEditorMobile ? "Vymazat" : "Vymazat vše"}
                 </Button>
               </div>
 
-              <div className="flex gap-2">
+              <div
+                className={cn(
+                  "flex shrink-0 items-center",
+                  isAnnotEditorCompact
+                    ? "w-full justify-end gap-1.5 max-lg:[&>button]:min-w-0"
+                    : "gap-2"
+                )}
+              >
                 <Button
                   variant="outline"
-                  className="min-h-[36px]"
+                  size="sm"
+                  className={annotBottomBarBtnClass}
                   onClick={() => dismissAnnotationEditor()}
                 >
                   Zrušit
                 </Button>
 
                 <Button
-                  className="min-h-[36px]"
+                  size="sm"
+                  className={annotBottomBarBtnClass}
                   onClick={handleSaveAnnotated}
                   disabled={!baseImageLoaded || isSavingAnnotation || pdfPageRasterBusy}
                 >
-                  {isSavingAnnotation ? "Ukládám…" : "Uložit anotaci"}
+                  {isSavingAnnotation
+                    ? isAnnotEditorMobile
+                      ? "…"
+                      : "Ukládám…"
+                    : isAnnotEditorMobile
+                      ? "Uložit"
+                      : "Uložit anotaci"}
                 </Button>
               </div>
             </div>
