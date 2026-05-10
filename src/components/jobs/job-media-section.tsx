@@ -1959,7 +1959,7 @@ function UserFolderBlock({
                 fileName: fileChatTarget.fileName,
               }}
               dense
-              onAfterSend={async () => {
+              onAfterSend={async (sent) => {
                 try {
                   const token = await user.getIdToken();
                   await fetch("/api/jobs/comments/notify", {
@@ -1975,6 +1975,7 @@ function UserFolderBlock({
                       fileId: fileChatTarget.fileId,
                       folderId: fileChatTarget.folderId,
                       fileName: fileChatTarget.fileName,
+                      messagePreview: sent.message,
                     }),
                   });
                 } catch {

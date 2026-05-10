@@ -52,3 +52,21 @@ export function formatDateSafe(value: unknown): string {
   }
 }
 
+/** Např. `10.05.2026 14:22` (pevné nuly u data i času). */
+export function formatCsDateTimeDot(value: unknown): string {
+  try {
+    const ms = safeTime(value);
+    if (!ms) return "bez data";
+    const d = new Date(ms);
+    if (Number.isNaN(d.getTime())) return "bez data";
+    const dd = String(d.getDate()).padStart(2, "0");
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const yyyy = String(d.getFullYear());
+    const hh = String(d.getHours()).padStart(2, "0");
+    const min = String(d.getMinutes()).padStart(2, "0");
+    return `${dd}.${mm}.${yyyy} ${hh}:${min}`;
+  } catch {
+    return "bez data";
+  }
+}
+

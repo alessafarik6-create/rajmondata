@@ -64,6 +64,7 @@ import {
   type EmployeeBankAccount,
 } from "@/lib/employee-bank-account";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 
 const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
 
@@ -143,6 +144,7 @@ export default function EmployeeProfilePage() {
   const [pwdConfirm, setPwdConfirm] = useState("");
   const [pwdLoading, setPwdLoading] = useState(false);
   const [langSaving, setLangSaving] = useState(false);
+  const [emailMsgNotifSaving, setEmailMsgNotifSaving] = useState(false);
 
   const [tpOld, setTpOld] = useState("");
   const [tpNew, setTpNew] = useState("");
@@ -346,6 +348,32 @@ export default function EmployeeProfilePage() {
     }
   };
 
+  const emailMessageNotificationsEnabled = profile?.emailMessageNotificationsEnabled !== false;
+
+  const saveEmailMessageNotifications = async (enabled: boolean) => {
+    if (!user || !firestore) return;
+    setEmailMsgNotifSaving(true);
+    try {
+      await updateDoc(doc(firestore, "users", user.uid), {
+        emailMessageNotificationsEnabled: enabled,
+        updatedAt: serverTimestamp(),
+      });
+      toast({
+        title: enabled ? "E-mail upozornění zapnuto" : "E-mail upozornění vypnuto",
+        description: "Nastavení platí pro zprávy v chatu u zakázky a souborů.",
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Nastavení se nepodařilo uložit.",
+      });
+    } finally {
+      setEmailMsgNotifSaving(false);
+    }
+  };
+
   const handleEmployeeBankSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user || !allowEmployeeBankAccountSelfEdit) return;
@@ -525,6 +553,32 @@ export default function EmployeeProfilePage() {
         employeeId={employeeId}
         compact
       />
+
+      <Card className="bg-white border-slate-200 shadow-sm">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">E-mail</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-0">
+          <div className="space-y-1">
+            <p className={PROFILE_LABEL_CLASS}>Email upozornění na zprávy</p>
+            <p className="text-sm text-muted-foreground max-w-xl">
+              Pokud vám v chatu u zakázky nebo u souboru přijde nová zpráva a zůstane nepřečtená,
+              můžeme vám poslat upozornění e-mailem (ne častěji než jednou za 24 hodin u stejného chatu).
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            {emailMsgNotifSaving ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : null}
+            <Switch
+              checked={emailMessageNotificationsEnabled}
+              disabled={emailMsgNotifSaving || !user}
+              onCheckedChange={(v) => void saveEmailMessageNotifications(v === true)}
+              aria-label="Email upozornění na zprávy"
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       <Card className="bg-white border-slate-200 shadow-sm">
         <CardHeader>

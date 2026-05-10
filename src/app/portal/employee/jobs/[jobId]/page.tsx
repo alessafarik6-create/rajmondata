@@ -456,7 +456,7 @@ export default function EmployeeJobDetailPage() {
                 canPost={true}
                 title="Poznámky / chat k zakázce"
                 target={{ targetType: "job" }}
-                onAfterSend={async () => {
+                onAfterSend={async (sent) => {
                   try {
                     const token = await user.getIdToken();
                     await fetch("/api/jobs/comments/notify", {
@@ -469,6 +469,7 @@ export default function EmployeeJobDetailPage() {
                         companyId,
                         jobId,
                         targetType: "job",
+                        messagePreview: sent.message,
                       }),
                     });
                   } catch {

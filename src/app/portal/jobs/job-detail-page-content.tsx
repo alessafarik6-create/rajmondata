@@ -9893,7 +9893,7 @@ export function JobDetailPageContent({
               canPost={true}
               title="Poznámky / chat k zakázce"
               target={{ targetType: "job" }}
-              onAfterSend={async () => {
+              onAfterSend={async (sent) => {
                 // Notifikace řešíme přes API (Admin SDK), aby šlo dohledat cílové uživatele.
                 try {
                   const token = await user.getIdToken();
@@ -9907,6 +9907,7 @@ export function JobDetailPageContent({
                       companyId,
                       jobId: String(jobId),
                       targetType: "job",
+                      messagePreview: sent.message,
                     }),
                   });
                 } catch {

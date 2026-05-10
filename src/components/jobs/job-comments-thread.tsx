@@ -20,7 +20,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
-import { formatDateSafe, safeTime } from "@/lib/date-safe";
+import { formatCsDateTimeDot, safeTime } from "@/lib/date-safe";
 
 export type JobCommentsTarget =
   | { targetType: "job" }
@@ -35,6 +35,32 @@ type CommentRow = Record<string, unknown> & { id: string };
 
 const millisFromTimestampLike = safeTime;
 
+function commentReadByUser(comment: CommentRow, userId: string): boolean {
+  const readAtBy = comment.readAtBy as Record<string, unknown> | undefined;
+  if (readAtBy && readAtBy[userId] != null) return true;
+  const readBy = comment.readBy as string[] | undefined;
+  return Array.isArray(readBy) && readBy.includes(userId);
+}
+
+function earliestOtherReaderMs(comment: CommentRow, authorId: string): number {
+  const readAtBy = comment.readAtBy as Record<string, unknown> | undefined;
+  if (!readAtBy) return 0;
+  let best = 0;
+  for (const [uid, v] of Object.entries(readAtBy)) {
+    if (uid === authorId) continue;
+    const ms = millisFromTimestampLike(v);
+    if (!ms) continue;
+    if (best === 0 || ms < best) best = ms;
+  }
+  return best;
+}
+
+function legacyOtherHasRead(comment: CommentRow, authorId: string): boolean {
+  const readBy = comment.readBy as string[] | undefined;
+  if (!Array.isArray(readBy)) return false;
+  return readBy.some((id) => id && id !== authorId);
+}
+
 export function computeUnreadCountForTarget(params: {
   comments: CommentRow[];
   userId: string | null | undefined;
@@ -43,8 +69,7 @@ export function computeUnreadCountForTarget(params: {
   if (!uid) return 0;
   let n = 0;
   for (const c of params.comments) {
-    const readBy = (c.readBy as unknown) as string[] | undefined;
-    if (Array.isArray(readBy) && readBy.includes(uid)) continue;
+    if (commentReadByUser(c, uid)) continue;
     n += 1;
   }
   return n;
@@ -149,10 +174,7 @@ export function JobCommentsThread(props: {
   // Mark as read when opened / new messages arrive.
   useEffect(() => {
     if (!firestore || !props.userId) return;
-    const unread = comments.filter((c) => {
-      const rb = (c.readBy as unknown) as string[] | undefined;
-      return !Array.isArray(rb) || !rb.includes(props.userId);
-    });
+    const unread = comments.filter((c) => !commentReadByUser(c, props.userId));
     if (!unread.length) return;
     const batch = writeBatch(firestore);
     for (const c of unread) {
@@ -166,7 +188,10 @@ export function JobCommentsThread(props: {
           "comments",
           c.id
         ),
-        { readBy: arrayUnion(props.userId) }
+        {
+          readBy: arrayUnion(props.userId),
+          [`readAtBy.${props.userId}`]: serverTimestamp(),
+        }
       );
     }
     void batch.commit().catch(() => {});
@@ -202,6 +227,7 @@ export function JobCommentsThread(props: {
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         readBy: [props.userId],
+        readAtBy: { [props.userId]: serverTimestamp() },
       };
       const ref = await addDoc(base, payload);
       setDraft("");
@@ -272,13 +298,25 @@ export function JobCommentsThread(props: {
           ) : (
             comments.map((c) => {
               const mine = String(c.authorId ?? "") === props.userId;
-              const role = String(c.authorRole ?? "");
+              const authorId = String(c.authorId ?? "");
               const author = String(c.authorName ?? "—");
               const msg = String(c.message ?? "");
-              const dt = formatDateSafe(c.createdAt);
-              const readBy = (c.readBy as unknown) as string[] | undefined;
-              const read = Array.isArray(readBy) && readBy.includes(props.userId);
-              const isAdmin = role === "admin";
+              const sentAt = formatCsDateTimeDot(c.createdAt);
+              const myReadMs = mine
+                ? 0
+                : safeTime((c.readAtBy as Record<string, unknown> | undefined)?.[props.userId]);
+              const otherReadMs = mine ? earliestOtherReaderMs(c, authorId) : 0;
+              const readLine = mine
+                ? otherReadMs > 0
+                  ? `přečteno ${formatCsDateTimeDot(otherReadMs)}`
+                  : legacyOtherHasRead(c, authorId)
+                    ? "přečteno"
+                    : "nepřečteno"
+                : myReadMs > 0
+                  ? `přečteno ${formatCsDateTimeDot(myReadMs)}`
+                  : commentReadByUser(c, props.userId)
+                    ? "přečteno"
+                    : "nepřečteno";
               return (
                 <div
                   key={c.id}
@@ -289,31 +327,18 @@ export function JobCommentsThread(props: {
                 >
                   <div
                     className={cn(
-                      "max-w-[92%] rounded-2xl border px-3 py-2 text-sm sm:max-w-[75%]",
-                      isAdmin
-                        ? "border-orange-200 bg-orange-50 text-orange-950 dark:border-orange-800/60 dark:bg-orange-950/30 dark:text-orange-50"
-                        : "border-slate-200 bg-slate-50 text-slate-950 dark:border-slate-700/60 dark:bg-slate-900/50 dark:text-slate-50",
-                      mine ? "rounded-br-md" : "rounded-bl-md"
+                      "max-w-[92%] rounded-2xl border bg-white px-3 py-2 text-sm text-black shadow-sm sm:max-w-[75%]",
+                      mine
+                        ? "border-orange-300 rounded-br-md"
+                        : "border-sky-200 rounded-bl-md",
                     )}
                   >
-                    <div className="mb-1 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground dark:text-muted-foreground">
-                      <span className="font-medium text-foreground/90">{author}</span>
-                      <Badge
-                        className={cn(
-                          "h-5 px-2 text-[10px] font-semibold",
-                          isAdmin
-                            ? "bg-orange-600 text-white hover:bg-orange-600"
-                            : "bg-sky-600 text-white hover:bg-sky-600"
-                        )}
-                      >
-                        {isAdmin ? "admin" : "zaměstnanec"}
-                      </Badge>
-                      <span className="text-foreground/70">{dt}</span>
-                      <span className="ml-auto text-foreground/70">
-                        {read ? "přečteno" : "nepřečteno"}
-                      </span>
+                    <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-neutral-600">
+                      <span className="font-medium text-neutral-900">{author}</span>
+                      <span>{sentAt}</span>
                     </div>
-                    <div className="whitespace-pre-wrap break-words text-foreground">{msg}</div>
+                    <div className="whitespace-pre-wrap break-words text-black">{msg}</div>
+                    <div className="mt-1.5 text-[11px] text-neutral-600">{readLine}</div>
                   </div>
                 </div>
               );

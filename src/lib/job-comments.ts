@@ -24,6 +24,8 @@ export type JobCommentDoc = {
   authorRole: JobCommentAuthorRole;
   createdAt: unknown;
   readBy?: string[];
+  /** Čas přečtení podle uživatele (uid → server timestamp). */
+  readAtBy?: Record<string, unknown>;
 };
 
 export function jobCommentsCollection(
@@ -59,6 +61,7 @@ export function buildJobCommentPayload(params: {
     authorRole: params.authorRole,
     createdAt: serverTimestamp(),
     readBy: [params.authorId],
+    readAtBy: { [params.authorId]: serverTimestamp() },
   };
 }
 
@@ -72,6 +75,7 @@ export async function markJobCommentsRead(params: {
   for (const ref of params.commentRefs) {
     batch.update(ref, {
       readBy: arrayUnion(params.userId),
+      [`readAtBy.${params.userId}`]: serverTimestamp(),
     });
   }
   await batch.commit();
