@@ -87,6 +87,8 @@ import {
   FileStack,
   MapPin,
   Loader2,
+  FileDown,
+  Printer,
   Camera,
   ImagePlus,
   FolderInput,
@@ -259,11 +261,14 @@ import {
 import {
   buildLegendFromShapeLabels,
   drawShapeLabelOnCanvas,
-  drawLegendStrip,
-  estimateLegendStripHeight,
   formatLegendEntryLine,
   hitTestShapeLabel,
 } from "@/lib/job-photo-shape-label";
+import { buildAnnotatedCompositeCanvas } from "@/lib/job-photo-annotation-export-composite";
+import {
+  downloadAnnotatedCompositeAsPdf,
+  printAnnotatedCompositeCanvas,
+} from "@/lib/job-photo-annotation-export-pdf-print";
 import { AnnotationModelsSettingsDialog } from "@/components/annotations/annotation-models-settings-dialog";
 import { UnifiedAnnotationEditor } from "@/components/annotations/UnifiedAnnotationEditor";
 import {
@@ -1516,6 +1521,7 @@ export function JobDetailPageContent({
 
   const [isUploading, setIsUploading] = useState(false);
   const [isSavingAnnotation, setIsSavingAnnotation] = useState(false);
+  const [isAnnotationExportBusy, setIsAnnotationExportBusy] = useState(false);
   const [pdfPageRasterBusy, setPdfPageRasterBusy] = useState(false);
   const [measurementCaptureBusy, setMeasurementCaptureBusy] = useState(false);
   const [customerAccessEmailSending, setCustomerAccessEmailSending] = useState(false);
@@ -6699,37 +6705,26 @@ export function JobDetailPageContent({
       return;
     }
 
-    const exportCanvas = document.createElement("canvas");
-
-    const ctx = exportCanvas.getContext("2d");
-    if (!ctx) {
-      toast({
-        variant: "destructive",
-        title: "Chyba při exportu",
-        description: "Nepodařilo se inicializovat plátno pro export.",
-      });
-      return;
-    }
-
     setIsSavingAnnotation(true);
 
+    let uploadCanvas: HTMLCanvasElement;
+    let documentWidth: number;
+    let documentHeight: number;
     try {
       if (isPdfSave) {
         pdfAnnotationsByPageRef.current.set(pdfPage, annotations);
-        const pdf = pdfDocRef.current!;
-        const page = await pdf.getPage(pdfPage);
-        const vp = page.getViewport({ scale: 1 });
-        exportCanvas.width = Math.max(1, Math.round(vp.width));
-        exportCanvas.height = Math.max(1, Math.round(vp.height));
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
-        await page.render({ canvasContext: ctx, viewport: vp }).promise;
-      } else {
-        exportCanvas.width = imageForCanvas!.naturalWidth || imageForCanvas!.width;
-        exportCanvas.height = imageForCanvas!.naturalHeight || imageForCanvas!.height;
-        ctx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
-        ctx.drawImage(imageForCanvas!, 0, 0);
       }
+      const built = await buildAnnotatedCompositeCanvas({
+        mode: isPdfSave ? "pdf" : "image",
+        pdfDocument: pdfDocRef.current,
+        pdfPageOneBased: pdfPage,
+        imageElement: imageForCanvas,
+        annotations,
+        colorToHex,
+      });
+      uploadCanvas = built.composite;
+      documentWidth = built.documentWidth;
+      documentHeight = built.documentHeight;
     } catch (e) {
       setIsSavingAnnotation(false);
       toast({
@@ -6738,191 +6733,6 @@ export function JobDetailPageContent({
         description: e instanceof Error ? e.message : "Export podkladu selhal.",
       });
       return;
-    }
-
-    const drawAll = (targetCtx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
-      const { fontSize, lineWidth, endpointRadius, arrowLen } =
-        getScaleAwareSizes(canvas);
-
-      const drawArrowHead = (x: number, y: number, ang: number, fill: string) => {
-        targetCtx.fillStyle = fill;
-        targetCtx.beginPath();
-        targetCtx.moveTo(x, y);
-        targetCtx.lineTo(
-          x - arrowLen * Math.cos(ang - Math.PI / 6),
-          y - arrowLen * Math.sin(ang - Math.PI / 6)
-        );
-        targetCtx.lineTo(
-          x - arrowLen * Math.cos(ang + Math.PI / 6),
-          y - arrowLen * Math.sin(ang + Math.PI / 6)
-        );
-        targetCtx.closePath();
-        targetCtx.fill();
-      };
-
-      annotations.forEach((a) => {
-        const stroke = colorToHex(a.color);
-        const lw =
-          typeof (a as any).strokeWidth === "number"
-            ? Number((a as any).strokeWidth)
-            : lineWidth;
-        targetCtx.lineWidth = lw;
-        targetCtx.lineCap = "round";
-        targetCtx.lineJoin = "round";
-        targetCtx.strokeStyle = stroke;
-        targetCtx.fillStyle = stroke;
-
-        if (a.type === "dimension") {
-          targetCtx.beginPath();
-          targetCtx.moveTo(a.startX, a.startY);
-          targetCtx.lineTo(a.endX, a.endY);
-          targetCtx.stroke();
-
-          const angle = Math.atan2(a.endY - a.startY, a.endX - a.startX);
-          drawArrowHead(a.startX, a.startY, angle + Math.PI, stroke);
-          drawArrowHead(a.endX, a.endY, angle, stroke);
-
-          const label = (a.label || "").trim();
-          if (label) {
-            const dim = a as DimensionAnnotation;
-            const lfRaw = dim.labelFontSize;
-            const labelFs =
-              typeof lfRaw === "number" && Number.isFinite(lfRaw)
-                ? Math.max(1, Math.min(100, lfRaw))
-                : 16;
-            const labelPx = Math.max(1, labelFs);
-            const midX = (a.startX + a.endX) / 2;
-            const midY = (a.startY + a.endY) / 2;
-            const offset = Math.max(10, labelPx * 0.85);
-            const tx = midX - offset * Math.sin(angle);
-            const ty = midY + offset * Math.cos(angle);
-            targetCtx.font = `700 ${labelPx}px ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial`;
-            targetCtx.textAlign = "center";
-            targetCtx.textBaseline = "middle";
-            targetCtx.lineWidth = Math.max(2, labelPx * 0.12);
-            targetCtx.strokeStyle = "rgba(0,0,0,0.55)";
-            targetCtx.strokeText(label, tx, ty);
-            targetCtx.fillStyle = stroke;
-            targetCtx.fillText(label, tx, ty);
-          }
-        }
-
-        if (a.type === "meter") {
-          const m = a as MeterAnnotation;
-          targetCtx.save();
-          targetCtx.setLineDash([5, 4]);
-          targetCtx.lineWidth = lw;
-          targetCtx.strokeStyle = stroke;
-          targetCtx.beginPath();
-          targetCtx.moveTo(m.startX, m.startY);
-          targetCtx.lineTo(m.endX, m.endY);
-          targetCtx.stroke();
-          targetCtx.setLineDash([]);
-          const lab = (m.label || "").trim();
-          if (lab) {
-            const midX = (m.startX + m.endX) / 2;
-            const midY = (m.startY + m.endY) / 2;
-            const ang = Math.atan2(m.endY - m.startY, m.endX - m.startX);
-            const perp = ang - Math.PI / 2;
-            const off = Math.max(12, fontSize * 0.55);
-            const tx = midX + Math.cos(perp) * off;
-            const ty = midY + Math.sin(perp) * off;
-            const fontPx = Math.max(10, Math.round(fontSize * 0.72));
-            targetCtx.font = `600 ${fontPx}px ui-sans-serif, system-ui, sans-serif`;
-            targetCtx.textAlign = "center";
-            targetCtx.textBaseline = "middle";
-            targetCtx.lineWidth = Math.max(2, fontPx * 0.12);
-            targetCtx.strokeStyle = "rgba(0,0,0,0.55)";
-            targetCtx.strokeText(lab, tx, ty);
-            targetCtx.fillStyle = "#f1f5f9";
-            targetCtx.fillText(lab, tx, ty);
-          }
-          targetCtx.restore();
-        }
-
-        if (a.type === "arrowNote") {
-          const ar = a as ArrowNoteAnnotation;
-          const sx = ar.startX;
-          const sy = ar.startY;
-          const ex = ar.endX;
-          const ey = ar.endY;
-          const angle = Math.atan2(ey - sy, ex - sx);
-          targetCtx.lineWidth = lw;
-          targetCtx.strokeStyle = stroke;
-          targetCtx.beginPath();
-          targetCtx.moveTo(sx, sy);
-          targetCtx.lineTo(ex, ey);
-          targetCtx.stroke();
-          drawArrowHead(ex, ey, angle, stroke);
-          const nfsRaw = ar.numFontSize;
-          const nfs =
-            typeof nfsRaw === "number" && Number.isFinite(nfsRaw)
-              ? Math.max(8, Math.min(28, nfsRaw))
-              : Math.min(18, Math.max(10, Math.round(fontSize * 0.52)));
-          const r = Math.max(nfs * 0.72, 9);
-          targetCtx.beginPath();
-          targetCtx.arc(sx, sy, r, 0, Math.PI * 2);
-          targetCtx.fillStyle = "rgba(255,255,255,0.94)";
-          targetCtx.fill();
-          targetCtx.strokeStyle = stroke;
-          targetCtx.lineWidth = Math.max(1.25, 1.5);
-          targetCtx.stroke();
-          targetCtx.font = `700 ${nfs}px ui-sans-serif, system-ui, sans-serif`;
-          targetCtx.textAlign = "center";
-          targetCtx.textBaseline = "middle";
-          targetCtx.fillStyle = stroke;
-          targetCtx.fillText(String(ar.arrowNumber ?? ""), sx, sy);
-        }
-
-        if (a.type === "note") {
-          drawNoteAnnotationOnCanvas(targetCtx, canvas, a, false, {
-            fontSize,
-            lineWidth: lw,
-            endpointRadius,
-            arrowLen,
-            colorToHex,
-          });
-        }
-
-        if (a.type === "shapeLabel") {
-          drawShapeLabelOnCanvas(
-            targetCtx,
-            a as ShapeLabelAnnotation,
-            false,
-            1,
-            colorToHex,
-            fontSize,
-            lw
-          );
-        }
-      });
-    };
-
-    drawAll(ctx, exportCanvas);
-
-    const legendShapes = annotations.filter(
-      (a): a is ShapeLabelAnnotation => a.type === "shapeLabel"
-    );
-    const leg = [
-      ...buildLegendFromShapeLabels(legendShapes),
-      ...buildArrowNoteLegendEntries(annotations),
-    ];
-    let uploadCanvas: HTMLCanvasElement = exportCanvas;
-    if (leg.length > 0 && ctx) {
-      const legH = estimateLegendStripHeight(ctx, leg, exportCanvas.width);
-      if (legH > 0) {
-        const merged = document.createElement("canvas");
-        merged.width = exportCanvas.width;
-        merged.height = exportCanvas.height + legH;
-        const mctx = merged.getContext("2d");
-        if (mctx) {
-          mctx.fillStyle = "#ffffff";
-          mctx.fillRect(0, 0, merged.width, merged.height);
-          mctx.drawImage(exportCanvas, 0, 0);
-          drawLegendStrip(mctx, leg, merged.width, exportCanvas.height, legH);
-          uploadCanvas = merged;
-        }
-      }
     }
 
     const canvasToBlob = (canvas: HTMLCanvasElement): Promise<Blob> =>
@@ -6938,8 +6748,8 @@ export function JobDetailPageContent({
 
       const annotationData = serializeJobPhotoAnnotations(
         annotations,
-        exportCanvas.width,
-        exportCanvas.height,
+        documentWidth,
+        documentHeight,
         {
           pageIndex: isPdfSave ? pdfPage - 1 : 0,
           imageCalibration: imageCalibrationRef.current,
@@ -7269,6 +7079,133 @@ export function JobDetailPageContent({
       setIsSavingAnnotation(false);
     }
   };
+
+  const handleExportAnnotationPdf = useCallback(async () => {
+    const isPdf = editorMediaKind === "pdf";
+    if (!baseImageLoaded) {
+      toast({
+        variant: "destructive",
+        title: "Chyba při exportu",
+        description: "Podklad není načten, export nelze provést.",
+      });
+      return;
+    }
+    if (!isPdf && !imageForCanvas) {
+      toast({
+        variant: "destructive",
+        title: "Chyba při exportu",
+        description: "Základní fotografie není načtena, export nelze provést.",
+      });
+      return;
+    }
+    if (isPdf && (!pdfDocRef.current || pdfNumPages < 1)) {
+      toast({
+        variant: "destructive",
+        title: "Chyba při exportu",
+        description: "PDF není připraveno k exportu.",
+      });
+      return;
+    }
+    setIsAnnotationExportBusy(true);
+    try {
+      if (isPdf) {
+        pdfAnnotationsByPageRef.current.set(pdfPage, annotations);
+      }
+      const built = await buildAnnotatedCompositeCanvas({
+        mode: isPdf ? "pdf" : "image",
+        pdfDocument: pdfDocRef.current,
+        pdfPageOneBased: pdfPage,
+        imageElement: imageForCanvas,
+        annotations,
+        colorToHex,
+      });
+      const rawName =
+        (photoToEdit?.fileName ||
+          photoToEdit?.name ||
+          photoToEdit?.id ||
+          "vykres").trim() || "vykres";
+      const name = isPdf ? `${rawName}-str${pdfPage}` : rawName;
+      downloadAnnotatedCompositeAsPdf(built.composite, name);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Export PDF selhal",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setIsAnnotationExportBusy(false);
+    }
+  }, [
+    editorMediaKind,
+    baseImageLoaded,
+    imageForCanvas,
+    pdfNumPages,
+    pdfPage,
+    annotations,
+    colorToHex,
+    photoToEdit,
+    toast,
+  ]);
+
+  const handlePrintAnnotated = useCallback(async () => {
+    const isPdf = editorMediaKind === "pdf";
+    if (!baseImageLoaded) {
+      toast({
+        variant: "destructive",
+        title: "Tisk",
+        description: "Podklad není načten, tisk nelze provést.",
+      });
+      return;
+    }
+    if (!isPdf && !imageForCanvas) {
+      toast({
+        variant: "destructive",
+        title: "Tisk",
+        description: "Základní fotografie není načtena, tisk nelze provést.",
+      });
+      return;
+    }
+    if (isPdf && (!pdfDocRef.current || pdfNumPages < 1)) {
+      toast({
+        variant: "destructive",
+        title: "Tisk",
+        description: "PDF není připraveno k tisku.",
+      });
+      return;
+    }
+    setIsAnnotationExportBusy(true);
+    try {
+      if (isPdf) {
+        pdfAnnotationsByPageRef.current.set(pdfPage, annotations);
+      }
+      const built = await buildAnnotatedCompositeCanvas({
+        mode: isPdf ? "pdf" : "image",
+        pdfDocument: pdfDocRef.current,
+        pdfPageOneBased: pdfPage,
+        imageElement: imageForCanvas,
+        annotations,
+        colorToHex,
+      });
+      printAnnotatedCompositeCanvas(built.composite, "Anotovaný výkres");
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Tisk se nezdařil",
+        description: e instanceof Error ? e.message : "Zkuste to znovu.",
+      });
+    } finally {
+      setIsAnnotationExportBusy(false);
+    }
+  }, [
+    editorMediaKind,
+    baseImageLoaded,
+    imageForCanvas,
+    pdfNumPages,
+    pdfPage,
+    annotations,
+    colorToHex,
+    toast,
+  ]);
 
   const handleConvertPdfPageToImage = useCallback(async () => {
     if (editorMediaKind !== "pdf" || !baseImageLoaded) {
@@ -8168,6 +8105,12 @@ export function JobDetailPageContent({
     [isAnnotEditorCompact]
   );
 
+  const annotExportControlsDisabled =
+    !baseImageLoaded ||
+    isAnnotationExportBusy ||
+    isSavingAnnotation ||
+    pdfPageRasterBusy;
+
   const measurementAnnotationEditorDialog = (
     <>
       <UnifiedAnnotationEditor
@@ -8191,6 +8134,32 @@ export function JobDetailPageContent({
                 <span className="min-w-0 truncate text-center text-[11px] font-semibold sm:text-xs">
                   Anotace
                 </span>
+                <div className="flex shrink-0 items-center gap-0.5 lg:hidden">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 border-white/25 bg-slate-800/80 text-white hover:bg-slate-700 disabled:opacity-50"
+                    title="Export PDF"
+                    aria-label="Export PDF"
+                    onClick={() => void handleExportAnnotationPdf()}
+                    disabled={annotExportControlsDisabled}
+                  >
+                    <FileDown className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    className="h-8 w-8 shrink-0 border-white/25 bg-slate-800/80 text-white hover:bg-slate-700 disabled:opacity-50"
+                    title="Tisk"
+                    aria-label="Tisk"
+                    onClick={() => void handlePrintAnnotated()}
+                    disabled={annotExportControlsDisabled}
+                  >
+                    <Printer className="h-4 w-4" />
+                  </Button>
+                </div>
                 <Button
                   type="button"
                   size="sm"
@@ -8200,6 +8169,7 @@ export function JobDetailPageContent({
                     annotationReadOnly ||
                     !baseImageLoaded ||
                     isSavingAnnotation ||
+                    isAnnotationExportBusy ||
                     pdfPageRasterBusy
                   }
                 >
@@ -8899,10 +8869,51 @@ export function JobDetailPageContent({
                 </Button>
 
                 <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn(annotBottomBarBtnClass, "gap-1")}
+                  onClick={() => void handleExportAnnotationPdf()}
+                  disabled={annotExportControlsDisabled}
+                  title="Exportovat anotovaný výkres do PDF"
+                >
+                  <FileDown
+                    className={cn(
+                      "shrink-0",
+                      isAnnotEditorCompact ? "h-3.5 w-3.5" : "h-4 w-4"
+                    )}
+                  />
+                  {isAnnotEditorMobile ? "PDF" : "Export PDF"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn(annotBottomBarBtnClass, "gap-1")}
+                  onClick={() => void handlePrintAnnotated()}
+                  disabled={annotExportControlsDisabled}
+                  title="Tisknout stejný výstup jako u PDF"
+                >
+                  <Printer
+                    className={cn(
+                      "shrink-0",
+                      isAnnotEditorCompact ? "h-3.5 w-3.5" : "h-4 w-4"
+                    )}
+                  />
+                  Tisk
+                </Button>
+
+                <Button
                   size="sm"
                   className={annotBottomBarBtnClass}
                   onClick={handleSaveAnnotated}
-                  disabled={!baseImageLoaded || isSavingAnnotation || pdfPageRasterBusy}
+                  disabled={
+                    annotationReadOnly ||
+                    !baseImageLoaded ||
+                    isSavingAnnotation ||
+                    isAnnotationExportBusy ||
+                    pdfPageRasterBusy
+                  }
                 >
                   {isSavingAnnotation
                     ? isAnnotEditorMobile
