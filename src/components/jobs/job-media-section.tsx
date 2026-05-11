@@ -634,10 +634,34 @@ function UserFolderBlock({
         if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
         return;
       }
+      const folderAllowsEmployeeEdit =
+        (folder as { employeeCanEdit?: unknown }).employeeCanEdit === true;
       /**
-       * Interní zakázka (majitel/admin) nebo zaměstnanec v portálu:
-       * vždy použij nový editor anotací (JobDetailPageContent / unified flow).
-       * Starý fullscreen editor (CustomerMediaAnnotationViewer) je jen pro klientský portál.
+       * Zaměstnanec bez práva upravovat anotace — náhled v modalu (bez navigace do editoru).
+       */
+      if (
+        isEmployeeLimited &&
+        (kind === "image" || kind === "pdf") &&
+        !folderAllowsEmployeeEdit
+      ) {
+        const fileType = kind === "pdf" ? "pdf" : "image";
+        const skipVectorLayer =
+          fileType === "image" && jobMediaHasFlattenedAdminExport(img);
+        setMediaViewer({
+          url: openUrl,
+          title,
+          fileType,
+          mediaDocumentId: img.id,
+          annotationData: skipVectorLayer ? undefined : img.annotationData,
+          readOnly: true,
+          adminNote: typeof img.note === "string" ? img.note : "",
+        });
+        return;
+      }
+      /**
+       * Interní zakázka (majitel/admin) nebo zaměstnanec s oprávněním upravovat:
+       * nový editor anotací (JobDetailPageContent / unified flow).
+       * Starý fullscreen editor (CustomerMediaAnnotationViewer) je jen pro klientský portál / náhled.
        */
       if ((kind === "image" || kind === "pdf") && !isCustomerScope) {
         onAnnotatePhoto({
@@ -680,7 +704,7 @@ function UserFolderBlock({
         adminNote: typeof img.note === "string" ? img.note : "",
       });
     },
-    [folder, mediaScope, isCustomerScope, onAnnotatePhoto]
+    [folder, mediaScope, isCustomerScope, isEmployeeLimited, onAnnotatePhoto]
   );
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -877,36 +901,6 @@ function UserFolderBlock({
         )
       : true);
 
-  useEffect(() => {
-    if (process.env.NODE_ENV !== "development") return;
-    if (!isEmployeeLimited) return;
-    const actorRole =
-      typeof (actorProfile as { role?: unknown } | null | undefined)?.role === "string"
-        ? String((actorProfile as { role: string }).role)
-        : "employee";
-    const perms = folder as {
-      employeeVisible?: unknown;
-      employeeVisibility?: unknown;
-      allowEmployeeUpload?: unknown;
-      employeeUploadAllowed?: unknown;
-      id?: string;
-      name?: string;
-      type?: string;
-    };
-    const visible =
-      perms.employeeVisible === true || String(perms.employeeVisibility || "") === "employee_visible";
-    const allow =
-      perms.allowEmployeeUpload === true || perms.employeeUploadAllowed === true;
-    console.log("UPLOAD BUTTON CHECK", {
-      role: actorRole,
-      folderId: folder.id,
-      folderName: (folder as { name?: unknown }).name ?? null,
-      folderVisibleToEmployees: visible,
-      employeeCanUpload: allow,
-      resultShowUploadButton: showFolderUpload,
-    });
-  }, [isEmployeeLimited, actorProfile, folder, showFolderUpload]);
-
   const persistFolderEmployeeFlags = async (patch: {
     employeeVisible: boolean;
     allowEmployeeUpload: boolean;
@@ -1053,15 +1047,6 @@ function UserFolderBlock({
         return;
       }
     }
-
-    const actorRole =
-      typeof (actorProfile as { role?: unknown } | null | undefined)?.role === "string"
-        ? String((actorProfile as { role: string }).role)
-        : "employee";
-    const allowEmployeeUpload =
-      (folder as { allowEmployeeUpload?: unknown }).allowEmployeeUpload === true ||
-      (folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true;
-    console.log("UPLOAD CHECK", { role: actorRole, allowEmployeeUpload });
 
     const safeBaseName =
       file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
@@ -2395,7 +2380,7 @@ function UserFolderBlock({
                         </JobMediaIconButton>
                         {kind === "pdf" ? (
                           <JobMediaIconButton
-                            label="Celá obrazovka"
+                            label="Náhled"
                             disabled={!openUrl}
                             onClick={() => {
                               if (openUrl) openFolderMediaViewer(img, openUrl, title);
@@ -2430,7 +2415,6 @@ function UserFolderBlock({
                               >
                                 <a
                                   href={openUrl}
-                                  download={title}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                 >
@@ -2439,11 +2423,11 @@ function UserFolderBlock({
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="text-xs">
-                              Stáhnout
+                              Otevřít v prohlížeči
                             </TooltipContent>
                           </Tooltip>
                         ) : (
-                          <JobMediaIconButton label="Stáhnout" disabled>
+                          <JobMediaIconButton label="Otevřít" disabled>
                             <Download className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
                         )}
@@ -2599,7 +2583,6 @@ function UserFolderBlock({
                             >
                               <a
                                 href={openUrl}
-                                download={title}
                                 target="_blank"
                                 rel="noopener noreferrer"
                               >
@@ -2608,11 +2591,11 @@ function UserFolderBlock({
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent side="bottom" className="text-xs">
-                            Stáhnout
+                            Otevřít v prohlížeči
                           </TooltipContent>
                         </Tooltip>
                       ) : (
-                        <JobMediaIconButton label="Stáhnout" disabled>
+                        <JobMediaIconButton label="Otevřít" disabled>
                           <Download className="size-[18px]" aria-hidden />
                         </JobMediaIconButton>
                       )}
@@ -2724,7 +2707,6 @@ function UserFolderBlock({
                               >
                                 <a
                                   href={openUrl}
-                                  download={title}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                 >
@@ -2733,7 +2715,7 @@ function UserFolderBlock({
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="text-xs">
-                              Stáhnout
+                              Otevřít v prohlížeči
                             </TooltipContent>
                           </Tooltip>
                         ) : null}
@@ -2871,7 +2853,7 @@ function UserFolderBlock({
       </DialogContent>
     </Dialog>
 
-    {firestore && user && mediaViewer && !isEmployeeLimited ? (
+    {firestore && user && mediaViewer ? (
       <CustomerMediaAnnotationViewer
         key={mediaViewer.mediaDocumentId}
         open={!!mediaViewer}
@@ -3793,7 +3775,6 @@ export function JobMediaSection({
                                   >
                                     <a
                                       href={openUrl}
-                                      download={title}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                     >
@@ -3802,11 +3783,11 @@ export function JobMediaSection({
                                   </Button>
                                 </TooltipTrigger>
                                 <TooltipContent side="bottom" className="text-xs">
-                                  Stáhnout
+                                  Otevřít v prohlížeči
                                 </TooltipContent>
                               </Tooltip>
                             ) : (
-                              <JobMediaIconButton label="Stáhnout" disabled>
+                              <JobMediaIconButton label="Otevřít" disabled>
                                 <Download className="size-[18px]" aria-hidden />
                               </JobMediaIconButton>
                             )}
@@ -3926,7 +3907,6 @@ export function JobMediaSection({
                                 >
                                   <a
                                     href={openUrl}
-                                    download={title}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                   >
@@ -3935,11 +3915,11 @@ export function JobMediaSection({
                                 </Button>
                               </TooltipTrigger>
                               <TooltipContent side="bottom" className="text-xs">
-                                Stáhnout
+                                Otevřít v prohlížeči
                               </TooltipContent>
                             </Tooltip>
                           ) : (
-                            <JobMediaIconButton label="Stáhnout" disabled>
+                            <JobMediaIconButton label="Otevřít" disabled>
                               <Download className="size-[18px]" aria-hidden />
                             </JobMediaIconButton>
                           )}
@@ -4028,7 +4008,6 @@ export function JobMediaSection({
                                           >
                                             <a
                                               href={openUrl}
-                                              download={title}
                                               target="_blank"
                                               rel="noopener noreferrer"
                                             >
@@ -4037,7 +4016,7 @@ export function JobMediaSection({
                                           </Button>
                                         </TooltipTrigger>
                                         <TooltipContent side="bottom" className="text-xs">
-                                          Stáhnout
+                                          Otevřít v prohlížeči
                                         </TooltipContent>
                                       </Tooltip>
                                     ) : null}

@@ -468,6 +468,20 @@ service cloud.firestore {
       );
     }
 
+    /**
+     * Omezený portál zaměstnance u zakázky — přepínač „Zaměstnanec může nahrávat“
+     * v jobMembers/{ownEmployeeId}.jobPermissions.canUploadFiles (bez pole = bez nahrávání).
+     */
+    function jobMemberLimitedPortalCanUploadFiles(companyId, jobId) {
+      let m = jobMemberPathForEmp(companyId, jobId, ownEmployeeId());
+      return ownEmployeeId() != null &&
+        exists(m) &&
+        'jobPermissions' in get(m).data &&
+        get(m).data.jobPermissions is map &&
+        'canUploadFiles' in get(m).data.jobPermissions &&
+        get(m).data.jobPermissions.canUploadFiles == true;
+    }
+
     function legacyJobPhotosEmployeeAllowed(companyId, jobId) {
       let sp = /databases/$(database)/documents/companies/$(companyId)/jobs/$(jobId)/employeeSummary/summary;
       return exists(sp) && get(sp).data.legacyPhotosEmployeeVisible == true;
@@ -1751,6 +1765,7 @@ service cloud.firestore {
               (jobEmployeeLimitedMediaProfile(companyId, jobId) &&
                 folderDocEmployeeVisible(companyId, jobId, folderId) &&
                 folderDocEmployeeUploadAllowed(companyId, jobId, folderId) &&
+                jobMemberLimitedPortalCanUploadFiles(companyId, jobId) &&
                 request.resource.data.companyId == companyId &&
                 request.resource.data.jobId == jobId &&
                 request.resource.data.folderId == folderId &&

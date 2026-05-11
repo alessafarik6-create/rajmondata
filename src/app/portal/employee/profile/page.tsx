@@ -493,9 +493,18 @@ export default function EmployeeProfilePage() {
   };
 
   const displayName =
-    profile?.displayName ||
-    [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
-    user?.email;
+    (() => {
+      const e = employeeRow as Record<string, unknown> | null | undefined;
+      const first = String(e?.firstName ?? "").trim();
+      const last = String(e?.lastName ?? "").trim();
+      const fromEmp = [first, last].filter(Boolean).join(" ").trim();
+      if (fromEmp) return fromEmp;
+      return (
+        profile?.displayName ||
+        [profile?.firstName, profile?.lastName].filter(Boolean).join(" ") ||
+        user?.email
+      );
+    })();
 
   if (isUserLoading || !user) {
     return (
@@ -670,11 +679,19 @@ export default function EmployeeProfilePage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <div>
               <span className="text-slate-800">Jméno</span>
-              <p className="font-medium">{profile?.firstName || "—"}</p>
+              <p className="font-medium">
+                {String((employeeRow as Record<string, unknown> | undefined)?.firstName ?? "").trim() ||
+                  profile?.firstName ||
+                  "—"}
+              </p>
             </div>
             <div>
               <span className="text-slate-800">Příjmení</span>
-              <p className="font-medium">{profile?.lastName || "—"}</p>
+              <p className="font-medium">
+                {String((employeeRow as Record<string, unknown> | undefined)?.lastName ?? "").trim() ||
+                  profile?.lastName ||
+                  "—"}
+              </p>
             </div>
           </div>
           <div>

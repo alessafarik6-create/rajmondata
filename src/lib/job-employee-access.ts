@@ -246,7 +246,11 @@ export function canEmployeeUploadToFolder(
   /** Upload zaměstnance řídíme primárně podle oprávnění složky + optional whitelistu uploadFolderIds. */
   if (!isFolderEmployeeVisible(folder)) return false;
   if (!isFolderEmployeeUploadAllowed(folder)) return false;
-  const uploads = permissions?.uploadFolderIds;
+  /** Přepínač „Zaměstnanec může nahrávat“ u člena zakázky — musí být zapnutý (shodně s Firestore rules). */
+  if (!permissions || permissions.canUploadFiles !== true) {
+    return false;
+  }
+  const uploads = permissions.uploadFolderIds;
   if (Array.isArray(uploads) && uploads.length > 0 && !uploads.includes(folder.id)) {
     return false;
   }

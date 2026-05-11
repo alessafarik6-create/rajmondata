@@ -39,6 +39,29 @@ service firebase.storage {
       );
     }
 
+    /** Shodně s Firestore: omezený zaměstnanec smí nahrávat jen s jobPermissions.canUploadFiles == true. */
+    function storageJobMemberLimitedCanUploadFiles(companyId, jobId) {
+      let eid = storageUserDoc().employeeId;
+      let mp = /databases/(default)/documents/companies/$(companyId)/jobs/$(jobId)/jobMembers/$(eid);
+      return eid is string &&
+        eid.size() > 0 &&
+        firestore.exists(mp) &&
+        'jobPermissions' in firestore.get(mp).data &&
+        firestore.get(mp).data.jobPermissions is map &&
+        'canUploadFiles' in firestore.get(mp).data.jobPermissions &&
+        firestore.get(mp).data.jobPermissions.canUploadFiles == true;
+    }
+
+    function storageJobMemberFullInternal(companyId, jobId) {
+      let eid = storageUserDoc().employeeId;
+      let mp = /databases/(default)/documents/companies/$(companyId)/jobs/$(jobId)/jobMembers/$(eid);
+      return eid is string &&
+        eid.size() > 0 &&
+        firestore.exists(mp) &&
+        'accessMode' in firestore.get(mp).data &&
+        firestore.get(mp).data.accessMode == 'full_internal';
+    }
+
     /** Zápis médií u zakázky (náklady / staré job-photos) — dříve chybějící funkce v pravidlech. */
     function storageJobMediaWriteOk() {
       return request.auth != null;
@@ -75,7 +98,14 @@ service firebase.storage {
       allow read: if request.auth != null;
       allow write: if request.auth != null && storageSameCompany(companyId) && (
         storageIsPrivileged() ||
-        (storageUserRole() == 'employee' && storageFolderAllowEmployeeUpload(companyId, jobId, folderId))
+        (
+          storageUserRole() == 'employee' &&
+          storageFolderAllowEmployeeUpload(companyId, jobId, folderId) &&
+          (
+            storageJobMemberFullInternal(companyId, jobId) ||
+            storageJobMemberLimitedCanUploadFiles(companyId, jobId)
+          )
+        )
       );
     }
 

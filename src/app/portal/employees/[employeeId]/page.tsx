@@ -215,23 +215,39 @@ export default function EmployeeDetailPage() {
 
   const [savingPersonal, setSavingPersonal] = useState(false);
   const savePersonal = async () => {
-    if (!canManage || !employeeRef || savingPersonal) return;
+    if (!canManage || !user || !employeeId || savingPersonal) return;
     setSavingPersonal(true);
     try {
-      await updateDoc(employeeRef, {
-        firstName: personalForm.firstName.trim(),
-        lastName: personalForm.lastName.trim(),
-        email: personalForm.email.trim(),
-        phone: personalForm.phone.trim(),
-        address: personalForm.address.trim(),
-        jobTitle: personalForm.jobTitle.trim(),
-        note: personalForm.note.trim(),
-        updatedAt: serverTimestamp(),
-      } as DocumentData);
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/employees/update-person", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          employeeId,
+          firstName: personalForm.firstName.trim(),
+          lastName: personalForm.lastName.trim(),
+          email: personalForm.email.trim(),
+          phone: personalForm.phone.trim(),
+          address: personalForm.address.trim(),
+          jobTitle: personalForm.jobTitle.trim(),
+          note: personalForm.note.trim(),
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Uložení selhalo.");
+      }
       toast({ title: "Uloženo", description: "Osobní údaje byly aktualizovány." });
-    } catch (e) {
+    } catch (e: unknown) {
       console.error(e);
-      toast({ variant: "destructive", title: "Uložení selhalo" });
+      toast({
+        variant: "destructive",
+        title: "Uložení selhalo",
+        description: e instanceof Error ? e.message : undefined,
+      });
     } finally {
       setSavingPersonal(false);
     }

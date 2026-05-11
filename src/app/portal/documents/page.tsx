@@ -22,6 +22,7 @@ import {
   FileText,
   Upload,
   Download,
+  Eye,
   Filter,
   Search,
   Loader2,
@@ -47,6 +48,7 @@ import {
 import { sendJobDocumentEmailFromBrowser } from "@/lib/document-email-send-client";
 import { DocumentEmailRecipientPicker } from "@/components/documents/document-email-recipient-picker";
 import { DocumentEmailOutboundHistory } from "@/components/documents/document-email-outbound-history";
+import { DocumentPreviewDialog } from "@/components/documents/document-preview-dialog";
 import {
   useUser,
   useFirestore,
@@ -4631,6 +4633,12 @@ function DocumentTableReceived({
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBodyPlain, setEmailBodyPlain] = useState("");
   const [emailSending, setEmailSending] = useState(false);
+  const [docPreview, setDocPreview] = useState<{
+    title: string;
+    fileUrl: string;
+    mimeType?: string | null;
+    fileName?: string | null;
+  } | null>(null);
 
   const openReceivedEmailDialog = (row: CompanyDocumentRow) => {
     const fmtCzk = (val: number) =>
@@ -5129,6 +5137,18 @@ function DocumentTableReceived({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {docPreview ? (
+        <DocumentPreviewDialog
+          open
+          onOpenChange={(o) => {
+            if (!o) setDocPreview(null);
+          }}
+          title={docPreview.title}
+          fileUrl={docPreview.fileUrl}
+          mimeType={docPreview.mimeType}
+          fileName={docPreview.fileName}
+        />
+      ) : null}
       <CardContent className="p-0">
         {isLoading ? (
           <div className="flex justify-center p-8">
@@ -5233,21 +5253,40 @@ function DocumentTableReceived({
                       </Button>
                     ) : null}
                     {row.fileUrl ? (
-                      <Button
-                        variant="outline"
-                        size="icon"
-                        className={iconBtn}
-                        asChild
-                        title="Příloha"
-                      >
-                        <a
-                          href={row.fileUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className={iconBtn}
+                          title="Náhled přílohy"
+                          onClick={() =>
+                            setDocPreview({
+                              title,
+                              fileUrl: row.fileUrl!.trim(),
+                              mimeType: row.mimeType,
+                              fileName: row.fileName,
+                            })
+                          }
                         >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                        </a>
-                      </Button>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className={iconBtn}
+                          asChild
+                          title="Otevřít v novém okně"
+                        >
+                          <a
+                            href={row.fileUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </Button>
+                      </>
                     ) : null}
                     <Button
                       type="button"
