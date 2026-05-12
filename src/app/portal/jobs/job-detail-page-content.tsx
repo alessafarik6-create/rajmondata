@@ -227,6 +227,7 @@ import {
   readImageCalibrationFromPayload,
   serializeJobPhotoAnnotations,
   syncShapeLabelLegendNumbers,
+  defaultHexForDimensionColor,
   type DimensionColor,
   type JobPhotoAnnotation as Annotation,
   type JobPhotoArrowNoteAnnotation as ArrowNoteAnnotation,
@@ -273,6 +274,7 @@ import { AnnotationModelsSettingsDialog } from "@/components/annotations/annotat
 import { UnifiedAnnotationEditor } from "@/components/annotations/UnifiedAnnotationEditor";
 import {
   dimensionColorFromModelColor,
+  modelColorToStrokeHex,
   type AnnotationModelDoc,
 } from "@/lib/annotation-models";
 import {
@@ -2196,22 +2198,7 @@ export function JobDetailPageContent({
     return await getDownloadURL(ref(getFirebaseStorage(), value));
   }, []);
 
-  const colorToHex = (c: DimensionColor) => {
-    switch (c) {
-      case "red":
-        return "#ef4444";
-      case "yellow":
-        return "#facc15";
-      case "white":
-        return "#ffffff";
-      case "black":
-        return "#000000";
-      case "blue":
-        return "#3b82f6";
-      default:
-        return "#ef4444";
-    }
-  };
+  const colorToHex = (c: DimensionColor) => defaultHexForDimensionColor(c);
 
   const createId = () =>
     `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -5007,11 +4994,16 @@ export function JobDetailPageContent({
           a.id === selectedAnnotationId &&
           (a.type === "dimension" ||
             a.type === "note" ||
-            a.type === "shapeLabel" ||
             a.type === "meter" ||
             a.type === "arrowNote")
             ? { ...a, color: newColor }
-            : a
+            : a.id === selectedAnnotationId && a.type === "shapeLabel"
+              ? {
+                  ...(a as ShapeLabelAnnotation),
+                  color: newColor,
+                  strokeHex: undefined,
+                }
+              : a
         )
       );
     },
@@ -5208,6 +5200,10 @@ export function JobDetailPageContent({
             );
             const cx = cur.x + cur.width / 2;
             const cy = cur.y + cur.height / 2;
+            const colorStroke: Pick<ShapeLabelAnnotation, "color" | "strokeHex"> =
+              fromLibrary
+                ? { color: cur.color, strokeHex: cur.strokeHex }
+                : { color: activeColor, strokeHex: undefined };
             return {
               ...cur,
               shape,
@@ -5221,7 +5217,7 @@ export function JobDetailPageContent({
               note: shapeLabelForm.note.trim() || undefined,
               legendDescription: shapeLabelForm.legendDescription.trim() || undefined,
               showLabelInline: shapeLabelForm.showLabelInline,
-              color: activeColor,
+              ...colorStroke,
               modelId: mid || cur.modelId,
               rotation: cur.rotation,
             };
@@ -5250,6 +5246,10 @@ export function JobDetailPageContent({
       const by = point.y - rect.height / 2;
       const id = createId();
       const mid = shapeLabelForm.modelId?.trim();
+      const lib = mid
+        ? annotationModelsSorted.find((m) => m.id === mid)
+        : undefined;
+      const mh = lib ? modelColorToStrokeHex(lib.color) : undefined;
       const row: ShapeLabelAnnotation = {
         id,
         type: "shapeLabel",
@@ -5266,16 +5266,17 @@ export function JobDetailPageContent({
         legendDescription: shapeLabelForm.legendDescription.trim() || undefined,
         legendNumber: 1,
         showLabelInline: shapeLabelForm.showLabelInline,
-        color: activeColor,
+        color: mh ? dimensionColorFromModelColor(mh) : activeColor,
         createdAt: Date.now(),
       };
       if (mid) row.modelId = mid;
+      if (mh) row.strokeHex = mh;
       setAnnotations((prev) => syncShapeLabelLegendNumbers([...prev, row]));
     }
     pendingShapePointRef.current = null;
     setShapeLabelDialogOpen(false);
     setShapeLabelEditingId(null);
-  }, [activeColor, shapeLabelForm, shapeLabelEditingId, imageForCanvas]);
+  }, [activeColor, shapeLabelForm, shapeLabelEditingId, imageForCanvas, annotationModelsSorted]);
 
   const undoLast = useCallback(() => {
     setAnnotations((prev) => prev.slice(0, -1));
@@ -5674,7 +5675,8 @@ export function JobDetailPageContent({
         const bx = pt.x - rect.width / 2;
         const by = pt.y - rect.height / 2;
         const id = createId();
-        const col = dimensionColorFromModelColor(plm.color);
+        const mh = modelColorToStrokeHex(plm.color);
+        const col = mh ? dimensionColorFromModelColor(mh) : activeColor;
         const effPlm = effectiveShapeLabelMm(plm.widthMm, plm.heightMm);
         setAnnotations((prev) => {
           const nextShape: ShapeLabelAnnotation = {
@@ -5694,6 +5696,7 @@ export function JobDetailPageContent({
             legendNumber: 1,
             showLabelInline: false,
             color: col,
+            ...(mh ? { strokeHex: mh } : {}),
             strokeWidth: activeStrokeWidth,
             createdAt: Date.now(),
             modelId: plm.id,
@@ -8685,7 +8688,13 @@ export function JobDetailPageContent({
                             {annotationShapeLegendEntries.map((e) => (
                               <li
                                 key={`leg-s-${e.legendNumber}-${e.label}-${e.widthMm}`}
-                                className="border-l-2 border-amber-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                                className="border-l-2 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                                style={{
+                                  borderLeftColor:
+                                    e.strokeHex && e.strokeHex.trim()
+                                      ? e.strokeHex.trim()
+                                      : "#fbbf24",
+                                }}
                               >
                                 {formatLegendEntryLine(e)}
                               </li>

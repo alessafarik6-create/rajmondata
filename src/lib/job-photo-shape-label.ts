@@ -2,10 +2,11 @@
  * Vykreslení a legenda pro anotace typu „značka / model“ (měřítkové značky).
  */
 
-import type {
-  AnnotationLegendEntry,
-  DimensionColor,
-  JobPhotoShapeLabelAnnotation,
+import {
+  resolveShapeLabelStrokeCss,
+  type AnnotationLegendEntry,
+  type DimensionColor,
+  type JobPhotoShapeLabelAnnotation,
 } from "@/lib/job-photo-annotations";
 import {
   effectiveShapeLabelMm,
@@ -45,6 +46,7 @@ export function buildLegendFromShapeLabels(
       heightMm: effMm.heightMm,
       legendDescription: s.legendDescription?.trim() ? s.legendDescription.trim() : undefined,
       note: s.note?.trim() ? s.note.trim() : undefined,
+      strokeHex: resolveShapeLabelStrokeCss(s),
     });
   }
   return out;
@@ -91,7 +93,7 @@ export function drawShapeLabelOnCanvas(
   a: JobPhotoShapeLabelAnnotation,
   isSelected: boolean,
   coordScale: number,
-  colorToHex: (c: DimensionColor) => string,
+  _colorToHex: (c: DimensionColor) => string,
   _fontSize: number,
   lineWidth: number
 ): void {
@@ -99,7 +101,7 @@ export function drawShapeLabelOnCanvas(
   const y = a.y * coordScale;
   const w = a.width * coordScale;
   const h = a.height * coordScale;
-  const stroke = colorToHex(a.color);
+  const stroke = resolveShapeLabelStrokeCss(a);
   const R = shapeLabelRotationRad(a);
   const cx = x + w / 2;
   const cy = y + h / 2;

@@ -10,6 +10,19 @@ import {
 
 export type DimensionColor = "red" | "yellow" | "white" | "black" | "blue";
 
+/** Hex palety editoru — pro výchozí vykreslení když chybí vlastní `strokeHex`. */
+export const DIMENSION_COLOR_HEX: Record<DimensionColor, string> = {
+  red: "#ef4444",
+  yellow: "#facc15",
+  white: "#ffffff",
+  black: "#000000",
+  blue: "#3b82f6",
+};
+
+export function defaultHexForDimensionColor(c: DimensionColor): string {
+  return DIMENSION_COLOR_HEX[c] ?? DIMENSION_COLOR_HEX.red;
+}
+
 export type ShapeLabelKind = "square" | "rectangle" | "circle" | "point";
 
 export type JobPhotoDimensionAnnotation = {
@@ -107,6 +120,11 @@ export type JobPhotoShapeLabelAnnotation = {
   legendNumber: number;
   showLabelInline: boolean;
   color: DimensionColor;
+  /**
+   * Přesná barva obrysu (hex / rgb / hsl z modelu nebo ruční úprava).
+   * Má přednost před paletou `color` při vykreslení.
+   */
+  strokeHex?: string;
   /** Volitelná tloušťka obrysu značky v px. */
   strokeWidth?: number;
   createdAt?: number;
@@ -126,7 +144,26 @@ export type AnnotationLegendEntry = {
   note?: string;
   /** Řádek šipky: „číslo – popis“ bez mm (podsekce v legendě). */
   arrowNote?: boolean;
+  /** Barva levého okraje řádku legendy (stejná jako obrys značky). */
+  strokeHex?: string;
 };
+
+function isLikelyCssColorToken(t: string): boolean {
+  const s = t.trim();
+  if (!s) return false;
+  if (/^#[0-9a-fA-F]{3}([0-9a-fA-F]{3})?([0-9a-fA-F]{2})?$/i.test(s)) return true;
+  if (/^(rgb|hsl)a?\(/i.test(s)) return true;
+  return false;
+}
+
+/** Barva obrysu značky / výplně legendy — vlastní hex nebo paleta `color`. */
+export function resolveShapeLabelStrokeCss(a: JobPhotoShapeLabelAnnotation): string {
+  const raw = a.strokeHex;
+  if (typeof raw === "string" && isLikelyCssColorToken(raw)) {
+    return raw.trim();
+  }
+  return defaultHexForDimensionColor(a.color);
+}
 
 /** Vložené instance modelů z knihovny (odkaz na anotaci + model). */
 export type AnnotationPlacedModelRef = {
@@ -225,6 +262,8 @@ type SerializedItem =
       legendNumber: number;
       showLabelInline: boolean;
       color: DimensionColor;
+      /** Přesná barva obrysu (hex/CSS), serializovaná z `strokeHex`. */
+      hex?: string;
       lw?: number;
       createdAt?: number;
       modelId?: string;
@@ -292,18 +331,19 @@ function buildLegendPayload(
     (a, b) => a.legendNumber - b.legendNumber || a.id.localeCompare(b.id)
   );
   const seen = new Set<number>();
-  const shapeEntries: AnnotationLegendEntry[] = [];
-  for (const s of sorted) {
-    const ln = Math.max(1, Math.floor(s.legendNumber || 1));
-    if (seen.has(ln)) continue;
-    seen.add(ln);
-    const effMm = effectiveShapeLabelMm(s.widthMm, s.heightMm);
-    const entry: AnnotationLegendEntry = {
-      legendNumber: ln,
-      label: s.label || "",
-      widthMm: effMm.widthMm,
-      heightMm: effMm.heightMm,
-    };
+    const shapeEntries: AnnotationLegendEntry[] = [];
+    for (const s of sorted) {
+      const ln = Math.max(1, Math.floor(s.legendNumber || 1));
+      if (seen.has(ln)) continue;
+      seen.add(ln);
+      const effMm = effectiveShapeLabelMm(s.widthMm, s.heightMm);
+      const entry: AnnotationLegendEntry = {
+        legendNumber: ln,
+        label: s.label || "",
+        widthMm: effMm.widthMm,
+        heightMm: effMm.heightMm,
+        strokeHex: resolveShapeLabelStrokeCss(s),
+      };
     const ld = s.legendDescription?.trim();
     if (ld) entry.legendDescription = ld;
     const nt = s.note?.trim();
@@ -484,6 +524,9 @@ export function serializeJobPhotoAnnotations(
         showLabelInline: Boolean(s.showLabelInline),
         color: s.color,
         ...(typeof s.strokeWidth === "number" && Number.isFinite(s.strokeWidth) ? { lw: s.strokeWidth } : {}),
+        ...(typeof s.strokeHex === "string" && s.strokeHex.trim()
+          ? { hex: s.strokeHex.trim() }
+          : {}),
       };
       const nt = s.note?.trim();
       if (nt) row.note = nt;
@@ -656,6 +699,11 @@ export function deserializeJobPhotoAnnotations(
         iw,
         ih
       );
+      const hexRaw = (s as { hex?: unknown }).hex;
+      const strokeHex =
+        typeof hexRaw === "string" && hexRaw.trim() && isLikelyCssColorToken(hexRaw)
+          ? hexRaw.trim()
+          : undefined;
       const shapeRow: JobPhotoShapeLabelAnnotation = {
         id: String(s.id || createLocalId()),
         type: "shapeLabel",
@@ -679,6 +727,7 @@ export function deserializeJobPhotoAnnotations(
         strokeWidth: typeof (s as { lw?: unknown }).lw === "number" ? (s as { lw: number }).lw : undefined,
         createdAt: typeof s.createdAt === "number" ? s.createdAt : undefined,
       };
+      if (strokeHex) shapeRow.strokeHex = strokeHex;
       const mid =
         typeof (s as { modelId?: string }).modelId === "string"
           ? (s as { modelId?: string }).modelId?.trim()
