@@ -568,6 +568,8 @@ function UserFolderBlock({
   memberPermissions = null,
   employeeRecordId = null,
   onOpenMediaApprovalDialog,
+  photoCommentDeepLink = null,
+  onPhotoCommentDeepLinkConsumed,
 }: {
   folder: JobFolderDoc;
   companyId: string;
@@ -592,6 +594,13 @@ function UserFolderBlock({
     fileLabel: string;
     row: Record<string, unknown>;
   }) => void;
+  /** Otevře chat u souboru z deep linku (?photoComment=…) v této složce. */
+  photoCommentDeepLink?: {
+    folderId: string;
+    fileId: string;
+    fileName: string;
+  } | null;
+  onPhotoCommentDeepLinkConsumed?: () => void;
 }) {
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -778,7 +787,11 @@ function UserFolderBlock({
       const prev = m.get(key) ?? { count: 0, unread: 0 };
       prev.count += 1;
       const readBy = (c.readBy as unknown) as string[] | undefined;
-      const read = uid && Array.isArray(readBy) && readBy.includes(uid);
+      const readAtBy = c.readAtBy as Record<string, unknown> | undefined;
+      const read =
+        Boolean(uid) &&
+        ((readAtBy && readAtBy[uid] != null) ||
+          (Array.isArray(readBy) && readBy.includes(uid)));
       if (!read) prev.unread += 1;
       m.set(key, prev);
     }
@@ -814,6 +827,47 @@ function UserFolderBlock({
 
   const [folderOpen, setFolderOpen] = useState(false);
   const [showAllInFolder, setShowAllInFolder] = useState(false);
+
+  const photoCommentDeepLinkHandledKey = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!photoCommentDeepLink) {
+      photoCommentDeepLinkHandledKey.current = null;
+      return;
+    }
+    if (!user?.uid) return;
+    if (String(folder.id) !== String(photoCommentDeepLink.folderId)) return;
+    const fid = String(photoCommentDeepLink.fileId || "").trim();
+    if (!fid) return;
+    const key = `${folder.id}:${fid}`;
+    if (photoCommentDeepLinkHandledKey.current === key) return;
+    if (imagesRaw === undefined) return;
+    const hit = imagesForUi.find((img) => img.id === fid);
+    if (!hit) return;
+    photoCommentDeepLinkHandledKey.current = key;
+    const titleFromRow = String(
+      (hit as { fileName?: unknown; name?: unknown }).fileName ??
+        (hit as { name?: unknown }).name ??
+        ""
+    ).trim();
+    setFolderOpen(true);
+    setFileChatTarget({
+      fileId: fid,
+      folderId: folder.id,
+      fileName:
+        String(photoCommentDeepLink.fileName || "").trim() || titleFromRow || "Soubor",
+    });
+    setFileChatOpen(true);
+    onPhotoCommentDeepLinkConsumed?.();
+  }, [
+    photoCommentDeepLink,
+    folder.id,
+    imagesRaw,
+    imagesForUi,
+    user?.uid,
+    onPhotoCommentDeepLinkConsumed,
+  ]);
+
   const visibleFolderImages = useMemo(() => {
     if (showAllInFolder || imagesForUi.length <= JOB_MEDIA_INITIAL_COUNT) return imagesForUi;
     return imagesForUi.slice(0, JOB_MEDIA_INITIAL_COUNT);
@@ -2907,6 +2961,14 @@ export type JobMediaSectionProps = {
   showLegacyPhotosForEmployee?: boolean;
   /** Dokument zakázky z Firestore — pro určení zákazníka u schvalování médií. */
   jobRecord?: Record<string, unknown> | null;
+  /** Deep link z e-mailu (?photoComment=…) — otevře chat u souboru v příslušné složce. */
+  photoCommentDeepLink?: {
+    folderId: string;
+    fileId: string;
+    fileName: string;
+  } | null;
+  /** Po úspěšném otevření chatu z deep linku (např. odstranění query z URL). */
+  onPhotoCommentDeepLinkConsumed?: () => void;
 };
 
 export function JobMediaSection({
@@ -2925,6 +2987,8 @@ export function JobMediaSection({
   employeeRecordId = null,
   showLegacyPhotosForEmployee = false,
   jobRecord = null,
+  photoCommentDeepLink = null,
+  onPhotoCommentDeepLinkConsumed,
 }: JobMediaSectionProps) {
   /** Skrýt nahrávání / mazání / interní akce — zaměstnanec i zákazník. */
   const hideJobMediaAdminUi =
@@ -4098,6 +4162,8 @@ export function JobMediaSection({
                           memberPermissions={memberPermissions}
                           employeeRecordId={employeeRecordId}
                           onOpenMediaApprovalDialog={openMediaApprovalDialog}
+                          photoCommentDeepLink={photoCommentDeepLink}
+                          onPhotoCommentDeepLinkConsumed={onPhotoCommentDeepLinkConsumed}
                         />
                       ))}
                     </div>

@@ -65,6 +65,19 @@ import {
 } from "@/lib/employee-bank-account";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  UNREAD_PHOTO_NOTE_INTERVAL_HOURS_OPTIONS,
+  normalizeUnreadPhotoNoteIntervalHours,
+  unreadPhotoNoteIntervalLabelCs,
+  type UnreadPhotoNoteIntervalHours,
+} from "@/lib/job-photo-comment-email-settings";
 
 const PROFILE_LABEL_CLASS = "text-sm font-medium text-gray-800";
 
@@ -145,6 +158,7 @@ export default function EmployeeProfilePage() {
   const [pwdLoading, setPwdLoading] = useState(false);
   const [langSaving, setLangSaving] = useState(false);
   const [emailMsgNotifSaving, setEmailMsgNotifSaving] = useState(false);
+  const [photoDocEmailNotifSaving, setPhotoDocEmailNotifSaving] = useState(false);
 
   const [tpOld, setTpOld] = useState("");
   const [tpNew, setTpNew] = useState("");
@@ -360,7 +374,7 @@ export default function EmployeeProfilePage() {
       });
       toast({
         title: enabled ? "E-mail upozornění zapnuto" : "E-mail upozornění vypnuto",
-        description: "Nastavení platí pro zprávy v chatu u zakázky a souborů.",
+        description: "Platí pro chat u zakázky (obecné zprávy k zakázce).",
       });
     } catch (err) {
       console.error(err);
@@ -371,6 +385,56 @@ export default function EmployeeProfilePage() {
       });
     } finally {
       setEmailMsgNotifSaving(false);
+    }
+  };
+
+  const emailUnreadPhotoNoteNotificationsEnabled =
+    profile?.emailUnreadPhotoNoteNotificationsEnabled !== false;
+  const unreadPhotoNoteIntervalHours = normalizeUnreadPhotoNoteIntervalHours(
+    profile?.unreadNoteNotificationIntervalHours
+  );
+
+  const savePhotoDocEmailNotifications = async (enabled: boolean) => {
+    if (!user || !firestore) return;
+    setPhotoDocEmailNotifSaving(true);
+    try {
+      await updateDoc(doc(firestore, "users", user.uid), {
+        emailUnreadPhotoNoteNotificationsEnabled: enabled,
+        updatedAt: serverTimestamp(),
+      });
+      toast({
+        title: enabled ? "Upozornění na fotodokumentaci zapnuto" : "Upozornění na fotodokumentaci vypnuto",
+      });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Nastavení se nepodařilo uložit.",
+      });
+    } finally {
+      setPhotoDocEmailNotifSaving(false);
+    }
+  };
+
+  const saveUnreadPhotoNoteInterval = async (hours: UnreadPhotoNoteIntervalHours) => {
+    if (!user || !firestore) return;
+    setPhotoDocEmailNotifSaving(true);
+    try {
+      await updateDoc(doc(firestore, "users", user.uid), {
+        unreadNoteNotificationIntervalHours: hours,
+        updatedAt: serverTimestamp(),
+      });
+      toast({ title: "Interval uložen" });
+    } catch (err) {
+      console.error(err);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Interval se nepodařilo uložit.",
+      });
+    } finally {
+      setPhotoDocEmailNotifSaving(false);
     }
   };
 
@@ -567,24 +631,78 @@ export default function EmployeeProfilePage() {
         <CardHeader className="pb-2">
           <CardTitle className="text-base">E-mail</CardTitle>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between pt-0">
-          <div className="space-y-1">
-            <p className={PROFILE_LABEL_CLASS}>Email upozornění na zprávy</p>
-            <p className="text-sm text-muted-foreground max-w-xl">
-              Pokud vám v chatu u zakázky nebo u souboru přijde nová zpráva a zůstane nepřečtená,
-              můžeme vám poslat upozornění e-mailem (ne častěji než jednou za 24 hodin u stejného chatu).
-            </p>
+        <CardContent className="flex flex-col gap-6 pt-0">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="space-y-1">
+              <p className={PROFILE_LABEL_CLASS}>E-mail upozornění — chat u zakázky</p>
+              <p className="text-sm text-muted-foreground max-w-xl">
+                Pokud v obecném chatu k zakázce přijde nová zpráva a zůstane nepřečtená, můžeme vám poslat
+                upozornění e-mailem (ne častěji než jednou za 24 hodin u stejného vlákna).
+              </p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              {emailMsgNotifSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+              ) : null}
+              <Switch
+                checked={emailMessageNotificationsEnabled}
+                disabled={emailMsgNotifSaving || !user}
+                onCheckedChange={(v) => void saveEmailMessageNotifications(v === true)}
+                aria-label="E-mail upozornění na chat u zakázky"
+              />
+            </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {emailMsgNotifSaving ? (
-              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-            ) : null}
-            <Switch
-              checked={emailMessageNotificationsEnabled}
-              disabled={emailMsgNotifSaving || !user}
-              onCheckedChange={(v) => void saveEmailMessageNotifications(v === true)}
-              aria-label="Email upozornění na zprávy"
-            />
+
+          <div className="border-t border-slate-200 pt-4 flex flex-col gap-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1">
+                <p className={PROFILE_LABEL_CLASS}>E-mail upozornění na nepřečtené poznámky</p>
+                <p className="text-sm text-muted-foreground max-w-xl">
+                  Pošleme vám e-mail po nastaveném intervalu, pokud máte nepřečtenou poznámku u souboru ve
+                  fotodokumentaci (u konkrétního obrázku / souboru).
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {photoDocEmailNotifSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                ) : null}
+                <Switch
+                  checked={emailUnreadPhotoNoteNotificationsEnabled}
+                  disabled={photoDocEmailNotifSaving || !user}
+                  onCheckedChange={(v) => void savePhotoDocEmailNotifications(v === true)}
+                  aria-label="E-mail upozornění na nepřečtené poznámky u fotodokumentace"
+                />
+              </div>
+            </div>
+            <div className="space-y-2 max-w-md">
+              <Label className={PROFILE_LABEL_CLASS}>Interval e-mail upozornění na nepřečtené poznámky</Label>
+              <Select
+                value={String(unreadPhotoNoteIntervalHours)}
+                disabled={photoDocEmailNotifSaving || !user}
+                onValueChange={(v) => {
+                  const n = Number(v);
+                  if (!UNREAD_PHOTO_NOTE_INTERVAL_HOURS_OPTIONS.includes(n as UnreadPhotoNoteIntervalHours)) {
+                    return;
+                  }
+                  void saveUnreadPhotoNoteInterval(n as UnreadPhotoNoteIntervalHours);
+                }}
+              >
+                <SelectTrigger className="bg-white text-gray-900 border-slate-200">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {UNREAD_PHOTO_NOTE_INTERVAL_HOURS_OPTIONS.map((h) => (
+                    <SelectItem key={h} value={String(h)}>
+                      {unreadPhotoNoteIntervalLabelCs(h)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                U položky „Vypnuto (bez opakování)“ obdržíte po nepřečtené poznámce nejvýše jeden e-mail,
+                dokud zprávu v portálu neotevřete.
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>

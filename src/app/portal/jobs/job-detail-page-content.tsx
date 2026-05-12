@@ -7,7 +7,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useUser,
   useFirestore,
@@ -34,6 +34,7 @@ import {
   formatMediaDate,
   type JobPhotoAnnotationTarget,
 } from "@/lib/job-media-types";
+import { parsePhotoCommentQueryParam } from "@/lib/job-photo-comment-email-settings";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
 import { JobCustomerProgressAdminSection } from "@/components/jobs/job-customer-progress-admin-section";
 import { JobCustomerTasksAdminSection } from "@/components/jobs/job-customer-tasks-admin-section";
@@ -983,6 +984,19 @@ export function JobDetailPageContent({
     : `/portal/jobs/${jobIdParam}`;
   const jobFirestoreId =
     jobIdParam && !isStandaloneMeasurementEditorRoute ? jobIdParam : null;
+  const pathname = usePathname() || "";
+  const photoCommentParam = searchParams.get("photoComment");
+  const photoCommentDeepLink = useMemo(
+    () => parsePhotoCommentQueryParam(photoCommentParam),
+    [photoCommentParam]
+  );
+  const consumePhotoCommentDeepLink = useCallback(() => {
+    const p = new URLSearchParams(searchParams.toString());
+    p.delete("photoComment");
+    const q = p.toString();
+    if (!pathname) return;
+    router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+  }, [router, pathname, searchParams]);
   const { company: companyDoc, companyName: companyNameFromDoc } = useCompany();
 
   const companyBankAccountNumber = useMemo(() => {
@@ -10662,6 +10676,8 @@ export function JobDetailPageContent({
               legacyUploading={isUploading}
               layout="jobDetailWide"
               onAnnotatePhoto={openPhotoAnnotationEditor}
+              photoCommentDeepLink={photoCommentDeepLink}
+              onPhotoCommentDeepLinkConsumed={consumePhotoCommentDeepLink}
             />
           </div>
         </section>

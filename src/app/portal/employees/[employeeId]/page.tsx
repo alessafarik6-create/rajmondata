@@ -39,6 +39,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { getFirebaseStorage } from "@/firebase/storage";
@@ -54,6 +61,12 @@ import {
   validateTerminalPinFormat,
 } from "@/lib/terminal-pin-validation";
 import { cn } from "@/lib/utils";
+import {
+  UNREAD_PHOTO_NOTE_INTERVAL_HOURS_OPTIONS,
+  normalizeUnreadPhotoNoteIntervalHours,
+  unreadPhotoNoteIntervalLabelCs,
+  type UnreadPhotoNoteIntervalHours,
+} from "@/lib/job-photo-comment-email-settings";
 import { EmployeeDocumentsSection } from "@/components/portal/EmployeeDocumentsSection";
 import { EmployeeGenerateDocumentDialog } from "@/components/portal/EmployeeGenerateDocumentDialog";
 import {
@@ -186,6 +199,16 @@ export default function EmployeeDetailPage() {
     ...EMPTY_EMPLOYEE_BANK_ACCOUNT,
   });
 
+  const [savingPersonal, setSavingPersonal] = useState(false);
+  const [portalNotifLoading, setPortalNotifLoading] = useState(false);
+  const [portalNotifSaving, setPortalNotifSaving] = useState(false);
+  const [portalNotifForm, setPortalNotifForm] = useState<{
+    linked: boolean;
+    emailMessageNotificationsEnabled: boolean;
+    emailUnreadPhotoNoteNotificationsEnabled: boolean;
+    unreadNoteNotificationIntervalHours: UnreadPhotoNoteIntervalHours;
+  } | null>(null);
+
   useEffect(() => {
     if (!employeeDoc) return;
     setPersonalForm({
@@ -213,7 +236,77 @@ export default function EmployeeDetailPage() {
     setBankForm(parsed ? { ...parsed } : { ...EMPTY_EMPLOYEE_BANK_ACCOUNT });
   }, [employeeDoc]);
 
-  const [savingPersonal, setSavingPersonal] = useState(false);
+  useEffect(() => {
+    if (!canManage || !user || !employeeId) return;
+    let cancelled = false;
+    setPortalNotifLoading(true);
+    void (async () => {
+      try {
+        const idToken = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/employees/portal-notification-settings?employeeId=${encodeURIComponent(employeeId)}`,
+          { headers: { Authorization: `Bearer ${idToken}` } }
+        );
+        const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (cancelled) return;
+        if (!res.ok) {
+          setPortalNotifForm(null);
+          return;
+        }
+        setPortalNotifForm({
+          linked: data.linked === true,
+          emailMessageNotificationsEnabled: data.emailMessageNotificationsEnabled !== false,
+          emailUnreadPhotoNoteNotificationsEnabled:
+            data.emailUnreadPhotoNoteNotificationsEnabled !== false,
+          unreadNoteNotificationIntervalHours: normalizeUnreadPhotoNoteIntervalHours(
+            data.unreadNoteNotificationIntervalHours
+          ),
+        });
+      } catch {
+        if (!cancelled) setPortalNotifForm(null);
+      } finally {
+        if (!cancelled) setPortalNotifLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage, user, employeeId]);
+
+  const savePortalNotifications = async () => {
+    if (!canManage || !user || !employeeId || portalNotifSaving || !portalNotifForm) return;
+    setPortalNotifSaving(true);
+    try {
+      const idToken = await user.getIdToken();
+      const res = await fetch("/api/company/employees/portal-notification-settings", {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          employeeId,
+          emailMessageNotificationsEnabled: portalNotifForm.emailMessageNotificationsEnabled,
+          emailUnreadPhotoNoteNotificationsEnabled:
+            portalNotifForm.emailUnreadPhotoNoteNotificationsEnabled,
+          unreadNoteNotificationIntervalHours: portalNotifForm.unreadNoteNotificationIntervalHours,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Uložení selhalo.");
+      }
+      toast({ title: "Uloženo", description: "Nastavení e-mailů portálu bylo aktualizováno." });
+    } catch (e: unknown) {
+      toast({
+        variant: "destructive",
+        title: "Uložení selhalo",
+        description: e instanceof Error ? e.message : undefined,
+      });
+    } finally {
+      setPortalNotifSaving(false);
+    }
+  };
   const savePersonal = async () => {
     if (!canManage || !user || !employeeId || savingPersonal) return;
     setSavingPersonal(true);
@@ -846,6 +939,116 @@ export default function EmployeeDetailPage() {
                   Uložit osobní údaje
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-slate-200 bg-white">
+            <CardHeader>
+              <CardTitle className="text-lg text-black">Portál — e-mailová upozornění</CardTitle>
+              <p className="text-sm text-slate-600 font-normal pt-1">
+                Nastavení se ukládá na propojený uživatelský účet (Firebase Auth). Zaměstnanec si totéž může upravit
+                ve svém profilu v portálu.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              {portalNotifLoading ? (
+                <div className="flex items-center gap-2 text-sm text-slate-700">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Načítání…
+                </div>
+              ) : !portalNotifForm ? (
+                <p className="text-sm text-slate-700">Nastavení se nepodařilo načíst.</p>
+              ) : !portalNotifForm.linked ? (
+                <p className="text-sm text-slate-700">
+                  Zaměstnanec nemá propojený účet portálu — e-mailová upozornění zatím nelze spravovat z administrace.
+                </p>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="space-y-1">
+                      <Label className="text-sm text-black">E-mail — chat u zakázky</Label>
+                      <p className="text-xs text-slate-600 max-w-xl">
+                        Nepřečtené zprávy v obecném chatu k zakázce (max. jednou za 24 h u stejného vlákna).
+                      </p>
+                    </div>
+                    <Switch
+                      checked={portalNotifForm.emailMessageNotificationsEnabled}
+                      disabled={!canManage || portalNotifSaving}
+                      onCheckedChange={(v) =>
+                        setPortalNotifForm((p) =>
+                          p ? { ...p, emailMessageNotificationsEnabled: v === true } : p
+                        )
+                      }
+                    />
+                  </div>
+                  <div className="border-t border-slate-200 pt-4 space-y-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="space-y-1">
+                        <Label className="text-sm text-black">E-mail — nepřečtené poznámky u fotodokumentace</Label>
+                        <p className="text-xs text-slate-600 max-w-xl">
+                          Pošleme e-mail po nastaveném intervalu, pokud má zaměstnanec nepřečtenou poznámku u souboru
+                          ve fotodokumentaci.
+                        </p>
+                      </div>
+                      <Switch
+                        checked={portalNotifForm.emailUnreadPhotoNoteNotificationsEnabled}
+                        disabled={!canManage || portalNotifSaving}
+                        onCheckedChange={(v) =>
+                          setPortalNotifForm((p) =>
+                            p ? { ...p, emailUnreadPhotoNoteNotificationsEnabled: v === true } : p
+                          )
+                        }
+                      />
+                    </div>
+                    <div className="space-y-2 max-w-md">
+                      <Label className="text-sm text-black">Interval upozornění</Label>
+                      <Select
+                        value={String(portalNotifForm.unreadNoteNotificationIntervalHours)}
+                        disabled={!canManage || portalNotifSaving}
+                        onValueChange={(v) => {
+                          const n = Number(v);
+                          if (
+                            !UNREAD_PHOTO_NOTE_INTERVAL_HOURS_OPTIONS.includes(
+                              n as UnreadPhotoNoteIntervalHours
+                            )
+                          ) {
+                            return;
+                          }
+                          setPortalNotifForm((p) =>
+                            p ? { ...p, unreadNoteNotificationIntervalHours: n as UnreadPhotoNoteIntervalHours } : p
+                          );
+                        }}
+                      >
+                        <SelectTrigger className="bg-white text-black border-slate-300">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {UNREAD_PHOTO_NOTE_INTERVAL_HOURS_OPTIONS.map((h) => (
+                            <SelectItem key={h} value={String(h)}>
+                              {unreadPhotoNoteIntervalLabelCs(h)}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Button
+                      type="button"
+                      className="h-11"
+                      disabled={!canManage || portalNotifSaving}
+                      onClick={() => void savePortalNotifications()}
+                    >
+                      {portalNotifSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="mr-2 h-4 w-4" />
+                      )}
+                      Uložit nastavení e-mailů portálu
+                    </Button>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>

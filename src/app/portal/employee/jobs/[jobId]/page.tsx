@@ -2,8 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useRouter } from "next/navigation";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   useUser,
   useFirestore,
@@ -26,6 +25,7 @@ import {
 } from "@/lib/job-employee-access";
 import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
 import { isJobIdAssigned } from "@/lib/assigned-jobs";
+import { parsePhotoCommentQueryParam } from "@/lib/job-photo-comment-email-settings";
 
 /** Bezpečná pole z dokumentu zakázky — žádné rozpočty / interní finance v UI. */
 function safeJobOverviewFields(job: Record<string, unknown> | null | undefined) {
@@ -44,8 +44,22 @@ function safeJobOverviewFields(job: Record<string, unknown> | null | undefined) 
 export default function EmployeeJobDetailPage() {
   const params = useParams();
   const router = useRouter();
+  const pathname = usePathname() || "";
+  const searchParams = useSearchParams();
   const jobIdRaw = params?.jobId;
   const jobId = Array.isArray(jobIdRaw) ? jobIdRaw[0] : jobIdRaw;
+  const photoCommentRaw = searchParams.get("photoComment");
+  const photoCommentDeepLink = useMemo(
+    () => parsePhotoCommentQueryParam(photoCommentRaw),
+    [photoCommentRaw]
+  );
+  const consumePhotoCommentDeepLink = useCallback(() => {
+    const p = new URLSearchParams(searchParams.toString());
+    p.delete("photoComment");
+    const q = p.toString();
+    if (!pathname) return;
+    router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+  }, [router, pathname, searchParams]);
   const { user } = useUser();
   const firestore = useFirestore();
 
@@ -444,6 +458,8 @@ export default function EmployeeJobDetailPage() {
                 memberPermissions={permissionsForMedia}
                 employeeRecordId={employeeId}
                 showLegacyPhotosForEmployee={showLegacyPhotos}
+                photoCommentDeepLink={photoCommentDeepLink}
+                onPhotoCommentDeepLinkConsumed={consumePhotoCommentDeepLink}
               />
 
               <JobCommentsThread
