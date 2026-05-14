@@ -267,6 +267,8 @@ type CompanyDocumentRow = {
   /** Volitelné — klasifikace / fronta nezařazených (když existuje v datech). */
   unassigned?: boolean | null;
   classificationStatus?: string | null;
+  /** Nákladová / výnosová kategorie (Materiál, Práce, Doprava, Ostatní). */
+  costCategory?: string | null;
   /** Rozdělení nákladů přijatého dokladu mezi zakázky / režii. */
   jobCostAllocations?: unknown;
   jobCostAllocationMode?: JobCostAllocationMode;
@@ -557,6 +559,155 @@ function isDeliveryNote(row: CompanyDocumentRow): boolean {
     row.documentType === "delivery_note" ||
     row.type === "delivery_note" ||
     row.documentKind === "delivery_note"
+  );
+}
+
+/** Účetní / nákladová klasifikace dokladu ve Firestore (`costCategory`). */
+type DocumentCostCategoryKey = "material" | "work" | "transport" | "other";
+
+function normalizeDocumentCostCategoryKey(
+  row: CompanyDocumentRow
+): DocumentCostCategoryKey {
+  const raw =
+    (row as { costCategory?: unknown }).costCategory ??
+    (row as { expenseCategory?: unknown }).expenseCategory;
+  const s = String(raw ?? "").trim().toLowerCase();
+  if (s === "material" || s === "materiál") return "material";
+  if (s === "work" || s === "práce" || s === "prace" || s === "labor") return "work";
+  if (s === "transport" || s === "doprava" || s === "shipping") return "transport";
+  return "other";
+}
+
+function documentMatchesCostCategoryFilter(
+  row: CompanyDocumentRow,
+  filter: string
+): boolean {
+  if (filter === "__all__") return true;
+  const cat = normalizeDocumentCostCategoryKey(row);
+  if (filter === "other") return cat === "other";
+  return cat === filter;
+}
+
+function costCategoryFilterLabelCs(filter: string): string {
+  switch (filter) {
+    case "material":
+      return "Materiál";
+    case "work":
+      return "Práce";
+    case "transport":
+      return "Doprava";
+    case "other":
+      return "Ostatní";
+    default:
+      return "Všechny kategorie";
+  }
+}
+
+function documentRowMoneyCzkParts(row: CompanyDocumentRow): {
+  netCzk: number;
+  vatCzk: number;
+  grossCzk: number;
+} {
+  const am = docDisplayAmounts(row);
+  const grossCzk = roundMoney2(am.amountGrossCZK);
+  let netCzk = roundMoney2(Number(row.amountNetCZK ?? 0));
+  let vatCzk = roundMoney2(Number(row.vatAmountCZK ?? 0));
+  if (grossCzk > 0 && netCzk <= 0 && vatCzk <= 0) {
+    if (inferSDPH(row)) {
+      const rate = Number(row.dphSazba ?? row.vatRate ?? row.vat ?? 21);
+      if (Number.isFinite(rate) && rate > 0) {
+        netCzk = roundMoney2(grossCzk / (1 + rate / 100));
+        vatCzk = roundMoney2(grossCzk - netCzk);
+      } else {
+        netCzk = grossCzk;
+        vatCzk = 0;
+      }
+    } else {
+      netCzk = grossCzk;
+      vatCzk = 0;
+    }
+  }
+  const grossFromParts = roundMoney2(netCzk + vatCzk);
+  return {
+    netCzk,
+    vatCzk,
+    grossCzk: grossCzk > 0 ? grossCzk : grossFromParts,
+  };
+}
+
+function invoiceRowMoneyCzkParts(
+  inv: Record<string, unknown>
+): { netCzk: number; vatCzk: number; grossCzk: number } {
+  const grossStored = roundMoney2(
+    Number(inv.amountGrossCZK ?? inv.castkaCZK ?? inv.totalAmountCZK ?? 0)
+  );
+  let netCzk = roundMoney2(Number(inv.amountNetCZK ?? 0));
+  let vatCzk = roundMoney2(Number(inv.vatAmountCZK ?? 0));
+  const grossOrig = roundMoney2(
+    Number(inv.amountGross ?? inv.totalAmount ?? 0)
+  );
+  const netOrig = roundMoney2(Number(inv.amountNet ?? 0));
+  const vatOrig = roundMoney2(Number(inv.vatAmount ?? 0));
+  if (grossStored > 0) {
+    if (netCzk <= 0 && vatCzk <= 0 && netOrig + vatOrig > 0) {
+      const rate =
+        grossOrig > 0 && netOrig > 0 ? roundMoney2(((grossOrig - netOrig) / netOrig) * 100) : 21;
+      if (Number.isFinite(rate) && rate > 0) {
+        netCzk = roundMoney2(grossStored / (1 + rate / 100));
+        vatCzk = roundMoney2(grossStored - netCzk);
+      } else {
+        netCzk = roundMoney2(grossStored - vatOrig);
+        vatCzk = roundMoney2(grossStored - netCzk);
+      }
+    } else if (netCzk <= 0 && vatCzk <= 0) {
+      netCzk = grossStored;
+      vatCzk = 0;
+    }
+    return {
+      netCzk,
+      vatCzk,
+      grossCzk: grossStored,
+    };
+  }
+  const gross = grossOrig > 0 ? grossOrig : roundMoney2(netOrig + vatOrig);
+  return { netCzk: netOrig, vatCzk: vatOrig, grossCzk: gross };
+}
+
+function DocumentsListMonetarySummary(props: {
+  title: string;
+  count: number;
+  netCzk: number;
+  vatCzk: number;
+  grossCzk: number;
+}) {
+  const { title, count, netCzk, vatCzk, grossCzk } = props;
+  return (
+    <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50/90 px-3 py-2.5 text-sm text-gray-900 shadow-sm">
+      <div className="font-semibold text-gray-950">{title}</div>
+      <div className="text-xs text-gray-600">
+        Počet dokladů: <span className="tabular-nums font-medium text-gray-900">{count}</span>
+      </div>
+      <div className="mt-2 grid gap-1 text-xs tabular-nums text-gray-800 sm:grid-cols-3 sm:gap-x-3">
+        <div>
+          Celkem bez DPH:{" "}
+          <span className="font-medium text-gray-950">
+            {roundMoney2(netCzk).toLocaleString("cs-CZ")} Kč
+          </span>
+        </div>
+        <div>
+          DPH:{" "}
+          <span className="font-medium text-gray-950">
+            {roundMoney2(vatCzk).toLocaleString("cs-CZ")} Kč
+          </span>
+        </div>
+        <div>
+          Celkem s DPH:{" "}
+          <span className="font-semibold text-gray-950">
+            {roundMoney2(grossCzk).toLocaleString("cs-CZ")} Kč
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1003,6 +1154,7 @@ function DocumentsPageContent() {
     vat: "21",
     date: new Date().toISOString().split("T")[0],
     description: "",
+    costCategory: "other" as DocumentCostCategoryKey,
     requiresPayment: false,
     dueDate: "",
     paymentStatus: "unpaid" as "unpaid" | "partial" | "paid",
@@ -1019,6 +1171,20 @@ function DocumentsPageContent() {
 
   const [documentsPaymentFilter, setDocumentsPaymentFilter] =
     useState<string>("__all__");
+
+  /** Na záložce „Všechny doklady“: které sekce zobrazit. */
+  const [documentsAllTabLedgerKind, setDocumentsAllTabLedgerKind] = useState<
+    "all" | "received" | "issued"
+  >("all");
+  /** Filtr nákladové kategorie — sdílený pro přijaté / vydané tabulky. */
+  const [documentsCostCategoryFilter, setDocumentsCostCategoryFilter] =
+    useState<string>("__all__");
+
+  useEffect(() => {
+    if (documentsMainTab !== "all") {
+      setDocumentsAllTabLedgerKind("all");
+    }
+  }, [documentsMainTab]);
 
   useEffect(() => {
     if (documentsMainTab === "trash") {
@@ -1099,6 +1265,7 @@ function DocumentsPageContent() {
     dphSazba: "21",
     date: "",
     poznamka: "",
+    costCategory: "other" as DocumentCostCategoryKey,
     zakazkaId: "",
     /** Když není vybraná zakázka: nezařazeno vs. režie. */
     noJobMode: "pending" as "pending" | "overhead",
@@ -1474,6 +1641,7 @@ function DocumentsPageContent() {
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
             isDeleted: false,
+            costCategory: formData.costCategory,
           }
         );
         if (invoiceId) {
@@ -1516,6 +1684,7 @@ function DocumentsPageContent() {
           vat: "21",
           date: new Date().toISOString().split("T")[0],
           description: "",
+          costCategory: "other",
           requiresPayment: false,
           dueDate: "",
           paymentStatus: "unpaid",
@@ -1638,6 +1807,7 @@ function DocumentsPageContent() {
         vat: "21",
         date: new Date().toISOString().split("T")[0],
         description: "",
+        costCategory: "other",
         requiresPayment: false,
         dueDate: "",
         paymentStatus: "unpaid",
@@ -1838,6 +2008,7 @@ function DocumentsPageContent() {
           ? { paidBy: user.uid }
           : {}),
         isDeleted: false,
+        costCategory: formData.costCategory,
       });
 
       logActivitySafe(firestore, companyId, user, profile, {
@@ -1988,6 +2159,7 @@ function DocumentsPageContent() {
         vat: "21",
         date: new Date().toISOString().split("T")[0],
         description: "",
+        costCategory: "other",
         requiresPayment: false,
         dueDate: "",
         paymentStatus: "unpaid",
@@ -2174,6 +2346,7 @@ function DocumentsPageContent() {
         dphSazba: "0",
         date: row.date ?? "",
         poznamka: String(row.note ?? row.description ?? ""),
+        costCategory: normalizeDocumentCostCategoryKey(row),
         zakazkaId: row.zakazkaId ?? row.jobId ?? "",
         noJobMode:
           row.assignmentType === "warehouse"
@@ -2206,6 +2379,7 @@ function DocumentsPageContent() {
       dphSazba: rate,
       date: row.date ?? new Date().toISOString().split("T")[0],
       poznamka: String(row.poznamka ?? row.note ?? row.description ?? ""),
+      costCategory: normalizeDocumentCostCategoryKey(row),
       zakazkaId: row.zakazkaId ?? row.jobId ?? "",
       noJobMode: row.assignmentType === "overhead" ? "overhead" : "pending",
       requiresPayment: row.requiresPayment === true,
@@ -2280,6 +2454,7 @@ function DocumentsPageContent() {
             warehouseId: assign === "warehouse" ? editWarehouseId.trim() || "main" : null,
           },
           invoiceId: editInvoiceId.trim() || null,
+          costCategory: editForm.costCategory,
           updatedAt: serverTimestamp(),
         };
         await updateDoc(
@@ -2344,6 +2519,7 @@ function DocumentsPageContent() {
         note: poznamka || null,
         description: poznamka || null,
         currency: docCurrency,
+        costCategory: editForm.costCategory,
         updatedAt: serverTimestamp(),
       };
 
@@ -2931,6 +3107,31 @@ function DocumentsPageContent() {
                       </Button>
                     </div>
                   </div>
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label>Kategorie dokladu</Label>
+                    <Select
+                      value={formData.costCategory}
+                      onValueChange={(v) =>
+                        setFormData({
+                          ...formData,
+                          costCategory: v as DocumentCostCategoryKey,
+                        })
+                      }
+                    >
+                      <SelectTrigger className="bg-background">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="material">Materiál</SelectItem>
+                        <SelectItem value="work">Práce</SelectItem>
+                        <SelectItem value="transport">Doprava</SelectItem>
+                        <SelectItem value="other">Ostatní</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      Používá se v přehledu dokladů pro filtrování a součty nákladů / vyúčtování.
+                    </p>
+                  </div>
                   {newDocKind === "delivery_note" ? (
                     <div className="space-y-2 sm:col-span-2">
                       <Label>Přiřadit k faktuře (volitelné)</Label>
@@ -3431,6 +3632,60 @@ function DocumentsPageContent() {
           ) : null}
         </TabsList>
 
+        {documentsMainTab !== "trash" ? (
+          <div className="mb-4 flex flex-col gap-3 rounded-lg border border-slate-200 bg-white px-3 py-3 shadow-sm sm:flex-row sm:flex-wrap sm:items-end">
+            {documentsMainTab === "all" ? (
+              <div className="space-y-1 min-w-[200px]">
+                <Label className="text-[11px] font-medium text-gray-800">Typ dokladu</Label>
+                <Select
+                  value={documentsAllTabLedgerKind}
+                  onValueChange={(v) =>
+                    setDocumentsAllTabLedgerKind(v as "all" | "received" | "issued")
+                  }
+                >
+                  <SelectTrigger className="h-9 border-gray-300 bg-white text-gray-900">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Vše</SelectItem>
+                    <SelectItem value="received">Přijaté doklady</SelectItem>
+                    <SelectItem value="issued">Vydané doklady</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
+            <div className="space-y-1 min-w-[200px]">
+              <Label className="text-[11px] font-medium text-gray-800">Kategorie dokladu</Label>
+              <Select
+                value={documentsCostCategoryFilter}
+                onValueChange={setDocumentsCostCategoryFilter}
+              >
+                <SelectTrigger
+                  className={cn(
+                    "h-9 border-gray-300 bg-white text-gray-900",
+                    documentsCostCategoryFilter !== "__all__" &&
+                      "border-primary/60 ring-1 ring-primary/25"
+                  )}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">Všechny kategorie</SelectItem>
+                  <SelectItem value="material">Materiál</SelectItem>
+                  <SelectItem value="work">Práce</SelectItem>
+                  <SelectItem value="transport">Doprava</SelectItem>
+                  <SelectItem value="other">Ostatní</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="max-w-xl text-xs text-gray-600 sm:ml-auto sm:max-w-md sm:text-right">
+              Součty pod seznamem odpovídají zvolené kategorii a ostatním filtrům v tabulce (vyhledávání,
+              zakázka, platba…). U vydaných dokladů se faktury do kategorií Materiál / Práce / Doprava
+              neřadí — zobrazí se u „Všechny kategorie“ nebo „Ostatní“.
+            </p>
+          </div>
+        ) : null}
+
         {documentsMainTab !== "trash" && documentsPaymentFilter === "overdue" ? (
           <div
             role="status"
@@ -3468,63 +3723,71 @@ function DocumentsPageContent() {
         ) : null}
 
         <TabsContent value="all" className="space-y-10">
-          <section className="space-y-2">
-            <h2 className="text-base font-semibold text-gray-950">
-              Přijaté doklady
-            </h2>
-            <DocumentTableReceived
-              key={`dtr-all-rcv-${paymentTableMountKey}`}
-              flashDomScope="all-received"
-              paymentFlashRowKey={paymentFlashRowKey}
-              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
-              companyId={companyId}
-              data={receivedDocsBase}
-              jobNamesById={jobNamesById}
-              isLoading={isLoading}
-              onDelete={requestDeleteDocument}
-              onEdit={openEditDocument}
-              onAssign={openAssignDialog}
-              search={receivedSearch}
-              onSearchChange={setReceivedSearch}
-              todayIso={todayIso}
-              onMarkPaid={markDocumentPaid}
-              onMarkUnpaid={markDocumentUnpaid}
-              readOnlyTrash={false}
-              showDeleteButton={canSoftDelete}
-              paymentFilter={documentsPaymentFilter}
-              onPaymentFilterChange={setDocumentsPaymentFilter}
-            />
-          </section>
-          <section className="space-y-2">
-            <h2 className="text-base font-semibold text-gray-950">
-              Vydané doklady a faktury
-            </h2>
-            <DocumentTableIssued
-              key={`dti-all-iss-${paymentTableMountKey}`}
-              flashDomScope="all-issued"
-              paymentFlashRowKey={paymentFlashRowKey}
-              data={issuedDocs}
-              invoices={issuedInvoicesFiltered}
-              isLoadingInvoices={isInvoicesLoading}
-              jobs={jobs}
-              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
-              companyId={companyId}
-              isLoading={isLoading}
-              onDelete={requestDeleteDocument}
-              onDeleteInvoice={requestDeleteInvoice}
-              onEdit={openEditDocument}
-              onAssign={openAssignDialog}
-              search={issuedSearch}
-              onSearchChange={setIssuedSearch}
-              onMarkPaid={markDocumentPaid}
-              onMarkUnpaid={markDocumentUnpaid}
-              readOnlyTrash={false}
-              showDeleteButton={canSoftDelete}
-              todayIso={todayIso}
-              paymentFilter={documentsPaymentFilter}
-              onPaymentFilterChange={setDocumentsPaymentFilter}
-            />
-          </section>
+          {(documentsAllTabLedgerKind === "all" ||
+            documentsAllTabLedgerKind === "received") && (
+            <section className="space-y-2">
+              <h2 className="text-base font-semibold text-gray-950">
+                Přijaté doklady
+              </h2>
+              <DocumentTableReceived
+                key={`dtr-all-rcv-${paymentTableMountKey}`}
+                flashDomScope="all-received"
+                paymentFlashRowKey={paymentFlashRowKey}
+                companyDoc={companyDoc as Record<string, unknown> | null | undefined}
+                companyId={companyId}
+                data={receivedDocsBase}
+                jobNamesById={jobNamesById}
+                isLoading={isLoading}
+                onDelete={requestDeleteDocument}
+                onEdit={openEditDocument}
+                onAssign={openAssignDialog}
+                search={receivedSearch}
+                onSearchChange={setReceivedSearch}
+                todayIso={todayIso}
+                onMarkPaid={markDocumentPaid}
+                onMarkUnpaid={markDocumentUnpaid}
+                readOnlyTrash={false}
+                showDeleteButton={canSoftDelete}
+                paymentFilter={documentsPaymentFilter}
+                onPaymentFilterChange={setDocumentsPaymentFilter}
+                costCategoryFilter={documentsCostCategoryFilter}
+              />
+            </section>
+          )}
+          {(documentsAllTabLedgerKind === "all" ||
+            documentsAllTabLedgerKind === "issued") && (
+            <section className="space-y-2">
+              <h2 className="text-base font-semibold text-gray-950">
+                Vydané doklady a faktury
+              </h2>
+              <DocumentTableIssued
+                key={`dti-all-iss-${paymentTableMountKey}`}
+                flashDomScope="all-issued"
+                paymentFlashRowKey={paymentFlashRowKey}
+                data={issuedDocs}
+                invoices={issuedInvoicesFiltered}
+                isLoadingInvoices={isInvoicesLoading}
+                jobs={jobs}
+                companyDoc={companyDoc as Record<string, unknown> | null | undefined}
+                companyId={companyId}
+                isLoading={isLoading}
+                onDelete={requestDeleteDocument}
+                onDeleteInvoice={requestDeleteInvoice}
+                onEdit={openEditDocument}
+                onAssign={openAssignDialog}
+                search={issuedSearch}
+                onSearchChange={setIssuedSearch}
+                onMarkPaid={markDocumentPaid}
+                onMarkUnpaid={markDocumentUnpaid}
+                readOnlyTrash={false}
+                showDeleteButton={canSoftDelete}
+                todayIso={todayIso}
+                paymentFilter={documentsPaymentFilter}
+                onPaymentFilterChange={setDocumentsPaymentFilter}
+                costCategoryFilter={documentsCostCategoryFilter}
+              />
+            </section>
+          )}
         </TabsContent>
 
         <TabsContent value="received">
@@ -3549,6 +3812,7 @@ function DocumentsPageContent() {
             showDeleteButton={canSoftDelete}
             paymentFilter={documentsPaymentFilter}
             onPaymentFilterChange={setDocumentsPaymentFilter}
+            costCategoryFilter={documentsCostCategoryFilter}
           />
         </TabsContent>
 
@@ -3577,6 +3841,7 @@ function DocumentsPageContent() {
             todayIso={todayIso}
             paymentFilter={documentsPaymentFilter}
             onPaymentFilterChange={setDocumentsPaymentFilter}
+            costCategoryFilter={documentsCostCategoryFilter}
           />
         </TabsContent>
 
@@ -3612,6 +3877,7 @@ function DocumentsPageContent() {
               showDeleteButton={false}
               paymentFilter={documentsPaymentFilter}
               onPaymentFilterChange={setDocumentsPaymentFilter}
+              costCategoryFilter={documentsCostCategoryFilter}
             />
           </section>
           <section className="space-y-2">
@@ -3641,6 +3907,7 @@ function DocumentsPageContent() {
               todayIso={todayIso}
               paymentFilter={documentsPaymentFilter}
               onPaymentFilterChange={setDocumentsPaymentFilter}
+              costCategoryFilter={documentsCostCategoryFilter}
             />
           </section>
         </TabsContent>
@@ -3741,6 +4008,28 @@ function DocumentsPageContent() {
                 className="bg-background"
                 required
               />
+            </div>
+            <div className="space-y-2">
+              <Label>Kategorie dokladu</Label>
+              <Select
+                value={editForm.costCategory}
+                onValueChange={(v) =>
+                  setEditForm({
+                    ...editForm,
+                    costCategory: v as DocumentCostCategoryKey,
+                  })
+                }
+              >
+                <SelectTrigger className="bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="material">Materiál</SelectItem>
+                  <SelectItem value="work">Práce</SelectItem>
+                  <SelectItem value="transport">Doprava</SelectItem>
+                  <SelectItem value="other">Ostatní</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             {!isEditingDeliveryNote ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_140px]">
@@ -4591,6 +4880,7 @@ function DocumentTableReceived({
   onPaymentFilterChange,
   flashDomScope,
   paymentFlashRowKey = null,
+  costCategoryFilter = "__all__",
 }: {
   companyDoc?: Record<string, unknown> | null;
   companyId: string;
@@ -4614,6 +4904,8 @@ function DocumentTableReceived({
   /** Unikátní prefix pro id řádku (scroll z souhrnu „po splatnosti“). */
   flashDomScope: string;
   paymentFlashRowKey?: string | null;
+  /** Filtr nákladové kategorie z nadřazené lišty. */
+  costCategoryFilter?: string;
 }) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -4778,6 +5070,11 @@ function DocumentTableReceived({
 
   const rows = useMemo(() => {
     let list = [...data];
+    if (costCategoryFilter !== "__all__") {
+      list = list.filter((d) =>
+        documentMatchesCostCategoryFilter(d, costCategoryFilter)
+      );
+    }
     if (jobAssignmentFilter === "assigned") {
       list = list.filter((d) => companyDocumentMatchesAssignedJobFilter(d));
     } else if (jobAssignmentFilter === "unassigned") {
@@ -4872,7 +5169,28 @@ function DocumentTableReceived({
     search,
     todayIso,
     jobNamesById,
+    costCategoryFilter,
   ]);
+
+  const receivedTotals = useMemo(() => {
+    let netCzk = 0;
+    let vatCzk = 0;
+    let grossCzk = 0;
+    for (const row of rows) {
+      const p = documentRowMoneyCzkParts(row);
+      netCzk += p.netCzk;
+      vatCzk += p.vatCzk;
+      grossCzk += p.grossCzk;
+    }
+    return { netCzk, vatCzk, grossCzk, count: rows.length };
+  }, [rows]);
+
+  const receivedSummaryTitle = useMemo(() => {
+    const cat = costCategoryFilterLabelCs(costCategoryFilter);
+    return costCategoryFilter === "__all__"
+      ? "Náklady celkem (přijaté doklady ve filtru)"
+      : `Náklady — ${cat} — celkem`;
+  }, [costCategoryFilter]);
 
   const fileKindLabel = (k: JobMediaFileType | "none") => {
     if (k === "pdf") return "PDF";
@@ -4947,7 +5265,7 @@ function DocumentTableReceived({
             </Select>
           </div>
           <div className="space-y-1 min-w-0">
-            <Label className="text-[11px] font-medium text-gray-800">Kategorie</Label>
+            <Label className="text-[11px] font-medium text-gray-800">Druh evidence</Label>
             <Select value={docTypeFilter} onValueChange={setDocTypeFilter}>
               <SelectTrigger className="h-9 w-full border-gray-300 bg-white text-gray-900">
                 <SelectValue />
@@ -5016,6 +5334,15 @@ function DocumentTableReceived({
             </Select>
           </div>
         </div>
+        {!isLoading ? (
+          <DocumentsListMonetarySummary
+            title={receivedSummaryTitle}
+            count={receivedTotals.count}
+            netCzk={receivedTotals.netCzk}
+            vatCzk={receivedTotals.vatCzk}
+            grossCzk={receivedTotals.grossCzk}
+          />
+        ) : null}
       </div>
       <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
         <DialogContent className="max-h-[90vh] w-[min(100%,34rem)] max-w-[34rem] overflow-y-auto border border-gray-200 bg-white p-0 text-gray-950 shadow-lg sm:rounded-xl">
@@ -5602,6 +5929,7 @@ function DocumentTableIssued({
   onPaymentFilterChange,
   flashDomScope,
   paymentFlashRowKey = null,
+  costCategoryFilter = "__all__",
 }: {
   data: CompanyDocumentRow[];
   invoices?: Array<Record<string, unknown> & { id: string }>;
@@ -5625,6 +5953,7 @@ function DocumentTableIssued({
   onPaymentFilterChange: (v: string) => void;
   flashDomScope: string;
   paymentFlashRowKey?: string | null;
+  costCategoryFilter?: string;
 }) {
   const firestore = useFirestore();
   const { toast } = useToast();
@@ -5652,6 +5981,7 @@ function DocumentTableIssued({
         };
     const out: E[] = [];
     for (const row of data) {
+      if (!documentMatchesCostCategoryFilter(row, costCategoryFilter)) continue;
       if (categoryFilter === "invoices") {
         continue;
       }
@@ -5664,6 +5994,9 @@ function DocumentTableIssued({
       });
     }
     for (const inv of invoices) {
+      const invOk =
+        costCategoryFilter === "__all__" || costCategoryFilter === "other";
+      if (!invOk) continue;
       if (categoryFilter !== "__all__" && categoryFilter !== "invoices") continue;
       out.push({
         kind: "inv",
@@ -5673,7 +6006,7 @@ function DocumentTableIssued({
     }
     out.sort((a, b) => b.sortKey.localeCompare(a.sortKey));
     return out;
-  }, [data, invoices, categoryFilter]);
+  }, [data, invoices, categoryFilter, costCategoryFilter]);
 
   const mergedShown = useMemo(
     () =>
@@ -5682,6 +6015,79 @@ function DocumentTableIssued({
       ),
     [merged, paymentFilter, todayIso]
   );
+
+  const mergedVisible = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return mergedShown;
+    return mergedShown.filter((entry) => {
+      if (entry.kind === "doc") {
+        const d = entry.row;
+        const allocNames = documentLinkedJobIds(d)
+          .map((jid) => jobs.find((j) => j.id === jid)?.name ?? "")
+          .join(" ");
+        const hay = [
+          d.number,
+          d.entityName,
+          d.nazev,
+          d.description,
+          d.note ?? "",
+          d.poznamka ?? "",
+          d.jobName ?? "",
+          allocNames,
+          d.sourceLabel ?? "",
+          d.fileName ?? "",
+          d.mimeType ?? "",
+        ]
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      }
+      const inv = entry.inv;
+      const hay = [
+        inv.invoiceNumber,
+        inv.documentNumber,
+        inv.id,
+        inv.customerName,
+        (inv as { customerEmail?: unknown }).customerEmail,
+        inv.jobId,
+      ]
+        .map((x) => String(x ?? "").trim())
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [mergedShown, search, jobs]);
+
+  const issuedTotals = useMemo(() => {
+    let netCzk = 0;
+    let vatCzk = 0;
+    let grossCzk = 0;
+    for (const e of mergedVisible) {
+      if (e.kind === "doc") {
+        const p = documentRowMoneyCzkParts(e.row);
+        netCzk += p.netCzk;
+        vatCzk += p.vatCzk;
+        grossCzk += p.grossCzk;
+      } else {
+        const p = invoiceRowMoneyCzkParts(e.inv);
+        netCzk += p.netCzk;
+        vatCzk += p.vatCzk;
+        grossCzk += p.grossCzk;
+      }
+    }
+    return { netCzk, vatCzk, grossCzk, count: mergedVisible.length };
+  }, [mergedVisible]);
+
+  const issuedSummaryTitle = useMemo(() => {
+    const cat = costCategoryFilterLabelCs(costCategoryFilter);
+    if (costCategoryFilter === "__all__") {
+      return "Vyfakturováno celkem (vydané doklady a faktury ve filtru)";
+    }
+    if (costCategoryFilter === "other") {
+      return "Vyfakturováno — Ostatní (doklady bez kategorie + všechny faktury)";
+    }
+    return `Vyfakturovaný ${cat} — celkem`;
+  }, [costCategoryFilter]);
 
   const jobNameForId = (jid: string) =>
     jobs.find((j) => j.id === jid)?.name ?? null;
@@ -5836,6 +6242,17 @@ function DocumentTableIssued({
           </Button>
         </div>
       </div>
+      {!loading ? (
+        <div className="border-b border-gray-200 px-2 pb-2 pt-0 sm:px-3">
+          <DocumentsListMonetarySummary
+            title={issuedSummaryTitle}
+            count={issuedTotals.count}
+            netCzk={issuedTotals.netCzk}
+            vatCzk={issuedTotals.vatCzk}
+            grossCzk={issuedTotals.grossCzk}
+          />
+        </div>
+      ) : null}
       <Dialog open={emailOpen} onOpenChange={setEmailOpen}>
         <DialogContent className="max-h-[90vh] w-[min(100%,34rem)] max-w-[34rem] overflow-y-auto border border-gray-200 bg-white p-0 text-gray-950 shadow-lg sm:rounded-xl">
           <DialogHeader className="space-y-1 border-b border-gray-100 px-4 pb-3 pt-4 sm:px-5">
@@ -5924,7 +6341,7 @@ function DocumentTableIssued({
           <div className="flex justify-center p-8">
             <Loader2 className="h-7 w-7 animate-spin text-primary" />
           </div>
-        ) : mergedShown.length > 0 ? (
+        ) : mergedVisible.length > 0 ? (
           <div className="w-full overflow-hidden bg-white">
             <div
               className={cn(
@@ -5938,7 +6355,7 @@ function DocumentTableIssued({
               <span>Datum / splatnost</span>
               <span className="text-left tabular-nums lg:text-right">Částka</span>
             </div>
-            {mergedShown.map((entry) => {
+            {mergedVisible.map((entry) => {
               const ib =
                 "h-10 w-10 shrink-0 p-0 text-gray-700 hover:bg-gray-100 hover:text-gray-950 sm:h-7 sm:w-7 touch-manipulation";
               if (entry.kind === "doc") {
@@ -6305,6 +6722,10 @@ function DocumentTableIssued({
                 </div>
               );
             })}
+          </div>
+        ) : mergedShown.length > 0 && mergedVisible.length === 0 ? (
+          <div className="text-center py-20 text-muted-foreground">
+            Žádná položka neodpovídá vyhledávání (zkuste jiný dotaz nebo ho vymažte).
           </div>
         ) : merged.length > 0 && mergedShown.length === 0 ? (
           <div className="text-center py-20 text-muted-foreground">
