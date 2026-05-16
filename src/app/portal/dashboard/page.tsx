@@ -958,12 +958,13 @@ export default function CompanyDashboard() {
       {companyId && !isCustomer && belowLg ? (
         <Dialog open={scheduleModalOpen} onOpenChange={setScheduleModalOpen}>
           <DialogContent
+            overlayClassName={isPhoneLayout ? "!z-[80]" : undefined}
             className={cn(
               "!border-white/10 !bg-slate-950 !p-0 !text-slate-50 !shadow-2xl !ring-white/10",
               "!flex max-h-[100dvh] flex-col gap-0 !overflow-hidden",
               "[&>button:last-child]:hidden",
               isPhoneLayout
-                ? "!fixed !inset-0 !left-0 !top-0 z-[60] !h-[100dvh] !max-h-[100dvh] !w-full !max-w-none !translate-x-0 !translate-y-0 !rounded-none"
+                ? "!fixed !inset-0 !left-0 !top-0 z-[80] !h-[100dvh] !max-h-[100dvh] !w-full !max-w-none !translate-x-0 !translate-y-0 !rounded-none"
                 : "!left-1/2 !top-1/2 !max-h-[min(92dvh,880px)] !w-[min(900px,calc(100vw-2rem))] !max-w-[min(900px,calc(100vw-2rem))] !-translate-x-1/2 !-translate-y-1/2 !rounded-2xl"
             )}
           >
@@ -978,7 +979,7 @@ export default function CompanyDashboard() {
                 Zavřít
               </Button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-[calc(12px+env(safe-area-inset-bottom))] pt-2 sm:px-4">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-y-contain px-2 pb-[calc(24px+env(safe-area-inset-bottom))] pt-2 sm:px-4">
               {scheduleModalOpen ? (
                 <CompanyScheduleCalendar
                   companyId={companyId}

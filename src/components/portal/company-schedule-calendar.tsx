@@ -50,6 +50,10 @@ import { useFirestore, useMemoFirebase, useCollection, useUser, useDoc, useCompa
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+
+/** Mobil: prostor pod mřížkou — nepřekrývá spodní navigace ani safe area. */
+const MOBILE_CALENDAR_BOTTOM_PAD =
+  "pb-[calc(96px+env(safe-area-inset-bottom,0px))]";
 import {
   isValidCompanyScheduleEvent,
   parseInstallationStatus,
@@ -1279,6 +1283,7 @@ export function CompanyScheduleCalendar({
       id={rootId}
       className={cn(
         "max-w-full rounded-xl border shadow-sm",
+        showCompact && "overflow-visible",
         dark
           ? "border-white/10 bg-slate-950 text-slate-50"
           : "border-slate-200 bg-white text-slate-900",
@@ -1473,7 +1478,16 @@ export function CompanyScheduleCalendar({
         )}
       </div>
 
-      <div className={cn("p-3 sm:p-4", dark && "bg-slate-950")}>
+      <div
+        className={cn(
+          "p-3 sm:p-4",
+          dark && "bg-slate-950",
+          showCompact &&
+            (appearance === "darkPortal"
+              ? "pb-[calc(24px+env(safe-area-inset-bottom,0px))]"
+              : MOBILE_CALENDAR_BOTTOM_PAD)
+        )}
+      >
         {loading ? (
           <div className="flex min-h-[200px] items-center justify-center">
             <span
@@ -1653,26 +1667,13 @@ export function CompanyScheduleCalendar({
                 {mobileDayEvents.length === 0 ? (
                   <div
                     className={cn(
-                      "space-y-4 rounded-2xl border border-dashed px-4 py-10 text-center text-base leading-relaxed",
+                      "rounded-2xl border border-dashed px-4 py-6 text-center text-base leading-relaxed",
                       dark
                         ? "border-white/15 bg-slate-900/50 text-slate-300"
                         : "border-slate-200 bg-slate-50 text-slate-600"
                     )}
                   >
                     <p>Tento den nemáte žádné naplánované schůzky ani zaměření.</p>
-                    {!readOnly ? (
-                      <Button
-                        type="button"
-                        className={cn(
-                          "min-h-12 w-full max-w-sm gap-2",
-                          dark && "bg-orange-500 text-slate-950 hover:bg-orange-400"
-                        )}
-                        onClick={() => openCreateForDay(mobileSelectedDay)}
-                      >
-                        <Plus className="h-4 w-4" />
-                        Naplánovat na tento den
-                      </Button>
-                    ) : null}
                   </div>
                 ) : (
                   <ul className="space-y-4">
@@ -1795,7 +1796,12 @@ export function CompanyScheduleCalendar({
                 )}
               </div>
 
-              <div className={cn("mt-5 border-t pt-4", dark ? "border-white/10" : "border-slate-100")}>
+              <div
+                className={cn(
+                  "mt-5 border-t pt-4",
+                  dark ? "border-white/10" : "border-slate-100"
+                )}
+              >
                 <h3
                   className={cn(
                     "mb-3 text-center text-xl font-bold capitalize leading-tight tracking-tight sm:text-2xl",
@@ -1805,7 +1811,7 @@ export function CompanyScheduleCalendar({
                 >
                   {visibleMonthLabel}
                 </h3>
-                <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+                <div className="grid grid-cols-7 gap-1.5 pb-2 sm:gap-2">
                   {WEEKDAYS.map((wd) => (
                     <div
                       key={wd}
