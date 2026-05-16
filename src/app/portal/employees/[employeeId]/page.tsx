@@ -75,7 +75,17 @@ import {
   type JobAccessMode,
   type JobRoleOnSite,
 } from "@/lib/job-employee-access";
-import { Loader2, ArrowLeft, Save, Upload, UserX } from "lucide-react";
+import { useIsBelowLg } from "@/hooks/use-mobile";
+import {
+  Loader2,
+  ArrowLeft,
+  Save,
+  Upload,
+  UserX,
+  Clock,
+  DollarSign,
+  Wallet,
+} from "lucide-react";
 
 function employeeDisplayName(e: Record<string, unknown> | null | undefined): string {
   if (!e) return "Zaměstnanec";
@@ -109,6 +119,7 @@ export default function EmployeeDetailPage() {
   const firestore = useFirestore();
   const { toast } = useToast();
   const { companyName, company } = useCompany();
+  const belowLg = useIsBelowLg();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -727,40 +738,107 @@ export default function EmployeeDetailPage() {
     );
   }
 
+  const cardCls = cn(
+    belowLg
+      ? "rounded-2xl border border-white/10 bg-slate-900/95 text-slate-100 shadow-lg"
+      : "border-slate-200 bg-white"
+  );
+  const cardTitleCls = belowLg ? "text-base font-semibold text-white" : "text-lg text-black";
+  const cardSubCls = belowLg ? "text-sm text-slate-400" : "text-sm text-slate-700";
+  const labelCls = belowLg ? "text-xs text-slate-400" : "text-xs text-slate-600";
+  const valueCls = belowLg
+    ? "text-sm font-medium text-slate-100 break-words"
+    : "font-medium text-black";
+  const inputCls = belowLg
+    ? "w-full border-white/15 bg-slate-950 text-slate-50 placeholder:text-slate-500"
+    : "";
+  const selectCls = cn(
+    "h-10 w-full rounded-md border px-3 text-sm",
+    belowLg
+      ? "border-white/15 bg-slate-950 text-slate-50"
+      : "border-slate-300 bg-white"
+  );
+  const saveBtnCls = cn(
+    "h-11",
+    belowLg &&
+      "w-full min-h-11 rounded-xl bg-orange-500 font-medium text-slate-950 hover:bg-orange-400"
+  );
+  const outlineBtnCls = cn(
+    "min-h-11 rounded-xl",
+    belowLg && "w-full border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+  );
+  const tabTriggerCls = cn(
+    "h-10 shrink-0 px-3 text-sm",
+    belowLg &&
+      "rounded-xl border border-white/10 bg-slate-900 text-slate-300 data-[state=active]:border-orange-500/50 data-[state=active]:bg-orange-500/15 data-[state=active]:text-orange-200"
+  );
+  const payrollHref = `/portal/labor/vyplaty?employee=${encodeURIComponent(employeeId)}`;
+
   return (
-    <div className="mx-auto w-full max-w-5xl space-y-4 px-2 pb-12 sm:px-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              className="h-10 border-slate-300"
-              onClick={() => router.push("/portal/employees")}
-            >
-              <ArrowLeft className="mr-2 h-4 w-4" />
-              Zaměstnanci
-            </Button>
-            <p className="text-sm text-slate-700">
-              {companyName ? `${companyName} · ` : ""}Detail zaměstnance
-            </p>
-          </div>
-          <h1 className="mt-2 break-words text-xl font-bold text-black sm:text-2xl">
-            {display}
-          </h1>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge
-            variant={isActive ? "default" : "secondary"}
-            className="capitalize"
+    <div
+      className={cn(
+        "mx-auto w-full max-w-5xl space-y-4",
+        belowLg
+          ? "max-w-none min-h-[100dvh] overflow-x-hidden bg-slate-950 px-3 pb-[calc(96px+env(safe-area-inset-bottom,0px))] pt-4"
+          : "px-2 pb-12 sm:px-4"
+      )}
+    >
+      {belowLg ? (
+        <div className={cn(cardCls, "space-y-4 p-4")}>
+          <Button
+            type="button"
+            variant="outline"
+            className={cn(outlineBtnCls, "h-10 w-auto self-start px-3")}
+            onClick={() => router.push("/portal/employees")}
           >
-            {isActive ? "Aktivní" : "Neaktivní"}
-          </Badge>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Zaměstnanci
+          </Button>
+          <div className="flex items-start gap-3">
+            <Avatar className="h-16 w-16 shrink-0 border-2 border-white/15">
+              <AvatarImage src={photoUrl || undefined} className="object-cover" alt="" />
+              <AvatarFallback className="bg-orange-500/20 text-lg text-orange-200">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1 space-y-1">
+              <h1 className="break-words text-xl font-bold leading-tight text-white">{display}</h1>
+              {companyName ? <p className="text-xs text-slate-400">{companyName}</p> : null}
+              <p className="break-all text-sm text-slate-300">
+                {String(employeeDoc?.email ?? "—")}
+              </p>
+              <p className="text-sm text-slate-400">
+                {String(employeeDoc?.phone ?? employeeDoc?.phoneNumber ?? "—")}
+              </p>
+              <p className="text-sm text-slate-400">
+                {String((employeeDoc as { jobTitle?: string })?.jobTitle ?? "—")}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Badge
+              variant={isActive ? "default" : "secondary"}
+              className={cn(
+                "capitalize",
+                isActive
+                  ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
+                  : "border-slate-500/50 bg-slate-800 text-slate-300"
+              )}
+            >
+              {isActive ? "Aktivní" : "Neaktivní"}
+            </Badge>
+            <Badge variant="outline" className="border-white/15 bg-white/5 text-slate-300">
+              {terminal.hasPin ? "PIN nastaven" : "Bez PINu"}
+            </Badge>
+          </div>
           {canManage ? (
             <Button
               type="button"
               variant={isActive ? "destructive" : "default"}
-              className="h-10"
+              className={cn(
+                "min-h-11 w-full rounded-xl font-medium",
+                !isActive && "bg-orange-500 text-slate-950 hover:bg-orange-400"
+              )}
               disabled={savingStatus}
               onClick={() => void toggleActive()}
             >
@@ -774,8 +852,78 @@ export default function EmployeeDetailPage() {
               )}
             </Button>
           ) : null}
+          <div className="grid grid-cols-1 gap-2 border-t border-white/10 pt-4 sm:grid-cols-2">
+            <Button type="button" variant="outline" className={outlineBtnCls} asChild>
+              <Link href="/portal/labor/dochazka/prehled">
+                <Clock className="mr-2 h-4 w-4 shrink-0" />
+                Docházka
+              </Link>
+            </Button>
+            <Button type="button" variant="outline" className={outlineBtnCls} asChild>
+              <Link href={payrollHref}>
+                <DollarSign className="mr-2 h-4 w-4 shrink-0" />
+                Výplaty
+              </Link>
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className={cn(outlineBtnCls, "sm:col-span-2")}
+              asChild
+            >
+              <Link href={payrollHref}>
+                <Wallet className="mr-2 h-4 w-4 shrink-0" />
+                Zálohy a dluhy
+              </Link>
+            </Button>
+          </div>
         </div>
-      </div>
+      ) : (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="h-10 border-slate-300"
+                onClick={() => router.push("/portal/employees")}
+              >
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Zaměstnanci
+              </Button>
+              <p className={cardSubCls}>
+                {companyName ? `${companyName} · ` : ""}Detail zaměstnance
+              </p>
+            </div>
+            <h1 className="mt-2 break-words text-xl font-bold text-black sm:text-2xl">
+              {display}
+            </h1>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge variant={isActive ? "default" : "secondary"} className="capitalize">
+              {isActive ? "Aktivní" : "Neaktivní"}
+            </Badge>
+            {canManage ? (
+              <Button
+                type="button"
+                variant={isActive ? "destructive" : "default"}
+                className="h-10"
+                disabled={savingStatus}
+                onClick={() => void toggleActive()}
+              >
+                {savingStatus ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <>
+                    <UserX className="mr-2 h-4 w-4" />
+                    {isActive ? "Deaktivovat" : "Aktivovat"}
+                  </>
+                )}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      )}
 
       {employeeError ? (
         <Alert variant="destructive">
@@ -787,32 +935,68 @@ export default function EmployeeDetailPage() {
       ) : null}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
-        <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1 bg-transparent p-0">
-          <TabsTrigger value="overview" className="h-10">Přehled</TabsTrigger>
-          <TabsTrigger value="personal" className="h-10">Osobní údaje</TabsTrigger>
-          <TabsTrigger value="work" className="h-10">Práce a mzda</TabsTrigger>
-          <TabsTrigger value="terminal" className="h-10">Terminál a PIN</TabsTrigger>
-          <TabsTrigger value="roles" className="h-10">Role a oprávnění</TabsTrigger>
-          <TabsTrigger value="jobs" className="h-10">Přiřazené zakázky</TabsTrigger>
-          <TabsTrigger value="documents" className="h-10">Dokumenty</TabsTrigger>
-          <TabsTrigger value="contracts" className="h-10">Smlouvy a dohody</TabsTrigger>
-          <TabsTrigger value="photos" className="h-10">Fotodokumentace</TabsTrigger>
-          <TabsTrigger value="signatures" className="h-10">Podpisy</TabsTrigger>
+        <TabsList
+          className={cn(
+            "flex h-auto w-full gap-1.5 bg-transparent p-0",
+            belowLg
+              ? "flex-nowrap overflow-x-auto pb-1 [-webkit-overflow-scrolling:touch]"
+              : "flex-wrap justify-start"
+          )}
+        >
+          <TabsTrigger value="overview" className={tabTriggerCls}>
+            {belowLg ? "Přehled" : "Přehled"}
+          </TabsTrigger>
+          <TabsTrigger value="personal" className={tabTriggerCls}>
+            {belowLg ? "Profil" : "Osobní údaje"}
+          </TabsTrigger>
+          <TabsTrigger value="work" className={tabTriggerCls}>
+            {belowLg ? "Mzda" : "Práce a mzda"}
+          </TabsTrigger>
+          <TabsTrigger value="terminal" className={tabTriggerCls}>
+            {belowLg ? "PIN" : "Terminál a PIN"}
+          </TabsTrigger>
+          <TabsTrigger value="roles" className={tabTriggerCls}>
+            {belowLg ? "Role" : "Role a oprávnění"}
+          </TabsTrigger>
+          <TabsTrigger value="jobs" className={tabTriggerCls}>
+            {belowLg ? "Zakázky" : "Přiřazené zakázky"}
+          </TabsTrigger>
+          <TabsTrigger value="documents" className={tabTriggerCls}>
+            Dokumenty
+          </TabsTrigger>
+          <TabsTrigger value="contracts" className={tabTriggerCls}>
+            {belowLg ? "Smlouvy" : "Smlouvy a dohody"}
+          </TabsTrigger>
+          <TabsTrigger value="photos" className={tabTriggerCls}>
+            {belowLg ? "Foto" : "Fotodokumentace"}
+          </TabsTrigger>
+          <TabsTrigger value="signatures" className={tabTriggerCls}>
+            Podpisy
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="mt-4 space-y-4">
-          <Card className="border-slate-200 bg-white">
+          <Card className={cardCls}>
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <CardTitle className="text-lg text-black">Přehled</CardTitle>
-                <p className="text-sm text-slate-700">
+                <CardTitle className={cardTitleCls}>Přehled</CardTitle>
+                <p className={cardSubCls}>
                   Rychlý souhrn + stav. Úpravy jsou v dalších záložkách.
                 </p>
               </div>
               <div className="flex items-center gap-3">
-                <Avatar className="h-16 w-16 border border-slate-200">
+                <Avatar
+                  className={cn(
+                    "h-16 w-16 border",
+                    belowLg ? "border-white/15" : "border-slate-200"
+                  )}
+                >
                   <AvatarImage src={photoUrl || undefined} className="object-cover" alt="" />
-                  <AvatarFallback className="bg-slate-100 text-slate-900">
+                  <AvatarFallback
+                    className={cn(
+                      belowLg ? "bg-orange-500/20 text-orange-200" : "bg-slate-100 text-slate-900"
+                    )}
+                  >
                     {initials}
                   </AvatarFallback>
                 </Avatar>
@@ -820,41 +1004,46 @@ export default function EmployeeDetailPage() {
             </CardHeader>
             <CardContent>
               {employeeLoading ? (
-                <div className="flex items-center gap-2 text-sm text-slate-800">
+                <div
+                  className={cn(
+                    "flex items-center gap-2 text-sm",
+                    belowLg ? "text-slate-300" : "text-slate-800"
+                  )}
+                >
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Načítání profilu…
                 </div>
               ) : (
-                <div className="grid gap-4 sm:grid-cols-2">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-600">Jméno</Label>
-                    <p className="font-medium text-black">{display}</p>
+                    <Label className={labelCls}>Jméno</Label>
+                    <p className={valueCls}>{display}</p>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-600">E-mail</Label>
-                    <p className="font-medium text-black">{String(employeeDoc?.email ?? "—")}</p>
+                    <Label className={labelCls}>E-mail</Label>
+                    <p className={valueCls}>{String(employeeDoc?.email ?? "—")}</p>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-600">Telefon</Label>
-                    <p className="font-medium text-black">
+                    <Label className={labelCls}>Telefon</Label>
+                    <p className={valueCls}>
                       {String(employeeDoc?.phone ?? employeeDoc?.phoneNumber ?? "—")}
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-600">Pozice</Label>
-                    <p className="font-medium text-black">
+                    <Label className={labelCls}>Pozice</Label>
+                    <p className={valueCls}>
                       {String((employeeDoc as any)?.jobTitle ?? "—")}
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-600">Hodinová sazba</Label>
-                    <p className="font-medium text-black">
+                    <Label className={labelCls}>Hodinová sazba</Label>
+                    <p className={valueCls}>
                       {(employeeDoc as any)?.hourlyRate != null ? `${String((employeeDoc as any).hourlyRate)} Kč/h` : "—"}
                     </p>
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs text-slate-600">Terminál</Label>
-                    <p className="font-medium text-black">
+                    <Label className={labelCls}>Terminál</Label>
+                    <p className={valueCls}>
                       {terminal.hasPin ? "PIN nastaven" : "Bez PINu"}
                       {terminal.needsChange ? " · změnit v profilu" : ""}
                     </p>
@@ -866,22 +1055,34 @@ export default function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="personal" className="mt-4 space-y-4">
-          <Card className="border-slate-200 bg-white">
+          <Card className={cardCls}>
             <CardHeader>
-              <CardTitle className="text-lg text-black">Osobní údaje</CardTitle>
+              <CardTitle className={cardTitleCls}>Osobní údaje</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start">
                 <div className="flex items-center gap-4">
-                  <Avatar className="h-28 w-28 border border-slate-200">
+                  <Avatar
+                    className={cn(
+                      "h-28 w-28 border",
+                      belowLg ? "border-white/15" : "border-slate-200"
+                    )}
+                  >
                     <AvatarImage src={photoUrl || undefined} className="object-cover" alt="" />
-                    <AvatarFallback className="bg-slate-100 text-slate-900 text-2xl">
+                    <AvatarFallback
+                      className={cn(
+                        "text-2xl",
+                        belowLg ? "bg-orange-500/20 text-orange-200" : "bg-slate-100 text-slate-900"
+                      )}
+                    >
                       {initials}
                     </AvatarFallback>
                   </Avatar>
                 </div>
                 <div className="flex-1 space-y-2">
-                  <Label className="text-sm text-black">Profilová fotka</Label>
+                  <Label className={cn("text-sm", belowLg ? "text-slate-200" : "text-black")}>
+                    Profilová fotka
+                  </Label>
                   <Input
                     type="file"
                     accept=".jpg,.jpeg,.png,.webp"
@@ -889,7 +1090,7 @@ export default function EmployeeDetailPage() {
                     onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
                   />
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" variant="default" className="h-10" disabled={!canManage || photoBusy || !photoFile} onClick={() => void uploadPhoto()}>
+                    <Button type="button" variant="default" className={cn("h-10", belowLg && "w-full min-h-11 rounded-xl bg-orange-500 text-slate-950 hover:bg-orange-400")} disabled={!canManage || photoBusy || !photoFile} onClick={() => void uploadPhoto()}>
                       {photoBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="mr-2 h-4 w-4" />}
                       Nahrát
                     </Button>
@@ -897,44 +1098,44 @@ export default function EmployeeDetailPage() {
                       Odebrat fotku
                     </Button>
                   </div>
-                  <p className="text-xs text-slate-600">
+                  <p className={cn("text-xs", belowLg ? "text-slate-400" : "text-slate-600")}>
                     Fotka se uloží do Firebase Storage a url se uloží do záznamu zaměstnance.
                   </p>
                 </div>
               </div>
 
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Jméno</Label>
-                  <Input value={personalForm.firstName} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, firstName: e.target.value }))} />
+                  <Input className={inputCls} value={personalForm.firstName} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, firstName: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
                   <Label>Příjmení</Label>
-                  <Input value={personalForm.lastName} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, lastName: e.target.value }))} />
+                  <Input className={inputCls} value={personalForm.lastName} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, lastName: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
                   <Label>E-mail</Label>
-                  <Input value={personalForm.email} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, email: e.target.value }))} />
+                  <Input className={inputCls} value={personalForm.email} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, email: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
                   <Label>Telefon</Label>
-                  <Input value={personalForm.phone} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, phone: e.target.value }))} />
+                  <Input className={inputCls} value={personalForm.phone} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, phone: e.target.value }))} />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label>Adresa</Label>
-                  <Input value={personalForm.address} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, address: e.target.value }))} />
+                  <Input className={inputCls} value={personalForm.address} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, address: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
                   <Label>Pracovní pozice</Label>
-                  <Input value={personalForm.jobTitle} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, jobTitle: e.target.value }))} />
+                  <Input className={inputCls} value={personalForm.jobTitle} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, jobTitle: e.target.value }))} />
                 </div>
                 <div className="space-y-2 sm:col-span-2">
                   <Label>Poznámka</Label>
                   <Textarea value={personalForm.note} disabled={!canManage} onChange={(e) => setPersonalForm((p) => ({ ...p, note: e.target.value }))} className="min-h-[110px]" />
                 </div>
               </div>
-              <div className="flex justify-end">
-                <Button type="button" className="h-11" disabled={!canManage || savingPersonal} onClick={() => void savePersonal()}>
+              <div className={cn("flex justify-end", belowLg && "w-full")}>
+                <Button type="button" className={saveBtnCls} disabled={!canManage || savingPersonal} onClick={() => void savePersonal()}>
                   {savingPersonal ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   Uložit osobní údaje
                 </Button>
@@ -942,9 +1143,9 @@ export default function EmployeeDetailPage() {
             </CardContent>
           </Card>
 
-          <Card className="border-slate-200 bg-white">
+          <Card className={cardCls}>
             <CardHeader>
-              <CardTitle className="text-lg text-black">Portál — e-mailová upozornění</CardTitle>
+              <CardTitle className={cardTitleCls}>Portál — e-mailová upozornění</CardTitle>
               <p className="text-sm text-slate-600 font-normal pt-1">
                 Nastavení se ukládá na propojený uživatelský účet (Firebase Auth). Zaměstnanec si totéž může upravit
                 ve svém profilu v portálu.
@@ -957,9 +1158,9 @@ export default function EmployeeDetailPage() {
                   Načítání…
                 </div>
               ) : !portalNotifForm ? (
-                <p className="text-sm text-slate-700">Nastavení se nepodařilo načíst.</p>
+                <p className={cardSubCls}>Nastavení se nepodařilo načíst.</p>
               ) : !portalNotifForm.linked ? (
-                <p className="text-sm text-slate-700">
+                <p className={cardSubCls}>
                   Zaměstnanec nemá propojený účet portálu — e-mailová upozornění zatím nelze spravovat z administrace.
                 </p>
               ) : (
@@ -1032,7 +1233,7 @@ export default function EmployeeDetailPage() {
                       </Select>
                     </div>
                   </div>
-                  <div className="flex justify-end">
+                  <div className={cn("flex justify-end", belowLg && "w-full")}>
                     <Button
                       type="button"
                       className="h-11"
@@ -1054,19 +1255,19 @@ export default function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="work" className="mt-4 space-y-4">
-          <Card className="border-slate-200 bg-white">
+          <Card className={cardCls}>
             <CardHeader>
-              <CardTitle className="text-lg text-black">Práce a mzda</CardTitle>
+              <CardTitle className={cardTitleCls}>Práce a mzda</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Hodinová sazba (Kč/h)</Label>
-                  <Input value={workForm.hourlyRate} disabled={!canManage} inputMode="decimal" onChange={(e) => setWorkForm((p) => ({ ...p, hourlyRate: e.target.value }))} />
+                  <Input className={inputCls} value={workForm.hourlyRate} disabled={!canManage} inputMode="decimal" onChange={(e) => setWorkForm((p) => ({ ...p, hourlyRate: e.target.value }))} />
                 </div>
                 <div className="space-y-2">
                   <Label>Typ mzdy</Label>
-                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" disabled={!canManage} value={workForm.wageType} onChange={(e) => setWorkForm((p) => ({ ...p, wageType: e.target.value as any }))}>
+                  <select className={selectCls} disabled={!canManage} value={workForm.wageType} onChange={(e) => setWorkForm((p) => ({ ...p, wageType: e.target.value as any }))}>
                     <option value="hourly">Hodinová</option>
                     <option value="monthly">Měsíční</option>
                     <option value="other">Jiné</option>
@@ -1077,40 +1278,50 @@ export default function EmployeeDetailPage() {
                 </div>
               </div>
 
-              <div className="rounded-lg border border-slate-200 p-4">
+              <div className={cn("rounded-lg border p-4", belowLg ? "border-white/10 bg-slate-950/50" : "border-slate-200")}>
                 <p className="text-sm font-semibold text-black">Bankovní účet (výplata)</p>
                 <div className="mt-3 grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Číslo účtu</Label>
-                    <Input value={bankForm.accountNumber} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, accountNumber: e.target.value }))} placeholder="např. 19-123456789" />
+                    <Input className={inputCls} value={bankForm.accountNumber} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, accountNumber: e.target.value }))} placeholder="např. 19-123456789" />
                   </div>
                   <div className="space-y-2">
                     <Label>Kód banky</Label>
-                    <Input value={bankForm.bankCode} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, bankCode: e.target.value }))} placeholder="např. 0100" />
+                    <Input className={inputCls} value={bankForm.bankCode} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, bankCode: e.target.value }))} placeholder="např. 0100" />
                   </div>
                   <div className="space-y-2">
                     <Label>IBAN</Label>
-                    <Input value={bankForm.iban} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, iban: e.target.value }))} />
+                    <Input className={inputCls} value={bankForm.iban} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, iban: e.target.value }))} />
                   </div>
                   <div className="space-y-2">
                     <Label>BIC/SWIFT</Label>
-                    <Input value={bankForm.bic} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, bic: e.target.value }))} />
+                    <Input className={inputCls} value={bankForm.bic} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, bic: e.target.value }))} />
                   </div>
                   <div className="space-y-2 sm:col-span-2">
                     <Label>Poznámka k výplatě</Label>
-                    <Textarea value={bankForm.paymentNote} disabled={!canManage} onChange={(e) => setBankForm((b) => ({ ...b, paymentNote: e.target.value }))} />
+                    <Textarea
+                      value={bankForm.paymentNote}
+                      disabled={!canManage}
+                      onChange={(e) => setBankForm((b) => ({ ...b, paymentNote: e.target.value }))}
+                      className={inputCls}
+                    />
                   </div>
                 </div>
-                <div className="mt-4 flex justify-end gap-2">
-                  <Button type="button" className="h-11" disabled={!canManage || savingBank} onClick={() => void saveBank()}>
+                <div
+                  className={cn(
+                    "mt-4 flex flex-col gap-2 sm:flex-row sm:justify-end",
+                    belowLg && "w-full"
+                  )}
+                >
+                  <Button type="button" className={saveBtnCls} disabled={!canManage || savingBank} onClick={() => void saveBank()}>
                     {savingBank ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                     Uložit bankovní účet
                   </Button>
                 </div>
               </div>
 
-              <div className="flex justify-end">
-                <Button type="button" className="h-11" disabled={!canManage || savingWork} onClick={() => void saveWork()}>
+              <div className={cn("flex justify-end", belowLg && "w-full")}>
+                <Button type="button" className={saveBtnCls} disabled={!canManage || savingWork} onClick={() => void saveWork()}>
                   {savingWork ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   Uložit práci a mzdu
                 </Button>
@@ -1120,23 +1331,23 @@ export default function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="terminal" className="mt-4 space-y-4">
-          <Card className="border-slate-200 bg-white">
+          <Card className={cardCls}>
             <CardHeader>
-              <CardTitle className="text-lg text-black">Terminál a PIN</CardTitle>
+              <CardTitle className={cardTitleCls}>Terminál a PIN</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-1">
-                  <Label className="text-xs text-slate-600">Stav</Label>
-                  <p className="font-medium text-black">
+                  <Label className={labelCls}>Stav</Label>
+                  <p className={valueCls}>
                     {terminal.hasPin ? "PIN nastaven" : "Bez PINu"}{terminal.needsChange ? " · změnit v profilu" : ""}
                   </p>
                 </div>
                 <div className="space-y-2">
                   <Label>PIN (ručně nastavit)</Label>
-                  <Input value={pinManual} disabled={!canManage || pinBusy} onChange={(e) => setPinManual(e.target.value)} placeholder="např. 1234" />
+                  <Input className={inputCls} value={pinManual} disabled={!canManage || pinBusy} onChange={(e) => setPinManual(e.target.value)} placeholder="např. 1234" />
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" className="h-10" disabled={!canManage || pinBusy} onClick={() => void callPinAdmin("set")}>
+                    <Button type="button" className={cn("h-10 min-h-11", belowLg && "w-full rounded-xl bg-orange-500 text-slate-950 hover:bg-orange-400")} disabled={!canManage || pinBusy} onClick={() => void callPinAdmin("set")}>
                       Nastavit PIN
                     </Button>
                     <Button type="button" variant="outline" className="h-10" disabled={!canManage || pinBusy} onClick={() => void callPinAdmin("generate")}>
@@ -1156,15 +1367,15 @@ export default function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="roles" className="mt-4 space-y-4">
-          <Card className="border-slate-200 bg-white">
+          <Card className={cardCls}>
             <CardHeader>
-              <CardTitle className="text-lg text-black">Role a oprávnění</CardTitle>
+              <CardTitle className={cardTitleCls}>Role a oprávnění</CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Role v portálu</Label>
-                  <select className="h-10 w-full rounded-md border border-slate-300 bg-white px-3 text-sm" disabled={!canManage} value={orgRole} onChange={(e) => setOrgRole(e.target.value as any)}>
+                  <select className={selectCls} disabled={!canManage} value={orgRole} onChange={(e) => setOrgRole(e.target.value as any)}>
                     <option value="employee">Zaměstnanec</option>
                     <option value="orgAdmin">Administrátor organizace</option>
                   </select>
@@ -1215,8 +1426,8 @@ export default function EmployeeDetailPage() {
                 </div>
               </div>
 
-              <div className="flex justify-end">
-                <Button type="button" className="h-11" disabled={!canManage || orgSaving} onClick={() => void saveOrg()}>
+              <div className={cn("flex justify-end", belowLg && "w-full")}>
+                <Button type="button" className={saveBtnCls} disabled={!canManage || orgSaving} onClick={() => void saveOrg()}>
                   {orgSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                   Uložit role a oprávnění
                 </Button>
@@ -1226,22 +1437,22 @@ export default function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="jobs" className="mt-4 space-y-4">
-          <Card className="border-slate-200 bg-white">
+          <Card className={cardCls}>
             <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <CardTitle className="text-lg text-black">Přiřazené zakázky</CardTitle>
-                <p className="text-sm text-slate-700">
+                <CardTitle className={cardTitleCls}>Přiřazené zakázky</CardTitle>
+                <p className={cardSubCls}>
                   Přiřazení se ukládá na zaměstnance i na zakázku a vytváří se i záznam v <code>jobMembers</code>.
                 </p>
               </div>
-              <Button type="button" className="h-11" disabled={!canManage || jobsSaving} onClick={() => void saveAssignedJobs()}>
+              <Button type="button" className={saveBtnCls} disabled={!canManage || jobsSaving} onClick={() => void saveAssignedJobs()}>
                 {jobsSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                 Uložit přiřazení
               </Button>
             </CardHeader>
             <CardContent className="space-y-3">
               {companyJobs.length === 0 ? (
-                <p className="text-sm text-slate-700">Žádné zakázky.</p>
+                <p className={cardSubCls}>Žádné zakázky.</p>
               ) : (
                 <div className="grid gap-2">
                   {companyJobs.map((j) => (
@@ -1252,7 +1463,7 @@ export default function EmployeeDetailPage() {
                         onCheckedChange={() => toggleAssignedJob(j.id)}
                       />
                       <span className="text-sm text-black">{j.name || j.id}</span>
-                      <span className="ml-auto text-xs text-slate-500">{j.id}</span>
+                      <span className={cn("ml-auto text-xs text-slate-500", belowLg && "hidden")}>{j.id}</span>
                     </label>
                   ))}
                 </div>
@@ -1273,7 +1484,7 @@ export default function EmployeeDetailPage() {
 
         <TabsContent value="contracts" className="mt-4 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-sm text-slate-700">
+            <p className={cardSubCls}>
               Vygenerované PDF se automaticky uloží do dokumentů zaměstnance.
             </p>
             <EmployeeGenerateDocumentDialog
@@ -1304,12 +1515,12 @@ export default function EmployeeDetailPage() {
         </TabsContent>
 
         <TabsContent value="signatures" className="mt-4 space-y-4">
-          <Card className="border-slate-200 bg-white">
+          <Card className={cardCls}>
             <CardHeader>
-              <CardTitle className="text-lg text-black">Podpisy</CardTitle>
+              <CardTitle className={cardTitleCls}>Podpisy</CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
-              <p className="text-sm text-slate-700">
+              <p className={cardSubCls}>
                 Podepisování bude navázané na vygenerované PDF dokumenty (zaměstnanec/firma).
               </p>
               <p className="text-xs text-slate-600">

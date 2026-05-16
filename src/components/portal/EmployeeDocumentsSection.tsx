@@ -50,6 +50,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useIsBelowLg } from "@/hooks/use-mobile";
 import { Loader2, Upload, FileText, Download, Pencil, Trash2, PenLine } from "lucide-react";
 import { EmployeeSignDocumentDialog } from "@/components/portal/EmployeeSignDocumentDialog";
 
@@ -108,6 +109,19 @@ export function EmployeeDocumentsSection(props: {
   const { toast } = useToast();
   const { user } = useUser();
   const firestore = useFirestore();
+  const belowLg = useIsBelowLg();
+  const cardCls = belowLg
+    ? "rounded-2xl border border-white/10 bg-slate-900/95 text-slate-100 shadow-lg"
+    : "border-slate-200 bg-white";
+  const cardTitleCls = belowLg ? "text-base font-semibold text-white" : "text-lg text-black";
+  const cardSubCls = belowLg ? "text-sm text-slate-400" : "text-sm text-slate-700";
+  const outlineBtnCls = cn(
+    belowLg && "min-h-11 w-full rounded-xl border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+  );
+  const primaryBtnCls = cn(
+    "h-10",
+    belowLg && "min-h-11 w-full rounded-xl bg-orange-500 font-medium text-slate-950 hover:bg-orange-400"
+  );
 
   const docsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !employeeId) return null;
@@ -348,21 +362,21 @@ export function EmployeeDocumentsSection(props: {
   };
 
   return (
-    <Card className="border-slate-200 bg-white">
+    <Card className={cardCls}>
       <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <CardTitle className="text-lg text-black">
+          <CardTitle className={cardTitleCls}>
             {title || "Dokumenty zaměstnance"}
           </CardTitle>
-          <p className="mt-1 text-sm text-slate-700">
+          <p className={cn("mt-1", cardSubCls)}>
             PDF, obrázky a kancelářské dokumenty. Smazání a úpravy provádí pouze
             administrátor.
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
+        <div className={cn("flex shrink-0 flex-wrap gap-2", belowLg && "w-full")}>
           <Button
             type="button"
-            className="h-10"
+            className={primaryBtnCls}
             disabled={!canUpload}
             onClick={openUpload}
           >
@@ -385,7 +399,81 @@ export function EmployeeDocumentsSection(props: {
             Načítání…
           </p>
         ) : filtered.length === 0 ? (
-          <p className="text-sm text-slate-700">Zatím žádné dokumenty.</p>
+          <p className={cardSubCls}>Zatím žádné dokumenty.</p>
+        ) : belowLg ? (
+          <ul className="space-y-3">
+            {filtered.map((d) => (
+              <li
+                key={d.id}
+                className="rounded-xl border border-white/10 bg-slate-950/80 p-3 space-y-3"
+              >
+                <div className="flex items-start gap-2 min-w-0">
+                  <FileText className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className="break-words text-sm font-semibold text-white">
+                      {d.title || d.id}
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      {EMPLOYEE_DOC_TYPE_LABEL[d.type] ?? d.type}
+                    </p>
+                    {statusBadge(d.status)}
+                    {d.note?.trim() ? (
+                      <p className="text-xs leading-relaxed text-slate-400">{d.note.trim()}</p>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className={cn("min-h-10 gap-2", outlineBtnCls)}
+                    onClick={() => window.open(d.finalSignedPdfUrl || d.fileUrl, "_blank")}
+                    disabled={!d.fileUrl}
+                  >
+                    <Download className="h-4 w-4" />
+                    Stáhnout
+                  </Button>
+                  {canManage && d.contentType === "application/pdf" ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={cn("min-h-10 gap-2", outlineBtnCls)}
+                      onClick={() => {
+                        setSignDoc(d);
+                        setSignAs("employee");
+                        setSignOpen(true);
+                      }}
+                    >
+                      <PenLine className="h-4 w-4" />
+                      Podepsat
+                    </Button>
+                  ) : null}
+                  {canManage ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className={cn("min-h-10 gap-2", outlineBtnCls)}
+                      onClick={() => openEdit(d)}
+                    >
+                      <Pencil className="h-4 w-4" />
+                      Upravit
+                    </Button>
+                  ) : null}
+                  {canManage ? (
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      className="min-h-10 gap-2"
+                      onClick={() => setDeleteDocRow(d)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                      Smazat
+                    </Button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
         ) : (
           <div className="overflow-x-auto rounded-md border border-slate-200">
             <Table>
