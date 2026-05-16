@@ -978,7 +978,7 @@ export default function CompanyDashboard() {
                 Zavřít
               </Button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-[calc(96px+env(safe-area-inset-bottom))] pt-2 sm:px-4">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-[calc(12px+env(safe-area-inset-bottom))] pt-2 sm:px-4">
               {scheduleModalOpen ? (
                 <CompanyScheduleCalendar
                   companyId={companyId}

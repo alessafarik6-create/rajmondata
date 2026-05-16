@@ -1268,6 +1268,7 @@ export function CompanyScheduleCalendar({
   };
 
   const titleText = headingTitle ?? "Schůzky a zaměření";
+  const visibleMonthLabel = format(visibleMonth, "LLLL yyyy", { locale: cs });
   const dark = appearance === "darkPortal";
   const fc = dark
     ? "border-white/20 bg-slate-900 text-slate-50 placeholder:text-slate-500"
@@ -1286,100 +1287,190 @@ export function CompanyScheduleCalendar({
     >
       <div
         className={cn(
-          "flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3",
+          "border-b",
+          showCompact
+            ? "space-y-3 px-3 py-3 sm:px-4"
+            : "flex flex-wrap items-center justify-between gap-3 px-4 py-3",
           dark ? "border-white/10 bg-slate-950" : "border-slate-200 bg-white"
         )}
       >
-        <div>
-          <h2 className={cn("text-lg font-semibold", dark ? "text-white" : "text-slate-900")}>
-            {titleText}
-          </h2>
-          <p className={cn("text-sm", dark ? "text-slate-300" : "text-slate-800")}>
-            {scheduleFilter === "installationsOnly"
-              ? "Montáže přiřazené vám — měsíční přehled."
-              : "Schůzky, montáže a zaměření — měsíční přehled."}
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            className={cn("h-9 gap-2", showFull && !readOnly ? "inline-flex" : "hidden")}
-            onClick={() => openCreateForDay(new Date())}
-          >
-            <Plus className="h-4 w-4" />
-            Nová schůzka
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className={cn(
-              "h-9 gap-2 border",
-              showFull && !readOnly ? "inline-flex" : "hidden",
-              dark
-                ? "border-violet-400/40 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25"
-                : "border-violet-300 bg-violet-50 text-violet-950 hover:bg-violet-100"
-            )}
-            onClick={() => openCreateForDay(new Date(), "installation")}
-          >
-            <Plus className="h-4 w-4" />
-            Nová montáž
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className={cn(
-              "h-9 w-9",
-              dark
-                ? "border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
-                : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
-            )}
-            onClick={() => setVisibleMonth((d) => subMonths(d, 1))}
-            aria-label="Předchozí měsíc"
-          >
-            <ChevronLeft className="h-4 w-4" />
-          </Button>
-          <span
-            className={cn(
-              "min-w-[160px] text-center text-sm font-medium tabular-nums",
-              dark ? "text-slate-100" : "text-slate-900"
-            )}
-          >
-            {format(visibleMonth, "LLLL yyyy", { locale: cs })}
-          </span>
-          <Button
-            type="button"
-            variant="outline"
-            size="icon"
-            className={cn(
-              "h-9 w-9",
-              dark
-                ? "border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
-                : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
-            )}
-            onClick={() => setVisibleMonth((d) => addMonths(d, 1))}
-            aria-label="Další měsíc"
-          >
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="secondary"
-            className={cn(
-              "inline-flex shrink-0 border px-3",
-              dark
-                ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
-                : "border-slate-200 bg-slate-100 text-slate-900 hover:bg-slate-200"
-            )}
-            onClick={() => {
-              const t = startOfDay(new Date());
-              setVisibleMonth(startOfMonth(t));
-              setMobileSelectedDay(t);
-            }}
-          >
-            Dnes
-          </Button>
-        </div>
+        {showCompact ? (
+          <>
+            <div className="min-w-0">
+              <h2
+                className={cn(
+                  "text-base font-semibold leading-tight",
+                  dark ? "text-white" : "text-slate-900"
+                )}
+              >
+                {titleText}
+              </h2>
+              <p
+                className={cn(
+                  "mt-0.5 text-xs leading-snug",
+                  dark ? "text-slate-400" : "text-slate-600"
+                )}
+              >
+                {scheduleFilter === "installationsOnly"
+                  ? "Montáže přiřazené vám — měsíční přehled."
+                  : "Schůzky, montáže a zaměření — měsíční přehled."}
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "h-10 w-10 shrink-0",
+                  dark
+                    ? "border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+                    : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+                )}
+                onClick={() => setVisibleMonth((d) => subMonths(d, 1))}
+                aria-label="Předchozí měsíc"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <p
+                className={cn(
+                  "min-w-0 flex-1 text-center text-lg font-bold capitalize leading-tight tabular-nums sm:text-xl",
+                  dark ? "text-white" : "text-slate-900"
+                )}
+                aria-live="polite"
+              >
+                {visibleMonthLabel}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "h-10 w-10 shrink-0",
+                  dark
+                    ? "border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+                    : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+                )}
+                onClick={() => setVisibleMonth((d) => addMonths(d, 1))}
+                aria-label="Další měsíc"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+            <div className="flex justify-center">
+              <Button
+                type="button"
+                variant="secondary"
+                className={cn(
+                  "inline-flex min-h-10 border px-4",
+                  dark
+                    ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
+                    : "border-slate-200 bg-slate-100 text-slate-900 hover:bg-slate-200"
+                )}
+                onClick={() => {
+                  const t = startOfDay(new Date());
+                  setVisibleMonth(startOfMonth(t));
+                  setMobileSelectedDay(t);
+                }}
+              >
+                Dnes
+              </Button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div>
+              <h2 className={cn("text-lg font-semibold", dark ? "text-white" : "text-slate-900")}>
+                {titleText}
+              </h2>
+              <p className={cn("text-sm", dark ? "text-slate-300" : "text-slate-800")}>
+                {scheduleFilter === "installationsOnly"
+                  ? "Montáže přiřazené vám — měsíční přehled."
+                  : "Schůzky, montáže a zaměření — měsíční přehled."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                className={cn("h-9 gap-2", showFull && !readOnly ? "inline-flex" : "hidden")}
+                onClick={() => openCreateForDay(new Date())}
+              >
+                <Plus className="h-4 w-4" />
+                Nová schůzka
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className={cn(
+                  "h-9 gap-2 border",
+                  showFull && !readOnly ? "inline-flex" : "hidden",
+                  dark
+                    ? "border-violet-400/40 bg-violet-500/15 text-violet-100 hover:bg-violet-500/25"
+                    : "border-violet-300 bg-violet-50 text-violet-950 hover:bg-violet-100"
+                )}
+                onClick={() => openCreateForDay(new Date(), "installation")}
+              >
+                <Plus className="h-4 w-4" />
+                Nová montáž
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "h-9 w-9",
+                  dark
+                    ? "border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+                    : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+                )}
+                onClick={() => setVisibleMonth((d) => subMonths(d, 1))}
+                aria-label="Předchozí měsíc"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span
+                className={cn(
+                  "min-w-[160px] text-center text-sm font-medium tabular-nums",
+                  dark ? "text-slate-100" : "text-slate-900"
+                )}
+              >
+                {visibleMonthLabel}
+              </span>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                className={cn(
+                  "h-9 w-9",
+                  dark
+                    ? "border-white/20 bg-white/5 text-slate-100 hover:bg-white/10"
+                    : "border-slate-300 bg-white text-slate-900 hover:bg-slate-50"
+                )}
+                onClick={() => setVisibleMonth((d) => addMonths(d, 1))}
+                aria-label="Další měsíc"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                className={cn(
+                  "inline-flex shrink-0 border px-3",
+                  dark
+                    ? "border-white/15 bg-white/10 text-white hover:bg-white/15"
+                    : "border-slate-200 bg-slate-100 text-slate-900 hover:bg-slate-200"
+                )}
+                onClick={() => {
+                  const t = startOfDay(new Date());
+                  setVisibleMonth(startOfMonth(t));
+                  setMobileSelectedDay(t);
+                }}
+              >
+                Dnes
+              </Button>
+            </div>
+          </>
+        )}
       </div>
 
       <div className={cn("p-3 sm:p-4", dark && "bg-slate-950")}>
@@ -1454,7 +1545,7 @@ export function CompanyScheduleCalendar({
             {/* Mobil / compact: pás dní, seznam akcí, měsíční mřížka */}
             <div className={showCompact ? "block" : "hidden"}>
               {!readOnly ? (
-                <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <div className="mb-4 grid grid-cols-1 gap-2.5 sm:grid-cols-2">
                   <Button
                     type="button"
                     className={cn(
@@ -1704,16 +1795,17 @@ export function CompanyScheduleCalendar({
                 )}
               </div>
 
-              <div className={cn("mt-6 border-t pt-4", dark ? "border-white/10" : "border-slate-100")}>
-                <p
+              <div className={cn("mt-5 border-t pt-4", dark ? "border-white/10" : "border-slate-100")}>
+                <h3
                   className={cn(
-                    "mb-2 text-center text-[11px] font-semibold uppercase tracking-wide",
-                    dark ? "text-slate-400" : "text-slate-500"
+                    "mb-3 text-center text-xl font-bold capitalize leading-tight tracking-tight sm:text-2xl",
+                    dark ? "text-white" : "text-slate-900"
                   )}
+                  aria-live="polite"
                 >
-                  Celý měsíc
-                </p>
-                <div className="grid grid-cols-7 gap-2">
+                  {visibleMonthLabel}
+                </h3>
+                <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
                   {WEEKDAYS.map((wd) => (
                     <div
                       key={wd}
@@ -1887,39 +1979,6 @@ export function CompanyScheduleCalendar({
         )}
       </div>
 
-      {showCompact && !readOnly && !formOpen ? (
-        <>
-          <button
-            type="button"
-            className={cn(
-              "fixed right-4 z-[65] flex min-h-[52px] items-center gap-2 rounded-full border px-5 py-3 text-sm font-semibold shadow-lg transition-colors",
-              dark
-                ? "border-orange-500/40 bg-orange-500 text-slate-950 hover:bg-orange-400"
-                : "border-slate-300 bg-orange-500 text-white hover:bg-orange-600"
-            )}
-            style={{ bottom: "calc(144px + env(safe-area-inset-bottom, 0px) + 12px)" }}
-            onClick={() => openCreateForDay(mobileSelectedDay)}
-          >
-            <Plus className="h-5 w-5" />
-            Schůzka
-          </button>
-          <button
-            type="button"
-            className={cn(
-              "fixed right-4 z-[65] flex min-h-[52px] items-center gap-2 rounded-full border px-5 py-3 text-sm font-semibold shadow-lg transition-colors",
-              dark
-                ? "border-violet-400/50 bg-violet-600 text-white hover:bg-violet-500"
-                : "border-violet-300 bg-violet-600 text-white hover:bg-violet-500"
-            )}
-            style={{ bottom: "calc(96px + env(safe-area-inset-bottom, 0px) + 12px)" }}
-            onClick={() => openCreateForDay(mobileSelectedDay, "installation")}
-          >
-            <Plus className="h-5 w-5" />
-            Montáž
-          </button>
-        </>
-      ) : null}
-
       <Sheet
         open={formOpen}
         onOpenChange={(open) => {
@@ -1937,7 +1996,7 @@ export function CompanyScheduleCalendar({
             "flex w-full flex-col overflow-y-auto sm:max-w-lg",
             showCompact ? "max-h-[92vh]" : "h-full max-h-screen",
             dark && "border-white/10 bg-slate-950 text-slate-50",
-            showCompact && "pb-[calc(96px+env(safe-area-inset-bottom))]"
+            showCompact && "pb-[env(safe-area-inset-bottom)]"
           )}
         >
           <SheetHeader>
