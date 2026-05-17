@@ -94,21 +94,19 @@ export function paymentStatusLabelCs(status: DepositPaymentStatus): string {
   return "—";
 }
 
+/**
+ * Sloupec „Zesmluvněno“ — pouze ruční datum, jinak ANO/NE (bez data vytvoření zakázky).
+ */
 export function resolveContractedDisplayValue(
   job: Record<string, unknown>,
-  options?: { fallbackDateLabel?: string; isContracted?: boolean }
+  options?: { isContracted?: boolean }
 ): string {
   const manual = parseJobContractManual(job);
   const manualDate = manual.contractedAt
     ? formatContractManualDateLabel(manual.contractedAt)
     : "";
   if (manualDate) return manualDate;
-  if (manual.isContracted === true) return "ANO";
-
-  const fb = String(options?.fallbackDateLabel ?? "").trim();
-  if (fb && fb !== "—") return fb;
-
-  if (options?.isContracted === true) return "ANO";
+  if (manual.isContracted === true || options?.isContracted === true) return "ANO";
   return "NE";
 }
 
@@ -134,8 +132,6 @@ export function calculateJobPaymentSummary(params: {
   invoices?: JobInvoiceForDeposit[];
   workContracts?: Array<WorkContractDoc | WorkContractLike>;
   jobIncomes?: JobIncomeForDeposit[];
-  /** Datum zesmluvnění ze smlouvy (fallback pro contractedDisplayValue). */
-  contractedDateFallback?: string;
   isContracted?: boolean;
 }): JobPaymentSummary {
   const job = params.job;
@@ -183,7 +179,6 @@ export function calculateJobPaymentSummary(params: {
 
   const isContracted = params.isContracted === true;
   const contractedDisplayValue = resolveContractedDisplayValue(job, {
-    fallbackDateLabel: params.contractedDateFallback,
     isContracted,
   });
 

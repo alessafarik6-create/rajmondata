@@ -18,6 +18,8 @@ import {
   formatMoneyInputDisplay,
   formatContractManualDateLabel,
   JOB_CONTRACT_MANUAL_FIELD,
+  normalizeContractedAtToIso,
+  parseContractedAtInput,
   parseJobContractManual,
   parseMoneyInput,
   serializeJobContractManualForFirestore,
@@ -65,7 +67,10 @@ export function JobContractDepositSection({
   const [saving, setSaving] = useState(false);
 
   const [isContracted, setIsContracted] = useState(false);
-  const [contractedAt, setContractedAt] = useState("");
+  /** ISO YYYY-MM-DD pro date picker a uložení. */
+  const [contractedAtIso, setContractedAtIso] = useState("");
+  /** Ruční vstup dd.mm.yyyy (synchronizace při blur). */
+  const [contractedAtText, setContractedAtText] = useState("");
   const [contractNumber, setContractNumber] = useState("");
   const [totalPriceInput, setTotalPriceInput] = useState("");
   const [requiredDepositInput, setRequiredDepositInput] = useState("");
@@ -77,7 +82,9 @@ export function JobContractDepositSection({
   useEffect(() => {
     const m = parseJobContractManual(job);
     setIsContracted(m.isContracted === true);
-    setContractedAt(m.contractedAt ?? "");
+    const iso = normalizeContractedAtToIso(m.contractedAt) ?? "";
+    setContractedAtIso(iso);
+    setContractedAtText(iso ? formatContractManualDateLabel(iso) : "");
     setContractNumber(m.contractNumber ?? "");
     setTotalPriceInput(
       formatMoneyInputDisplay(
@@ -117,10 +124,41 @@ export function JobContractDepositSection({
     [jobRef, canEdit, toast]
   );
 
+  const resolveContractedAtForSave = useCallback((): string | null => {
+    return (
+      normalizeContractedAtToIso(contractedAtIso) ||
+      parseContractedAtInput(contractedAtText) ||
+      null
+    );
+  }, [contractedAtIso, contractedAtText]);
+
+  const handleContractedAtTextBlur = () => {
+    const trimmed = contractedAtText.trim();
+    if (!trimmed) {
+      setContractedAtIso("");
+      setContractedAtText("");
+      return;
+    }
+    const iso = parseContractedAtInput(trimmed);
+    if (!iso) {
+      toast({
+        variant: "destructive",
+        title: "Neplatné datum",
+        description: "Zadejte datum ve formátu dd.mm.yyyy (např. 15.03.2024).",
+      });
+      setContractedAtText(
+        contractedAtIso ? formatContractManualDateLabel(contractedAtIso) : ""
+      );
+      return;
+    }
+    setContractedAtIso(iso);
+    setContractedAtText(formatContractManualDateLabel(iso));
+  };
+
   const handleSave = () => {
     void persist({
       isContracted,
-      contractedAt: contractedAt.trim() || null,
+      contractedAt: resolveContractedAtForSave(),
       contractNumber: contractNumber.trim() || null,
       totalPriceGross: parseMoneyInput(totalPriceInput),
       requiredDepositGross: parseMoneyInput(requiredDepositInput),
@@ -143,7 +181,7 @@ export function JobContractDepositSection({
       ...job,
       contractManual: serializeJobContractManualForFirestore({
         isContracted,
-        contractedAt: contractedAt.trim() || null,
+        contractedAt: resolveContractedAtForSave(),
         contractNumber: contractNumber.trim() || null,
         totalPriceGross: parseMoneyInput(totalPriceInput),
         requiredDepositGross: parseMoneyInput(requiredDepositInput),
@@ -160,7 +198,8 @@ export function JobContractDepositSection({
   }, [
     job,
     isContracted,
-    contractedAt,
+    contractedAtIso,
+    contractedAtText,
     contractNumber,
     totalPriceInput,
     requiredDepositInput,
@@ -210,19 +249,45 @@ export function JobContractDepositSection({
         <div className={gridClass}>
           <div className="space-y-1.5">
             <Label htmlFor="contract-manual-date">Datum zesmluvnění</Label>
-            <Input
-              id="contract-manual-date"
-              type="date"
-              className={fieldClass}
-              value={contractedAt}
-              onChange={(e) => setContractedAt(e.target.value)}
-              disabled={!canEdit || saving}
-            />
-            {contractedAt ? (
-              <p className="text-xs text-gray-600">
-                {formatContractManualDateLabel(contractedAt)}
+            {canEdit ? (
+              <>
+                <Input
+                  id="contract-manual-date"
+                  type="date"
+                  className={cn(fieldClass, belowLg && "min-h-[44px]")}
+                  value={contractedAtIso}
+                  onChange={(e) => {
+                    const iso = e.target.value;
+                    setContractedAtIso(iso);
+                    setContractedAtText(iso ? formatContractManualDateLabel(iso) : "");
+                  }}
+                  disabled={saving}
+                />
+                <Input
+                  id="contract-manual-date-text"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  className={fieldClass}
+                  value={contractedAtText}
+                  onChange={(e) => setContractedAtText(e.target.value)}
+                  onBlur={handleContractedAtTextBlur}
+                  disabled={saving}
+                  placeholder="dd.mm.yyyy"
+                  aria-label="Datum zesmluvnění ve formátu dd.mm.yyyy"
+                />
+                <p className="text-xs text-gray-600">
+                  Datum podpisu smlouvy (nezávislé na datu vytvoření zakázky). Formát v
+                  exportu: dd.mm.yyyy.
+                </p>
+              </>
+            ) : (
+              <p className="text-sm font-medium text-gray-900 tabular-nums">
+                {contractedAtIso
+                  ? formatContractManualDateLabel(contractedAtIso)
+                  : "—"}
               </p>
-            ) : null}
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="contract-manual-number">Číslo smlouvy / SOD</Label>

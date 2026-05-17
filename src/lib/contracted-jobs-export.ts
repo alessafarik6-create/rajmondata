@@ -18,6 +18,7 @@ import {
   calculateJobPaymentSummary,
   formatMoneyKc,
   paymentStatusLabelCs,
+  resolveContractedDisplayValue,
   type DepositPaymentStatus,
   type JobIncomeForDeposit,
   type JobInvoiceForDeposit,
@@ -199,38 +200,17 @@ export function buildContractedJobExportRow(params: {
   const primary = selectPrimaryWorkContractForBilling(contractLikes, budgetGross);
   const manual = parseJobContractManual(job);
 
-  let contractedAtLabel = manual.contractedAt
+  const jobIsContracted = isJobContracted(job, contractsForJob);
+  const contractedAtLabel = manual.contractedAt
     ? formatContractManualDateLabel(manual.contractedAt)
     : "";
-  if (!contractedAtLabel && primary) {
-    const src = filteredContracts.find((c) => c.id === primary.id);
-    if (src) {
-      contractedAtLabel =
-        formatCsDateFromFirestore(src.contractIssuedAt) ||
-        formatCsDateFromFirestore(src.pdfSavedAt) ||
-        formatCsDateFromFirestore(src.updatedAt) ||
-        "";
-    }
-  }
-  if (!contractedAtLabel) {
-    for (const c of filteredContracts) {
-      const d =
-        formatCsDateFromFirestore(c.contractIssuedAt) ||
-        formatCsDateFromFirestore(c.pdfSavedAt);
-      if (d) {
-        contractedAtLabel = d;
-        break;
-      }
-    }
-  }
 
   const payment = calculateJobPaymentSummary({
     job,
     invoices,
     workContracts: filteredContracts,
     jobIncomes,
-    contractedDateFallback: contractedAtLabel,
-    isContracted: true,
+    isContracted: jobIsContracted,
   });
 
   const addrBlock = buildJobCustomerAddressBlock(job, customer);
@@ -282,7 +262,9 @@ export function buildContractedJobExportRow(params: {
     address: formatAddressOneLine(addrBlock.addressLines),
     createdAtLabel: createdAtLabel || "—",
     contractedAtLabel: contractedAtLabel || "—",
-    contractedDisplayValue: payment.contractedDisplayValue,
+    contractedDisplayValue: resolveContractedDisplayValue(job, {
+      isContracted: jobIsContracted,
+    }),
     contractNumber: contractNumber || "—",
     totalPriceGross: payment.totalPriceGross,
     requiredDepositGross: payment.requiredDepositGross,

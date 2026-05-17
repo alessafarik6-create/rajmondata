@@ -53,12 +53,13 @@ export function parseJobContractManual(job: unknown): JobContractManualData {
     j.isManuallyContracted === true ||
     j.manualContracted === true;
 
-  const contractedAt =
+  const contractedAtRaw =
     o.contractedAt != null
-      ? String(o.contractedAt).trim().slice(0, 10) || null
+      ? String(o.contractedAt).trim()
       : j.manualContractedAt != null
-        ? String(j.manualContractedAt).trim().slice(0, 10) || null
-        : null;
+        ? String(j.manualContractedAt).trim()
+        : "";
+  const contractedAt = normalizeContractedAtToIso(contractedAtRaw);
 
   const contractNumber =
     (o.contractNumber != null ? String(o.contractNumber).trim() : "") ||
@@ -93,11 +94,60 @@ export function isJobManuallyContracted(job: unknown): boolean {
   return parseJobContractManual(job).isContracted === true;
 }
 
+/** Normalizuje vstup na ISO `YYYY-MM-DD` (uložení do Firestore). */
+export function normalizeContractedAtToIso(
+  raw: string | null | undefined
+): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s) return null;
+
+  const isoPrefix = s.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(isoPrefix)) {
+    return isoPrefix;
+  }
+
+  const czMatch = /^(\d{1,2})\.(\d{1,2})\.(\d{4})$/.exec(s.replace(/\s/g, ""));
+  if (czMatch) {
+    const day = Number(czMatch[1]);
+    const month = Number(czMatch[2]);
+    const year = Number(czMatch[3]);
+    if (
+      year >= 1900 &&
+      year <= 2100 &&
+      month >= 1 &&
+      month <= 12 &&
+      day >= 1 &&
+      day <= 31
+    ) {
+      const d = String(day).padStart(2, "0");
+      const m = String(month).padStart(2, "0");
+      return `${year}-${m}-${d}`;
+    }
+    return null;
+  }
+
+  const parsed = new Date(s);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  return null;
+}
+
+/** Zobrazení data zesmluvnění — český formát dd.mm.yyyy. */
 export function formatContractManualDateLabel(iso: string | null | undefined): string {
-  const s = String(iso ?? "").trim().slice(0, 10);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return "";
-  const [y, m, d] = s.split("-");
-  return `${Number(d)}. ${Number(m)}. ${y}`;
+  const normalized = normalizeContractedAtToIso(iso);
+  if (!normalized) return "";
+  const [y, m, d] = normalized.split("-");
+  return `${d}.${m}.${y}`;
+}
+
+/** Parsování ručního vstupu data (ISO z date pickeru nebo dd.mm.yyyy). */
+export function parseContractedAtInput(value: string): string | null {
+  return normalizeContractedAtToIso(value);
 }
 
 export function serializeJobContractManualForFirestore(
@@ -105,7 +155,7 @@ export function serializeJobContractManualForFirestore(
 ): Record<string, unknown> {
   return {
     isContracted: data.isContracted === true,
-    contractedAt: data.contractedAt?.trim() || null,
+    contractedAt: normalizeContractedAtToIso(data.contractedAt) || null,
     contractNumber: data.contractNumber?.trim() || null,
     totalPriceGross:
       data.totalPriceGross != null && Number.isFinite(data.totalPriceGross)
