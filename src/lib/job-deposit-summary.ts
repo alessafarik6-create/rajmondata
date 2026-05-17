@@ -10,8 +10,9 @@ import {
   type WorkContractLike,
 } from "@/lib/job-billing-invoices";
 import {
-  formatContractManualDateLabel,
+  buildManualDepositPaymentLabels,
   parseJobContractManual,
+  resolveManualDepositGross,
 } from "@/lib/job-contract-manual";
 import { resolveJobBudgetFromFirestore, resolveJobPaidFromFirestore, roundMoney2 } from "@/lib/vat-calculations";
 import type { WorkContractDoc } from "@/lib/work-contract-print-html-build";
@@ -165,8 +166,10 @@ export function calculateJobDepositSummary(params: {
   const incomes = params.jobIncomes ?? [];
 
   const manual = parseJobContractManual(job);
-  const manualDepositGross = roundMoney2(
-    Math.max(0, Number(manual.paidDepositGross) || 0)
+  const manualDepositGross = resolveManualDepositGross(manual);
+  const manualPaymentLabels = buildManualDepositPaymentLabels(
+    manual.manualDepositPayments,
+    formatMoneyKc
   );
 
   const budget = resolveJobBudgetFromFirestore(job);
@@ -189,7 +192,10 @@ export function calculateJobDepositSummary(params: {
   });
 
   const incomePaid = sumJobIncomesGross(incomes);
-  const paymentDateLabels: string[] = buildAdvancePaymentLabels(invoices);
+  const paymentDateLabels: string[] = [
+    ...manualPaymentLabels,
+    ...buildAdvancePaymentLabels(invoices),
+  ];
   const otherPaymentsLabels: string[] = [];
 
   for (const inv of invoices) {

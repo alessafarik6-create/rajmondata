@@ -11,10 +11,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { FileText, Loader2 } from "lucide-react";
+import { FileText, Loader2, Plus, Trash2 } from "lucide-react";
 import { JD } from "@/lib/job-detail-page-styles";
 import { useIsBelowLg } from "@/hooks/use-mobile";
 import {
+  createManualDepositPaymentId,
   formatMoneyInputDisplay,
   formatContractManualDateLabel,
   JOB_CONTRACT_MANUAL_FIELD,
@@ -24,6 +25,7 @@ import {
   parseMoneyInput,
   serializeJobContractManualForFirestore,
   type JobContractManualData,
+  type ManualDepositPayment,
 } from "@/lib/job-contract-manual";
 import {
   calculateJobPaymentSummary,
@@ -47,9 +49,38 @@ type Props = {
   jobIncomes?: JobIncomeForDeposit[];
 };
 
+type ManualPaymentRowState = {
+  id: string;
+  paidAtIso: string;
+  paidAtText: string;
+  amountInput: string;
+  note: string;
+};
+
 function manualFingerprint(job: unknown): string {
   const m = parseJobContractManual(job);
   return JSON.stringify(m);
+}
+
+function paymentsToRowState(payments: ManualDepositPayment[]): ManualPaymentRowState[] {
+  return payments.map((p) => ({
+    id: p.id,
+    paidAtIso: p.paidAt ?? "",
+    paidAtText: p.paidAt ? formatContractManualDateLabel(p.paidAt) : "",
+    amountInput: formatMoneyInputDisplay(p.amountGross),
+    note: p.note ?? "",
+  }));
+}
+
+function rowStateToPayments(rows: ManualPaymentRowState[]): ManualDepositPayment[] {
+  return rows.map((r) => ({
+    id: r.id,
+    paidAt:
+      normalizeContractedAtToIso(r.paidAtIso) ||
+      parseContractedAtInput(r.paidAtText),
+    amountGross: parseMoneyInput(r.amountInput) ?? 0,
+    note: r.note.trim() || null,
+  }));
 }
 
 export function JobContractDepositSection({
@@ -75,6 +106,9 @@ export function JobContractDepositSection({
   const [totalPriceInput, setTotalPriceInput] = useState("");
   const [requiredDepositInput, setRequiredDepositInput] = useState("");
   const [paidDepositInput, setPaidDepositInput] = useState("");
+  const [manualPaymentRows, setManualPaymentRows] = useState<ManualPaymentRowState[]>(
+    []
+  );
   const [depositNote, setDepositNote] = useState("");
 
   const fp = manualFingerprint(job);
@@ -94,6 +128,11 @@ export function JobContractDepositSection({
     );
     setRequiredDepositInput(formatMoneyInputDisplay(m.requiredDepositGross));
     setPaidDepositInput(formatMoneyInputDisplay(m.paidDepositGross));
+    setManualPaymentRows(
+      m.manualDepositPayments?.length
+        ? paymentsToRowState(m.manualDepositPayments)
+        : []
+    );
     setDepositNote(m.depositNote ?? "");
   }, [fp, defaultTotalPriceGross, job]);
 
@@ -155,19 +194,89 @@ export function JobContractDepositSection({
     setContractedAtText(formatContractManualDateLabel(iso));
   };
 
-  const handleSave = () => {
-    void persist({
+  const buildManualDataPayload = useCallback((): JobContractManualData => {
+    const manualDepositPayments = rowStateToPayments(manualPaymentRows);
+    return {
       isContracted,
       contractedAt: resolveContractedAtForSave(),
       contractNumber: contractNumber.trim() || null,
       totalPriceGross: parseMoneyInput(totalPriceInput),
       requiredDepositGross: parseMoneyInput(requiredDepositInput),
-      paidDepositGross: parseMoneyInput(paidDepositInput),
+      paidDepositGross:
+        manualDepositPayments.length > 0
+          ? null
+          : parseMoneyInput(paidDepositInput),
+      manualDepositPayments,
       depositNote: depositNote.trim() || null,
-    });
+    };
+  }, [
+    manualPaymentRows,
+    isContracted,
+    resolveContractedAtForSave,
+    contractNumber,
+    totalPriceInput,
+    requiredDepositInput,
+    paidDepositInput,
+    depositNote,
+  ]);
+
+  const handleSave = () => {
+    void persist(buildManualDataPayload());
   };
 
-  if (!canView) return null;
+  const addManualPaymentRow = () => {
+    setManualPaymentRows((rows) => [
+      ...rows,
+      {
+        id: createManualDepositPaymentId(),
+        paidAtIso: "",
+        paidAtText: "",
+        amountInput: "",
+        note: "",
+      },
+    ]);
+  };
+
+  const updateManualPaymentRow = (
+    id: string,
+    patch: Partial<Omit<ManualPaymentRowState, "id">>
+  ) => {
+    setManualPaymentRows((rows) =>
+      rows.map((r) => (r.id === id ? { ...r, ...patch } : r))
+    );
+  };
+
+  const removeManualPaymentRow = (id: string) => {
+    setManualPaymentRows((rows) => rows.filter((r) => r.id !== id));
+  };
+
+  const handleManualPaymentDateBlur = (id: string) => {
+    const row = manualPaymentRows.find((r) => r.id === id);
+    if (!row) return;
+    const trimmed = row.paidAtText.trim();
+    if (!trimmed) {
+      updateManualPaymentRow(id, { paidAtIso: "", paidAtText: "" });
+      return;
+    }
+    const iso = parseContractedAtInput(trimmed);
+    if (!iso) {
+      toast({
+        variant: "destructive",
+        title: "Neplatné datum platby",
+        description: "Zadejte datum ve formátu dd.mm.yyyy.",
+      });
+      updateManualPaymentRow(id, {
+        paidAtText: row.paidAtIso
+          ? formatContractManualDateLabel(row.paidAtIso)
+          : "",
+      });
+      return;
+    }
+    updateManualPaymentRow(id, {
+      paidAtIso: iso,
+      paidAtText: formatContractManualDateLabel(iso),
+    });
+  };
 
   const fieldClass = cn("w-full min-w-0", belowLg && "text-base");
   const gridClass = cn(
@@ -179,15 +288,7 @@ export function JobContractDepositSection({
     if (!job) return null;
     const draftJob: Record<string, unknown> = {
       ...job,
-      contractManual: serializeJobContractManualForFirestore({
-        isContracted,
-        contractedAt: resolveContractedAtForSave(),
-        contractNumber: contractNumber.trim() || null,
-        totalPriceGross: parseMoneyInput(totalPriceInput),
-        requiredDepositGross: parseMoneyInput(requiredDepositInput),
-        paidDepositGross: parseMoneyInput(paidDepositInput),
-        depositNote: depositNote.trim() || null,
-      }),
+      contractManual: serializeJobContractManualForFirestore(buildManualDataPayload()),
     };
     return calculateJobPaymentSummary({
       job: draftJob,
@@ -197,18 +298,13 @@ export function JobContractDepositSection({
     });
   }, [
     job,
-    isContracted,
-    contractedAtIso,
-    contractedAtText,
-    contractNumber,
-    totalPriceInput,
-    requiredDepositInput,
-    paidDepositInput,
-    depositNote,
+    buildManualDataPayload,
     jobInvoices,
     workContractsForJob,
     jobIncomes,
   ]);
+
+  if (!canView) return null;
 
   return (
     <Card className={cn(JD.card)}>
@@ -345,10 +441,144 @@ export function JobContractDepositSection({
               placeholder="0"
             />
             <p className="text-xs text-gray-600">
-              Lze zadat i bez zálohové faktury v portálu. Do exportu se přičte k platbám z
-              dokladů (bez dvojího započtení stejné částky).
+              Použije se jen pokud nemáte zadané ruční platby zálohy níže.
             </p>
           </div>
+
+          <div className="space-y-3 sm:col-span-2 rounded-lg border border-orange-200/90 bg-white/80 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">Ruční platby zálohy</p>
+                <p className="text-xs text-gray-600 mt-0.5">
+                  Pro starší smlouvy mimo portál — datum, částka a poznámka ke každé platbě.
+                </p>
+              </div>
+              {canEdit ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5 shrink-0"
+                  disabled={saving}
+                  onClick={addManualPaymentRow}
+                >
+                  <Plus className="h-4 w-4" aria-hidden />
+                  Přidat platbu
+                </Button>
+              ) : null}
+            </div>
+
+            {manualPaymentRows.length === 0 ? (
+              <p className="text-xs text-gray-600">
+                {canEdit
+                  ? "Zatím žádná ruční platba. Klikněte na „Přidat platbu“."
+                  : "Žádné ruční platby zálohy."}
+              </p>
+            ) : (
+              <div className="space-y-3">
+                {manualPaymentRows.map((row, index) => (
+                  <div
+                    key={row.id}
+                    className="rounded-md border border-gray-200 bg-gray-50/80 p-3 space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-gray-700">
+                        Platba {index + 1}
+                      </span>
+                      {canEdit ? (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                          disabled={saving}
+                          onClick={() => removeManualPaymentRow(row.id)}
+                          aria-label="Smazat platbu"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      ) : null}
+                    </div>
+                    <div className={gridClass}>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`manual-pay-date-${row.id}`}>Datum platby</Label>
+                        {canEdit ? (
+                          <>
+                            <Input
+                              id={`manual-pay-date-${row.id}`}
+                              type="date"
+                              className={cn(fieldClass, belowLg && "min-h-[44px]")}
+                              value={row.paidAtIso}
+                              disabled={saving}
+                              onChange={(e) => {
+                                const iso = e.target.value;
+                                updateManualPaymentRow(row.id, {
+                                  paidAtIso: iso,
+                                  paidAtText: iso
+                                    ? formatContractManualDateLabel(iso)
+                                    : "",
+                                });
+                              }}
+                            />
+                            <Input
+                              type="text"
+                              inputMode="numeric"
+                              className={fieldClass}
+                              value={row.paidAtText}
+                              disabled={saving}
+                              placeholder="dd.mm.yyyy"
+                              onChange={(e) =>
+                                updateManualPaymentRow(row.id, {
+                                  paidAtText: e.target.value,
+                                })
+                              }
+                              onBlur={() => handleManualPaymentDateBlur(row.id)}
+                            />
+                          </>
+                        ) : (
+                          <p className="text-sm font-medium tabular-nums">
+                            {row.paidAtIso
+                              ? formatContractManualDateLabel(row.paidAtIso)
+                              : "—"}
+                          </p>
+                        )}
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label htmlFor={`manual-pay-amount-${row.id}`}>Částka (Kč s DPH)</Label>
+                        <Input
+                          id={`manual-pay-amount-${row.id}`}
+                          inputMode="decimal"
+                          className={fieldClass}
+                          value={row.amountInput}
+                          disabled={!canEdit || saving}
+                          onChange={(e) =>
+                            updateManualPaymentRow(row.id, {
+                              amountInput: e.target.value,
+                            })
+                          }
+                          placeholder="0"
+                        />
+                      </div>
+                      <div className="space-y-1.5 sm:col-span-2">
+                        <Label htmlFor={`manual-pay-note-${row.id}`}>Poznámka</Label>
+                        <Input
+                          id={`manual-pay-note-${row.id}`}
+                          className={fieldClass}
+                          value={row.note}
+                          disabled={!canEdit || saving}
+                          onChange={(e) =>
+                            updateManualPaymentRow(row.id, { note: e.target.value })
+                          }
+                          placeholder="Volitelně…"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="space-y-1.5 sm:col-span-2">
             <Label htmlFor="contract-manual-note">Poznámka k záloze</Label>
             <Textarea

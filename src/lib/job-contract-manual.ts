@@ -6,6 +6,14 @@ import { roundMoney2 } from "@/lib/vat-calculations";
 
 export const JOB_CONTRACT_MANUAL_FIELD = "contractManual" as const;
 
+export type ManualDepositPayment = {
+  id: string;
+  /** ISO YYYY-MM-DD */
+  paidAt: string | null;
+  amountGross: number;
+  note?: string | null;
+};
+
 export type JobContractManualData = {
   isContracted?: boolean;
   /** ISO datum YYYY-MM-DD */
@@ -13,9 +21,83 @@ export type JobContractManualData = {
   contractNumber?: string | null;
   totalPriceGross?: number | null;
   requiredDepositGross?: number | null;
+  /** Legacy — použije se jen pokud chybí {@link manualDepositPayments}. */
   paidDepositGross?: number | null;
+  manualDepositPayments?: ManualDepositPayment[];
   depositNote?: string | null;
 };
+
+function formatKcInline(value: number): string {
+  const n = Number.isFinite(value) ? Math.round(value) : 0;
+  return `${n.toLocaleString("cs-CZ")} Kč`;
+}
+
+export function createManualDepositPaymentId(): string {
+  return `mdp_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function parseManualDepositPayments(raw: unknown): ManualDepositPayment[] {
+  if (!Array.isArray(raw)) return [];
+  const out: ManualDepositPayment[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const amountGross = readNum(o.amountGross) ?? 0;
+    const paidAt = normalizeContractedAtToIso(
+      o.paidAt != null ? String(o.paidAt) : null
+    );
+    const id = String(o.id ?? "").trim() || createManualDepositPaymentId();
+    const note =
+      o.note != null ? String(o.note).trim() || null : null;
+    if (amountGross <= 0.009 && !paidAt) continue;
+    out.push({
+      id,
+      paidAt,
+      amountGross: roundMoney2(Math.max(0, amountGross)),
+      note,
+    });
+  }
+  return out.sort((a, b) => {
+    const da = a.paidAt ?? "";
+    const db = b.paidAt ?? "";
+    if (da && db && da !== db) return da.localeCompare(db);
+    return a.id.localeCompare(b.id);
+  });
+}
+
+/** Součet ručních plateb zálohy, nebo legacy `paidDepositGross`. */
+export function resolveManualDepositGross(manual: JobContractManualData): number {
+  const payments = manual.manualDepositPayments ?? [];
+  if (payments.length > 0) {
+    return roundMoney2(
+      payments.reduce((sum, p) => sum + Math.max(0, p.amountGross), 0)
+    );
+  }
+  return roundMoney2(Math.max(0, Number(manual.paidDepositGross) || 0));
+}
+
+export function formatManualDepositPaymentLabel(
+  payment: ManualDepositPayment,
+  moneyFormatter: (value: number) => string = formatKcInline
+): string {
+  const dateLabel = payment.paidAt
+    ? formatContractManualDateLabel(payment.paidAt)
+    : "—";
+  const amountLabel = moneyFormatter(payment.amountGross);
+  const note = payment.note?.trim();
+  if (note) return `${dateLabel} (${amountLabel}) · ${note}`;
+  return `${dateLabel} (${amountLabel})`;
+}
+
+export function buildManualDepositPaymentLabels(
+  payments: ManualDepositPayment[] | undefined,
+  moneyFormatter?: (value: number) => string
+): string[] {
+  if (!payments?.length) return [];
+  return payments
+    .filter((p) => p.amountGross > 0.009)
+    .map((p) => formatManualDepositPaymentLabel(p, moneyFormatter));
+}
 
 export function parseMoneyInput(value: string): number | null {
   const t = value.replace(/\s/g, "").replace(/\u00a0/g, "").replace(/Kč/gi, "").trim();
@@ -66,7 +148,16 @@ export function parseJobContractManual(job: unknown): JobContractManualData {
     (j.manualContractNumber != null ? String(j.manualContractNumber).trim() : "") ||
     null;
 
-  return {
+  const manualDepositPayments = parseManualDepositPayments(
+    o.manualDepositPayments
+  );
+
+  const legacyPaid =
+    readNum(o.paidDepositGross) ??
+    readNum(j.manualPaidDepositGross) ??
+    readNum(j.paidDepositManual);
+
+  const data: JobContractManualData = {
     isContracted,
     contractedAt,
     contractNumber: contractNumber || null,
@@ -77,10 +168,8 @@ export function parseJobContractManual(job: unknown): JobContractManualData {
     requiredDepositGross:
       readNum(o.requiredDepositGross) ??
       readNum(j.manualRequiredDepositGross),
-    paidDepositGross:
-      readNum(o.paidDepositGross) ??
-      readNum(j.manualPaidDepositGross) ??
-      readNum(j.paidDepositManual),
+    paidDepositGross: legacyPaid,
+    manualDepositPayments,
     depositNote:
       o.depositNote != null
         ? String(o.depositNote).trim() || null
@@ -88,6 +177,12 @@ export function parseJobContractManual(job: unknown): JobContractManualData {
           ? String(j.manualDepositNote).trim() || null
           : null,
   };
+
+  if (manualDepositPayments.length > 0) {
+    data.paidDepositGross = resolveManualDepositGross(data);
+  }
+
+  return data;
 }
 
 export function isJobManuallyContracted(job: unknown): boolean {
@@ -150,9 +245,48 @@ export function parseContractedAtInput(value: string): string | null {
   return normalizeContractedAtToIso(value);
 }
 
+function sanitizeManualDepositPaymentsForSave(
+  payments: ManualDepositPayment[] | undefined
+): ManualDepositPayment[] {
+  if (!payments?.length) return [];
+  const out: ManualDepositPayment[] = [];
+  for (const p of payments) {
+    const amountGross = roundMoney2(Math.max(0, Number(p.amountGross) || 0));
+    const paidAt = normalizeContractedAtToIso(p.paidAt);
+    if (amountGross <= 0.009 && !paidAt) continue;
+    out.push({
+      id: String(p.id ?? "").trim() || createManualDepositPaymentId(),
+      paidAt,
+      amountGross,
+      note: p.note?.trim() || null,
+    });
+  }
+  return out.sort((a, b) => {
+    const da = a.paidAt ?? "";
+    const db = b.paidAt ?? "";
+    if (da && db && da !== db) return da.localeCompare(db);
+    return a.id.localeCompare(b.id);
+  });
+}
+
 export function serializeJobContractManualForFirestore(
   data: JobContractManualData
 ): Record<string, unknown> {
+  const manualDepositPayments = sanitizeManualDepositPaymentsForSave(
+    data.manualDepositPayments
+  );
+  const paidFromList =
+    manualDepositPayments.length > 0
+      ? roundMoney2(
+          manualDepositPayments.reduce((s, p) => s + p.amountGross, 0)
+        )
+      : null;
+  const paidDepositGross =
+    paidFromList ??
+    (data.paidDepositGross != null && Number.isFinite(data.paidDepositGross)
+      ? roundMoney2(data.paidDepositGross)
+      : null);
+
   return {
     isContracted: data.isContracted === true,
     contractedAt: normalizeContractedAtToIso(data.contractedAt) || null,
@@ -165,10 +299,13 @@ export function serializeJobContractManualForFirestore(
       data.requiredDepositGross != null && Number.isFinite(data.requiredDepositGross)
         ? roundMoney2(data.requiredDepositGross)
         : null,
-    paidDepositGross:
-      data.paidDepositGross != null && Number.isFinite(data.paidDepositGross)
-        ? roundMoney2(data.paidDepositGross)
-        : null,
+    paidDepositGross,
+    manualDepositPayments: manualDepositPayments.map((p) => ({
+      id: p.id,
+      paidAt: p.paidAt,
+      amountGross: p.amountGross,
+      note: p.note ?? null,
+    })),
     depositNote: data.depositNote?.trim() || null,
   };
 }
