@@ -8,6 +8,7 @@ import { PDF_FONT_FAMILY, registerDejaVuFontsForPdf } from "@/lib/pdf/register-d
 import {
   type ContractedJobExportRow,
   type ContractedJobsExportSummary,
+  type ContractedJobsPaidVatGroup,
 } from "@/lib/contracted-jobs-export";
 import { formatMoneyKc, paymentStatusLabelCs } from "@/lib/job-payment-summary";
 import { formatCurrency } from "@/lib/pdf/exportJobsToPdf";
@@ -30,6 +31,62 @@ function safeCellText(s: string | null | undefined): string {
 function detectImageFormat(dataUrl: string): "PNG" | "JPEG" {
   if (dataUrl.startsWith("data:image/png")) return "PNG";
   return "JPEG";
+}
+
+function ensurePageSpace(
+  doc: jsPDF,
+  footY: number,
+  pageH: number,
+  neededMm: number
+): number {
+  if (footY + neededMm <= pageH - 10) return footY;
+  doc.addPage();
+  return 14;
+}
+
+function renderPaidVatSummaryBlock(
+  doc: jsPDF,
+  margin: number,
+  pageH: number,
+  startY: number,
+  groups: ContractedJobsPaidVatGroup[]
+): number {
+  const visible = groups.filter((g) => g.amountGross > 0.009);
+  if (visible.length === 0) return startY;
+
+  const blockHeight = 8 + visible.length * 14;
+  let footY = ensurePageSpace(doc, startY, pageH, blockHeight);
+  footY += 5;
+
+  doc.setFont(PDF_FONT_FAMILY, "bold");
+  doc.setFontSize(8.5);
+  doc.setTextColor(15, 15, 20);
+  doc.text("Souhrn přijatých plateb podle DPH:", margin, footY);
+  footY += 5;
+
+  doc.setFont(PDF_FONT_FAMILY, "normal");
+  doc.setFontSize(7.5);
+  doc.setTextColor(35, 35, 45);
+
+  for (const g of visible) {
+    footY = ensurePageSpace(doc, footY, pageH, 14);
+    doc.setFont(PDF_FONT_FAMILY, "bold");
+    doc.text(g.title, margin, footY);
+    footY += 3.5;
+    doc.setFont(PDF_FONT_FAMILY, "normal");
+    const lines = [
+      `Základ bez DPH: ${formatMoneyKc(g.amountNet)}`,
+      `DPH: ${formatMoneyKc(g.vatAmount)}`,
+      `Celkem s DPH: ${formatMoneyKc(g.amountGross)}`,
+    ];
+    for (const line of lines) {
+      doc.text(line, margin + 2, footY);
+      footY += 3.2;
+    }
+    footY += 2;
+  }
+
+  return footY;
 }
 
 export async function exportContractedJobsToPdf(
@@ -214,6 +271,14 @@ export async function exportContractedJobsToPdf(
     doc.text(line, margin, footY);
     footY += 4;
   }
+
+  footY = renderPaidVatSummaryBlock(
+    doc,
+    margin,
+    pageH,
+    footY + 2,
+    summary.paidByVatGroups ?? []
+  );
 
   const safeName = (
     options.fileName ||

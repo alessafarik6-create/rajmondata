@@ -193,6 +193,81 @@ export function resolveJobBudgetFromFirestore(
  * Zaplacené částky u zakázky (úhrady z účetní složky + případně ruční pole).
  * Primárně `paidAmountNet` / `paidAmountGross`; legacy `paidAmount` = hrubá částka.
  */
+export type JobVatRateForExport = {
+  effectiveRate: VatRatePercent;
+  /** Sazba nebyla na zakázce explicitně uložena — výpočet přes fallback 21 %. */
+  isUndetermined: boolean;
+  summaryGroupKey: "12" | "21" | "0" | "neurceno";
+  summaryGroupTitle: string;
+  summarySortOrder: number;
+};
+
+const VAT_SUMMARY_SORT: Record<JobVatRateForExport["summaryGroupKey"], number> = {
+  "12": 1,
+  "21": 2,
+  "0": 3,
+  neurceno: 4,
+};
+
+/** Sazba DPH zakázky pro export — explicitní `vatRate`, jinak fallback + „Neurčeno“. */
+export function resolveJobVatRateForExport(
+  job: Record<string, unknown> | null | undefined
+): JobVatRateForExport {
+  if (!job) {
+    return {
+      effectiveRate: DEFAULT_VAT_RATE,
+      isUndetermined: true,
+      summaryGroupKey: "neurceno",
+      summaryGroupTitle: "Neurčeno",
+      summarySortOrder: VAT_SUMMARY_SORT.neurceno,
+    };
+  }
+  const raw = job.vatRate;
+  const hasExplicit =
+    raw !== undefined &&
+    raw !== null &&
+    String(raw).trim() !== "" &&
+    Number.isFinite(Number(raw));
+
+  if (!hasExplicit) {
+    return {
+      effectiveRate: DEFAULT_VAT_RATE,
+      isUndetermined: true,
+      summaryGroupKey: "neurceno",
+      summaryGroupTitle: "Neurčeno",
+      summarySortOrder: VAT_SUMMARY_SORT.neurceno,
+    };
+  }
+
+  const rate = normalizeVatRate(raw);
+  const summaryGroupKey: JobVatRateForExport["summaryGroupKey"] =
+    rate === 12 ? "12" : rate === 21 ? "21" : rate === 0 ? "0" : "21";
+  return {
+    effectiveRate: rate,
+    isUndetermined: false,
+    summaryGroupKey,
+    summaryGroupTitle: `DPH ${rate} %`,
+    summarySortOrder: VAT_SUMMARY_SORT[summaryGroupKey],
+  };
+}
+
+/** Rozdělí částku s DPH na základ, DPH a celkem podle sazby. */
+export function splitGrossAmountByVatRate(
+  amountGross: number,
+  vatRate: VatRatePercent
+): { amountNet: number; vatAmount: number; amountGross: number } {
+  const gross = roundMoney2(Math.max(0, amountGross));
+  if (gross <= 0.009) {
+    return { amountNet: 0, vatAmount: 0, amountGross: 0 };
+  }
+  if (vatRate === 0) {
+    return { amountNet: gross, vatAmount: 0, amountGross: gross };
+  }
+  const amountNet = roundMoney2(gross / (1 + vatRate / 100));
+  const vatAmount = roundMoney2(gross - amountNet);
+  return { amountNet, vatAmount, amountGross: gross };
+}
+
 export function resolveJobPaidFromFirestore(
   job: Record<string, unknown> | null | undefined
 ): { paidNet: number; paidGross: number } {

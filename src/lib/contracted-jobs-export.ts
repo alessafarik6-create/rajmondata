@@ -24,7 +24,12 @@ import {
 } from "@/lib/job-payment-summary";
 import { selectPrimaryWorkContractForBilling, type WorkContractLike } from "@/lib/job-billing-invoices";
 import { formatContractManualDateLabel, isJobManuallyContracted, parseJobContractManual } from "@/lib/job-contract-manual";
-import { resolveJobBudgetFromFirestore, roundMoney2 } from "@/lib/vat-calculations";
+import {
+  resolveJobBudgetFromFirestore,
+  resolveJobVatRateForExport,
+  roundMoney2,
+  splitGrossAmountByVatRate,
+} from "@/lib/vat-calculations";
 import {
   formatCsDateFromFirestore,
   type WorkContractDoc,
@@ -63,6 +68,20 @@ export type ContractedJobExportRow = {
   jobPaymentStatus: DepositPaymentStatus;
   depositNote: string;
   otherPaymentsLabel: string;
+  vatSummaryGroupKey: string;
+  vatSummaryGroupTitle: string;
+  vatSummarySortOrder: number;
+  paidAmountNet: number;
+  paidAmountVat: number;
+};
+
+export type ContractedJobsPaidVatGroup = {
+  groupKey: string;
+  title: string;
+  sortOrder: number;
+  amountNet: number;
+  vatAmount: number;
+  amountGross: number;
 };
 
 export type ContractedJobsExportSummary = {
@@ -72,6 +91,7 @@ export type ContractedJobsExportSummary = {
   totalReceivedDepositGross: number;
   totalDepositRemainingGross: number;
   totalRemainingToPayGross: number;
+  paidByVatGroups: ContractedJobsPaidVatGroup[];
 };
 
 const CONTRACTED_STATUS = "zesmluvněno";
@@ -248,6 +268,12 @@ export function buildContractedJobExportRow(params: {
     String(job.startDate ?? "").trim() ||
     "—";
 
+  const vatForExport = resolveJobVatRateForExport(job);
+  const paidSplit = splitGrossAmountByVatRate(
+    payment.totalPaidGross,
+    vatForExport.effectiveRate
+  );
+
   return {
     jobId: job.id,
     jobNumber: resolveJobNumber(job) || "—",
@@ -285,7 +311,54 @@ export function buildContractedJobExportRow(params: {
       payment.otherPaymentsLabels.length > 0
         ? payment.otherPaymentsLabels.join("; ")
         : "—",
+    vatSummaryGroupKey: vatForExport.summaryGroupKey,
+    vatSummaryGroupTitle: vatForExport.summaryGroupTitle,
+    vatSummarySortOrder: vatForExport.summarySortOrder,
+    paidAmountNet: paidSplit.amountNet,
+    paidAmountVat: paidSplit.vatAmount,
   };
+}
+
+export function buildPaidVatGroupsFromExportRows(
+  rows: ContractedJobExportRow[]
+): ContractedJobsPaidVatGroup[] {
+  const acc = new Map<
+    string,
+    {
+      title: string;
+      sortOrder: number;
+      amountNet: number;
+      vatAmount: number;
+      amountGross: number;
+    }
+  >();
+
+  for (const r of rows) {
+    if (r.totalPaidGross <= 0.009) continue;
+    const key = r.vatSummaryGroupKey;
+    const cur = acc.get(key) ?? {
+      title: r.vatSummaryGroupTitle,
+      sortOrder: r.vatSummarySortOrder,
+      amountNet: 0,
+      vatAmount: 0,
+      amountGross: 0,
+    };
+    cur.amountNet = roundMoney2(cur.amountNet + r.paidAmountNet);
+    cur.vatAmount = roundMoney2(cur.vatAmount + r.paidAmountVat);
+    cur.amountGross = roundMoney2(cur.amountGross + r.totalPaidGross);
+    acc.set(key, cur);
+  }
+
+  return [...acc.entries()]
+    .map(([groupKey, v]) => ({
+      groupKey,
+      title: v.title,
+      sortOrder: v.sortOrder,
+      amountNet: v.amountNet,
+      vatAmount: v.vatAmount,
+      amountGross: v.amountGross,
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
 export function buildContractedJobsExportSummary(
@@ -318,6 +391,7 @@ export function buildContractedJobsExportSummary(
     totalReceivedDepositGross,
     totalDepositRemainingGross,
     totalRemainingToPayGross,
+    paidByVatGroups: buildPaidVatGroupsFromExportRows(rows),
   };
 }
 
