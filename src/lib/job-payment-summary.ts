@@ -7,7 +7,10 @@ import {
   selectPrimaryWorkContractForBilling,
   type WorkContractLike,
 } from "@/lib/job-billing-invoices";
-import { parseJobContractManual } from "@/lib/job-contract-manual";
+import {
+  formatContractManualDateLabel,
+  parseJobContractManual,
+} from "@/lib/job-contract-manual";
 import {
   calculateJobDepositSummary,
   type DepositPaymentStatus,
@@ -24,9 +27,9 @@ export type JobPaymentSummary = {
   totalPriceGross: number;
   requiredDepositGross: number;
   manualDepositGross: number;
-  /** Přijaté platby mimo ruční zálohu (pro sloupec „Z plateb“). */
+  /** Přijaté platby mimo ruční zálohu (sloupec „Z plateb“). */
   paymentsDepositGross: number;
-  /** Celkem zaplaceno na zakázce — stejný zdroj jako finanční přehled (`paidAmountGross`). */
+  /** Celkem zaplaceno — ruční záloha + platby / doklady / paidAmountGross (bez dvojího započtení). */
   totalPaidGross: number;
   /** Cena − celkem zaplaceno (doplatek celé zakázky). */
   remainingToPayGross: number;
@@ -36,6 +39,8 @@ export type JobPaymentSummary = {
   paymentDateLabels: string[];
   otherPaymentsLabels: string[];
   depositNote: string | null;
+  isContracted: boolean;
+  contractedDisplayValue: string;
 };
 
 export function formatMoneyKc(value: number): string {
@@ -43,21 +48,68 @@ export function formatMoneyKc(value: number): string {
   return `${n.toLocaleString("cs-CZ")} Kč`;
 }
 
+/** Stav zálohy — „Zaplaceno“ jen při úhradě celé zakázky, jinak „Částečně uhrazeno“. */
+export function resolveDepositPaymentStatus(
+  totalPriceGross: number,
+  totalPaidGross: number,
+  requiredDepositGross: number,
+  depositPaidGross: number
+): DepositPaymentStatus {
+  if (requiredDepositGross <= 0.009 && depositPaidGross <= 0.009) return "—";
+  if (depositPaidGross <= 0.009) return "nezaplaceno";
+  if (
+    totalPriceGross > 0.009 &&
+    totalPaidGross >= totalPriceGross - 0.01
+  ) {
+    return "zaplaceno";
+  }
+  return "částečně uhrazeno";
+}
+
+/** Stav zakázky podle celkové ceny vs. celkem zaplaceno. */
+export function resolveJobPaymentStatus(
+  totalPriceGross: number,
+  totalPaidGross: number
+): DepositPaymentStatus {
+  if (totalPriceGross <= 0.009) {
+    return totalPaidGross > 0.009 ? "částečně uhrazeno" : "—";
+  }
+  if (totalPaidGross <= 0.009) return "nezaplaceno";
+  if (totalPaidGross >= totalPriceGross - 0.01) return "zaplaceno";
+  return "částečně uhrazeno";
+}
+
+/** @deprecated použijte {@link resolveJobPaymentStatus} nebo {@link resolveDepositPaymentStatus} */
 export function resolvePaymentStatus(
   requiredGross: number,
   paidGross: number
 ): DepositPaymentStatus {
-  if (requiredGross <= 0.009) return "—";
-  if (paidGross <= 0.009) return "nezaplaceno";
-  if (paidGross >= requiredGross - 0.01) return "zaplaceno";
-  return "částečně zaplaceno";
+  return resolveDepositPaymentStatus(requiredGross, paidGross, requiredGross, paidGross);
 }
 
 export function paymentStatusLabelCs(status: DepositPaymentStatus): string {
   if (status === "nezaplaceno") return "Nezaplaceno";
-  if (status === "částečně zaplaceno") return "Částečně zaplaceno";
+  if (status === "částečně uhrazeno") return "Částečně uhrazeno";
   if (status === "zaplaceno") return "Zaplaceno";
   return "—";
+}
+
+export function resolveContractedDisplayValue(
+  job: Record<string, unknown>,
+  options?: { fallbackDateLabel?: string; isContracted?: boolean }
+): string {
+  const manual = parseJobContractManual(job);
+  const manualDate = manual.contractedAt
+    ? formatContractManualDateLabel(manual.contractedAt)
+    : "";
+  if (manualDate) return manualDate;
+  if (manual.isContracted === true) return "ANO";
+
+  const fb = String(options?.fallbackDateLabel ?? "").trim();
+  if (fb && fb !== "—") return fb;
+
+  if (options?.isContracted === true) return "ANO";
+  return "NE";
 }
 
 function resolveTotalPriceGross(
@@ -74,20 +126,6 @@ function resolveTotalPriceGross(
   return 0;
 }
 
-function toContractLikes(
-  workContracts: Array<WorkContractDoc | WorkContractLike>
-): WorkContractLike[] {
-  return workContracts.map((c) => ({
-    id: String((c as { id?: string }).id ?? ""),
-    contractNumber: (c as WorkContractLike).contractNumber,
-    depositAmount: (c as WorkContractLike).depositAmount,
-    depositPercentage: (c as WorkContractLike).depositPercentage,
-    zalohovaCastka: (c as WorkContractLike).zalohovaCastka,
-    zalohovaProcenta: (c as WorkContractLike).zalohovaProcenta,
-    documentRole: (c as WorkContractLike).documentRole,
-  }));
-}
-
 /**
  * Společný výpočet pro detail zakázky, kartu Smlouva a záloha a export PDF.
  */
@@ -95,8 +133,10 @@ export function calculateJobPaymentSummary(params: {
   job: Record<string, unknown>;
   invoices?: JobInvoiceForDeposit[];
   workContracts?: Array<WorkContractDoc | WorkContractLike>;
-  /** Příjmy / platby u zakázky (`jobs/{id}/incomes`). */
   jobIncomes?: JobIncomeForDeposit[];
+  /** Datum zesmluvnění ze smlouvy (fallback pro contractedDisplayValue). */
+  contractedDateFallback?: string;
+  isContracted?: boolean;
 }): JobPaymentSummary {
   const job = params.job;
   const invoices = params.invoices ?? [];
@@ -115,7 +155,10 @@ export function calculateJobPaymentSummary(params: {
     jobIncomes,
   });
 
-  const { paidGross: totalPaidGross } = resolveJobPaidFromFirestore(job);
+  const { paidGross: jobPaidGross } = resolveJobPaidFromFirestore(job);
+  const totalPaidGross = roundMoney2(
+    Math.max(jobPaidGross, deposit.totalDepositPaidGross)
+  );
 
   const paymentsDepositGross = roundMoney2(
     Math.max(0, totalPaidGross - deposit.manualDepositGross)
@@ -126,6 +169,24 @@ export function calculateJobPaymentSummary(params: {
     roundMoney2(totalPriceGross - totalPaidGross)
   );
 
+  const depositStatus = resolveDepositPaymentStatus(
+    totalPriceGross,
+    totalPaidGross,
+    deposit.requiredDepositGross,
+    deposit.totalDepositPaidGross
+  );
+
+  const jobPaymentStatus = resolveJobPaymentStatus(
+    totalPriceGross,
+    totalPaidGross
+  );
+
+  const isContracted = params.isContracted === true;
+  const contractedDisplayValue = resolveContractedDisplayValue(job, {
+    fallbackDateLabel: params.contractedDateFallback,
+    isContracted,
+  });
+
   return {
     totalPriceGross,
     requiredDepositGross: deposit.requiredDepositGross,
@@ -134,14 +195,13 @@ export function calculateJobPaymentSummary(params: {
     totalPaidGross,
     remainingToPayGross,
     depositRemainingGross: deposit.depositRemainingGross,
-    depositStatus: resolvePaymentStatus(
-      deposit.requiredDepositGross,
-      deposit.totalDepositPaidGross
-    ),
-    jobPaymentStatus: resolvePaymentStatus(totalPriceGross, totalPaidGross),
+    depositStatus,
+    jobPaymentStatus,
     paymentDateLabels: deposit.paymentDateLabels,
     otherPaymentsLabels: deposit.otherPaymentsLabels,
     depositNote: manual.depositNote ?? null,
+    isContracted,
+    contractedDisplayValue,
   };
 }
 

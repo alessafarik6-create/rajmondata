@@ -102,7 +102,7 @@ export async function exportContractedJobsToPdf(
     safeCellText(r.customer),
     safeCellText(r.address),
     safeCellText(r.createdAtLabel),
-    safeCellText(r.contractedAtLabel),
+    safeCellText(r.contractedDisplayValue || r.contractedAtLabel),
     safeCellText(r.contractNumber),
     formatCurrency(r.totalPriceGross),
     formatCurrency(r.requiredDepositGross),

@@ -1,5 +1,5 @@
 /**
- * Test calculateJobPaymentSummary logiky (Zbývá doplatit = cena − zaplaceno).
+ * Test calculateJobPaymentSummary logiky.
  * node scripts/test-job-payment-summary.mjs
  */
 
@@ -9,23 +9,46 @@ function roundMoney2(n) {
   return Math.round(n * 100) / 100;
 }
 
-function resolvePaymentStatus(requiredGross, paidGross) {
-  if (requiredGross <= 0.009) return "—";
-  if (paidGross <= 0.009) return "nezaplaceno";
-  if (paidGross >= requiredGross - 0.01) return "zaplaceno";
-  return "částečně zaplaceno";
+function resolveDepositPaymentStatus(
+  totalPriceGross,
+  totalPaidGross,
+  requiredDepositGross,
+  depositPaidGross
+) {
+  if (requiredDepositGross <= 0.009 && depositPaidGross <= 0.009) return "—";
+  if (depositPaidGross <= 0.009) return "nezaplaceno";
+  if (totalPriceGross > 0.009 && totalPaidGross >= totalPriceGross - 0.01) {
+    return "zaplaceno";
+  }
+  return "částečně uhrazeno";
+}
+
+function resolveJobPaymentStatus(totalPriceGross, totalPaidGross) {
+  if (totalPriceGross <= 0.009) {
+    return totalPaidGross > 0.009 ? "částečně uhrazeno" : "—";
+  }
+  if (totalPaidGross <= 0.009) return "nezaplaceno";
+  if (totalPaidGross >= totalPriceGross - 0.01) return "zaplaceno";
+  return "částečně uhrazeno";
+}
+
+function resolveContractedDisplayValue(job) {
+  const m = job.contractManual ?? {};
+  if (m.contractedAt) {
+    const [y, mo, d] = String(m.contractedAt).slice(0, 10).split("-");
+    return `${Number(d)}. ${Number(mo)}. ${y}`;
+  }
+  if (m.isContracted === true) return "ANO";
+  return "NE";
 }
 
 function calculateJobPaymentSummary({ job }) {
-  const totalPriceGross = roundMoney2(
-    Number(job.contractManual?.totalPriceGross) ||
-      Number(job.budgetGross) ||
-      0
-  );
+  const totalPriceGross = roundMoney2(Number(job.contractManual?.totalPriceGross) || 0);
   const manualDepositGross = roundMoney2(
     Number(job.contractManual?.paidDepositGross) || 0
   );
-  const totalPaidGross = roundMoney2(Number(job.paidAmountGross) || 0);
+  const jobPaidGross = roundMoney2(Number(job.paidAmountGross) || 0);
+  const totalPaidGross = roundMoney2(Math.max(jobPaidGross, manualDepositGross));
   const paymentsDepositGross = roundMoney2(
     Math.max(0, totalPaidGross - manualDepositGross)
   );
@@ -36,23 +59,42 @@ function calculateJobPaymentSummary({ job }) {
   const requiredDepositGross = roundMoney2(
     Number(job.contractManual?.requiredDepositGross) || 0
   );
-  const totalDepositPaidGross = roundMoney2(
-    manualDepositGross + paymentsDepositGross
-  );
   return {
     totalPriceGross,
     totalPaidGross,
     paymentsDepositGross,
     remainingToPayGross,
-    depositStatus: resolvePaymentStatus(requiredDepositGross, totalDepositPaidGross),
-    jobPaymentStatus: resolvePaymentStatus(totalPriceGross, totalPaidGross),
+    depositStatus: resolveDepositPaymentStatus(
+      totalPriceGross,
+      totalPaidGross,
+      requiredDepositGross,
+      totalPaidGross
+    ),
+    jobPaymentStatus: resolveJobPaymentStatus(totalPriceGross, totalPaidGross),
+    contractedDisplayValue: resolveContractedDisplayValue(job),
   };
 }
 
-// Případ z požadavku: 4 400 400 − 200 000 = 4 200 400
-const main = calculateJobPaymentSummary({
+// Ruční záloha 200k, bez paidAmountGross na zakázce
+const manualOnly = calculateJobPaymentSummary({
   job: {
-    paidAmountGross: 200000,
+    contractManual: {
+      isContracted: true,
+      totalPriceGross: 4400400,
+      requiredDepositGross: 200000,
+      paidDepositGross: 200000,
+    },
+  },
+});
+assert.equal(manualOnly.totalPaidGross, 200000);
+assert.equal(manualOnly.remainingToPayGross, 4200400);
+assert.equal(manualOnly.depositStatus, "částečně uhrazeno");
+assert.equal(manualOnly.jobPaymentStatus, "částečně uhrazeno");
+assert.equal(manualOnly.contractedDisplayValue, "ANO");
+
+// Žádná platba
+const none = calculateJobPaymentSummary({
+  job: {
     contractManual: {
       isContracted: true,
       totalPriceGross: 4400400,
@@ -60,10 +102,34 @@ const main = calculateJobPaymentSummary({
     },
   },
 });
-assert.equal(main.totalPriceGross, 4400400);
-assert.equal(main.totalPaidGross, 200000);
-assert.equal(main.remainingToPayGross, 4200400);
-assert.equal(main.jobPaymentStatus, "částečně zaplaceno");
-assert.equal(main.paymentsDepositGross, 200000);
+assert.equal(none.totalPaidGross, 0);
+assert.equal(none.remainingToPayGross, 4400400);
+assert.equal(none.depositStatus, "nezaplaceno");
+assert.equal(none.jobPaymentStatus, "nezaplaceno");
+
+// Plně zaplaceno
+const full = calculateJobPaymentSummary({
+  job: {
+    paidAmountGross: 4400400,
+    contractManual: { isContracted: true, totalPriceGross: 4400400 },
+  },
+});
+assert.equal(full.remainingToPayGross, 0);
+assert.equal(full.jobPaymentStatus, "zaplaceno");
+assert.equal(full.depositStatus, "zaplaceno");
+
+// Záloha splněna, zakázka ne — stav zálohy musí být částečně uhrazeno
+const depositOnly = calculateJobPaymentSummary({
+  job: {
+    contractManual: {
+      isContracted: true,
+      totalPriceGross: 4400400,
+      requiredDepositGross: 200000,
+      paidDepositGross: 200000,
+    },
+  },
+});
+assert.equal(depositOnly.depositStatus, "částečně uhrazeno");
+assert.notEqual(depositOnly.depositStatus, "zaplaceno");
 
 console.log("OK: testy job-payment-summary prošly.");

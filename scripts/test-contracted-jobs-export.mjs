@@ -68,7 +68,7 @@ function calculateJobDepositSummary({ job, invoices = [], jobIncomes = [] }) {
   if (requiredDepositGross > 0.009) {
     if (totalDepositPaidGross <= 0.009) depositStatus = "nezaplaceno";
     else if (totalDepositPaidGross >= requiredDepositGross - 0.01) depositStatus = "zaplaceno";
-    else depositStatus = "částečně zaplaceno";
+    else depositStatus = "částečně uhrazeno";
   }
   return {
     requiredDepositGross,

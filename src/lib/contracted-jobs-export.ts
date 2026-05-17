@@ -42,7 +42,10 @@ export type ContractedJobExportRow = {
   customer: string;
   address: string;
   createdAtLabel: string;
+  /** Datum zesmluvnění (pokud existuje). */
   contractedAtLabel: string;
+  /** Pro PDF/CSV: datum, „ANO“ nebo „NE“. */
+  contractedDisplayValue: string;
   contractNumber: string;
   totalPriceGross: number;
   requiredDepositGross: number;
@@ -176,11 +179,38 @@ export function buildContractedJobExportRow(params: {
   const primary = selectPrimaryWorkContractForBilling(contractLikes, budgetGross);
   const manual = parseJobContractManual(job);
 
+  let contractedAtLabel = manual.contractedAt
+    ? formatContractManualDateLabel(manual.contractedAt)
+    : "";
+  if (!contractedAtLabel && primary) {
+    const src = filteredContracts.find((c) => c.id === primary.id);
+    if (src) {
+      contractedAtLabel =
+        formatCsDateFromFirestore(src.contractIssuedAt) ||
+        formatCsDateFromFirestore(src.pdfSavedAt) ||
+        formatCsDateFromFirestore(src.updatedAt) ||
+        "";
+    }
+  }
+  if (!contractedAtLabel) {
+    for (const c of filteredContracts) {
+      const d =
+        formatCsDateFromFirestore(c.contractIssuedAt) ||
+        formatCsDateFromFirestore(c.pdfSavedAt);
+      if (d) {
+        contractedAtLabel = d;
+        break;
+      }
+    }
+  }
+
   const payment = calculateJobPaymentSummary({
     job,
     invoices,
     workContracts: filteredContracts,
     jobIncomes,
+    contractedDateFallback: contractedAtLabel,
+    isContracted: true,
   });
 
   const addrBlock = buildJobCustomerAddressBlock(job, customer);
@@ -213,31 +243,6 @@ export function buildContractedJobExportRow(params: {
         .find(Boolean) ?? "";
   }
 
-  let contractedAtLabel = manual.contractedAt
-    ? formatContractManualDateLabel(manual.contractedAt)
-    : "";
-  if (!contractedAtLabel && primary) {
-    const src = filteredContracts.find((c) => c.id === primary.id);
-    if (src) {
-      contractedAtLabel =
-        formatCsDateFromFirestore(src.contractIssuedAt) ||
-        formatCsDateFromFirestore(src.pdfSavedAt) ||
-        formatCsDateFromFirestore(src.updatedAt) ||
-        "";
-    }
-  }
-  if (!contractedAtLabel) {
-    for (const c of filteredContracts) {
-      const d =
-        formatCsDateFromFirestore(c.contractIssuedAt) ||
-        formatCsDateFromFirestore(c.pdfSavedAt);
-      if (d) {
-        contractedAtLabel = d;
-        break;
-      }
-    }
-  }
-
   const createdAtLabel =
     formatCsDateFromFirestore(job.createdAt) ||
     String(job.startDate ?? "").trim() ||
@@ -251,6 +256,7 @@ export function buildContractedJobExportRow(params: {
     address: formatAddressOneLine(addrBlock.addressLines),
     createdAtLabel: createdAtLabel || "—",
     contractedAtLabel: contractedAtLabel || "—",
+    contractedDisplayValue: payment.contractedDisplayValue,
     contractNumber: contractNumber || "—",
     totalPriceGross: payment.totalPriceGross,
     requiredDepositGross: payment.requiredDepositGross,
@@ -468,7 +474,7 @@ export function downloadContractedJobsCsv(
       r.customer,
       r.address,
       r.createdAtLabel,
-      r.contractedAtLabel,
+      r.contractedDisplayValue || r.contractedAtLabel,
       r.contractNumber,
       r.totalPriceGross,
       r.requiredDepositGross,

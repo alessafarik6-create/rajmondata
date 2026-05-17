@@ -16,7 +16,11 @@ import {
 import { resolveJobBudgetFromFirestore, resolveJobPaidFromFirestore, roundMoney2 } from "@/lib/vat-calculations";
 import type { WorkContractDoc } from "@/lib/work-contract-print-html-build";
 
-export type DepositPaymentStatus = "nezaplaceno" | "částečně zaplaceno" | "zaplaceno" | "—";
+export type DepositPaymentStatus =
+  | "nezaplaceno"
+  | "částečně uhrazeno"
+  | "zaplaceno"
+  | "—";
 
 export type JobInvoiceForDeposit = {
   id: string;
@@ -64,7 +68,7 @@ export function resolveDepositPaymentStatus(
   if (requiredGross <= 0.009) return "—";
   if (receivedGross <= 0.009) return "nezaplaceno";
   if (receivedGross >= requiredGross - 0.01) return "zaplaceno";
-  return "částečně zaplaceno";
+  return "částečně uhrazeno";
 }
 
 function formatPaymentDateLabel(inv: JobInvoiceForDeposit): string {
@@ -285,7 +289,7 @@ export function calculateJobDepositSummary(params: {
 
 export function depositStatusLabelCs(status: DepositPaymentStatus): string {
   if (status === "nezaplaceno") return "Nezaplaceno";
-  if (status === "částečně zaplaceno") return "Částečně zaplaceno";
+  if (status === "částečně uhrazeno") return "Částečně uhrazeno";
   if (status === "zaplaceno") return "Zaplaceno";
   return "—";
 }
