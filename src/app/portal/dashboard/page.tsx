@@ -239,6 +239,11 @@ export default function CompanyDashboard() {
     return collection(firestore, "companies", companyId, "jobs");
   }, [firestore, companyId]);
 
+  const customersQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !showAdminDashboard) return null;
+    return collection(firestore, "companies", companyId, "customers");
+  }, [firestore, companyId, showAdminDashboard]);
+
   const financeQuery = useMemoFirebase(() => {
     if (!firestore || !companyId) return null;
     if (!isManagement && !isAccountant) return null;
@@ -352,6 +357,7 @@ export default function CompanyDashboard() {
     isLoading: isJobsLoading,
     error: jobsError,
   } = useCollection(jobsQuery);
+  const { data: customersRaw } = useCollection(customersQuery);
   const {
     data: financeRowsRaw,
   } = useCollection(financeQuery);
@@ -472,6 +478,24 @@ export default function CompanyDashboard() {
   const typedJobs: JobData[] = Array.isArray(allJobsRaw)
     ? (allJobsRaw as JobData[])
     : [];
+
+  const customersById = useMemo(() => {
+    const map = new Map<string, Record<string, unknown>>();
+    const list = Array.isArray(customersRaw) ? customersRaw : [];
+    for (const c of list) {
+      const id = String((c as { id?: string }).id ?? "").trim();
+      if (id) map.set(id, c as Record<string, unknown>);
+    }
+    return map;
+  }, [customersRaw]);
+
+  const jobsForContractedOverview = useMemo(
+    () =>
+      typedJobs
+        .filter((j) => j.id)
+        .map((j) => ({ ...(j as unknown as Record<string, unknown>), id: j.id })),
+    [typedJobs]
+  );
 
   // Úkoly na mobilním dashboardu nezobrazujeme automaticky (otevřou se přes modul „Úkoly“).
 
@@ -952,6 +976,9 @@ export default function CompanyDashboard() {
           unpaidLabel: "—",
           jobsLabel: String(jobs.filter((j) => j.status !== "dokončená").length || 0),
         }}
+        showContractedJobsOverview={showAdminDashboard}
+        contractedJobs={jobsForContractedOverview}
+        contractedJobsCustomersById={customersById}
       />
       <MobileBottomNav unreadMessages={unreadEmployeeChatCount} role={role} />
 

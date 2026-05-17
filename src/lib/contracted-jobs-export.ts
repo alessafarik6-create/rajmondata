@@ -23,6 +23,7 @@ import {
   type JobIncomeForDeposit,
   type JobInvoiceForDeposit,
 } from "@/lib/job-payment-summary";
+import { collectJobDepositTimelineEvents } from "@/lib/job-deposit-summary";
 import { selectPrimaryWorkContractForBilling, type WorkContractLike } from "@/lib/job-billing-invoices";
 import { formatContractManualDateLabel, isJobManuallyContracted, parseJobContractManual } from "@/lib/job-contract-manual";
 import {
@@ -60,6 +61,8 @@ export type ContractedJobExportRow = {
   /** @deprecated použijte {@link totalPaidGross} */
   totalDepositPaidGross: number;
   totalPaidGross: number;
+  /** Přijaté zálohy u zakázky (stejný výpočet jako karta Smlouva a záloha). */
+  depositReceivedGross: number;
   remainingToPayGross: number;
   manualDepositLabel: string;
   paymentsDepositLabel: string;
@@ -91,8 +94,26 @@ export type ContractedJobsExportSummary = {
   totalRequiredDepositGross: number;
   totalReceivedDepositGross: number;
   totalDepositRemainingGross: number;
+  /** Součet přijatých záloh přes všechny zesmluvněné zakázky. */
+  totalDepositReceivedGross: number;
   totalRemainingToPayGross: number;
   paidByVatGroups: ContractedJobsPaidVatGroup[];
+};
+
+export type ContractedDepositTimelineEvent = {
+  jobId: string;
+  jobName: string;
+  customer: string;
+  paidAtIso: string | null;
+  paidAtLabel: string;
+  amountGross: number;
+  sourceLabel: string;
+};
+
+export type ContractedJobsExportBundle = {
+  rows: ContractedJobExportRow[];
+  summary: ContractedJobsExportSummary;
+  timelineEvents: ContractedDepositTimelineEvent[];
 };
 
 const CONTRACTED_STATUS = "zesmluvněno";
@@ -272,6 +293,7 @@ export function buildContractedJobExportRow(params: {
     paymentsDepositGross: payment.paymentsDepositGross,
     totalDepositPaidGross: payment.totalPaidGross,
     totalPaidGross: payment.totalPaidGross,
+    depositReceivedGross: payment.depositReceivedGross,
     remainingToPayGross: payment.remainingToPayGross,
     manualDepositLabel:
       payment.manualDepositGross > 0
@@ -350,6 +372,7 @@ export function buildContractedJobsExportSummary(
   let totalRequiredDepositGross = 0;
   let totalReceivedDepositGross = 0;
   let totalDepositRemainingGross = 0;
+  let totalDepositReceivedGross = 0;
   let totalRemainingToPayGross = 0;
   for (const r of rows) {
     totalPriceGross = roundMoney2(totalPriceGross + r.totalPriceGross);
@@ -358,6 +381,9 @@ export function buildContractedJobsExportSummary(
     );
     totalReceivedDepositGross = roundMoney2(
       totalReceivedDepositGross + r.totalPaidGross
+    );
+    totalDepositReceivedGross = roundMoney2(
+      totalDepositReceivedGross + r.depositReceivedGross
     );
     totalDepositRemainingGross = roundMoney2(
       totalDepositRemainingGross + r.depositRemainingGross
@@ -372,9 +398,25 @@ export function buildContractedJobsExportSummary(
     totalRequiredDepositGross,
     totalReceivedDepositGross,
     totalDepositRemainingGross,
+    totalDepositReceivedGross,
     totalRemainingToPayGross,
     paidByVatGroups: buildPaidVatGroupsFromExportRows(rows),
   };
+}
+
+function sortContractedDepositTimeline(
+  events: ContractedDepositTimelineEvent[]
+): ContractedDepositTimelineEvent[] {
+  return [...events].sort((a, b) => {
+    const da = a.paidAtIso ?? "";
+    const db = b.paidAtIso ?? "";
+    if (da !== db) {
+      if (!da) return 1;
+      if (!db) return -1;
+      return db.localeCompare(da);
+    }
+    return a.jobName.localeCompare(b.jobName, "cs", { sensitivity: "base" });
+  });
 }
 
 export async function fetchJobDocument(
@@ -455,13 +497,15 @@ export function computeJobDepositAggregation(
   };
 }
 
-export async function buildContractedJobsExportRows(params: {
+export async function buildContractedJobsExportBundle(params: {
   firestore: Firestore;
   companyId: string;
   jobs: Array<Record<string, unknown> & { id: string }>;
   customersById: Map<string, Record<string, unknown>>;
-}): Promise<ContractedJobExportRow[]> {
+}): Promise<ContractedJobsExportBundle> {
   const rows: ContractedJobExportRow[] = [];
+  const timelineEvents: ContractedDepositTimelineEvent[] = [];
+
   for (const jobSeed of params.jobs) {
     const jid = String(jobSeed.id ?? "").trim();
     if (!jid) continue;
@@ -485,12 +529,47 @@ export async function buildContractedJobsExportRows(params: {
       invoices,
       jobIncomes,
     });
-    if (row) rows.push(row);
+    if (!row) continue;
+
+    rows.push(row);
+    const filteredContracts = filterBillingWorkContracts(contracts);
+    for (const ev of collectJobDepositTimelineEvents({
+      job: jobFresh,
+      invoices,
+      workContracts: filteredContracts,
+      jobIncomes,
+    })) {
+      timelineEvents.push({
+        jobId: jid,
+        jobName: row.jobName,
+        customer: row.customer,
+        paidAtIso: ev.paidAtIso,
+        paidAtLabel: ev.paidAtLabel,
+        amountGross: ev.amountGross,
+        sourceLabel: ev.sourceLabel,
+      });
+    }
   }
+
   rows.sort((a, b) =>
     a.jobName.localeCompare(b.jobName, "cs", { sensitivity: "base" })
   );
-  return rows;
+
+  return {
+    rows,
+    summary: buildContractedJobsExportSummary(rows),
+    timelineEvents: sortContractedDepositTimeline(timelineEvents),
+  };
+}
+
+export async function buildContractedJobsExportRows(params: {
+  firestore: Firestore;
+  companyId: string;
+  jobs: Array<Record<string, unknown> & { id: string }>;
+  customersById: Map<string, Record<string, unknown>>;
+}): Promise<ContractedJobExportRow[]> {
+  const bundle = await buildContractedJobsExportBundle(params);
+  return bundle.rows;
 }
 
 export function downloadContractedJobsCsv(

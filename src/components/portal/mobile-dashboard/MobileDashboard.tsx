@@ -13,6 +13,7 @@ import type { PlatformModuleCode } from "@/lib/platform-config";
 import type { PlatformModuleCatalogRow } from "@/lib/platform-module-catalog";
 import type { CompanyPlatformFields } from "@/lib/platform-access";
 import { usePortalTasksModuleBadgeCount } from "@/hooks/use-portal-tasks-module-badge-count";
+import { MobileContractedJobsOverview } from "@/components/portal/mobile-dashboard/MobileContractedJobsOverview";
 
 function dayPartGreeting(now = new Date()): string {
   const h = now.getHours();
@@ -61,6 +62,10 @@ export function MobileDashboard(props: {
   isTaskBadgePrivileged?: boolean;
   /** Volitelné doplnění badge podle klíče dlaždice (např. `jobs`, `invoices`). */
   extraModuleBadgeCounts?: Partial<Record<MobileModuleTileId, number>>;
+  /** Přehled zesmluvněných zakázek (vedení / účetní, mobil). */
+  showContractedJobsOverview?: boolean;
+  contractedJobs?: Array<Record<string, unknown> & { id: string }>;
+  contractedJobsCustomersById?: Map<string, Record<string, unknown>>;
 }) {
   const greet = dayPartGreeting();
   const name = props.displayName || "uživateli";
@@ -157,6 +162,18 @@ export function MobileDashboard(props: {
               tone={(props.overduePlatformInvoices || 0) > 0 ? "danger" : "default"}
             />
           </div>
+
+          {props.showContractedJobsOverview &&
+          props.companyId &&
+          props.contractedJobs &&
+          props.contractedJobsCustomersById ? (
+            <MobileContractedJobsOverview
+              companyId={props.companyId}
+              jobs={props.contractedJobs}
+              customersById={props.contractedJobsCustomersById}
+              enabled
+            />
+          ) : null}
         </section>
       </div>
     </div>

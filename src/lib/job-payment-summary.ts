@@ -38,6 +38,8 @@ export type JobPaymentSummary = {
   jobPaymentStatus: DepositPaymentStatus;
   paymentDateLabels: string[];
   otherPaymentsLabels: string[];
+  /** Přijaté zálohy (ruční + ZF/DD/příjmy, bez dvojího započtení). */
+  depositReceivedGross: number;
   depositNote: string | null;
   isContracted: boolean;
   contractedDisplayValue: string;
@@ -194,6 +196,7 @@ export function calculateJobPaymentSummary(params: {
     jobPaymentStatus,
     paymentDateLabels: deposit.paymentDateLabels,
     otherPaymentsLabels: deposit.otherPaymentsLabels,
+    depositReceivedGross: deposit.totalDepositPaidGross,
     depositNote: manual.depositNote ?? null,
     isContracted,
     contractedDisplayValue,
