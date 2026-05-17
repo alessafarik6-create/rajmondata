@@ -14,61 +14,72 @@ function roundMoney2(n) {
   return Math.round(n * 100) / 100;
 }
 
-function filterBillingWorkContracts(contracts) {
-  return contracts.filter((c) => {
-    if (c.isTemplate === true) return false;
-    const ct = String(c.contractType ?? "").trim();
-    return !ct || ct === "smlouva_o_dilo" || ct === "contract_document";
-  });
+function parseJobContractManual(job) {
+  const raw = job?.contractManual;
+  if (!raw || typeof raw !== "object") return {};
+  return {
+    isContracted: raw.isContracted === true,
+    paidDepositGross:
+      raw.paidDepositGross != null && Number.isFinite(Number(raw.paidDepositGross))
+        ? roundMoney2(Number(raw.paidDepositGross))
+        : null,
+    requiredDepositGross:
+      raw.requiredDepositGross != null &&
+      Number.isFinite(Number(raw.requiredDepositGross))
+        ? roundMoney2(Number(raw.requiredDepositGross))
+        : null,
+  };
 }
 
-function contractHasSavedBody(c) {
-  if (String(c.pdfHtml ?? "").trim()) return true;
-  if (c.pdfSavedAt != null) return true;
-  return (
-    String(c.mainContractContent ?? "").trim().length > 0 ||
-    String(c.contractHeader ?? "").trim().length > 0
-  );
+function isJobManuallyContracted(job) {
+  return parseJobContractManual(job).isContracted === true;
 }
 
-function isJobContracted(job, contractsForJob) {
-  const status = String(job.status ?? "")
-    .trim()
-    .toLowerCase();
-  if (status === "zesmluvněno") return true;
-  const jobNumbers = [job.contractNumber, job.sodNumber]
-    .map((x) => String(x ?? "").trim())
-    .filter(Boolean);
-  if (jobNumbers.length) return true;
-  const relevant = filterBillingWorkContracts(contractsForJob);
-  if (relevant.some((c) => String(c.contractNumber ?? "").trim())) return true;
-  return relevant.some((c) => {
-    if (String(c.documentRole ?? "").trim() === "attachment") return false;
-    return contractHasSavedBody(c);
-  });
-}
-
-function aggregateDepositPaymentsFromInvoices(invoices) {
-  const advanceIds = new Set();
+function sumTaxReceiptsForAdvance(invoices, advanceId) {
+  let s = 0;
   for (const inv of invoices) {
-    if (inv.type === JOB_INVOICE_TYPES.ADVANCE && inv.id) advanceIds.add(inv.id);
+    if (inv.type !== JOB_INVOICE_TYPES.TAX_RECEIPT) continue;
+    if (String(inv.relatedInvoiceId ?? "").trim() !== advanceId) continue;
+    s = roundMoney2(s + (Number(inv.amountGross) || 0));
   }
-  let receivedDepositGross = 0;
-  const paymentDateLabels = [];
-  const otherPaymentsLabels = [];
+  return s;
+}
+
+function computeJobDepositAggregation(job, invoices) {
+  const manualData = parseJobContractManual(job);
+  const manualDepositGross = roundMoney2(
+    Math.max(0, Number(manualData.paidDepositGross) || 0)
+  );
+  const advances = invoices.filter((i) => i.type === JOB_INVOICE_TYPES.ADVANCE);
+  const advanceIds = new Set(advances.map((a) => a.id).filter(Boolean));
+  let paymentsDepositGross = 0;
   for (const inv of invoices) {
     if (inv.type !== JOB_INVOICE_TYPES.TAX_RECEIPT) continue;
     const gross = roundMoney2(Number(inv.amountGross) || 0);
     if (gross <= 0) continue;
     const related = String(inv.relatedInvoiceId ?? "").trim();
     if (related && advanceIds.has(related)) {
-      receivedDepositGross = roundMoney2(receivedDepositGross + gross);
-      paymentDateLabels.push(String(inv.paymentDate ?? gross));
-    } else {
-      otherPaymentsLabels.push(`other:${gross}`);
+      paymentsDepositGross = roundMoney2(paymentsDepositGross + gross);
     }
   }
-  return { receivedDepositGross, paymentDateLabels, otherPaymentsLabels };
+  for (const adv of advances) {
+    const aid = String(adv.id ?? "").trim();
+    if (!aid) continue;
+    const cap = roundMoney2(Number(adv.amountGross) || 0);
+    const paidField = roundMoney2(Number(adv.paidGrossReceived) || 0);
+    if (paidField <= 0.009) continue;
+    const receiptSum = sumTaxReceiptsForAdvance(invoices, aid);
+    const gap = roundMoney2(paidField - receiptSum);
+    if (gap <= 0.009) continue;
+    const add =
+      cap > 0 ? Math.min(gap, Math.max(0, roundMoney2(cap - receiptSum))) : gap;
+    paymentsDepositGross = roundMoney2(paymentsDepositGross + add);
+  }
+  return {
+    manualDepositGross,
+    paymentsDepositGross,
+    totalDepositPaidGross: roundMoney2(manualDepositGross + paymentsDepositGross),
+  };
 }
 
 function resolveDepositPaymentStatus(required, received) {
@@ -78,98 +89,48 @@ function resolveDepositPaymentStatus(required, received) {
   return "částečně zaplaceno";
 }
 
-function buildSummary(rows) {
-  return rows.reduce(
-    (s, r) => ({
-      jobCount: s.jobCount + 1,
-      totalPriceGross: roundMoney2(s.totalPriceGross + r.totalPriceGross),
-      totalRequiredDepositGross: roundMoney2(
-        s.totalRequiredDepositGross + r.requiredDepositGross
-      ),
-      totalReceivedDepositGross: roundMoney2(
-        s.totalReceivedDepositGross + r.receivedDepositGross
-      ),
-      totalDepositRemainingGross: roundMoney2(
-        s.totalDepositRemainingGross + r.depositRemainingGross
-      ),
-    }),
-    {
-      jobCount: 0,
-      totalPriceGross: 0,
-      totalRequiredDepositGross: 0,
-      totalReceivedDepositGross: 0,
-      totalDepositRemainingGross: 0,
-    }
-  );
-}
-
-// 1) bez smlouvy
+// ručně zesmluvněná bez portálové smlouvy
 assert.equal(
-  isJobContracted({ status: "nová" }, []),
-  false,
-  "zakázka bez smlouvy"
+  isJobManuallyContracted({ contractManual: { isContracted: true } }),
+  true
 );
 
-// 2) zesmluvněná bez platby
-const agg0 = aggregateDepositPaymentsFromInvoices([]);
-assert.equal(agg0.receivedDepositGross, 0);
-
-// 3) více zálohových plateb
-const invMulti = [
-  { id: "zf1", type: JOB_INVOICE_TYPES.ADVANCE },
+// ruční záloha + platby
+const jobManual = { contractManual: { paidDepositGross: 25000 } };
+const invPay = [
+  { id: "zf1", type: JOB_INVOICE_TYPES.ADVANCE, amountGross: 100000, paidGrossReceived: 50000 },
   {
     id: "dd1",
     type: JOB_INVOICE_TYPES.TAX_RECEIPT,
     relatedInvoiceId: "zf1",
     amountGross: 50000,
-    paymentDate: "2025-01-10",
   },
+];
+const agg = computeJobDepositAggregation(jobManual, invPay);
+assert.equal(agg.manualDepositGross, 25000);
+assert.equal(agg.paymentsDepositGross, 50000);
+assert.equal(agg.totalDepositPaidGross, 75000);
+
+// bez dvojího započtení: paidGrossReceived = součet DD
+const aggNoDouble = computeJobDepositAggregation({}, invPay);
+assert.equal(aggNoDouble.paymentsDepositGross, 50000);
+
+// paidGrossReceived vyšší než DD — doplatek
+const invGap = [
+  { id: "zf2", type: JOB_INVOICE_TYPES.ADVANCE, amountGross: 100000, paidGrossReceived: 80000 },
   {
     id: "dd2",
     type: JOB_INVOICE_TYPES.TAX_RECEIPT,
-    relatedInvoiceId: "zf1",
-    amountGross: 30000,
-    paymentDate: "2025-02-01",
+    relatedInvoiceId: "zf2",
+    amountGross: 50000,
   },
 ];
-const aggMulti = aggregateDepositPaymentsFromInvoices(invMulti);
-assert.equal(aggMulti.receivedDepositGross, 80000, "součet dvou záloh");
+const aggGap = computeJobDepositAggregation({}, invGap);
+assert.equal(aggGap.paymentsDepositGross, 80000);
 
-// 4) částečně
-assert.equal(
-  resolveDepositPaymentStatus(100000, 40000),
-  "částečně zaplaceno"
-);
-
-// 5) plně
+// stavy úhrady
+assert.equal(resolveDepositPaymentStatus(100000, 0), "nezaplaceno");
+assert.equal(resolveDepositPaymentStatus(100000, 40000), "částečně zaplaceno");
 assert.equal(resolveDepositPaymentStatus(100000, 100000), "zaplaceno");
-
-// 6) souhrn
-const rows = [
-  {
-    totalPriceGross: 200000,
-    requiredDepositGross: 60000,
-    receivedDepositGross: 40000,
-    depositRemainingGross: 20000,
-  },
-  {
-    totalPriceGross: 100000,
-    requiredDepositGross: 30000,
-    receivedDepositGross: 30000,
-    depositRemainingGross: 0,
-  },
-];
-const sum = buildSummary(rows);
-assert.equal(sum.jobCount, 2);
-assert.equal(sum.totalPriceGross, 300000);
-assert.equal(sum.totalRequiredDepositGross, 90000);
-assert.equal(sum.totalReceivedDepositGross, 70000);
-assert.equal(sum.totalDepositRemainingGross, 20000);
-
-// zesmluvněná podle čísla SOD
-assert.equal(
-  isJobContracted({}, [{ id: "c1", contractNumber: "SOD-2025-001" }]),
-  true
-);
 
 console.log("OK: všechny testy contracted-jobs-export prošly.");

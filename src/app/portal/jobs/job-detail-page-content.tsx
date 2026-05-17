@@ -48,6 +48,7 @@ import {
 } from "@/lib/job-linked-document-sync";
 import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
 import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoices-section";
+import { JobContractDepositSection } from "@/components/jobs/job-contract-deposit-section";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
 import { JobDocumentEmailSection } from "@/components/jobs/job-document-email-section";
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
@@ -10178,6 +10179,18 @@ export function JobDetailPageContent({
               </div>
             </CardContent>
           </Card>
+
+          {companyId && jobFirestoreId &&
+          profile?.role !== "customer" &&
+          (isAdmin || canManageFolders) ? (
+            <JobContractDepositSection
+              jobRef={jobRef}
+              job={job as Record<string, unknown>}
+              canEdit={isAdmin}
+              canView={isAdmin || canManageFolders}
+              defaultTotalPriceGross={jobBudgetBreakdown?.budgetGross ?? null}
+            />
+          ) : null}
 
           {companyId && jobFirestoreId ? (
             <JobBillingInvoicesSection

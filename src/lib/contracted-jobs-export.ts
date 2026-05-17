@@ -20,6 +20,11 @@ import {
 } from "@/lib/job-billing-invoices";
 import { resolveJobBudgetFromFirestore, roundMoney2 } from "@/lib/vat-calculations";
 import {
+  formatContractManualDateLabel,
+  isJobManuallyContracted,
+  parseJobContractManual,
+} from "@/lib/job-contract-manual";
+import {
   formatCsDateFromFirestore,
   type WorkContractDoc,
 } from "@/lib/work-contract-print-html-build";
@@ -51,7 +56,11 @@ export type ContractedJobExportRow = {
   contractNumber: string;
   totalPriceGross: number;
   requiredDepositGross: number;
-  receivedDepositGross: number;
+  manualDepositGross: number;
+  paymentsDepositGross: number;
+  totalDepositPaidGross: number;
+  manualDepositLabel: string;
+  paymentsDepositLabel: string;
   depositPaymentDatesLabel: string;
   depositRemainingGross: number;
   depositStatus: DepositPaymentStatus;
@@ -99,6 +108,8 @@ export function isJobContracted(
   job: Record<string, unknown>,
   contractsForJob: WorkContractDoc[]
 ): boolean {
+  if (isJobManuallyContracted(job)) return true;
+
   const status = String(job.status ?? "")
     .trim()
     .toLowerCase();
@@ -158,25 +169,45 @@ function formatPaymentDateLabel(inv: JobInvoiceExportRow): string {
 }
 
 export type DepositAggregation = {
-  receivedDepositGross: number;
+  manualDepositGross: number;
+  paymentsDepositGross: number;
+  totalDepositPaidGross: number;
   paymentDateLabels: string[];
   otherPaymentsLabels: string[];
 };
 
+function sumTaxReceiptsForAdvance(
+  invoices: JobInvoiceExportRow[],
+  advanceId: string
+): number {
+  let s = 0;
+  for (const inv of invoices) {
+    if (String(inv.type ?? "") !== JOB_INVOICE_TYPES.TAX_RECEIPT) continue;
+    if (String(inv.relatedInvoiceId ?? "").trim() !== advanceId) continue;
+    s = roundMoney2(s + (Number(inv.amountGross) || 0));
+  }
+  return s;
+}
+
 /**
- * Zálohy pouze z daňových dokladů vázaných na zálohové faktury.
- * Ostatní přijaté platby (DD bez vazby na ZF) se nezapočítávají do zálohy.
+ * Zálohy z portálu: daňové doklady k ZF + doplatek z paidGrossReceived na ZF bez dvojího započtení.
+ * Ruční záloha se přičítá zvlášť.
  */
-export function aggregateDepositPaymentsFromInvoices(
+export function computeJobDepositAggregation(
+  job: Record<string, unknown>,
   invoices: JobInvoiceExportRow[]
 ): DepositAggregation {
-  const advanceIds = new Set<string>();
-  for (const inv of invoices) {
-    if (String(inv.type ?? "") !== JOB_INVOICE_TYPES.ADVANCE) continue;
-    if (inv.id) advanceIds.add(inv.id);
-  }
+  const manualData = parseJobContractManual(job);
+  const manualDepositGross = roundMoney2(
+    Math.max(0, Number(manualData.paidDepositGross) || 0)
+  );
 
-  let receivedDepositGross = 0;
+  const advances = invoices.filter(
+    (i) => String(i.type ?? "") === JOB_INVOICE_TYPES.ADVANCE
+  );
+  const advanceIds = new Set(advances.map((a) => a.id).filter(Boolean));
+
+  let paymentsDepositGross = 0;
   const paymentDateLabels: string[] = [];
   const otherPaymentsLabels: string[] = [];
 
@@ -190,7 +221,7 @@ export function aggregateDepositPaymentsFromInvoices(
     const dateLabel = formatPaymentDateLabel(inv);
 
     if (related && advanceIds.has(related)) {
-      receivedDepositGross = roundMoney2(receivedDepositGross + gross);
+      paymentsDepositGross = roundMoney2(paymentsDepositGross + gross);
       paymentDateLabels.push(
         dateLabel ? `${dateLabel} (${formatMoneyKc(gross)})` : formatMoneyKc(gross)
       );
@@ -202,10 +233,50 @@ export function aggregateDepositPaymentsFromInvoices(
     }
   }
 
+  for (const adv of advances) {
+    const aid = String(adv.id ?? "").trim();
+    if (!aid) continue;
+    const cap = roundMoney2(Number(adv.amountGross) || 0);
+    const paidField = roundMoney2(Number(adv.paidGrossReceived) || 0);
+    if (paidField <= 0.009) continue;
+    const receiptSum = sumTaxReceiptsForAdvance(invoices, aid);
+    const gap = roundMoney2(paidField - receiptSum);
+    if (gap <= 0.009) continue;
+    const add =
+      cap > 0 ? Math.min(gap, Math.max(0, roundMoney2(cap - receiptSum))) : gap;
+    paymentsDepositGross = roundMoney2(paymentsDepositGross + add);
+    const invNo = String(adv.invoiceNumber ?? adv.documentNumber ?? aid).trim();
+    paymentDateLabels.push(
+      `ZF ${invNo} (úhrada bez DD): ${formatMoneyKc(add)}`
+    );
+  }
+
+  const totalDepositPaidGross = roundMoney2(
+    manualDepositGross + paymentsDepositGross
+  );
+
   return {
-    receivedDepositGross,
+    manualDepositGross,
+    paymentsDepositGross,
+    totalDepositPaidGross,
     paymentDateLabels,
     otherPaymentsLabels,
+  };
+}
+
+/** @deprecated Použijte {@link computeJobDepositAggregation}. */
+export function aggregateDepositPaymentsFromInvoices(
+  invoices: JobInvoiceExportRow[]
+): {
+  receivedDepositGross: number;
+  paymentDateLabels: string[];
+  otherPaymentsLabels: string[];
+} {
+  const agg = computeJobDepositAggregation({}, invoices);
+  return {
+    receivedDepositGross: agg.paymentsDepositGross,
+    paymentDateLabels: agg.paymentDateLabels,
+    otherPaymentsLabels: agg.otherPaymentsLabels,
   };
 }
 
@@ -248,15 +319,20 @@ export function buildContractedJobExportRow(params: {
   const budgetGross = budget?.budgetGross ?? null;
   const primary = selectPrimaryWorkContractForBilling(contractLikes, budgetGross);
 
-  const requiredDepositGross = primary
-    ? depositGrossKcFromContract(primary, budgetGross)
-    : 0;
+  const manual = parseJobContractManual(job);
 
-  const depositAgg = aggregateDepositPaymentsFromInvoices(invoices);
-  const receivedDepositGross = depositAgg.receivedDepositGross;
+  const requiredDepositGross =
+    manual.requiredDepositGross != null && Number.isFinite(manual.requiredDepositGross)
+      ? roundMoney2(manual.requiredDepositGross)
+      : primary
+        ? depositGrossKcFromContract(primary, budgetGross)
+        : 0;
+
+  const depositAgg = computeJobDepositAggregation(job, invoices);
+  const totalDepositPaidGross = depositAgg.totalDepositPaidGross;
   const depositRemainingGross = Math.max(
     0,
-    roundMoney2(requiredDepositGross - receivedDepositGross)
+    roundMoney2(requiredDepositGross - totalDepositPaidGross)
   );
 
   const addrBlock = buildJobCustomerAddressBlock(job, customer);
@@ -318,9 +394,11 @@ export function buildContractedJobExportRow(params: {
     "—";
 
   const totalPriceGross =
-    budgetGross != null && Number.isFinite(budgetGross)
-      ? roundMoney2(budgetGross)
-      : 0;
+    manual.totalPriceGross != null && Number.isFinite(manual.totalPriceGross)
+      ? roundMoney2(manual.totalPriceGross)
+      : budgetGross != null && Number.isFinite(budgetGross)
+        ? roundMoney2(budgetGross)
+        : 0;
 
   return {
     jobId: job.id,
@@ -333,7 +411,17 @@ export function buildContractedJobExportRow(params: {
     contractNumber: contractNumber || "—",
     totalPriceGross,
     requiredDepositGross,
-    receivedDepositGross,
+    manualDepositGross: depositAgg.manualDepositGross,
+    paymentsDepositGross: depositAgg.paymentsDepositGross,
+    totalDepositPaidGross,
+    manualDepositLabel:
+      depositAgg.manualDepositGross > 0
+        ? formatMoneyKc(depositAgg.manualDepositGross)
+        : "—",
+    paymentsDepositLabel:
+      depositAgg.paymentsDepositGross > 0
+        ? formatMoneyKc(depositAgg.paymentsDepositGross)
+        : "—",
     depositPaymentDatesLabel:
       depositAgg.paymentDateLabels.length > 0
         ? depositAgg.paymentDateLabels.join("; ")
@@ -341,7 +429,7 @@ export function buildContractedJobExportRow(params: {
     depositRemainingGross,
     depositStatus: resolveDepositPaymentStatus(
       requiredDepositGross,
-      receivedDepositGross
+      totalDepositPaidGross
     ),
     otherPaymentsLabel:
       depositAgg.otherPaymentsLabels.length > 0
@@ -363,7 +451,7 @@ export function buildContractedJobsExportSummary(
       totalRequiredDepositGross + r.requiredDepositGross
     );
     totalReceivedDepositGross = roundMoney2(
-      totalReceivedDepositGross + r.receivedDepositGross
+      totalReceivedDepositGross + r.totalDepositPaidGross
     );
     totalDepositRemainingGross = roundMoney2(
       totalDepositRemainingGross + r.depositRemainingGross
@@ -464,9 +552,10 @@ export function downloadContractedJobsCsv(
     "cislo_smlouvy",
     "celkova_cena",
     "pozadovana_zaloha",
-    "prijate_zalohy",
+    "zaloha_rucne",
+    "zaloha_z_plateb",
+    "celkem_zaplaceno_zaloha",
     "datumy_plateb_zaloh",
-    "soucet_prijatych_zaloh",
     "zbyva_zaloha",
     "stav_zalohy",
     "ostatni_platby",
@@ -487,9 +576,10 @@ export function downloadContractedJobsCsv(
       r.contractNumber,
       r.totalPriceGross,
       r.requiredDepositGross,
-      r.receivedDepositGross,
+      r.manualDepositGross,
+      r.paymentsDepositGross,
+      r.totalDepositPaidGross,
       r.depositPaymentDatesLabel,
-      r.receivedDepositGross,
       r.depositRemainingGross,
       r.depositStatus,
       r.otherPaymentsLabel,
