@@ -104,7 +104,13 @@ import {
   fetchImageAsDataUrl,
   type JobPdfExportRow,
 } from "@/lib/pdf/exportJobsToPdf";
+import { exportContractedJobsToPdf } from "@/lib/pdf/exportContractedJobsToPdf";
 import { sumJobExpensesFromFirestore } from "@/lib/pdf/sum-job-expenses-client";
+import {
+  buildContractedJobsExportRows,
+  buildContractedJobsExportSummary,
+  downloadContractedJobsCsv,
+} from "@/lib/contracted-jobs-export";
 import { useIsBelowLg } from "@/hooks/use-mobile";
 type JobsBoundaryProps = { children: ReactNode };
 type JobsBoundaryState = { error: Error | null };
@@ -350,6 +356,18 @@ function JobsPageContent() {
   const [measurementPhotoDialogOpen, setMeasurementPhotoDialogOpen] =
     useState(false);
   const [exportPdfLoading, setExportPdfLoading] = useState(false);
+  const [exportContractedLoading, setExportContractedLoading] = useState(false);
+
+  const customersById = useMemo(() => {
+    const m = new Map<string, Record<string, unknown>>();
+    for (const c of customers) {
+      const id = String(c?.id ?? "").trim();
+      if (id) m.set(id, c as Record<string, unknown>);
+    }
+    return m;
+  }, [customers]);
+
+  const jobsForExport = belowLg ? filteredJobsMobile : filteredJobs;
   useEffect(() => {
     if (!isAdmin && workContractTemplatesManagerOpen) {
       setWorkContractTemplatesManagerOpen(false);
@@ -842,6 +860,91 @@ function JobsPageContent() {
     }
   };
 
+  const handleExportContractedJobs = async (format: "pdf" | "csv") => {
+    if (!isAdmin || !firestore || !companyId) {
+      toast({
+        variant: "destructive",
+        title: "Export",
+        description: "Tuto akci mohou provést jen administrátoři.",
+      });
+      return;
+    }
+    if (jobsForExport.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Export",
+        description: "Nejsou žádné zakázky k exportu (zkontrolujte filtry).",
+      });
+      return;
+    }
+    setExportContractedLoading(true);
+    try {
+      const jobsPayload = jobsForExport
+        .map((j) => {
+          const id = String(j?.id ?? "").trim();
+          if (!id) return null;
+          return { ...(j as Record<string, unknown>), id };
+        })
+        .filter(Boolean) as Array<Record<string, unknown> & { id: string }>;
+
+      const rows = await buildContractedJobsExportRows({
+        firestore,
+        companyId,
+        jobs: jobsPayload,
+        customersById,
+      });
+
+      if (rows.length === 0) {
+        toast({
+          variant: "destructive",
+          title: "Export zesmluvněných zakázek",
+          description:
+            "Ve filtrovaném seznamu není žádná zesmluvněná zakázka (smlouva, číslo SOD nebo stav „zesmluvněno“).",
+        });
+        return;
+      }
+
+      const summary = buildContractedJobsExportSummary(rows);
+      const fileBase = `zesmluvnene-zakazky-${new Date().toISOString().slice(0, 10)}`;
+
+      if (format === "csv") {
+        downloadContractedJobsCsv(rows, summary, fileBase);
+        toast({
+          title: "CSV bylo vygenerováno",
+          description: `Exportováno ${rows.length} zesmluvněných zakázek.`,
+        });
+        return;
+      }
+
+      let logoDataUrl: string | null = null;
+      const logoUrl = company?.organizationLogoUrl;
+      if (typeof logoUrl === "string" && logoUrl.trim()) {
+        logoDataUrl = await fetchImageAsDataUrl(logoUrl.trim());
+      }
+
+      await exportContractedJobsToPdf({
+        rows,
+        summary,
+        companyName: tenantCompanyName || "Organizace",
+        logoDataUrl,
+        fileName: fileBase,
+      });
+
+      toast({
+        title: "PDF bylo vygenerováno",
+        description: `Exportováno ${rows.length} zesmluvněných zakázek.`,
+      });
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Export zesmluvněných zakázek",
+        description: e instanceof Error ? e.message : "Generování se nezdařilo.",
+      });
+    } finally {
+      setExportContractedLoading(false);
+    }
+  };
+
   if (isProfileLoading) {
     return (
       <div className="flex justify-center p-12">
@@ -954,6 +1057,48 @@ function JobsPageContent() {
                   <div className="grid grid-cols-2 gap-1.5">
                     <button
                       type="button"
+                      className={cn(
+                        "min-w-0 text-left",
+                        (exportContractedLoading || jobsForExport.length === 0) &&
+                          "pointer-events-none opacity-50"
+                      )}
+                      disabled={
+                        exportContractedLoading || jobsForExport.length === 0
+                      }
+                      onClick={() => void handleExportContractedJobs("pdf")}
+                    >
+                      <div className={tileClass}>
+                        {exportContractedLoading ? (
+                          <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-400" />
+                        ) : (
+                          <FileDown className="h-5 w-5 shrink-0 text-orange-400" />
+                        )}
+                        <span className={labelClass}>Zesmluvněné</span>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      className={cn(
+                        "min-w-0 text-left",
+                        (exportContractedLoading || jobsForExport.length === 0) &&
+                          "pointer-events-none opacity-50"
+                      )}
+                      disabled={
+                        exportContractedLoading || jobsForExport.length === 0
+                      }
+                      onClick={() => void handleExportContractedJobs("csv")}
+                    >
+                      <div className={tileClass}>
+                        <FileText className="h-5 w-5 shrink-0 text-orange-400" />
+                        <span className={labelClass}>Zesml. CSV</span>
+                      </div>
+                    </button>
+                  </div>
+                ) : null}
+                {isAdmin ? (
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <button
+                      type="button"
                       className="min-w-0 text-left"
                       onClick={() => setWorkContractTemplatesManagerOpen(true)}
                     >
@@ -1027,6 +1172,29 @@ function JobsPageContent() {
                   <FileDown className="w-4 h-4 shrink-0" />
                 )}
                 Export PDF
+              </Button>
+              <Button
+                type="button"
+                variant="outlineLight"
+                className="gap-2 min-h-[44px]"
+                disabled={exportContractedLoading || jobsForExport.length === 0}
+                onClick={() => void handleExportContractedJobs("pdf")}
+              >
+                {exportContractedLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                ) : (
+                  <FileDown className="w-4 h-4 shrink-0" />
+                )}
+                Export zesmluvněných zakázek
+              </Button>
+              <Button
+                type="button"
+                variant="outlineLight"
+                className="gap-2 min-h-[44px]"
+                disabled={exportContractedLoading || jobsForExport.length === 0}
+                onClick={() => void handleExportContractedJobs("csv")}
+              >
+                CSV zesmluvněných
               </Button>
               <Link href="/portal/jobs/templates">
                 <Button variant="outlineLight" className="gap-2 min-h-[44px]">
