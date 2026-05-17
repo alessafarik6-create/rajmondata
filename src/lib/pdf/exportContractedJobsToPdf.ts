@@ -22,6 +22,20 @@ export type ExportContractedJobsToPdfOptions = {
   fontBasePath?: string;
 };
 
+/**
+ * Spodní souhrn PDF — bez součtu požadovaných záloh (sloupec Záloha v tabulce zůstává).
+ */
+export function buildContractedJobsPdfSummaryLines(
+  summary: ContractedJobsExportSummary
+): string[] {
+  return [
+    `Počet zesmluvněných zakázek: ${summary.jobCount}`,
+    `Součet cen zakázek: ${formatMoneyKc(summary.totalPriceGross)}`,
+    `Součet celkem zaplaceno: ${formatMoneyKc(summary.totalReceivedDepositGross)}`,
+    `Součet zbývá doplatit: ${formatMoneyKc(summary.totalRemainingToPayGross)}`,
+  ];
+}
+
 function safeCellText(s: string | null | undefined): string {
   if (s == null) return "—";
   const t = String(s).trim();
@@ -260,12 +274,7 @@ export async function exportContractedJobsToPdf(
   doc.setFont(PDF_FONT_FAMILY, "normal");
   footY += 4.5;
   doc.setFontSize(8);
-  const summaryLines = [
-    `Počet zesmluvněných zakázek: ${summary.jobCount}`,
-    `Součet cen zakázek: ${formatMoneyKc(summary.totalPriceGross)}`,
-    `Součet celkem zaplaceno: ${formatMoneyKc(summary.totalReceivedDepositGross)}`,
-    `Součet zbývá doplatit: ${formatMoneyKc(summary.totalRemainingToPayGross)}`,
-  ];
+  const summaryLines = buildContractedJobsPdfSummaryLines(summary);
   for (const line of summaryLines) {
     doc.text(line, margin, footY);
     footY += 4;
