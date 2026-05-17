@@ -1,10 +1,12 @@
 /**
- * Export zesmluvněných zakázek — určení zesmluvnění, zálohy z daňových dokladů, souhrn.
+ * Export zesmluvněných zakázek — určení zesmluvnění, zálohy, souhrn.
  */
 
 import type { Firestore } from "firebase/firestore";
 import {
   collection,
+  doc,
+  getDoc,
   getDocs,
   limit,
   query,
@@ -13,37 +15,25 @@ import {
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { buildJobCustomerAddressBlock } from "@/lib/customer-address-display";
 import {
-  depositGrossKcFromContract,
-  JOB_INVOICE_TYPES,
-  selectPrimaryWorkContractForBilling,
-  type WorkContractLike,
-} from "@/lib/job-billing-invoices";
+  calculateJobDepositSummary,
+  formatMoneyKc,
+  resolveDepositPaymentStatus,
+  type DepositPaymentStatus,
+  type JobIncomeForDeposit,
+  type JobInvoiceForDeposit,
+} from "@/lib/job-deposit-summary";
+import { selectPrimaryWorkContractForBilling, type WorkContractLike } from "@/lib/job-billing-invoices";
+import { formatContractManualDateLabel, isJobManuallyContracted, parseJobContractManual } from "@/lib/job-contract-manual";
 import { resolveJobBudgetFromFirestore, roundMoney2 } from "@/lib/vat-calculations";
-import {
-  formatContractManualDateLabel,
-  isJobManuallyContracted,
-  parseJobContractManual,
-} from "@/lib/job-contract-manual";
 import {
   formatCsDateFromFirestore,
   type WorkContractDoc,
 } from "@/lib/work-contract-print-html-build";
 
-export type DepositPaymentStatus = "nezaplaceno" | "částečně zaplaceno" | "zaplaceno" | "—";
+export type { DepositPaymentStatus } from "@/lib/job-deposit-summary";
+export { formatMoneyKc, resolveDepositPaymentStatus } from "@/lib/job-deposit-summary";
 
-export type JobInvoiceExportRow = {
-  id: string;
-  type?: string;
-  jobId?: string;
-  relatedInvoiceId?: string | null;
-  amountGross?: unknown;
-  paidGrossReceived?: unknown;
-  paymentDate?: string | null;
-  issueDate?: string | null;
-  taxSupplyDate?: string | null;
-  documentNumber?: string | null;
-  invoiceNumber?: string | null;
-};
+export type JobInvoiceExportRow = JobInvoiceForDeposit;
 
 export type ContractedJobExportRow = {
   jobId: string;
@@ -64,7 +54,6 @@ export type ContractedJobExportRow = {
   depositPaymentDatesLabel: string;
   depositRemainingGross: number;
   depositStatus: DepositPaymentStatus;
-  /** Platby bez jasné vazby na zálohu — zobrazit v exportu zvlášť. */
   otherPaymentsLabel: string;
 };
 
@@ -100,10 +89,6 @@ function contractHasSavedBody(c: WorkContractDoc): boolean {
   return content.length > 0 || header.length > 0;
 }
 
-/**
- * Zakázka je zesmluvněná, pokud má uloženou smlouvu o dílo, číslo SOD/smlouvy,
- * nebo stav „zesmluvněno“.
- */
 export function isJobContracted(
   job: Record<string, unknown>,
   contractsForJob: WorkContractDoc[]
@@ -124,6 +109,9 @@ export function isJobContracted(
     .map((x) => String(x ?? "").trim())
     .filter(Boolean);
   if (jobNumbers.length > 0) return true;
+
+  const manual = parseJobContractManual(job);
+  if (manual.contractNumber) return true;
 
   const relevant = filterBillingWorkContracts(contractsForJob);
 
@@ -155,153 +143,14 @@ function formatAddressOneLine(lines: string[]): string {
   return lines.map((l) => l.trim()).filter(Boolean).join(", ") || "—";
 }
 
-function formatPaymentDateLabel(inv: JobInvoiceExportRow): string {
-  const raw =
-    String(inv.paymentDate ?? "").trim() ||
-    String(inv.taxSupplyDate ?? "").trim() ||
-    String(inv.issueDate ?? "").trim();
-  if (!raw) return "";
-  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
-    const [y, m, d] = raw.slice(0, 10).split("-");
-    if (y && m && d) return `${Number(d)}. ${Number(m)}. ${y}`;
-  }
-  return raw;
-}
-
-export type DepositAggregation = {
-  manualDepositGross: number;
-  paymentsDepositGross: number;
-  totalDepositPaidGross: number;
-  paymentDateLabels: string[];
-  otherPaymentsLabels: string[];
-};
-
-function sumTaxReceiptsForAdvance(
-  invoices: JobInvoiceExportRow[],
-  advanceId: string
-): number {
-  let s = 0;
-  for (const inv of invoices) {
-    if (String(inv.type ?? "") !== JOB_INVOICE_TYPES.TAX_RECEIPT) continue;
-    if (String(inv.relatedInvoiceId ?? "").trim() !== advanceId) continue;
-    s = roundMoney2(s + (Number(inv.amountGross) || 0));
-  }
-  return s;
-}
-
-/**
- * Zálohy z portálu: daňové doklady k ZF + doplatek z paidGrossReceived na ZF bez dvojího započtení.
- * Ruční záloha se přičítá zvlášť.
- */
-export function computeJobDepositAggregation(
-  job: Record<string, unknown>,
-  invoices: JobInvoiceExportRow[]
-): DepositAggregation {
-  const manualData = parseJobContractManual(job);
-  const manualDepositGross = roundMoney2(
-    Math.max(0, Number(manualData.paidDepositGross) || 0)
-  );
-
-  const advances = invoices.filter(
-    (i) => String(i.type ?? "") === JOB_INVOICE_TYPES.ADVANCE
-  );
-  const advanceIds = new Set(advances.map((a) => a.id).filter(Boolean));
-
-  let paymentsDepositGross = 0;
-  const paymentDateLabels: string[] = [];
-  const otherPaymentsLabels: string[] = [];
-
-  for (const inv of invoices) {
-    if (String(inv.type ?? "") !== JOB_INVOICE_TYPES.TAX_RECEIPT) continue;
-    const gross = roundMoney2(Number(inv.amountGross) || 0);
-    if (gross <= 0) continue;
-    const related = String(inv.relatedInvoiceId ?? "").trim();
-    const docNo =
-      String(inv.documentNumber ?? inv.invoiceNumber ?? "").trim() || inv.id;
-    const dateLabel = formatPaymentDateLabel(inv);
-
-    if (related && advanceIds.has(related)) {
-      paymentsDepositGross = roundMoney2(paymentsDepositGross + gross);
-      paymentDateLabels.push(
-        dateLabel ? `${dateLabel} (${formatMoneyKc(gross)})` : formatMoneyKc(gross)
-      );
-    } else {
-      const part = dateLabel
-        ? `${docNo}: ${formatMoneyKc(gross)} · ${dateLabel}`
-        : `${docNo}: ${formatMoneyKc(gross)}`;
-      otherPaymentsLabels.push(part);
-    }
-  }
-
-  for (const adv of advances) {
-    const aid = String(adv.id ?? "").trim();
-    if (!aid) continue;
-    const cap = roundMoney2(Number(adv.amountGross) || 0);
-    const paidField = roundMoney2(Number(adv.paidGrossReceived) || 0);
-    if (paidField <= 0.009) continue;
-    const receiptSum = sumTaxReceiptsForAdvance(invoices, aid);
-    const gap = roundMoney2(paidField - receiptSum);
-    if (gap <= 0.009) continue;
-    const add =
-      cap > 0 ? Math.min(gap, Math.max(0, roundMoney2(cap - receiptSum))) : gap;
-    paymentsDepositGross = roundMoney2(paymentsDepositGross + add);
-    const invNo = String(adv.invoiceNumber ?? adv.documentNumber ?? aid).trim();
-    paymentDateLabels.push(
-      `ZF ${invNo} (úhrada bez DD): ${formatMoneyKc(add)}`
-    );
-  }
-
-  const totalDepositPaidGross = roundMoney2(
-    manualDepositGross + paymentsDepositGross
-  );
-
-  return {
-    manualDepositGross,
-    paymentsDepositGross,
-    totalDepositPaidGross,
-    paymentDateLabels,
-    otherPaymentsLabels,
-  };
-}
-
-/** @deprecated Použijte {@link computeJobDepositAggregation}. */
-export function aggregateDepositPaymentsFromInvoices(
-  invoices: JobInvoiceExportRow[]
-): {
-  receivedDepositGross: number;
-  paymentDateLabels: string[];
-  otherPaymentsLabels: string[];
-} {
-  const agg = computeJobDepositAggregation({}, invoices);
-  return {
-    receivedDepositGross: agg.paymentsDepositGross,
-    paymentDateLabels: agg.paymentDateLabels,
-    otherPaymentsLabels: agg.otherPaymentsLabels,
-  };
-}
-
-export function resolveDepositPaymentStatus(
-  requiredGross: number,
-  receivedGross: number
-): DepositPaymentStatus {
-  if (requiredGross <= 0.009) return "—";
-  if (receivedGross <= 0.009) return "nezaplaceno";
-  if (receivedGross >= requiredGross - 0.01) return "zaplaceno";
-  return "částečně zaplaceno";
-}
-
-export function formatMoneyKc(value: number): string {
-  const n = Number.isFinite(value) ? Math.round(value) : 0;
-  return `${n.toLocaleString("cs-CZ")} Kč`;
-}
-
 export function buildContractedJobExportRow(params: {
   job: Record<string, unknown> & { id: string };
   customer: Record<string, unknown> | null | undefined;
   contractsForJob: WorkContractDoc[];
   invoices: JobInvoiceExportRow[];
+  jobIncomes?: JobIncomeForDeposit[];
 }): ContractedJobExportRow | null {
-  const { job, customer, contractsForJob, invoices } = params;
+  const { job, customer, contractsForJob, invoices, jobIncomes } = params;
   if (!isJobContracted(job, contractsForJob)) return null;
 
   const filteredContracts = filterBillingWorkContracts(contractsForJob);
@@ -318,22 +167,14 @@ export function buildContractedJobExportRow(params: {
   const budget = resolveJobBudgetFromFirestore(job);
   const budgetGross = budget?.budgetGross ?? null;
   const primary = selectPrimaryWorkContractForBilling(contractLikes, budgetGross);
-
   const manual = parseJobContractManual(job);
 
-  const requiredDepositGross =
-    manual.requiredDepositGross != null && Number.isFinite(manual.requiredDepositGross)
-      ? roundMoney2(manual.requiredDepositGross)
-      : primary
-        ? depositGrossKcFromContract(primary, budgetGross)
-        : 0;
-
-  const depositAgg = computeJobDepositAggregation(job, invoices);
-  const totalDepositPaidGross = depositAgg.totalDepositPaidGross;
-  const depositRemainingGross = Math.max(
-    0,
-    roundMoney2(requiredDepositGross - totalDepositPaidGross)
-  );
+  const deposit = calculateJobDepositSummary({
+    job,
+    invoices,
+    workContracts: filteredContracts,
+    jobIncomes,
+  });
 
   const addrBlock = buildJobCustomerAddressBlock(job, customer);
   const customerName =
@@ -341,8 +182,8 @@ export function buildContractedJobExportRow(params: {
     String(job.customerName ?? "").trim() ||
     "—";
 
-  let contractNumber = "";
-  if (primary?.contractNumber) {
+  let contractNumber = manual.contractNumber?.trim() || "";
+  if (!contractNumber && primary?.contractNumber) {
     contractNumber = String(primary.contractNumber).trim();
   }
   if (!contractNumber) {
@@ -365,8 +206,10 @@ export function buildContractedJobExportRow(params: {
         .find(Boolean) ?? "";
   }
 
-  let contractedAtLabel = "";
-  if (primary) {
+  let contractedAtLabel = manual.contractedAt
+    ? formatContractManualDateLabel(manual.contractedAt)
+    : "";
+  if (!contractedAtLabel && primary) {
     const src = filteredContracts.find((c) => c.id === primary.id);
     if (src) {
       contractedAtLabel =
@@ -410,30 +253,27 @@ export function buildContractedJobExportRow(params: {
     contractedAtLabel: contractedAtLabel || "—",
     contractNumber: contractNumber || "—",
     totalPriceGross,
-    requiredDepositGross,
-    manualDepositGross: depositAgg.manualDepositGross,
-    paymentsDepositGross: depositAgg.paymentsDepositGross,
-    totalDepositPaidGross,
+    requiredDepositGross: deposit.requiredDepositGross,
+    manualDepositGross: deposit.manualDepositGross,
+    paymentsDepositGross: deposit.paymentsDepositGross,
+    totalDepositPaidGross: deposit.totalDepositPaidGross,
     manualDepositLabel:
-      depositAgg.manualDepositGross > 0
-        ? formatMoneyKc(depositAgg.manualDepositGross)
+      deposit.manualDepositGross > 0
+        ? formatMoneyKc(deposit.manualDepositGross)
         : "—",
     paymentsDepositLabel:
-      depositAgg.paymentsDepositGross > 0
-        ? formatMoneyKc(depositAgg.paymentsDepositGross)
+      deposit.paymentsDepositGross > 0
+        ? formatMoneyKc(deposit.paymentsDepositGross)
         : "—",
     depositPaymentDatesLabel:
-      depositAgg.paymentDateLabels.length > 0
-        ? depositAgg.paymentDateLabels.join("; ")
+      deposit.paymentDateLabels.length > 0
+        ? deposit.paymentDateLabels.join("; ")
         : "—",
-    depositRemainingGross,
-    depositStatus: resolveDepositPaymentStatus(
-      requiredDepositGross,
-      totalDepositPaidGross
-    ),
+    depositRemainingGross: deposit.depositRemainingGross,
+    depositStatus: deposit.depositStatus,
     otherPaymentsLabel:
-      depositAgg.otherPaymentsLabels.length > 0
-        ? depositAgg.otherPaymentsLabels.join("; ")
+      deposit.otherPaymentsLabels.length > 0
+        ? deposit.otherPaymentsLabels.join("; ")
         : "—",
   };
 }
@@ -466,6 +306,19 @@ export function buildContractedJobsExportSummary(
   };
 }
 
+export async function fetchJobDocument(
+  firestore: Firestore,
+  companyId: string,
+  jobId: string
+): Promise<Record<string, unknown> & { id: string }> {
+  const ref = doc(firestore, "companies", companyId, "jobs", jobId);
+  const snap = await getDoc(ref);
+  if (!snap.exists()) {
+    return { id: jobId };
+  }
+  return { id: snap.id, ...snap.data() } as Record<string, unknown> & { id: string };
+}
+
 export async function fetchWorkContractsForJob(
   firestore: Firestore,
   companyId: string,
@@ -493,7 +346,7 @@ export async function fetchInvoicesForJob(
     query(
       collection(firestore, "companies", companyId, "invoices"),
       where("jobId", "==", jobId),
-      limit(80)
+      limit(120)
     )
   );
   const rows: JobInvoiceExportRow[] = [];
@@ -505,6 +358,32 @@ export async function fetchInvoicesForJob(
   return rows;
 }
 
+export async function fetchJobIncomesForJob(
+  firestore: Firestore,
+  companyId: string,
+  jobId: string
+): Promise<JobIncomeForDeposit[]> {
+  const snap = await getDocs(
+    collection(firestore, "companies", companyId, "jobs", jobId, "incomes")
+  );
+  return snap.docs.map((d) => ({ ...d.data() }) as JobIncomeForDeposit);
+}
+
+/** @deprecated Použijte {@link calculateJobDepositSummary}. */
+export function computeJobDepositAggregation(
+  job: Record<string, unknown>,
+  invoices: JobInvoiceExportRow[]
+) {
+  const d = calculateJobDepositSummary({ job, invoices });
+  return {
+    manualDepositGross: d.manualDepositGross,
+    paymentsDepositGross: d.paymentsDepositGross,
+    totalDepositPaidGross: d.totalDepositPaidGross,
+    paymentDateLabels: d.paymentDateLabels,
+    otherPaymentsLabels: d.otherPaymentsLabels,
+  };
+}
+
 export async function buildContractedJobsExportRows(params: {
   firestore: Firestore;
   companyId: string;
@@ -512,22 +391,28 @@ export async function buildContractedJobsExportRows(params: {
   customersById: Map<string, Record<string, unknown>>;
 }): Promise<ContractedJobExportRow[]> {
   const rows: ContractedJobExportRow[] = [];
-  for (const job of params.jobs) {
-    const jid = String(job.id ?? "").trim();
+  for (const jobSeed of params.jobs) {
+    const jid = String(jobSeed.id ?? "").trim();
     if (!jid) continue;
-    const [contracts, invoices] = await Promise.all([
+
+    const [jobFresh, contracts, invoices, jobIncomes] = await Promise.all([
+      fetchJobDocument(params.firestore, params.companyId, jid),
       fetchWorkContractsForJob(params.firestore, params.companyId, jid),
       fetchInvoicesForJob(params.firestore, params.companyId, jid),
+      fetchJobIncomesForJob(params.firestore, params.companyId, jid),
     ]);
-    const customerId = String(job.customerId ?? "").trim();
+
+    const customerId = String(jobFresh.customerId ?? jobSeed.customerId ?? "").trim();
     const customer = customerId
       ? params.customersById.get(customerId)
       : undefined;
+
     const row = buildContractedJobExportRow({
-      job,
+      job: jobFresh,
       customer,
       contractsForJob: contracts,
       invoices,
+      jobIncomes,
     });
     if (row) rows.push(row);
   }

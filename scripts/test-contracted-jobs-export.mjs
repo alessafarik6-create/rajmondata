@@ -1,6 +1,6 @@
 /**
- * Ruční test logiky exportu zesmluvněných zakázek.
- * Spuštění: node scripts/test-contracted-jobs-export.mjs
+ * Test calculateJobDepositSummary (stejná logika jako export PDF).
+ * node scripts/test-contracted-jobs-export.mjs
  */
 
 import assert from "node:assert/strict";
@@ -20,117 +20,102 @@ function parseJobContractManual(job) {
   return {
     isContracted: raw.isContracted === true,
     paidDepositGross:
-      raw.paidDepositGross != null && Number.isFinite(Number(raw.paidDepositGross))
-        ? roundMoney2(Number(raw.paidDepositGross))
-        : null,
+      raw.paidDepositGross != null ? roundMoney2(Number(raw.paidDepositGross)) : null,
     requiredDepositGross:
-      raw.requiredDepositGross != null &&
-      Number.isFinite(Number(raw.requiredDepositGross))
+      raw.requiredDepositGross != null
         ? roundMoney2(Number(raw.requiredDepositGross))
         : null,
   };
 }
 
-function isJobManuallyContracted(job) {
-  return parseJobContractManual(job).isContracted === true;
-}
+function calculateJobDepositSummary({ job, invoices = [], jobIncomes = [] }) {
+  const manual = parseJobContractManual(job);
+  const manualDepositGross = roundMoney2(Math.max(0, Number(manual.paidDepositGross) || 0));
+  const requiredDepositGross = roundMoney2(Math.max(0, Number(manual.requiredDepositGross) || 0));
 
-function sumTaxReceiptsForAdvance(invoices, advanceId) {
-  let s = 0;
-  for (const inv of invoices) {
-    if (inv.type !== JOB_INVOICE_TYPES.TAX_RECEIPT) continue;
-    if (String(inv.relatedInvoiceId ?? "").trim() !== advanceId) continue;
-    s = roundMoney2(s + (Number(inv.amountGross) || 0));
-  }
-  return s;
-}
-
-function computeJobDepositAggregation(job, invoices) {
-  const manualData = parseJobContractManual(job);
-  const manualDepositGross = roundMoney2(
-    Math.max(0, Number(manualData.paidDepositGross) || 0)
-  );
-  const advances = invoices.filter((i) => i.type === JOB_INVOICE_TYPES.ADVANCE);
-  const advanceIds = new Set(advances.map((a) => a.id).filter(Boolean));
   let paymentsDepositGross = 0;
-  for (const inv of invoices) {
-    if (inv.type !== JOB_INVOICE_TYPES.TAX_RECEIPT) continue;
-    const gross = roundMoney2(Number(inv.amountGross) || 0);
-    if (gross <= 0) continue;
-    const related = String(inv.relatedInvoiceId ?? "").trim();
-    if (related && advanceIds.has(related)) {
-      paymentsDepositGross = roundMoney2(paymentsDepositGross + gross);
-    }
+  const advances = invoices.filter((i) => i.type === JOB_INVOICE_TYPES.ADVANCE);
+  for (const a of advances) {
+    const cap = roundMoney2(Number(a.amountGross) || 0);
+    const paid = roundMoney2(Number(a.paidGrossReceived) || 0);
+    paymentsDepositGross = roundMoney2(
+      paymentsDepositGross + (cap > 0 ? Math.min(paid, cap) : paid)
+    );
   }
-  for (const adv of advances) {
-    const aid = String(adv.id ?? "").trim();
-    if (!aid) continue;
-    const cap = roundMoney2(Number(adv.amountGross) || 0);
-    const paidField = roundMoney2(Number(adv.paidGrossReceived) || 0);
-    if (paidField <= 0.009) continue;
-    const receiptSum = sumTaxReceiptsForAdvance(invoices, aid);
-    const gap = roundMoney2(paidField - receiptSum);
-    if (gap <= 0.009) continue;
-    const add =
-      cap > 0 ? Math.min(gap, Math.max(0, roundMoney2(cap - receiptSum))) : gap;
-    paymentsDepositGross = roundMoney2(paymentsDepositGross + add);
+  for (const inc of jobIncomes) {
+    paymentsDepositGross = roundMoney2(
+      paymentsDepositGross + (Number(inc.amountGross) || 0)
+    );
+  }
+
+  const jobPaidGross = roundMoney2(Number(job.paidAmountGross) || 0);
+  const counted = roundMoney2(manualDepositGross + paymentsDepositGross);
+  if (jobPaidGross > counted + 0.009) {
+    const cap =
+      requiredDepositGross > 0.009
+        ? roundMoney2(Math.max(0, requiredDepositGross - counted))
+        : roundMoney2(jobPaidGross - counted);
+    const residual = roundMoney2(Math.min(jobPaidGross - counted, cap));
+    if (residual > 0.009) paymentsDepositGross = roundMoney2(paymentsDepositGross + residual);
+  }
+
+  const totalDepositPaidGross = roundMoney2(manualDepositGross + paymentsDepositGross);
+  const depositRemainingGross = Math.max(
+    0,
+    roundMoney2(requiredDepositGross - totalDepositPaidGross)
+  );
+  let depositStatus = "—";
+  if (requiredDepositGross > 0.009) {
+    if (totalDepositPaidGross <= 0.009) depositStatus = "nezaplaceno";
+    else if (totalDepositPaidGross >= requiredDepositGross - 0.01) depositStatus = "zaplaceno";
+    else depositStatus = "částečně zaplaceno";
   }
   return {
+    requiredDepositGross,
     manualDepositGross,
     paymentsDepositGross,
-    totalDepositPaidGross: roundMoney2(manualDepositGross + paymentsDepositGross),
+    totalDepositPaidGross,
+    depositRemainingGross,
+    depositStatus,
   };
 }
 
-function resolveDepositPaymentStatus(required, received) {
-  if (required <= 0.009) return "—";
-  if (received <= 0.009) return "nezaplaceno";
-  if (received >= required - 0.01) return "zaplaceno";
-  return "částečně zaplaceno";
-}
+// Ručně zadaná záloha
+const manualOnly = calculateJobDepositSummary({
+  job: {
+    contractManual: { isContracted: true, requiredDepositGross: 200000, paidDepositGross: 50000 },
+  },
+  invoices: [],
+});
+assert.equal(manualOnly.manualDepositGross, 50000);
+assert.equal(manualOnly.totalDepositPaidGross, 50000);
 
-// ručně zesmluvněná bez portálové smlouvy
-assert.equal(
-  isJobManuallyContracted({ contractManual: { isContracted: true } }),
-  true
-);
+// Finanční přehled 200k bez dokladů
+const fromJobPaid = calculateJobDepositSummary({
+  job: {
+    paidAmountGross: 200000,
+    contractManual: { isContracted: true, requiredDepositGross: 200000 },
+  },
+  invoices: [],
+});
+assert.equal(fromJobPaid.totalDepositPaidGross, 200000);
+assert.equal(fromJobPaid.depositStatus, "zaplaceno");
 
-// ruční záloha + platby
-const jobManual = { contractManual: { paidDepositGross: 25000 } };
-const invPay = [
-  { id: "zf1", type: JOB_INVOICE_TYPES.ADVANCE, amountGross: 100000, paidGrossReceived: 50000 },
+// ZF + DD bez dvojího započtení
+const inv = [
+  { id: "zf1", type: JOB_INVOICE_TYPES.ADVANCE, amountGross: 200000, paidGrossReceived: 200000 },
   {
     id: "dd1",
     type: JOB_INVOICE_TYPES.TAX_RECEIPT,
     relatedInvoiceId: "zf1",
-    amountGross: 50000,
+    amountGross: 200000,
   },
 ];
-const agg = computeJobDepositAggregation(jobManual, invPay);
-assert.equal(agg.manualDepositGross, 25000);
-assert.equal(agg.paymentsDepositGross, 50000);
-assert.equal(agg.totalDepositPaidGross, 75000);
+const fromInv = calculateJobDepositSummary({
+  job: { paidAmountGross: 200000, contractManual: { requiredDepositGross: 200000 } },
+  invoices: inv,
+});
+assert.equal(fromInv.paymentsDepositGross, 200000);
+assert.equal(fromInv.totalDepositPaidGross, 200000);
 
-// bez dvojího započtení: paidGrossReceived = součet DD
-const aggNoDouble = computeJobDepositAggregation({}, invPay);
-assert.equal(aggNoDouble.paymentsDepositGross, 50000);
-
-// paidGrossReceived vyšší než DD — doplatek
-const invGap = [
-  { id: "zf2", type: JOB_INVOICE_TYPES.ADVANCE, amountGross: 100000, paidGrossReceived: 80000 },
-  {
-    id: "dd2",
-    type: JOB_INVOICE_TYPES.TAX_RECEIPT,
-    relatedInvoiceId: "zf2",
-    amountGross: 50000,
-  },
-];
-const aggGap = computeJobDepositAggregation({}, invGap);
-assert.equal(aggGap.paymentsDepositGross, 80000);
-
-// stavy úhrady
-assert.equal(resolveDepositPaymentStatus(100000, 0), "nezaplaceno");
-assert.equal(resolveDepositPaymentStatus(100000, 40000), "částečně zaplaceno");
-assert.equal(resolveDepositPaymentStatus(100000, 100000), "zaplaceno");
-
-console.log("OK: všechny testy contracted-jobs-export prošly.");
+console.log("OK: testy job-deposit-summary prošly.");

@@ -6,10 +6,10 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import { PDF_FONT_FAMILY, registerDejaVuFontsForPdf } from "@/lib/pdf/register-dejavu-font";
 import {
-  formatMoneyKc,
   type ContractedJobExportRow,
   type ContractedJobsExportSummary,
 } from "@/lib/contracted-jobs-export";
+import { depositStatusLabelCs, formatMoneyKc } from "@/lib/job-deposit-summary";
 import { formatCurrency } from "@/lib/pdf/exportJobsToPdf";
 
 export type ExportContractedJobsToPdfOptions = {
@@ -25,13 +25,6 @@ function safeCellText(s: string | null | undefined): string {
   if (s == null) return "—";
   const t = String(s).trim();
   return t.length ? t : "—";
-}
-
-function depositStatusLabel(status: string): string {
-  if (status === "nezaplaceno") return "Nezaplaceno";
-  if (status === "částečně zaplaceno") return "Částečně zaplaceno";
-  if (status === "zaplaceno") return "Zaplaceno";
-  return "—";
 }
 
 function detectImageFormat(dataUrl: string): "PNG" | "JPEG" {
@@ -117,7 +110,7 @@ export async function exportContractedJobsToPdf(
     formatCurrency(r.totalDepositPaidGross),
     safeCellText(r.depositPaymentDatesLabel),
     formatCurrency(r.depositRemainingGross),
-    depositStatusLabel(r.depositStatus),
+    depositStatusLabelCs(r.depositStatus),
   ]);
 
   autoTable(doc, {

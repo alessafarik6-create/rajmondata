@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { DocumentReference } from "firebase/firestore";
 import { serverTimestamp, updateDoc } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,7 +23,13 @@ import {
   serializeJobContractManualForFirestore,
   type JobContractManualData,
 } from "@/lib/job-contract-manual";
-import { formatMoneyKc } from "@/lib/contracted-jobs-export";
+import {
+  calculateJobDepositSummary,
+  depositStatusLabelCs,
+  formatMoneyKc,
+} from "@/lib/job-deposit-summary";
+import type { JobIncomeForDeposit, JobInvoiceForDeposit } from "@/lib/job-deposit-summary";
+import type { WorkContractDoc } from "@/lib/work-contract-print-html-build";
 
 type Props = {
   jobRef: DocumentReference | null;
@@ -34,6 +40,9 @@ type Props = {
   canView: boolean;
   /** Výchozí celková cena z rozpočtu zakázky (Kč s DPH) */
   defaultTotalPriceGross?: number | null;
+  workContractsForJob?: WorkContractDoc[];
+  jobInvoices?: JobInvoiceForDeposit[];
+  jobIncomes?: JobIncomeForDeposit[];
 };
 
 function manualFingerprint(job: unknown): string {
@@ -47,6 +56,9 @@ export function JobContractDepositSection({
   canEdit,
   canView,
   defaultTotalPriceGross,
+  workContractsForJob = [],
+  jobInvoices = [],
+  jobIncomes = [],
 }: Props) {
   const belowLg = useIsBelowLg();
   const { toast } = useToast();
@@ -125,8 +137,39 @@ export function JobContractDepositSection({
     belowLg ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"
   );
 
-  const previewManual = parseMoneyInput(paidDepositInput);
-  const previewRequired = parseMoneyInput(requiredDepositInput);
+  const depositPreview = useMemo(() => {
+    if (!job) return null;
+    const draftJob: Record<string, unknown> = {
+      ...job,
+      contractManual: serializeJobContractManualForFirestore({
+        isContracted,
+        contractedAt: contractedAt.trim() || null,
+        contractNumber: contractNumber.trim() || null,
+        totalPriceGross: parseMoneyInput(totalPriceInput),
+        requiredDepositGross: parseMoneyInput(requiredDepositInput),
+        paidDepositGross: parseMoneyInput(paidDepositInput),
+        depositNote: depositNote.trim() || null,
+      }),
+    };
+    return calculateJobDepositSummary({
+      job: draftJob,
+      invoices: jobInvoices,
+      workContracts: workContractsForJob,
+      jobIncomes,
+    });
+  }, [
+    job,
+    isContracted,
+    contractedAt,
+    contractNumber,
+    totalPriceInput,
+    requiredDepositInput,
+    paidDepositInput,
+    depositNote,
+    jobInvoices,
+    workContractsForJob,
+    jobIncomes,
+  ]);
 
   return (
     <Card className={cn(JD.card)}>
@@ -260,19 +303,30 @@ export function JobContractDepositSection({
           </p>
         ) : null}
 
-        {(previewManual != null && previewManual > 0) ||
-        (previewRequired != null && previewRequired > 0) ? (
-          <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-800 space-y-1">
-            {previewRequired != null && previewRequired > 0 ? (
-              <p>
-                Požadovaná záloha: <strong>{formatMoneyKc(previewRequired)}</strong>
-              </p>
-            ) : null}
-            {previewManual != null && previewManual > 0 ? (
-              <p>
-                Ručně zadaná zaplacená záloha: <strong>{formatMoneyKc(previewManual)}</strong>
-              </p>
-            ) : null}
+        {depositPreview ? (
+          <div className="rounded-lg border border-orange-200 bg-orange-50/60 px-3 py-2 text-sm text-gray-900 space-y-1">
+            <p className="font-medium text-gray-900">Souhrn zálohy (stejná logika jako export PDF)</p>
+            <p>
+              Požadovaná záloha:{" "}
+              <strong>{formatMoneyKc(depositPreview.requiredDepositGross)}</strong>
+            </p>
+            <p>
+              Ručně zadaná zaplacená:{" "}
+              <strong>{formatMoneyKc(depositPreview.manualDepositGross)}</strong>
+            </p>
+            <p>
+              Z plateb / dokladů:{" "}
+              <strong>{formatMoneyKc(depositPreview.paymentsDepositGross)}</strong>
+            </p>
+            <p>
+              Celkem zaplaceno na záloze:{" "}
+              <strong>{formatMoneyKc(depositPreview.totalDepositPaidGross)}</strong>
+            </p>
+            <p>
+              Zbývá: <strong>{formatMoneyKc(depositPreview.depositRemainingGross)}</strong>
+              {" · "}
+              Stav: <strong>{depositStatusLabelCs(depositPreview.depositStatus)}</strong>
+            </p>
           </div>
         ) : null}
 

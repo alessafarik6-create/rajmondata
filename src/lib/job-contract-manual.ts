@@ -36,27 +36,56 @@ export function formatMoneyInputDisplay(value: number | null | undefined): strin
   return String(Math.round(n));
 }
 
+function readNum(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? roundMoney2(n) : null;
+}
+
 export function parseJobContractManual(job: unknown): JobContractManualData {
-  const raw = (job as Record<string, unknown> | null | undefined)?.[
-    JOB_CONTRACT_MANUAL_FIELD
-  ];
-  if (!raw || typeof raw !== "object") return {};
-  const o = raw as Record<string, unknown>;
-  const num = (v: unknown): number | null => {
-    if (v == null || v === "") return null;
-    const n = Number(v);
-    return Number.isFinite(n) ? roundMoney2(n) : null;
-  };
+  const j = (job ?? {}) as Record<string, unknown>;
+  const raw = j[JOB_CONTRACT_MANUAL_FIELD];
+  const o =
+    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+
+  const isContracted =
+    o.isContracted === true ||
+    j.isManuallyContracted === true ||
+    j.manualContracted === true;
+
+  const contractedAt =
+    o.contractedAt != null
+      ? String(o.contractedAt).trim().slice(0, 10) || null
+      : j.manualContractedAt != null
+        ? String(j.manualContractedAt).trim().slice(0, 10) || null
+        : null;
+
+  const contractNumber =
+    (o.contractNumber != null ? String(o.contractNumber).trim() : "") ||
+    (j.manualContractNumber != null ? String(j.manualContractNumber).trim() : "") ||
+    null;
+
   return {
-    isContracted: o.isContracted === true,
-    contractedAt:
-      o.contractedAt != null ? String(o.contractedAt).trim().slice(0, 10) || null : null,
-    contractNumber:
-      o.contractNumber != null ? String(o.contractNumber).trim() || null : null,
-    totalPriceGross: num(o.totalPriceGross),
-    requiredDepositGross: num(o.requiredDepositGross),
-    paidDepositGross: num(o.paidDepositGross),
-    depositNote: o.depositNote != null ? String(o.depositNote).trim() || null : null,
+    isContracted,
+    contractedAt,
+    contractNumber: contractNumber || null,
+    totalPriceGross:
+      readNum(o.totalPriceGross) ??
+      readNum(j.manualContractTotalPriceGross) ??
+      readNum(j.manualTotalPriceGross),
+    requiredDepositGross:
+      readNum(o.requiredDepositGross) ??
+      readNum(j.manualRequiredDepositGross),
+    paidDepositGross:
+      readNum(o.paidDepositGross) ??
+      readNum(j.manualPaidDepositGross) ??
+      readNum(j.paidDepositManual),
+    depositNote:
+      o.depositNote != null
+        ? String(o.depositNote).trim() || null
+        : j.manualDepositNote != null
+          ? String(j.manualDepositNote).trim() || null
+          : null,
   };
 }
 

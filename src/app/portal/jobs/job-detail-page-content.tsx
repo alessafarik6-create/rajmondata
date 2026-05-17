@@ -59,6 +59,12 @@ import { canAccessCompanyModule } from "@/lib/platform-access";
 import { isCompanyPrivileged } from "@/lib/company-privilege";
 import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access";
 import type { JobExpenseRow } from "@/lib/job-expense-types";
+import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
+import {
+  calculateJobDepositSummary,
+  depositStatusLabelCs,
+  formatMoneyKc,
+} from "@/lib/job-deposit-summary";
 import {
   doc,
   collection,
@@ -1242,6 +1248,33 @@ export function JobDetailPageContent({
   );
   const { data: jobIncomesRaw } = useCollection(jobIncomesColRef);
 
+  const jobInvoicesForDepositQueryRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobFirestoreId
+        ? query(
+            collection(firestore, "companies", companyId, "invoices"),
+            where("jobId", "==", jobFirestoreId),
+            limit(120)
+          )
+        : null,
+    [firestore, companyId, jobFirestoreId]
+  );
+  const { data: jobInvoicesForDepositRaw } = useCollection(jobInvoicesForDepositQueryRef);
+
+  const jobInvoicesForDeposit = useMemo(() => {
+    const rows = Array.isArray(jobInvoicesForDepositRaw)
+      ? jobInvoicesForDepositRaw
+      : [];
+    return rows
+      .filter((inv) =>
+        isActiveFirestoreDoc(inv as { isDeleted?: unknown })
+      )
+      .map((inv) => {
+        const r = inv as Record<string, unknown> & { id: string };
+        return { ...r, id: r.id };
+      });
+  }, [jobInvoicesForDepositRaw]);
+
   const jobIncomesSorted = useMemo(() => {
     const list = [...(jobIncomesRaw ?? [])] as {
       id: string;
@@ -1515,6 +1548,16 @@ export function JobDetailPageContent({
           getTime(b.createdAt) - getTime(a.createdAt)
       );
   }, [workContracts]);
+
+  const jobDepositSummary = useMemo(() => {
+    if (!job) return null;
+    return calculateJobDepositSummary({
+      job: job as Record<string, unknown>,
+      invoices: jobInvoicesForDeposit,
+      workContracts: workContractsForJob,
+      jobIncomes: jobIncomesSorted,
+    });
+  }, [job, jobInvoicesForDeposit, workContractsForJob, jobIncomesSorted]);
 
   const jobCustomerAddressBlock = useMemo(
     () => buildJobCustomerAddressBlock(job, customer),
@@ -10044,6 +10087,31 @@ export function JobDetailPageContent({
                       {jobPaid.paidGross.toLocaleString("cs-CZ")} Kč
                     </span>
                   </div>
+                  {jobDepositSummary &&
+                  (jobDepositSummary.requiredDepositGross > 0 ||
+                    jobDepositSummary.totalDepositPaidGross > 0) ? (
+                    <div className="mt-2 space-y-1 rounded-md border border-orange-200 bg-orange-50/70 px-2 py-2 text-xs">
+                      <p className="font-semibold text-gray-900">Záloha (souhrn)</p>
+                      <div className="flex justify-between gap-2">
+                        <span>Požadováno</span>
+                        <span className="font-semibold tabular-nums">
+                          {formatMoneyKc(jobDepositSummary.requiredDepositGross)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <span>Celkem na záloze</span>
+                        <span className="font-semibold tabular-nums">
+                          {formatMoneyKc(jobDepositSummary.totalDepositPaidGross)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between gap-2">
+                        <span>Stav zálohy</span>
+                        <span className="font-semibold">
+                          {depositStatusLabelCs(jobDepositSummary.depositStatus)}
+                        </span>
+                      </div>
+                    </div>
+                  ) : null}
                   <div className="flex justify-between gap-2">
                     <span className="text-slate-800">K doplatení (bez DPH)</span>
                     <span
@@ -10189,6 +10257,9 @@ export function JobDetailPageContent({
               canEdit={isAdmin}
               canView={isAdmin || canManageFolders}
               defaultTotalPriceGross={jobBudgetBreakdown?.budgetGross ?? null}
+              workContractsForJob={workContractsForJob}
+              jobInvoices={jobInvoicesForDeposit}
+              jobIncomes={jobIncomesSorted}
             />
           ) : null}
 
