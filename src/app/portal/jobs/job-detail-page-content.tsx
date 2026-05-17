@@ -61,10 +61,10 @@ import { userCanAccessProductionPortal } from "@/lib/warehouse-production-access
 import type { JobExpenseRow } from "@/lib/job-expense-types";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import {
-  calculateJobDepositSummary,
-  depositStatusLabelCs,
+  calculateJobPaymentSummary,
   formatMoneyKc,
-} from "@/lib/job-deposit-summary";
+  paymentStatusLabelCs,
+} from "@/lib/job-payment-summary";
 import {
   doc,
   collection,
@@ -1549,9 +1549,9 @@ export function JobDetailPageContent({
       );
   }, [workContracts]);
 
-  const jobDepositSummary = useMemo(() => {
+  const jobPaymentSummary = useMemo(() => {
     if (!job) return null;
-    return calculateJobDepositSummary({
+    return calculateJobPaymentSummary({
       job: job as Record<string, unknown>,
       invoices: jobInvoicesForDeposit,
       workContracts: workContractsForJob,
@@ -10087,29 +10087,37 @@ export function JobDetailPageContent({
                       {jobPaid.paidGross.toLocaleString("cs-CZ")} Kč
                     </span>
                   </div>
-                  {jobDepositSummary &&
-                  (jobDepositSummary.requiredDepositGross > 0 ||
-                    jobDepositSummary.totalDepositPaidGross > 0) ? (
+                  {jobPaymentSummary &&
+                  (jobPaymentSummary.totalPriceGross > 0 ||
+                    jobPaymentSummary.totalPaidGross > 0) ? (
                     <div className="mt-2 space-y-1 rounded-md border border-orange-200 bg-orange-50/70 px-2 py-2 text-xs">
-                      <p className="font-semibold text-gray-900">Záloha (souhrn)</p>
+                      <p className="font-semibold text-gray-900">Platby zakázky (souhrn)</p>
                       <div className="flex justify-between gap-2">
-                        <span>Požadováno</span>
+                        <span>Celkem zaplaceno</span>
                         <span className="font-semibold tabular-nums">
-                          {formatMoneyKc(jobDepositSummary.requiredDepositGross)}
+                          {formatMoneyKc(jobPaymentSummary.totalPaidGross)}
                         </span>
                       </div>
                       <div className="flex justify-between gap-2">
-                        <span>Celkem na záloze</span>
+                        <span>Zbývá doplatit</span>
                         <span className="font-semibold tabular-nums">
-                          {formatMoneyKc(jobDepositSummary.totalDepositPaidGross)}
+                          {formatMoneyKc(jobPaymentSummary.remainingToPayGross)}
                         </span>
                       </div>
                       <div className="flex justify-between gap-2">
-                        <span>Stav zálohy</span>
+                        <span>Stav zakázky</span>
                         <span className="font-semibold">
-                          {depositStatusLabelCs(jobDepositSummary.depositStatus)}
+                          {paymentStatusLabelCs(jobPaymentSummary.jobPaymentStatus)}
                         </span>
                       </div>
+                      {jobPaymentSummary.requiredDepositGross > 0 ? (
+                        <div className="flex justify-between gap-2 border-t border-orange-200/80 pt-1">
+                          <span>Stav zálohy</span>
+                          <span className="font-semibold">
+                            {paymentStatusLabelCs(jobPaymentSummary.depositStatus)}
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                   <div className="flex justify-between gap-2">

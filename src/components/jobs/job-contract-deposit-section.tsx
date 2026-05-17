@@ -24,10 +24,10 @@ import {
   type JobContractManualData,
 } from "@/lib/job-contract-manual";
 import {
-  calculateJobDepositSummary,
-  depositStatusLabelCs,
+  calculateJobPaymentSummary,
   formatMoneyKc,
-} from "@/lib/job-deposit-summary";
+  paymentStatusLabelCs,
+} from "@/lib/job-payment-summary";
 import type { JobIncomeForDeposit, JobInvoiceForDeposit } from "@/lib/job-deposit-summary";
 import type { WorkContractDoc } from "@/lib/work-contract-print-html-build";
 
@@ -137,7 +137,7 @@ export function JobContractDepositSection({
     belowLg ? "grid-cols-1" : "grid-cols-1 sm:grid-cols-2"
   );
 
-  const depositPreview = useMemo(() => {
+  const paymentPreview = useMemo(() => {
     if (!job) return null;
     const draftJob: Record<string, unknown> = {
       ...job,
@@ -151,7 +151,7 @@ export function JobContractDepositSection({
         depositNote: depositNote.trim() || null,
       }),
     };
-    return calculateJobDepositSummary({
+    return calculateJobPaymentSummary({
       job: draftJob,
       invoices: jobInvoices,
       workContracts: workContractsForJob,
@@ -303,29 +303,33 @@ export function JobContractDepositSection({
           </p>
         ) : null}
 
-        {depositPreview ? (
+        {paymentPreview ? (
           <div className="rounded-lg border border-orange-200 bg-orange-50/60 px-3 py-2 text-sm text-gray-900 space-y-1">
-            <p className="font-medium text-gray-900">Souhrn zálohy (stejná logika jako export PDF)</p>
+            <p className="font-medium text-gray-900">Souhrn (stejná logika jako export PDF)</p>
+            <p>
+              Cena zakázky: <strong>{formatMoneyKc(paymentPreview.totalPriceGross)}</strong>
+            </p>
             <p>
               Požadovaná záloha:{" "}
-              <strong>{formatMoneyKc(depositPreview.requiredDepositGross)}</strong>
+              <strong>{formatMoneyKc(paymentPreview.requiredDepositGross)}</strong>
             </p>
             <p>
               Ručně zadaná zaplacená:{" "}
-              <strong>{formatMoneyKc(depositPreview.manualDepositGross)}</strong>
+              <strong>{formatMoneyKc(paymentPreview.manualDepositGross)}</strong>
             </p>
             <p>
-              Z plateb / dokladů:{" "}
-              <strong>{formatMoneyKc(depositPreview.paymentsDepositGross)}</strong>
+              Z plateb: <strong>{formatMoneyKc(paymentPreview.paymentsDepositGross)}</strong>
             </p>
             <p>
-              Celkem zaplaceno na záloze:{" "}
-              <strong>{formatMoneyKc(depositPreview.totalDepositPaidGross)}</strong>
+              Celkem zaplaceno: <strong>{formatMoneyKc(paymentPreview.totalPaidGross)}</strong>
             </p>
             <p>
-              Zbývá: <strong>{formatMoneyKc(depositPreview.depositRemainingGross)}</strong>
+              Zbývá doplatit: <strong>{formatMoneyKc(paymentPreview.remainingToPayGross)}</strong>
+            </p>
+            <p>
+              Stav zálohy: <strong>{paymentStatusLabelCs(paymentPreview.depositStatus)}</strong>
               {" · "}
-              Stav: <strong>{depositStatusLabelCs(depositPreview.depositStatus)}</strong>
+              Stav zakázky: <strong>{paymentStatusLabelCs(paymentPreview.jobPaymentStatus)}</strong>
             </p>
           </div>
         ) : null}

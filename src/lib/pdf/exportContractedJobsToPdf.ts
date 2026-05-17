@@ -9,7 +9,7 @@ import {
   type ContractedJobExportRow,
   type ContractedJobsExportSummary,
 } from "@/lib/contracted-jobs-export";
-import { depositStatusLabelCs, formatMoneyKc } from "@/lib/job-deposit-summary";
+import { formatMoneyKc, paymentStatusLabelCs } from "@/lib/job-payment-summary";
 import { formatCurrency } from "@/lib/pdf/exportJobsToPdf";
 
 export type ExportContractedJobsToPdfOptions = {
@@ -41,25 +41,25 @@ export async function exportContractedJobsToPdf(
 
   const pageW = doc.internal.pageSize.getWidth();
   const pageH = doc.internal.pageSize.getHeight();
-  const margin = 10;
+  const margin = 8;
   let cursorY = 12;
 
   if (options.logoDataUrl) {
     const fmt = detectImageFormat(options.logoDataUrl);
     try {
-      doc.addImage(options.logoDataUrl, fmt, margin, cursorY, 16, 16);
+      doc.addImage(options.logoDataUrl, fmt, margin, cursorY, 14, 14);
     } catch {
       /* bez loga */
     }
   }
 
-  const titleX = options.logoDataUrl ? margin + 20 : margin;
+  const titleX = options.logoDataUrl ? margin + 18 : margin;
   doc.setFont(PDF_FONT_FAMILY, "bold");
-  doc.setFontSize(14);
+  doc.setFontSize(13);
   doc.setTextColor(24, 24, 27);
-  doc.text(companyName || "Organizace", titleX, cursorY + 6);
+  doc.text(companyName || "Organizace", titleX, cursorY + 5);
   doc.setFont(PDF_FONT_FAMILY, "normal");
-  doc.setFontSize(8);
+  doc.setFontSize(7.5);
   doc.setTextColor(55, 55, 65);
   doc.text(
     `Export: ${new Date().toLocaleString("cs-CZ")}`,
@@ -67,13 +67,13 @@ export async function exportContractedJobsToPdf(
     cursorY + 4,
     { align: "right" }
   );
-  cursorY += 18;
-  doc.setFontSize(11);
+  cursorY += 16;
+  doc.setFontSize(10);
   doc.setFont(PDF_FONT_FAMILY, "bold");
   doc.setTextColor(15, 15, 20);
   doc.text("Přehled zesmluvněných zakázek", margin, cursorY);
   doc.setFont(PDF_FONT_FAMILY, "normal");
-  cursorY += 5;
+  cursorY += 4;
 
   const head = [
     [
@@ -88,10 +88,11 @@ export async function exportContractedJobsToPdf(
       "Záloha",
       "Ručně",
       "Z plateb",
-      "Celkem záloha",
+      "Celkem zaplaceno",
+      "Zbývá doplatit",
+      "Stav zálohy",
+      "Stav zakázky",
       "Datumy plateb",
-      "Zbývá",
-      "Stav",
     ],
   ];
 
@@ -107,10 +108,11 @@ export async function exportContractedJobsToPdf(
     formatCurrency(r.requiredDepositGross),
     formatCurrency(r.manualDepositGross),
     formatCurrency(r.paymentsDepositGross),
-    formatCurrency(r.totalDepositPaidGross),
+    formatCurrency(r.totalPaidGross),
+    formatCurrency(r.remainingToPayGross),
+    paymentStatusLabelCs(r.depositStatus),
+    paymentStatusLabelCs(r.jobPaymentStatus),
     safeCellText(r.depositPaymentDatesLabel),
-    formatCurrency(r.depositRemainingGross),
-    depositStatusLabelCs(r.depositStatus),
   ]);
 
   autoTable(doc, {
@@ -120,13 +122,13 @@ export async function exportContractedJobsToPdf(
     styles: {
       font: PDF_FONT_FAMILY,
       fontStyle: "normal",
-      fontSize: 6,
-      cellPadding: 1.2,
+      fontSize: 5.5,
+      cellPadding: 1,
       overflow: "linebreak",
       valign: "top",
       textColor: [20, 20, 28],
       lineColor: [200, 200, 210],
-      lineWidth: 0.08,
+      lineWidth: 0.06,
     },
     headStyles: {
       font: PDF_FONT_FAMILY,
@@ -134,31 +136,29 @@ export async function exportContractedJobsToPdf(
       fillColor: [220, 95, 20],
       textColor: [255, 255, 255],
       halign: "left",
-      fontSize: 6,
+      fontSize: 5.5,
     },
     alternateRowStyles: { fillColor: [252, 252, 254] },
     columnStyles: {
-      0: { cellWidth: 12 },
-      1: { cellWidth: 18 },
-      2: { cellWidth: 16 },
-      3: { cellWidth: 22 },
-      4: { cellWidth: 14 },
-      5: { cellWidth: 14 },
-      6: { cellWidth: 14 },
-      7: { halign: "right", cellWidth: 14 },
-      8: { halign: "right", cellWidth: 13 },
-      9: { halign: "right", cellWidth: 13 },
-      10: { halign: "right", cellWidth: 13 },
-      11: { halign: "right", cellWidth: 14 },
-      12: { cellWidth: 22 },
-      13: { halign: "right", cellWidth: 13 },
-      14: { cellWidth: 16 },
+      0: { cellWidth: 10 },
+      1: { cellWidth: 16 },
+      2: { cellWidth: 14 },
+      3: { cellWidth: 18 },
+      4: { cellWidth: 12 },
+      5: { cellWidth: 12 },
+      6: { cellWidth: 12 },
+      7: { halign: "right", cellWidth: 13 },
+      8: { halign: "right", cellWidth: 11 },
+      9: { halign: "right", cellWidth: 11 },
+      10: { halign: "right", cellWidth: 11 },
+      11: { halign: "right", cellWidth: 13 },
+      12: { halign: "right", cellWidth: 13 },
+      13: { cellWidth: 12 },
+      14: { cellWidth: 12 },
+      15: { cellWidth: 20 },
     },
     margin: { left: margin, right: margin },
     tableWidth: pageW - 2 * margin,
-    didDrawPage: (data) => {
-      if (data.pageNumber > 1) return;
-    },
   });
 
   let footY =
@@ -171,48 +171,48 @@ export async function exportContractedJobsToPdf(
   if (rowsWithOther.length > 0) {
     if (footY > pageH - 50) {
       doc.addPage();
-      footY = 16;
+      footY = 14;
     }
-    footY += 6;
+    footY += 5;
     doc.setFont(PDF_FONT_FAMILY, "bold");
-    doc.setFontSize(8);
+    doc.setFontSize(7.5);
     doc.text("Ostatní přijaté platby (bez vazby na zálohovou fakturu)", margin, footY);
-    footY += 4;
+    footY += 3.5;
     doc.setFont(PDF_FONT_FAMILY, "normal");
-    doc.setFontSize(7);
+    doc.setFontSize(6.5);
     for (const r of rowsWithOther) {
-      if (footY > pageH - 20) {
+      if (footY > pageH - 18) {
         doc.addPage();
-        footY = 16;
+        footY = 14;
       }
       const line = `${r.jobName}: ${r.otherPaymentsLabel}`;
       const split = doc.splitTextToSize(line, pageW - 2 * margin);
       doc.text(split, margin, footY);
-      footY += split.length * 3.5 + 1;
+      footY += split.length * 3.2 + 1;
     }
   }
 
-  if (footY > pageH - 36) {
+  if (footY > pageH - 40) {
     doc.addPage();
-    footY = 16;
+    footY = 14;
   }
-  footY += 8;
+  footY += 6;
   doc.setFont(PDF_FONT_FAMILY, "bold");
-  doc.setFontSize(10);
+  doc.setFontSize(9.5);
   doc.text("Souhrn", margin, footY);
   doc.setFont(PDF_FONT_FAMILY, "normal");
-  footY += 5;
-  doc.setFontSize(8.5);
+  footY += 4.5;
+  doc.setFontSize(8);
   const summaryLines = [
     `Počet zesmluvněných zakázek: ${summary.jobCount}`,
-    `Součet celkových cen: ${formatMoneyKc(summary.totalPriceGross)}`,
+    `Součet cen zakázek: ${formatMoneyKc(summary.totalPriceGross)}`,
     `Součet požadovaných záloh: ${formatMoneyKc(summary.totalRequiredDepositGross)}`,
-    `Součet přijatých záloh: ${formatMoneyKc(summary.totalReceivedDepositGross)}`,
-    `Součet zbývajících záloh k doplacení: ${formatMoneyKc(summary.totalDepositRemainingGross)}`,
+    `Součet celkem zaplaceno: ${formatMoneyKc(summary.totalReceivedDepositGross)}`,
+    `Součet zbývá doplatit: ${formatMoneyKc(summary.totalRemainingToPayGross)}`,
   ];
   for (const line of summaryLines) {
     doc.text(line, margin, footY);
-    footY += 4.5;
+    footY += 4;
   }
 
   const safeName = (

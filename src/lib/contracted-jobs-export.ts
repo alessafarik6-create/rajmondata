@@ -15,13 +15,13 @@ import {
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { buildJobCustomerAddressBlock } from "@/lib/customer-address-display";
 import {
-  calculateJobDepositSummary,
+  calculateJobPaymentSummary,
   formatMoneyKc,
-  resolveDepositPaymentStatus,
+  paymentStatusLabelCs,
   type DepositPaymentStatus,
   type JobIncomeForDeposit,
   type JobInvoiceForDeposit,
-} from "@/lib/job-deposit-summary";
+} from "@/lib/job-payment-summary";
 import { selectPrimaryWorkContractForBilling, type WorkContractLike } from "@/lib/job-billing-invoices";
 import { formatContractManualDateLabel, isJobManuallyContracted, parseJobContractManual } from "@/lib/job-contract-manual";
 import { resolveJobBudgetFromFirestore, roundMoney2 } from "@/lib/vat-calculations";
@@ -30,8 +30,8 @@ import {
   type WorkContractDoc,
 } from "@/lib/work-contract-print-html-build";
 
-export type { DepositPaymentStatus } from "@/lib/job-deposit-summary";
-export { formatMoneyKc, resolveDepositPaymentStatus } from "@/lib/job-deposit-summary";
+export type { DepositPaymentStatus } from "@/lib/job-payment-summary";
+export { formatMoneyKc, paymentStatusLabelCs as depositStatusLabelCs } from "@/lib/job-payment-summary";
 
 export type JobInvoiceExportRow = JobInvoiceForDeposit;
 
@@ -48,12 +48,17 @@ export type ContractedJobExportRow = {
   requiredDepositGross: number;
   manualDepositGross: number;
   paymentsDepositGross: number;
+  /** @deprecated použijte {@link totalPaidGross} */
   totalDepositPaidGross: number;
+  totalPaidGross: number;
+  remainingToPayGross: number;
   manualDepositLabel: string;
   paymentsDepositLabel: string;
   depositPaymentDatesLabel: string;
   depositRemainingGross: number;
   depositStatus: DepositPaymentStatus;
+  jobPaymentStatus: DepositPaymentStatus;
+  depositNote: string;
   otherPaymentsLabel: string;
 };
 
@@ -63,6 +68,7 @@ export type ContractedJobsExportSummary = {
   totalRequiredDepositGross: number;
   totalReceivedDepositGross: number;
   totalDepositRemainingGross: number;
+  totalRemainingToPayGross: number;
 };
 
 const CONTRACTED_STATUS = "zesmluvněno";
@@ -112,6 +118,7 @@ export function isJobContracted(
 
   const manual = parseJobContractManual(job);
   if (manual.contractNumber) return true;
+  if (manual.contractedAt) return true;
 
   const relevant = filterBillingWorkContracts(contractsForJob);
 
@@ -169,7 +176,7 @@ export function buildContractedJobExportRow(params: {
   const primary = selectPrimaryWorkContractForBilling(contractLikes, budgetGross);
   const manual = parseJobContractManual(job);
 
-  const deposit = calculateJobDepositSummary({
+  const payment = calculateJobPaymentSummary({
     job,
     invoices,
     workContracts: filteredContracts,
@@ -236,13 +243,6 @@ export function buildContractedJobExportRow(params: {
     String(job.startDate ?? "").trim() ||
     "—";
 
-  const totalPriceGross =
-    manual.totalPriceGross != null && Number.isFinite(manual.totalPriceGross)
-      ? roundMoney2(manual.totalPriceGross)
-      : budgetGross != null && Number.isFinite(budgetGross)
-        ? roundMoney2(budgetGross)
-        : 0;
-
   return {
     jobId: job.id,
     jobNumber: resolveJobNumber(job) || "—",
@@ -252,28 +252,32 @@ export function buildContractedJobExportRow(params: {
     createdAtLabel: createdAtLabel || "—",
     contractedAtLabel: contractedAtLabel || "—",
     contractNumber: contractNumber || "—",
-    totalPriceGross,
-    requiredDepositGross: deposit.requiredDepositGross,
-    manualDepositGross: deposit.manualDepositGross,
-    paymentsDepositGross: deposit.paymentsDepositGross,
-    totalDepositPaidGross: deposit.totalDepositPaidGross,
+    totalPriceGross: payment.totalPriceGross,
+    requiredDepositGross: payment.requiredDepositGross,
+    manualDepositGross: payment.manualDepositGross,
+    paymentsDepositGross: payment.paymentsDepositGross,
+    totalDepositPaidGross: payment.totalPaidGross,
+    totalPaidGross: payment.totalPaidGross,
+    remainingToPayGross: payment.remainingToPayGross,
     manualDepositLabel:
-      deposit.manualDepositGross > 0
-        ? formatMoneyKc(deposit.manualDepositGross)
+      payment.manualDepositGross > 0
+        ? formatMoneyKc(payment.manualDepositGross)
         : "—",
     paymentsDepositLabel:
-      deposit.paymentsDepositGross > 0
-        ? formatMoneyKc(deposit.paymentsDepositGross)
+      payment.paymentsDepositGross > 0
+        ? formatMoneyKc(payment.paymentsDepositGross)
         : "—",
     depositPaymentDatesLabel:
-      deposit.paymentDateLabels.length > 0
-        ? deposit.paymentDateLabels.join("; ")
+      payment.paymentDateLabels.length > 0
+        ? payment.paymentDateLabels.join("; ")
         : "—",
-    depositRemainingGross: deposit.depositRemainingGross,
-    depositStatus: deposit.depositStatus,
+    depositRemainingGross: payment.depositRemainingGross,
+    depositStatus: payment.depositStatus,
+    jobPaymentStatus: payment.jobPaymentStatus,
+    depositNote: payment.depositNote?.trim() || "—",
     otherPaymentsLabel:
-      deposit.otherPaymentsLabels.length > 0
-        ? deposit.otherPaymentsLabels.join("; ")
+      payment.otherPaymentsLabels.length > 0
+        ? payment.otherPaymentsLabels.join("; ")
         : "—",
   };
 }
@@ -285,16 +289,20 @@ export function buildContractedJobsExportSummary(
   let totalRequiredDepositGross = 0;
   let totalReceivedDepositGross = 0;
   let totalDepositRemainingGross = 0;
+  let totalRemainingToPayGross = 0;
   for (const r of rows) {
     totalPriceGross = roundMoney2(totalPriceGross + r.totalPriceGross);
     totalRequiredDepositGross = roundMoney2(
       totalRequiredDepositGross + r.requiredDepositGross
     );
     totalReceivedDepositGross = roundMoney2(
-      totalReceivedDepositGross + r.totalDepositPaidGross
+      totalReceivedDepositGross + r.totalPaidGross
     );
     totalDepositRemainingGross = roundMoney2(
       totalDepositRemainingGross + r.depositRemainingGross
+    );
+    totalRemainingToPayGross = roundMoney2(
+      totalRemainingToPayGross + r.remainingToPayGross
     );
   }
   return {
@@ -303,6 +311,7 @@ export function buildContractedJobsExportSummary(
     totalRequiredDepositGross,
     totalReceivedDepositGross,
     totalDepositRemainingGross,
+    totalRemainingToPayGross,
   };
 }
 
@@ -369,18 +378,18 @@ export async function fetchJobIncomesForJob(
   return snap.docs.map((d) => ({ ...d.data() }) as JobIncomeForDeposit);
 }
 
-/** @deprecated Použijte {@link calculateJobDepositSummary}. */
+/** @deprecated Použijte {@link calculateJobPaymentSummary}. */
 export function computeJobDepositAggregation(
   job: Record<string, unknown>,
   invoices: JobInvoiceExportRow[]
 ) {
-  const d = calculateJobDepositSummary({ job, invoices });
+  const p = calculateJobPaymentSummary({ job, invoices });
   return {
-    manualDepositGross: d.manualDepositGross,
-    paymentsDepositGross: d.paymentsDepositGross,
-    totalDepositPaidGross: d.totalDepositPaidGross,
-    paymentDateLabels: d.paymentDateLabels,
-    otherPaymentsLabels: d.otherPaymentsLabels,
+    manualDepositGross: p.manualDepositGross,
+    paymentsDepositGross: p.paymentsDepositGross,
+    totalDepositPaidGross: p.totalPaidGross,
+    paymentDateLabels: p.paymentDateLabels,
+    otherPaymentsLabels: p.otherPaymentsLabels,
   };
 }
 
@@ -439,10 +448,12 @@ export function downloadContractedJobsCsv(
     "pozadovana_zaloha",
     "zaloha_rucne",
     "zaloha_z_plateb",
-    "celkem_zaplaceno_zaloha",
-    "datumy_plateb_zaloh",
-    "zbyva_zaloha",
+    "celkem_zaplaceno",
+    "zbyva_doplatit",
     "stav_zalohy",
+    "stav_zakazky",
+    "datumy_plateb",
+    "poznamka_zaloha",
     "ostatni_platby",
   ];
   const esc = (c: string | number) => {
@@ -463,10 +474,12 @@ export function downloadContractedJobsCsv(
       r.requiredDepositGross,
       r.manualDepositGross,
       r.paymentsDepositGross,
-      r.totalDepositPaidGross,
+      r.totalPaidGross,
+      r.remainingToPayGross,
+      paymentStatusLabelCs(r.depositStatus),
+      paymentStatusLabelCs(r.jobPaymentStatus),
       r.depositPaymentDatesLabel,
-      r.depositRemainingGross,
-      r.depositStatus,
+      r.depositNote,
       r.otherPaymentsLabel,
     ]
       .map(esc)
@@ -478,8 +491,8 @@ export function downloadContractedJobsCsv(
     esc(`pocet_zakazek;${summary.jobCount}`),
     esc(`soucet_cen;${summary.totalPriceGross}`),
     esc(`soucet_pozadovanych_zaloh;${summary.totalRequiredDepositGross}`),
-    esc(`soucet_prijatych_zaloh;${summary.totalReceivedDepositGross}`),
-    esc(`soucet_zbyva_zaloh;${summary.totalDepositRemainingGross}`),
+    esc(`soucet_celkem_zaplaceno;${summary.totalReceivedDepositGross}`),
+    esc(`soucet_zbyva_doplatit;${summary.totalRemainingToPayGross}`),
   ];
   const csv = ["\ufeff" + [header.map(esc).join(","), ...body, ...summaryLines].join("\n")];
   const blob = new Blob(csv, { type: "text/csv;charset=utf-8" });
