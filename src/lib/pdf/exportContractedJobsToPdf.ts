@@ -263,7 +263,6 @@ export async function exportContractedJobsToPdf(
   const summaryLines = [
     `Počet zesmluvněných zakázek: ${summary.jobCount}`,
     `Součet cen zakázek: ${formatMoneyKc(summary.totalPriceGross)}`,
-    `Součet požadovaných záloh: ${formatMoneyKc(summary.totalRequiredDepositGross)}`,
     `Součet celkem zaplaceno: ${formatMoneyKc(summary.totalReceivedDepositGross)}`,
     `Součet zbývá doplatit: ${formatMoneyKc(summary.totalRemainingToPayGross)}`,
   ];
