@@ -19,10 +19,14 @@ export type SendTransactionalEmailInput = {
   /** Resend: kopie (bez duplicit s `to`). */
   cc?: string[];
   attachments?: SendTransactionalEmailAttachment[];
+  /** Přepíše výchozí EMAIL_FROM (např. „Firma &lt;info@firma.cz&gt;“). */
+  from?: string;
+  replyTo?: string | string[];
+  headers?: Record<string, string>;
 };
 
 export type SendTransactionalEmailResult =
-  | { ok: true }
+  | { ok: true; messageId?: string | null }
   | { ok: false; error: string; detail: string | null };
 
 export async function sendTransactionalEmail(
@@ -63,10 +67,20 @@ export async function sendTransactionalEmail(
   const resend = new Resend(key);
   let result: Awaited<ReturnType<Resend["emails"]["send"]>>;
   try {
+    const replyToList = Array.isArray(input.replyTo)
+      ? input.replyTo.map((e) => e.trim()).filter(Boolean)
+      : input.replyTo?.trim()
+        ? [input.replyTo.trim()]
+        : [];
+
     result = await resend.emails.send({
-      from,
+      from: input.from?.trim() || from,
       to: uniqueTo,
       ...(ccUnique.length > 0 ? { cc: ccUnique } : {}),
+      ...(replyToList.length > 0 ? { reply_to: replyToList } : {}),
+      ...(input.headers && Object.keys(input.headers).length > 0
+        ? { headers: input.headers }
+        : {}),
       subject: input.subject,
       html: input.html,
       ...attachmentPayload,
@@ -98,7 +112,14 @@ export async function sendTransactionalEmail(
       detail: detail.slice(0, 12_000),
     };
   }
-  return { ok: true };
+  const messageId =
+    result.data &&
+    typeof result.data === "object" &&
+    "id" in result.data &&
+    typeof (result.data as { id: unknown }).id === "string"
+      ? String((result.data as { id: string }).id).trim() || null
+      : null;
+  return { ok: true, messageId };
 }
 
 export function buildNotificationHtml(parts: {

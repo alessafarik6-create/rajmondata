@@ -14,6 +14,7 @@ import {
   Plus,
   Calendar,
   ChevronDown,
+  Mail,
 } from "lucide-react";
 import { format } from "date-fns";
 import { cs } from "date-fns/locale";
@@ -23,6 +24,7 @@ import {
   useDoc,
   useCollection,
   useMemoFirebase,
+  useCompany,
 } from "@/firebase";
 import {
   collection,
@@ -74,6 +76,16 @@ import {
 import { InquiryTypeBadge } from "@/components/inquiry-type-badge";
 import { resolveInquiryTypeRaw } from "@/lib/inquiry-type-badge";
 import { sendModuleEmailNotificationFromBrowser } from "@/lib/email-notifications/client";
+import {
+  INQUIRY_WORKFLOW_STATUSES,
+  INQUIRY_WORKFLOW_STATUS_LABELS,
+  isInquiryWorkflowStatus,
+  parseInquiryOfferTemplateDoc,
+  type InquiryOfferRecord,
+  type InquiryWorkflowStatus,
+} from "@/lib/inquiry-offer-email";
+import { LeadInquiryOfferDialog } from "@/components/leads/lead-inquiry-offer-dialog";
+import { LeadInquiryOfferHistory } from "@/components/leads/lead-inquiry-offer-history";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -129,6 +141,7 @@ type LeadOverlayRow = {
   externalId?: string;
   sourceId?: string;
   importSourceUrl?: string;
+  workflowStatus?: string;
 };
 
 function overlayReceivedDate(ov: LeadOverlayRow | undefined): Date | null {
@@ -193,6 +206,7 @@ export default function PortalLeadsPage() {
   const { user, isUserLoading } = useUser();
   const firestore = useFirestore();
   const { toast } = useToast();
+  const { company, companyName } = useCompany();
 
   const userRef = useMemoFirebase(
     () => (user && firestore ? doc(firestore, "users", user.uid) : null),
@@ -223,9 +237,25 @@ export default function PortalLeadsPage() {
     );
   }, [firestore, companyId]);
 
+  const offerTemplatesQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return collection(firestore, "companies", companyId, "inquiry_offer_templates");
+  }, [firestore, companyId]);
+
+  const inquiryOffersQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "inquiry_offers"),
+      orderBy("updatedAt", "desc"),
+      limit(300)
+    );
+  }, [firestore, companyId]);
+
   const { data: tagsRaw, isLoading: tagsLoading } = useCollection(tagsQuery);
   const { data: overlaysRaw } = useCollection(overlaysQuery);
   const { data: meetingsRaw } = useCollection(meetingsQuery);
+  const { data: offerTemplatesRaw } = useCollection(offerTemplatesQuery);
+  const { data: inquiryOffersRaw } = useCollection(inquiryOffersQuery);
 
   const tags = useMemo(() => {
     const list = Array.isArray(tagsRaw) ? (tagsRaw as LeadTagRow[]) : [];
@@ -301,6 +331,27 @@ export default function PortalLeadsPage() {
   const [noteDraft, setNoteDraft] = useState<Record<string, string>>({});
   const [savingNoteKey, setSavingNoteKey] = useState<string | null>(null);
   const [expandedLeadKeys, setExpandedLeadKeys] = useState<Record<string, boolean>>({});
+  const [offerLead, setOfferLead] = useState<LeadImportRow | null>(null);
+
+  const offerTemplates = useMemo(() => {
+    const list = Array.isArray(offerTemplatesRaw) ? offerTemplatesRaw : [];
+    return list
+      .map((d) => {
+        const row = d as Record<string, unknown> & { id?: string };
+        const id = String(row.id ?? "").trim();
+        if (!id) return null;
+        return parseInquiryOfferTemplateDoc(id, row);
+      })
+      .filter(Boolean) as ReturnType<typeof parseInquiryOfferTemplateDoc>[];
+  }, [offerTemplatesRaw]);
+
+  const inquiryOffers = useMemo(() => {
+    const list = Array.isArray(inquiryOffersRaw) ? inquiryOffersRaw : [];
+    return list.map((d) => {
+      const row = d as Record<string, unknown> & { id?: string };
+      return { ...row, id: row.id } as InquiryOfferRecord;
+    });
+  }, [inquiryOffersRaw]);
 
   const toggleLeadExpanded = useCallback((key: string) => {
     setExpandedLeadKeys((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -456,6 +507,37 @@ export default function PortalLeadsPage() {
   const canMeasure = userCanManageMeasurements(profile);
   const canManageTags =
     role === "owner" || role === "admin" || role === "manager" || role === "accountant";
+  const canManageOffers = canManageTags;
+
+  const handleWorkflowStatusChange = async (
+    lead: LeadImportRow,
+    status: InquiryWorkflowStatus
+  ) => {
+    if (!firestore || !companyId || !user) return;
+    const key = stableImportLeadDocumentId(lead);
+    const ref = doc(firestore, "companies", companyId, "import_lead_overlays", key);
+    try {
+      await setDoc(
+        ref,
+        {
+          companyId,
+          importLeadId: lead.id,
+          workflowStatus: status,
+          workflowStatusUpdatedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          updatedByUid: user.uid,
+        },
+        { merge: true }
+      );
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Stav poptávky",
+        description: "Stav se nepodařilo uložit.",
+      });
+    }
+  };
 
   const handleTagChange = async (lead: LeadImportRow, tagId: string | null) => {
     if (!firestore || !companyId || !user) return;
@@ -1195,6 +1277,18 @@ export default function PortalLeadsPage() {
                               <span className="hidden sm:inline">Naplánovat schůzku</span>
                               <span className="sm:hidden">Schůzka</span>
                             </Button>
+                            {canManageOffers ? (
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-8 border-0 bg-orange-500 px-2 text-xs text-white hover:bg-orange-600 sm:h-9 sm:px-3"
+                                onClick={() => setOfferLead(r)}
+                              >
+                                <Mail className="mr-1 inline h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                                <span className="hidden sm:inline">Nabídka</span>
+                                <span className="sm:hidden">Nab.</span>
+                              </Button>
+                            ) : null}
                           </div>
                         </div>
 
@@ -1245,6 +1339,47 @@ export default function PortalLeadsPage() {
                                       {format(nextMt, "d. M. yyyy HH:mm", { locale: cs })}
                                     </strong>
                                   </span>
+                                </div>
+                              ) : null}
+                              {canManageOffers ? (
+                                <div className="space-y-2 border-t border-slate-200/80 pt-3">
+                                  <Label className="text-xs text-slate-800">Stav poptávky</Label>
+                                  <select
+                                    className={NATIVE_SELECT_CLASS}
+                                    value={
+                                      ov?.workflowStatus &&
+                                      isInquiryWorkflowStatus(ov.workflowStatus)
+                                        ? ov.workflowStatus
+                                        : "nova"
+                                    }
+                                    onChange={(e) =>
+                                      void handleWorkflowStatusChange(
+                                        r,
+                                        e.target.value as InquiryWorkflowStatus
+                                      )
+                                    }
+                                  >
+                                    {INQUIRY_WORKFLOW_STATUSES.map((s) => (
+                                      <option key={s} value={s}>
+                                        {INQUIRY_WORKFLOW_STATUS_LABELS[s]}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    className="mt-2 min-h-11 w-full gap-2 bg-orange-500 text-white hover:bg-orange-600 sm:min-h-9 sm:w-auto"
+                                    onClick={() => setOfferLead(r)}
+                                  >
+                                    <Mail className="h-4 w-4" />
+                                    Odpovědět nabídkou
+                                  </Button>
+                                </div>
+                              ) : null}
+                              {canManageOffers ? (
+                                <div className="space-y-2 border-t border-slate-200/80 pt-3">
+                                  <Label className="text-xs text-slate-800">Historie nabídek</Label>
+                                  <LeadInquiryOfferHistory offers={inquiryOffers} leadKey={key} />
                                 </div>
                               ) : null}
                               <div className="space-y-2 border-t border-slate-200/80 pt-3">
@@ -1319,6 +1454,19 @@ export default function PortalLeadsPage() {
           )}
         </CardContent>
       </Card>
+
+      {offerLead && companyId ? (
+        <LeadInquiryOfferDialog
+          open={!!offerLead}
+          onOpenChange={(o) => !o && setOfferLead(null)}
+          companyId={companyId}
+          companyName={companyName || String(company?.companyName ?? "Organizace")}
+          lead={offerLead}
+          leadKey={stableImportLeadDocumentId(offerLead)}
+          templates={offerTemplates}
+          onSent={() => setOfferLead(null)}
+        />
+      ) : null}
     </div>
   );
 }

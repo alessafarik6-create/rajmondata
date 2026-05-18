@@ -2219,7 +2219,10 @@ service cloud.firestore {
           (!('internalNote' in request.resource.data) ||
             (request.resource.data.internalNote is string &&
               request.resource.data.internalNote.size() <= 12000)) &&
-          (!('receivedAt' in request.resource.data) || request.resource.data.receivedAt is timestamp);
+          (!('receivedAt' in request.resource.data) || request.resource.data.receivedAt is timestamp) &&
+          (!('workflowStatus' in request.resource.data) ||
+            request.resource.data.workflowStatus in
+              ['nova', 'rozpracovano', 'nabidka_pripravena', 'nabidka_odeslana', 'uzavreno']);
         allow update: if signedIn() && sameCompany(companyId) &&
           userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
           resource.data.companyId == companyId &&
@@ -2234,8 +2237,39 @@ service cloud.firestore {
               request.resource.data.internalNote.size() <= 12000)) &&
           (!('receivedAt' in request.resource.data) || request.resource.data.receivedAt is timestamp) &&
           (!('receivedAt' in resource.data) ||
-            request.resource.data.receivedAt == resource.data.receivedAt);
+            request.resource.data.receivedAt == resource.data.receivedAt) &&
+          (!('workflowStatus' in request.resource.data) ||
+            request.resource.data.workflowStatus in
+              ['nova', 'rozpracovano', 'nabidka_pripravena', 'nabidka_odeslana', 'uzavreno']);
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /**
+       * Šablony e-mailových nabídek k poptávkám
+       */
+      match /inquiry_offer_templates/{templateId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'];
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0 &&
+          request.resource.data.name.size() <= 120 &&
+          request.resource.data.subject is string &&
+          request.resource.data.bodyText is string;
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId;
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /**
+       * Historie / koncepty nabídek — zápis pouze přes Admin SDK (API).
+       */
+      match /inquiry_offers/{offerId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'];
+        allow write: if false;
       }
 
       /**

@@ -24,6 +24,8 @@ import { Users, ShieldCheck, Bell, Building2, Clock, ImageIcon, Trash2, Mail, Fi
 import { EmailNotificationsSettings } from '@/components/settings/email-notifications-settings';
 import { OrganizationSignatureSettingsCard } from "@/components/settings/organization-signature-settings";
 import { DocumentEmailOutboundSettingsCard } from "@/components/settings/document-email-outbound-settings-card";
+import { InquiryEmailIdentitySettingsCard } from "@/components/settings/inquiry-email-identity-settings-card";
+import { InquiryOfferTemplatesSettingsCard } from "@/components/settings/inquiry-offer-templates-settings-card";
 import { EmployeeDocumentTemplatesSettingsCard } from "@/components/settings/EmployeeDocumentTemplatesSettingsCard";
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
@@ -635,7 +637,12 @@ export default function SettingsPage() {
                   ) : null}
 
                   {isAdmin && companyId ? (
-                    <div className="pt-4">
+                    <div className="pt-4 space-y-6">
+                      <InquiryEmailIdentitySettingsCard
+                        companyId={companyId}
+                        company={company as Record<string, unknown> | null | undefined}
+                      />
+                      <InquiryOfferTemplatesSettingsCard companyId={companyId} />
                       <DocumentEmailOutboundSettingsCard
                         companyId={companyId}
                         company={company as Record<string, unknown> | null | undefined}
