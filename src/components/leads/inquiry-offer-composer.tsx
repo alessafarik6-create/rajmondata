@@ -30,9 +30,11 @@ import {
   type InquiryOfferTemplate,
 } from "@/lib/inquiry-offer-email";
 import {
+  buildInquiryOfferSentBodyPlain,
   calculateInquiryOfferPricing,
   formatInquiryPriceCz,
   INQUIRY_VAT_RATES,
+  parseInquiryPriceInput,
   type InquiryVatRate,
 } from "@/lib/inquiry-offer-pricing";
 import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
@@ -76,12 +78,6 @@ export type InquiryOfferComposerProps = {
   onSent?: (info: InquiryOfferSentInfo) => void;
 };
 
-function parsePriceInput(raw: string): number | null {
-  const t = raw.replace(/\s/g, "").replace(",", ".");
-  const n = Number(t);
-  return Number.isFinite(n) ? Math.round(n * 100) / 100 : null;
-}
-
 function newUploadSessionId(): string {
   return `sess-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
@@ -119,10 +115,14 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
     [props.templates]
   );
 
-  const priceNet = useMemo(() => parsePriceInput(priceInput), [priceInput]);
+  const priceNet = useMemo(() => parseInquiryPriceInput(priceInput), [priceInput]);
   const pricing = useMemo(
     () => calculateInquiryOfferPricing(priceNet, vatRate),
     [priceNet, vatRate]
+  );
+  const bodyPlainPreview = useMemo(
+    () => buildInquiryOfferSentBodyPlain(bodyText, pricing),
+    [bodyText, pricing]
   );
 
   const templateLead = useMemo((): LeadImportRow => {
@@ -299,7 +299,7 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
           action,
           to: toTrim,
           subject: subject.trim(),
-          bodyText: bodyText.trim(),
+          bodyText: bodyPlainPreview.trim(),
           priceNet: pricing.priceNet,
           vatRate: pricing.vatRate,
           internalNote: internalNote.trim() || null,
@@ -334,7 +334,7 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
         props.onSent?.({
           offerId: data.offerId,
           subject: subject.trim(),
-          bodyText: bodyText.trim(),
+          bodyText: bodyPlainPreview.trim(),
           to: toTrim,
           priceNet: pricing.priceNet,
           vatRate: pricing.vatRate,

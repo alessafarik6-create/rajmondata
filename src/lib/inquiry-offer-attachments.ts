@@ -10,6 +10,23 @@ export type InquiryOfferAttachmentSource =
   | "catalog"
   | "inventory";
 
+export const INQUIRY_OFFER_ATTACHMENT_LOAD_ERROR =
+  "Přílohu se nepodařilo načíst. Zkontrolujte soubor nebo ji odeberte.";
+
+export const INQUIRY_ATTACHMENT_SOURCE_LABELS: Record<InquiryOfferAttachmentSource, string> = {
+  library: "Knihovna příloh",
+  upload: "Nahráno v nabídce",
+  catalog: "Produktový katalog",
+  inventory: "Sklad",
+};
+
+export function formatAttachmentSizeBytes(bytes: number | null | undefined): string {
+  if (bytes == null || !Number.isFinite(bytes) || bytes <= 0) return "—";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 export type InquiryOfferAttachmentRef = {
   id: string;
   source: InquiryOfferAttachmentSource;

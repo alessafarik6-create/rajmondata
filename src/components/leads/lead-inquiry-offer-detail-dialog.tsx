@@ -31,6 +31,7 @@ import {
   inquiryOfferHasFullDetail,
   INQUIRY_OFFER_LEGACY_DETAIL_MESSAGE,
   INQUIRY_OFFER_STATUS_LABELS,
+  formatInquiryOfferAttachmentLine,
   listInquiryOfferAttachments,
   resolveInquiryOfferSendMeta,
 } from "@/lib/inquiry-offer-history";
@@ -113,7 +114,7 @@ export function LeadInquiryOfferDetailDialog(props: {
                   value={
                     <ul className="list-disc pl-4 space-y-0.5">
                       {listInquiryOfferAttachments(offer).map((a) => (
-                        <li key={a.id}>{a.label || a.filename}</li>
+                        <li key={a.id}>{formatInquiryOfferAttachmentLine(a)}</li>
                       ))}
                     </ul>
                   }

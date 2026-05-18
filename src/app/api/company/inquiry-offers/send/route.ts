@@ -10,7 +10,7 @@ import {
 } from "@/lib/inquiry-offer-send-admin";
 import { parseAttachmentRefs } from "@/lib/inquiry-offer-attachments";
 import { INQUIRY_OFFER_STANDALONE_LEAD_KEY } from "@/lib/inquiry-offer-email";
-import { normalizeInquiryVatRate } from "@/lib/inquiry-offer-pricing";
+import { normalizeInquiryVatRate, parseInquiryPriceInput } from "@/lib/inquiry-offer-pricing";
 import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
 
 export const dynamic = "force-dynamic";
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
       to,
       subject: String(body.subject ?? "").trim(),
       bodyText: String(body.bodyText ?? ""),
-      priceNet: body.priceNet,
+      priceNet: parseInquiryPriceInput(body.priceNet),
       vatRate: normalizeInquiryVatRate(body.vatRate),
       internalNote: body.internalNote,
       templateId: body.templateId,

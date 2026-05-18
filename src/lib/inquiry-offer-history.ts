@@ -11,7 +11,11 @@ import {
   normalizeInquiryVatRate,
   type InquiryVatRate,
 } from "@/lib/inquiry-offer-pricing";
-import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
+import {
+  formatAttachmentSizeBytes,
+  INQUIRY_ATTACHMENT_SOURCE_LABELS,
+  type InquiryOfferAttachmentRef,
+} from "@/lib/inquiry-offer-attachments";
 
 export const INQUIRY_OFFER_LEGACY_DETAIL_MESSAGE =
   "Detail nabídky není dostupný, protože nebyl uložen ve starší verzi.";
@@ -57,6 +61,13 @@ export function listInquiryOfferAttachments(
   offer: InquiryOfferRecord
 ): InquiryOfferAttachmentRef[] {
   return Array.isArray(offer.attachments) ? offer.attachments : [];
+}
+
+export function formatInquiryOfferAttachmentLine(a: InquiryOfferAttachmentRef): string {
+  const name = a.label?.trim() || a.filename;
+  const size = formatAttachmentSizeBytes(a.sizeBytes);
+  const source = INQUIRY_ATTACHMENT_SOURCE_LABELS[a.source] ?? a.source;
+  return `${name} · ${size} · ${source}`;
 }
 
 export function resolveInquiryOfferSendMeta(offer: InquiryOfferRecord) {

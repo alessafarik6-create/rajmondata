@@ -8,7 +8,10 @@ import type { Firestore } from "firebase-admin/firestore";
 import nodemailer from "nodemailer";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
-import { resolveInquiryOfferAttachmentsForEmail } from "@/lib/inquiry-offer-attachment-resolve";
+import {
+  mergeAttachmentRefsWithResolvedSizes,
+  resolveInquiryOfferAttachmentsForEmail,
+} from "@/lib/inquiry-offer-attachment-resolve";
 import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
 import {
   buildInquiryOfferEmailHtml,
@@ -21,7 +24,9 @@ import {
   type InquiryWorkflowStatus,
 } from "@/lib/inquiry-offer-email";
 import {
+  buildInquiryOfferSentBodyPlain,
   calculateInquiryOfferPricing,
+  parseInquiryPriceInput,
   type InquiryVatRate,
 } from "@/lib/inquiry-offer-pricing";
 import type { SendTransactionalEmailAttachment } from "@/lib/email-notifications/resend-send";
@@ -145,6 +150,7 @@ async function deliverViaResend(
     from: plan.fromHeader,
     replyTo: plan.replyTo,
     headers: params.headers,
+    ...(params.attachments.length > 0 ? { attachments: params.attachments } : {}),
   });
   if (!send.ok) {
     const raw = `${send.error} ${send.detail ?? ""}`;
@@ -174,10 +180,16 @@ export async function sendInquiryOfferEmail(
   const company = (companySnap.data() ?? {}) as Record<string, unknown>;
   const identity = readInquiryEmailIdentity(company);
 
-  const bodyPlain = params.bodyText.trim();
-  if (!bodyPlain) {
+  const userBodyPlain = params.bodyText.trim();
+  if (!userBodyPlain) {
     return { ok: false, error: "Text nabídky je prázdný.", detail: null };
   }
+
+  const pricing = calculateInquiryOfferPricing(
+    parseInquiryPriceInput(params.priceNet),
+    params.vatRate
+  );
+  const bodyPlain = buildInquiryOfferSentBodyPlain(userBodyPlain, pricing);
 
   let planResult = await buildInquiryOfferSendPlan({ company, identity });
   if ("error" in planResult) {
@@ -208,9 +220,10 @@ export async function sendInquiryOfferEmail(
 
   const subject = params.subject.trim();
   let messageId: string | null = customMessageId;
+  const attachmentRefs = params.attachments ?? [];
   let emailAttachments: SendTransactionalEmailAttachment[] = [];
   try {
-    emailAttachments = await resolveInquiryOfferAttachmentsForEmail(params.attachments ?? []);
+    emailAttachments = await resolveInquiryOfferAttachmentsForEmail(attachmentRefs);
   } catch (err) {
     return {
       ok: false,
@@ -219,7 +232,10 @@ export async function sendInquiryOfferEmail(
     };
   }
 
-  const pricing = calculateInquiryOfferPricing(params.priceNet, params.vatRate);
+  const attachmentsForHistory = mergeAttachmentRefsWithResolvedSizes(
+    attachmentRefs,
+    emailAttachments
+  );
   const isStandalone =
     params.isStandalone === true || params.leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
 
@@ -303,7 +319,7 @@ export async function sendInquiryOfferEmail(
     vatRate: pricing.vatRate,
     vatAmount: pricing.vatAmount,
     priceGross: pricing.priceGross,
-    attachments: params.attachments ?? [],
+    attachments: attachmentsForHistory,
     internalNote: params.internalNote?.trim() || null,
     templateId: params.templateId ?? null,
     templateName: params.templateName ?? null,
@@ -365,7 +381,14 @@ export async function saveInquiryOfferDraft(
   const planResult = await buildInquiryOfferSendPlan({ company, identity });
   const plan = "error" in planResult ? null : planResult;
 
-  const bodyPlain = params.bodyText.trim();
+  const pricing = calculateInquiryOfferPricing(
+    parseInquiryPriceInput(params.priceNet),
+    params.vatRate
+  );
+  const userBodyPlain = params.bodyText.trim();
+  const bodyPlain = userBodyPlain
+    ? buildInquiryOfferSentBodyPlain(userBodyPlain, pricing)
+    : "";
   const bodyInnerHtml = bodyPlain ? plainTextToHtmlParagraphs(bodyPlain) : "";
   const html =
     params.bodyHtml?.trim() ||
@@ -386,7 +409,6 @@ export async function saveInquiryOfferDraft(
     .doc(params.companyId)
     .collection("inquiry_offers");
 
-  const pricing = calculateInquiryOfferPricing(params.priceNet, params.vatRate);
   const isStandalone =
     params.isStandalone === true || params.leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
 

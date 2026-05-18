@@ -25,6 +25,8 @@ import {
   attachmentRefKey,
   INQUIRY_OFFER_LIBRARY_COLLECTION,
   parseInquiryOfferLibraryDoc,
+  formatAttachmentSizeBytes,
+  INQUIRY_ATTACHMENT_SOURCE_LABELS,
   type InquiryOfferAttachmentRef,
   type InquiryOfferLibraryItem,
 } from "@/lib/inquiry-offer-attachments";
@@ -200,9 +202,12 @@ export function InquiryOfferAttachmentsField(props: Props) {
               key={a.id}
               className="flex items-center justify-between gap-2 rounded border border-slate-200 bg-white px-2 py-1.5 text-xs"
             >
-              <span className="min-w-0 flex-1 truncate">
-                <span className="font-medium">{a.filename}</span>
-                <span className="text-slate-500"> · {a.source}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium">{a.filename}</span>
+                <span className="block text-[10px] text-slate-500">
+                  {formatAttachmentSizeBytes(a.sizeBytes)} ·{" "}
+                  {INQUIRY_ATTACHMENT_SOURCE_LABELS[a.source] ?? a.source}
+                </span>
               </span>
               <Button
                 type="button"
