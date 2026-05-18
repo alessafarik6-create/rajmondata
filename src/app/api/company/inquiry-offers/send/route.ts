@@ -9,7 +9,9 @@ import {
   sendInquiryOfferEmail,
 } from "@/lib/inquiry-offer-send-admin";
 import { parseAttachmentRefs } from "@/lib/inquiry-offer-attachments";
-import { INQUIRY_OFFER_STANDALONE_LEAD_KEY } from "@/lib/inquiry-offer-email";
+import { INQUIRY_OFFER_STANDALONE_LEAD_KEY, readInquiryEmailIdentity } from "@/lib/inquiry-offer-email";
+import { validateOfferCopyEmailsRaw } from "@/lib/inquiry-offer-copy";
+import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { normalizeInquiryVatRate, parseInquiryPriceInput } from "@/lib/inquiry-offer-pricing";
 import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
 
@@ -102,6 +104,16 @@ export async function POST(request: NextRequest) {
         { ok: false, error: "E-mail příjemce je povinný." },
         { status: 400 }
       );
+    }
+
+    if (action === "send") {
+      const companySnap = await db.collection(COMPANIES_COLLECTION).doc(companyId).get();
+      const company = (companySnap.data() ?? {}) as Record<string, unknown>;
+      const identity = readInquiryEmailIdentity(company);
+      const copyCheck = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
+      if (!copyCheck.ok) {
+        return NextResponse.json({ ok: false, error: copyCheck.error }, { status: 400 });
+      }
     }
 
     const common = {

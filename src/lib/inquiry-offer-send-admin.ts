@@ -29,6 +29,13 @@ import {
   parseInquiryPriceInput,
   type InquiryVatRate,
 } from "@/lib/inquiry-offer-pricing";
+import {
+  INQUIRY_OFFER_INVALID_COPY_EMAILS_ERROR,
+  resolveInquiryOfferCopyDelivery,
+  validateOfferCopyEmailsRaw,
+  type InquiryOfferCopyDelivery,
+  type InquiryOfferCopyMode,
+} from "@/lib/inquiry-offer-copy";
 import type { SendTransactionalEmailAttachment } from "@/lib/email-notifications/resend-send";
 import { isResendDomainNotVerifiedError } from "@/lib/inquiry-offer-resend";
 import {
@@ -88,8 +95,12 @@ async function deliverViaSmtp(
     bodyPlain: string;
     headers: Record<string, string>;
     attachments: SendTransactionalEmailAttachment[];
+    copy: InquiryOfferCopyDelivery | null;
   }
-): Promise<{ ok: true; messageId: string } | { ok: false; error: string; detail: string | null }> {
+): Promise<
+  | { ok: true; messageId: string; copyModeUsed: InquiryOfferCopyMode | null }
+  | { ok: false; error: string; detail: string | null }
+> {
   const smtp = identity.smtp;
   if (!smtp?.host || !smtp.user) {
     return { ok: false, error: "SMTP není nakonfigurováno.", detail: null };
@@ -104,7 +115,8 @@ async function deliverViaSmtp(
     },
   });
   try {
-    const info = await transporter.sendMail({
+    const copy = params.copy;
+    const mailOpts: nodemailer.SendMailOptions = {
       from: plan.fromHeader,
       to: params.to,
       replyTo: plan.replyTo,
@@ -121,13 +133,53 @@ async function deliverViaSmtp(
         from: plan.fromEmailTechnical,
         to: params.to,
       },
-    });
+    };
+    if (copy?.emails.length) {
+      if (copy.mode === "cc") {
+        mailOpts.cc = copy.emails;
+      } else {
+        mailOpts.bcc = copy.emails;
+      }
+    }
+    const info = await transporter.sendMail(mailOpts);
     const messageId = String(info.messageId ?? params.headers["Message-ID"] ?? "").trim();
-    return { ok: true, messageId: messageId || params.headers["Message-ID"] };
+    return {
+      ok: true,
+      messageId: messageId || params.headers["Message-ID"],
+      copyModeUsed: copy?.emails.length ? copy.mode : null,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { ok: false, error: "Odeslání přes SMTP se nezdařilo.", detail: msg };
   }
+}
+
+function resendPayloadWithCopy(
+  base: {
+    to: string;
+    subject: string;
+    html: string;
+    from: string;
+    replyTo: string;
+    headers: Record<string, string>;
+    attachments: SendTransactionalEmailAttachment[];
+  },
+  copy: InquiryOfferCopyDelivery | null
+) {
+  return {
+    to: [base.to],
+    subject: base.subject,
+    html: base.html,
+    from: base.from,
+    replyTo: base.replyTo,
+    headers: base.headers,
+    ...(base.attachments.length > 0 ? { attachments: base.attachments } : {}),
+    ...(copy?.emails.length
+      ? copy.mode === "cc"
+        ? { cc: copy.emails }
+        : { bcc: copy.emails }
+      : {}),
+  };
 }
 
 async function deliverViaResend(
@@ -138,20 +190,40 @@ async function deliverViaResend(
     html: string;
     headers: Record<string, string>;
     attachments: SendTransactionalEmailAttachment[];
+    copy: InquiryOfferCopyDelivery | null;
   }
 ): Promise<
-  | { ok: true; messageId: string | null }
+  | { ok: true; messageId: string | null; copyModeUsed: InquiryOfferCopyMode | null }
   | { ok: false; error: string; detail: string | null; domainNotVerified: boolean }
 > {
-  const send = await sendTransactionalEmail({
-    to: [params.to],
+  const base = {
+    to: params.to,
     subject: params.subject,
     html: params.html,
     from: plan.fromHeader,
     replyTo: plan.replyTo,
     headers: params.headers,
-    ...(params.attachments.length > 0 ? { attachments: params.attachments } : {}),
-  });
+    attachments: params.attachments,
+  };
+
+  let copyModeUsed: InquiryOfferCopyMode | null = params.copy?.emails.length
+    ? params.copy.mode
+    : null;
+  let send = await sendTransactionalEmail(resendPayloadWithCopy(base, params.copy));
+
+  if (
+    !send.ok &&
+    params.copy?.emails.length &&
+    params.copy.mode === "bcc"
+  ) {
+    const fallbackCopy: InquiryOfferCopyDelivery = {
+      emails: params.copy.emails,
+      mode: "cc",
+    };
+    send = await sendTransactionalEmail(resendPayloadWithCopy(base, fallbackCopy));
+    if (send.ok) copyModeUsed = "cc";
+  }
+
   if (!send.ok) {
     const raw = `${send.error} ${send.detail ?? ""}`;
     return {
@@ -161,7 +233,11 @@ async function deliverViaResend(
       domainNotVerified: isResendDomainNotVerifiedError(raw),
     };
   }
-  return { ok: true, messageId: send.messageId ?? params.headers["Message-ID"] ?? null };
+  return {
+    ok: true,
+    messageId: send.messageId ?? params.headers["Message-ID"] ?? null,
+    copyModeUsed,
+  };
 }
 
 export async function sendInquiryOfferEmail(
@@ -239,6 +315,22 @@ export async function sendInquiryOfferEmail(
   const isStandalone =
     params.isStandalone === true || params.leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
 
+  const copyValidation = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
+  if (!copyValidation.ok) {
+    return { ok: false, error: copyValidation.error, detail: null };
+  }
+  let offerCopyDelivery: InquiryOfferCopyDelivery | null = null;
+  try {
+    offerCopyDelivery = resolveInquiryOfferCopyDelivery(identity, toNorm);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : INQUIRY_OFFER_INVALID_COPY_EMAILS_ERROR,
+      detail: null,
+    };
+  }
+  let offerCopyModeUsed: InquiryOfferCopyMode | null = null;
+
   if (plan.method === "org_smtp") {
     const smtpOut = await deliverViaSmtp(plan, identity, {
       to: toNorm,
@@ -247,11 +339,13 @@ export async function sendInquiryOfferEmail(
       bodyPlain,
       headers,
       attachments: emailAttachments,
+      copy: offerCopyDelivery,
     });
     if (!smtpOut.ok) {
       return { ok: false, error: smtpOut.error, detail: smtpOut.detail };
     }
     messageId = smtpOut.messageId;
+    offerCopyModeUsed = smtpOut.copyModeUsed;
   } else {
     let resendOut = await deliverViaResend(plan, {
       to: toNorm,
@@ -259,6 +353,7 @@ export async function sendInquiryOfferEmail(
       html,
       headers,
       attachments: emailAttachments,
+      copy: offerCopyDelivery,
     });
     if (
       !resendOut.ok &&
@@ -281,6 +376,7 @@ export async function sendInquiryOfferEmail(
         html,
         headers,
         attachments: emailAttachments,
+        copy: offerCopyDelivery,
       });
     }
     if (!resendOut.ok) {
@@ -295,6 +391,7 @@ export async function sendInquiryOfferEmail(
       return { ok: false, error: resendOut.error, detail: resendOut.detail };
     }
     messageId = resendOut.messageId;
+    offerCopyModeUsed = resendOut.copyModeUsed;
   }
 
   const offersCol = db
@@ -327,6 +424,8 @@ export async function sendInquiryOfferEmail(
     sentByEmail: params.sentByEmail ?? null,
     sentByName: params.sentByName ?? null,
     ...buildInquiryOfferHistoryFields(plan),
+    offerCopyTo: offerCopyDelivery?.emails ?? [],
+    offerCopyMode: offerCopyModeUsed ?? offerCopyDelivery?.mode ?? null,
     messageId,
     threadId,
     sentAt: FieldValue.serverTimestamp(),

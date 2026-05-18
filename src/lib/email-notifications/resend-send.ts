@@ -18,6 +18,8 @@ export type SendTransactionalEmailInput = {
   html: string;
   /** Resend: kopie (bez duplicit s `to`). */
   cc?: string[];
+  /** Resend: skrytá kopie (bez duplicit s `to` / `cc`). */
+  bcc?: string[];
   attachments?: SendTransactionalEmailAttachment[];
   /** Přepíše výchozí EMAIL_FROM (např. „Firma &lt;info@firma.cz&gt;“). */
   from?: string;
@@ -52,6 +54,12 @@ export async function sendTransactionalEmail(
     ? input.cc.map((e) => e.trim().toLowerCase()).filter(Boolean)
     : [];
   const ccUnique = [...new Set(ccRaw)].filter((e) => !toSet.has(e));
+  const ccSet = new Set(ccUnique);
+
+  const bccRaw = Array.isArray(input.bcc)
+    ? input.bcc.map((e) => e.trim().toLowerCase()).filter(Boolean)
+    : [];
+  const bccUnique = [...new Set(bccRaw)].filter((e) => !toSet.has(e) && !ccSet.has(e));
 
   const attachmentPayload =
     Array.isArray(input.attachments) && input.attachments.length > 0
@@ -84,6 +92,7 @@ export async function sendTransactionalEmail(
       from: input.from?.trim() || from,
       to: uniqueTo,
       ...(ccUnique.length > 0 ? { cc: ccUnique } : {}),
+      ...(bccUnique.length > 0 ? { bcc: bccUnique } : {}),
       ...replyToPayload,
       ...(input.headers && Object.keys(input.headers).length > 0
         ? { headers: input.headers }

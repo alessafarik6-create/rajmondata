@@ -59,6 +59,8 @@ export type InquiryEmailIdentity = {
   senderEmail?: string | null;
   replyToEmail?: string | null;
   offerReplyEmail?: string | null;
+  /** E-mail(y) pro automatickou kopii každé odeslané nabídky (čárkou oddělené). */
+  offerCopyEmails?: string | null;
   phone?: string | null;
   web?: string | null;
   emailSignatureHtml?: string | null;
@@ -110,6 +112,9 @@ export type InquiryOfferRecord = {
   smtpUsed?: boolean;
   sendMethod?: InquiryOfferSendMethod | null;
   usedPlatformFallback?: boolean;
+  /** Adresy kopie nabídky (BCC/CC). */
+  offerCopyTo?: string[] | null;
+  offerCopyMode?: "bcc" | "cc" | null;
   createdAt?: unknown;
   updatedAt?: unknown;
 };
@@ -146,6 +151,7 @@ export function readInquiryEmailIdentity(
     senderEmail: strOrNull(o.senderEmail),
     replyToEmail: strOrNull(o.replyToEmail),
     offerReplyEmail: strOrNull(o.offerReplyEmail),
+    offerCopyEmails: strOrNull(o.offerCopyEmails),
     phone: strOrNull(o.phone),
     web: strOrNull(o.web),
     emailSignatureHtml: strOrNull(o.emailSignatureHtml),

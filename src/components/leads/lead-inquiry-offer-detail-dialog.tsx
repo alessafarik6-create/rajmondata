@@ -96,7 +96,10 @@ export function LeadInquiryOfferDetailDialog(props: {
           <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-4 py-3 sm:px-6">
             <div className="space-y-4">
               <DetailRow label="Datum odeslání" value={formatSentAt(offer)} />
-              <DetailRow label="Komu" value={offer.to || "—"} />
+              <DetailRow label="Hlavní příjemce" value={offer.to || "—"} />
+              {meta?.copyLabel ? (
+                <DetailRow label="Kopie nabídky" value={meta.copyLabel} />
+              ) : null}
               <DetailRow label="Předmět" value={offer.subject || "—"} />
               <DetailRow label="Cena" value={formatInquiryOfferPricingBlock(offer)} />
               {offer.isStandalone && offer.customerName ? (
@@ -131,10 +134,10 @@ export function LeadInquiryOfferDetailDialog(props: {
                 />
               ) : null}
               {meta?.displayFrom ? (
-                <DetailRow label="Odesláno jako" value={meta.displayFrom} />
+                <DetailRow label="Odesláno jako (odesílatel)" value={meta.displayFrom} />
               ) : null}
               {meta?.replyTo ? (
-                <DetailRow label="Odpovědi chodí na" value={meta.replyTo} />
+                <DetailRow label="Reply-to" value={meta.replyTo} />
               ) : null}
               {meta?.modeLabel ? <DetailRow label="Způsob odeslání" value={meta.modeLabel} /> : null}
               {offer.messageId ? (

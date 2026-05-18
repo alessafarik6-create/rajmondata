@@ -16,6 +16,10 @@ import {
   readInquiryEmailIdentity,
   type InquiryEmailIdentity,
 } from "@/lib/inquiry-offer-email";
+import {
+  INQUIRY_OFFER_INVALID_COPY_EMAILS_ERROR,
+  validateOfferCopyEmailsRaw,
+} from "@/lib/inquiry-offer-copy";
 
 const VAR_HINT =
   "Proměnné v šablonách nabídek: {jmeno}, {email}, {telefon}, {adresa}, {typ_poptavky}, {zprava}, {cena}, {firma}, {datum}";
@@ -34,6 +38,7 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
   const [senderEmail, setSenderEmail] = useState("");
   const [replyToEmail, setReplyToEmail] = useState("");
   const [offerReplyEmail, setOfferReplyEmail] = useState("");
+  const [offerCopyEmails, setOfferCopyEmails] = useState("");
   const [phone, setPhone] = useState("");
   const [web, setWeb] = useState("");
   const [emailSignatureHtml, setEmailSignatureHtml] = useState("");
@@ -51,6 +56,7 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
     setSenderEmail(id.senderEmail ?? "");
     setReplyToEmail(id.replyToEmail ?? "");
     setOfferReplyEmail(id.offerReplyEmail ?? "");
+    setOfferCopyEmails(id.offerCopyEmails ?? "");
     setPhone(id.phone ?? String(company?.phone ?? "").trim());
     setWeb(id.web ?? String(company?.web ?? "").trim());
     setEmailSignatureHtml(id.emailSignatureHtml ?? "");
@@ -69,6 +75,7 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
     senderEmail: senderEmail.trim() || null,
     replyToEmail: replyToEmail.trim() || null,
     offerReplyEmail: offerReplyEmail.trim() || null,
+    offerCopyEmails: offerCopyEmails.trim() || null,
     phone: phone.trim() || null,
     web: web.trim() || null,
     emailSignatureHtml: emailSignatureHtml.trim() || null,
@@ -84,6 +91,15 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
 
   const handleSave = async () => {
     if (!firestore || !companyId) return;
+    const copyCheck = validateOfferCopyEmailsRaw(offerCopyEmails);
+    if (!copyCheck.ok) {
+      toast({
+        variant: "destructive",
+        title: "Neplatné kopie nabídek",
+        description: INQUIRY_OFFER_INVALID_COPY_EMAILS_ERROR,
+      });
+      return;
+    }
     setSaving(true);
     try {
       const payload = {
@@ -138,6 +154,22 @@ export function InquiryEmailIdentitySettingsCard({ companyId, company }: Props) 
             onChange={setOfferReplyEmail}
             hint="Má prioritu před reply-to"
           />
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="inq-offer-copy">Kopie nabídek (BCC/CC)</Label>
+            <Input
+              id="inq-offer-copy"
+              type="text"
+              inputMode="email"
+              className="w-full break-all"
+              value={offerCopyEmails}
+              onChange={(e) => setOfferCopyEmails(e.target.value)}
+              placeholder="např. obchod@firma.cz, ucetni@firma.cz"
+            />
+            <p className="text-xs text-muted-foreground break-words">
+              Na tyto adresy odejde automatická kopie každé odeslané nabídky (včetně příloh). Více
+              adres oddělte čárkou. Preferovaně se použije skrytá kopie (BCC).
+            </p>
+          </div>
           <PhoneFieldRow value={phone} onChange={setPhone} />
           <WebFieldRow value={web} onChange={setWeb} />
           <SignatureFieldRow value={emailSignatureHtml} onChange={setEmailSignatureHtml} />

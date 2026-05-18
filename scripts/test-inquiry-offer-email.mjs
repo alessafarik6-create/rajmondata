@@ -51,4 +51,13 @@ assert.match(sendSrc, /buildInquiryOfferSentBodyPlain/, "send uses pricing body"
 assert.match(sendSrc, /attachments: params.attachments/, "resend passes attachments");
 assert.match(attachSrc, /INQUIRY_OFFER_ATTACHMENT_LOAD_ERROR/, "attachment load error");
 
+const copyLib = join(root, "src/lib/inquiry-offer-copy.ts");
+const copySrc = readFileSync(copyLib, "utf8");
+assert.match(copySrc, /validateOfferCopyEmailsRaw/, "copy email validation");
+assert.match(copySrc, /resolveInquiryOfferCopyDelivery/, "copy delivery resolver");
+assert.match(sendSrc, /offerCopyTo/, "history stores copy recipients");
+assert.match(sendSrc, /offerCopyMode/, "history stores copy mode");
+assert.match(sendSrc, /deliverViaResend/, "resend delivery");
+assert.match(resendSrc, /bcc/, "resend bcc support");
+
 console.log("OK: test-inquiry-offer-email");

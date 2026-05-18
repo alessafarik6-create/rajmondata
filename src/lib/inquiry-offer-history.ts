@@ -16,6 +16,11 @@ import {
   INQUIRY_ATTACHMENT_SOURCE_LABELS,
   type InquiryOfferAttachmentRef,
 } from "@/lib/inquiry-offer-attachments";
+import {
+  formatOfferCopyEmailsForDisplay,
+  INQUIRY_OFFER_COPY_MODE_LABELS,
+  type InquiryOfferCopyMode,
+} from "@/lib/inquiry-offer-copy";
 
 export const INQUIRY_OFFER_LEGACY_DETAIL_MESSAGE =
   "Detail nabídky není dostupný, protože nebyl uložen ve starší verzi.";
@@ -80,7 +85,15 @@ export function resolveInquiryOfferSendMeta(offer: InquiryOfferRecord) {
       : technicalFrom);
   const replyTo = offer.replyTo ?? offer.replyToEmail ?? null;
   const modeLabel = sendingMode ? INQUIRY_OFFER_SEND_METHOD_LABELS[sendingMode] : null;
-  return { sendingMode, technicalFrom, displayFrom, replyTo, modeLabel };
+  const copyEmails = Array.isArray(offer.offerCopyTo) ? offer.offerCopyTo.filter(Boolean) : [];
+  const copyMode = (offer.offerCopyMode ?? null) as InquiryOfferCopyMode | null;
+  const copyLabel =
+    copyEmails.length > 0
+      ? `${formatOfferCopyEmailsForDisplay(copyEmails)}${
+          copyMode ? ` (${INQUIRY_OFFER_COPY_MODE_LABELS[copyMode]})` : ""
+        }`
+      : null;
+  return { sendingMode, technicalFrom, displayFrom, replyTo, modeLabel, copyEmails, copyLabel, copyMode };
 }
 
 export type InquiryOfferReuseInitial = {
