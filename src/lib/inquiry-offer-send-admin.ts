@@ -277,7 +277,10 @@ export async function sendInquiryOfferEmail(
     offerId = ref.id;
   }
 
-  await updateLeadWorkflowStatus(db, params.companyId, params.leadKey, "nabidka_odeslana");
+  await markLeadCustomerContacted(db, params.companyId, params.leadKey, {
+    type: "offer",
+    workflowStatus: "nabidka_odeslana",
+  });
 
   return {
     ok: true,
@@ -385,4 +388,31 @@ async function updateLeadWorkflowStatus(
     },
     { merge: true }
   );
+}
+
+export async function markLeadCustomerContacted(
+  db: Firestore,
+  companyId: string,
+  leadKey: string,
+  params: {
+    type: "offer" | "email";
+    workflowStatus?: InquiryWorkflowStatus;
+  }
+): Promise<void> {
+  const ref = db
+    .collection(COMPANIES_COLLECTION)
+    .doc(companyId)
+    .collection("import_lead_overlays")
+    .doc(leadKey);
+  const patch: Record<string, unknown> = {
+    customerContacted: true,
+    lastCustomerContactAt: FieldValue.serverTimestamp(),
+    lastCustomerContactType: params.type,
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  if (params.workflowStatus) {
+    patch.workflowStatus = params.workflowStatus;
+    patch.workflowStatusUpdatedAt = FieldValue.serverTimestamp();
+  }
+  await ref.set(patch, { merge: true });
 }

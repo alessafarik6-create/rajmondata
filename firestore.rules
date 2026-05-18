@@ -2222,7 +2222,13 @@ service cloud.firestore {
           (!('receivedAt' in request.resource.data) || request.resource.data.receivedAt is timestamp) &&
           (!('workflowStatus' in request.resource.data) ||
             request.resource.data.workflowStatus in
-              ['nova', 'rozpracovano', 'nabidka_pripravena', 'nabidka_odeslana', 'uzavreno']);
+              ['nova', 'rozpracovano', 'nabidka_pripravena', 'nabidka_odeslana', 'uzavreno']) &&
+          (!('lastCustomerContactAt' in request.resource.data) ||
+            request.resource.data.lastCustomerContactAt is timestamp) &&
+          (!('lastCustomerContactType' in request.resource.data) ||
+            request.resource.data.lastCustomerContactType in ['offer', 'email']) &&
+          (!('customerContacted' in request.resource.data) ||
+            request.resource.data.customerContacted is bool);
         allow update: if signedIn() && sameCompany(companyId) &&
           userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'] &&
           resource.data.companyId == companyId &&
@@ -2240,7 +2246,13 @@ service cloud.firestore {
             request.resource.data.receivedAt == resource.data.receivedAt) &&
           (!('workflowStatus' in request.resource.data) ||
             request.resource.data.workflowStatus in
-              ['nova', 'rozpracovano', 'nabidka_pripravena', 'nabidka_odeslana', 'uzavreno']);
+              ['nova', 'rozpracovano', 'nabidka_pripravena', 'nabidka_odeslana', 'uzavreno']) &&
+          (!('lastCustomerContactAt' in request.resource.data) ||
+            request.resource.data.lastCustomerContactAt is timestamp) &&
+          (!('lastCustomerContactType' in request.resource.data) ||
+            request.resource.data.lastCustomerContactType in ['offer', 'email']) &&
+          (!('customerContacted' in request.resource.data) ||
+            request.resource.data.customerContacted is bool);
         allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
       }
 

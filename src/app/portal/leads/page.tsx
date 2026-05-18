@@ -85,6 +85,13 @@ import {
   type InquiryWorkflowStatus,
 } from "@/lib/inquiry-offer-email";
 import { LeadInquiryOfferDialog } from "@/components/leads/lead-inquiry-offer-dialog";
+import { LeadContactRowIndicator } from "@/components/leads/lead-contact-row-indicator";
+import {
+  buildLeadContactOverlayPatch,
+  leadMatchesContactFilter,
+  resolveLeadContactDisplay,
+  type LeadContactFilter,
+} from "@/lib/lead-contact-status";
 import { LeadInquiryOfferHistory } from "@/components/leads/lead-inquiry-offer-history";
 
 const POLL_MS = 5 * 60 * 1000;
@@ -142,6 +149,9 @@ type LeadOverlayRow = {
   sourceId?: string;
   importSourceUrl?: string;
   workflowStatus?: string;
+  lastCustomerContactAt?: unknown;
+  lastCustomerContactType?: string | null;
+  customerContacted?: boolean | null;
 };
 
 function overlayReceivedDate(ov: LeadOverlayRow | undefined): Date | null {
@@ -307,7 +317,9 @@ export default function PortalLeadsPage() {
   const [search, setSearch] = useState("");
   const [filterTyp, setFilterTyp] = useState<string>("");
   const [filterTag, setFilterTag] = useState<string>("");
+  const [filterContact, setFilterContact] = useState<LeadContactFilter>("");
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
+  const [optimisticContactKeys, setOptimisticContactKeys] = useState<Record<string, true>>({});
 
   const [tagsDialogOpen, setTagsDialogOpen] = useState(false);
   const [newTagName, setNewTagName] = useState("");
@@ -352,6 +364,19 @@ export default function PortalLeadsPage() {
       return { ...row, id: row.id } as InquiryOfferRecord;
     });
   }, [inquiryOffersRaw]);
+
+  const sentOffersByLeadKey = useMemo(() => {
+    const m = new Map<string, InquiryOfferRecord[]>();
+    for (const o of inquiryOffers) {
+      if (o.status !== "sent") continue;
+      const lk = String(o.leadKey ?? "").trim();
+      if (!lk) continue;
+      const arr = m.get(lk) ?? [];
+      arr.push(o);
+      m.set(lk, arr);
+    }
+    return m;
+  }, [inquiryOffers]);
 
   const toggleLeadExpanded = useCallback((key: string) => {
     setExpandedLeadKeys((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -460,8 +485,29 @@ export default function PortalLeadsPage() {
         return o?.tagId === filterTag;
       });
     }
+    if (filterContact) {
+      list = list.filter((r) => {
+        const key = stableImportLeadDocumentId(r);
+        const ov = overlayByDocId.get(key);
+        const offers = sentOffersByLeadKey.get(key) ?? [];
+        if (optimisticContactKeys[key]) {
+          if (filterContact === "uncontacted") return false;
+          if (filterContact === "contacted" || filterContact === "offer_sent") return true;
+        }
+        return leadMatchesContactFilter(filterContact, ov, offers);
+      });
+    }
     return list;
-  }, [rows, search, filterTyp, filterTag, overlayByDocId]);
+  }, [
+    rows,
+    search,
+    filterTyp,
+    filterTag,
+    filterContact,
+    overlayByDocId,
+    sentOffersByLeadKey,
+    optimisticContactKeys,
+  ]);
 
   const sortedFilteredRows = useMemo(() => {
     const list = [...filteredRows];
@@ -508,6 +554,40 @@ export default function PortalLeadsPage() {
   const canManageTags =
     role === "owner" || role === "admin" || role === "manager" || role === "accountant";
   const canManageOffers = canManageTags;
+
+  const handleMarkEmailContact = async (lead: LeadImportRow) => {
+    if (!firestore || !companyId || !user) return;
+    const key = stableImportLeadDocumentId(lead);
+    setOptimisticContactKeys((p) => ({ ...p, [key]: true }));
+    const ref = doc(firestore, "companies", companyId, "import_lead_overlays", key);
+    try {
+      await setDoc(
+        ref,
+        {
+          companyId,
+          importLeadId: lead.id,
+          ...buildLeadContactOverlayPatch({ type: "email" }),
+          lastCustomerContactAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          updatedByUid: user.uid,
+        },
+        { merge: true }
+      );
+      toast({ title: "Kontakt zaznamenán", description: "Poptávka je označena jako kontaktovaná e-mailem." });
+    } catch (e) {
+      console.error(e);
+      setOptimisticContactKeys((p) => {
+        const n = { ...p };
+        delete n[key];
+        return n;
+      });
+      toast({
+        variant: "destructive",
+        title: "Uložení se nezdařilo",
+        description: "Stav kontaktu se nepodařilo uložit.",
+      });
+    }
+  };
 
   const handleWorkflowStatusChange = async (
     lead: LeadImportRow,
@@ -819,6 +899,21 @@ export default function PortalLeadsPage() {
                 ))}
               </select>
             </div>
+            {canManageOffers ? (
+              <div className="w-full sm:w-[220px] space-y-1.5">
+                <Label className="text-xs text-slate-800">Kontakt se zákazníkem</Label>
+                <select
+                  className={NATIVE_SELECT_CLASS}
+                  value={filterContact}
+                  onChange={(e) => setFilterContact(e.target.value as LeadContactFilter)}
+                >
+                  <option value="">Všechny</option>
+                  <option value="uncontacted">Neukontaktované</option>
+                  <option value="contacted">Kontaktované</option>
+                  <option value="offer_sent">Nabídka odeslána</option>
+                </select>
+              </div>
+            ) : null}
             <div className="w-full sm:w-[200px] space-y-1.5">
               <Label className="text-xs text-slate-800">Řazení podle data přijetí</Label>
               <select
@@ -1181,13 +1276,28 @@ export default function PortalLeadsPage() {
                     const received = leadReceivedDate(r, ov);
                     const expanded = !!expandedLeadKeys[key];
                     const dateStr = received ? formatReceivedDay(received) : "—";
+                    const sentOffers = sentOffersByLeadKey.get(key) ?? [];
+                    let contact = resolveLeadContactDisplay(ov, sentOffers);
+                    if (optimisticContactKeys[key] && !contact.contacted) {
+                      contact = {
+                        ...contact,
+                        contacted: true,
+                        offerSent: true,
+                        label: "Nabídka odeslána",
+                        contactType: "offer",
+                      };
+                    }
 
                     return (
                       <div
                         key={`${key}-${r.id}`}
                         data-open-lead={key}
                         className={cn(
-                          idx % 2 === 1 ? "bg-slate-50/90" : "bg-white"
+                          contact.contacted
+                            ? "border-l-2 border-l-emerald-500 bg-emerald-50/90"
+                            : idx % 2 === 1
+                              ? "bg-slate-50/90"
+                              : "bg-white"
                         )}
                       >
                         <div
@@ -1201,7 +1311,12 @@ export default function PortalLeadsPage() {
                             }
                           }}
                           onClick={() => toggleLeadExpanded(key)}
-                          className="flex cursor-pointer items-start gap-1.5 px-2 py-2 text-sm transition-colors hover:bg-slate-100/70 sm:gap-2 sm:px-3 sm:py-2 lg:items-center"
+                          className={cn(
+                            "flex cursor-pointer items-start gap-1.5 px-2 py-2 text-sm transition-colors sm:gap-2 sm:px-3 sm:py-2 lg:items-center",
+                            contact.contacted
+                              ? "hover:bg-emerald-100/75"
+                              : "hover:bg-slate-100/70"
+                          )}
                         >
                           <ChevronDown
                             className={cn(
@@ -1217,6 +1332,9 @@ export default function PortalLeadsPage() {
                                   {r.jmeno || "—"}
                                 </span>
                                 <InquiryTypeBadge type={inquiryTypeSource} variant="preview" />
+                                {!isCustomer && contact.contacted ? (
+                                  <LeadContactRowIndicator contact={contact} />
+                                ) : null}
                                 <span className="shrink-0 text-xs tabular-nums text-slate-800">
                                   {dateStr}
                                 </span>
@@ -1294,7 +1412,10 @@ export default function PortalLeadsPage() {
 
                         {expanded ? (
                           <div
-                            className="border-b border-slate-200 bg-slate-100/60 px-3 py-3 sm:px-4 sm:py-4"
+                            className={cn(
+                              "border-b border-slate-200 px-3 py-3 sm:px-4 sm:py-4",
+                              contact.contacted ? "bg-emerald-50/70" : "bg-slate-100/60"
+                            )}
                             onClick={(e) => e.stopPropagation()}
                           >
                             <div className="mx-auto max-w-4xl space-y-4">
@@ -1374,6 +1495,18 @@ export default function PortalLeadsPage() {
                                     <Mail className="h-4 w-4" />
                                     Odpovědět nabídkou
                                   </Button>
+                                  {!contact.contacted ? (
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      className="mt-2 min-h-11 w-full border-emerald-600/40 text-emerald-900 hover:bg-emerald-50 sm:min-h-9 sm:w-auto"
+                                      onClick={() => void handleMarkEmailContact(r)}
+                                    >
+                                      <Mail className="h-4 w-4" />
+                                      Zaznamenat kontakt e-mailem
+                                    </Button>
+                                  ) : null}
                                 </div>
                               ) : null}
                               {canManageOffers ? (
@@ -1464,7 +1597,11 @@ export default function PortalLeadsPage() {
           lead={offerLead}
           leadKey={stableImportLeadDocumentId(offerLead)}
           templates={offerTemplates}
-          onSent={() => setOfferLead(null)}
+          onSent={() => {
+            const key = stableImportLeadDocumentId(offerLead);
+            setOptimisticContactKeys((p) => ({ ...p, [key]: true }));
+            setOfferLead(null);
+          }}
         />
       ) : null}
     </div>
