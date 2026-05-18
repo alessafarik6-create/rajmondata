@@ -295,6 +295,35 @@
   color: hsl(var(--foreground));
 }
 
+/* E-mailový composer nabídky — centrovaný velký modal (90 % šířky, ~92 % výšky) */
+[data-inquiry-offer-composer] {
+  position: fixed !important;
+  left: 50% !important;
+  top: 50% !important;
+  right: auto !important;
+  bottom: auto !important;
+  transform: translate(-50%, -50%) !important;
+  margin: 0 !important;
+  overflow: hidden !important;
+  max-height: 95dvh !important;
+  height: min(92dvh, 95dvh) !important;
+  width: min(90vw, calc(100vw - 1.5rem)) !important;
+  max-width: 72rem !important;
+}
+
+@media (max-width: 640px) {
+  [data-inquiry-offer-composer] {
+    left: 0 !important;
+    top: 0 !important;
+    transform: none !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    border-radius: 0 !important;
+  }
+}
+
 @media (max-width: 640px) {
   [data-portal-content] [data-slot="card"],
   [data-admin-content] [data-slot="card"] {

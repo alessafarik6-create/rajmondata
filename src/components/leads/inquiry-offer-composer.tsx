@@ -367,7 +367,14 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogContent
-        className="left-0 top-0 flex h-[100dvh] max-h-[100dvh] w-full max-w-full translate-x-0 translate-y-0 flex-col gap-0 rounded-none border-0 p-0 sm:max-w-full [&>button.absolute]:z-20"
+        data-inquiry-offer-composer
+        className={[
+          "!left-1/2 !top-1/2 !-translate-x-1/2 !-translate-y-1/2",
+          "!flex !max-h-[95dvh] h-[min(92dvh,95dvh)] w-[min(90vw,calc(100vw-1.5rem))] !max-w-6xl",
+          "flex-col gap-0 overflow-hidden rounded-xl border-0 p-0 shadow-2xl",
+          "max-sm:!h-[100dvh] max-sm:!max-h-[100dvh] max-sm:w-full max-sm:!max-w-full max-sm:rounded-none",
+          "[&>button.absolute]:hidden",
+        ].join(" ")}
         aria-describedby={undefined}
       >
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
@@ -388,8 +395,8 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
           </Button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/80">
-          <div className="mx-auto max-w-3xl space-y-0 divide-y divide-slate-200 bg-white shadow-sm">
+        <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain bg-slate-100/90">
+          <div className="mx-auto w-full max-w-4xl space-y-0 divide-y divide-slate-200 border-x border-slate-200/80 bg-white shadow-sm sm:my-2 sm:rounded-lg sm:border">
             {isStandalone ? (
               <>
                 <ComposerRow label="Jméno zákazníka" required>
@@ -474,8 +481,8 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
                 Text e-mailu
               </Label>
               <Textarea
-                rows={14}
-                className="min-h-[220px] w-full resize-y border-slate-200 text-sm leading-relaxed"
+                rows={16}
+                className="min-h-[min(42vh,480px)] w-full resize-y border-slate-200 text-sm leading-relaxed sm:min-h-[min(38vh,520px)]"
                 value={bodyText}
                 onChange={(e) => setBodyText(e.target.value)}
                 placeholder="Vložte text nabídky…"
@@ -567,7 +574,7 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 sm:flex-row sm:justify-end sm:px-6">
+        <div className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] sm:flex-row sm:justify-end sm:px-6">
           <Button
             type="button"
             variant="outline"
@@ -607,7 +614,7 @@ function ComposerRow(props: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="grid gap-1 px-4 py-2.5 sm:grid-cols-[7rem_1fr] sm:items-center sm:gap-4 sm:px-6 sm:py-3">
+    <div className="grid grid-cols-1 gap-1 px-4 py-2.5 sm:grid-cols-[8rem_1fr] sm:items-center sm:gap-4 sm:px-6 sm:py-3">
       <Label className="text-xs font-medium uppercase tracking-wide text-slate-500 sm:pt-0">
         {props.label}
         {props.required ? " *" : ""}
