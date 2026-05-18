@@ -11,16 +11,17 @@ import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
 import {
   buildInquiryOfferEmailHtml,
   buildInquiryOfferThreadId,
-  isInquirySmtpConfigured,
   isValidEmailAddress,
   plainTextToHtmlParagraphs,
   readInquiryEmailIdentity,
-  resolveInquiryReplyToEmail,
-  resolveInquirySenderEmail,
-  resolveOrganizationDisplayName,
   stripHtmlToPlain,
   type InquiryWorkflowStatus,
 } from "@/lib/inquiry-offer-email";
+import { isResendDomainNotVerifiedError } from "@/lib/inquiry-offer-resend";
+import {
+  buildInquiryOfferSendPlan,
+  type InquiryOfferSendPlan,
+} from "@/lib/inquiry-offer-send-plan";
 
 export type SendInquiryOfferEmailParams = {
   companyId: string;
@@ -36,23 +37,102 @@ export type SendInquiryOfferEmailParams = {
   userId: string;
   sentByEmail?: string | null;
   sentByName?: string | null;
-  /** Existující koncept — aktualizovat místo nového záznamu */
   draftOfferId?: string | null;
 };
 
 export type SendInquiryOfferEmailResult =
-  | { ok: true; offerId: string; messageId: string | null; threadId: string }
+  | {
+      ok: true;
+      offerId: string;
+      messageId: string | null;
+      threadId: string;
+      sendNotice: string | null;
+      sendPlan: InquiryOfferSendPlan;
+    }
   | { ok: false; error: string; detail: string | null };
-
-function formatFromHeader(displayName: string, email: string): string {
-  const safeName = displayName.replace(/"/g, "'").trim() || "Organizace";
-  return `${safeName} <${email}>`;
-}
 
 function buildMessageIdHeader(domain: string): string {
   const token = crypto.randomBytes(12).toString("hex");
   const host = domain.replace(/^@/, "") || "mail.local";
   return `<inquiry-offer-${token}@${host}>`;
+}
+
+async function deliverViaSmtp(
+  plan: InquiryOfferSendPlan,
+  identity: ReturnType<typeof readInquiryEmailIdentity>,
+  params: {
+    to: string;
+    subject: string;
+    html: string;
+    bodyPlain: string;
+    headers: Record<string, string>;
+  }
+): Promise<{ ok: true; messageId: string } | { ok: false; error: string; detail: string | null }> {
+  const smtp = identity.smtp;
+  if (!smtp?.host || !smtp.user) {
+    return { ok: false, error: "SMTP není nakonfigurováno.", detail: null };
+  }
+  const transporter = nodemailer.createTransport({
+    host: String(smtp.host).trim(),
+    port: Number(smtp.port) || (smtp.secure ? 465 : 587),
+    secure: smtp.secure === true,
+    auth: {
+      user: String(smtp.user).trim(),
+      pass: String(smtp.password ?? ""),
+    },
+  });
+  try {
+    const info = await transporter.sendMail({
+      from: plan.fromHeader,
+      to: params.to,
+      replyTo: plan.replyTo,
+      subject: params.subject,
+      html: params.html,
+      text: stripHtmlToPlain(params.bodyPlain),
+      headers: params.headers,
+      envelope: {
+        from: plan.fromEmailTechnical,
+        to: params.to,
+      },
+    });
+    const messageId = String(info.messageId ?? params.headers["Message-ID"] ?? "").trim();
+    return { ok: true, messageId: messageId || params.headers["Message-ID"] };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: "Odeslání přes SMTP se nezdařilo.", detail: msg };
+  }
+}
+
+async function deliverViaResend(
+  plan: InquiryOfferSendPlan,
+  params: {
+    to: string;
+    subject: string;
+    html: string;
+    headers: Record<string, string>;
+  }
+): Promise<
+  | { ok: true; messageId: string | null }
+  | { ok: false; error: string; detail: string | null; domainNotVerified: boolean }
+> {
+  const send = await sendTransactionalEmail({
+    to: [params.to],
+    subject: params.subject,
+    html: params.html,
+    from: plan.fromHeader,
+    replyTo: plan.replyTo,
+    headers: params.headers,
+  });
+  if (!send.ok) {
+    const raw = `${send.error} ${send.detail ?? ""}`;
+    return {
+      ok: false,
+      error: send.error,
+      detail: send.detail,
+      domainNotVerified: isResendDomainNotVerifiedError(raw),
+    };
+  }
+  return { ok: true, messageId: send.messageId ?? params.headers["Message-ID"] ?? null };
 }
 
 export async function sendInquiryOfferEmail(
@@ -70,37 +150,21 @@ export async function sendInquiryOfferEmail(
   }
   const company = (companySnap.data() ?? {}) as Record<string, unknown>;
   const identity = readInquiryEmailIdentity(company);
-  const orgName = resolveOrganizationDisplayName(company, identity);
-  const replyTo = resolveInquiryReplyToEmail(identity, company);
-  if (!replyTo) {
-    return {
-      ok: false,
-      error: "Chybí e-mail organizace pro odpovědi.",
-      detail: "Nastavte v Nastavení → E-mailový podpis a identita pole Reply-to nebo Hlavní kontaktní e-mail.",
-    };
-  }
-
-  const smtpUsed = isInquirySmtpConfigured(identity);
-  const senderEmail = resolveInquirySenderEmail(identity, company, smtpUsed);
-  const threadId = buildInquiryOfferThreadId(params.companyId, params.leadKey);
 
   const bodyPlain = params.bodyText.trim();
   if (!bodyPlain) {
     return { ok: false, error: "Text nabídky je prázdný.", detail: null };
   }
 
-  const bodyInnerHtml = plainTextToHtmlParagraphs(bodyPlain);
-  const html = buildInquiryOfferEmailHtml({
-    bodyHtmlContent: bodyInnerHtml,
-    organizationName: orgName,
-    logoUrl: String(company.organizationLogoUrl ?? "").trim() || null,
-    signatureHtml: identity.emailSignatureHtml,
-    phone: identity.phone ?? (String(company.phone ?? "").trim() || null),
-    web: identity.web ?? (String(company.web ?? "").trim() || null),
-    contactEmail: replyTo,
-  });
+  let planResult = await buildInquiryOfferSendPlan({ company, identity });
+  if ("error" in planResult) {
+    return { ok: false, error: planResult.error, detail: null };
+  }
+  let plan = planResult;
+  let sendNotice = plan.sendNotice;
 
-  const replyDomain = replyTo.split("@")[1] || "local";
+  const threadId = buildInquiryOfferThreadId(params.companyId, params.leadKey);
+  const replyDomain = plan.replyTo.split("@")[1] || "local";
   const customMessageId = buildMessageIdHeader(replyDomain);
   const headers: Record<string, string> = {
     "Message-ID": customMessageId,
@@ -108,81 +172,63 @@ export async function sendInquiryOfferEmail(
     "X-Entity-Ref-ID": threadId,
   };
 
+  const bodyInnerHtml = plainTextToHtmlParagraphs(bodyPlain);
+  const html = buildInquiryOfferEmailHtml({
+    bodyHtmlContent: bodyInnerHtml,
+    organizationName: plan.fromDisplayName,
+    logoUrl: String(company.organizationLogoUrl ?? "").trim() || null,
+    signatureHtml: identity.emailSignatureHtml,
+    phone: identity.phone ?? (String(company.phone ?? "").trim() || null),
+    web: identity.web ?? (String(company.web ?? "").trim() || null),
+    contactEmail: plan.replyTo,
+  });
+
+  const subject = params.subject.trim();
   let messageId: string | null = customMessageId;
-  let fromEmailUsed = senderEmail;
-  let fromDisplayName = orgName;
 
-  if (smtpUsed && identity.smtp) {
-    const smtp = identity.smtp;
-    const fromAddr =
-      senderEmail ||
-      String(smtp.user ?? "")
-        .trim()
-        .toLowerCase();
-    if (!fromAddr || !isValidEmailAddress(fromAddr)) {
-      return {
-        ok: false,
-        error: "SMTP: chybí platná adresa odesílatele.",
-        detail: null,
-      };
-    }
-    fromEmailUsed = fromAddr;
-    const transporter = nodemailer.createTransport({
-      host: String(smtp.host).trim(),
-      port: Number(smtp.port) || (smtp.secure ? 465 : 587),
-      secure: smtp.secure === true,
-      auth: {
-        user: String(smtp.user).trim(),
-        pass: String(smtp.password ?? ""),
-      },
-    });
-    try {
-      const info = await transporter.sendMail({
-        from: formatFromHeader(orgName, fromAddr),
-        to: toNorm,
-        replyTo,
-        subject: params.subject.trim(),
-        html,
-        text: stripHtmlToPlain(bodyPlain),
-        headers: {
-          ...headers,
-        },
-        envelope: {
-          from: fromAddr,
-          to: toNorm,
-        },
-      });
-      messageId = String(info.messageId ?? customMessageId).trim() || customMessageId;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: "Odeslání přes SMTP se nezdařilo.", detail: msg };
-    }
-  } else {
-    const platformFrom = String(process.env.EMAIL_FROM ?? "").trim();
-    if (!platformFrom) {
-      return {
-        ok: false,
-        error: "E-mail není na serveru nakonfigurován.",
-        detail: "EMAIL_FROM chybí.",
-      };
-    }
-    const fromHeader = senderEmail
-      ? formatFromHeader(orgName, senderEmail)
-      : formatFromHeader(orgName, platformFrom.includes("<") ? platformFrom : platformFrom);
-
-    const send = await sendTransactionalEmail({
-      to: [toNorm],
-      subject: params.subject.trim(),
+  if (plan.method === "org_smtp") {
+    const smtpOut = await deliverViaSmtp(plan, identity, {
+      to: toNorm,
+      subject,
       html,
-      from: fromHeader.includes("<") ? fromHeader : formatFromHeader(orgName, platformFrom),
-      replyTo,
+      bodyPlain,
       headers,
     });
-    if (!send.ok) {
-      return { ok: false, error: send.error, detail: send.detail };
+    if (!smtpOut.ok) {
+      return { ok: false, error: smtpOut.error, detail: smtpOut.detail };
     }
-    messageId = send.messageId ?? customMessageId;
-    fromEmailUsed = senderEmail || platformFrom.replace(/.*<([^>]+)>.*/, "$1").trim() || platformFrom;
+    messageId = smtpOut.messageId;
+  } else {
+    let resendOut = await deliverViaResend(plan, { to: toNorm, subject, html, headers });
+    if (
+      !resendOut.ok &&
+      resendOut.domainNotVerified &&
+      plan.method !== "platform_fallback"
+    ) {
+      planResult = await buildInquiryOfferSendPlan({
+        company,
+        identity,
+        forcePlatformFallback: true,
+      });
+      if ("error" in planResult) {
+        return { ok: false, error: planResult.error, detail: null };
+      }
+      plan = planResult;
+      sendNotice = plan.sendNotice;
+      resendOut = await deliverViaResend(plan, { to: toNorm, subject, html, headers });
+    }
+    if (!resendOut.ok) {
+      if (resendOut.domainNotVerified) {
+        return {
+          ok: false,
+          error:
+            "Organizace nemá ověřenou e-mailovou doménu a systémový odesílatel portálu není dostupný.",
+          detail: resendOut.detail,
+        };
+      }
+      return { ok: false, error: resendOut.error, detail: resendOut.detail };
+    }
+    messageId = resendOut.messageId;
   }
 
   const offersCol = db
@@ -196,7 +242,7 @@ export async function sendInquiryOfferEmail(
     importLeadId: params.importLeadId,
     status: "sent" as const,
     to: toNorm,
-    subject: params.subject.trim(),
+    subject,
     bodyHtml: html,
     bodyPlain,
     priceGross:
@@ -209,12 +255,14 @@ export async function sendInquiryOfferEmail(
     sentByUid: params.userId,
     sentByEmail: params.sentByEmail ?? null,
     sentByName: params.sentByName ?? null,
-    fromEmail: fromEmailUsed,
-    fromDisplayName,
-    replyToEmail: replyTo,
+    fromEmail: plan.fromEmailTechnical,
+    fromDisplayName: plan.fromDisplayName,
+    replyToEmail: plan.replyTo,
     messageId,
     threadId,
-    smtpUsed,
+    smtpUsed: plan.method === "org_smtp",
+    sendMethod: plan.method,
+    usedPlatformFallback: plan.usedPlatformFallback,
     sentAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   };
@@ -234,7 +282,14 @@ export async function sendInquiryOfferEmail(
 
   await updateLeadWorkflowStatus(db, params.companyId, params.leadKey, "nabidka_odeslana");
 
-  return { ok: true, offerId, messageId, threadId };
+  return {
+    ok: true,
+    offerId,
+    messageId,
+    threadId,
+    sendNotice,
+    sendPlan: plan,
+  };
 }
 
 export async function saveInquiryOfferDraft(
@@ -252,21 +307,22 @@ export async function saveInquiryOfferDraft(
   const companySnap = await db.collection(COMPANIES_COLLECTION).doc(params.companyId).get();
   const company = (companySnap.data() ?? {}) as Record<string, unknown>;
   const identity = readInquiryEmailIdentity(company);
-  const orgName = resolveOrganizationDisplayName(company, identity);
-  const replyTo = resolveInquiryReplyToEmail(identity, company);
+  const planResult = await buildInquiryOfferSendPlan({ company, identity });
+  const plan = "error" in planResult ? null : planResult;
+
   const bodyPlain = params.bodyText.trim();
   const bodyInnerHtml = bodyPlain ? plainTextToHtmlParagraphs(bodyPlain) : "";
   const html =
     params.bodyHtml?.trim() ||
-    (bodyPlain
+    (bodyPlain && plan
       ? buildInquiryOfferEmailHtml({
           bodyHtmlContent: bodyInnerHtml,
-          organizationName: orgName,
+          organizationName: plan.fromDisplayName,
           logoUrl: String(company.organizationLogoUrl ?? "").trim() || null,
           signatureHtml: identity.emailSignatureHtml,
           phone: identity.phone ?? (String(company.phone ?? "").trim() || null),
           web: identity.web ?? (String(company.web ?? "").trim() || null),
-          contactEmail: replyTo,
+          contactEmail: plan.replyTo,
         })
       : "");
 
@@ -294,7 +350,11 @@ export async function saveInquiryOfferDraft(
     sentByUid: params.userId,
     sentByEmail: params.sentByEmail ?? null,
     sentByName: params.sentByName ?? null,
-    replyToEmail: replyTo,
+    replyToEmail: plan?.replyTo ?? null,
+    fromEmail: plan?.fromEmailTechnical ?? null,
+    fromDisplayName: plan?.fromDisplayName ?? null,
+    sendMethod: plan?.method ?? null,
+    usedPlatformFallback: plan?.usedPlatformFallback ?? false,
     threadId: buildInquiryOfferThreadId(params.companyId, params.leadKey),
     updatedAt: FieldValue.serverTimestamp(),
   };

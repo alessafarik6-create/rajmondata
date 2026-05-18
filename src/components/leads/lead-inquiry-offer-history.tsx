@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Copy } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import type { InquiryOfferRecord } from "@/lib/inquiry-offer-email";
+import { INQUIRY_OFFER_SEND_METHOD_LABELS } from "@/lib/inquiry-offer-send-plan";
 
 function tsToDate(raw: unknown): Date | null {
   if (
@@ -81,11 +82,25 @@ export function LeadInquiryOfferHistory(props: {
                 Odeslal: {o.sentByName || o.sentByEmail}
               </p>
             ) : null}
+            {o.sendMethod ? (
+              <p className="text-xs text-slate-600">
+                Odeslání: {INQUIRY_OFFER_SEND_METHOD_LABELS[o.sendMethod] ?? o.sendMethod}
+              </p>
+            ) : o.smtpUsed ? (
+              <p className="text-xs text-slate-600">Odeslání: SMTP organizace</p>
+            ) : o.usedPlatformFallback ? (
+              <p className="text-xs text-slate-600">Odeslání: Systémový e-mail portálu</p>
+            ) : null}
             {o.fromEmail ? (
-              <p className="text-xs text-slate-600 break-all">From: {o.fromEmail}</p>
+              <p className="text-xs text-slate-600 break-all">
+                Technický odesílatel:{" "}
+                {o.fromDisplayName ? `${o.fromDisplayName} <${o.fromEmail}>` : o.fromEmail}
+              </p>
             ) : null}
             {o.replyToEmail ? (
-              <p className="text-xs text-slate-600 break-all">Reply-to: {o.replyToEmail}</p>
+              <p className="text-xs text-slate-600 break-all">
+                Odpovědi (Reply-to): {o.replyToEmail}
+              </p>
             ) : null}
             {o.templateName ? (
               <p className="text-xs text-slate-500">Šablona: {o.templateName}</p>

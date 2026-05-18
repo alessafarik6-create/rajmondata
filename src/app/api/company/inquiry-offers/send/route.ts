@@ -125,6 +125,10 @@ export async function POST(request: NextRequest) {
       messageId: sent.messageId,
       threadId: sent.threadId,
       status: "sent",
+      sendNotice: sent.sendNotice,
+      sendMethod: sent.sendPlan.method,
+      fromHeader: sent.sendPlan.fromHeader,
+      replyTo: sent.sendPlan.replyTo,
     });
   } catch (err) {
     return NextResponse.json(

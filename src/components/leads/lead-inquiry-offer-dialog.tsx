@@ -61,6 +61,15 @@ export function LeadInquiryOfferDialog(props: {
   const [templateId, setTemplateId] = useState<string>("");
   const [sending, setSending] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
+  const [sendPreview, setSendPreview] = useState<{
+    methodLabel: string;
+    fromDisplayName: string;
+    fromEmailTechnical: string;
+    fromHeader: string;
+    replyTo: string;
+    notice: string | null;
+  } | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   const activeTemplates = useMemo(
     () => props.templates.filter((t) => t.active !== false),
@@ -112,6 +121,47 @@ export function LeadInquiryOfferDialog(props: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.open, props.leadKey]);
 
+  useEffect(() => {
+    if (!props.open || !user || !props.companyId) {
+      setSendPreview(null);
+      return;
+    }
+    let cancelled = false;
+    setPreviewLoading(true);
+    void (async () => {
+      try {
+        const token = await user.getIdToken();
+        const res = await fetch(
+          `/api/company/inquiry-offers/preview?companyId=${encodeURIComponent(props.companyId)}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const data = (await res.json()) as {
+          ok?: boolean;
+          preview?: {
+            methodLabel: string;
+            fromDisplayName: string;
+            fromEmailTechnical: string;
+            fromHeader: string;
+            replyTo: string;
+            notice: string | null;
+          };
+        };
+        if (!cancelled && res.ok && data.ok && data.preview) {
+          setSendPreview(data.preview);
+        } else if (!cancelled) {
+          setSendPreview(null);
+        }
+      } catch {
+        if (!cancelled) setSendPreview(null);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [props.open, props.companyId, user]);
+
   const selectedTemplate = activeTemplates.find((t) => t.id === templateId);
 
   const postOffer = async (action: "send" | "draft") => {
@@ -157,15 +207,21 @@ export function LeadInquiryOfferDialog(props: {
           draftOfferId: props.draftOfferId ?? null,
         }),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string; detail?: string };
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        detail?: string;
+        sendNotice?: string | null;
+      };
       if (!res.ok || !data.ok) {
         throw new Error(data.error || data.detail || "Operace se nezdařila.");
       }
+      const sendNotice = data.sendNotice?.trim();
       toast({
         title: action === "send" ? "Nabídka odeslána" : "Koncept uložen",
         description:
           action === "send"
-            ? `E-mail byl odeslán na ${toTrim}.`
+            ? sendNotice || `E-mail byl odeslán na ${toTrim}.`
             : "Nabídku můžete upravit a odeslat později.",
       });
       props.onSent?.();
@@ -259,6 +315,31 @@ export function LeadInquiryOfferDialog(props: {
               <p className="text-xs text-muted-foreground">
                 Do textu vložte proměnnou {"{cena}"} nebo upravte částku ručně.
               </p>
+            </div>
+            <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
+              <p className="font-medium text-slate-900">Odeslání e-mailu</p>
+              {previewLoading ? (
+                <p className="mt-1 text-slate-500">Načítám nastavení odesílatele…</p>
+              ) : sendPreview ? (
+                <ul className="mt-1 space-y-0.5">
+                  <li>
+                    Způsob: <span className="font-medium">{sendPreview.methodLabel}</span>
+                  </li>
+                  <li className="break-all">
+                    Odesílatel: {sendPreview.fromDisplayName} &lt;{sendPreview.fromEmailTechnical}&gt;
+                  </li>
+                  <li className="break-all">
+                    Odpovědi (Reply-to): <span className="font-medium">{sendPreview.replyTo}</span>
+                  </li>
+                  {sendPreview.notice ? (
+                    <li className="mt-1 text-amber-800">{sendPreview.notice}</li>
+                  ) : null}
+                </ul>
+              ) : (
+                <p className="mt-1 text-slate-500">
+                  Zákazník uvidí vaši organizaci; odpovědi půjdou na e-mail firmy.
+                </p>
+              )}
             </div>
             <div className="space-y-2">
               <Label htmlFor="offer-note">Interní poznámka</Label>

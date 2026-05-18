@@ -14,10 +14,24 @@ assert.match(src, /buildInquiryOfferEmailHtml/, "branded html builder");
 assert.match(src, /resolveInquiryReplyToEmail/, "reply-to resolver");
 assert.match(src, /offerReplyEmail/, "offer reply priority");
 
+const planLib = join(root, "src/lib/inquiry-offer-send-plan.ts");
+const resendLib = join(root, "src/lib/inquiry-offer-resend.ts");
+
 const sendSrc = readFileSync(sendLib, "utf8");
 assert.match(sendSrc, /replyTo/, "send uses replyTo");
 assert.match(sendSrc, /nodemailer/, "smtp support");
 assert.match(sendSrc, /nabidka_odeslana/, "status after send");
+assert.match(sendSrc, /buildInquiryOfferSendPlan/, "send plan builder");
+assert.match(sendSrc, /platform_fallback/, "platform fallback path");
+assert.match(sendSrc, /sendMethod/, "persist send method");
+
+const planSrc = readFileSync(planLib, "utf8");
+assert.match(planSrc, /platform_fallback/, "fallback method in plan");
+assert.match(planSrc, /formatInquiryOfferFromHeader/, "from header formatter");
+
+const resendHelper = readFileSync(resendLib, "utf8");
+assert.match(resendHelper, /isResendDomainNotVerifiedError/, "domain error detection");
+assert.match(resendHelper, /resolvePlatformFallbackSenderEmail/, "platform fallback email");
 
 const resendSrc = readFileSync(resend, "utf8");
 assert.match(resendSrc, /reply_to/, "resend reply_to");

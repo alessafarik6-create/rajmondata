@@ -56,6 +56,11 @@ export type InquiryEmailIdentity = {
   smtp?: InquiryEmailSmtpSettings | null;
 };
 
+export type InquiryOfferSendMethod =
+  | "org_smtp"
+  | "org_resend_verified"
+  | "platform_fallback";
+
 export type InquiryOfferRecord = {
   id?: string;
   companyId?: string;
@@ -74,12 +79,16 @@ export type InquiryOfferRecord = {
   sentByUid?: string | null;
   sentByEmail?: string | null;
   sentByName?: string | null;
+  /** Technická adresa odesílatele (From). */
   fromEmail?: string | null;
   fromDisplayName?: string | null;
   replyToEmail?: string | null;
   messageId?: string | null;
   threadId?: string | null;
+  /** @deprecated použijte sendMethod */
   smtpUsed?: boolean;
+  sendMethod?: InquiryOfferSendMethod | null;
+  usedPlatformFallback?: boolean;
   createdAt?: unknown;
   updatedAt?: unknown;
 };
