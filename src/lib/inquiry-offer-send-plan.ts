@@ -3,7 +3,9 @@
  */
 
 import {
+  INQUIRY_OFFER_MISSING_REPLY_ERROR,
   isInquirySmtpConfigured,
+  isValidEmailAddress,
   readInquiryEmailIdentity,
   resolveInquiryReplyToEmail,
   resolveInquirySenderEmail,
@@ -12,6 +14,7 @@ import {
   type InquiryOfferSendMethod,
 } from "@/lib/inquiry-offer-email";
 import {
+  isExcludedInquiryReplyToEmail,
   isResendSenderDomainVerified,
   resolvePlatformFallbackSenderEmail,
 } from "@/lib/inquiry-offer-resend";
@@ -42,6 +45,34 @@ export function formatInquiryOfferFromHeader(displayName: string, email: string)
   return `${safeName} <${email.trim().toLowerCase()}>`;
 }
 
+export function buildInquiryOfferDeliveryHeaders(params: {
+  messageId: string;
+  threadId: string;
+  replyTo: string;
+}): Record<string, string> {
+  return {
+    "Message-ID": params.messageId,
+    "Reply-To": params.replyTo.trim(),
+    "X-Inquiry-Thread": params.threadId,
+    "X-Entity-Ref-ID": params.threadId,
+  };
+}
+
+export function buildInquiryOfferHistoryFields(plan: InquiryOfferSendPlan) {
+  return {
+    technicalFrom: plan.fromEmailTechnical,
+    displayFrom: plan.fromHeader,
+    replyTo: plan.replyTo,
+    replyToEmail: plan.replyTo,
+    fromEmail: plan.fromEmailTechnical,
+    fromDisplayName: plan.fromDisplayName,
+    sendingMode: plan.method,
+    sendMethod: plan.method,
+    usedPlatformFallback: plan.usedPlatformFallback,
+    smtpUsed: plan.method === "org_smtp",
+  };
+}
+
 export async function buildInquiryOfferSendPlan(params: {
   company: Record<string, unknown>;
   identity?: InquiryEmailIdentity;
@@ -51,11 +82,8 @@ export async function buildInquiryOfferSendPlan(params: {
   const identity = params.identity ?? readInquiryEmailIdentity(params.company);
   const orgName = resolveOrganizationDisplayName(params.company, identity);
   const replyTo = resolveInquiryReplyToEmail(identity, params.company);
-  if (!replyTo) {
-    return {
-      error:
-        "Chybí e-mail organizace pro odpovědi. Nastavte reply-to nebo hlavní kontaktní e-mail v Nastavení.",
-    };
+  if (!replyTo || !isValidEmailAddress(replyTo) || isExcludedInquiryReplyToEmail(replyTo)) {
+    return { error: INQUIRY_OFFER_MISSING_REPLY_ERROR };
   }
 
   const orgPreferred = resolveInquirySenderEmail(identity, params.company, false);

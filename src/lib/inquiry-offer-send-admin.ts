@@ -19,6 +19,8 @@ import {
 } from "@/lib/inquiry-offer-email";
 import { isResendDomainNotVerifiedError } from "@/lib/inquiry-offer-resend";
 import {
+  buildInquiryOfferDeliveryHeaders,
+  buildInquiryOfferHistoryFields,
   buildInquiryOfferSendPlan,
   type InquiryOfferSendPlan,
 } from "@/lib/inquiry-offer-send-plan";
@@ -166,11 +168,11 @@ export async function sendInquiryOfferEmail(
   const threadId = buildInquiryOfferThreadId(params.companyId, params.leadKey);
   const replyDomain = plan.replyTo.split("@")[1] || "local";
   const customMessageId = buildMessageIdHeader(replyDomain);
-  const headers: Record<string, string> = {
-    "Message-ID": customMessageId,
-    "X-Inquiry-Thread": threadId,
-    "X-Entity-Ref-ID": threadId,
-  };
+  const headers = buildInquiryOfferDeliveryHeaders({
+    messageId: customMessageId,
+    threadId,
+    replyTo: plan.replyTo,
+  });
 
   const bodyInnerHtml = plainTextToHtmlParagraphs(bodyPlain);
   const html = buildInquiryOfferEmailHtml({
@@ -255,14 +257,9 @@ export async function sendInquiryOfferEmail(
     sentByUid: params.userId,
     sentByEmail: params.sentByEmail ?? null,
     sentByName: params.sentByName ?? null,
-    fromEmail: plan.fromEmailTechnical,
-    fromDisplayName: plan.fromDisplayName,
-    replyToEmail: plan.replyTo,
+    ...buildInquiryOfferHistoryFields(plan),
     messageId,
     threadId,
-    smtpUsed: plan.method === "org_smtp",
-    sendMethod: plan.method,
-    usedPlatformFallback: plan.usedPlatformFallback,
     sentAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
   };
@@ -350,11 +347,7 @@ export async function saveInquiryOfferDraft(
     sentByUid: params.userId,
     sentByEmail: params.sentByEmail ?? null,
     sentByName: params.sentByName ?? null,
-    replyToEmail: plan?.replyTo ?? null,
-    fromEmail: plan?.fromEmailTechnical ?? null,
-    fromDisplayName: plan?.fromDisplayName ?? null,
-    sendMethod: plan?.method ?? null,
-    usedPlatformFallback: plan?.usedPlatformFallback ?? false,
+    ...(plan ? buildInquiryOfferHistoryFields(plan) : {}),
     threadId: buildInquiryOfferThreadId(params.companyId, params.leadKey),
     updatedAt: FieldValue.serverTimestamp(),
   };

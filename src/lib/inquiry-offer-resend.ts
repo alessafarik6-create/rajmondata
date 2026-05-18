@@ -29,6 +29,22 @@ export function extractEmailDomain(email: string): string | null {
   return domain || null;
 }
 
+/** E-maily, které nesmí být Reply-To u nabídek (platforma / noreply). */
+export function isExcludedInquiryReplyToEmail(email: string): boolean {
+  const e = email.trim().toLowerCase();
+  if (!e || !e.includes("@")) return true;
+  const platform = resolvePlatformFallbackSenderEmail();
+  if (platform && e === platform) return true;
+  const local = e.split("@")[0] ?? "";
+  if (local === "noreply" || local === "no-reply" || local === "donotreply") return true;
+  const platformDomain = platform ? extractEmailDomain(platform) : null;
+  const domain = extractEmailDomain(e);
+  if (platformDomain && domain && domain === platformDomain && local.includes("noreply")) {
+    return true;
+  }
+  return false;
+}
+
 export function resolvePlatformFallbackSenderEmail(): string | null {
   const override = String(process.env.INQUIRY_OFFER_FALLBACK_FROM ?? "").trim();
   if (override) {

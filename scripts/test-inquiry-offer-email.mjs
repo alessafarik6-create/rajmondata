@@ -22,8 +22,9 @@ assert.match(sendSrc, /replyTo/, "send uses replyTo");
 assert.match(sendSrc, /nodemailer/, "smtp support");
 assert.match(sendSrc, /nabidka_odeslana/, "status after send");
 assert.match(sendSrc, /buildInquiryOfferSendPlan/, "send plan builder");
+assert.match(sendSrc, /buildInquiryOfferDeliveryHeaders/, "Reply-To header builder");
+assert.match(sendSrc, /buildInquiryOfferHistoryFields/, "history fields");
 assert.match(sendSrc, /platform_fallback/, "platform fallback path");
-assert.match(sendSrc, /sendMethod/, "persist send method");
 
 const planSrc = readFileSync(planLib, "utf8");
 assert.match(planSrc, /platform_fallback/, "fallback method in plan");
@@ -34,7 +35,8 @@ assert.match(resendHelper, /isResendDomainNotVerifiedError/, "domain error detec
 assert.match(resendHelper, /resolvePlatformFallbackSenderEmail/, "platform fallback email");
 
 const resendSrc = readFileSync(resend, "utf8");
-assert.match(resendSrc, /reply_to/, "resend reply_to");
+assert.match(resendSrc, /replyTo/, "resend replyTo (SDK v6)");
+assert.match(planSrc, /Reply-To/, "explicit Reply-To delivery header");
 assert.match(resendSrc, /messageId/, "message id return");
 
 console.log("OK: test-inquiry-offer-email");

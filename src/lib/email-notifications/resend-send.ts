@@ -73,11 +73,18 @@ export async function sendTransactionalEmail(
         ? [input.replyTo.trim()]
         : [];
 
+    const replyToPayload =
+      replyToList.length === 0
+        ? {}
+        : replyToList.length === 1
+          ? { replyTo: replyToList[0]! }
+          : { replyTo: replyToList };
+
     result = await resend.emails.send({
       from: input.from?.trim() || from,
       to: uniqueTo,
       ...(ccUnique.length > 0 ? { cc: ccUnique } : {}),
-      ...(replyToList.length > 0 ? { reply_to: replyToList } : {}),
+      ...replyToPayload,
       ...(input.headers && Object.keys(input.headers).length > 0
         ? { headers: input.headers }
         : {}),

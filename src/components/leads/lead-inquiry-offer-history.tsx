@@ -22,6 +22,23 @@ function tsToDate(raw: unknown): Date | null {
   return null;
 }
 
+function resolveOfferSendMeta(o: InquiryOfferRecord): {
+  sendingMode: InquiryOfferRecord["sendingMode"];
+  technicalFrom: string | null;
+  displayFrom: string | null;
+  replyTo: string | null;
+} {
+  const sendingMode = o.sendingMode ?? o.sendMethod ?? null;
+  const technicalFrom = o.technicalFrom ?? o.fromEmail ?? null;
+  const displayFrom =
+    o.displayFrom ??
+    (o.fromDisplayName && technicalFrom
+      ? `${o.fromDisplayName} <${technicalFrom}>`
+      : technicalFrom);
+  const replyTo = o.replyTo ?? o.replyToEmail ?? null;
+  return { sendingMode, technicalFrom, displayFrom, replyTo };
+}
+
 export function LeadInquiryOfferHistory(props: {
   offers: InquiryOfferRecord[];
   leadKey: string;
@@ -63,6 +80,7 @@ export function LeadInquiryOfferHistory(props: {
           o.priceGross != null && Number.isFinite(o.priceGross)
             ? `${Math.round(o.priceGross).toLocaleString("cs-CZ")} Kč`
             : "—";
+        const meta = resolveOfferSendMeta(o);
         return (
           <li
             key={o.id ?? `${o.subject}-${dateLabel}`}
@@ -82,24 +100,21 @@ export function LeadInquiryOfferHistory(props: {
                 Odeslal: {o.sentByName || o.sentByEmail}
               </p>
             ) : null}
-            {o.sendMethod ? (
+            {meta.sendingMode && INQUIRY_OFFER_SEND_METHOD_LABELS[meta.sendingMode] ? (
               <p className="text-xs text-slate-600">
-                Odeslání: {INQUIRY_OFFER_SEND_METHOD_LABELS[o.sendMethod] ?? o.sendMethod}
+                Způsob: {INQUIRY_OFFER_SEND_METHOD_LABELS[meta.sendingMode]}
               </p>
             ) : o.smtpUsed ? (
-              <p className="text-xs text-slate-600">Odeslání: SMTP organizace</p>
+              <p className="text-xs text-slate-600">Způsob: SMTP organizace</p>
             ) : o.usedPlatformFallback ? (
-              <p className="text-xs text-slate-600">Odeslání: Systémový e-mail portálu</p>
+              <p className="text-xs text-slate-600">Způsob: Systémový e-mail portálu</p>
             ) : null}
-            {o.fromEmail ? (
-              <p className="text-xs text-slate-600 break-all">
-                Technický odesílatel:{" "}
-                {o.fromDisplayName ? `${o.fromDisplayName} <${o.fromEmail}>` : o.fromEmail}
-              </p>
+            {meta.displayFrom ? (
+              <p className="text-xs text-slate-600 break-all">Odesláno jako: {meta.displayFrom}</p>
             ) : null}
-            {o.replyToEmail ? (
+            {meta.replyTo ? (
               <p className="text-xs text-slate-600 break-all">
-                Odpovědi (Reply-to): {o.replyToEmail}
+                Odpovědi chodí na: {meta.replyTo}
               </p>
             ) : null}
             {o.templateName ? (

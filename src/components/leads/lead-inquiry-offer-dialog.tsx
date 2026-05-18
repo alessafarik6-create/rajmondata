@@ -27,6 +27,7 @@ import type { LeadImportRow } from "@/lib/lead-import-parse";
 import {
   applyInquiryTemplateVariables,
   buildInquiryTemplateVariables,
+  INQUIRY_OFFER_MISSING_REPLY_ERROR,
   isValidEmailAddress,
   parseInquiryOfferTemplateDoc,
   type InquiryOfferTemplate,
@@ -70,6 +71,7 @@ export function LeadInquiryOfferDialog(props: {
     notice: string | null;
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   const activeTemplates = useMemo(
     () => props.templates.filter((t) => t.active !== false),
@@ -124,10 +126,12 @@ export function LeadInquiryOfferDialog(props: {
   useEffect(() => {
     if (!props.open || !user || !props.companyId) {
       setSendPreview(null);
+      setPreviewError(null);
       return;
     }
     let cancelled = false;
     setPreviewLoading(true);
+    setPreviewError(null);
     void (async () => {
       try {
         const token = await user.getIdToken();
@@ -137,6 +141,7 @@ export function LeadInquiryOfferDialog(props: {
         );
         const data = (await res.json()) as {
           ok?: boolean;
+          error?: string;
           preview?: {
             methodLabel: string;
             fromDisplayName: string;
@@ -146,13 +151,19 @@ export function LeadInquiryOfferDialog(props: {
             notice: string | null;
           };
         };
-        if (!cancelled && res.ok && data.ok && data.preview) {
+        if (cancelled) return;
+        if (res.ok && data.ok && data.preview?.replyTo) {
           setSendPreview(data.preview);
-        } else if (!cancelled) {
+          setPreviewError(null);
+        } else {
           setSendPreview(null);
+          setPreviewError(data.error ?? INQUIRY_OFFER_MISSING_REPLY_ERROR);
         }
       } catch {
-        if (!cancelled) setSendPreview(null);
+        if (!cancelled) {
+          setSendPreview(null);
+          setPreviewError(INQUIRY_OFFER_MISSING_REPLY_ERROR);
+        }
       } finally {
         if (!cancelled) setPreviewLoading(false);
       }
@@ -172,6 +183,14 @@ export function LeadInquiryOfferDialog(props: {
         variant: "destructive",
         title: "Chybí e-mail",
         description: "Poptávka nemá platný e-mail příjemce — odeslání není možné.",
+      });
+      return;
+    }
+    if (action === "send" && (previewError || !sendPreview?.replyTo)) {
+      toast({
+        variant: "destructive",
+        title: "Chybí e-mail pro odpovědi",
+        description: previewError ?? INQUIRY_OFFER_MISSING_REPLY_ERROR,
       });
       return;
     }
@@ -320,16 +339,16 @@ export function LeadInquiryOfferDialog(props: {
               <p className="font-medium text-slate-900">Odeslání e-mailu</p>
               {previewLoading ? (
                 <p className="mt-1 text-slate-500">Načítám nastavení odesílatele…</p>
+              ) : previewError ? (
+                <p className="mt-1 font-medium text-red-700">{previewError}</p>
               ) : sendPreview ? (
                 <ul className="mt-1 space-y-0.5">
                   <li>
                     Způsob: <span className="font-medium">{sendPreview.methodLabel}</span>
                   </li>
-                  <li className="break-all">
-                    Odesílatel: {sendPreview.fromDisplayName} &lt;{sendPreview.fromEmailTechnical}&gt;
-                  </li>
-                  <li className="break-all">
-                    Odpovědi (Reply-to): <span className="font-medium">{sendPreview.replyTo}</span>
+                  <li className="break-all">Odesláno jako: {sendPreview.fromHeader}</li>
+                  <li className="break-all font-medium text-slate-900">
+                    Odpovědi zákazníka půjdou na: {sendPreview.replyTo}
                   </li>
                   {sendPreview.notice ? (
                     <li className="mt-1 text-amber-800">{sendPreview.notice}</li>
@@ -358,7 +377,7 @@ export function LeadInquiryOfferDialog(props: {
           <Button
             type="button"
             className="w-full min-h-11 gap-2 bg-orange-600 hover:bg-orange-700"
-            disabled={sending || savingDraft}
+            disabled={sending || savingDraft || previewLoading || Boolean(previewError)}
             onClick={() => void postOffer("send")}
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}

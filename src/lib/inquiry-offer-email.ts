@@ -3,6 +3,10 @@
  */
 
 import type { LeadImportRow } from "@/lib/lead-import-parse";
+import { isExcludedInquiryReplyToEmail } from "@/lib/inquiry-offer-resend";
+
+export const INQUIRY_OFFER_MISSING_REPLY_ERROR =
+  "Doplňte e-mail pro odpovědi v nastavení organizace.";
 
 export const INQUIRY_WORKFLOW_STATUSES = [
   "nova",
@@ -83,9 +87,13 @@ export type InquiryOfferRecord = {
   fromEmail?: string | null;
   fromDisplayName?: string | null;
   replyToEmail?: string | null;
+  technicalFrom?: string | null;
+  displayFrom?: string | null;
+  replyTo?: string | null;
+  sendingMode?: InquiryOfferSendMethod | null;
   messageId?: string | null;
   threadId?: string | null;
-  /** @deprecated použijte sendMethod */
+  /** @deprecated použijte sendingMode / sendMethod */
   smtpUsed?: boolean;
   sendMethod?: InquiryOfferSendMethod | null;
   usedPlatformFallback?: boolean;
@@ -149,7 +157,14 @@ export function resolveOrganizationDisplayName(
   );
 }
 
-/** Priorita: nabídky → reply-to → hlavní kontakt → firestore email */
+/**
+ * Priorita Reply-To u nabídek:
+ * 1. e-mail pro odpovědi na nabídky
+ * 2. reply-to e-mail
+ * 3. e-mail odesílatele organizace
+ * 4. hlavní kontaktní e-mail organizace
+ * (nikdy platformní noreply)
+ */
 export function resolveInquiryReplyToEmail(
   identity: InquiryEmailIdentity,
   company: Record<string, unknown>
@@ -157,13 +172,16 @@ export function resolveInquiryReplyToEmail(
   const candidates = [
     identity.offerReplyEmail,
     identity.replyToEmail,
-    identity.contactEmail,
     identity.senderEmail,
+    identity.contactEmail,
     String(company.email ?? "").trim() || null,
   ];
   for (const c of candidates) {
     const t = c?.trim();
-    if (t && isValidEmailAddress(t)) return t.toLowerCase();
+    if (!t || !isValidEmailAddress(t)) continue;
+    const norm = t.toLowerCase();
+    if (isExcludedInquiryReplyToEmail(norm)) continue;
+    return norm;
   }
   return null;
 }
