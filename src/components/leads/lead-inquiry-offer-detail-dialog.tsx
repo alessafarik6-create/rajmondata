@@ -26,11 +26,12 @@ import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import type { InquiryOfferRecord } from "@/lib/inquiry-offer-email";
 import {
-  formatInquiryOfferPrice,
+  formatInquiryOfferPricingBlock,
   getInquiryOfferBodyForDisplay,
   inquiryOfferHasFullDetail,
   INQUIRY_OFFER_LEGACY_DETAIL_MESSAGE,
   INQUIRY_OFFER_STATUS_LABELS,
+  listInquiryOfferAttachments,
   resolveInquiryOfferSendMeta,
 } from "@/lib/inquiry-offer-history";
 import { contactTimestampToDate } from "@/lib/lead-contact-status";
@@ -96,7 +97,28 @@ export function LeadInquiryOfferDetailDialog(props: {
               <DetailRow label="Datum odeslání" value={formatSentAt(offer)} />
               <DetailRow label="Komu" value={offer.to || "—"} />
               <DetailRow label="Předmět" value={offer.subject || "—"} />
-              <DetailRow label="Cena nabídky" value={formatInquiryOfferPrice(offer.priceGross)} />
+              <DetailRow label="Cena" value={formatInquiryOfferPricingBlock(offer)} />
+              {offer.isStandalone && offer.customerName ? (
+                <DetailRow label="Zákazník" value={offer.customerName} />
+              ) : null}
+              {offer.isStandalone && offer.customerPhone ? (
+                <DetailRow label="Telefon" value={offer.customerPhone} />
+              ) : null}
+              {offer.isStandalone && offer.customerAddress ? (
+                <DetailRow label="Adresa" value={offer.customerAddress} />
+              ) : null}
+              {listInquiryOfferAttachments(offer).length > 0 ? (
+                <DetailRow
+                  label="Přílohy"
+                  value={
+                    <ul className="list-disc pl-4 space-y-0.5">
+                      {listInquiryOfferAttachments(offer).map((a) => (
+                        <li key={a.id}>{a.label || a.filename}</li>
+                      ))}
+                    </ul>
+                  }
+                />
+              ) : null}
               <DetailRow
                 label="Stav"
                 value={INQUIRY_OFFER_STATUS_LABELS[offer.status] ?? offer.status}

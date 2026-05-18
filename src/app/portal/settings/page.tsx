@@ -26,6 +26,7 @@ import { OrganizationSignatureSettingsCard } from "@/components/settings/organiz
 import { DocumentEmailOutboundSettingsCard } from "@/components/settings/document-email-outbound-settings-card";
 import { InquiryEmailIdentitySettingsCard } from "@/components/settings/inquiry-email-identity-settings-card";
 import { InquiryOfferTemplatesSettingsCard } from "@/components/settings/inquiry-offer-templates-settings-card";
+import { InquiryOfferLibrarySettingsCard } from "@/components/settings/inquiry-offer-library-settings-card";
 import { EmployeeDocumentTemplatesSettingsCard } from "@/components/settings/EmployeeDocumentTemplatesSettingsCard";
 import { useToast } from '@/hooks/use-toast';
 import { COMPANIES_COLLECTION, ORGANIZATIONS_COLLECTION } from '@/lib/firestore-collections';
@@ -643,6 +644,7 @@ export default function SettingsPage() {
                         company={company as Record<string, unknown> | null | undefined}
                       />
                       <InquiryOfferTemplatesSettingsCard companyId={companyId} />
+                      <InquiryOfferLibrarySettingsCard companyId={companyId} />
                       <DocumentEmailOutboundSettingsCard
                         companyId={companyId}
                         company={company as Record<string, unknown> | null | undefined}

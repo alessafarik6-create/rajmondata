@@ -7,7 +7,7 @@ import { Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { InquiryOfferRecord } from "@/lib/inquiry-offer-email";
 import {
-  formatInquiryOfferPrice,
+  formatInquiryOfferPricingBlock,
   inquiryOfferHasFullDetail,
   INQUIRY_OFFER_STATUS_LABELS,
 } from "@/lib/inquiry-offer-history";
@@ -60,7 +60,7 @@ export function LeadInquiryOfferHistory(props: {
       <ul className="space-y-2">
         {list.map((o) => {
           const dateLabel = formatOfferDate(o);
-          const price = formatInquiryOfferPrice(o.priceGross);
+          const price = formatInquiryOfferPricingBlock(o);
           const statusLabel = INQUIRY_OFFER_STATUS_LABELS[o.status] ?? o.status;
           const hasDetail = inquiryOfferHasFullDetail(o);
 

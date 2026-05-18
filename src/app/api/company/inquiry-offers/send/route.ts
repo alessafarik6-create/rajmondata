@@ -8,10 +8,14 @@ import {
   saveInquiryOfferDraft,
   sendInquiryOfferEmail,
 } from "@/lib/inquiry-offer-send-admin";
+import { parseAttachmentRefs } from "@/lib/inquiry-offer-attachments";
+import { INQUIRY_OFFER_STANDALONE_LEAD_KEY } from "@/lib/inquiry-offer-email";
+import { normalizeInquiryVatRate } from "@/lib/inquiry-offer-pricing";
 import { errorMessageFromUnknown } from "@/lib/server-error-serialize";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 type Body = {
   companyId?: string;
@@ -21,11 +25,17 @@ type Body = {
   to?: string;
   subject?: string;
   bodyText?: string;
-  priceGross?: number | null;
+  priceNet?: number | null;
+  vatRate?: number | null;
   internalNote?: string | null;
   templateId?: string | null;
   templateName?: string | null;
   draftOfferId?: string | null;
+  attachments?: unknown;
+  isStandalone?: boolean;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
 };
 
 function canSendInquiryOffers(role: string): boolean {
@@ -65,13 +75,20 @@ export async function POST(request: NextRequest) {
 
     const body = (await request.json()) as Body;
     const companyId = String(body.companyId ?? "").trim();
-    const leadKey = String(body.leadKey ?? "").trim();
+    const isStandalone =
+      body.isStandalone === true || String(body.leadKey ?? "").trim() === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
+    const leadKey = isStandalone
+      ? INQUIRY_OFFER_STANDALONE_LEAD_KEY
+      : String(body.leadKey ?? "").trim();
     const importLeadId = String(body.importLeadId ?? leadKey).trim();
     const action = body.action === "draft" ? "draft" : "send";
 
-    if (!companyId || !leadKey) {
+    if (!companyId) {
+      return NextResponse.json({ ok: false, error: "Chybí companyId." }, { status: 400 });
+    }
+    if (!isStandalone && !leadKey) {
       return NextResponse.json(
-        { ok: false, error: "Chybí companyId nebo leadKey." },
+        { ok: false, error: "Chybí leadKey u nabídky z poptávky." },
         { status: 400 }
       );
     }
@@ -82,7 +99,7 @@ export async function POST(request: NextRequest) {
     const to = String(body.to ?? "").trim();
     if (action === "send" && !to) {
       return NextResponse.json(
-        { ok: false, error: "Příjemce (e-mail z poptávky) je povinný." },
+        { ok: false, error: "E-mail příjemce je povinný." },
         { status: 400 }
       );
     }
@@ -94,10 +111,16 @@ export async function POST(request: NextRequest) {
       to,
       subject: String(body.subject ?? "").trim(),
       bodyText: String(body.bodyText ?? ""),
-      priceGross: body.priceGross,
+      priceNet: body.priceNet,
+      vatRate: normalizeInquiryVatRate(body.vatRate),
       internalNote: body.internalNote,
       templateId: body.templateId,
       templateName: body.templateName,
+      attachments: parseAttachmentRefs(body.attachments),
+      isStandalone,
+      customerName: body.customerName,
+      customerPhone: body.customerPhone,
+      customerAddress: body.customerAddress,
       userId: caller.uid,
       sentByEmail,
       sentByName,

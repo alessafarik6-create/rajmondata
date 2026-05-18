@@ -3,7 +3,12 @@
  */
 
 import type { LeadImportRow } from "@/lib/lead-import-parse";
+import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
+import type { InquiryVatRate } from "@/lib/inquiry-offer-pricing";
 import { isExcludedInquiryReplyToEmail } from "@/lib/inquiry-offer-resend";
+
+/** Firestore klíč pro nabídky bez poptávky. */
+export const INQUIRY_OFFER_STANDALONE_LEAD_KEY = "__standalone__";
 
 export const INQUIRY_OFFER_MISSING_REPLY_ERROR =
   "Doplňte e-mail pro odpovědi v nastavení organizace.";
@@ -75,7 +80,15 @@ export type InquiryOfferRecord = {
   subject: string;
   bodyHtml: string;
   bodyPlain: string;
+  priceNet?: number | null;
+  vatRate?: InquiryVatRate | null;
+  vatAmount?: number | null;
   priceGross?: number | null;
+  attachments?: InquiryOfferAttachmentRef[] | null;
+  isStandalone?: boolean;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
   internalNote?: string | null;
   templateId?: string | null;
   templateName?: string | null;

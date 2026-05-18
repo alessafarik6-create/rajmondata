@@ -8,15 +8,23 @@ import type { Firestore } from "firebase-admin/firestore";
 import nodemailer from "nodemailer";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
+import { resolveInquiryOfferAttachmentsForEmail } from "@/lib/inquiry-offer-attachment-resolve";
+import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
 import {
   buildInquiryOfferEmailHtml,
   buildInquiryOfferThreadId,
+  INQUIRY_OFFER_STANDALONE_LEAD_KEY,
   isValidEmailAddress,
   plainTextToHtmlParagraphs,
   readInquiryEmailIdentity,
   stripHtmlToPlain,
   type InquiryWorkflowStatus,
 } from "@/lib/inquiry-offer-email";
+import {
+  calculateInquiryOfferPricing,
+  type InquiryVatRate,
+} from "@/lib/inquiry-offer-pricing";
+import type { SendTransactionalEmailAttachment } from "@/lib/email-notifications/resend-send";
 import { isResendDomainNotVerifiedError } from "@/lib/inquiry-offer-resend";
 import {
   buildInquiryOfferDeliveryHeaders,
@@ -32,10 +40,16 @@ export type SendInquiryOfferEmailParams = {
   to: string;
   subject: string;
   bodyText: string;
-  priceGross?: number | null;
+  priceNet?: number | null;
+  vatRate?: InquiryVatRate | null;
   internalNote?: string | null;
   templateId?: string | null;
   templateName?: string | null;
+  attachments?: InquiryOfferAttachmentRef[];
+  isStandalone?: boolean;
+  customerName?: string | null;
+  customerPhone?: string | null;
+  customerAddress?: string | null;
   userId: string;
   sentByEmail?: string | null;
   sentByName?: string | null;
@@ -68,6 +82,7 @@ async function deliverViaSmtp(
     html: string;
     bodyPlain: string;
     headers: Record<string, string>;
+    attachments: SendTransactionalEmailAttachment[];
   }
 ): Promise<{ ok: true; messageId: string } | { ok: false; error: string; detail: string | null }> {
   const smtp = identity.smtp;
@@ -92,6 +107,11 @@ async function deliverViaSmtp(
       html: params.html,
       text: stripHtmlToPlain(params.bodyPlain),
       headers: params.headers,
+      attachments: params.attachments.map((a) => ({
+        filename: a.filename,
+        content: a.content,
+        contentType: a.contentType,
+      })),
       envelope: {
         from: plan.fromEmailTechnical,
         to: params.to,
@@ -112,6 +132,7 @@ async function deliverViaResend(
     subject: string;
     html: string;
     headers: Record<string, string>;
+    attachments: SendTransactionalEmailAttachment[];
   }
 ): Promise<
   | { ok: true; messageId: string | null }
@@ -187,6 +208,20 @@ export async function sendInquiryOfferEmail(
 
   const subject = params.subject.trim();
   let messageId: string | null = customMessageId;
+  let emailAttachments: SendTransactionalEmailAttachment[] = [];
+  try {
+    emailAttachments = await resolveInquiryOfferAttachmentsForEmail(params.attachments ?? []);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Přílohy se nepodařilo připravit.",
+      detail: null,
+    };
+  }
+
+  const pricing = calculateInquiryOfferPricing(params.priceNet, params.vatRate);
+  const isStandalone =
+    params.isStandalone === true || params.leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
 
   if (plan.method === "org_smtp") {
     const smtpOut = await deliverViaSmtp(plan, identity, {
@@ -195,13 +230,20 @@ export async function sendInquiryOfferEmail(
       html,
       bodyPlain,
       headers,
+      attachments: emailAttachments,
     });
     if (!smtpOut.ok) {
       return { ok: false, error: smtpOut.error, detail: smtpOut.detail };
     }
     messageId = smtpOut.messageId;
   } else {
-    let resendOut = await deliverViaResend(plan, { to: toNorm, subject, html, headers });
+    let resendOut = await deliverViaResend(plan, {
+      to: toNorm,
+      subject,
+      html,
+      headers,
+      attachments: emailAttachments,
+    });
     if (
       !resendOut.ok &&
       resendOut.domainNotVerified &&
@@ -217,7 +259,13 @@ export async function sendInquiryOfferEmail(
       }
       plan = planResult;
       sendNotice = plan.sendNotice;
-      resendOut = await deliverViaResend(plan, { to: toNorm, subject, html, headers });
+      resendOut = await deliverViaResend(plan, {
+        to: toNorm,
+        subject,
+        html,
+        headers,
+        attachments: emailAttachments,
+      });
     }
     if (!resendOut.ok) {
       if (resendOut.domainNotVerified) {
@@ -243,14 +291,19 @@ export async function sendInquiryOfferEmail(
     leadKey: params.leadKey,
     importLeadId: params.importLeadId,
     status: "sent" as const,
+    isStandalone,
+    customerName: params.customerName?.trim() || null,
+    customerPhone: params.customerPhone?.trim() || null,
+    customerAddress: params.customerAddress?.trim() || null,
     to: toNorm,
     subject,
     bodyHtml: html,
     bodyPlain,
-    priceGross:
-      params.priceGross != null && Number.isFinite(Number(params.priceGross))
-        ? Math.round(Number(params.priceGross) * 100) / 100
-        : null,
+    priceNet: pricing.priceNet,
+    vatRate: pricing.vatRate,
+    vatAmount: pricing.vatAmount,
+    priceGross: pricing.priceGross,
+    attachments: params.attachments ?? [],
     internalNote: params.internalNote?.trim() || null,
     templateId: params.templateId ?? null,
     templateName: params.templateName ?? null,
@@ -277,10 +330,12 @@ export async function sendInquiryOfferEmail(
     offerId = ref.id;
   }
 
-  await markLeadCustomerContacted(db, params.companyId, params.leadKey, {
-    type: "offer",
-    workflowStatus: "nabidka_odeslana",
-  });
+  if (!isStandalone) {
+    await markLeadCustomerContacted(db, params.companyId, params.leadKey, {
+      type: "offer",
+      workflowStatus: "nabidka_odeslana",
+    });
+  }
 
   return {
     ok: true,
@@ -331,19 +386,28 @@ export async function saveInquiryOfferDraft(
     .doc(params.companyId)
     .collection("inquiry_offers");
 
+  const pricing = calculateInquiryOfferPricing(params.priceNet, params.vatRate);
+  const isStandalone =
+    params.isStandalone === true || params.leadKey === INQUIRY_OFFER_STANDALONE_LEAD_KEY;
+
   const payload = {
     companyId: params.companyId,
     leadKey: params.leadKey,
     importLeadId: params.importLeadId,
     status: "draft" as const,
+    isStandalone,
+    customerName: params.customerName?.trim() || null,
+    customerPhone: params.customerPhone?.trim() || null,
+    customerAddress: params.customerAddress?.trim() || null,
     to: toNorm,
     subject: params.subject.trim(),
     bodyHtml: html,
     bodyPlain,
-    priceGross:
-      params.priceGross != null && Number.isFinite(Number(params.priceGross))
-        ? Math.round(Number(params.priceGross) * 100) / 100
-        : null,
+    priceNet: pricing.priceNet,
+    vatRate: pricing.vatRate,
+    vatAmount: pricing.vatAmount,
+    priceGross: pricing.priceGross,
+    attachments: params.attachments ?? [],
     internalNote: params.internalNote?.trim() || null,
     templateId: params.templateId ?? null,
     templateName: params.templateName ?? null,
@@ -358,7 +422,9 @@ export async function saveInquiryOfferDraft(
   const draftId = params.draftOfferId?.trim();
   if (draftId) {
     await offersCol.doc(draftId).set(payload, { merge: true });
-    await updateLeadWorkflowStatus(db, params.companyId, params.leadKey, "nabidka_pripravena");
+    if (!isStandalone) {
+      await updateLeadWorkflowStatus(db, params.companyId, params.leadKey, "nabidka_pripravena");
+    }
     return { ok: true, offerId: draftId };
   }
 
@@ -366,7 +432,9 @@ export async function saveInquiryOfferDraft(
     ...payload,
     createdAt: FieldValue.serverTimestamp(),
   });
-  await updateLeadWorkflowStatus(db, params.companyId, params.leadKey, "nabidka_pripravena");
+  if (!isStandalone) {
+    await updateLeadWorkflowStatus(db, params.companyId, params.leadKey, "nabidka_pripravena");
+  }
   return { ok: true, offerId: ref.id };
 }
 

@@ -153,6 +153,21 @@ service firebase.storage {
       allow write: if request.auth != null;
     }
 
+    /** Knihovna příloh k e-mailovým nabídkám. */
+    match /companies/{companyId}/inquiry-offer-library/{allPaths=**} {
+      allow read: if request.auth != null && storageSameCompany(companyId);
+      allow write: if request.auth != null && storageSameCompany(companyId) && storageIsPrivileged();
+    }
+
+    /** Jednorázové uploady příloh při sestavování nabídky. */
+    match /companies/{companyId}/inquiry-offer-uploads/{allPaths=**} {
+      allow read: if request.auth != null && storageSameCompany(companyId);
+      allow write: if request.auth != null && storageSameCompany(companyId) && (
+        storageIsPrivileged() ||
+        storageUserRole() in ['owner', 'admin', 'manager', 'accountant']
+      );
+    }
+
     /**
      * Dokumenty zaměstnanců (PDF, fotky, Word…):
      * companies/{companyId}/employees/{employeeId}/documents/{documentId}/...

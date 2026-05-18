@@ -217,6 +217,7 @@ export function pathnameToHelpModule(pathname: string): HelpPortalModuleValue {
   if (p.startsWith("/portal/employees") || p.startsWith("/portal/employee")) return "employees";
   if (p.startsWith("/portal/labor")) return "labor";
   if (p.startsWith("/portal/leads")) return "leads";
+  if (p.startsWith("/portal/offers")) return "leads";
   if (p.startsWith("/portal/finance")) return "finance";
   if (p.startsWith("/portal/settings")) return "settings";
   if (p.startsWith("/portal/dashboard")) return "dashboard";

@@ -84,7 +84,10 @@ import {
   type InquiryOfferRecord,
   type InquiryWorkflowStatus,
 } from "@/lib/inquiry-offer-email";
-import { LeadInquiryOfferDialog } from "@/components/leads/lead-inquiry-offer-dialog";
+import {
+  LeadInquiryOfferDialog,
+  StandaloneInquiryOfferDialog,
+} from "@/components/leads/lead-inquiry-offer-dialog";
 import { LeadContactRowIndicator } from "@/components/leads/lead-contact-row-indicator";
 import {
   buildLeadContactOverlayPatch,
@@ -349,6 +352,7 @@ export default function PortalLeadsPage() {
   const [savingNoteKey, setSavingNoteKey] = useState<string | null>(null);
   const [expandedLeadKeys, setExpandedLeadKeys] = useState<Record<string, boolean>>({});
   const [offerLead, setOfferLead] = useState<LeadImportRow | null>(null);
+  const [standaloneOfferOpen, setStandaloneOfferOpen] = useState(false);
   const [offerInitial, setOfferInitial] = useState<InquiryOfferReuseInitial | undefined>(
     undefined
   );
@@ -873,15 +877,32 @@ export default function PortalLeadsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="portal-page-title text-2xl sm:text-3xl flex items-center gap-2">
-          <Inbox className="h-7 w-7 text-orange-700 shrink-0" />
-          Poptávky
-        </h1>
-        <p className="portal-page-description mt-1">
-          Importované poptávky ze zdroje nastaveného u organizace. Štítky a stav se ukládají v aplikaci a při
-          obnově importu se nemažou.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="portal-page-title text-2xl sm:text-3xl flex items-center gap-2">
+            <Inbox className="h-7 w-7 text-orange-700 shrink-0" />
+            Poptávky
+          </h1>
+          <p className="portal-page-description mt-1">
+            Importované poptávky ze zdroje nastaveného u organizace. Štítky a stav se ukládají v aplikaci a při
+            obnově importu se nemažou.
+          </p>
+        </div>
+        {canManageOffers ? (
+          <div className="flex flex-wrap gap-2 shrink-0">
+            <Button
+              type="button"
+              className="min-h-11 gap-2 bg-orange-600 hover:bg-orange-700"
+              onClick={() => setStandaloneOfferOpen(true)}
+            >
+              <Mail className="h-4 w-4" />
+              Nová nabídka
+            </Button>
+            <Button type="button" variant="outline" className="min-h-11" asChild>
+              <Link href="/portal/offers">Historie nabídek</Link>
+            </Button>
+          </div>
+        ) : null}
       </div>
 
       <Card className="border-slate-200 shadow-sm">
@@ -1631,6 +1652,16 @@ export default function PortalLeadsPage() {
           )}
         </CardContent>
       </Card>
+
+      {companyId && canManageOffers ? (
+        <StandaloneInquiryOfferDialog
+          open={standaloneOfferOpen}
+          onOpenChange={setStandaloneOfferOpen}
+          companyId={companyId}
+          companyName={companyName || String(company?.companyName ?? "Organizace")}
+          templates={offerTemplates}
+        />
+      ) : null}
 
       {offerLead && companyId ? (
         <LeadInquiryOfferDialog

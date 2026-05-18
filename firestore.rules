@@ -2285,6 +2285,25 @@ service cloud.firestore {
       }
 
       /**
+       * Knihovna příloh k e-mailovým nabídkám
+       */
+      match /inquiry_offer_library/{itemId} {
+        allow read: if signedIn() && sameCompany(companyId) &&
+          userRole() in ['owner', 'admin', 'manager', 'accountant', 'employee'];
+        allow create: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          request.resource.data.companyId == companyId &&
+          request.resource.data.name is string &&
+          request.resource.data.name.size() > 0 &&
+          request.resource.data.name.size() <= 200 &&
+          request.resource.data.storagePath is string &&
+          request.resource.data.downloadUrl is string;
+        allow update: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+          resource.data.companyId == companyId &&
+          request.resource.data.companyId == companyId;
+        allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
+      }
+
+      /**
        * Audit aktivit — append-only; čtení jen pro vedení nebo super_admin.
        * companies/{companyId}/activityLogs/{logId}
        */

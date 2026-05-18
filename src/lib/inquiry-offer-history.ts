@@ -6,6 +6,12 @@ import type { InquiryOfferRecord } from "@/lib/inquiry-offer-email";
 import { stripHtmlToPlain } from "@/lib/inquiry-offer-email";
 import { INQUIRY_OFFER_SEND_METHOD_LABELS } from "@/lib/inquiry-offer-send-plan";
 import type { InquiryOfferSendMethod } from "@/lib/inquiry-offer-email";
+import {
+  formatInquiryPriceCz,
+  normalizeInquiryVatRate,
+  type InquiryVatRate,
+} from "@/lib/inquiry-offer-pricing";
+import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
 
 export const INQUIRY_OFFER_LEGACY_DETAIL_MESSAGE =
   "Detail nabídky není dostupný, protože nebyl uložen ve starší verzi.";
@@ -29,8 +35,28 @@ export function getInquiryOfferBodyForDisplay(offer: InquiryOfferRecord): string
 }
 
 export function formatInquiryOfferPrice(priceGross: number | null | undefined): string {
-  if (priceGross == null || !Number.isFinite(priceGross)) return "—";
-  return `${Math.round(priceGross).toLocaleString("cs-CZ")} Kč`;
+  return formatInquiryPriceCz(priceGross);
+}
+
+export function formatInquiryOfferPricingBlock(offer: InquiryOfferRecord): string {
+  const net = offer.priceNet;
+  const gross = offer.priceGross;
+  if (net == null && gross == null) return "—";
+  const vatRate = normalizeInquiryVatRate(offer.vatRate);
+  const vat = offer.vatAmount;
+  if (net != null) {
+    const parts = [`bez DPH: ${formatInquiryPriceCz(net)}`];
+    if (vat != null) parts.push(`DPH ${vatRate} %: ${formatInquiryPriceCz(vat)}`);
+    if (gross != null) parts.push(`s DPH: ${formatInquiryPriceCz(gross)}`);
+    return parts.join(" · ");
+  }
+  return formatInquiryPriceCz(gross);
+}
+
+export function listInquiryOfferAttachments(
+  offer: InquiryOfferRecord
+): InquiryOfferAttachmentRef[] {
+  return Array.isArray(offer.attachments) ? offer.attachments : [];
 }
 
 export function resolveInquiryOfferSendMeta(offer: InquiryOfferRecord) {
@@ -51,8 +77,14 @@ export type InquiryOfferReuseInitial = {
   subject?: string;
   bodyText?: string;
   priceGross?: number | null;
+  priceNet?: number | null;
+  vatRate?: InquiryVatRate;
   internalNote?: string | null;
   templateId?: string | null;
+  customerName?: string;
+  customerPhone?: string;
+  customerAddress?: string;
+  attachments?: InquiryOfferAttachmentRef[];
 };
 
 export function inquiryOfferToReuseInitial(offer: InquiryOfferRecord): InquiryOfferReuseInitial {
@@ -60,8 +92,14 @@ export function inquiryOfferToReuseInitial(offer: InquiryOfferRecord): InquiryOf
     to: offer.to?.trim() || undefined,
     subject: offer.subject?.trim() || undefined,
     bodyText: getInquiryOfferBodyForDisplay(offer) || undefined,
+    priceNet: offer.priceNet ?? offer.priceGross ?? null,
     priceGross: offer.priceGross ?? null,
+    vatRate: offer.vatRate != null ? normalizeInquiryVatRate(offer.vatRate) : undefined,
     internalNote: offer.internalNote ?? null,
     templateId: offer.templateId ?? null,
+    customerName: offer.customerName?.trim() || undefined,
+    customerPhone: offer.customerPhone?.trim() || undefined,
+    customerAddress: offer.customerAddress?.trim() || undefined,
+    attachments: listInquiryOfferAttachments(offer),
   };
 }
