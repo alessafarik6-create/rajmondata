@@ -88,11 +88,16 @@ import { LeadInquiryOfferDialog } from "@/components/leads/lead-inquiry-offer-di
 import { LeadContactRowIndicator } from "@/components/leads/lead-contact-row-indicator";
 import {
   buildLeadContactOverlayPatch,
+  contactTimestampToDate,
   leadMatchesContactFilter,
   resolveLeadContactDisplay,
   type LeadContactFilter,
 } from "@/lib/lead-contact-status";
 import { LeadInquiryOfferHistory } from "@/components/leads/lead-inquiry-offer-history";
+import {
+  inquiryOfferToReuseInitial,
+  type InquiryOfferReuseInitial,
+} from "@/lib/inquiry-offer-history";
 
 const POLL_MS = 5 * 60 * 1000;
 
@@ -344,6 +349,10 @@ export default function PortalLeadsPage() {
   const [savingNoteKey, setSavingNoteKey] = useState<string | null>(null);
   const [expandedLeadKeys, setExpandedLeadKeys] = useState<Record<string, boolean>>({});
   const [offerLead, setOfferLead] = useState<LeadImportRow | null>(null);
+  const [offerInitial, setOfferInitial] = useState<InquiryOfferReuseInitial | undefined>(
+    undefined
+  );
+  const [optimisticOffers, setOptimisticOffers] = useState<InquiryOfferRecord[]>([]);
 
   const offerTemplates = useMemo(() => {
     const list = Array.isArray(offerTemplatesRaw) ? offerTemplatesRaw : [];
@@ -365,9 +374,38 @@ export default function PortalLeadsPage() {
     });
   }, [inquiryOffersRaw]);
 
+  const allInquiryOffers = useMemo(() => {
+    const byId = new Map<string, InquiryOfferRecord>();
+    for (const o of inquiryOffers) {
+      if (o.id) byId.set(o.id, o);
+    }
+    for (const o of optimisticOffers) {
+      if (o.id && !byId.has(o.id)) byId.set(o.id, o);
+      else if (!o.id) byId.set(`opt-${o.leadKey}-${o.subject}-${o.sentAt}`, o);
+    }
+    return [...byId.values()].sort((a, b) => {
+      const ta =
+        contactTimestampToDate(a.sentAt)?.getTime() ??
+        contactTimestampToDate(a.updatedAt)?.getTime() ??
+        0;
+      const tb =
+        contactTimestampToDate(b.sentAt)?.getTime() ??
+        contactTimestampToDate(b.updatedAt)?.getTime() ??
+        0;
+      return tb - ta;
+    });
+  }, [inquiryOffers, optimisticOffers]);
+
+  const openOfferFromHistory = useCallback((lead: LeadImportRow, offer: InquiryOfferRecord) => {
+    const key = stableImportLeadDocumentId(lead);
+    setOfferInitial(inquiryOfferToReuseInitial(offer));
+    setOfferLead(lead);
+    setExpandedLeadKeys((p) => ({ ...p, [key]: true }));
+  }, []);
+
   const sentOffersByLeadKey = useMemo(() => {
     const m = new Map<string, InquiryOfferRecord[]>();
-    for (const o of inquiryOffers) {
+    for (const o of allInquiryOffers) {
       if (o.status !== "sent") continue;
       const lk = String(o.leadKey ?? "").trim();
       if (!lk) continue;
@@ -376,7 +414,7 @@ export default function PortalLeadsPage() {
       m.set(lk, arr);
     }
     return m;
-  }, [inquiryOffers]);
+  }, [allInquiryOffers]);
 
   const toggleLeadExpanded = useCallback((key: string) => {
     setExpandedLeadKeys((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -1512,7 +1550,13 @@ export default function PortalLeadsPage() {
                               {canManageOffers ? (
                                 <div className="space-y-2 border-t border-slate-200/80 pt-3">
                                   <Label className="text-xs text-slate-800">Historie nabídek</Label>
-                                  <LeadInquiryOfferHistory offers={inquiryOffers} leadKey={key} />
+                                  <LeadInquiryOfferHistory
+                                    offers={allInquiryOffers}
+                                    leadKey={key}
+                                    canResend={canManageOffers}
+                                    onReuseOffer={(offer) => openOfferFromHistory(r, offer)}
+                                    onResendOffer={(offer) => openOfferFromHistory(r, offer)}
+                                  />
                                 </div>
                               ) : null}
                               <div className="space-y-2 border-t border-slate-200/80 pt-3">
@@ -1591,16 +1635,44 @@ export default function PortalLeadsPage() {
       {offerLead && companyId ? (
         <LeadInquiryOfferDialog
           open={!!offerLead}
-          onOpenChange={(o) => !o && setOfferLead(null)}
+          onOpenChange={(o) => {
+            if (!o) {
+              setOfferLead(null);
+              setOfferInitial(undefined);
+            }
+          }}
           companyId={companyId}
           companyName={companyName || String(company?.companyName ?? "Organizace")}
           lead={offerLead}
           leadKey={stableImportLeadDocumentId(offerLead)}
           templates={offerTemplates}
-          onSent={() => {
+          initial={offerInitial}
+          onSent={(info) => {
             const key = stableImportLeadDocumentId(offerLead);
             setOptimisticContactKeys((p) => ({ ...p, [key]: true }));
+            setExpandedLeadKeys((p) => ({ ...p, [key]: true }));
+            if (info?.offerId) {
+              setOptimisticOffers((prev) => [
+                {
+                  id: info.offerId,
+                  leadKey: key,
+                  companyId,
+                  status: "sent",
+                  to: info.to,
+                  subject: info.subject,
+                  bodyPlain: info.bodyText,
+                  bodyHtml: "",
+                  priceGross: info.priceGross,
+                  internalNote: info.internalNote,
+                  templateId: info.templateId,
+                  templateName: info.templateName,
+                  sentAt: new Date(),
+                },
+                ...prev.filter((o) => o.id !== info.offerId),
+              ]);
+            }
             setOfferLead(null);
+            setOfferInitial(undefined);
           }}
         />
       ) : null}

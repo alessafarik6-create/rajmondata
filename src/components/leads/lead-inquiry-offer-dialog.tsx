@@ -50,7 +50,16 @@ export function LeadInquiryOfferDialog(props: {
     internalNote?: string | null;
     templateId?: string | null;
   };
-  onSent?: () => void;
+  onSent?: (info: {
+    offerId?: string;
+    subject: string;
+    bodyText: string;
+    to: string;
+    priceGross: number | null;
+    internalNote: string | null;
+    templateId: string | null;
+    templateName: string | null;
+  }) => void;
 }) {
   const { user } = useUser();
   const { toast } = useToast();
@@ -231,6 +240,7 @@ export function LeadInquiryOfferDialog(props: {
         error?: string;
         detail?: string;
         sendNotice?: string | null;
+        offerId?: string;
       };
       if (!res.ok || !data.ok) {
         throw new Error(data.error || data.detail || "Operace se nezdařila.");
@@ -243,7 +253,18 @@ export function LeadInquiryOfferDialog(props: {
             ? sendNotice || `E-mail byl odeslán na ${toTrim}.`
             : "Nabídku můžete upravit a odeslat později.",
       });
-      props.onSent?.();
+      if (action === "send") {
+        props.onSent?.({
+          offerId: data.offerId,
+          subject: subject.trim(),
+          bodyText: bodyText.trim(),
+          to: toTrim,
+          priceGross,
+          internalNote: internalNote.trim() || null,
+          templateId: templateId || null,
+          templateName: selectedTemplate?.name ?? null,
+        });
+      }
       props.onOpenChange(false);
     } catch (e) {
       toast({

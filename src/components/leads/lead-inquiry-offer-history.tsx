@@ -1,56 +1,49 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import { format } from "date-fns";
 import { cs } from "date-fns/locale";
-import { Timestamp } from "firebase/firestore";
+import { Eye } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Copy } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
 import type { InquiryOfferRecord } from "@/lib/inquiry-offer-email";
-import { INQUIRY_OFFER_SEND_METHOD_LABELS } from "@/lib/inquiry-offer-send-plan";
+import {
+  formatInquiryOfferPrice,
+  inquiryOfferHasFullDetail,
+  INQUIRY_OFFER_STATUS_LABELS,
+} from "@/lib/inquiry-offer-history";
+import { contactTimestampToDate } from "@/lib/lead-contact-status";
+import { LeadInquiryOfferDetailDialog } from "@/components/leads/lead-inquiry-offer-detail-dialog";
 
-function tsToDate(raw: unknown): Date | null {
-  if (
-    raw &&
-    typeof raw === "object" &&
-    "toDate" in raw &&
-    typeof (raw as Timestamp).toDate === "function"
-  ) {
-    return (raw as Timestamp).toDate();
-  }
-  return null;
-}
-
-function resolveOfferSendMeta(o: InquiryOfferRecord): {
-  sendingMode: InquiryOfferRecord["sendingMode"];
-  technicalFrom: string | null;
-  displayFrom: string | null;
-  replyTo: string | null;
-} {
-  const sendingMode = o.sendingMode ?? o.sendMethod ?? null;
-  const technicalFrom = o.technicalFrom ?? o.fromEmail ?? null;
-  const displayFrom =
-    o.displayFrom ??
-    (o.fromDisplayName && technicalFrom
-      ? `${o.fromDisplayName} <${technicalFrom}>`
-      : technicalFrom);
-  const replyTo = o.replyTo ?? o.replyToEmail ?? null;
-  return { sendingMode, technicalFrom, displayFrom, replyTo };
+function formatOfferDate(offer: InquiryOfferRecord): string {
+  const d =
+    contactTimestampToDate(offer.sentAt) ??
+    contactTimestampToDate(offer.updatedAt) ??
+    contactTimestampToDate(offer.createdAt);
+  return d ? format(d, "d. M. yyyy HH:mm", { locale: cs }) : "—";
 }
 
 export function LeadInquiryOfferHistory(props: {
   offers: InquiryOfferRecord[];
   leadKey: string;
+  canResend?: boolean;
+  onReuseOffer?: (offer: InquiryOfferRecord) => void;
+  onResendOffer?: (offer: InquiryOfferRecord) => void;
 }) {
-  const { toast } = useToast();
+  const [detailOffer, setDetailOffer] = useState<InquiryOfferRecord | null>(null);
+
   const list = useMemo(
     () =>
       [...props.offers]
         .filter((o) => o.leadKey === props.leadKey)
         .sort((a, b) => {
-          const da = tsToDate(a.sentAt) ?? tsToDate(a.createdAt);
-          const db = tsToDate(b.sentAt) ?? tsToDate(b.createdAt);
+          const da =
+            contactTimestampToDate(a.sentAt) ??
+            contactTimestampToDate(a.updatedAt) ??
+            contactTimestampToDate(a.createdAt);
+          const db =
+            contactTimestampToDate(b.sentAt) ??
+            contactTimestampToDate(b.updatedAt) ??
+            contactTimestampToDate(b.createdAt);
           return (db?.getTime() ?? 0) - (da?.getTime() ?? 0);
         }),
     [props.offers, props.leadKey]
@@ -62,98 +55,67 @@ export function LeadInquiryOfferHistory(props: {
     );
   }
 
-  const copyText = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast({ title: "Zkopírováno do schránky" });
-    } catch {
-      toast({ variant: "destructive", title: "Kopírování se nezdařilo" });
-    }
-  };
-
   return (
-    <ul className="space-y-2">
-      {list.map((o) => {
-        const sent = tsToDate(o.sentAt) ?? tsToDate(o.createdAt);
-        const dateLabel = sent ? format(sent, "d. M. yyyy HH:mm", { locale: cs }) : "—";
-        const price =
-          o.priceGross != null && Number.isFinite(o.priceGross)
-            ? `${Math.round(o.priceGross).toLocaleString("cs-CZ")} Kč`
-            : "—";
-        const meta = resolveOfferSendMeta(o);
-        return (
-          <li
-            key={o.id ?? `${o.subject}-${dateLabel}`}
-            className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm"
-          >
-            <OfferHistoryHeader
-              status={o.status}
-              dateLabel={dateLabel}
-              subject={o.subject}
-              price={price}
-            />
-            <p className="mt-1 text-xs text-slate-600">
-              Komu: <span className="break-all">{o.to || "—"}</span>
-            </p>
-            {o.sentByName || o.sentByEmail ? (
-              <p className="text-xs text-slate-600">
-                Odeslal: {o.sentByName || o.sentByEmail}
-              </p>
-            ) : null}
-            {meta.sendingMode && INQUIRY_OFFER_SEND_METHOD_LABELS[meta.sendingMode] ? (
-              <p className="text-xs text-slate-600">
-                Způsob: {INQUIRY_OFFER_SEND_METHOD_LABELS[meta.sendingMode]}
-              </p>
-            ) : o.smtpUsed ? (
-              <p className="text-xs text-slate-600">Způsob: SMTP organizace</p>
-            ) : o.usedPlatformFallback ? (
-              <p className="text-xs text-slate-600">Způsob: Systémový e-mail portálu</p>
-            ) : null}
-            {meta.displayFrom ? (
-              <p className="text-xs text-slate-600 break-all">Odesláno jako: {meta.displayFrom}</p>
-            ) : null}
-            {meta.replyTo ? (
-              <p className="text-xs text-slate-600 break-all">
-                Odpovědi chodí na: {meta.replyTo}
-              </p>
-            ) : null}
-            {o.templateName ? (
-              <p className="text-xs text-slate-500">Šablona: {o.templateName}</p>
-            ) : null}
-            <OfferBodyPreview body={o.bodyPlain || ""} onCopy={() => void copyText(o.bodyPlain || "")} />
-          </li>
-        );
-      })}
-    </ul>
-  );
-}
+    <>
+      <ul className="space-y-2">
+        {list.map((o) => {
+          const dateLabel = formatOfferDate(o);
+          const price = formatInquiryOfferPrice(o.priceGross);
+          const statusLabel = INQUIRY_OFFER_STATUS_LABELS[o.status] ?? o.status;
+          const hasDetail = inquiryOfferHasFullDetail(o);
 
-function OfferHistoryHeader(props: {
-  status: string;
-  dateLabel: string;
-  subject: string;
-  price: string;
-}) {
-  return (
-    <div className="flex flex-wrap items-baseline justify-between gap-2">
-      <span className="font-medium text-slate-900">{props.subject || "—"}</span>
-      <span className="text-xs text-slate-500">
-        {props.status === "sent" ? "Odesláno" : "Koncept"} · {props.dateLabel}
-      </span>
-      <span className="w-full text-xs font-semibold text-orange-800 sm:w-auto">{props.price}</span>
-    </div>
-  );
-}
+          return (
+            <li
+              key={o.id ?? `${o.subject}-${dateLabel}`}
+              className="rounded-md border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm"
+            >
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="text-xs tabular-nums text-slate-500">{dateLabel}</span>
+                    <span
+                      className={
+                        o.status === "sent"
+                          ? "rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900"
+                          : "rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700"
+                      }
+                    >
+                      {statusLabel}
+                    </span>
+                  </div>
+                  <p className="break-words font-medium text-slate-900">{o.subject || "—"}</p>
+                  <p className="break-all text-xs text-slate-600">Komu: {o.to || "—"}</p>
+                  <p className="text-xs font-semibold text-orange-800">{price}</p>
+                  {!hasDetail ? (
+                    <p className="text-xs text-amber-800">
+                      Detail nabídky není dostupný, protože nebyl uložen ve starší verzi.
+                    </p>
+                  ) : null}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-9 w-full shrink-0 gap-1.5 sm:w-auto"
+                  onClick={() => setDetailOffer(o)}
+                >
+                  <Eye className="h-3.5 w-3.5" />
+                  Zobrazit nabídku
+                </Button>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
 
-function OfferBodyPreview(props: { body: string; onCopy: () => void }) {
-  if (!props.body.trim()) return null;
-  return (
-    <div className="mt-2 space-y-1">
-      <p className="line-clamp-3 whitespace-pre-wrap text-xs text-slate-700">{props.body}</p>
-      <Button type="button" size="sm" variant="ghost" className="h-8 gap-1 px-2 text-xs" onClick={props.onCopy}>
-        <Copy className="h-3.5 w-3.5" />
-        Kopírovat text
-      </Button>
-    </div>
+      <LeadInquiryOfferDetailDialog
+        offer={detailOffer}
+        open={!!detailOffer}
+        onOpenChange={(open) => !open && setDetailOffer(null)}
+        canResend={props.canResend}
+        onReuse={props.onReuseOffer}
+        onResend={props.onResendOffer}
+      />
+    </>
   );
 }
