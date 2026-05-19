@@ -2,6 +2,7 @@
 
 import { getAuth } from "firebase/auth";
 import type { DocumentEmailType } from "@/lib/document-email-outbound";
+import type { JobDocumentEmailAttachmentRef } from "@/lib/job-document-email-attachments";
 
 function apiUrl(path: string): string {
   if (typeof window === "undefined") return path;
@@ -24,6 +25,10 @@ export type SendJobDocumentEmailPayload = {
   contractId?: string | null;
   /** Objednávka materiálu u zakázky (`material_order`). */
   materialOrderId?: string | null;
+  /** Zahrnout hlavní PDF doklad (smlouva / faktura). Výchozí true. */
+  includeMainDocument?: boolean;
+  /** Další přílohy (smlouvy, dokumenty zakázky, fotodokumentace, výrobní podklady). */
+  extraAttachments?: JobDocumentEmailAttachmentRef[];
 };
 
 /**

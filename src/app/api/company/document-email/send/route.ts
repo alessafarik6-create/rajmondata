@@ -20,6 +20,12 @@ import {
 import { recordEmailOutboundOnPrimaryDocs, sendDocumentEmail } from "@/lib/document-email-outbound-admin";
 import { getDocumentPdfBuffer } from "@/lib/document-email-pdf-server";
 import {
+  JOB_DOC_EMAIL_ATTACHMENT_LOAD_ERROR,
+  parseJobDocumentEmailAttachmentRefs,
+  resolveJobDocumentEmailExtraAttachments,
+  type JobDocumentEmailAttachmentSourceLabel,
+} from "@/lib/job-document-email-attachments";
+import {
   errorMessageFromUnknown,
   errorStackFromUnknown,
   serializeUnknownForLog,
@@ -48,6 +54,10 @@ type Body = {
   contractId?: string | null;
   /** companies/.../jobs/{jobId}/materialOrders/{materialOrderId} */
   materialOrderId?: string | null;
+  /** Zahrnout hlavní PDF doklad (smlouva / faktura). Výchozí true. */
+  includeMainDocument?: boolean;
+  /** Další přílohy zakázky. */
+  extraAttachments?: unknown;
 };
 
 function storageDownloadUrl(bucketName: string, storagePath: string, token: string): string {
@@ -207,10 +217,53 @@ export async function POST(request: NextRequest) {
       return jsonFail(400, "Vyplňte předmět i text zprávy.", null, { step: "validateBody", requestId });
     }
 
-    if (type === "contract" && !contractId) {
+    const includeMainDocument =
+      type === "job_attachments"
+        ? false
+        : body.includeMainDocument !== false;
+    const extraRefsRaw = parseJobDocumentEmailAttachmentRefs(body.extraAttachments);
+    const extraRefs = extraRefsRaw.filter((ref) => {
+      if (!includeMainDocument) return true;
+      if (
+        type === "contract" &&
+        ref.kind === "work_contract_pdf" &&
+        contractId &&
+        ref.sourceId === contractId
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+    if (type === "job_attachments") {
+      if (!resolvedJobId) {
+        return jsonFail(400, "Chybí zakázka.", null, { step: "jobRequiredAttachments", requestId });
+      }
+      if (extraRefs.length === 0) {
+        return jsonFail(400, "Vyberte alespoň jednu přílohu.", null, {
+          step: "extraAttachments",
+          requestId,
+        });
+      }
+    }
+
+    if (!includeMainDocument && extraRefs.length === 0) {
+      return jsonFail(
+        400,
+        "Vyberte hlavní dokument nebo alespoň jednu přílohu.",
+        null,
+        { step: "noAttachments", requestId }
+      );
+    }
+
+    if (includeMainDocument && type === "contract" && !contractId) {
       return jsonFail(400, "Chybí identifikátor smlouvy.", null, { step: "contractId", requestId });
     }
-    if ((type === "invoice" || type === "advance_invoice") && !invoiceId) {
+    if (
+      includeMainDocument &&
+      (type === "invoice" || type === "advance_invoice") &&
+      !invoiceId
+    ) {
       return jsonFail(400, "Chybí identifikátor dokladu.", null, { step: "invoiceId", requestId });
     }
     if (type === "received_document" && !docId) {
@@ -291,6 +344,8 @@ export async function POST(request: NextRequest) {
 
     type Attachment = { filename: string; content: Buffer; contentType?: string };
     let attachments: Attachment[] = [];
+    let mainDocumentFilename: string | null = null;
+    const attachmentDetails: { filename: string; source: string }[] = [];
 
     if (type === "received_document") {
       const docRef = db.collection(COMPANIES_COLLECTION).doc(companyId).collection("documents").doc(String(docId));
@@ -338,7 +393,7 @@ export async function POST(request: NextRequest) {
       } else {
         attachments = [];
       }
-    } else {
+    } else if (includeMainDocument) {
       let pdf: Awaited<ReturnType<typeof getDocumentPdfBuffer>>;
       try {
         pdf = await getDocumentPdfBuffer({
@@ -392,6 +447,7 @@ export async function POST(request: NextRequest) {
         bufferBytes: pdf.buffer.length,
       });
 
+      mainDocumentFilename = pdf.filename;
       attachments = [
         {
           filename: pdf.filename,
@@ -399,6 +455,46 @@ export async function POST(request: NextRequest) {
           contentType: "application/pdf",
         },
       ];
+    }
+
+    if (extraRefs.length > 0) {
+      if (!resolvedJobId) {
+        return jsonFail(400, "Chybí zakázka pro přílohy.", null, {
+          step: "jobRequiredExtraAttachments",
+          requestId,
+        });
+      }
+      try {
+        const extras = await resolveJobDocumentEmailExtraAttachments(db, {
+          companyId,
+          jobId: resolvedJobId,
+          refs: extraRefs,
+        });
+        for (const ref of extraRefs) {
+          attachmentDetails.push({ filename: ref.filename, source: ref.sourceLabel });
+        }
+        attachments = [...attachments, ...extras];
+      } catch (err) {
+        const msg =
+          err instanceof Error ? err.message : JOB_DOC_EMAIL_ATTACHMENT_LOAD_ERROR;
+        const detail = errorStackFromUnknown(err) ?? serializeUnknownForLog(err);
+        console.error(ROUTE_LOG, "extra attachments failed", {
+          requestId,
+          message: msg,
+          serialized: serializeUnknownForLog(err),
+        });
+        return jsonFail(400, msg, detail.slice(0, 12_000), {
+          step: "resolveExtraAttachments",
+          requestId,
+        });
+      }
+    }
+
+    if (attachments.length === 0) {
+      return jsonFail(400, "Žádná příloha k odeslání.", null, {
+        step: "attachmentsEmpty",
+        requestId,
+      });
     }
 
     console.info(ROUTE_LOG, "email send start", {
@@ -424,6 +520,13 @@ export async function POST(request: NextRequest) {
         contractId,
         documentId: docId,
         attachments,
+        mainDocumentFilename,
+        attachmentDetails: attachmentDetails.length
+          ? (attachmentDetails as {
+              filename: string;
+              source: JobDocumentEmailAttachmentSourceLabel;
+            }[])
+          : null,
       });
     } catch (sendErr) {
       const msg = errorMessageFromUnknown(sendErr);

@@ -21,6 +21,14 @@ import {
   sendTransactionalEmail,
   type SendTransactionalEmailAttachment,
 } from "@/lib/email-notifications/resend-send";
+import { readInquiryEmailIdentity } from "@/lib/inquiry-offer-email";
+import {
+  type InquiryOfferCopyMode,
+  resolveInquiryOfferCopyDelivery,
+  validateOfferCopyEmailsRaw,
+} from "@/lib/inquiry-offer-copy";
+import { buildInquiryOfferSendPlan } from "@/lib/inquiry-offer-send-plan";
+import type { JobDocumentEmailAttachmentSourceLabel } from "@/lib/job-document-email-attachments";
 
 export async function getEmailTemplateFromCompany(
   db: Firestore,
@@ -71,8 +79,10 @@ export type SendDocumentEmailParams = {
   contractId?: string | null;
   /** Pro přijaté doklady (companies/{companyId}/documents/{documentId}). */
   documentId?: string | null;
-  /** PDF přílohy (povinné pro dokumenty ze zakázky). */
+  /** PDF a další přílohy e-mailu. */
   attachments: SendTransactionalEmailAttachment[];
+  mainDocumentFilename?: string | null;
+  attachmentDetails?: { filename: string; source: JobDocumentEmailAttachmentSourceLabel }[] | null;
 };
 
 function documentEmailLogsCollection(db: Firestore, companyId: string, jobId: string | null) {
@@ -102,8 +112,12 @@ export async function logDocumentSend(
     invoiceId?: string | null;
     contractId?: string | null;
     documentId?: string | null;
-    /** Názvy PDF příloh odeslaných s e-mailem. */
+    /** Názvy všech příloh odeslaných s e-mailem (hlavní + doplňkové). */
     attachmentFilenames?: string[] | null;
+    mainDocumentFilename?: string | null;
+    attachmentDetails?: { filename: string; source: JobDocumentEmailAttachmentSourceLabel }[] | null;
+    offerCopyTo?: string[] | null;
+    offerCopyMode?: InquiryOfferCopyMode | null;
   }
 ): Promise<string> {
   const col = documentEmailLogsCollection(db, input.companyId, input.jobId);
@@ -125,6 +139,12 @@ export async function logDocumentSend(
     attachmentFilenames: Array.isArray(input.attachmentFilenames)
       ? input.attachmentFilenames.filter(Boolean)
       : [],
+    mainDocumentFilename: input.mainDocumentFilename ?? null,
+    attachmentDetails: Array.isArray(input.attachmentDetails)
+      ? input.attachmentDetails.filter((a) => a?.filename)
+      : [],
+    offerCopyTo: Array.isArray(input.offerCopyTo) ? input.offerCopyTo.filter(Boolean) : [],
+    offerCopyMode: input.offerCopyMode ?? null,
     sentAt: FieldValue.serverTimestamp(),
   });
   return ref.id;
@@ -151,6 +171,7 @@ export async function sendDocumentEmail(
   const outbound = readDocumentEmailOutbound(company);
   const orgEmailRaw = String(company.email ?? "").trim();
   const orgEmail = orgEmailRaw || null;
+  const identity = readInquiryEmailIdentity(company);
 
   const toNorm = params.to.trim().toLowerCase();
   const cc = resolveCcList({
@@ -160,12 +181,52 @@ export async function sendDocumentEmail(
     toLower: toNorm,
   });
 
+  const copyValidation = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
+  if (!copyValidation.ok) {
+    return { ok: false, error: copyValidation.error, detail: null };
+  }
+  let offerCopyDelivery: ReturnType<typeof resolveInquiryOfferCopyDelivery> = null;
+  try {
+    offerCopyDelivery = resolveInquiryOfferCopyDelivery(identity, toNorm);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Neplatné kopie nabídek.",
+      detail: null,
+    };
+  }
+
+  const planResult = await buildInquiryOfferSendPlan({ company, identity });
+  if ("error" in planResult) {
+    return { ok: false, error: planResult.error, detail: null };
+  }
+
   const attachmentFilenames = (params.attachments ?? []).map((a) => a.filename).filter(Boolean);
   const hasAttachments = Array.isArray(params.attachments) && params.attachments.length > 0;
 
+  const offerCopyTo = offerCopyDelivery?.emails ?? [];
+  const offerCopyMode = offerCopyDelivery?.mode ?? null;
+
+  const logBase = {
+    mainDocumentFilename: params.mainDocumentFilename ?? null,
+    attachmentDetails: params.attachmentDetails ?? null,
+    offerCopyTo,
+    offerCopyMode,
+  };
+
+  const ccForSend =
+    offerCopyDelivery?.emails.length && offerCopyDelivery.mode === "cc"
+      ? [...new Set([...cc, ...offerCopyDelivery.emails])]
+      : cc;
+
   const send = await sendTransactionalEmail({
     to: [toNorm],
-    cc: cc.length ? cc : undefined,
+    cc: ccForSend.length ? ccForSend : undefined,
+    ...(offerCopyDelivery?.emails.length && offerCopyDelivery.mode === "bcc"
+      ? { bcc: offerCopyDelivery.emails }
+      : {}),
+    from: planResult.fromHeader,
+    replyTo: planResult.replyTo,
     subject: params.subject.trim(),
     html: params.html,
     ...(hasAttachments ? { attachments: params.attachments } : {}),
@@ -188,6 +249,7 @@ export async function sendDocumentEmail(
       contractId: params.contractId ?? null,
       documentId: params.documentId ?? null,
       attachmentFilenames,
+      ...logBase,
     });
     return send;
   }
@@ -207,6 +269,7 @@ export async function sendDocumentEmail(
     contractId: params.contractId ?? null,
     documentId: params.documentId ?? null,
     attachmentFilenames,
+    ...logBase,
   });
 
   return { ok: true };

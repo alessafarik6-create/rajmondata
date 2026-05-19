@@ -45,6 +45,7 @@ export function DocumentEmailOutboundSettingsCard({ companyId, company }: Props)
     received_document: { subject: "", body: "" },
     meeting_record: { subject: "", body: "" },
     material_order: { subject: "", body: "" },
+    job_attachments: { subject: "", body: "" },
   });
   const [saving, setSaving] = useState(false);
 

@@ -9,6 +9,8 @@ export const DOCUMENT_EMAIL_TYPES = [
   "received_document",
   "meeting_record",
   "material_order",
+  /** Jen vybrané přílohy zakázky (bez hlavního PDF dokladu). */
+  "job_attachments",
 ] as const;
 
 export type DocumentEmailType = (typeof DOCUMENT_EMAIL_TYPES)[number];
@@ -20,6 +22,7 @@ export const DOCUMENT_EMAIL_TYPE_LABELS: Record<DocumentEmailType, string> = {
   received_document: "Přijatý doklad",
   meeting_record: "Zápis ze schůzky",
   material_order: "Objednávka materiálu",
+  job_attachments: "Přílohy zakázky",
 };
 
 export type DocumentEmailOutboundSettings = {
@@ -106,6 +109,15 @@ export function defaultEmailTemplate(
         body:
           "Dobrý den,\n\n" +
           "v příloze zasíláme objednávku materiálu ({{cislo_dokladu}}).\n\n" +
+          "S pozdravem\n{{nazev_firmy}}",
+      };
+    case "job_attachments":
+      return {
+        subject: "Dokumenty k zakázce",
+        body:
+          "Dobrý den,\n\n" +
+          "v příloze zasíláme vybrané dokumenty k zakázce.\n\n" +
+          "Odkaz: {{odkaz_na_dokument}}\n\n" +
           "S pozdravem\n{{nazev_firmy}}",
       };
     default:

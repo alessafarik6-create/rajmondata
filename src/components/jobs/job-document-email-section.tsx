@@ -26,6 +26,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Mail, Send } from "lucide-react";
 import {
@@ -48,6 +49,16 @@ import {
 } from "@/lib/job-billing-invoices";
 import { isActiveFirestoreDoc } from "@/lib/document-soft-delete";
 import { roundMoney2, type JobBudgetBreakdown } from "@/lib/vat-calculations";
+import {
+  attachmentRefsFromOptions,
+  buildCompanyDocumentAttachmentOptions,
+  buildProductionSheetAttachmentOptions,
+  buildWorkContractAttachmentOptions,
+  formatAttachmentSizeBytes,
+  type JobDocumentEmailAttachmentOption,
+} from "@/lib/job-document-email-attachments";
+import { INQUIRY_OFFER_COPY_MODE_LABELS } from "@/lib/inquiry-offer-copy";
+import type { InquiryOfferCopyMode } from "@/lib/inquiry-offer-copy";
 
 type EmailLogRow = {
   id: string;
@@ -62,6 +73,10 @@ type EmailLogRow = {
   sentByEmail?: string | null;
   sentByUid?: string | null;
   attachmentFilenames?: string[];
+  mainDocumentFilename?: string | null;
+  attachmentDetails?: { filename?: string; source?: string }[];
+  offerCopyTo?: string[];
+  offerCopyMode?: InquiryOfferCopyMode | null;
 };
 
 function appOrigin(): string {
@@ -79,6 +94,14 @@ function formatLogDate(row: EmailLogRow): string {
     /* ignore */
   }
   return "—";
+}
+
+function formatLogAttachments(row: EmailLogRow): string | null {
+  const names = Array.isArray(row.attachmentFilenames)
+    ? row.attachmentFilenames.filter(Boolean)
+    : [];
+  if (names.length === 0) return null;
+  return `Přílohy: ${names.join(", ")}`;
 }
 
 type Props = {
@@ -118,7 +141,26 @@ export function JobDocumentEmailSection({
     );
   }, [firestore, companyId, jobId]);
 
+  const jobDocumentsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !jobId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "documents"),
+      where("jobId", "==", jobId),
+      limit(120)
+    );
+  }, [firestore, companyId, jobId]);
+
+  const productionSheetsQuery = useMemoFirebase(() => {
+    if (!firestore || !companyId || !jobId) return null;
+    return query(
+      collection(firestore, "companies", companyId, "jobs", jobId, "productionSheets"),
+      limit(40)
+    );
+  }, [firestore, companyId, jobId]);
+
   const { data: jobInvoicesRaw = [] } = useCollection(jobInvoicesQuery);
+  const { data: jobDocumentsRaw = [] } = useCollection(jobDocumentsQuery);
+  const { data: productionSheetsRaw = [] } = useCollection(productionSheetsQuery);
 
   const jobInvoices = useMemo(() => {
     const rows = (Array.isArray(jobInvoicesRaw) ? jobInvoicesRaw : []).filter(
@@ -164,6 +206,45 @@ export function JobDocumentEmailSection({
     return (adv[0] as Record<string, unknown> & { id: string }) ?? null;
   }, [jobInvoices]);
 
+  const attachmentOptions = useMemo((): JobDocumentEmailAttachmentOption[] => {
+    const contracts = buildWorkContractAttachmentOptions(workContractsForJob);
+    const docs = buildCompanyDocumentAttachmentOptions(
+      (Array.isArray(jobDocumentsRaw) ? jobDocumentsRaw : [])
+        .filter((d) => isActiveFirestoreDoc(d as { isDeleted?: unknown }))
+        .map((d) => {
+          const row = d as Record<string, unknown> & { id: string };
+          return {
+            id: row.id,
+            fileName: row.fileName as string | null,
+            mimeType: row.mimeType as string | null,
+            sizeBytes:
+              typeof row.sizeBytes === "number"
+                ? row.sizeBytes
+                : typeof row.fileSize === "number"
+                  ? row.fileSize
+                  : null,
+            storagePath: row.storagePath as string | null,
+            fileUrl: (row.fileUrl ?? row.downloadURL) as string | null,
+            source: row.source as string | null,
+            jobLinkedKind: row.jobLinkedKind as string | null,
+          };
+        })
+    );
+    const sheets = buildProductionSheetAttachmentOptions(
+      (Array.isArray(productionSheetsRaw) ? productionSheetsRaw : []).map((s) => {
+        const row = s as Record<string, unknown> & { id: string };
+        return {
+          id: row.id,
+          fileName: row.fileName as string | null,
+          fileUrl: row.fileUrl as string | null,
+          storagePath: row.storagePath as string | null,
+          sizeBytes: typeof row.sizeBytes === "number" ? row.sizeBytes : null,
+        };
+      })
+    );
+    return [...contracts, ...docs, ...sheets];
+  }, [workContractsForJob, jobDocumentsRaw, productionSheetsRaw]);
+
   const logsQuery = useMemoFirebase(() => {
     if (!firestore || !companyId || !jobId) return null;
     return query(
@@ -195,6 +276,10 @@ export function JobDocumentEmailSection({
   const [documentUrl, setDocumentUrl] = useState<string | null>(null);
   const [invoiceId, setInvoiceId] = useState<string | null>(null);
   const [contractId, setContractId] = useState<string | null>(null);
+  const [includeMainDocument, setIncludeMainDocument] = useState(true);
+  const [selectedAttachmentIds, setSelectedAttachmentIds] = useState<Set<string>>(
+    () => new Set()
+  );
   const [sending, setSending] = useState(false);
 
   const outbound = useMemo(
@@ -202,11 +287,33 @@ export function JobDocumentEmailSection({
     [companyDoc]
   );
 
+  const supportsMainDocument = useMemo(
+    () =>
+      modalType === "contract" ||
+      modalType === "invoice" ||
+      modalType === "advance_invoice",
+    [modalType]
+  );
+
   const buildVars = useCallback(
     (type: DocumentEmailType): DocumentEmailTemplateVars | null => {
       const origin = appOrigin();
       const firm = companyDisplayName.trim() || "Organizace";
       const jmeno = customerName.trim() || "—";
+      const jobLink = origin ? `${origin}/portal/jobs/${jobId}` : `/portal/jobs/${jobId}`;
+      const jobLabel =
+        job && String(job.name ?? "").trim() ? String(job.name).trim() : jobId.slice(0, 8);
+
+      if (type === "job_attachments") {
+        return {
+          nazev_firmy: firm,
+          jmeno_zakaznika: jmeno,
+          cislo_dokladu: jobLabel,
+          datum: new Date().toLocaleDateString("cs-CZ"),
+          castka: "—",
+          odkaz_na_dokument: jobLink,
+        };
+      }
       if (type === "contract") {
         if (!primaryContract) return null;
         const num =
@@ -218,14 +325,13 @@ export function JobDocumentEmailSection({
           jobBudgetBreakdown != null
             ? `${roundMoney2(jobBudgetBreakdown.budgetGross).toLocaleString("cs-CZ")} Kč`
             : "—";
-        const link = origin ? `${origin}/portal/jobs/${jobId}` : `/portal/jobs/${jobId}`;
         return {
           nazev_firmy: firm,
           jmeno_zakaznika: jmeno,
           cislo_dokladu: num,
           datum,
           castka,
-          odkaz_na_dokument: link,
+          odkaz_na_dokument: jobLink,
         };
       }
       if (type === "invoice") {
@@ -277,6 +383,7 @@ export function JobDocumentEmailSection({
     [
       companyDisplayName,
       customerName,
+      job,
       jobBudgetBreakdown,
       jobId,
       latestAdvanceInvoice,
@@ -285,7 +392,26 @@ export function JobDocumentEmailSection({
     ]
   );
 
+  const toggleAttachment = (id: string, checked: boolean) => {
+    setSelectedAttachmentIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  };
+
   const openModal = (type: DocumentEmailType) => {
+    if (type === "job_attachments" && attachmentOptions.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Žádné přílohy",
+        description:
+          "K zakázce zatím nejsou smlouvy, dokumenty ani výrobní podklady ke odeslání.",
+      });
+      return;
+    }
+
     const vars = buildVars(type);
     if (!vars) {
       toast({
@@ -300,7 +426,6 @@ export function JobDocumentEmailSection({
       });
       return;
     }
-    /* Smlouva: PDF se na serveru sestaví z dat dokumentu (stejná logika jako „Generovat PDF“). */
     if (type === "invoice" && latestFinalInvoice) {
       const ph = String(
         (latestFinalInvoice as Record<string, unknown>).pdfHtml ?? ""
@@ -334,15 +459,20 @@ export function JobDocumentEmailSection({
     setSubject(substituteDocumentEmailVariables(tpl.subject, vars));
     setBodyPlain(substituteDocumentEmailVariables(tpl.body, vars));
     setDocumentUrl(vars.odkaz_na_dokument);
+    setIncludeMainDocument(type !== "job_attachments");
+    setSelectedAttachmentIds(new Set());
     if (type === "contract") {
       setContractId(primaryContract?.id ?? null);
       setInvoiceId(null);
     } else if (type === "invoice") {
       setContractId(null);
       setInvoiceId(latestFinalInvoice?.id ?? null);
-    } else {
+    } else if (type === "advance_invoice") {
       setContractId(null);
       setInvoiceId(latestAdvanceInvoice?.id ?? null);
+    } else {
+      setContractId(null);
+      setInvoiceId(null);
     }
     setModalOpen(true);
   };
@@ -375,6 +505,27 @@ export function JobDocumentEmailSection({
         return;
       }
     }
+
+    const sendMain = supportsMainDocument ? includeMainDocument : false;
+    const extraRefs = attachmentRefsFromOptions(attachmentOptions, selectedAttachmentIds);
+
+    if (modalType === "job_attachments" && extraRefs.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Vyberte přílohy",
+        description: "Označte alespoň jednu přílohu k odeslání.",
+      });
+      return;
+    }
+    if (!sendMain && extraRefs.length === 0) {
+      toast({
+        variant: "destructive",
+        title: "Nic k odeslání",
+        description: "Zapněte hlavní dokument nebo vyberte přílohy.",
+      });
+      return;
+    }
+
     const html = normalizeEmailBodyToHtml(bodyPlain);
     setSending(true);
     try {
@@ -389,10 +540,17 @@ export function JobDocumentEmailSection({
         documentUrl,
         invoiceId,
         contractId,
+        includeMainDocument: sendMain,
+        extraAttachments: extraRefs.length > 0 ? extraRefs : undefined,
       });
       toast({
         title: "Odesláno",
-        description: "E-mail včetně PDF přílohy byl odeslán a zapsán do historie.",
+        description:
+          extraRefs.length > 0 && sendMain
+            ? "E-mail s dokladem a vybranými přílohami byl odeslán."
+            : extraRefs.length > 0
+              ? "E-mail s vybranými přílohami byl odeslán."
+              : "E-mail včetně PDF přílohy byl odeslán a zapsán do historie.",
       });
       setModalOpen(false);
     } catch (error) {
@@ -409,6 +567,15 @@ export function JobDocumentEmailSection({
   const jobName =
     job && String(job.name ?? "").trim() ? String(job.name).trim() : "Zakázka";
 
+  const mainDocumentLabel =
+    modalType === "contract"
+      ? "Smlouva o dílo (PDF)"
+      : modalType === "invoice"
+        ? "Faktura (PDF)"
+        : modalType === "advance_invoice"
+          ? "Zálohová faktura (PDF)"
+          : null;
+
   return (
     <>
       <Card className="border border-gray-200 bg-white shadow-sm">
@@ -418,8 +585,9 @@ export function JobDocumentEmailSection({
             Odeslání dokumentu e-mailem
           </CardTitle>
           <p className="text-xs text-gray-600">
-            Odeslání přes server (Resend) — PDF příloha se vygeneruje na serveru z uloženého dokladu
-            (malý požadavek z prohlížeče). Historie a kopie dle nastavení organizace.
+            Odeslání přes server (Resend) — PDF příloha se vygeneruje na serveru z uloženého dokladu.
+            Můžete přidat další přílohy (smlouvy, dokumenty, fotodokumentace). Odesílatel a kopie dle
+            nastavení organizace (stejně jako u nabídek).
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -451,6 +619,15 @@ export function JobDocumentEmailSection({
             >
               Odeslat zálohovou fakturu
             </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!canManage || attachmentOptions.length === 0}
+              onClick={() => openModal("job_attachments")}
+            >
+              Odeslat přílohy
+            </Button>
           </div>
           {!canManage ? (
             <p className="text-xs text-muted-foreground">Změny smí provádět vedení zakázky.</p>
@@ -468,50 +645,66 @@ export function JobDocumentEmailSection({
               <p className="text-xs text-gray-500">Zatím nic nebylo odesláno.</p>
             ) : (
               <ul className="max-h-56 space-y-2 overflow-y-auto text-xs">
-                {emailLogs.map((row) => (
-                  <li
-                    key={row.id}
-                    className="rounded-md border border-gray-200 bg-gray-50/80 px-2 py-1.5"
-                  >
-                    <div className="flex flex-wrap justify-between gap-1 font-medium text-gray-900">
-                      <span>
-                        {DOCUMENT_EMAIL_TYPE_LABELS[row.type as DocumentEmailType] ??
-                          String(row.type ?? "—")}
-                      </span>
-                      <span
-                        className={
-                          row.status === "error" ? "text-red-700" : "text-emerald-700"
-                        }
-                      >
-                        {row.status === "error" ? "Chyba" : "Odesláno"}
-                      </span>
-                    </div>
-                    <div className="text-gray-600">
-                      {row.to ?? "—"} · {formatLogDate(row)}
-                    </div>
-                    {row.sentByEmail ? (
-                      <div className="text-[10px] text-gray-500">
-                        Odeslal: {row.sentByEmail}
+                {emailLogs.map((row) => {
+                  const attLine = formatLogAttachments(row);
+                  return (
+                    <li
+                      key={row.id}
+                      className="rounded-md border border-gray-200 bg-gray-50/80 px-2 py-1.5"
+                    >
+                      <div className="flex flex-wrap justify-between gap-1 font-medium text-gray-900">
+                        <span>
+                          {DOCUMENT_EMAIL_TYPE_LABELS[row.type as DocumentEmailType] ??
+                            String(row.type ?? "—")}
+                        </span>
+                        <span
+                          className={
+                            row.status === "error" ? "text-red-700" : "text-emerald-700"
+                          }
+                        >
+                          {row.status === "error" ? "Chyba" : "Odesláno"}
+                        </span>
                       </div>
-                    ) : row.sentByUid ? (
-                      <div className="text-[10px] text-gray-500">
-                        Odeslal (UID): {String(row.sentByUid).slice(0, 8)}…
+                      <div className="text-gray-600">
+                        {row.to ?? "—"} · {formatLogDate(row)}
                       </div>
-                    ) : null}
-                    {Array.isArray(row.cc) && row.cc.length > 0 ? (
-                      <div className="text-[10px] text-gray-500">Kopie: {row.cc.join(", ")}</div>
-                    ) : null}
-                    {Array.isArray(row.attachmentFilenames) &&
-                    row.attachmentFilenames.length > 0 ? (
-                      <div className="text-[10px] text-gray-500">
-                        PDF: {row.attachmentFilenames.join(", ")}
-                      </div>
-                    ) : null}
-                    {row.status === "error" && row.errorMessage ? (
-                      <div className="text-[10px] text-red-700">{row.errorMessage}</div>
-                    ) : null}
-                  </li>
-                ))}
+                      {row.sentByEmail ? (
+                        <div className="text-[10px] text-gray-500">
+                          Odeslal: {row.sentByEmail}
+                        </div>
+                      ) : row.sentByUid ? (
+                        <div className="text-[10px] text-gray-500">
+                          Odeslal (UID): {String(row.sentByUid).slice(0, 8)}…
+                        </div>
+                      ) : null}
+                      {Array.isArray(row.cc) && row.cc.length > 0 ? (
+                        <div className="break-all text-[10px] text-gray-500">
+                          Kopie (CC): {row.cc.join(", ")}
+                        </div>
+                      ) : null}
+                      {Array.isArray(row.offerCopyTo) && row.offerCopyTo.length > 0 ? (
+                        <div className="break-all text-[10px] text-gray-500">
+                          Kopie nabídek (
+                          {row.offerCopyMode
+                            ? INQUIRY_OFFER_COPY_MODE_LABELS[row.offerCopyMode]
+                            : "BCC"}
+                          ): {row.offerCopyTo.join(", ")}
+                        </div>
+                      ) : null}
+                      {row.mainDocumentFilename ? (
+                        <div className="break-all text-[10px] text-gray-500">
+                          Hlavní dokument: {row.mainDocumentFilename}
+                        </div>
+                      ) : null}
+                      {attLine ? (
+                        <div className="break-all text-[10px] text-gray-500">{attLine}</div>
+                      ) : null}
+                      {row.status === "error" && row.errorMessage ? (
+                        <div className="text-[10px] text-red-700">{row.errorMessage}</div>
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -519,14 +712,14 @@ export function JobDocumentEmailSection({
       </Card>
 
       <Dialog open={modalOpen} onOpenChange={setModalOpen}>
-        <DialogContent className="max-h-[90vh] max-w-lg overflow-y-auto sm:max-w-lg">
+        <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto sm:max-w-xl">
           <DialogHeader>
             <DialogTitle>
               Odeslat: {DOCUMENT_EMAIL_TYPE_LABELS[modalType]}
             </DialogTitle>
             <DialogDescription>
-              PDF příloha vznikne na serveru z uloženého tisku dokladu. Zkontrolujte příjemce a text
-              — kopie organizace se přidají při odeslání dle nastavení.
+              Vyberte hlavní doklad a další přílohy. PDF hlavního dokladu vznikne na serveru. Při
+              chybě načtení přílohy se e-mail neodešle.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-1">
@@ -565,10 +758,77 @@ export function JobDocumentEmailSection({
                 id="doc-email-body"
                 value={bodyPlain}
                 onChange={(e) => setBodyPlain(e.target.value)}
-                rows={10}
+                rows={8}
                 className="bg-white font-mono text-xs"
               />
             </div>
+
+            {(supportsMainDocument || attachmentOptions.length > 0) && (
+              <div className="space-y-2 rounded-md border border-gray-200 bg-gray-50/80 p-3">
+                <p className="text-xs font-semibold text-gray-800">Přílohy e-mailu</p>
+                {supportsMainDocument && mainDocumentLabel ? (
+                  <div className="flex items-start gap-2">
+                    <Checkbox
+                      id="doc-email-main"
+                      checked={includeMainDocument}
+                      onCheckedChange={(v) => setIncludeMainDocument(v === true)}
+                      className="mt-0.5 shrink-0"
+                    />
+                    <Label
+                      htmlFor="doc-email-main"
+                      className="min-w-0 flex-1 cursor-pointer text-xs font-normal leading-snug"
+                    >
+                      <span className="block break-words font-medium">{mainDocumentLabel}</span>
+                      <span className="text-gray-500">Hlavní doklad — PDF ze serveru</span>
+                    </Label>
+                  </div>
+                ) : null}
+                {attachmentOptions.length === 0 ? (
+                  <p className="text-[11px] text-gray-500">
+                    K zakázce nejsou další soubory k přiložení.
+                  </p>
+                ) : (
+                  <ul className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                    {attachmentOptions.map((opt) => {
+                      const checked = selectedAttachmentIds.has(opt.id);
+                      const isMainContractDup =
+                        supportsMainDocument &&
+                        includeMainDocument &&
+                        modalType === "contract" &&
+                        opt.kind === "work_contract_pdf" &&
+                        contractId &&
+                        opt.sourceId === contractId;
+                      if (isMainContractDup) return null;
+                      return (
+                        <li
+                          key={opt.id}
+                          className="flex items-start gap-2 rounded border border-gray-100 bg-white px-2 py-1.5"
+                        >
+                          <Checkbox
+                            id={`att-${opt.id}`}
+                            checked={checked}
+                            onCheckedChange={(v) => toggleAttachment(opt.id, v === true)}
+                            className="mt-0.5 shrink-0"
+                          />
+                          <Label
+                            htmlFor={`att-${opt.id}`}
+                            className="min-w-0 flex-1 cursor-pointer text-xs font-normal"
+                          >
+                            <span className="block break-all font-medium text-gray-900">
+                              {opt.filename}
+                            </span>
+                            <span className="mt-0.5 block text-[10px] text-gray-500">
+                              {opt.fileType} · {formatAttachmentSizeBytes(opt.sizeBytes)} ·{" "}
+                              {opt.sourceLabel}
+                            </span>
+                          </Label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            )}
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={() => setModalOpen(false)}>
