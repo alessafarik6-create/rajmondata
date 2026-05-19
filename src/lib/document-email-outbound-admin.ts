@@ -1,3 +1,5 @@
+import "server-only";
+
 /**
  * Server (Admin SDK) — načtení šablony, odeslání, zápis historie odeslání dokumentů ze zakázky.
  *

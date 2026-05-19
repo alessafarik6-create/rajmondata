@@ -5,6 +5,8 @@
  * Vercel serverless: puppeteer-core + @sparticuz/chromium.
  */
 
+import "server-only";
+
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";

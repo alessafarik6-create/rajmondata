@@ -19,12 +19,12 @@ import {
 } from "@/lib/document-email-outbound";
 import { recordEmailOutboundOnPrimaryDocs, sendDocumentEmail } from "@/lib/document-email-outbound-admin";
 import { getDocumentPdfBuffer } from "@/lib/document-email-pdf-server";
+import type { JobDocumentEmailAttachmentSourceLabel } from "@/lib/job-document-email-attachments";
 import {
   JOB_DOC_EMAIL_ATTACHMENT_LOAD_ERROR,
   parseJobDocumentEmailAttachmentRefs,
   resolveJobDocumentEmailExtraAttachments,
-  type JobDocumentEmailAttachmentSourceLabel,
-} from "@/lib/job-document-email-attachments";
+} from "@/lib/job-document-email-attachments-server";
 import {
   errorMessageFromUnknown,
   errorStackFromUnknown,
