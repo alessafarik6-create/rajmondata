@@ -121,6 +121,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
+import { JobNoteMetaLine, JobNoteTextBlock } from "@/components/jobs/job-note-text-block";
 import {
   Tooltip,
   TooltipContent,
@@ -407,14 +408,14 @@ function JobMediaApprovalAdminSummary({
   if (!a.requiresCustomerApproval) return null;
   const st = a.approvalStatus;
   return (
-    <div className="space-y-1.5 rounded-md border border-border/50 bg-muted/30 px-2 py-1.5 text-[11px] leading-snug">
+    <div className="min-w-0 space-y-2 rounded-md border border-border/50 bg-white px-2 py-2 sm:px-2.5">
       <div className="flex flex-wrap items-center gap-1">
-        <Badge variant="outline" className="text-[10px] font-medium">
+        <Badge variant="outline" className="text-[10px] font-medium text-gray-800">
           Schválení zákazníkem
         </Badge>
         <Badge
           className={cn(
-            "text-[10px] font-medium",
+            "text-[10px] font-medium text-white",
             st === "approved" && "bg-emerald-600 hover:bg-emerald-600",
             st === "changes_requested" && "bg-amber-600 hover:bg-amber-600",
             st === "pending" && "bg-slate-600 hover:bg-slate-600"
@@ -424,29 +425,27 @@ function JobMediaApprovalAdminSummary({
         </Badge>
       </div>
       {a.approvalNoteFromAdmin ? (
-        <p className="text-muted-foreground">
-          <span className="font-medium text-foreground">Poznámka k žádosti: </span>
+        <JobNoteTextBlock variant="admin_request" label="Poznámka k žádosti" dense>
           {a.approvalNoteFromAdmin}
-        </p>
+        </JobNoteTextBlock>
       ) : null}
       {a.customerComment ? (
-        <p className="text-amber-900 dark:text-amber-200">
-          <span className="font-medium">Připomínka zákazníka: </span>
+        <JobNoteTextBlock variant="customer" label="Připomínka zákazníka" dense>
           {a.customerComment}
-        </p>
+        </JobNoteTextBlock>
       ) : null}
       {a.approvalRequestedAtMs ? (
-        <p className="text-[10px] text-muted-foreground">
+        <JobNoteMetaLine>
           Žádost odeslána: {new Date(a.approvalRequestedAtMs).toLocaleString("cs-CZ")}
-        </p>
+        </JobNoteMetaLine>
       ) : null}
       {a.approvalEmailSent ? (
-        <p className="text-[10px] text-muted-foreground">
+        <JobNoteMetaLine>
           Upozornění zákazníkovi odesláno
           {a.approvalEmailSentAtMs
             ? `: ${new Date(a.approvalEmailSentAtMs).toLocaleString("cs-CZ")}`
             : ""}
-        </p>
+        </JobNoteMetaLine>
       ) : null}
       {typeof onResend === "function" && a.approvalStatus === "pending" ? (
         <Button
@@ -462,14 +461,14 @@ function JobMediaApprovalAdminSummary({
         </Button>
       ) : null}
       {a.approvedAtMs ? (
-        <p className="text-[10px] text-muted-foreground">
+        <JobNoteMetaLine>
           Schváleno zákazníkem: {new Date(a.approvedAtMs).toLocaleString("cs-CZ")}
-        </p>
+        </JobNoteMetaLine>
       ) : null}
       {a.customerCommentAtMs && st === "changes_requested" ? (
-        <p className="text-[10px] text-muted-foreground">
+        <JobNoteMetaLine>
           Připomínka odeslána: {new Date(a.customerCommentAtMs).toLocaleString("cs-CZ")}
-        </p>
+        </JobNoteMetaLine>
       ) : null}
     </div>
   );
@@ -538,7 +537,11 @@ function JobMediaFileCard({
           />
         ) : null}
         {note?.trim() ? (
-          <p className="line-clamp-2 text-[11px] leading-snug text-foreground/88">
+          <p
+            className="line-clamp-3 min-w-0 break-words text-xs leading-relaxed text-gray-900 sm:text-sm"
+            title={note.trim()}
+          >
+            <span className="font-medium text-gray-700">Poznámka: </span>
             {note.trim()}
           </p>
         ) : null}

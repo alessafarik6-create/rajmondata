@@ -638,7 +638,7 @@ export function JobDocumentEmailSection({
               Historie odeslání ({jobName})
             </p>
             {logsError ? (
-              <p className="text-xs text-amber-800">
+              <p className="text-xs text-gray-800">
                 Historii nelze načíst (zkontrolujte index Firestore pro řazení podle data).
               </p>
             ) : emailLogs.length === 0 ? (

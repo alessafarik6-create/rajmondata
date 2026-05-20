@@ -327,18 +327,20 @@ export function JobCommentsThread(props: {
                 >
                   <div
                     className={cn(
-                      "max-w-[92%] rounded-2xl border bg-white px-3 py-2 text-sm text-black shadow-sm sm:max-w-[75%]",
+                      "max-w-[92%] min-w-0 rounded-2xl border bg-white px-3 py-2.5 shadow-sm sm:max-w-[75%]",
                       mine
                         ? "border-orange-300 rounded-br-md"
                         : "border-sky-200 rounded-bl-md",
                     )}
                   >
-                    <div className="mb-1 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-neutral-600">
-                      <span className="font-medium text-neutral-900">{author}</span>
+                    <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-gray-600">
+                      <span className="font-semibold text-gray-900">{author}</span>
                       <span>{sentAt}</span>
                     </div>
-                    <div className="whitespace-pre-wrap break-words text-black">{msg}</div>
-                    <div className="mt-1.5 text-[11px] text-neutral-600">{readLine}</div>
+                    <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-900 sm:text-[15px]">
+                      {msg}
+                    </div>
+                    <div className="mt-1.5 text-xs text-gray-600">{readLine}</div>
                   </div>
                 </div>
               );

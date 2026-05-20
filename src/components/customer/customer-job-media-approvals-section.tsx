@@ -24,6 +24,7 @@ import {
   jobMediaHasFlattenedAdminExport,
 } from "@/lib/job-media-types";
 import { CustomerApprovalFullscreenLightbox } from "@/components/customer/customer-approval-fullscreen-lightbox";
+import { JobNoteTextBlock } from "@/components/jobs/job-note-text-block";
 import {
   approvalStatusLabelCs,
   isJobMediaAwaitingCustomerApproval,
@@ -428,24 +429,22 @@ export function CustomerJobMediaApprovalsSection({
                   </div>
                   <p className="text-xs text-muted-foreground">{it.dateLine}</p>
                   {it.approval.approvalNoteFromAdmin ? (
-                    <div className="rounded-md bg-muted/60 px-2.5 py-2 text-sm">
-                      <span className="text-xs font-medium text-muted-foreground">Poznámka od firmy: </span>
+                    <JobNoteTextBlock variant="admin_request" label="Poznámka od firmy">
                       {it.approval.approvalNoteFromAdmin}
-                    </div>
+                    </JobNoteTextBlock>
                   ) : null}
                   {inferJobMediaItemType(it.raw as JobFolderImageDoc) !== "pdf" &&
                   !jobMediaHasFlattenedAdminExport(it.raw as JobFolderImageDoc) ? (
-                    <p className="text-xs text-amber-800 dark:text-amber-200/90">
+                    <JobNoteTextBlock variant="system" label="Systémová informace" dense>
                       U tohoto souboru není uložený anotovaný výstup z editoru — kóty se mohou
                       zobrazovat jen pokud jsou v datech zakázky; po uložení anotace v administraci
                       vznikne soubor s kótami (annotatedImageUrl).
-                    </p>
+                    </JobNoteTextBlock>
                   ) : null}
                   {it.approval.customerComment ? (
-                    <div className="rounded-md border border-amber-200/60 bg-amber-50/50 px-2.5 py-2 text-sm dark:border-amber-900/40 dark:bg-amber-950/30">
-                      <span className="text-xs font-medium">Vaše připomínka: </span>
+                    <JobNoteTextBlock variant="customer" label="Vaše připomínka">
                       {it.approval.customerComment}
-                    </div>
+                    </JobNoteTextBlock>
                   ) : null}
                   {readOnly ? (
                     <Button
@@ -549,10 +548,9 @@ export function CustomerJobMediaApprovalsSection({
                 <p className="text-sm text-white/70">Náhled není k dispozici.</p>
               ) : null}
               {lightbox.approval.approvalNoteFromAdmin ? (
-                <p className="text-sm text-white/85">
-                  <span className="font-medium text-white">Poznámka od firmy: </span>
+                <JobNoteTextBlock variant="admin_request" label="Poznámka od firmy" className="bg-white">
                   {lightbox.approval.approvalNoteFromAdmin}
-                </p>
+                </JobNoteTextBlock>
               ) : null}
               {readOnly ? null : lightboxCommentOpen ? (
                 <div className="space-y-2">

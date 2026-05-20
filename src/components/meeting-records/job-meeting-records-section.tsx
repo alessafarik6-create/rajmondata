@@ -220,7 +220,7 @@ export function JobMeetingRecordsSection(props: {
             </div>
           ) : null}
           {isIndexPending ? (
-            <p className="text-sm text-amber-800">
+            <p className="text-sm leading-relaxed text-gray-800">
               Připravuje se index ve Firestore — záznamy se mohou krátce nezobrazit. Po vytvoření indexu
               obnovte stránku.
             </p>
