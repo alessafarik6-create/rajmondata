@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { ExpandableNoteText } from "@/components/jobs/job-note-text-block";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
 import { formatCsDateTimeDot, safeTime } from "@/lib/date-safe";
@@ -337,9 +338,7 @@ export function JobCommentsThread(props: {
                       <span className="font-semibold text-gray-900">{author}</span>
                       <span>{sentAt}</span>
                     </div>
-                    <div className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-900 sm:text-[15px]">
-                      {msg}
-                    </div>
+                    <ExpandableNoteText text={msg} />
                     <div className="mt-1.5 text-xs text-gray-600">{readLine}</div>
                   </div>
                 </div>

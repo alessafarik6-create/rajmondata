@@ -121,7 +121,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
-import { JobNoteMetaLine, JobNoteTextBlock } from "@/components/jobs/job-note-text-block";
+import {
+  ExpandableNoteText,
+  JobNoteMetaLine,
+  JobNoteTextBlock,
+} from "@/components/jobs/job-note-text-block";
 import {
   Tooltip,
   TooltipContent,
@@ -537,13 +541,14 @@ function JobMediaFileCard({
           />
         ) : null}
         {note?.trim() ? (
-          <p
-            className="line-clamp-3 min-w-0 break-words text-xs leading-relaxed text-gray-900 sm:text-sm"
-            title={note.trim()}
-          >
-            <span className="font-medium text-gray-700">Poznámka: </span>
-            {note.trim()}
-          </p>
+          <div className="min-w-0 space-y-0.5">
+            <p className="text-xs font-medium text-gray-700 sm:text-sm">Poznámka</p>
+            <ExpandableNoteText
+              text={note.trim()}
+              dense
+              collapsedClassName="line-clamp-4"
+            />
+          </div>
         ) : null}
         {extraFooter ? (
           <div className="rounded-md border border-border/40 bg-muted/20 px-2 py-1.5">{extraFooter}</div>

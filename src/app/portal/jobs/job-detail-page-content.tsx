@@ -1594,7 +1594,7 @@ export function JobDetailPageContent({
   );
   /** Na mobilu/tabletu sbalená nápověda a legenda, aby zbytek editoru zůstal větší. */
   const [annotationHelpOpen, setAnnotationHelpOpen] = useState(false);
-  const [annotationLegendOpen, setAnnotationLegendOpen] = useState(true);
+  const [annotationLegendOpen, setAnnotationLegendOpen] = useState(false);
   /** Jeden zdroj pravdy: editor je otevřený právě tehdy, je-li vybrané médium k anotaci. */
   const editorOpen = Boolean(photoToEdit);
   const annotationReadOnly = employeeAnnotationShell
@@ -1832,8 +1832,6 @@ export function JobDetailPageContent({
     if (isAnnotEditorCompact) {
       setAnnotationLegendOpen(false);
       setAnnotationHelpOpen(false);
-    } else {
-      setAnnotationLegendOpen(true);
     }
   }, [editorOpen, isAnnotEditorCompact]);
 
@@ -7727,6 +7725,55 @@ export function JobDetailPageContent({
     annotationShapeLegendEntries.length > 0 ||
     annotationArrowLegendEntries.length > 0;
 
+  const annotationLegendScrollContent = useMemo(
+    () => (
+      <>
+        {annotationShapeLegendEntries.length ? (
+          <ul className="space-y-1.5 sm:space-y-2">
+            {annotationShapeLegendEntries.map((e) => (
+              <li
+                key={`leg-s-${e.legendNumber}-${e.label}-${e.widthMm}`}
+                className="border-l-2 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                style={{
+                  borderLeftColor:
+                    e.strokeHex && e.strokeHex.trim()
+                      ? e.strokeHex.trim()
+                      : "#fbbf24",
+                }}
+              >
+                {formatLegendEntryLine(e)}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {annotationArrowLegendEntries.length ? (
+          <div
+            className={
+              annotationShapeLegendEntries.length
+                ? "mt-3 border-t border-slate-600/80 pt-2"
+                : ""
+            }
+          >
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 sm:text-sm">
+              Poznámky / Šipky
+            </p>
+            <ul className="space-y-1.5 sm:space-y-2">
+              {annotationArrowLegendEntries.map((e) => (
+                <li
+                  key={`leg-a-${e.legendNumber}-${e.label}`}
+                  className="border-l-2 border-sky-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
+                >
+                  {formatLegendEntryLine(e)}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </>
+    ),
+    [annotationShapeLegendEntries, annotationArrowLegendEntries]
+  );
+
   const openEditJobDialog = useCallback(() => {
     if (!isAdmin) {
       toast({
@@ -8599,6 +8646,51 @@ export function JobDetailPageContent({
             </div>
 
             <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col gap-2">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col lg:flex-row">
+              {annotationLegendHasContent ? (
+                <aside
+                  className={cn(
+                    "hidden min-h-0 shrink-0 flex-col border-slate-600/80 bg-[#070d18] lg:flex",
+                    annotationLegendOpen
+                      ? "w-56 border-r"
+                      : "w-11 items-center border-r px-0.5 py-2"
+                  )}
+                >
+                  {annotationLegendOpen ? (
+                    <>
+                      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-600/80 px-2.5 py-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-200 sm:text-sm">
+                          Legenda
+                        </p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 shrink-0 px-2 text-[11px] text-slate-200 hover:bg-white/10"
+                          onClick={() => setAnnotationLegendOpen(false)}
+                        >
+                          Skrýt
+                        </Button>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 py-2 sm:px-3 sm:py-2.5">
+                        {annotationLegendScrollContent}
+                      </div>
+                    </>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      className="h-auto min-h-[5rem] w-full border border-amber-500/40 px-1 py-2 text-[10px] font-semibold leading-tight text-amber-100"
+                      onClick={() => setAnnotationLegendOpen(true)}
+                    >
+                      Legenda
+                    </Button>
+                  )}
+                </aside>
+              ) : null}
+
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             <div
               ref={annotationWheelCaptureRef}
               className={cn(
@@ -8693,100 +8785,46 @@ export function JobDetailPageContent({
                   </div>
                 </div>
               )}
-              {annotationLegendHasContent ? (
-                <>
-                  {isAnnotEditorCompact && !annotationLegendOpen ? (
-                    <div className="pointer-events-auto absolute bottom-[max(5rem,calc(env(safe-area-inset-bottom)+4.5rem))] left-1/2 z-20 max-w-[calc(100%-1rem)] -translate-x-1/2 lg:bottom-3">
+            </div>
+
+              {annotationLegendHasContent && isAnnotEditorCompact ? (
+                <div className="shrink-0 border-t border-slate-600/80 bg-[#070d18] lg:hidden">
+                  {annotationLegendOpen ? (
+                    <div className="flex max-h-[min(38dvh,340px)] min-h-0 flex-col">
+                      <div className="flex shrink-0 items-center justify-between gap-2 px-2.5 py-2">
+                        <p className="text-xs font-bold uppercase tracking-wide text-slate-200">
+                          Legenda
+                        </p>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 shrink-0 px-2 text-[11px] text-slate-200 hover:bg-white/10"
+                          onClick={() => setAnnotationLegendOpen(false)}
+                        >
+                          Skrýt
+                        </Button>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pb-2.5">
+                        {annotationLegendScrollContent}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="px-2 py-1.5">
                       <Button
                         type="button"
                         size="sm"
                         variant="secondary"
-                        className="h-8 border border-amber-500/40 bg-[#070d18] px-3 text-xs font-semibold text-amber-100 shadow-lg"
+                        className="h-8 w-full border border-amber-500/40 bg-[#070d18] text-xs font-semibold text-amber-100"
                         onClick={() => setAnnotationLegendOpen(true)}
                       >
                         Legenda
                       </Button>
                     </div>
-                  ) : null}
-                  {(!isAnnotEditorCompact || annotationLegendOpen) && (
-                    <div
-                      className={cn(
-                        "pointer-events-auto absolute left-1/2 z-10 w-[min(calc(100vw-0.75rem),36rem)] max-w-[calc(100%-0.5rem)] -translate-x-1/2",
-                        isAnnotEditorCompact
-                          ? "bottom-[max(5.25rem,calc(env(safe-area-inset-bottom)+4.75rem))] max-lg:bottom-[max(4.75rem,calc(env(safe-area-inset-bottom)+4.25rem))]"
-                          : "bottom-2"
-                      )}
-                    >
-                      <div
-                        className={cn(
-                          "overflow-y-auto overscroll-contain rounded-md border border-slate-600/80 bg-[#070d18] px-2.5 py-2 text-left shadow-2xl ring-1 ring-black/40 sm:px-3 sm:py-3",
-                          isAnnotEditorCompact
-                            ? "max-h-[min(42dvh,380px)]"
-                            : "max-h-[min(36dvh,320px)]"
-                        )}
-                      >
-                        <div className="mb-1.5 flex items-center justify-between gap-2">
-                          <p className="text-xs font-bold uppercase tracking-wide text-slate-200 sm:text-sm">
-                            Legenda
-                          </p>
-                          {isAnnotEditorCompact ? (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 shrink-0 px-2 text-[11px] text-slate-200 hover:bg-white/10"
-                              onClick={() => setAnnotationLegendOpen(false)}
-                            >
-                              Skrýt
-                            </Button>
-                          ) : null}
-                        </div>
-                        {annotationShapeLegendEntries.length ? (
-                          <ul className="space-y-1.5 sm:space-y-2">
-                            {annotationShapeLegendEntries.map((e) => (
-                              <li
-                                key={`leg-s-${e.legendNumber}-${e.label}-${e.widthMm}`}
-                                className="border-l-2 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
-                                style={{
-                                  borderLeftColor:
-                                    e.strokeHex && e.strokeHex.trim()
-                                      ? e.strokeHex.trim()
-                                      : "#fbbf24",
-                                }}
-                              >
-                                {formatLegendEntryLine(e)}
-                              </li>
-                            ))}
-                          </ul>
-                        ) : null}
-                        {annotationArrowLegendEntries.length ? (
-                          <div
-                            className={
-                              annotationShapeLegendEntries.length
-                                ? "mt-3 border-t border-slate-600/80 pt-2"
-                                : ""
-                            }
-                          >
-                            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-400 sm:text-sm">
-                              Poznámky / Šipky
-                            </p>
-                            <ul className="space-y-1.5 sm:space-y-2">
-                              {annotationArrowLegendEntries.map((e) => (
-                                <li
-                                  key={`leg-a-${e.legendNumber}-${e.label}`}
-                                  className="border-l-2 border-sky-400 pl-2 text-sm font-semibold leading-snug text-slate-50 sm:text-base"
-                                >
-                                  {formatLegendEntryLine(e)}
-                                </li>
-                              ))}
-                            </ul>
-                          </div>
-                        ) : null}
-                      </div>
-                    </div>
                   )}
-                </>
+                </div>
               ) : null}
+              </div>
             </div>
             </div>
 
