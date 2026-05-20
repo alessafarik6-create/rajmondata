@@ -33,8 +33,10 @@ import {
   INQUIRY_OFFER_STATUS_LABELS,
   formatInquiryOfferAttachmentLine,
   listInquiryOfferAttachments,
+  parseInquiryOfferFooterFromRecord,
   resolveInquiryOfferSendMeta,
 } from "@/lib/inquiry-offer-history";
+import { InquiryOfferFooterPreview } from "@/components/leads/inquiry-offer-footer-preview";
 import { contactTimestampToDate } from "@/lib/lead-contact-status";
 
 function formatSentAt(offer: InquiryOfferRecord): string {
@@ -69,6 +71,8 @@ export function LeadInquiryOfferDetailDialog(props: {
   const hasDetail = offer ? inquiryOfferHasFullDetail(offer) : false;
   const bodyText = offer ? getInquiryOfferBodyForDisplay(offer) : "";
   const meta = offer ? resolveInquiryOfferSendMeta(offer) : null;
+  const storedFooter = offer ? parseInquiryOfferFooterFromRecord(offer) : null;
+  const storedHtml = String(offer?.bodyHtml ?? "").trim();
 
   const copyBody = async () => {
     if (!bodyText.trim()) return;
@@ -152,16 +156,33 @@ export function LeadInquiryOfferDetailDialog(props: {
                   value={<p className="whitespace-pre-wrap">{offer.internalNote}</p>}
                 />
               ) : null}
+              {storedFooter ? (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                    Firemní podpis při odeslání
+                  </p>
+                  <InquiryOfferFooterPreview footer={storedFooter} />
+                </div>
+              ) : null}
               <div className="space-y-1.5">
                 <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
-                  Text nabídky / e-mailu
+                  Náhled e-mailu u zákazníka
                 </p>
-                {hasDetail ? (
+                {hasDetail && storedHtml.length > 80 ? (
+                  <div className="overflow-hidden rounded-md border border-slate-200 bg-white">
+                    <iframe
+                      title="Odeslaná nabídka"
+                      srcDoc={storedHtml}
+                      className="block h-[min(50vh,480px)] w-full max-w-full border-0"
+                      sandbox=""
+                    />
+                  </div>
+                ) : hasDetail ? (
                   <div className="max-w-full rounded-md border border-slate-200 bg-slate-50 p-3">
                     <p className="whitespace-pre-wrap break-words text-sm text-slate-800">{bodyText}</p>
                   </div>
                 ) : (
-                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  <p className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-gray-900">
                     {INQUIRY_OFFER_LEGACY_DETAIL_MESSAGE}
                   </p>
                 )}

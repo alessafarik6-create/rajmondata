@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useMemo, useState } from "react";
-import { Loader2, Mail, Save, X } from "lucide-react";
+import { Eye, Loader2, Mail, Save, X } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -39,7 +39,10 @@ import {
 } from "@/lib/inquiry-offer-pricing";
 import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
 import { InquiryOfferAttachmentsField } from "@/components/leads/inquiry-offer-attachments-field";
+import { InquiryOfferFooterPreview } from "@/components/leads/inquiry-offer-footer-preview";
+import { InquiryOfferEmailPreviewDialog } from "@/components/leads/inquiry-offer-email-preview-dialog";
 import type { InquiryOfferReuseInitial } from "@/lib/inquiry-offer-history";
+import type { InquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
 
 export type InquiryOfferSentInfo = {
   offerId?: string;
@@ -109,6 +112,9 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [offerFooter, setOfferFooter] = useState<InquiryOfferFooterData | null>(null);
+  const [footerLoading, setFooterLoading] = useState(false);
+  const [emailPreviewOpen, setEmailPreviewOpen] = useState(false);
 
   const activeTemplates = useMemo(
     () => props.templates.filter((t) => t.active !== false),
@@ -200,43 +206,60 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
     if (!props.open || !user || !props.companyId) {
       setSendPreview(null);
       setPreviewError(null);
+      setOfferFooter(null);
       return;
     }
     let cancelled = false;
     setPreviewLoading(true);
+    setFooterLoading(true);
     setPreviewError(null);
     void (async () => {
       try {
         const token = await user.getIdToken();
         const res = await fetch(
-          `/api/company/inquiry-offers/preview?companyId=${encodeURIComponent(props.companyId)}`,
+          `/api/company/inquiry-offers/footer-context?companyId=${encodeURIComponent(props.companyId)}`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
         const data = (await res.json()) as {
           ok?: boolean;
           error?: string;
-          preview?: {
+          footer?: InquiryOfferFooterData;
+          sendPreview?: {
             methodLabel: string;
             fromHeader: string;
             replyTo: string;
             notice: string | null;
-          };
+          } | null;
+          sendPreviewError?: string | null;
         };
         if (cancelled) return;
-        if (res.ok && data.ok && data.preview?.replyTo) {
-          setSendPreview(data.preview);
-          setPreviewError(null);
+        if (res.ok && data.ok) {
+          setOfferFooter(data.footer ?? null);
+          if (data.sendPreview?.replyTo) {
+            setSendPreview(data.sendPreview);
+            setPreviewError(null);
+          } else {
+            setSendPreview(null);
+            setPreviewError(
+              data.sendPreviewError ?? data.error ?? INQUIRY_OFFER_MISSING_REPLY_ERROR
+            );
+          }
         } else {
+          setOfferFooter(null);
           setSendPreview(null);
           setPreviewError(data.error ?? INQUIRY_OFFER_MISSING_REPLY_ERROR);
         }
       } catch {
         if (!cancelled) {
+          setOfferFooter(null);
           setSendPreview(null);
           setPreviewError(INQUIRY_OFFER_MISSING_REPLY_ERROR);
         }
       } finally {
-        if (!cancelled) setPreviewLoading(false);
+        if (!cancelled) {
+          setPreviewLoading(false);
+          setFooterLoading(false);
+        }
       }
     })();
     return () => {
@@ -540,6 +563,10 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
               />
             </div>
 
+            <div className="px-4 py-3 sm:px-6">
+              <InquiryOfferFooterPreview footer={offerFooter} loading={footerLoading} />
+            </div>
+
             <ComposerRow label="Interní poznámka">
               <Textarea
                 rows={2}
@@ -574,7 +601,7 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
           </div>
         </div>
 
-        <div className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] sm:flex-row sm:justify-end sm:px-6">
+        <div className="flex shrink-0 flex-col gap-2 border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.06)] sm:flex-row sm:flex-wrap sm:justify-end sm:px-6">
           <Button
             type="button"
             variant="outline"
@@ -582,6 +609,16 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
             onClick={() => props.onOpenChange(false)}
           >
             Zrušit
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="min-h-11 w-full gap-2 sm:w-auto"
+            disabled={!subject.trim() || !bodyText.trim()}
+            onClick={() => setEmailPreviewOpen(true)}
+          >
+            <Eye className="h-4 w-4" />
+            Náhled nabídky
           </Button>
           <Button
             type="button"
@@ -597,12 +634,33 @@ export function InquiryOfferComposer(props: InquiryOfferComposerProps) {
             type="button"
             className="min-h-11 w-full gap-2 bg-orange-600 hover:bg-orange-700 sm:w-auto"
             disabled={sending || savingDraft || previewLoading || Boolean(previewError)}
-            onClick={() => void postOffer("send")}
+            onClick={() => setEmailPreviewOpen(true)}
           >
             {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
             Odeslat e-mailem
           </Button>
         </div>
+
+        <InquiryOfferEmailPreviewDialog
+          open={emailPreviewOpen}
+          onOpenChange={setEmailPreviewOpen}
+          companyId={props.companyId}
+          payload={{
+            to,
+            subject,
+            bodyText,
+            priceNet: pricing.priceNet,
+            vatRate: pricing.vatRate,
+            attachments,
+          }}
+          sending={sending}
+          sendDisabled={previewLoading || Boolean(previewError)}
+          onEdit={() => setEmailPreviewOpen(false)}
+          onSend={() => {
+            setEmailPreviewOpen(false);
+            void postOffer("send");
+          }}
+        />
       </DialogContent>
     </Dialog>
   );

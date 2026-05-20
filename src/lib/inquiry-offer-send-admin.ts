@@ -44,6 +44,11 @@ import {
   buildInquiryOfferSendPlan,
   type InquiryOfferSendPlan,
 } from "@/lib/inquiry-offer-send-plan";
+import {
+  buildInquiryOfferFooterData,
+  inquiryOfferAuthorFromUserDoc,
+  type InquiryOfferFooterData,
+} from "@/lib/inquiry-offer-footer";
 
 export type SendInquiryOfferEmailParams = {
   companyId: string;
@@ -283,15 +288,22 @@ export async function sendInquiryOfferEmail(
     replyTo: plan.replyTo,
   });
 
+  const authorSnap = await db.collection("users").doc(params.userId).get();
+  const author = inquiryOfferAuthorFromUserDoc(
+    params.userId,
+    (authorSnap.data() ?? {}) as Record<string, unknown>
+  );
+  const offerFooter: InquiryOfferFooterData = buildInquiryOfferFooterData({
+    company,
+    identity,
+    author,
+  });
+
   const bodyInnerHtml = plainTextToHtmlParagraphs(bodyPlain);
   const html = buildInquiryOfferEmailHtml({
     bodyHtmlContent: bodyInnerHtml,
     organizationName: plan.fromDisplayName,
-    logoUrl: String(company.organizationLogoUrl ?? "").trim() || null,
-    signatureHtml: identity.emailSignatureHtml,
-    phone: identity.phone ?? (String(company.phone ?? "").trim() || null),
-    web: identity.web ?? (String(company.web ?? "").trim() || null),
-    contactEmail: plan.replyTo,
+    footer: offerFooter,
   });
 
   const subject = params.subject.trim();
@@ -426,6 +438,7 @@ export async function sendInquiryOfferEmail(
     ...buildInquiryOfferHistoryFields(plan),
     offerCopyTo: offerCopyDelivery?.emails ?? [],
     offerCopyMode: offerCopyModeUsed ?? offerCopyDelivery?.mode ?? null,
+    offerFooter,
     messageId,
     threadId,
     sentAt: FieldValue.serverTimestamp(),
@@ -488,6 +501,13 @@ export async function saveInquiryOfferDraft(
   const bodyPlain = userBodyPlain
     ? buildInquiryOfferSentBodyPlain(userBodyPlain, pricing)
     : "";
+  const authorSnap = await db.collection("users").doc(params.userId).get();
+  const author = inquiryOfferAuthorFromUserDoc(
+    params.userId,
+    (authorSnap.data() ?? {}) as Record<string, unknown>
+  );
+  const offerFooter = buildInquiryOfferFooterData({ company, identity, author });
+
   const bodyInnerHtml = bodyPlain ? plainTextToHtmlParagraphs(bodyPlain) : "";
   const html =
     params.bodyHtml?.trim() ||
@@ -495,11 +515,7 @@ export async function saveInquiryOfferDraft(
       ? buildInquiryOfferEmailHtml({
           bodyHtmlContent: bodyInnerHtml,
           organizationName: plan.fromDisplayName,
-          logoUrl: String(company.organizationLogoUrl ?? "").trim() || null,
-          signatureHtml: identity.emailSignatureHtml,
-          phone: identity.phone ?? (String(company.phone ?? "").trim() || null),
-          web: identity.web ?? (String(company.web ?? "").trim() || null),
-          contactEmail: plan.replyTo,
+          footer: offerFooter,
         })
       : "");
 
@@ -536,6 +552,7 @@ export async function saveInquiryOfferDraft(
     sentByEmail: params.sentByEmail ?? null,
     sentByName: params.sentByName ?? null,
     ...(plan ? buildInquiryOfferHistoryFields(plan) : {}),
+    offerFooter,
     threadId: buildInquiryOfferThreadId(params.companyId, params.leadKey),
     updatedAt: FieldValue.serverTimestamp(),
   };

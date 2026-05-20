@@ -4,6 +4,10 @@
 
 import type { LeadImportRow } from "@/lib/lead-import-parse";
 import type { InquiryOfferAttachmentRef } from "@/lib/inquiry-offer-attachments";
+import {
+  buildInquiryOfferFooterHtml,
+  type InquiryOfferFooterData,
+} from "@/lib/inquiry-offer-footer";
 import type { InquiryVatRate } from "@/lib/inquiry-offer-pricing";
 import { isExcludedInquiryReplyToEmail } from "@/lib/inquiry-offer-resend";
 
@@ -115,6 +119,8 @@ export type InquiryOfferRecord = {
   /** Adresy kopie nabídky (BCC/CC). */
   offerCopyTo?: string[] | null;
   offerCopyMode?: "bcc" | "cc" | null;
+  /** Snímek patičky / podpisu při odeslání. */
+  offerFooter?: InquiryOfferFooterData | null;
   createdAt?: unknown;
   updatedAt?: unknown;
 };
@@ -340,37 +346,21 @@ export function stripHtmlToPlain(html: string): string {
 export function buildInquiryOfferEmailHtml(params: {
   bodyHtmlContent: string;
   organizationName: string;
+  /** Firemní patička s IČO, sídlem, kontakty a autorem. */
+  footer: import("@/lib/inquiry-offer-footer").InquiryOfferFooterData;
+  /** @deprecated použijte footer — ponecháno pro staré volání */
   logoUrl?: string | null;
   signatureHtml?: string | null;
   phone?: string | null;
   web?: string | null;
   contactEmail?: string | null;
 }): string {
-  const logo = params.logoUrl?.trim();
-  const logoBlock = logo
-    ? `<p style="margin:0 0 20px;text-align:center;"><img src="${escapeHtml(logo)}" alt="${escapeHtml(params.organizationName)}" style="max-width:200px;max-height:72px;height:auto;width:auto;" /></p>`
-    : `<p style="margin:0 0 8px;font-size:18px;font-weight:600;color:#0f172a;">${escapeHtml(params.organizationName)}</p>`;
+  const headerLogo = params.footer.logoUrl?.trim() || params.logoUrl?.trim();
+  const headerBlock = headerLogo
+    ? `<p style="margin:0 0 16px;text-align:left;"><img src="${escapeHtml(headerLogo)}" alt="${escapeHtml(params.organizationName)}" style="max-width:200px;max-height:72px;height:auto;width:auto;" /></p>`
+    : `<p style="margin:0 0 12px;font-size:17px;font-weight:600;color:#0f172a;">${escapeHtml(params.organizationName)}</p>`;
 
-  const contactLines: string[] = [];
-  if (params.phone?.trim()) contactLines.push(escapeHtml(params.phone.trim()));
-  if (params.web?.trim()) {
-    const w = params.web.trim();
-    const href = w.startsWith("http") ? w : `https://${w}`;
-    contactLines.push(
-      `<a href="${escapeHtml(href)}" style="color:#c2410c;">${escapeHtml(w)}</a>`
-    );
-  }
-  if (params.contactEmail?.trim()) {
-    contactLines.push(
-      `<a href="mailto:${escapeHtml(params.contactEmail.trim())}" style="color:#c2410c;">${escapeHtml(params.contactEmail.trim())}</a>`
-    );
-  }
-
-  const signature =
-    params.signatureHtml?.trim() ||
-    (contactLines.length
-      ? `<p style="margin:0;font-size:14px;color:#334155;line-height:1.5;">${contactLines.join("<br />")}</p>`
-      : "");
+  const footerInner = buildInquiryOfferFooterHtml(params.footer);
 
   return `
 <!DOCTYPE html>
@@ -380,15 +370,14 @@ export function buildInquiryOfferEmailHtml(params: {
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f1f5f9;padding:16px 8px;">
     <tr><td align="center">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e2e8f0;">
-        <tr><td style="padding:24px 20px 8px;font-family:system-ui,Segoe UI,sans-serif;">
-          ${logoBlock}
+        <tr><td style="padding:20px 20px 4px;font-family:system-ui,Segoe UI,sans-serif;">
+          ${headerBlock}
         </td></tr>
         <tr><td style="padding:8px 20px 16px;font-family:system-ui,Segoe UI,sans-serif;font-size:15px;line-height:1.55;color:#0f172a;">
           ${params.bodyHtmlContent}
         </td></tr>
-        <tr><td style="padding:16px 20px 24px;border-top:1px solid #e2e8f0;font-family:system-ui,Segoe UI,sans-serif;">
-          <p style="margin:0 0 8px;font-size:13px;font-weight:600;color:#64748b;">${escapeHtml(params.organizationName)}</p>
-          ${signature}
+        <tr><td style="padding:16px 20px 22px;border-top:1px solid #e2e8f0;font-family:system-ui,Segoe UI,sans-serif;">
+          ${footerInner}
         </td></tr>
       </table>
     </td></tr>

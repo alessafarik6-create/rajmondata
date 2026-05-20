@@ -3,6 +3,7 @@
  */
 
 import type { InquiryOfferRecord } from "@/lib/inquiry-offer-email";
+import type { InquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
 import { stripHtmlToPlain } from "@/lib/inquiry-offer-email";
 import { INQUIRY_OFFER_SEND_METHOD_LABELS } from "@/lib/inquiry-offer-send-plan";
 import type { InquiryOfferSendMethod } from "@/lib/inquiry-offer-email";
@@ -110,6 +111,14 @@ export type InquiryOfferReuseInitial = {
   customerAddress?: string;
   attachments?: InquiryOfferAttachmentRef[];
 };
+
+export function parseInquiryOfferFooterFromRecord(
+  offer: InquiryOfferRecord
+): InquiryOfferFooterData | null {
+  const raw = offer.offerFooter;
+  if (!raw || typeof raw !== "object") return null;
+  return raw as InquiryOfferFooterData;
+}
 
 export function inquiryOfferToReuseInitial(offer: InquiryOfferRecord): InquiryOfferReuseInitial {
   return {
