@@ -7184,7 +7184,7 @@ export function JobDetailPageContent({
           photoToEdit?.id ||
           "vykres").trim() || "vykres";
       const name = isPdf ? `${rawName}-str${pdfPage}` : rawName;
-      downloadAnnotatedCompositeAsPdf(built.composite, name);
+      await downloadAnnotatedCompositeAsPdf(built, name);
     } catch (e) {
       toast({
         variant: "destructive",
@@ -7245,7 +7245,7 @@ export function JobDetailPageContent({
         annotations,
         colorToHex,
       });
-      printAnnotatedCompositeCanvas(built.composite, "Anotovaný výkres");
+      await printAnnotatedCompositeCanvas(built, "Anotovaný výkres");
     } catch (e) {
       toast({
         variant: "destructive",

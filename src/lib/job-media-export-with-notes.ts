@@ -14,8 +14,16 @@ import {
   readAnnotationPayloadFromPhotoDoc,
   type JobPhotoAnnotation,
 } from "@/lib/job-photo-annotations";
-import { buildAnnotatedCompositeCanvas } from "@/lib/job-photo-annotation-export-composite";
-import { scaleCanvasMaxSide } from "@/lib/job-photo-annotation-export-composite";
+import {
+  buildAnnotatedCompositeCanvas,
+  scaleCanvasMaxSide,
+  type AnnotatedCompositeResult,
+} from "@/lib/job-photo-annotation-export-composite";
+import {
+  ANNOTATED_PRINT_PAGE_CSS,
+  buildAnnotatedPrintDocumentBody,
+  layoutAnnotatedDrawingOnPdf,
+} from "@/lib/job-photo-annotation-export-pdf-print";
 import {
   getJobMediaPreviewUrl,
   inferJobMediaItemType,
@@ -225,6 +233,7 @@ html,body{margin:0;padding:0;background:#fff;color:#111;font-family:system-ui,-a
 .thread li{margin:0 0 12px;padding:0 0 12px;border-bottom:1px solid #e2e8f0;}
 .thread-head{font-size:12px;color:#475569;margin:0 0 4px;}
 .office-msg{padding:8mm;background:#f8fafc;border:1px solid #e2e8f0;border-radius:4px;}
+.page-break-before{page-break-before:always;}
 @media print{
   @page{margin:10mm;size:auto;}
   body{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
@@ -273,13 +282,17 @@ function readAnnotationsForExport(
 
 async function resolveExportVisualCanvas(
   input: JobMediaNotesExportInput
-): Promise<{ canvas: HTMLCanvasElement | null; pdfPageImages: string[] }> {
+): Promise<{
+  canvas: HTMLCanvasElement | null;
+  pdfPageImages: string[];
+  annotatedBuilt: AnnotatedCompositeResult | null;
+}> {
   const url = input.openUrl.trim();
   const kind = input.kind;
   const fileDoc = input.fileDoc;
 
   if (kind === "office" || kind === "csv") {
-    return { canvas: null, pdfPageImages: [] };
+    return { canvas: null, pdfPageImages: [], annotatedBuilt: null };
   }
 
   const hasFlattened = jobMediaHasFlattenedAdminExport(
@@ -301,7 +314,11 @@ async function resolveExportVisualCanvas(
         annotations,
         colorToHex: defaultHexForDimensionColor,
       });
-      return { canvas: built.composite, pdfPageImages: [] };
+      return {
+        canvas: built.drawingCanvas,
+        pdfPageImages: [],
+        annotatedBuilt: built,
+      };
     }
     const c = document.createElement("canvas");
     c.width = w;
@@ -311,7 +328,7 @@ async function resolveExportVisualCanvas(
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, w, h);
     ctx.drawImage(img, 0, 0, w, h);
-    return { canvas: c, pdfPageImages: [] };
+    return { canvas: c, pdfPageImages: [], annotatedBuilt: null };
   }
 
   if (kind === "pdf") {
@@ -351,7 +368,11 @@ async function resolveExportVisualCanvas(
             restPages.push(URL.createObjectURL(b));
           }
         }
-        return { canvas: built.composite, pdfPageImages: restPages };
+        return {
+          canvas: built.drawingCanvas,
+          pdfPageImages: restPages,
+          annotatedBuilt: built,
+        };
       }
 
       const blobs = await renderPdfPagesToPngBlobs(
@@ -370,13 +391,13 @@ async function resolveExportVisualCanvas(
           })
         );
       }
-      return { canvas: null, pdfPageImages: dataUrls };
+      return { canvas: null, pdfPageImages: dataUrls, annotatedBuilt: null };
     } finally {
       await pdf?.destroy?.();
     }
   }
 
-  return { canvas: null, pdfPageImages: [] };
+  return { canvas: null, pdfPageImages: [], annotatedBuilt: null };
 }
 
 function addCanvasToPdfPage(
@@ -505,7 +526,34 @@ export async function exportJobMediaWithNotesPdf(
 
   let doc: jsPDF | null = null;
 
-  if (visual.canvas) {
+  if (visual.annotatedBuilt) {
+    const d = visual.annotatedBuilt.drawingCanvas;
+    const isLandscape = d.width >= d.height;
+    doc = new jsPDF({
+      orientation: isLandscape ? "landscape" : "portrait",
+      unit: "mm",
+      format: "a4",
+    });
+    await layoutAnnotatedDrawingOnPdf(doc, visual.annotatedBuilt);
+    if (visual.pdfPageImages.length > 0) {
+      for (let i = 0; i < visual.pdfPageImages.length; i++) {
+        const dataUrl = visual.pdfPageImages[i]!;
+        const img = await loadHtmlImage(dataUrl);
+        const orient =
+          (img.naturalWidth || img.width) >= (img.naturalHeight || img.height)
+            ? "landscape"
+            : "portrait";
+        doc.addPage(orient);
+        addImageDataUrlToPdfPage(
+          doc,
+          dataUrl,
+          img.naturalWidth || img.width,
+          img.naturalHeight || img.height,
+          marginMm
+        );
+      }
+    }
+  } else if (visual.canvas) {
     const isLandscape = visual.canvas.width >= visual.canvas.height;
     doc = new jsPDF({
       orientation: isLandscape ? "landscape" : "portrait",
@@ -580,8 +628,18 @@ export async function printJobMediaWithNotes(
   const visual = await resolveExportVisualCanvas(input);
 
   let docHtml = "";
+  let extraPrintCss = "";
   if (input.kind === "office" || input.kind === "csv") {
     docHtml = `<div class="office-msg"><p><strong>${escapeHtml(bundle.title)}</strong> — ${input.kind === "office" ? "Office dokument" : "CSV soubor"}.</p><p class="meta">Pro tisk celého souboru použijte „Otevřít v novém okně“. Níže jsou poznámky k tomuto souboru.</p></div>`;
+  } else if (visual.annotatedBuilt) {
+    const built = buildAnnotatedPrintDocumentBody(visual.annotatedBuilt);
+    docHtml = built.bodyInner;
+    extraPrintCss = `@media print{${built.pageSizeCss}}`;
+    if (visual.pdfPageImages.length) {
+      docHtml += `<div class="doc pdf-pages">${visual.pdfPageImages
+        .map((u) => `<img src="${u}" alt="" />`)
+        .join("")}</div>`;
+    }
   } else if (visual.canvas) {
     const dataUrl = scaleCanvasMaxSide(visual.canvas, 5600).toDataURL("image/png");
     docHtml = `<div class="doc"><img src="${dataUrl}" alt="" /></div>`;
@@ -598,7 +656,7 @@ export async function printJobMediaWithNotes(
     throw new Error("Prohlížeč zablokoval okno — povolte vyskakovací okna pro tisk.");
   }
 
-  const html = `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><title>${escapeHtml(bundle.title)} — tisk</title><style>${PRINT_CSS}</style></head><body><div class="wrap">${docHtml}<div class="notes">${notesHtml}</div></div><script>
+  const html = `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><title>${escapeHtml(bundle.title)} — tisk</title><style>${ANNOTATED_PRINT_PAGE_CSS}${PRINT_CSS}${extraPrintCss}</style></head><body><div class="wrap">${docHtml}<div class="notes page-break-before">${notesHtml}</div></div><script>
 (function(){
   function doPrint(){ try { window.focus(); window.print(); } catch(e) {} }
   var imgs = document.images;

@@ -26,6 +26,171 @@ export function formatLegendEntryLine(e: AnnotationLegendEntry): string {
   return s;
 }
 
+function truncateLegendText(text: string, maxLen: number): string {
+  const t = text.trim();
+  if (t.length <= maxLen) return t;
+  return `${t.slice(0, Math.max(0, maxLen - 1)).trim()}…`;
+}
+
+/** Kompaktní řádek pro tisk / PDF — kratší popisy, zachované číslování. */
+export function formatLegendEntryLineForExport(e: AnnotationLegendEntry): string {
+  if (e.arrowNote) {
+    return `${e.legendNumber} – ${truncateLegendText((e.label || "").trim(), 90)}`;
+  }
+  let s = `${e.legendNumber} – ${truncateLegendText((e.label || "").trim(), 48)}, ${e.widthMm} × ${e.heightMm} mm`;
+  const ld = e.legendDescription?.trim();
+  if (ld) s += `, ${truncateLegendText(ld, 70)}`;
+  const nt = e.note?.trim();
+  if (nt) s += ` — ${truncateLegendText(nt, 60)}`;
+  return s;
+}
+
+export type LegendPanelStyle = "export-light" | "editor-dark";
+
+const LEGEND_PANEL_STYLES: Record<
+  LegendPanelStyle,
+  {
+    bg: string;
+    border: string;
+    titleColor: string;
+    bodyColor: string;
+    subColor: string;
+    titleFont: string;
+    bodyFont: string;
+    subFont: string;
+    pad: number;
+    lineH: number;
+    titleH: number;
+    subGap: number;
+  }
+> = {
+  "export-light": {
+    bg: "#ffffff",
+    border: "#cbd5e1",
+    titleColor: "#0f172a",
+    bodyColor: "#334155",
+    subColor: "#64748b",
+    titleFont: "700 11px ui-sans-serif, system-ui, sans-serif",
+    bodyFont: "500 10px ui-sans-serif, system-ui, sans-serif",
+    subFont: "600 9px ui-sans-serif, system-ui, sans-serif",
+    pad: 8,
+    lineH: 13,
+    titleH: 16,
+    subGap: 6,
+  },
+  "editor-dark": {
+    bg: "#0b1220",
+    border: "#334155",
+    titleColor: "#f8fafc",
+    bodyColor: "#e2e8f0",
+    subColor: "#94a3b8",
+    titleFont: "700 11px ui-sans-serif, system-ui, sans-serif",
+    bodyFont: "500 10px ui-sans-serif, system-ui, sans-serif",
+    subFont: "600 9px ui-sans-serif, system-ui, sans-serif",
+    pad: 8,
+    lineH: 13,
+    titleH: 16,
+    subGap: 6,
+  },
+};
+
+function countWrappedLinesCompact(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxW: number,
+  font: string
+): number {
+  ctx.save();
+  ctx.font = font;
+  const n = countWrappedLines(ctx, text, maxW);
+  ctx.restore();
+  return n;
+}
+
+/** Výška kompaktního panelu legendy (úzký sloupec nebo spodní pruh). */
+export function estimateLegendPanelHeight(
+  ctx: CanvasRenderingContext2D,
+  entries: AnnotationLegendEntry[],
+  panelWidth: number,
+  style: LegendPanelStyle = "export-light"
+): number {
+  if (!entries.length) return 0;
+  const st = LEGEND_PANEL_STYLES[style];
+  const innerW = Math.max(60, panelWidth - st.pad * 2);
+  const shapes = entries.filter((e) => !e.arrowNote);
+  const arrows = entries.filter((e) => e.arrowNote);
+  let lines = 0;
+  lines += countWrappedLinesCompact(ctx, "Legenda", innerW, st.titleFont);
+  for (const e of shapes) {
+    lines += countWrappedLinesCompact(
+      ctx,
+      formatLegendEntryLineForExport(e),
+      innerW,
+      st.bodyFont
+    );
+  }
+  if (arrows.length) {
+    lines += countWrappedLinesCompact(ctx, "Poznámky / Šipky", innerW, st.subFont);
+    for (const e of arrows) {
+      lines += countWrappedLinesCompact(
+        ctx,
+        formatLegendEntryLineForExport(e),
+        innerW,
+        st.bodyFont
+      );
+    }
+  }
+  return st.pad * 2 + st.titleH + lines * st.lineH + (arrows.length ? st.subGap : 0);
+}
+
+export function drawLegendPanel(
+  ctx: CanvasRenderingContext2D,
+  entries: AnnotationLegendEntry[],
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  style: LegendPanelStyle = "export-light"
+): void {
+  if (!entries.length) return;
+  const st = LEGEND_PANEL_STYLES[style];
+  ctx.save();
+  ctx.fillStyle = st.bg;
+  ctx.fillRect(x, y, width, height);
+  ctx.strokeStyle = st.border;
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, width - 1, height - 1);
+  const innerX = x + st.pad;
+  const innerW = Math.max(40, width - st.pad * 2);
+  let cy = y + st.pad + 10;
+  ctx.fillStyle = st.titleColor;
+  ctx.font = st.titleFont;
+  wrapFillText(ctx, "Legenda", innerX, cy, innerW, st.lineH);
+  cy += st.titleH;
+  const shapes = entries.filter((e) => !e.arrowNote);
+  const arrows = entries.filter((e) => e.arrowNote);
+  ctx.font = st.bodyFont;
+  ctx.fillStyle = st.bodyColor;
+  for (const e of shapes) {
+    wrapFillText(ctx, formatLegendEntryLineForExport(e), innerX, cy, innerW, st.lineH);
+    cy += st.lineH;
+  }
+  if (arrows.length) {
+    cy += st.subGap;
+    ctx.fillStyle = st.subColor;
+    ctx.font = st.subFont;
+    wrapFillText(ctx, "Poznámky / Šipky", innerX, cy, innerW, st.lineH);
+    cy += st.lineH;
+    ctx.font = st.bodyFont;
+    ctx.fillStyle = st.bodyColor;
+    for (const e of arrows) {
+      wrapFillText(ctx, formatLegendEntryLineForExport(e), innerX, cy, innerW, st.lineH);
+      cy += st.lineH;
+    }
+  }
+  ctx.restore();
+}
+
 export function buildLegendFromShapeLabels(
   items: JobPhotoShapeLabelAnnotation[]
 ): AnnotationLegendEntry[] {

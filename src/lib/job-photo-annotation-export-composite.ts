@@ -1,12 +1,13 @@
 /**
- * Skládá podklad (fotka / stránka PDF ve scale 1) + anotace + legenda do jednoho canvasu.
- * Stejná logika jako při ukládání anotovaného PNG v editoru zakázky.
+ * Skládá podklad (fotka / stránka PDF ve scale 1) + anotace + legenda do exportu.
+ * Priorita: maximální čitelnost výkresu — legenda úzký panel vpravo nebo samostatná stránka (PDF).
  */
 
 import { drawNoteAnnotationOnCanvas } from "@/lib/job-photo-annotation-canvas";
 import { getScaleAwareSizes } from "@/lib/job-photo-annotation-ui-helpers";
 import {
   buildArrowNoteLegendEntries,
+  type AnnotationLegendEntry,
   type JobPhotoAnnotation,
   type JobPhotoArrowNoteAnnotation,
   type JobPhotoDimensionAnnotation,
@@ -16,13 +17,19 @@ import {
 } from "@/lib/job-photo-annotations";
 import {
   buildLegendFromShapeLabels,
-  drawLegendStrip,
+  drawLegendPanel,
   drawShapeLabelOnCanvas,
-  estimateLegendStripHeight,
+  estimateLegendPanelHeight,
 } from "@/lib/job-photo-shape-label";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 
 export type AnnotationColorToHex = (color: JobPhotoAnnotation["color"]) => string;
+
+const LEGEND_GAP_PX = 6;
+const SIDEBAR_MIN_W = 120;
+const SIDEBAR_MAX_W = 200;
+const SIDEBAR_WIDTH_RATIO = 0.18;
+const MAX_BOTTOM_LEGEND_RATIO = 0.2;
 
 function drawAnnotationsOnExportCanvas(
   targetCtx: CanvasRenderingContext2D,
@@ -187,18 +194,99 @@ function drawAnnotationsOnExportCanvas(
   });
 }
 
+function collectLegendEntries(
+  annotations: JobPhotoAnnotation[]
+): AnnotationLegendEntry[] {
+  const legendShapes = annotations.filter(
+    (a): a is JobPhotoShapeLabelAnnotation => a.type === "shapeLabel"
+  );
+  return [
+    ...buildLegendFromShapeLabels(legendShapes),
+    ...buildArrowNoteLegendEntries(annotations),
+  ];
+}
+
+export type LegendLayoutMode = "none" | "sidebar" | "bottom" | "separate";
+
+/**
+ * Sestaví rastr: výkres + legenda (sidebar / kompaktní spodek) nebo jen výkres (dlouhá legenda → PDF stránky).
+ */
+export function assembleDrawingWithLegendLayout(
+  drawing: HTMLCanvasElement,
+  entries: AnnotationLegendEntry[],
+  measureCtx: CanvasRenderingContext2D
+): { composite: HTMLCanvasElement; layout: LegendLayoutMode } {
+  if (!entries.length) {
+    return { composite: drawing, layout: "none" };
+  }
+
+  const docW = drawing.width;
+  const docH = drawing.height;
+  const isLandscape = docW >= docH;
+  const sidebarW = Math.min(
+    SIDEBAR_MAX_W,
+    Math.max(SIDEBAR_MIN_W, Math.round(docW * SIDEBAR_WIDTH_RATIO))
+  );
+  const sidebarH = estimateLegendPanelHeight(measureCtx, entries, sidebarW, "export-light");
+
+  if (isLandscape && sidebarH > 0 && sidebarH <= docH) {
+    const merged = document.createElement("canvas");
+    merged.width = docW + LEGEND_GAP_PX + sidebarW;
+    merged.height = docH;
+    const mctx = merged.getContext("2d");
+    if (mctx) {
+      mctx.fillStyle = "#ffffff";
+      mctx.fillRect(0, 0, merged.width, merged.height);
+      mctx.drawImage(drawing, 0, 0);
+      drawLegendPanel(
+        mctx,
+        entries,
+        docW + LEGEND_GAP_PX,
+        0,
+        sidebarW,
+        docH,
+        "export-light"
+      );
+      return { composite: merged, layout: "sidebar" };
+    }
+  }
+
+  const bottomH = estimateLegendPanelHeight(measureCtx, entries, docW, "export-light");
+  if (
+    !isLandscape &&
+    bottomH > 0 &&
+    bottomH <= docH * MAX_BOTTOM_LEGEND_RATIO
+  ) {
+    const merged = document.createElement("canvas");
+    merged.width = docW;
+    merged.height = docH + LEGEND_GAP_PX + bottomH;
+    const mctx = merged.getContext("2d");
+    if (mctx) {
+      mctx.fillStyle = "#ffffff";
+      mctx.fillRect(0, 0, merged.width, merged.height);
+      mctx.drawImage(drawing, 0, 0);
+      drawLegendPanel(mctx, entries, 0, docH + LEGEND_GAP_PX, docW, bottomH, "export-light");
+      return { composite: merged, layout: "bottom" };
+    }
+  }
+
+  return { composite: drawing, layout: "separate" };
+}
+
 export type AnnotatedCompositeResult = {
-  /** Celý rastr včetně legendy pod výkresem (pokud existuje). */
+  /** Výkres s anotacemi (bez legendy). */
+  drawingCanvas: HTMLCanvasElement;
+  /** Rastr pro uložení PNG — výkres + legenda vedle/pod, nebo jen výkres. */
   composite: HTMLCanvasElement;
-  /** Šířka/výška souřadnic dokumentu bez pruhu legendy — pro serializaci anotací. */
   documentWidth: number;
   documentHeight: number;
+  legendEntries: AnnotationLegendEntry[];
+  legendLayout: LegendLayoutMode;
 };
 
 export async function buildAnnotatedCompositeCanvas(params: {
   mode: "pdf" | "image";
   pdfDocument: PDFDocumentProxy | null;
-  /** 1-based index stránky (stejně jako `pdfPage` v editoru) */
   pdfPageOneBased: number;
   imageElement: HTMLImageElement | null;
   annotations: JobPhotoAnnotation[];
@@ -237,35 +325,20 @@ export async function buildAnnotatedCompositeCanvas(params: {
 
   drawAnnotationsOnExportCanvas(ctx, exportCanvas, annotations, colorToHex);
 
-  const legendShapes = annotations.filter(
-    (a): a is JobPhotoShapeLabelAnnotation => a.type === "shapeLabel"
+  const leg = collectLegendEntries(annotations);
+  const { composite, layout } = assembleDrawingWithLegendLayout(
+    exportCanvas,
+    leg,
+    ctx
   );
-  const leg = [
-    ...buildLegendFromShapeLabels(legendShapes),
-    ...buildArrowNoteLegendEntries(annotations),
-  ];
-  let composite: HTMLCanvasElement = exportCanvas;
-  if (leg.length > 0) {
-    const legH = estimateLegendStripHeight(ctx, leg, exportCanvas.width);
-    if (legH > 0) {
-      const merged = document.createElement("canvas");
-      merged.width = exportCanvas.width;
-      merged.height = exportCanvas.height + legH;
-      const mctx = merged.getContext("2d");
-      if (mctx) {
-        mctx.fillStyle = "#ffffff";
-        mctx.fillRect(0, 0, merged.width, merged.height);
-        mctx.drawImage(exportCanvas, 0, 0);
-        drawLegendStrip(mctx, leg, merged.width, exportCanvas.height, legH);
-        composite = merged;
-      }
-    }
-  }
 
   return {
+    drawingCanvas: exportCanvas,
     composite,
     documentWidth: exportCanvas.width,
     documentHeight: exportCanvas.height,
+    legendEntries: leg,
+    legendLayout: layout,
   };
 }
 
