@@ -121,6 +121,12 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
+import { JobMediaExportNotesButtons } from "@/components/jobs/job-media-export-notes-buttons";
+import {
+  canJobMediaExportWithNotes,
+  jobMediaNotesExportInputFromRow,
+  pickFileCommentsForExport,
+} from "@/lib/job-media-export-with-notes";
 import {
   ExpandableNoteText,
   JobNoteMetaLine,
@@ -805,6 +811,40 @@ function UserFolderBlock({
     }
     return m;
   }, [fileCommentsRaw, user?.uid, folder.id]);
+
+  const hideJobMediaAdminUi = isCustomerScope || isEmployeeLimited;
+
+  const fileCommentsList = (Array.isArray(fileCommentsRaw) ? fileCommentsRaw : []) as Array<
+    Record<string, unknown> & { id: string }
+  >;
+
+  const renderExportNotesButtons = (img: JobFolderImageDoc, title: string) => {
+    if (
+      !canJobMediaExportWithNotes({
+        mediaScope,
+        hideJobMediaAdminUi,
+        folder: folder as unknown as Record<string, unknown>,
+        file: img as unknown as Record<string, unknown>,
+      })
+    ) {
+      return null;
+    }
+    return (
+      <JobMediaExportNotesButtons
+        buildInput={() =>
+          jobMediaNotesExportInputFromRow({
+            row: img as unknown as Record<string, unknown>,
+            fileName: title,
+            jobLabel: jobDisplayName,
+            comments: pickFileCommentsForExport(fileCommentsList, img.id, {
+              folderId: folder.id,
+            }),
+            includeApproval: !isCustomerScope,
+          })
+        }
+      />
+    );
+  };
 
   const images = useMemo(() => {
     const list = (imagesRaw || []) as JobFolderImageDoc[];
@@ -2405,6 +2445,7 @@ function UserFolderBlock({
                     extraFooter={productionFooter(img)}
                     actions={
                       <>
+                        {renderExportNotesButtons(img, title)}
                         <JobMediaIconButton
                           label="Otevřít v novém okně"
                           disabled={!openUrl}
@@ -2576,6 +2617,7 @@ function UserFolderBlock({
                   extraFooter={productionFooter(img)}
                   actions={
                     <>
+                      {renderExportNotesButtons(img, title)}
                       <JobMediaIconButton
                         label={`Poznámky (${fileCommentStats.get(img.id)?.count ?? 0})`}
                         disabled={!user?.uid}
@@ -2722,6 +2764,7 @@ function UserFolderBlock({
                     footer={productionFooter(img)}
                     actions={
                       <>
+                        {renderExportNotesButtons(img, title)}
                         <JobMediaIconButton
                           label="Otevřít"
                           disabled={!openUrl}
@@ -3124,6 +3167,59 @@ export function JobMediaSection({
   );
 
   const { data: foldersRaw } = useCollection<JobFolderDoc>(foldersColRef);
+
+  const legacyFileCommentsQuery = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId && mediaScope !== "customer"
+        ? query(
+            collection(firestore, "companies", companyId, "jobs", jobId, "comments"),
+            where("targetType", "==", "file"),
+            limit(500)
+          )
+        : null,
+    [firestore, companyId, jobId, mediaScope]
+  );
+  const { data: legacyFileCommentsRaw = [] } = useCollection(legacyFileCommentsQuery);
+
+  const legacyFileCommentsList = (Array.isArray(legacyFileCommentsRaw)
+    ? legacyFileCommentsRaw
+    : []) as Array<Record<string, unknown> & { id: string }>;
+
+  const renderLegacyExportNotesButtons = useCallback(
+    (p: { id: string } & Record<string, unknown>, title: string) => {
+      if (
+        !canJobMediaExportWithNotes({
+          mediaScope,
+          hideJobMediaAdminUi,
+          folder: null,
+          file: p,
+        })
+      ) {
+        return null;
+      }
+      return (
+        <JobMediaExportNotesButtons
+          buildInput={() =>
+            jobMediaNotesExportInputFromRow({
+              row: p,
+              fileName: title,
+              jobLabel: jobDisplayName,
+              comments: pickFileCommentsForExport(legacyFileCommentsList, p.id, {
+                legacyPhotos: true,
+              }),
+              includeApproval: mediaScope !== "customer",
+            })
+          }
+        />
+      );
+    },
+    [
+      mediaScope,
+      hideJobMediaAdminUi,
+      jobDisplayName,
+      legacyFileCommentsList,
+    ]
+  );
 
   const foldersSorted = useMemo(() => {
     const list = (foldersRaw || []).filter(
@@ -3811,6 +3907,10 @@ export function JobMediaSection({
                         resendApprovalBusy={false}
                         actions={
                           <>
+                            {renderLegacyExportNotesButtons(
+                              p as unknown as Record<string, unknown> & { id: string },
+                              title
+                            )}
                             <JobMediaIconButton
                               label="Otevřít v novém okně"
                               disabled={!openUrl}
@@ -3934,6 +4034,10 @@ export function JobMediaSection({
                       resendApprovalBusy={false}
                       actions={
                         <>
+                          {renderLegacyExportNotesButtons(
+                            p as unknown as Record<string, unknown> & { id: string },
+                            title
+                          )}
                           <JobMediaIconButton
                             label="Náhled"
                             disabled={!openUrl}
@@ -4048,6 +4152,10 @@ export function JobMediaSection({
                                 dateLine={dateLine}
                                 actions={
                                   <>
+                                    {renderLegacyExportNotesButtons(
+                                      p as unknown as Record<string, unknown> & { id: string },
+                                      title
+                                    )}
                                     <JobMediaIconButton
                                       label="Otevřít"
                                       disabled={!openUrl}
