@@ -1,15 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
+import { resolveInquiryOfferAuthor } from "@/lib/inquiry-offer-author-resolve";
 import {
   callerCanAccessCompany,
   verifyBearerAndLoadCaller,
 } from "@/lib/api-verify-company-user";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { readInquiryEmailIdentity } from "@/lib/inquiry-offer-email";
-import {
-  buildInquiryOfferFooterData,
-  inquiryOfferAuthorFromUserDoc,
-} from "@/lib/inquiry-offer-footer";
+import { buildInquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
 import {
   buildInquiryOfferSendPlan,
   INQUIRY_OFFER_SEND_METHOD_LABELS,
@@ -50,11 +48,12 @@ export async function GET(request: NextRequest) {
     }
     const company = (snap.data() ?? {}) as Record<string, unknown>;
     const identity = readInquiryEmailIdentity(company);
-    const userSnap = await db.collection("users").doc(caller.uid).get();
-    const author = inquiryOfferAuthorFromUserDoc(
-      caller.uid,
-      (userSnap.data() ?? {}) as Record<string, unknown>
-    );
+    const author = await resolveInquiryOfferAuthor({
+      db,
+      auth,
+      companyId,
+      userId: caller.uid,
+    });
     const footer = buildInquiryOfferFooterData({ company, identity, author });
 
     const planResult = await buildInquiryOfferSendPlan({ company, identity });

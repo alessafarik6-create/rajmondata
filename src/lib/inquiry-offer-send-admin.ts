@@ -45,8 +45,12 @@ import {
   type InquiryOfferSendPlan,
 } from "@/lib/inquiry-offer-send-plan";
 import {
+  buildInquiryOfferAuthorHistoryFields,
+  resolveInquiryOfferAuthor,
+} from "@/lib/inquiry-offer-author-resolve";
+import { getAdminAuth } from "@/lib/firebase-admin";
+import {
   buildInquiryOfferFooterData,
-  inquiryOfferAuthorFromUserDoc,
   type InquiryOfferFooterData,
 } from "@/lib/inquiry-offer-footer";
 
@@ -288,16 +292,18 @@ export async function sendInquiryOfferEmail(
     replyTo: plan.replyTo,
   });
 
-  const authorSnap = await db.collection("users").doc(params.userId).get();
-  const author = inquiryOfferAuthorFromUserDoc(
-    params.userId,
-    (authorSnap.data() ?? {}) as Record<string, unknown>
-  );
+  const author = await resolveInquiryOfferAuthor({
+    db,
+    auth: getAdminAuth(),
+    companyId: params.companyId,
+    userId: params.userId,
+  });
   const offerFooter: InquiryOfferFooterData = buildInquiryOfferFooterData({
     company,
     identity,
     author,
   });
+  const authorHistory = buildInquiryOfferAuthorHistoryFields(author);
 
   const bodyInnerHtml = plainTextToHtmlParagraphs(bodyPlain);
   const html = buildInquiryOfferEmailHtml({
@@ -439,6 +445,7 @@ export async function sendInquiryOfferEmail(
     offerCopyTo: offerCopyDelivery?.emails ?? [],
     offerCopyMode: offerCopyModeUsed ?? offerCopyDelivery?.mode ?? null,
     offerFooter,
+    ...authorHistory,
     messageId,
     threadId,
     sentAt: FieldValue.serverTimestamp(),
@@ -501,12 +508,14 @@ export async function saveInquiryOfferDraft(
   const bodyPlain = userBodyPlain
     ? buildInquiryOfferSentBodyPlain(userBodyPlain, pricing)
     : "";
-  const authorSnap = await db.collection("users").doc(params.userId).get();
-  const author = inquiryOfferAuthorFromUserDoc(
-    params.userId,
-    (authorSnap.data() ?? {}) as Record<string, unknown>
-  );
+  const author = await resolveInquiryOfferAuthor({
+    db,
+    auth: getAdminAuth(),
+    companyId: params.companyId,
+    userId: params.userId,
+  });
   const offerFooter = buildInquiryOfferFooterData({ company, identity, author });
+  const authorHistory = buildInquiryOfferAuthorHistoryFields(author);
 
   const bodyInnerHtml = bodyPlain ? plainTextToHtmlParagraphs(bodyPlain) : "";
   const html =
@@ -553,6 +562,7 @@ export async function saveInquiryOfferDraft(
     sentByName: params.sentByName ?? null,
     ...(plan ? buildInquiryOfferHistoryFields(plan) : {}),
     offerFooter,
+    ...authorHistory,
     threadId: buildInquiryOfferThreadId(params.companyId, params.leadKey),
     updatedAt: FieldValue.serverTimestamp(),
   };

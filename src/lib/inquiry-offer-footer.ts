@@ -72,14 +72,32 @@ export function authorInitialsFromName(name: string | null | undefined): string 
   return `${parts[0]![0] ?? ""}${parts[parts.length - 1]![0] ?? ""}`.toUpperCase();
 }
 
+/** @deprecated Preferujte resolveInquiryOfferAuthor na serveru (fotka ze zaměstnance + Storage). */
 export function inquiryOfferAuthorFromUserDoc(
   uid: string,
   userDoc: Record<string, unknown> | null | undefined
 ): InquiryOfferAuthorSnapshot {
   const d = userDoc ?? {};
   const displayName = strOrNull(d.displayName) ?? strOrNull(d.name);
-  const photoUrl =
-    strOrNull(d.photoURL) ?? strOrNull(d.profileImage) ?? strOrNull(d.photoUrl);
+  const photoFields = [
+    "photoURL",
+    "photoUrl",
+    "avatarUrl",
+    "profilePhotoUrl",
+    "profileImageUrl",
+    "imageUrl",
+    "employeePhotoUrl",
+    "userPhotoUrl",
+    "profileImage",
+  ] as const;
+  let photoUrl: string | null = null;
+  for (const key of photoFields) {
+    const raw = strOrNull(d[key]);
+    if (raw && (raw.startsWith("http://") || raw.startsWith("https://"))) {
+      photoUrl = raw;
+      break;
+    }
+  }
   return {
     uid,
     displayName,

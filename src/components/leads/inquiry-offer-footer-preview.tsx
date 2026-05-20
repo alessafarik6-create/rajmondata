@@ -1,8 +1,35 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import type { InquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
+
+export function InquiryOfferAuthorAvatar(props: {
+  photoUrl?: string | null;
+  initials?: string | null;
+  displayName?: string | null;
+  className?: string;
+}) {
+  const [photoBroken, setPhotoBroken] = useState(false);
+  const photo =
+    props.photoUrl?.trim() && !photoBroken ? props.photoUrl.trim() : null;
+  const initials = props.initials?.trim() || "?";
+
+  return (
+    <Avatar className={props.className ?? "h-12 w-12 shrink-0 border border-slate-200"}>
+      {photo ? (
+        <AvatarImage
+          src={photo}
+          alt={props.displayName ?? ""}
+          onError={() => setPhotoBroken(true)}
+        />
+      ) : null}
+      <AvatarFallback className="bg-slate-100 text-sm font-semibold text-slate-700">
+        {initials}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
 
 export function InquiryOfferFooterPreview(props: {
   footer: InquiryOfferFooterData | null;
@@ -38,14 +65,11 @@ export function InquiryOfferFooterPreview(props: {
         ) : null}
         <div className="flex min-w-0 flex-1 gap-3">
           {author ? (
-            <Avatar className="h-12 w-12 shrink-0 border border-slate-200">
-              {author.photoUrl ? (
-                <AvatarImage src={author.photoUrl} alt={author.displayName ?? ""} />
-              ) : null}
-              <AvatarFallback className="bg-slate-100 text-sm font-semibold text-slate-700">
-                {author.initials ?? "?"}
-              </AvatarFallback>
-            </Avatar>
+            <InquiryOfferAuthorAvatar
+              photoUrl={author.photoUrl}
+              initials={author.initials}
+              displayName={author.displayName}
+            />
           ) : null}
           <div className="min-w-0 flex-1 space-y-1 text-sm leading-relaxed text-gray-900">
             <p className="text-base font-semibold text-gray-950">{footer.companyName}</p>

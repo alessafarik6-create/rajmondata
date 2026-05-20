@@ -33,10 +33,14 @@ import {
   INQUIRY_OFFER_STATUS_LABELS,
   formatInquiryOfferAttachmentLine,
   listInquiryOfferAttachments,
+  getInquiryOfferAuthorDisplayMeta,
   parseInquiryOfferFooterFromRecord,
   resolveInquiryOfferSendMeta,
 } from "@/lib/inquiry-offer-history";
-import { InquiryOfferFooterPreview } from "@/components/leads/inquiry-offer-footer-preview";
+import {
+  InquiryOfferAuthorAvatar,
+  InquiryOfferFooterPreview,
+} from "@/components/leads/inquiry-offer-footer-preview";
 import { contactTimestampToDate } from "@/lib/lead-contact-status";
 
 function formatSentAt(offer: InquiryOfferRecord): string {
@@ -72,6 +76,7 @@ export function LeadInquiryOfferDetailDialog(props: {
   const bodyText = offer ? getInquiryOfferBodyForDisplay(offer) : "";
   const meta = offer ? resolveInquiryOfferSendMeta(offer) : null;
   const storedFooter = offer ? parseInquiryOfferFooterFromRecord(offer) : null;
+  const authorMeta = offer ? getInquiryOfferAuthorDisplayMeta(offer) : null;
   const storedHtml = String(offer?.bodyHtml ?? "").trim();
 
   const copyBody = async () => {
@@ -131,10 +136,29 @@ export function LeadInquiryOfferDetailDialog(props: {
                 label="Stav"
                 value={INQUIRY_OFFER_STATUS_LABELS[offer.status] ?? offer.status}
               />
-              {offer.sentByName || offer.sentByEmail ? (
+              {authorMeta?.name || authorMeta?.email || offer.sentByName || offer.sentByEmail ? (
                 <DetailRow
-                  label="Odeslal"
-                  value={offer.sentByName || offer.sentByEmail}
+                  label="Autor nabídky"
+                  value={
+                    <div className="flex min-w-0 items-center gap-3">
+                      <InquiryOfferAuthorAvatar
+                        photoUrl={authorMeta?.photoUrl}
+                        initials={authorMeta?.initials}
+                        displayName={authorMeta?.name}
+                        className="h-10 w-10 shrink-0 border border-slate-200"
+                      />
+                      <div className="min-w-0 space-y-0.5">
+                        <p className="font-medium text-slate-900">
+                          {authorMeta?.name || offer.sentByName || "—"}
+                        </p>
+                        {(authorMeta?.email || offer.sentByEmail) ? (
+                          <p className="break-all text-sm text-slate-700">
+                            {authorMeta?.email || offer.sentByEmail}
+                          </p>
+                        ) : null}
+                      </div>
+                    </div>
+                  }
                 />
               ) : null}
               {meta?.displayFrom ? (

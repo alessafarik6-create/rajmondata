@@ -4,6 +4,7 @@
 
 import type { InquiryOfferRecord } from "@/lib/inquiry-offer-email";
 import type { InquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
+import { authorInitialsFromName } from "@/lib/inquiry-offer-footer";
 import { stripHtmlToPlain } from "@/lib/inquiry-offer-email";
 import { INQUIRY_OFFER_SEND_METHOD_LABELS } from "@/lib/inquiry-offer-send-plan";
 import type { InquiryOfferSendMethod } from "@/lib/inquiry-offer-email";
@@ -118,6 +119,37 @@ export function parseInquiryOfferFooterFromRecord(
   const raw = offer.offerFooter;
   if (!raw || typeof raw !== "object") return null;
   return raw as InquiryOfferFooterData;
+}
+
+/** Fotka autora z historie (uložená při odeslání) nebo ze snímku patičky. */
+export function getInquiryOfferAuthorPhotoUrl(offer: InquiryOfferRecord): string | null {
+  const direct = String(offer.authorPhotoUrl ?? "").trim();
+  if (direct.startsWith("http://") || direct.startsWith("https://")) return direct;
+  const footer = parseInquiryOfferFooterFromRecord(offer);
+  const fromFooter = String(footer?.author?.photoUrl ?? "").trim();
+  if (fromFooter.startsWith("http://") || fromFooter.startsWith("https://")) return fromFooter;
+  return null;
+}
+
+export function getInquiryOfferAuthorDisplayMeta(offer: InquiryOfferRecord): {
+  name: string | null;
+  email: string | null;
+  initials: string | null;
+  photoUrl: string | null;
+} {
+  const name =
+    String(offer.authorName ?? offer.sentByName ?? "").trim() ||
+    parseInquiryOfferFooterFromRecord(offer)?.author?.displayName?.trim() ||
+    null;
+  const email =
+    String(offer.authorEmail ?? offer.sentByEmail ?? "").trim() ||
+    parseInquiryOfferFooterFromRecord(offer)?.author?.email?.trim() ||
+    null;
+  const photoUrl = getInquiryOfferAuthorPhotoUrl(offer);
+  const initials =
+    parseInquiryOfferFooterFromRecord(offer)?.author?.initials ??
+    authorInitialsFromName(name);
+  return { name, email, initials, photoUrl };
 }
 
 export function inquiryOfferToReuseInitial(offer: InquiryOfferRecord): InquiryOfferReuseInitial {

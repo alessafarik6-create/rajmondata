@@ -102,6 +102,11 @@ export type InquiryOfferRecord = {
   sentByUid?: string | null;
   sentByEmail?: string | null;
   sentByName?: string | null;
+  /** Snímek autora při odeslání (pro historii). */
+  authorId?: string | null;
+  authorName?: string | null;
+  authorEmail?: string | null;
+  authorPhotoUrl?: string | null;
   /** Technická adresa odesílatele (From). */
   fromEmail?: string | null;
   fromDisplayName?: string | null;

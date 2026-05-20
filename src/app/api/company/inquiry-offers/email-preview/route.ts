@@ -17,10 +17,8 @@ import {
   normalizeInquiryVatRate,
   parseInquiryPriceInput,
 } from "@/lib/inquiry-offer-pricing";
-import {
-  buildInquiryOfferFooterData,
-  inquiryOfferAuthorFromUserDoc,
-} from "@/lib/inquiry-offer-footer";
+import { resolveInquiryOfferAuthor } from "@/lib/inquiry-offer-author-resolve";
+import { buildInquiryOfferFooterData } from "@/lib/inquiry-offer-footer";
 import { parseAttachmentRefs } from "@/lib/inquiry-offer-attachments";
 import { formatInquiryOfferAttachmentLine } from "@/lib/inquiry-offer-history";
 import {
@@ -85,11 +83,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: planResult.error }, { status: 400 });
     }
 
-    const userSnap = await db.collection("users").doc(caller.uid).get();
-    const author = inquiryOfferAuthorFromUserDoc(
-      caller.uid,
-      (userSnap.data() ?? {}) as Record<string, unknown>
-    );
+    const author = await resolveInquiryOfferAuthor({
+      db,
+      auth,
+      companyId,
+      userId: caller.uid,
+    });
     const footer = buildInquiryOfferFooterData({ company, identity, author });
 
     const userBodyPlain = String(body.bodyText ?? "").trim();
