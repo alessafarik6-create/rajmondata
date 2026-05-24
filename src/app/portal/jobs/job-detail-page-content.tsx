@@ -9461,8 +9461,7 @@ export function JobDetailPageContent({
         />
       ) : null}
 
-      <div className={JD.grid}>
-        <div className={JD.mainCol}>
+      <div className={JD.stackCol}>
           <Card className={cn(JD.card)}>
             <CardHeader>
               <CardTitle className={JD.cardTitle}>
@@ -10025,12 +10024,16 @@ export function JobDetailPageContent({
               </div>
             </CardContent>
           </Card>
-        </div>
+      </div>
+      </div>
 
-        <div className={JD.sideCol}>
-          <div className={JD.sideColGrid}>
-          <div className={cn(JD.sideColCell, JD.sideColSpan2)}>
-          <Card className={cn(JD.card, "h-full")}>
+      <section
+        className={JD.sectionBand}
+        aria-label="Finanční přehled, komunikace a výroba"
+      >
+        <div className={JD.sectionBandInner}>
+          <div className={JD.stackCol}>
+          <Card className={cn(JD.fullWidthCard)}>
             <CardHeader>
               <CardTitle className={JD.cardTitlePlain}>Finanční údaje</CardTitle>
             </CardHeader>
@@ -10295,10 +10298,8 @@ export function JobDetailPageContent({
               </div>
             </CardContent>
           </Card>
-          </div>
 
           {companyId && jobFirestoreId && user && firestore ? (
-            <div className={JD.sideColCell}>
             <JobCommentsThread
               firestore={firestore}
               companyId={companyId}
@@ -10338,12 +10339,12 @@ export function JobDetailPageContent({
                   // ignore
                 }
               }}
+              wide
+              className={cn(JD.fullWidthCard, "border-gray-200")}
             />
-            </div>
           ) : null}
 
           {companyId && jobFirestoreId ? (
-            <div className={JD.sideColCell}>
             <JobDocumentEmailSection
               companyId={companyId}
               jobId={String(jobFirestoreId)}
@@ -10359,12 +10360,11 @@ export function JobDetailPageContent({
               workContractsForJob={workContractsForJob}
               jobBudgetBreakdown={jobBudgetBreakdown}
               canManage={canManageFolders}
+              layout="wide"
             />
-            </div>
           ) : null}
 
           {companyId && jobFirestoreId && user ? (
-            <div className={JD.sideColCell}>
             <JobMaterialOrdersSection
               companyId={companyId}
               companyDisplayName={
@@ -10380,12 +10380,10 @@ export function JobDetailPageContent({
               canManage={canManageFolders}
               companyDoc={(companyDoc as Record<string, unknown> | null | undefined) ?? null}
             />
-            </div>
           ) : null}
 
           {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
-            <div className={JD.sideColCell}>
-            <Card className={cn(JD.card, "h-full border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
+            <Card className={cn(JD.fullWidthCard, "border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
               <CardHeader className="pb-2">
                 <CardTitle className={cn(JD.cardTitlePlain, "flex items-center gap-2")}>
                   <Factory className="h-5 w-5 text-primary" />
@@ -10404,11 +10402,9 @@ export function JobDetailPageContent({
                 </Button>
               </CardContent>
             </Card>
-            </div>
           ) : null}
 
           {companyId && jobFirestoreId && user && vyrobaModuleOn && firestore ? (
-            <div className={JD.sideColCell}>
             <JobProductionTeamSection
               firestore={firestore}
               companyId={companyId}
@@ -10416,12 +10412,11 @@ export function JobDetailPageContent({
               job={job as Record<string, unknown>}
               canManage={canManageFolders}
               user={user}
+              layout="wide"
             />
-            </div>
           ) : null}
 
-          <div className={JD.sideColCell}>
-          <Card className={cn(JD.card, "h-full")}>
+          <Card className={cn(JD.fullWidthCard)}>
             <CardHeader>
               <CardTitle className={JD.cardTitlePlain}>Poznámky a historie</CardTitle>
             </CardHeader>
@@ -10453,12 +10448,10 @@ export function JobDetailPageContent({
               </div>
             </CardContent>
           </Card>
-          </div>
 
           {companyId && jobFirestoreId &&
           profile?.role !== "customer" &&
           (isAdmin || canManageFolders) ? (
-            <div className={JD.sideColCell}>
             <JobContractDepositSection
               jobRef={jobRef}
               job={job as Record<string, unknown>}
@@ -10469,11 +10462,9 @@ export function JobDetailPageContent({
               jobInvoices={jobInvoicesForDeposit}
               jobIncomes={jobIncomesSorted}
             />
-            </div>
           ) : null}
 
           {companyId && jobFirestoreId ? (
-            <div className={JD.sideColCell}>
             <JobBillingInvoicesSection
               companyId={companyId}
               jobId={String(jobId)}
@@ -10503,13 +10494,11 @@ export function JobDetailPageContent({
                   : ""
               }
             />
-            </div>
           ) : null}
 
           </div>
         </div>
-      </div>
-      </div>
+      </section>
 
       {user && companyId && jobFirestoreId ? (
         <section

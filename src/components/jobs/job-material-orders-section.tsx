@@ -48,6 +48,9 @@ import { allocateNextDocumentNumber } from "@/lib/invoice-number-series";
 import { useToast } from "@/hooks/use-toast";
 import { buildMaterialOrderHtml } from "@/lib/material-order-a4-html";
 import { printInvoiceHtmlDocument } from "@/lib/print-html";
+import { cn } from "@/lib/utils";
+
+const CARD = "border-slate-200 bg-white text-slate-900 shadow-sm";
 import { DocumentEmailRecipientPicker } from "@/components/documents/document-email-recipient-picker";
 import { sendJobDocumentEmailFromBrowser } from "@/lib/document-email-send-client";
 import {
@@ -740,15 +743,15 @@ export function JobMaterialOrdersSection(props: {
   };
 
   return (
-    <Card className="border-slate-200 bg-white">
-      <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <CardTitle className="text-base">Materiál a objednávky</CardTitle>
-          <p className="text-xs text-muted-foreground">
+    <Card className={cn(CARD, "w-full min-w-0")}>
+      <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1">
+          <CardTitle className="text-lg font-semibold">Materiál a objednávky</CardTitle>
+          <p className="text-sm text-muted-foreground">
             Evidence toho, co je potřeba objednat, co je objednáno a co je ze skladu. Vše je navázané na tuto zakázku.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap">
           <Button
             type="button"
             variant="outline"

@@ -59,6 +59,7 @@ import {
 } from "@/lib/job-document-email-attachments";
 import { INQUIRY_OFFER_COPY_MODE_LABELS } from "@/lib/inquiry-offer-copy";
 import type { InquiryOfferCopyMode } from "@/lib/inquiry-offer-copy";
+import { cn } from "@/lib/utils";
 
 type EmailLogRow = {
   id: string;
@@ -115,6 +116,7 @@ type Props = {
   workContractsForJob?: WorkContractLike[] | null;
   jobBudgetBreakdown: JobBudgetBreakdown | null;
   canManage: boolean;
+  layout?: "default" | "wide";
 };
 
 export function JobDocumentEmailSection({
@@ -128,7 +130,9 @@ export function JobDocumentEmailSection({
   workContractsForJob,
   jobBudgetBreakdown,
   canManage,
+  layout = "default",
 }: Props) {
+  const isWide = layout === "wide";
   const firestore = useFirestore();
   const { toast } = useToast();
 
@@ -578,24 +582,24 @@ export function JobDocumentEmailSection({
 
   return (
     <>
-      <Card className="border border-gray-200 bg-white shadow-sm">
+      <Card className={cn("border border-gray-200 bg-white shadow-sm", isWide && "w-full min-w-0 break-words")}>
         <CardHeader className="pb-2">
-          <CardTitle className="flex items-center gap-2 text-base font-semibold text-gray-950">
-            <Mail className="h-4 w-4 shrink-0 text-gray-600" aria-hidden />
+          <CardTitle className="flex items-center gap-2 text-lg font-semibold text-gray-950">
+            <Mail className="h-5 w-5 shrink-0 text-gray-600" aria-hidden />
             Odeslání dokumentu e-mailem
           </CardTitle>
-          <p className="text-xs text-gray-600">
+          <p className="text-sm text-gray-600">
             Odeslání přes server (Resend) — PDF příloha se vygeneruje na serveru z uloženého dokladu.
             Můžete přidat další přílohy (smlouvy, dokumenty, fotodokumentace). Odesílatel a kopie dle
             nastavení organizace (stejně jako u nabídek).
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-3">
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size={isWide ? "default" : "sm"}
               disabled={!canManage}
               onClick={() => openModal("contract")}
             >
@@ -604,7 +608,7 @@ export function JobDocumentEmailSection({
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size={isWide ? "default" : "sm"}
               disabled={!canManage}
               onClick={() => openModal("invoice")}
             >
@@ -613,7 +617,7 @@ export function JobDocumentEmailSection({
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size={isWide ? "default" : "sm"}
               disabled={!canManage}
               onClick={() => openModal("advance_invoice")}
             >
@@ -622,7 +626,7 @@ export function JobDocumentEmailSection({
             <Button
               type="button"
               variant="outline"
-              size="sm"
+              size={isWide ? "default" : "sm"}
               disabled={!canManage || attachmentOptions.length === 0}
               onClick={() => openModal("job_attachments")}
             >
@@ -634,23 +638,23 @@ export function JobDocumentEmailSection({
           ) : null}
 
           <div className="border-t border-gray-200 pt-3">
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500">
+            <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-gray-500">
               Historie odeslání ({jobName})
             </p>
             {logsError ? (
-              <p className="text-xs text-gray-800">
+              <p className="text-sm text-gray-800">
                 Historii nelze načíst (zkontrolujte index Firestore pro řazení podle data).
               </p>
             ) : emailLogs.length === 0 ? (
-              <p className="text-xs text-gray-500">Zatím nic nebylo odesláno.</p>
+              <p className="text-sm text-gray-500">Zatím nic nebylo odesláno.</p>
             ) : (
-              <ul className="max-h-56 space-y-2 overflow-y-auto text-xs">
+              <ul className={cn("space-y-2 text-sm", isWide ? "min-w-0" : "max-h-56 overflow-y-auto")}>
                 {(emailLogs ?? []).map((row) => {
                   const attLine = formatLogAttachments(row);
                   return (
                     <li
                       key={row.id}
-                      className="rounded-md border border-gray-200 bg-gray-50/80 px-2 py-1.5"
+                      className="rounded-md border border-gray-200 bg-gray-50/80 px-3 py-2.5 break-words"
                     >
                       <div className="flex flex-wrap justify-between gap-1 font-medium text-gray-900">
                         <span>
@@ -678,12 +682,12 @@ export function JobDocumentEmailSection({
                         </div>
                       ) : null}
                       {Array.isArray(row.cc) && row.cc.length > 0 ? (
-                        <div className="break-all text-[10px] text-gray-500">
+                        <div className="text-xs text-gray-500 break-words">
                           Kopie (CC): {row.cc.join(", ")}
                         </div>
                       ) : null}
                       {Array.isArray(row.offerCopyTo) && row.offerCopyTo.length > 0 ? (
-                        <div className="break-all text-[10px] text-gray-500">
+                        <div className="text-xs text-gray-500 break-words">
                           Kopie nabídek (
                           {row.offerCopyMode
                             ? INQUIRY_OFFER_COPY_MODE_LABELS[row.offerCopyMode]
@@ -692,12 +696,12 @@ export function JobDocumentEmailSection({
                         </div>
                       ) : null}
                       {row.mainDocumentFilename ? (
-                        <div className="break-all text-[10px] text-gray-500">
+                        <div className="text-xs text-gray-500 break-words">
                           Hlavní dokument: {row.mainDocumentFilename}
                         </div>
                       ) : null}
                       {attLine ? (
-                        <div className="break-all text-[10px] text-gray-500">{attLine}</div>
+                        <div className="text-xs text-gray-500 break-words">{attLine}</div>
                       ) : null}
                       {row.status === "error" && row.errorMessage ? (
                         <div className="text-[10px] text-red-700">{row.errorMessage}</div>

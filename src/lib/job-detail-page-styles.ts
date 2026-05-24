@@ -5,20 +5,15 @@
 export const JD = {
   page: "w-full min-w-0 space-y-6 sm:space-y-8",
   contentMax: "mx-auto w-full max-w-6xl px-4 sm:px-6 lg:px-8",
-  grid: "grid grid-cols-1 gap-6 lg:grid-cols-3 lg:items-start lg:gap-8",
-  mainCol: "min-w-0 space-y-6 lg:col-span-2",
-  /** Pravý panel — sticky na velkých obrazovkách, uvnitř mřížka karet. */
-  sideCol:
-    "min-w-0 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto lg:overscroll-contain",
-  sideColGrid:
-    "grid grid-cols-1 gap-4 sm:gap-5 md:grid-cols-2 md:items-stretch lg:gap-5",
-  /** Buňka mřížky — stejná výška v řádku, karta vyplní výšku. */
-  sideColCell:
-    "min-w-0 flex flex-col [&>*]:min-h-0 [&>*]:flex-1 [&>*]:flex [&>*]:flex-col",
-  /** Jedna karta přes celou šířku mřížky (např. finance). */
-  sideColSpan2: "md:col-span-2",
-  /** Karta: bílé pozadí, jemný border a stín (sladěno s Card z UI). */
+  /** Hlavní vertikální stack karet — jeden sloupec přes celou šířku. */
+  stackCol: "min-w-0 w-full space-y-6 sm:space-y-8",
+  /** @deprecated — detail zakázky už nepoužívá boční sloupec */
+  grid: "min-w-0 w-full space-y-6 sm:space-y-8",
+  /** @deprecated */
+  mainCol: "min-w-0 w-full space-y-6 sm:space-y-8",
   card: "border-gray-200 bg-white text-gray-950 shadow-sm",
+  fullWidthCard:
+    "w-full min-w-0 break-words border-gray-200 bg-white text-gray-950 shadow-sm",
   cardTitle:
     "text-lg font-semibold tracking-tight text-gray-950 flex items-center gap-2 [&_svg]:h-5 [&_svg]:w-5 [&_svg]:shrink-0 [&_svg]:text-primary",
   cardTitlePlain: "text-lg font-semibold tracking-tight text-gray-950",

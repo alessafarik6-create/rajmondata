@@ -89,6 +89,8 @@ export function JobCommentsThread(props: {
   target: JobCommentsTarget;
   /** pro embed vs dialog */
   dense?: boolean;
+  /** Plná šířka detailu zakázky — bez úzkého scroll panelu */
+  wide?: boolean;
   className?: string;
   /** zavolat po odeslání (např. notifikace) */
   onAfterSend?: (comment: {
@@ -263,14 +265,20 @@ export function JobCommentsThread(props: {
     toast,
   ]);
 
-  const containerHeightClassName = props.dense
-    ? "h-[56vh] max-h-[56vh]"
-    : "h-[62vh] max-h-[62vh]";
+  const containerHeightClassName = props.wide
+    ? ""
+    : props.dense
+      ? "h-[56vh] max-h-[56vh]"
+      : "h-[62vh] max-h-[62vh]";
+
+  const messagesScrollClassName = props.wide
+    ? "space-y-3 min-h-[200px] max-h-[min(70vh,720px)] overflow-y-auto pr-1"
+    : "flex-1 space-y-2 overflow-y-auto pr-1";
 
   return (
     <Card className={cn("border border-border bg-background text-foreground shadow-sm", props.className)}>
       <CardHeader className={cn(props.dense ? "pb-2" : "")}>
-        <CardTitle className="flex items-center justify-between gap-2 text-base">
+        <CardTitle className="flex items-center justify-between gap-2 text-lg">
           <span>{props.title}</span>
           {unreadCount > 0 ? (
             <Badge variant="destructive" className="text-[10px]">
@@ -283,8 +291,15 @@ export function JobCommentsThread(props: {
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className={cn("flex flex-col gap-3", containerHeightClassName, props.dense ? "pt-0" : "")}>
-        <div className={cn("flex-1 space-y-2 overflow-y-auto pr-1")}>
+      <CardContent
+        className={cn(
+          "flex flex-col gap-3",
+          containerHeightClassName,
+          props.wide && "min-w-0",
+          props.dense ? "pt-0" : ""
+        )}
+      >
+        <div className={messagesScrollClassName}>
           {error ? (
             <>
               {console.error("[JobCommentsThread] load failed", error)}
@@ -328,7 +343,8 @@ export function JobCommentsThread(props: {
                 >
                   <div
                     className={cn(
-                      "max-w-[92%] min-w-0 rounded-2xl border bg-white px-3 py-2.5 shadow-sm sm:max-w-[75%]",
+                      "max-w-[92%] min-w-0 rounded-2xl border bg-white px-3 py-2.5 shadow-sm break-words",
+                      props.wide ? "sm:max-w-[75%]" : "sm:max-w-[75%]",
                       mine
                         ? "border-orange-300 rounded-br-md"
                         : "border-sky-200 rounded-bl-md",
@@ -348,12 +364,12 @@ export function JobCommentsThread(props: {
         </div>
 
         {props.canPost ? (
-          <div className="sticky bottom-0 flex gap-2 border-t border-border bg-background/95 pt-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+          <div className="flex flex-col gap-2 border-t border-border bg-background/95 pt-3 sm:flex-row sm:items-stretch">
             <Input
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="Napište zprávu…"
-              className="min-h-[44px] bg-background text-foreground placeholder:text-muted-foreground"
+              className="min-h-[44px] min-w-0 flex-1 bg-background text-foreground placeholder:text-muted-foreground"
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();

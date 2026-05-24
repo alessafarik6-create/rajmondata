@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2, Factory } from "lucide-react";
+import { cn } from "@/lib/utils";
 import {
   Select,
   SelectContent,
@@ -43,8 +44,10 @@ export function JobProductionTeamSection(props: {
   job: Record<string, unknown>;
   canManage: boolean;
   user: { uid: string; getIdToken: () => Promise<string> };
+  layout?: "default" | "wide";
 }) {
-  const { firestore, companyId, jobId, job, canManage, user } = props;
+  const { firestore, companyId, jobId, job, canManage, user, layout = "default" } = props;
+  const isWide = layout === "wide";
   const { toast } = useToast();
   const settings = useMemo(() => parseJobProductionSettings(job), [job]);
 
@@ -193,7 +196,7 @@ export function JobProductionTeamSection(props: {
   if (!canManage) return null;
 
   return (
-    <Card className={CARD}>
+    <Card className={cn(CARD, isWide && "w-full min-w-0 break-words")}>
       <CardHeader className="border-b border-slate-100">
         <CardTitle className="text-lg text-slate-900 flex items-center gap-2">
           <Factory className="h-5 w-5 text-primary" />
@@ -208,7 +211,14 @@ export function JobProductionTeamSection(props: {
 
         <div className="space-y-2">
           <Label>Přiřazení pro realizaci</Label>
-          <div className="max-h-48 overflow-y-auto rounded border border-slate-200 p-2 space-y-2">
+          <div
+            className={cn(
+              "rounded border border-slate-200 p-3",
+              isWide
+                ? "grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3"
+                : "max-h-48 space-y-2 overflow-y-auto"
+            )}
+          >
             {employees.length === 0 ? (
               <p className="text-xs text-slate-500">Žádní zaměstnanci.</p>
             ) : (
@@ -255,7 +265,12 @@ export function JobProductionTeamSection(props: {
             Zaškrtněte konkrétní složky, nebo u každé níže zapněte přepínač „Výroba“. Typ „dokumenty“ je z
             bezpečnostních důvodů vyloučen.
           </p>
-          <div className="max-h-40 overflow-y-auto rounded border border-slate-200 p-2 space-y-2">
+          <div
+            className={cn(
+              "rounded border border-slate-200 p-3",
+              isWide ? "grid grid-cols-1 gap-3 lg:grid-cols-2" : "max-h-40 space-y-2 overflow-y-auto"
+            )}
+          >
             {folders.length === 0 ? (
               <p className="text-xs text-slate-500">Zatím žádné složky u zakázky.</p>
             ) : (
