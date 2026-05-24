@@ -1993,7 +1993,7 @@ export function JobDetailPageContent({
 
   const parentContractChoices = useMemo(
     () =>
-      workContractsForJob.filter(
+      (workContractsForJob ?? []).filter(
         (c) =>
           c.id !== activeWorkContractId &&
           String(c.documentRole ?? "").trim() !== "addendum" &&
@@ -2011,7 +2011,7 @@ export function JobDetailPageContent({
 
   const attachmentsByParentContractId = useMemo(() => {
     const map = new Map<string, WorkContractDoc[]>();
-    for (const c of workContractsForJob) {
+    for (const c of workContractsForJob ?? []) {
       if (String(c.documentRole ?? "").trim() !== "attachment") continue;
       const pid = String(c.parentContractId ?? "").trim();
       if (!pid) continue;
@@ -2729,7 +2729,7 @@ export function JobDetailPageContent({
         }
         const parentNo = String(parent.contractNumber ?? "").trim();
         const parentTitle = workContractDisplayTitle(parent);
-        const siblingAttachments = workContractsForJob.filter(
+        const siblingAttachments = (workContractsForJob ?? []).filter(
           (c) =>
             String(c.documentRole ?? "").trim() === "attachment" &&
             String(c.parentContractId ?? "").trim() === pid
@@ -3717,7 +3717,7 @@ export function JobDetailPageContent({
       ) {
         attachmentOrdinalResolved = existing.attachmentOrdinal;
       } else {
-        const siblingAttachments = workContractsForJob.filter(
+        const siblingAttachments = (workContractsForJob ?? []).filter(
           (c) =>
             c.id !== activeWorkContractId &&
             String(c.documentRole ?? "").trim() === "attachment" &&
@@ -10819,7 +10819,7 @@ export function JobDetailPageContent({
               jobRecord={job ? (job as Record<string, unknown>) : null}
               user={user}
               canManageFolders={canManageFolders}
-              photos={photos?.filter(isUsablePhotoRow) as PhotoDoc[] | undefined}
+              photos={(photos ?? []).filter(isUsablePhotoRow) as PhotoDoc[]}
               uploadLegacyPhoto={async (file, opts) => {
                 await handlePhotoUpload(file, opts);
               }}

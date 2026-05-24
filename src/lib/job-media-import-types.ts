@@ -132,13 +132,13 @@ export function classifyJobMediaImportCategories(params: {
 }
 
 export function buildJobImportSearchRows(
-  jobs: Record<string, unknown>[],
-  customersById: Map<string, Record<string, unknown>>
+  jobs: Record<string, unknown>[] | null | undefined,
+  customersById: Map<string, Record<string, unknown>> | null | undefined
 ): JobImportJobSearchRow[] {
-  return jobs.map((j) => {
+  return (jobs ?? []).map((j) => {
     const id = String(j.id ?? "").trim();
     const customerId = String(j.customerId ?? "").trim();
-    const cust = customerId ? customersById.get(customerId) : undefined;
+    const cust = customerId ? (customersById ?? new Map()).get(customerId) : undefined;
     const customerName = String(
       cust?.name ?? cust?.companyName ?? j.customerName ?? ""
     ).trim();
@@ -164,13 +164,13 @@ export function buildJobImportSearchRows(
 }
 
 export function filterJobsForMediaImport(
-  rows: JobImportJobSearchRow[],
+  rows: JobImportJobSearchRow[] | null | undefined,
   query: string,
   jobTagLabelFn?: (tag: string) => string
 ): JobImportJobSearchRow[] {
   const q = query.trim().toLowerCase();
-  if (!q) return rows;
-  return rows.filter((r) => {
+  if (!q) return rows ?? [];
+  return (rows ?? []).filter((r) => {
     const dateStr =
       r.createdAtMs != null
         ? new Date(r.createdAtMs).toLocaleDateString("cs-CZ")

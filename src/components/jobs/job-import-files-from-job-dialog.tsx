@@ -43,8 +43,8 @@ type Props = {
   targetJobId: string;
   jobDisplayName?: string | null;
   user: User;
-  jobs: Record<string, unknown>[];
-  customersById: Map<string, Record<string, unknown>>;
+  jobs?: Record<string, unknown>[] | null;
+  customersById?: Map<string, Record<string, unknown>> | null;
   onImported?: () => void;
 };
 
@@ -94,8 +94,8 @@ export function JobImportFilesFromJobDialog({
     () =>
       filterJobsForMediaImport(
         buildJobImportSearchRows(
-          jobs.filter((j) => String(j.id ?? "").trim() !== targetJobId),
-          customersById
+          (jobs ?? []).filter((j) => String(j.id ?? "").trim() !== targetJobId),
+          customersById ?? new Map()
         ),
         jobSearch,
         jobTagLabel
@@ -154,14 +154,15 @@ export function JobImportFilesFromJobDialog({
   );
 
   const filteredItems = useMemo(() => {
-    if (category === "all") return items;
-    return items.filter((it) => it.categories.includes(category));
+    const list = items ?? [];
+    if (category === "all") return list;
+    return list.filter((it) => (it.categories ?? []).includes(category));
   }, [items, category]);
 
   const categoryCounts = useMemo(() => {
     const m = new Map<JobMediaImportCategory, number>();
-    for (const it of items) {
-      for (const c of it.categories) {
+    for (const it of items ?? []) {
+      for (const c of it.categories ?? []) {
         m.set(c, (m.get(c) ?? 0) + 1);
       }
     }
@@ -195,7 +196,7 @@ export function JobImportFilesFromJobDialog({
 
   const confirmImport = async () => {
     const refs: JobMediaImportSelectionRef[] = [];
-    for (const it of items) {
+    for (const it of items ?? []) {
       const k = itemKey(it);
       if (selected.has(k)) refs.push(selectionFromItem(it));
     }

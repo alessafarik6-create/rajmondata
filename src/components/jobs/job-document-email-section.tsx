@@ -112,7 +112,7 @@ type Props = {
   companyDisplayName: string;
   customerName: string;
   customerEmail: string;
-  workContractsForJob: WorkContractLike[];
+  workContractsForJob?: WorkContractLike[] | null;
   jobBudgetBreakdown: JobBudgetBreakdown | null;
   canManage: boolean;
 };
@@ -184,14 +184,14 @@ export function JobDocumentEmailSection({
   const primaryContract = useMemo(
     () =>
       selectPrimaryWorkContractForBilling(
-        workContractsForJob,
+        workContractsForJob ?? [],
         jobBudgetBreakdown?.budgetGross ?? null
       ),
     [workContractsForJob, jobBudgetBreakdown]
   );
 
   const latestFinalInvoice = useMemo(() => {
-    const finals = jobInvoices.filter(
+    const finals = (jobInvoices ?? []).filter(
       (inv) =>
         String((inv as { type?: string }).type ?? "") === JOB_INVOICE_TYPES.FINAL_INVOICE
     );
@@ -199,7 +199,7 @@ export function JobDocumentEmailSection({
   }, [jobInvoices]);
 
   const latestAdvanceInvoice = useMemo(() => {
-    const adv = jobInvoices.filter(
+    const adv = (jobInvoices ?? []).filter(
       (inv) =>
         String((inv as { type?: string }).type ?? "") === JOB_INVOICE_TYPES.ADVANCE
     );
@@ -207,7 +207,7 @@ export function JobDocumentEmailSection({
   }, [jobInvoices]);
 
   const attachmentOptions = useMemo((): JobDocumentEmailAttachmentOption[] => {
-    const contracts = buildWorkContractAttachmentOptions(workContractsForJob);
+    const contracts = buildWorkContractAttachmentOptions(workContractsForJob ?? []);
     const docs = buildCompanyDocumentAttachmentOptions(
       (Array.isArray(jobDocumentsRaw) ? jobDocumentsRaw : [])
         .filter((d) => isActiveFirestoreDoc(d as { isDeleted?: unknown }))
@@ -645,7 +645,7 @@ export function JobDocumentEmailSection({
               <p className="text-xs text-gray-500">Zatím nic nebylo odesláno.</p>
             ) : (
               <ul className="max-h-56 space-y-2 overflow-y-auto text-xs">
-                {emailLogs.map((row) => {
+                {(emailLogs ?? []).map((row) => {
                   const attLine = formatLogAttachments(row);
                   return (
                     <li
@@ -789,7 +789,7 @@ export function JobDocumentEmailSection({
                   </p>
                 ) : (
                   <ul className="max-h-48 space-y-2 overflow-y-auto pr-1">
-                    {attachmentOptions.map((opt) => {
+                    {(attachmentOptions ?? []).map((opt) => {
                       const checked = selectedAttachmentIds.has(opt.id);
                       const isMainContractDup =
                         supportsMainDocument &&

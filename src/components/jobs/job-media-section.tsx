@@ -849,7 +849,7 @@ function UserFolderBlock({
   };
 
   const images = useMemo(() => {
-    const list = (imagesRaw || []) as JobFolderImageDoc[];
+    const list = (imagesRaw ?? []) as JobFolderImageDoc[];
     return list
       .filter((x) => x && typeof x.id === "string")
       .slice()
@@ -3067,7 +3067,8 @@ export function JobMediaSection({
         : null,
     [firestore, companyId, hideJobMediaAdminUi, canManageFolders]
   );
-  const { data: jobsForImportRaw = [] } = useCollection(jobsForImportRef);
+  const { data: jobsForImportRaw } = useCollection(jobsForImportRef);
+  const jobsForImport = jobsForImportRaw ?? [];
   const customersForImportRef = useMemoFirebase(
     () =>
       firestore && companyId && !hideJobMediaAdminUi && canManageFolders
@@ -3075,7 +3076,7 @@ export function JobMediaSection({
         : null,
     [firestore, companyId, hideJobMediaAdminUi, canManageFolders]
   );
-  const { data: customersForImportRaw = [] } = useCollection(customersForImportRef);
+  const { data: customersForImportRaw } = useCollection(customersForImportRef);
   const customersByIdForImport = useMemo(() => {
     const m = new Map<string, Record<string, unknown>>();
     for (const c of customersForImportRaw ?? []) {
@@ -3250,7 +3251,7 @@ export function JobMediaSection({
   );
 
   const foldersSorted = useMemo(() => {
-    const list = (foldersRaw || []).filter(
+    const list = (foldersRaw ?? []).filter(
       (f) => f && typeof f.id === "string"
     ) as JobFolderDoc[];
     return list.slice().sort((a, b) => {
@@ -3591,7 +3592,7 @@ export function JobMediaSection({
   };
 
   const photosSorted = useMemo(() => {
-    const list = (photos || []).filter((p) => p?.id);
+    const list = (photos ?? []).filter((p) => p?.id);
     return list.slice().sort((a, b) => {
       const ta =
         typeof (a.createdAt as { toMillis?: () => number })?.toMillis ===
@@ -4462,7 +4463,7 @@ export function JobMediaSection({
         />
       ) : null}
 
-      {user && canManageFolders && !hideJobMediaAdminUi ? (
+      {user && canManageFolders && !hideJobMediaAdminUi && importFromJobOpen ? (
         <JobImportFilesFromJobDialog
           open={importFromJobOpen}
           onOpenChange={setImportFromJobOpen}
@@ -4470,7 +4471,7 @@ export function JobMediaSection({
           targetJobId={jobId}
           jobDisplayName={jobDisplayName}
           user={user}
-          jobs={jobsForImportRaw as Record<string, unknown>[]}
+          jobs={jobsForImport as Record<string, unknown>[]}
           customersById={customersByIdForImport}
         />
       ) : null}
