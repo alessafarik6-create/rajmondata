@@ -10028,7 +10028,9 @@ export function JobDetailPageContent({
         </div>
 
         <div className={JD.sideCol}>
-          <Card className={cn(JD.card)}>
+          <div className={JD.sideColGrid}>
+          <div className={cn(JD.sideColCell, JD.sideColSpan2)}>
+          <Card className={cn(JD.card, "h-full")}>
             <CardHeader>
               <CardTitle className={JD.cardTitlePlain}>Finanční údaje</CardTitle>
             </CardHeader>
@@ -10293,55 +10295,10 @@ export function JobDetailPageContent({
               </div>
             </CardContent>
           </Card>
-
-          {companyId && jobFirestoreId &&
-          profile?.role !== "customer" &&
-          (isAdmin || canManageFolders) ? (
-            <JobContractDepositSection
-              jobRef={jobRef}
-              job={job as Record<string, unknown>}
-              canEdit={isAdmin}
-              canView={isAdmin || canManageFolders}
-              defaultTotalPriceGross={jobBudgetBreakdown?.budgetGross ?? null}
-              workContractsForJob={workContractsForJob}
-              jobInvoices={jobInvoicesForDeposit}
-              jobIncomes={jobIncomesSorted}
-            />
-          ) : null}
-
-          {companyId && jobFirestoreId ? (
-            <JobBillingInvoicesSection
-              companyId={companyId}
-              jobId={String(jobId)}
-              job={job as Record<string, unknown>}
-              jobName={
-                job?.name != null && String(job.name).trim() !== ""
-                  ? String(job.name).trim()
-                  : "Zakázka"
-              }
-              customerId={job?.customerId as string | undefined}
-              customerName={jobCustomerAddressBlock.displayName}
-              customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
-              jobBudgetBreakdown={jobBudgetBreakdown}
-              workContractsForJob={workContractsForJob}
-              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
-              companyDisplayName={
-                companyNameFromDoc ||
-                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
-                "Organizace"
-              }
-              user={user}
-              canManage={canManageFolders}
-              canSoftDeleteInvoices={isAdmin}
-              jobStatus={
-                job && typeof (job as { status?: string }).status === "string"
-                  ? String((job as { status: string }).status)
-                  : ""
-              }
-            />
-          ) : null}
+          </div>
 
           {companyId && jobFirestoreId && user && firestore ? (
+            <div className={JD.sideColCell}>
             <JobCommentsThread
               firestore={firestore}
               companyId={companyId}
@@ -10382,9 +10339,11 @@ export function JobDetailPageContent({
                 }
               }}
             />
+            </div>
           ) : null}
 
           {companyId && jobFirestoreId ? (
+            <div className={JD.sideColCell}>
             <JobDocumentEmailSection
               companyId={companyId}
               jobId={String(jobFirestoreId)}
@@ -10401,9 +10360,11 @@ export function JobDetailPageContent({
               jobBudgetBreakdown={jobBudgetBreakdown}
               canManage={canManageFolders}
             />
+            </div>
           ) : null}
 
           {companyId && jobFirestoreId && user ? (
+            <div className={JD.sideColCell}>
             <JobMaterialOrdersSection
               companyId={companyId}
               companyDisplayName={
@@ -10419,10 +10380,12 @@ export function JobDetailPageContent({
               canManage={canManageFolders}
               companyDoc={(companyDoc as Record<string, unknown> | null | undefined) ?? null}
             />
+            </div>
           ) : null}
 
           {companyId && jobFirestoreId && user && vyrobaModuleOn && showVyrobaWorkshopEntry ? (
-            <Card className={cn(JD.card, "border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
+            <div className={JD.sideColCell}>
+            <Card className={cn(JD.card, "h-full border-primary/20 bg-gradient-to-br from-primary/5 to-white")}>
               <CardHeader className="pb-2">
                 <CardTitle className={cn(JD.cardTitlePlain, "flex items-center gap-2")}>
                   <Factory className="h-5 w-5 text-primary" />
@@ -10441,9 +10404,11 @@ export function JobDetailPageContent({
                 </Button>
               </CardContent>
             </Card>
+            </div>
           ) : null}
 
           {companyId && jobFirestoreId && user && vyrobaModuleOn && firestore ? (
+            <div className={JD.sideColCell}>
             <JobProductionTeamSection
               firestore={firestore}
               companyId={companyId}
@@ -10452,9 +10417,11 @@ export function JobDetailPageContent({
               canManage={canManageFolders}
               user={user}
             />
+            </div>
           ) : null}
 
-          <Card className={cn(JD.card)}>
+          <div className={JD.sideColCell}>
+          <Card className={cn(JD.card, "h-full")}>
             <CardHeader>
               <CardTitle className={JD.cardTitlePlain}>Poznámky a historie</CardTitle>
             </CardHeader>
@@ -10486,7 +10453,60 @@ export function JobDetailPageContent({
               </div>
             </CardContent>
           </Card>
+          </div>
 
+          {companyId && jobFirestoreId &&
+          profile?.role !== "customer" &&
+          (isAdmin || canManageFolders) ? (
+            <div className={JD.sideColCell}>
+            <JobContractDepositSection
+              jobRef={jobRef}
+              job={job as Record<string, unknown>}
+              canEdit={isAdmin}
+              canView={isAdmin || canManageFolders}
+              defaultTotalPriceGross={jobBudgetBreakdown?.budgetGross ?? null}
+              workContractsForJob={workContractsForJob}
+              jobInvoices={jobInvoicesForDeposit}
+              jobIncomes={jobIncomesSorted}
+            />
+            </div>
+          ) : null}
+
+          {companyId && jobFirestoreId ? (
+            <div className={JD.sideColCell}>
+            <JobBillingInvoicesSection
+              companyId={companyId}
+              jobId={String(jobId)}
+              job={job as Record<string, unknown>}
+              jobName={
+                job?.name != null && String(job.name).trim() !== ""
+                  ? String(job.name).trim()
+                  : "Zakázka"
+              }
+              customerId={job?.customerId as string | undefined}
+              customerName={jobCustomerAddressBlock.displayName}
+              customerAddressLines={jobCustomerAddressBlock.addressLines.join("\n")}
+              jobBudgetBreakdown={jobBudgetBreakdown}
+              workContractsForJob={workContractsForJob}
+              companyDoc={companyDoc as Record<string, unknown> | null | undefined}
+              companyDisplayName={
+                companyNameFromDoc ||
+                (companyDoc as { companyName?: string } | null | undefined)?.companyName ||
+                "Organizace"
+              }
+              user={user}
+              canManage={canManageFolders}
+              canSoftDeleteInvoices={isAdmin}
+              jobStatus={
+                job && typeof (job as { status?: string }).status === "string"
+                  ? String((job as { status: string }).status)
+                  : ""
+              }
+            />
+            </div>
+          ) : null}
+
+          </div>
         </div>
       </div>
       </div>

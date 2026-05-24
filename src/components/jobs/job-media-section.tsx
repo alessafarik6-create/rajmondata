@@ -122,6 +122,7 @@ import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
 import { JobMediaExportNotesButtons } from "@/components/jobs/job-media-export-notes-buttons";
+import { JobImportFilesFromJobDialog } from "@/components/jobs/job-import-files-from-job-dialog";
 import {
   canJobMediaExportWithNotes,
   jobMediaNotesExportInputFromRow,
@@ -146,6 +147,7 @@ import {
   Eye,
   FileText,
   FolderPlus,
+  Files,
   ImagePlus,
   Loader2,
   MessageSquare,
@@ -3056,6 +3058,32 @@ export function JobMediaSection({
   const [newFolderName, setNewFolderName] = useState("");
   const [newFolderType, setNewFolderType] = useState<JobFolderType>("files");
   const [creatingFolder, setCreatingFolder] = useState(false);
+  const [importFromJobOpen, setImportFromJobOpen] = useState(false);
+
+  const jobsForImportRef = useMemoFirebase(
+    () =>
+      firestore && companyId && !hideJobMediaAdminUi && canManageFolders
+        ? collection(firestore, "companies", companyId, "jobs")
+        : null,
+    [firestore, companyId, hideJobMediaAdminUi, canManageFolders]
+  );
+  const { data: jobsForImportRaw = [] } = useCollection(jobsForImportRef);
+  const customersForImportRef = useMemoFirebase(
+    () =>
+      firestore && companyId && !hideJobMediaAdminUi && canManageFolders
+        ? collection(firestore, "companies", companyId, "customers")
+        : null,
+    [firestore, companyId, hideJobMediaAdminUi, canManageFolders]
+  );
+  const { data: customersForImportRaw = [] } = useCollection(customersForImportRef);
+  const customersByIdForImport = useMemo(() => {
+    const m = new Map<string, Record<string, unknown>>();
+    for (const c of customersForImportRaw ?? []) {
+      const id = String((c as { id?: string }).id ?? "").trim();
+      if (id) m.set(id, c as Record<string, unknown>);
+    }
+    return m;
+  }, [customersForImportRaw]);
 
   const [noteOpen, setNoteOpen] = useState(false);
   const [noteDraft, setNoteDraft] = useState("");
@@ -3717,6 +3745,19 @@ export function JobMediaSection({
                   </span>
                 </button>
               </CollapsibleTrigger>
+              <div className="flex shrink-0 flex-wrap gap-2">
+              {canManageFolders && !hideJobMediaAdminUi && user ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() => setImportFromJobOpen(true)}
+                >
+                  <Files className="h-4 w-4" aria-hidden />
+                  Importovat soubory z jiné zakázky
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="outline"
@@ -3726,6 +3767,7 @@ export function JobMediaSection({
               >
                 {mediaGalleryOpen ? "Sbalit" : "Rozbalit"}
               </Button>
+              </div>
             </div>
             <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               {mediaScope !== "employeeLimited" && mediaScope !== "customer" ? (
@@ -4417,6 +4459,19 @@ export function JobMediaSection({
           initialAdminNote={mediaApprovalDlg.initialAdminNote}
           initialApprovalEmailSent={mediaApprovalDlg.initialApprovalEmailSent}
           onApplied={() => setMediaApprovalDlg(null)}
+        />
+      ) : null}
+
+      {user && canManageFolders && !hideJobMediaAdminUi ? (
+        <JobImportFilesFromJobDialog
+          open={importFromJobOpen}
+          onOpenChange={setImportFromJobOpen}
+          companyId={companyId}
+          targetJobId={jobId}
+          jobDisplayName={jobDisplayName}
+          user={user}
+          jobs={jobsForImportRaw as Record<string, unknown>[]}
+          customersById={customersByIdForImport}
         />
       ) : null}
       </>
