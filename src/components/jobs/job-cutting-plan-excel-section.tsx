@@ -14,10 +14,10 @@ import { useDoc, useMemoFirebase } from "@/firebase";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { JD } from "@/lib/job-detail-page-styles";
+import { withTimeout } from "@/lib/async-with-timeout";
 import {
   CUTTING_PLAN_EXCEL_ACCEPT,
   JOB_CUTTING_PLAN_EXCEL_DOC_ID,
@@ -29,8 +29,17 @@ import {
 } from "@/lib/job-cutting-plan-excel-types";
 import { uploadJobCuttingPlanExcelFile } from "@/lib/job-cutting-plan-excel-upload";
 import {
+  CUTTING_PLAN_PREVIEW_EMPTY_MSG,
+  CUTTING_PLAN_PREVIEW_LOAD_ERROR,
+  CUTTING_PLAN_PREVIEW_MAX_COLS,
+  CUTTING_PLAN_PREVIEW_MAX_ROWS,
+  CUTTING_PLAN_PREVIEW_TIMEOUT_MS,
   parseCuttingPlanExcelBytes,
+  parseCuttingPlanExcelFile,
+  previewDataToSnapshot,
+  snapshotToPreviewData,
   type CuttingPlanPreviewData,
+  type CuttingPlanPreviewSnapshot,
 } from "@/lib/job-cutting-plan-excel-preview";
 import {
   FileSpreadsheet,
@@ -46,6 +55,8 @@ import {
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 
+type PreviewUiStatus = "idle" | "loading" | "ready" | "error" | "empty";
+
 type Props = {
   firestore: Firestore;
   companyId: string;
@@ -56,10 +67,34 @@ type Props = {
   canView: boolean;
 };
 
+function applyPreviewToUi(
+  data: CuttingPlanPreviewData | null,
+  setPreviewData: (d: CuttingPlanPreviewData | null) => void,
+  setPreviewStatus: (s: PreviewUiStatus) => void,
+  setPreviewError: (e: string | null) => void
+) {
+  if (!data) {
+    setPreviewData(null);
+    setPreviewStatus("idle");
+    setPreviewError(null);
+    return;
+  }
+  if (data.empty || data.sheets.length === 0) {
+    setPreviewData(data);
+    setPreviewStatus("empty");
+    setPreviewError(null);
+    return;
+  }
+  setPreviewData(data);
+  setPreviewStatus("ready");
+  setPreviewError(null);
+}
+
 export function JobCuttingPlanExcelSection(props: Props) {
   const { firestore, companyId, jobId, user, authorName, canManage, canView } = props;
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const generateGenRef = useRef(0);
 
   const docRef = useMemoFirebase(
     () =>
@@ -83,46 +118,99 @@ export function JobCuttingPlanExcelSection(props: Props) {
   const [uploading, setUploading] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(true);
-  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewStatus, setPreviewStatus] = useState<PreviewUiStatus>("idle");
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<CuttingPlanPreviewData | null>(null);
-  const [activeSheet, setActiveSheet] = useState(0);
 
-  const loadPreview = useCallback(async (meta: JobCuttingPlanExcelDoc) => {
-    setPreviewLoading(true);
-    setPreviewError(null);
-    try {
-      const storage = getFirebaseStorage();
-      const bytes = await getBytes(storageRef(storage, meta.storagePath));
-      const parsed = parseCuttingPlanExcelBytes(bytes, meta.extension);
-      setPreviewData(parsed);
-      setActiveSheet(0);
-    } catch (e) {
-      console.error("[CuttingPlanExcel] preview failed", e);
-      setPreviewData(null);
-      setPreviewError(
-        e instanceof Error
-          ? e.message
-          : "Náhled se nepodařilo načíst. Soubor lze stáhnout a otevřít v Excelu."
-      );
-    } finally {
-      setPreviewLoading(false);
-    }
-  }, []);
-
+  /** Uložený JSON náhled z Firestore — okamžité zobrazení bez stahování Excelu. */
   useEffect(() => {
-    if (!planDoc || !canView) {
+    if (!planDoc) {
       setPreviewData(null);
+      setPreviewStatus("idle");
       setPreviewError(null);
       return;
     }
-    if (previewOpen) void loadPreview(planDoc);
-  }, [planDoc, canView, previewOpen, loadPreview]);
+    if (!planDoc.preview) return;
+    const cached = snapshotToPreviewData(planDoc.preview);
+    if (cached) {
+      applyPreviewToUi(cached, setPreviewData, setPreviewStatus, setPreviewError);
+    }
+  }, [planDoc?.preview?.generatedAt, planDoc?.storagePath, planDoc?.fileName]);
+
+  const savePreviewToFirestore = useCallback(
+    async (snapshot: CuttingPlanPreviewSnapshot | null) => {
+      await setDoc(
+        docRef,
+        {
+          preview: snapshot,
+          previewGeneratedAt: snapshot?.generatedAt ?? null,
+        },
+        { merge: true }
+      );
+    },
+    [docRef]
+  );
+
+  const generatePreviewFromBytes = useCallback(
+    async (bytes: ArrayBuffer, extension: JobCuttingPlanExcelDoc["extension"]) => {
+      const gen = ++generateGenRef.current;
+      setPreviewStatus("loading");
+      setPreviewError(null);
+      try {
+        const parsed = await withTimeout(
+          Promise.resolve().then(() => parseCuttingPlanExcelBytes(bytes, extension)),
+          CUTTING_PLAN_PREVIEW_TIMEOUT_MS,
+          "Generování náhledu"
+        );
+        if (gen !== generateGenRef.current) return;
+        const snapshot = previewDataToSnapshot(parsed);
+        applyPreviewToUi(parsed, setPreviewData, setPreviewStatus, setPreviewError);
+        if (snapshot) {
+          await savePreviewToFirestore(snapshot);
+        }
+        return parsed;
+      } catch (e) {
+        if (gen !== generateGenRef.current) return;
+        console.error("[CuttingPlanExcel] generate preview failed", e);
+        setPreviewData(null);
+        setPreviewStatus("error");
+        setPreviewError(CUTTING_PLAN_PREVIEW_LOAD_ERROR);
+        return null;
+      }
+    },
+    [savePreviewToFirestore]
+  );
+
+  const generatePreviewFromStorage = useCallback(
+    async (meta: JobCuttingPlanExcelDoc) => {
+      const gen = ++generateGenRef.current;
+      setPreviewStatus("loading");
+      setPreviewError(null);
+      try {
+        const storage = getFirebaseStorage();
+        const bytes = await withTimeout(
+          getBytes(storageRef(storage, meta.storagePath)),
+          CUTTING_PLAN_PREVIEW_TIMEOUT_MS,
+          "Stažení souboru"
+        );
+        if (gen !== generateGenRef.current) return;
+        await generatePreviewFromBytes(bytes, meta.extension);
+      } catch (e) {
+        if (gen !== generateGenRef.current) return;
+        console.error("[CuttingPlanExcel] storage preview failed", e);
+        setPreviewData(null);
+        setPreviewStatus("error");
+        setPreviewError(CUTTING_PLAN_PREVIEW_LOAD_ERROR);
+      }
+    },
+    [generatePreviewFromBytes]
+  );
 
   const persistDoc = async (
     upload: { fileUrl: string; storagePath: string; fileName: string },
     file: File,
-    extension: NonNullable<ReturnType<typeof inferCuttingPlanExtension>>
+    extension: NonNullable<ReturnType<typeof inferCuttingPlanExtension>>,
+    preview: CuttingPlanPreviewSnapshot | null
   ) => {
     await setDoc(
       docRef,
@@ -138,6 +226,8 @@ export function JobCuttingPlanExcelSection(props: Props) {
         uploadedBy: user.uid,
         uploadedByName: authorName,
         uploadedByEmail: user.email?.trim() || null,
+        preview,
+        previewGeneratedAt: preview?.generatedAt ?? null,
         updatedAt: serverTimestamp(),
         ...(planDoc ? {} : { createdAt: serverTimestamp() }),
       },
@@ -171,19 +261,36 @@ export function JobCuttingPlanExcelSection(props: Props) {
     setUploading(true);
     const previousPath = planDoc?.storagePath;
     try {
+      let previewSnapshot: CuttingPlanPreviewSnapshot | null = null;
+      try {
+        const parsed = await withTimeout(
+          parseCuttingPlanExcelFile(file),
+          CUTTING_PLAN_PREVIEW_TIMEOUT_MS,
+          "Generování náhledu"
+        );
+        previewSnapshot = previewDataToSnapshot(parsed);
+        applyPreviewToUi(parsed, setPreviewData, setPreviewStatus, setPreviewError);
+      } catch (previewErr) {
+        console.warn("[CuttingPlanExcel] preview on upload failed", previewErr);
+        setPreviewStatus("error");
+        setPreviewError(CUTTING_PLAN_PREVIEW_LOAD_ERROR);
+      }
+
       const uploaded = await uploadJobCuttingPlanExcelFile({
         companyId,
         jobId,
         file,
         extension,
       });
-      await persistDoc(uploaded, file, extension);
+      await persistDoc(uploaded, file, extension, previewSnapshot);
       if (previousPath && previousPath !== uploaded.storagePath) {
         await removeOldStorage(previousPath);
       }
       toast({
         title: planDoc ? "Excel nahrazen" : "Excel nahrán",
-        description: "Nářezový plánek je uložen u zakázky. Vzorce zůstávají v souboru.",
+        description: previewSnapshot
+          ? "Nářezový plánek a náhled tabulky jsou uloženy u zakázky."
+          : "Soubor je uložen. Náhled tabulky se nepodařilo vygenerovat — použijte „Vygenerovat náhled“ nebo stáhněte Excel.",
       });
       setPreviewOpen(true);
     } catch (e) {
@@ -203,10 +310,13 @@ export function JobCuttingPlanExcelSection(props: Props) {
     if (!canManage || !planDoc) return;
     if (!window.confirm("Smazat nářezový plánek (Excel) u této zakázky?")) return;
     setDeleting(true);
+    generateGenRef.current++;
     try {
       await removeOldStorage(planDoc.storagePath);
       await deleteDoc(docRef);
       setPreviewData(null);
+      setPreviewStatus("idle");
+      setPreviewError(null);
       toast({ title: "Excel smazán" });
     } catch (e) {
       toast({
@@ -236,14 +346,14 @@ export function JobCuttingPlanExcelSection(props: Props) {
       toast({
         variant: "destructive",
         title: "Náhled není k dispozici",
-        description: "Nejdříve načtěte tabulkový náhled.",
+        description: "Nejdříve připravte tabulkový náhled.",
       });
       return;
     }
-    const sheet = previewData.sheets[activeSheet] ?? previewData.sheets[0];
+    const sheet = previewData.sheets[0];
     const rows = sheet.rows.filter((r) => r.some((c) => String(c).trim() !== ""));
     if (rows.length === 0) {
-      toast({ variant: "destructive", title: "Prázdný list", description: "List neobsahuje data." });
+      toast({ variant: "destructive", title: "Prázdný list", description: CUTTING_PLAN_PREVIEW_EMPTY_MSG });
       return;
     }
     const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
@@ -264,9 +374,29 @@ export function JobCuttingPlanExcelSection(props: Props) {
     );
   };
 
+  const previewStatusLabel = (() => {
+    switch (previewStatus) {
+      case "loading":
+        return "Načítám tabulku…";
+      case "ready":
+        return previewData?.truncated
+          ? "Náhled připraven (zkrácená ukázka)"
+          : "Náhled připraven";
+      case "error":
+        return "Náhled se nepodařilo načíst";
+      case "empty":
+        return CUTTING_PLAN_PREVIEW_EMPTY_MSG;
+      default:
+        return planDoc?.preview
+          ? "Náhled připraven"
+          : "Náhled zatím není vygenerován";
+    }
+  })();
+
   if (!canView) return null;
 
   const uploadedLabel = formatCuttingPlanUploadedAt(planDoc?.updatedAt ?? planDoc?.createdAt);
+  const sheet = previewData?.sheets[0];
 
   return (
     <Card className={cn(JD.fullWidthCard)}>
@@ -278,7 +408,8 @@ export function JobCuttingPlanExcelSection(props: Props) {
           </CardTitle>
           <p className="text-sm text-gray-600">
             Výpočtová tabulka pro nářez — soubor se ukládá k zakázce včetně vzorců. Náhled zobrazuje
-            poslední uložené hodnoty z Excelu (bez přepočtu vzorců v prohlížeči).
+            poslední uložené hodnoty (max. {CUTTING_PLAN_PREVIEW_MAX_ROWS} řádků ×{" "}
+            {CUTTING_PLAN_PREVIEW_MAX_COLS} sloupců prvního listu).
           </p>
         </div>
         {canManage ? (
@@ -309,7 +440,7 @@ export function JobCuttingPlanExcelSection(props: Props) {
 
       <CardContent className="space-y-4">
         {isLoading ? (
-          <p className="text-sm text-muted-foreground">Načítám…</p>
+          <p className="text-sm text-muted-foreground">Načítám metadata…</p>
         ) : !planDoc ? (
           <div className="rounded-lg border border-dashed border-gray-300 bg-gray-50/80 px-4 py-8 text-center text-sm text-gray-700">
             {canManage
@@ -376,94 +507,128 @@ export function JobCuttingPlanExcelSection(props: Props) {
             </div>
 
             {previewOpen ? (
-              <div className="space-y-2">
+              <div className="space-y-3 rounded-lg border border-gray-200 bg-white p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-sm font-medium text-gray-900">Tabulkový náhled</p>
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-gray-900">Tabulkový náhled</p>
+                    <p
+                      className={cn(
+                        "text-xs",
+                        previewStatus === "error" ? "text-destructive" : "text-gray-600"
+                      )}
+                    >
+                      {previewStatus === "error" && previewError
+                        ? previewError
+                        : previewStatusLabel}
+                    </p>
+                  </div>
                   <div className="flex flex-wrap items-center gap-2">
-                    {previewData?.truncated ? (
+                    {previewStatus === "ready" && previewData?.truncated ? (
                       <Badge variant="secondary" className="font-normal">
-                        Zobrazen výřez (max. {250} řádků × {40} sloupců)
+                        Excel je moc velký — zobrazena zkrácená ukázka
                       </Badge>
+                    ) : null}
+                    {previewStatus === "ready" ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={handleExportPreviewPdf}
+                      >
+                        <FileDown className="h-4 w-4" />
+                        Export náhledu PDF
+                      </Button>
                     ) : null}
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
                       className="gap-1.5"
-                      disabled={previewLoading || !previewData}
-                      onClick={handleExportPreviewPdf}
+                      disabled={previewStatus === "loading"}
+                      onClick={() => {
+                        if (!planDoc) return;
+                        if (planDoc.preview && previewStatus !== "error") {
+                          const cached = snapshotToPreviewData(planDoc.preview);
+                          if (cached) {
+                            applyPreviewToUi(
+                              cached,
+                              setPreviewData,
+                              setPreviewStatus,
+                              setPreviewError
+                            );
+                            return;
+                          }
+                        }
+                        void generatePreviewFromStorage(planDoc);
+                      }}
                     >
-                      <FileDown className="h-4 w-4" />
-                      Export náhledu PDF
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      disabled={previewLoading}
-                      onClick={() => planDoc && void loadPreview(planDoc)}
-                    >
+                      {previewStatus === "loading" ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
                       Obnovit náhled
                     </Button>
+                    {previewStatus === "idle" && canManage ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="gap-1.5"
+                        onClick={() => planDoc && void generatePreviewFromStorage(planDoc)}
+                      >
+                        Vygenerovat náhled
+                      </Button>
+                    ) : null}
                   </div>
                 </div>
 
-                {previewLoading ? (
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-6">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Načítám tabulku…
+                {previewStatus === "loading" ? (
+                  <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+                    Načítám tabulku… (max. {Math.round(CUTTING_PLAN_PREVIEW_TIMEOUT_MS / 1000)} s)
                   </div>
-                ) : previewError ? (
-                  <p className="text-sm text-destructive">{previewError}</p>
-                ) : previewData && previewData.sheets.length > 0 ? (
-                  <Tabs
-                    value={String(activeSheet)}
-                    onValueChange={(v) => setActiveSheet(Number(v))}
-                  >
-                    {previewData.sheets.length > 1 ? (
-                      <TabsList className="mb-2 flex h-auto flex-wrap justify-start gap-1">
-                        {previewData.sheets.map((s, i) => (
-                          <TabsTrigger key={s.name} value={String(i)} className="text-xs sm:text-sm">
-                            {s.name}
-                          </TabsTrigger>
+                ) : previewStatus === "ready" && sheet ? (
+                  <div className="overflow-x-auto rounded-lg border border-gray-200">
+                    <p className="border-b border-gray-200 bg-gray-50 px-3 py-1.5 text-xs font-medium text-gray-700">
+                      List: {sheet.name}
+                    </p>
+                    <table className="min-w-full border-collapse text-left text-sm text-gray-900">
+                      <tbody>
+                        {sheet.rows.map((row, ri) => (
+                          <tr
+                            key={`row-${ri}`}
+                            className={cn(
+                              ri === 0 && "bg-orange-50/90 font-semibold",
+                              ri % 2 === 1 && ri > 0 && "bg-gray-50/50"
+                            )}
+                          >
+                            {row.map((cell, ci) => (
+                              <td
+                                key={`${ri}-${ci}`}
+                                className="whitespace-nowrap border border-gray-200 px-2.5 py-1.5 align-top tabular-nums"
+                              >
+                                {cell || "\u00a0"}
+                              </td>
+                            ))}
+                          </tr>
                         ))}
-                      </TabsList>
-                    ) : null}
-                    {previewData.sheets.map((sheet, i) => (
-                      <TabsContent key={sheet.name} value={String(i)} className="mt-0">
-                        <div className="overflow-x-auto rounded-lg border border-gray-200 bg-white">
-                          <table className="min-w-full border-collapse text-left text-sm text-gray-900">
-                            <tbody>
-                              {sheet.rows.map((row, ri) => (
-                                <tr
-                                  key={`${sheet.name}-${ri}`}
-                                  className={cn(
-                                    ri === 0 && "bg-orange-50/90 font-semibold",
-                                    ri % 2 === 1 && ri > 0 && "bg-gray-50/50"
-                                  )}
-                                >
-                                  {row.map((cell, ci) => (
-                                    <td
-                                      key={`${ri}-${ci}`}
-                                      className="whitespace-nowrap border border-gray-200 px-2.5 py-1.5 align-top tabular-nums"
-                                    >
-                                      {cell || "\u00a0"}
-                                    </td>
-                                  ))}
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </TabsContent>
-                    ))}
-                  </Tabs>
-                ) : (
-                  <p className="text-sm text-muted-foreground">List je prázdný nebo nelze zobrazit.</p>
-                )}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : previewStatus === "empty" ? (
+                  <p className="text-sm text-muted-foreground py-2">{CUTTING_PLAN_PREVIEW_EMPTY_MSG}</p>
+                ) : previewStatus === "idle" ? (
+                  <p className="text-sm text-muted-foreground py-2">
+                    {canManage
+                      ? "Klikněte na „Vygenerovat náhled“ nebo nahrajte soubor znovu — náhled se uloží k zakázce pro rychlé zobrazení."
+                      : "Náhled tabulky zatím není k dispozici."}
+                  </p>
+                ) : null}
+
                 <p className="text-xs text-gray-500">
-                  Vzorce v souboru zůstávají zachované — po stažení a otevření v Excelu se přepočítají.
-                  Náhled zobrazuje uložené hodnoty z posledního uložení v Excelu.
+                  Vzorce zůstávají v původním souboru ke stažení. Náhled je statická ukázka uložených
+                  hodnot z Excelu.
                 </p>
               </div>
             ) : null}

@@ -1,6 +1,9 @@
 /** Nářezový plánek — Excel navázaný na jednu zakázku (Firestore doc `current`). */
 
-export const JOB_CUTTING_PLAN_EXCEL_DOC_ID = "current" as const;
+import type { CuttingPlanPreviewSnapshot } from "@/lib/job-cutting-plan-excel-preview";
+import { parsePreviewSnapshotFromFirestore } from "@/lib/job-cutting-plan-excel-preview";
+
+export type { CuttingPlanPreviewSnapshot } from "@/lib/job-cutting-plan-excel-preview";
 
 export const CUTTING_PLAN_EXCEL_ACCEPT =
   ".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv";
@@ -24,7 +27,11 @@ export type JobCuttingPlanExcelDoc = {
   uploadedByEmail?: string | null;
   createdAt?: unknown;
   updatedAt?: unknown;
+  /** Rychlý tabulkový náhled (generuje se při uploadu / na vyžádání). */
+  preview?: CuttingPlanPreviewSnapshot | null;
 };
+
+export const JOB_CUTTING_PLAN_EXCEL_DOC_ID = "current" as const;
 
 export function inferCuttingPlanExtension(file: File): CuttingPlanExcelExtension | null {
   const name = file.name.toLowerCase();
@@ -82,5 +89,6 @@ export function parseJobCuttingPlanExcelDoc(
       typeof raw.uploadedByEmail === "string" ? raw.uploadedByEmail.trim() || null : null,
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
+    preview: parsePreviewSnapshotFromFirestore(raw.preview),
   };
 }
