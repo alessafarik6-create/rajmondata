@@ -1,11 +1,8 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Input } from "@/components/ui/input";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import {
-  CUTTING_PLAN_PREVIEW_MAX_HEIGHT_PX,
-} from "@/lib/job-cutting-plan-excel-constants";
+import { CUTTING_PLAN_PREVIEW_MAX_HEIGHT_PX } from "@/lib/job-cutting-plan-excel-constants";
 import {
   buildGridModels,
   gridOverridesFromDraft,
@@ -32,14 +29,20 @@ type Props = {
 
 export function JobCuttingPlanExcelPreviewTable(props: Props) {
   const { sheetName, rows, formulaCells, cellOverrides, canEdit, onDraftChange } = props;
+  const overridesKey = useMemo(() => JSON.stringify(cellOverrides), [cellOverrides]);
+  const rowsKey = useMemo(() => JSON.stringify(rows), [rows]);
+  const formulasKey = useMemo(() => JSON.stringify(formulaCells), [formulaCells]);
 
   const [grid, setGrid] = useState<GridCellModel[][]>(() =>
     buildGridModels({ rows, formulaCells, cellOverrides, canEdit })
   );
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   useEffect(() => {
     setGrid(buildGridModels({ rows, formulaCells, cellOverrides, canEdit }));
-  }, [rows, formulaCells, cellOverrides, canEdit]);
+    setEditingKey(null);
+  }, [rowsKey, formulasKey, overridesKey, canEdit, rows, formulaCells, cellOverrides]);
 
   const emitDraft = useCallback(
     (next: GridCellModel[][]) => {
@@ -56,7 +59,7 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
     setGrid((prev) => {
       const next = prev.map((line) => line.map((c) => ({ ...c })));
       const cell = next[row]?.[col];
-      if (!cell || !cell.editable) return prev;
+      if (!cell || cell.isFormula || !cell.editable) return prev;
       cell.override = value;
       recalculateGrid(next);
       emitDraft(next);
@@ -88,17 +91,17 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
         List: {sheetName}
       </p>
       <div
-        className="overflow-auto"
+        className="overflow-auto overscroll-contain"
         style={{ maxHeight: CUTTING_PLAN_PREVIEW_MAX_HEIGHT_PX }}
       >
         <table className="min-w-full border-collapse text-left text-sm text-gray-900">
-          <thead className="sticky top-0 z-10 bg-gray-100">
+          <thead className="sticky top-0 z-10 bg-gray-100 shadow-sm">
             <tr>
-              <th className="w-10 border border-gray-200 px-1 py-1 text-center text-xs text-gray-500" />
+              <th className="sticky left-0 z-20 w-10 border border-gray-200 bg-gray-100 px-1 py-1 text-center text-xs text-gray-500" />
               {columnLabels.map((label) => (
                 <th
                   key={label}
-                  className="min-w-[4.5rem] border border-gray-200 px-2 py-1 text-center text-xs font-medium text-gray-600"
+                  className="min-w-[5rem] border border-gray-200 px-2 py-1 text-center text-xs font-medium text-gray-600"
                 >
                   {label}
                 </th>
@@ -109,47 +112,73 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
             {grid.map((line, ri) => (
               <tr
                 key={`row-${ri}`}
-                className={cn(ri === 0 && "bg-orange-50/70", ri % 2 === 1 && ri > 0 && "bg-gray-50/40")}
+                className={cn(ri === 0 && "bg-orange-50/60", ri % 2 === 1 && ri > 0 && "bg-gray-50/30")}
               >
-                <td className="border border-gray-200 bg-gray-50 px-1 py-1 text-center text-xs text-gray-500 tabular-nums">
+                <td className="sticky left-0 z-10 border border-gray-200 bg-gray-50 px-1 py-1 text-center text-xs text-gray-500 tabular-nums">
                   {ri + 1}
                 </td>
-                {line.map((cell) => (
-                  <td
-                    key={cellKey(cell.row, cell.col)}
-                    className={cn(
-                      "border border-gray-200 p-0 align-top",
-                      cell.isFormula && "bg-sky-50/80",
-                      cell.editable && "bg-amber-50/30"
-                    )}
-                    title={
-                      cell.isFormula
-                        ? cell.formula
-                        : cell.editable
-                          ? "Upravitelná hodnota"
-                          : undefined
-                    }
-                  >
-                    {cell.isFormula ? (
-                      <div className="px-2 py-1.5 tabular-nums whitespace-nowrap">
-                        <span className="text-gray-900">{cell.display || "—"}</span>
-                        {cell.formulaError ? (
-                          <span className="ml-1 text-[10px] text-amber-700">!</span>
-                        ) : null}
-                      </div>
-                    ) : cell.editable ? (
-                      <Input
-                        value={cell.override ?? cell.base}
-                        onChange={(e) => updateCell(cell.row, cell.col, e.target.value)}
-                        className="h-8 min-w-[4.5rem] rounded-none border-0 bg-transparent px-2 py-1 text-sm tabular-nums shadow-none focus-visible:ring-1 focus-visible:ring-primary"
-                      />
-                    ) : (
-                      <div className="px-2 py-1.5 whitespace-nowrap text-gray-800">
-                        {cell.display || "\u00a0"}
-                      </div>
-                    )}
-                  </td>
-                ))}
+                {line.map((cell) => {
+                  const key = cellKey(cell.row, cell.col);
+                  const isEditing = editingKey === key;
+                  const inputValue =
+                    cell.override !== undefined ? cell.override : cell.base;
+
+                  return (
+                    <td
+                      key={key}
+                      className={cn(
+                        "border border-gray-200 p-0 align-middle min-w-[5rem]",
+                        cell.isFormula && "bg-sky-50",
+                        cell.editable && "bg-amber-50/50"
+                      )}
+                      title={
+                        cell.isFormula
+                          ? `Vzorec: ${cell.formula}`
+                          : cell.editable
+                            ? "Klikněte pro úpravu"
+                            : undefined
+                      }
+                    >
+                      {cell.isFormula ? (
+                        <div
+                          className="min-h-[2rem] px-2 py-1.5 tabular-nums text-gray-900 whitespace-nowrap"
+                          aria-readonly
+                        >
+                          {cell.display !== "" ? cell.display : "\u00a0"}
+                          {cell.formulaError ? (
+                            <span
+                              className="ml-1 text-[10px] text-amber-700"
+                              title={cell.formulaError}
+                            >
+                              ?
+                            </span>
+                          ) : null}
+                        </div>
+                      ) : cell.editable ? (
+                        <input
+                          ref={(el) => {
+                            inputRefs.current[key] = el;
+                          }}
+                          type="text"
+                          value={inputValue}
+                          readOnly={!canEdit}
+                          onFocus={() => setEditingKey(key)}
+                          onBlur={() => setEditingKey((k) => (k === key ? null : k))}
+                          onChange={(e) => updateCell(cell.row, cell.col, e.target.value)}
+                          className={cn(
+                            "w-full min-h-[2rem] min-w-[5rem] border-0 bg-transparent px-2 py-1.5 text-sm text-gray-900",
+                            "focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-inset",
+                            isEditing && "bg-white ring-1 ring-primary/30"
+                          )}
+                        />
+                      ) : (
+                        <div className="min-h-[2rem] px-2 py-1.5 whitespace-nowrap text-gray-800">
+                          {cell.display || "\u00a0"}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
               </tr>
             ))}
           </tbody>
