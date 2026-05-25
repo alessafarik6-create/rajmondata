@@ -115,6 +115,17 @@ service firebase.storage {
       allow write: if storageJobCompanyWriteOk(companyId);
     }
 
+    /** Nářezový plánek — Excel/CSV (binární soubor se vzorci). */
+    match /companies/{companyId}/jobs/{jobId}/cuttingPlanExcel/{allPaths=**} {
+      allow read: if request.auth != null && storageSameCompany(companyId) && storageUserRole() != 'customer';
+      allow write: if request.auth != null && storageSameCompany(companyId) && (
+        storageIsSuperAdmin() || storageUserRole() in ['owner', 'admin']
+      );
+      allow delete: if request.auth != null && storageSameCompany(companyId) && (
+        storageIsSuperAdmin() || storageUserRole() in ['owner', 'admin']
+      );
+    }
+
     /** PDF rychlých objednávek — zápis jen přes Admin SDK (server); čtení firma. */
     match /companies/{companyId}/jobs/{jobId}/materialOrderPdfExports/{allPaths=**} {
       allow read: if request.auth != null && storageSameCompany(companyId);

@@ -142,6 +142,7 @@ import { getJobCustomerPortalPreviewGate } from "@/lib/job-customer-portal-previ
 import { JD } from "@/lib/job-detail-page-styles";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
+import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
   staffCanEditMeetingRecords,
   staffCanViewMeetingRecords,
@@ -9941,6 +9942,26 @@ export function JobDetailPageContent({
                 </CardContent>
               </Card>
             )}
+
+          {profile?.role !== "customer" && companyId && jobFirestoreId && user && firestore ? (
+            <JobCuttingPlanExcelSection
+              firestore={firestore}
+              companyId={companyId}
+              jobId={String(jobFirestoreId)}
+              user={user}
+              authorName={
+                String(
+                  (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
+                    (profile as { name?: unknown })?.name ??
+                    (profile as { email?: unknown })?.email ??
+                    user.email ??
+                    ""
+                ).trim() || "Uživatel"
+              }
+              canManage={isAdmin}
+              canView={isAdmin || canManageFolders || profile?.role === "employee"}
+            />
+          ) : null}
 
           <Card className={cn(JD.card)}>
             <CardHeader>

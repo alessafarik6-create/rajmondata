@@ -1143,6 +1143,33 @@ service cloud.firestore {
         }
 
         /**
+         * Nářezový plánek — Excel/CSV u zakázky (jeden aktivní soubor, doc id `current`).
+         * companies/{companyId}/jobs/{jobId}/cuttingPlanExcel/{docId}
+         */
+        match /cuttingPlanExcel/{docId} {
+          allow read: if signedIn() && sameCompany(companyId) &&
+            userRole() != 'customer' &&
+            jobFinancialReadAccess(companyId, jobId);
+          allow create, update: if signedIn() && sameCompany(companyId) &&
+            (userRole() in ['owner', 'admin'] || isSuperAdminFirebase()) &&
+            jobDetailReadAccess(companyId, jobId) &&
+            docId == 'current' &&
+            request.resource.data.companyId == companyId &&
+            request.resource.data.jobId == jobId &&
+            request.resource.data.fileName is string &&
+            request.resource.data.fileName.size() > 0 &&
+            request.resource.data.fileName.size() <= 260 &&
+            request.resource.data.fileUrl is string &&
+            request.resource.data.storagePath is string &&
+            request.resource.data.uploadedBy == request.auth.uid &&
+            request.resource.data.extension in ['xlsx', 'xls', 'csv'];
+          allow delete: if signedIn() && sameCompany(companyId) &&
+            (userRole() in ['owner', 'admin'] || isSuperAdminFirebase()) &&
+            jobDetailReadAccess(companyId, jobId) &&
+            docId == 'current';
+        }
+
+        /**
          * Objednávky materiálu (klasické i rychlé z výroby).
          * companies/{companyId}/jobs/{jobId}/materialOrders/{orderId}
          */
