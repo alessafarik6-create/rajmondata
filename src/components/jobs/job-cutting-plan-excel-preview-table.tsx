@@ -3,18 +3,12 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
 import { CUTTING_PLAN_PREVIEW_MAX_HEIGHT_PX } from "@/lib/job-cutting-plan-excel-constants";
-import {
-  buildGridModels,
-  gridOverridesFromDraft,
-  gridToRows2d,
-  recalculateGrid,
-  type GridCellModel,
-} from "@/lib/job-cutting-plan-excel-formulas";
+import { CuttingPlanPreviewEngine } from "@/lib/job-cutting-plan-excel-hyperformula";
 import { cellKey } from "@/lib/job-cutting-plan-excel-storage";
 
 export type PreviewTableDraft = {
-  grid: GridCellModel[][];
   overrides: Record<string, string>;
+  computedValues: Record<string, string>;
   rows: string[][];
 };
 
@@ -23,51 +17,89 @@ type Props = {
   rows: string[][];
   formulaCells: Record<string, string>;
   cellOverrides: Record<string, string>;
+  /** Změna dat ze serveru — při editaci se nemění. */
+  syncKey: string;
   canEdit: boolean;
   onDraftChange?: (draft: PreviewTableDraft) => void;
 };
 
 export function JobCuttingPlanExcelPreviewTable(props: Props) {
-  const { sheetName, rows, formulaCells, cellOverrides, canEdit, onDraftChange } = props;
-  const overridesKey = useMemo(() => JSON.stringify(cellOverrides), [cellOverrides]);
-  const rowsKey = useMemo(() => JSON.stringify(rows), [rows]);
-  const formulasKey = useMemo(() => JSON.stringify(formulaCells), [formulaCells]);
+  const {
+    sheetName,
+    rows,
+    formulaCells,
+    cellOverrides,
+    syncKey,
+    canEdit,
+    onDraftChange,
+  } = props;
 
-  const [grid, setGrid] = useState<GridCellModel[][]>(() =>
-    buildGridModels({ rows, formulaCells, cellOverrides, canEdit })
-  );
+  const engineRef = useRef<CuttingPlanPreviewEngine | null>(null);
+  const [displays, setDisplays] = useState<string[][]>([]);
+  const [localOverrides, setLocalOverrides] = useState<Record<string, string>>({});
   const [editingKey, setEditingKey] = useState<string | null>(null);
-  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const [focusedValue, setFocusedValue] = useState<string>("");
+
+  const rowCount = rows.length;
+  const colCount = rows.reduce((m, r) => Math.max(m, r.length), 0);
+
+  const rebuildFromProps = useCallback(() => {
+    engineRef.current?.destroy();
+    if (rowCount === 0 || colCount === 0) {
+      engineRef.current = null;
+      setDisplays([]);
+      setLocalOverrides({ ...cellOverrides });
+      return;
+    }
+    const engine = CuttingPlanPreviewEngine.create({
+      rows,
+      formulaCells,
+      cellOverrides,
+    });
+    engineRef.current = engine;
+    setLocalOverrides({ ...cellOverrides });
+    setDisplays(engine.getAllDisplays());
+  }, [rows, formulaCells, cellOverrides, rowCount, colCount]);
 
   useEffect(() => {
-    setGrid(buildGridModels({ rows, formulaCells, cellOverrides, canEdit }));
-    setEditingKey(null);
-  }, [rowsKey, formulasKey, overridesKey, canEdit, rows, formulaCells, cellOverrides]);
+    rebuildFromProps();
+    return () => engineRef.current?.destroy();
+    // Pouze syncKey — změny draftOverrides nesmí znovu sestavit grid při psaní.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [syncKey]);
 
   const emitDraft = useCallback(
-    (next: GridCellModel[][]) => {
+    (nextOverrides: Record<string, string>) => {
+      const engine = engineRef.current;
+      if (!engine) return;
       onDraftChange?.({
-        grid: next,
-        overrides: gridOverridesFromDraft(next),
-        rows: gridToRows2d(next),
+        overrides: nextOverrides,
+        computedValues: engine.getComputedValues(),
+        rows: engine.getAllDisplays(),
       });
     },
     [onDraftChange]
   );
 
-  const updateCell = (row: number, col: number, value: string) => {
-    setGrid((prev) => {
-      const next = prev.map((line) => line.map((c) => ({ ...c })));
-      const cell = next[row]?.[col];
-      if (!cell || cell.isFormula || !cell.editable) return prev;
-      cell.override = value;
-      recalculateGrid(next);
-      emitDraft(next);
-      return next;
-    });
+  const getInputValue = (row: number, col: number): string => {
+    const key = cellKey(row, col);
+    if (Object.prototype.hasOwnProperty.call(localOverrides, key)) {
+      return localOverrides[key];
+    }
+    return String(rows[row]?.[col] ?? "");
   };
 
-  const colCount = grid[0]?.length ?? 0;
+  const commitCell = (row: number, col: number, value: string) => {
+    const engine = engineRef.current;
+    if (!engine || !canEdit || !engine.isEditable(row, col)) return;
+
+    const key = cellKey(row, col);
+    const nextOverrides = { ...localOverrides, [key]: value };
+    engine.setCellValue(row, col, value);
+    setLocalOverrides(nextOverrides);
+    setDisplays(engine.getAllDisplays());
+    emitDraft(nextOverrides);
+  };
 
   const columnLabels = useMemo(() => {
     const labels: string[] = [];
@@ -83,7 +115,9 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
     return labels;
   }, [colCount]);
 
-  if (!grid.length) return null;
+  if (rowCount === 0 || colCount === 0) return null;
+
+  const engine = engineRef.current;
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white">
@@ -101,7 +135,7 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
               {columnLabels.map((label) => (
                 <th
                   key={label}
-                  className="min-w-[5rem] border border-gray-200 px-2 py-1 text-center text-xs font-medium text-gray-600"
+                  className="min-w-[5.5rem] border border-gray-200 px-2 py-1 text-center text-xs font-medium text-gray-600"
                 >
                   {label}
                 </th>
@@ -109,7 +143,7 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
             </tr>
           </thead>
           <tbody>
-            {grid.map((line, ri) => (
+            {displays.map((line, ri) => (
               <tr
                 key={`row-${ri}`}
                 className={cn(ri === 0 && "bg-orange-50/60", ri % 2 === 1 && ri > 0 && "bg-gray-50/30")}
@@ -117,63 +151,76 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
                 <td className="sticky left-0 z-10 border border-gray-200 bg-gray-50 px-1 py-1 text-center text-xs text-gray-500 tabular-nums">
                   {ri + 1}
                 </td>
-                {line.map((cell) => {
-                  const key = cellKey(cell.row, cell.col);
+                {Array.from({ length: colCount }, (_, ci) => {
+                  const key = cellKey(ri, ci);
+                  const isFormula = engine?.isFormulaCell(ri, ci) ?? false;
+                  const editable = canEdit && (engine?.isEditable(ri, ci) ?? !isFormula);
+                  const display = line[ci] ?? "";
                   const isEditing = editingKey === key;
-                  const inputValue =
-                    cell.override !== undefined ? cell.override : cell.base;
 
                   return (
                     <td
                       key={key}
                       className={cn(
-                        "border border-gray-200 p-0 align-middle min-w-[5rem]",
-                        cell.isFormula && "bg-sky-50",
-                        cell.editable && "bg-amber-50/50"
+                        "border border-gray-200 p-0 align-middle",
+                        isFormula ? "bg-sky-50" : editable ? "bg-amber-50/60" : "bg-white"
                       )}
-                      title={
-                        cell.isFormula
-                          ? `Vzorec: ${cell.formula}`
-                          : cell.editable
-                            ? "Klikněte pro úpravu"
-                            : undefined
-                      }
+                      onClick={() => {
+                        if (editable && !isEditing) {
+                          const v = getInputValue(ri, ci);
+                          setFocusedValue(v);
+                          setEditingKey(key);
+                        }
+                      }}
                     >
-                      {cell.isFormula ? (
+                      {isFormula ? (
                         <div
-                          className="min-h-[2rem] px-2 py-1.5 tabular-nums text-gray-900 whitespace-nowrap"
-                          aria-readonly
+                          className="min-h-[2.25rem] px-2 py-1.5 tabular-nums text-gray-900 whitespace-nowrap"
+                          title={
+                            formulaCells[key]
+                              ? `Vzorec: ${formulaCells[key]}`
+                              : undefined
+                          }
                         >
-                          {cell.display !== "" ? cell.display : "\u00a0"}
-                          {cell.formulaError ? (
-                            <span
-                              className="ml-1 text-[10px] text-amber-700"
-                              title={cell.formulaError}
-                            >
-                              ?
-                            </span>
-                          ) : null}
+                          {display || (rows[ri]?.[ci] && !String(rows[ri][ci]).startsWith("=") ? rows[ri][ci] : "\u00a0")}
                         </div>
-                      ) : cell.editable ? (
-                        <input
-                          ref={(el) => {
-                            inputRefs.current[key] = el;
-                          }}
-                          type="text"
-                          value={inputValue}
-                          readOnly={!canEdit}
-                          onFocus={() => setEditingKey(key)}
-                          onBlur={() => setEditingKey((k) => (k === key ? null : k))}
-                          onChange={(e) => updateCell(cell.row, cell.col, e.target.value)}
-                          className={cn(
-                            "w-full min-h-[2rem] min-w-[5rem] border-0 bg-transparent px-2 py-1.5 text-sm text-gray-900",
-                            "focus:outline-none focus:ring-2 focus:ring-primary/40 focus:ring-inset",
-                            isEditing && "bg-white ring-1 ring-primary/30"
-                          )}
-                        />
+                      ) : editable ? (
+                        isEditing ? (
+                          <input
+                            autoFocus
+                            type="text"
+                            value={focusedValue}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              setFocusedValue(v);
+                              commitCell(ri, ci, v);
+                            }}
+                            onBlur={() => {
+                              commitCell(ri, ci, focusedValue);
+                              setEditingKey(null);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                commitCell(ri, ci, focusedValue);
+                                setEditingKey(null);
+                              }
+                              if (e.key === "Escape") {
+                                setEditingKey(null);
+                              }
+                            }}
+                            className="w-full min-h-[2.25rem] min-w-[5.5rem] border-0 bg-white px-2 py-1.5 text-sm text-gray-900 caret-primary focus:outline-none focus:ring-2 focus:ring-primary/50"
+                          />
+                        ) : (
+                          <div className="min-h-[2.25rem] cursor-text px-2 py-1.5 tabular-nums text-gray-900 whitespace-nowrap">
+                            {Object.prototype.hasOwnProperty.call(localOverrides, key)
+                              ? localOverrides[key]
+                              : display || rows[ri]?.[ci] || "\u00a0"}
+                          </div>
+                        )
                       ) : (
-                        <div className="min-h-[2rem] px-2 py-1.5 whitespace-nowrap text-gray-800">
-                          {cell.display || "\u00a0"}
+                        <div className="min-h-[2.25rem] px-2 py-1.5 whitespace-nowrap text-gray-800">
+                          {display || "\u00a0"}
                         </div>
                       )}
                     </td>

@@ -33,6 +33,7 @@ export type CuttingPlanPreviewData = {
   empty: boolean;
   formulaCells: Record<string, string>;
   cellOverrides: Record<string, string>;
+  computedValues: Record<string, string>;
   columnCount: number;
 };
 
@@ -43,6 +44,7 @@ export type CuttingPlanPreviewSnapshot = {
   columnCount: number;
   formulaCells: Record<string, string>;
   cellOverrides: Record<string, string>;
+  computedValues?: Record<string, string>;
   truncated: boolean;
   empty: boolean;
   generatedAt: number;
@@ -144,6 +146,7 @@ export function parseCuttingPlanExcelBytes(
       empty: true,
       formulaCells: {},
       cellOverrides: {},
+      computedValues: {},
       columnCount: 0,
     };
   }
@@ -156,6 +159,7 @@ export function parseCuttingPlanExcelBytes(
       empty: true,
       formulaCells: {},
       cellOverrides: {},
+      computedValues: {},
       columnCount: 0,
     };
   }
@@ -171,6 +175,7 @@ export function parseCuttingPlanExcelBytes(
     empty,
     formulaCells,
     cellOverrides: {},
+    computedValues: {},
     columnCount,
   };
 }
@@ -196,6 +201,7 @@ export function previewDataToSnapshot(data: CuttingPlanPreviewData): CuttingPlan
       columnCount: data.columnCount || 0,
       formulaCells: data.formulaCells ?? {},
       cellOverrides: data.cellOverrides ?? {},
+      computedValues: data.computedValues ?? {},
       truncated: data.truncated,
       empty: true,
       generatedAt,
@@ -207,6 +213,7 @@ export function previewDataToSnapshot(data: CuttingPlanPreviewData): CuttingPlan
     columnCount: data.columnCount || sheet.rows[0]?.length || 0,
     formulaCells: data.formulaCells ?? {},
     cellOverrides: data.cellOverrides ?? {},
+    computedValues: data.computedValues ?? {},
     truncated: data.truncated,
     empty: false,
     generatedAt,
@@ -226,6 +233,7 @@ export function snapshotToPreviewData(
       empty: true,
       formulaCells: snap.formulaCells ?? {},
       cellOverrides: snap.cellOverrides ?? {},
+      computedValues: snap.computedValues ?? {},
       columnCount: snap.columnCount,
     };
   }
@@ -236,6 +244,7 @@ export function snapshotToPreviewData(
     empty: false,
     formulaCells: snap.formulaCells ?? {},
     cellOverrides: snap.cellOverrides ?? {},
+    computedValues: snap.computedValues ?? {},
     columnCount: snap.columnCount,
   };
 }
@@ -250,6 +259,7 @@ export function snapshotToFirestoreFields(
       previewColumns: 0,
       formulaCells: {},
       cellOverrides: {},
+      computedValues: {},
       previewTruncated: false,
       previewEmpty: true,
       previewGeneratedAt: null,
@@ -262,6 +272,7 @@ export function snapshotToFirestoreFields(
     previewRows: rows2dToFirestore(snap.rows),
     formulaCells: snap.formulaCells ?? {},
     cellOverrides: snap.cellOverrides ?? {},
+    computedValues: snap.computedValues ?? {},
     previewTruncated: snap.truncated,
     previewEmpty: snap.empty,
     previewGeneratedAt: snap.generatedAt,
@@ -302,6 +313,10 @@ export function parsePreviewFromJobDoc(
     raw.cellOverrides ??
       (raw.preview as Record<string, unknown> | undefined)?.cellOverrides
   );
+  const computedValues = parseStringMap(
+    raw.computedValues ??
+      (raw.preview as Record<string, unknown> | undefined)?.computedValues
+  );
 
   const generatedAt =
     typeof raw.previewGeneratedAt === "number"
@@ -333,6 +348,7 @@ export function parsePreviewFromJobDoc(
     columnCount,
     formulaCells,
     cellOverrides,
+    computedValues,
     truncated,
     empty,
     generatedAt,

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   doc,
   deleteDoc,
@@ -131,8 +131,26 @@ export function JobCuttingPlanExcelSection(props: Props) {
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [previewData, setPreviewData] = useState<CuttingPlanPreviewData | null>(null);
   const [draftOverrides, setDraftOverrides] = useState<Record<string, string>>({});
+  const [draftComputed, setDraftComputed] = useState<Record<string, string>>({});
+  const [revertSyncToken, setRevertSyncToken] = useState(0);
   const [dirty, setDirty] = useState(false);
-  const [calcWarning, setCalcWarning] = useState<string | null>(null);
+
+  const previewTableSyncKey = useMemo(() => {
+    const gen = planDoc?.preview?.generatedAt ?? 0;
+    const updated =
+      planDoc?.previewUpdatedAt != null
+        ? String(planDoc.previewUpdatedAt)
+        : "0";
+    const path = planDoc?.storagePath ?? "";
+    return `${gen}|${updated}|${path}|${revertSyncToken}`;
+  }, [
+    planDoc?.preview?.generatedAt,
+    planDoc?.previewUpdatedAt,
+    planDoc?.storagePath,
+    revertSyncToken,
+  ]);
+
+  const canEditCells = canManage;
 
   const syncFromPlanDoc = useCallback((docMeta: JobCuttingPlanExcelDoc | null) => {
     if (!docMeta?.preview) {
@@ -151,6 +169,7 @@ export function JobCuttingPlanExcelSection(props: Props) {
     if (cached) {
       applyPreviewToUi(cached, setPreviewData, setPreviewStatus, setPreviewError);
       setDraftOverrides({ ...docMeta.preview.cellOverrides });
+      setDraftComputed({ ...(docMeta.preview.computedValues ?? {}) });
       setDirty(false);
     }
   }, []);
@@ -163,7 +182,6 @@ export function JobCuttingPlanExcelSection(props: Props) {
     planDoc?.fileName,
     planDoc?.previewUpdatedAt,
     syncFromPlanDoc,
-    planDoc,
   ]);
 
   const savePreviewToFirestore = useCallback(
@@ -189,7 +207,6 @@ export function JobCuttingPlanExcelSection(props: Props) {
       const gen = ++generateGenRef.current;
       setPreviewStatus("loading");
       setPreviewError(null);
-      setCalcWarning(null);
       try {
         const parsed = await withTimeout(
           Promise.resolve().then(() => parseCuttingPlanExcelBytes(bytes, extension)),
@@ -346,6 +363,7 @@ export function JobCuttingPlanExcelSection(props: Props) {
         docRef,
         {
           cellOverrides: draftOverrides,
+          computedValues: draftComputed,
           previewUpdatedAt: serverTimestamp(),
           previewUpdatedBy: user.uid,
         },
@@ -367,22 +385,16 @@ export function JobCuttingPlanExcelSection(props: Props) {
   const handleRevertEdits = () => {
     if (planDoc?.preview) {
       setDraftOverrides({ ...planDoc.preview.cellOverrides });
+      setDraftComputed({ ...(planDoc.preview.computedValues ?? {}) });
       setDirty(false);
-      setCalcWarning(null);
+      setRevertSyncToken((t) => t + 1);
       toast({ title: "Změny vráceny", description: "Obnoveny hodnoty z posledního uložení." });
     }
   };
 
   const handleDraftChange = (draft: PreviewTableDraft) => {
     setDraftOverrides(draft.overrides);
-    const hasFormulaError = draft.grid.some((line) =>
-      line.some((c) => c.isFormula && c.formulaError)
-    );
-    setCalcWarning(
-      hasFormulaError
-        ? "Některý vzorec nelze přepočítat — zkontrolujte odkazy nebo stáhněte původní Excel."
-        : null
-    );
+    setDraftComputed(draft.computedValues);
     const saved = planDoc?.preview?.cellOverrides ?? {};
     const changed = JSON.stringify(draft.overrides) !== JSON.stringify(saved);
     setDirty(changed);
@@ -493,6 +505,7 @@ export function JobCuttingPlanExcelSection(props: Props) {
   const sheet = previewData?.sheets[0];
   const formulaCells = previewData?.formulaCells ?? planDoc?.preview?.formulaCells ?? {};
   const baseRows = sheet?.rows ?? planDoc?.preview?.rows ?? [];
+  const savedCellOverrides = planDoc?.preview?.cellOverrides ?? {};
 
   return (
     <Card className={cn(JD.fullWidthCard)}>
@@ -617,9 +630,6 @@ export function JobCuttingPlanExcelSection(props: Props) {
                         ? previewError
                         : previewStatusLabel}
                     </p>
-                    {calcWarning ? (
-                      <p className="text-xs text-amber-700">{calcWarning}</p>
-                    ) : null}
                   </div>
                   <div className="flex flex-wrap items-center gap-2">
                     {previewStatus === "ready" && previewData?.truncated ? (
@@ -627,7 +637,7 @@ export function JobCuttingPlanExcelSection(props: Props) {
                         Excel je moc velký — zobrazena zkrácená ukázka
                       </Badge>
                     ) : null}
-                    {canManage && previewStatus === "ready" ? (
+                    {canEditCells && previewStatus === "ready" ? (
                       <>
                         <Button
                           type="button"
@@ -723,9 +733,10 @@ export function JobCuttingPlanExcelSection(props: Props) {
                     sheetName={sheet?.name ?? planDoc.preview?.sheetName ?? "List1"}
                     rows={baseRows}
                     formulaCells={formulaCells}
-                    cellOverrides={draftOverrides}
-                    canEdit={canManage}
-                    onDraftChange={canManage ? handleDraftChange : undefined}
+                    cellOverrides={savedCellOverrides}
+                    syncKey={previewTableSyncKey}
+                    canEdit={canEditCells}
+                    onDraftChange={canEditCells ? handleDraftChange : undefined}
                   />
                 ) : previewStatus === "empty" ? (
                   <p className="text-sm text-muted-foreground py-2">{CUTTING_PLAN_PREVIEW_EMPTY_MSG}</p>
