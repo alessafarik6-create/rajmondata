@@ -363,7 +363,7 @@ export function JobCuttingPlanExcelSection(props: Props) {
         docRef,
         {
           cellOverrides: draftOverrides,
-          computedValues: draftComputed,
+          computedValues: deleteField(),
           previewUpdatedAt: serverTimestamp(),
           previewUpdatedBy: user.uid,
         },

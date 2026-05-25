@@ -36,6 +36,7 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
 
   const engineRef = useRef<CuttingPlanPreviewEngine | null>(null);
   const [displays, setDisplays] = useState<string[][]>([]);
+  const [computedValues, setComputedValues] = useState<Record<string, string>>({});
   const [localOverrides, setLocalOverrides] = useState<Record<string, string>>({});
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [focusedValue, setFocusedValue] = useState<string>("");
@@ -52,14 +53,17 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
       return;
     }
     const engine = CuttingPlanPreviewEngine.create({
+      sheetName,
       rows,
       formulaCells,
       cellOverrides,
     });
     engineRef.current = engine;
     setLocalOverrides({ ...cellOverrides });
-    setDisplays(engine.getAllDisplays());
-  }, [rows, formulaCells, cellOverrides, rowCount, colCount]);
+    const nextDisplays = engine.refreshAllDisplays();
+    setDisplays(nextDisplays);
+    setComputedValues(engine.getComputedValues());
+  }, [sheetName, rows, formulaCells, cellOverrides, rowCount, colCount]);
 
   useEffect(() => {
     rebuildFromProps();
@@ -67,19 +71,6 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
     // Pouze syncKey — změny draftOverrides nesmí znovu sestavit grid při psaní.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [syncKey]);
-
-  const emitDraft = useCallback(
-    (nextOverrides: Record<string, string>) => {
-      const engine = engineRef.current;
-      if (!engine) return;
-      onDraftChange?.({
-        overrides: nextOverrides,
-        computedValues: engine.getComputedValues(),
-        rows: engine.getAllDisplays(),
-      });
-    },
-    [onDraftChange]
-  );
 
   const getInputValue = (row: number, col: number): string => {
     const key = cellKey(row, col);
@@ -95,10 +86,19 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
 
     const key = cellKey(row, col);
     const nextOverrides = { ...localOverrides, [key]: value };
-    engine.setCellValue(row, col, value);
+    const { displays: nextDisplays, computedValues: nextComputed } = engine.applyInputChange(
+      row,
+      col,
+      value
+    );
     setLocalOverrides(nextOverrides);
-    setDisplays(engine.getAllDisplays());
-    emitDraft(nextOverrides);
+    setDisplays(nextDisplays);
+    setComputedValues(nextComputed);
+    onDraftChange?.({
+      overrides: nextOverrides,
+      computedValues: nextComputed,
+      rows: nextDisplays,
+    });
   };
 
   const columnLabels = useMemo(() => {
@@ -155,7 +155,15 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
                   const key = cellKey(ri, ci);
                   const isFormula = engine?.isFormulaCell(ri, ci) ?? false;
                   const editable = canEdit && (engine?.isEditable(ri, ci) ?? !isFormula);
-                  const display = line[ci] ?? "";
+                  const computed = computedValues[key];
+                  const display =
+                    isFormula && computed !== undefined && computed !== ""
+                      ? computed
+                      : (line[ci] ?? "");
+                  const excelFallback =
+                    rows[ri]?.[ci] && !String(rows[ri][ci]).startsWith("=")
+                      ? String(rows[ri][ci])
+                      : "";
                   const isEditing = editingKey === key;
 
                   return (
@@ -182,7 +190,7 @@ export function JobCuttingPlanExcelPreviewTable(props: Props) {
                               : undefined
                           }
                         >
-                          {display || (rows[ri]?.[ci] && !String(rows[ri][ci]).startsWith("=") ? rows[ri][ci] : "\u00a0")}
+                          {display !== "" ? display : excelFallback || "\u00a0"}
                         </div>
                       ) : editable ? (
                         isEditing ? (
