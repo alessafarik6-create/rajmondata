@@ -26,7 +26,8 @@ import {
   hasNewPasswordFormErrors,
   validateNewPasswordForm,
 } from "@/lib/new-password-form-validation";
-import { confirmPasswordReset, type AuthError } from "firebase/auth";
+import { PASSWORD_RESET_INVALID_LINK_MESSAGE } from "@/lib/password-reset-link";
+import { confirmPasswordReset, verifyPasswordResetCode, type AuthError } from "firebase/auth";
 
 function ObnovaHeslaCard({
   children,
@@ -81,8 +82,25 @@ function ObnovaHeslaContent() {
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [linkInvalid, setLinkInvalid] = useState(false);
+  const [verifyingCode, setVerifyingCode] = useState(false);
 
   const showInvalidState = !linkLooksValid || linkInvalid;
+
+  useEffect(() => {
+    if (!auth || !oobCode?.trim() || !linkLooksValid || linkInvalid || success) return;
+    let cancelled = false;
+    setVerifyingCode(true);
+    verifyPasswordResetCode(auth, oobCode.trim())
+      .catch(() => {
+        if (!cancelled) setLinkInvalid(true);
+      })
+      .finally(() => {
+        if (!cancelled) setVerifyingCode(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth, oobCode, linkLooksValid, linkInvalid, success]);
 
   useEffect(() => {
     if (!success) return;
@@ -94,6 +112,7 @@ function ObnovaHeslaContent() {
 
   const canSubmit =
     !loading &&
+    !verifyingCode &&
     !showInvalidState &&
     !success &&
     password.trim().length > 0 &&
@@ -161,10 +180,7 @@ function ObnovaHeslaContent() {
         <ObnovaHeslaCard
           title="Neplatný odkaz"
           description={
-            <span className="text-destructive">
-              Odkaz pro obnovu hesla je neplatný nebo již vypršel. Požádejte o nový e-mailem
-              nebo u správce firmy.
-            </span>
+            <span className="text-destructive">{PASSWORD_RESET_INVALID_LINK_MESSAGE}</span>
           }
         >
           <CardContent className="px-4 pb-6 sm:px-6 sm:pb-8">
@@ -185,15 +201,14 @@ function ObnovaHeslaContent() {
       >
         <ObnovaHeslaCard
           title="Heslo bylo změněno"
-          description="Nové heslo je uloženo. Za chvíli vás přesměrujeme na přihlášení."
+          description="Heslo bylo úspěšně změněno."
         >
           <CardContent className="space-y-4 px-4 pb-6 sm:px-6 sm:pb-8">
             <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
-              Heslo bylo úspěšně nastaveno. Použijte ho při příštím přihlášení do zákaznického
-              portálu.
+              Heslo bylo úspěšně změněno.
             </p>
             <Button asChild className={PUBLIC_AUTH_SUBMIT_BUTTON_CLASS}>
-              <Link href="/login">Přihlásit se</Link>
+              <Link href="/login">Přejít na přihlášení</Link>
             </Button>
           </CardContent>
         </ObnovaHeslaCard>
@@ -212,6 +227,13 @@ function ObnovaHeslaContent() {
       >
         <form onSubmit={(e) => void handleSubmit(e)}>
           <CardContent className="space-y-4 px-4 sm:px-6">
+            {verifyingCode ? (
+              <div className="flex items-center justify-center gap-2 py-4 text-sm text-slate-600">
+                <Loader2 className="h-5 w-5 animate-spin text-orange-500" />
+                Ověřuji odkaz…
+              </div>
+            ) : null}
+
             {firebaseConfigError ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {firebaseConfigError}

@@ -24,26 +24,7 @@ export function absoluteUrl(path: string): string {
   return base ? `${base}${cleanPath}` : cleanPath;
 }
 
-export function toAppPasswordResetUrl(firebaseLink: string): string {
-  const base = appBaseUrl();
-  if (!base) return firebaseLink;
-  try {
-    const u = new URL(firebaseLink);
-    const oobCode = u.searchParams.get("oobCode");
-    const mode = u.searchParams.get("mode");
-    const apiKey = u.searchParams.get("apiKey");
-    const lang = u.searchParams.get("lang");
-    if (!oobCode || mode !== "resetPassword") return firebaseLink;
-    const out = new URL(`${base}/login/obnova-hesla`);
-    out.searchParams.set("mode", "resetPassword");
-    out.searchParams.set("oobCode", oobCode);
-    if (apiKey) out.searchParams.set("apiKey", apiKey);
-    if (lang) out.searchParams.set("lang", lang);
-    return out.toString();
-  } catch {
-    return firebaseLink;
-  }
-}
+export { toAppPasswordResetUrl } from "@/lib/password-reset-link";
 
 export type CompanyEmailBranding = {
   companyName: string;

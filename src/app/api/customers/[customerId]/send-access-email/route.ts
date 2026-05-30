@@ -11,8 +11,8 @@ import {
   loadCompanyEmailBranding,
   normalizeEmail,
   isValidEmail,
-  toAppPasswordResetUrl,
 } from "@/lib/customer-portal-email";
+import { generateAppPasswordResetLink } from "@/lib/password-reset-link";
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
 import { PLATFORM_NAME } from "@/lib/platform-brand";
 
@@ -70,8 +70,7 @@ export async function POST(
 
   let resetLink: string;
   try {
-    const firebaseResetLink = await auth.generatePasswordResetLink(email);
-    resetLink = toAppPasswordResetUrl(firebaseResetLink);
+    resetLink = await generateAppPasswordResetLink(auth, email);
   } catch {
     return NextResponse.json(
       { error: "Nepodařilo se připravit odkaz pro nastavení hesla." },

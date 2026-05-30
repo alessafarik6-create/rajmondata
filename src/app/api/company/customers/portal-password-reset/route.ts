@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminFirestore, getAdminAuth } from "@/lib/firebase-admin";
+import {
+  generateAppPasswordResetLink,
+  resolveAppBaseUrl,
+} from "@/lib/password-reset-link";
 
 type Body = {
   customerId?: string;
 };
 
 /**
- * Vygeneruje odkaz na reset hesla (Firebase). Owner/admin zkopíruje odkaz a pošle zákazníkovi.
+ * Vygeneruje odkaz na reset hesla (vlastní stránka portálu). Owner/admin zkopíruje odkaz zákazníkovi.
  */
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -97,13 +101,24 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const appBase = resolveAppBaseUrl();
+  if (!appBase) {
+    return NextResponse.json(
+      {
+        error:
+          "Chybí APP_URL v konfiguraci serveru — nelze sestavit odkaz na portál (nastavte APP_URL=https://rajmondata.cz).",
+      },
+      { status: 503 }
+    );
+  }
+
   try {
-    const resetLink = await auth.generatePasswordResetLink(portalEmail);
+    const resetLink = await generateAppPasswordResetLink(auth, portalEmail, appBase);
     return NextResponse.json({
       ok: true,
       resetLink,
       message:
-        "Odkaz zkopírujte a bezpečně předejte zákazníkovi (e-mailem). Platnost je omezená.",
+        "Odkaz vede na stránku portálu pro nastavení hesla. Zkopírujte ho a bezpečně předejte zákazníkovi — platnost je omezená.",
     });
   } catch (e) {
     console.error("[portal-password-reset] generatePasswordResetLink", e);
