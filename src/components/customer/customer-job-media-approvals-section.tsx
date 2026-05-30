@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  addDoc,
   collection,
   serverTimestamp,
   updateDoc,
@@ -9,6 +10,7 @@ import {
   type Firestore,
   type UpdateData,
 } from "firebase/firestore";
+import { buildCustomerMediaNotePayload } from "@/lib/job-media-file-notes";
 import { useCollection, useFirestore, useMemoFirebase, useUser } from "@/firebase";
 import {
   filterFoldersForCustomer,
@@ -336,6 +338,25 @@ export function CustomerJobMediaApprovalsSection({
           customerCommentBy: customerUid,
         }) as unknown as UpdateData<DocumentData>
       );
+      const fileId =
+        it.target.kind === "photos" ? it.target.photoId : it.target.imageId;
+      const folderId =
+        it.target.kind === "folderImages" ? it.target.folderId : null;
+      const notePayload = buildCustomerMediaNotePayload({
+        companyId,
+        jobId,
+        target: { fileId, folderId, fileName: it.title },
+        text,
+        authorId: customerUid,
+        authorName: "Zákazník",
+        source: "approval",
+      });
+      await addDoc(collection(firestore, "companies", companyId, "jobs", jobId, "media_notes"), {
+        ...notePayload,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+
       await createCustomerActivity(firestore, {
         organizationId: companyId,
         jobId,
@@ -348,7 +369,7 @@ export function CustomerJobMediaApprovalsSection({
         createdByRole: "customer",
         isRead: false,
         targetType: "job",
-        targetId: it.target.kind === "photos" ? it.target.photoId : it.target.imageId,
+        targetId: fileId,
         targetLink: `/portal/jobs/${jobId}`,
       });
       toast({ title: "Odesláno", description: "Vaše připomínka byla uložena." });

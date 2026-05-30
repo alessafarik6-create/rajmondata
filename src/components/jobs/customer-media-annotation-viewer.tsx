@@ -60,6 +60,8 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { createCustomerActivity } from "@/lib/customer-activity";
+import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
+import type { JobMediaFileNoteDoc, JobMediaFileNoteTarget } from "@/lib/job-media-file-notes";
 
 type Tool =
   | "pan"
@@ -555,6 +557,13 @@ export type CustomerMediaAnnotationViewerProps = {
   embeddedAnnotationData?: unknown;
   /** Poznámka administrátora k souboru (ze složky / fotky). */
   adminNote?: string;
+  /** Poznámky k výkresu (media_notes) — stejné ID jako mediaDocumentId. */
+  allMediaNotes?: JobMediaFileNoteDoc[];
+  fileNotesTarget?: JobMediaFileNoteTarget;
+  fileNotesLegacyRow?: Record<string, unknown>;
+  customerPortal?: boolean;
+  authorDisplayName?: string;
+  onMediaNoteAdded?: (note: JobMediaFileNoteDoc) => void;
 };
 
 export function CustomerMediaAnnotationViewer({
@@ -573,6 +582,12 @@ export function CustomerMediaAnnotationViewer({
   mediaDocumentId,
   embeddedAnnotationData,
   adminNote,
+  allMediaNotes = [],
+  fileNotesTarget,
+  fileNotesLegacyRow,
+  customerPortal = false,
+  authorDisplayName = "Uživatel",
+  onMediaNoteAdded,
 }: CustomerMediaAnnotationViewerProps) {
   const isPlainObject = (value: unknown): value is Record<string, unknown> => {
     if (!value || typeof value !== "object") return false;
@@ -1853,7 +1868,7 @@ export function CustomerMediaAnnotationViewer({
         </div>
 
         <aside className="flex max-h-[min(38vh,320px)] w-full shrink-0 flex-col border-t border-white/10 bg-black/40 md:max-h-none md:w-[280px] md:border-l md:border-t-0">
-          {adminNote?.trim() ? (
+          {adminNote?.trim() && !customerPortal ? (
             <div className="border-b border-white/10 p-3">
               <p className="text-xs font-medium text-white/85">Poznámka od administrátora</p>
               <p className="mt-1 whitespace-pre-wrap text-xs leading-snug text-white/80">
@@ -1861,7 +1876,25 @@ export function CustomerMediaAnnotationViewer({
               </p>
             </div>
           ) : null}
-          <div className="border-b border-white/10 p-3 text-sm font-medium">Poznámky</div>
+          {fileNotesTarget && userId ? (
+            <div className="border-b border-white/10 p-3 [&_.text-gray-800]:text-white/90 [&_.text-muted-foreground]:text-white/60 [&_textarea]:border-white/20 [&_textarea]:bg-white/10 [&_textarea]:text-white">
+              <JobMediaFileNotesPanel
+                firestore={firestore}
+                companyId={companyId}
+                jobId={jobId}
+                userId={userId}
+                authorName={authorDisplayName}
+                target={fileNotesTarget}
+                legacyFileRow={fileNotesLegacyRow}
+                allNotes={allMediaNotes}
+                customerPortal={customerPortal}
+                readOnly={readOnly}
+                dense
+                onNoteAdded={onMediaNoteAdded}
+              />
+            </div>
+          ) : null}
+          <div className="border-b border-white/10 p-3 text-sm font-medium">Anotace na výkresu</div>
           <ScrollArea className="flex-1 p-3">
             {readOnly ? (
               <p className="text-xs text-white/70">Prohlížení — úpravy nejsou povoleny.</p>

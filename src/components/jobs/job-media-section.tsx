@@ -129,6 +129,17 @@ import {
   pickFileCommentsForExport,
 } from "@/lib/job-media-export-with-notes";
 import {
+  commentRowToMediaNoteLike,
+  filterMediaNotesForCustomerView,
+  mergeFileMediaNotesWithLegacyApprovalComment,
+  parseJobMediaFileNoteDoc,
+  pickMediaNotesForFile,
+  sortMediaNotesChronologically,
+  type JobMediaFileNoteDoc,
+  type JobMediaFileNoteTarget,
+} from "@/lib/job-media-file-notes";
+import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
+import {
   ExpandableNoteText,
   JobNoteMetaLine,
   JobNoteTextBlock,
@@ -498,6 +509,9 @@ function JobMediaFileCard({
   onResendApprovalEmail,
   resendApprovalBusy,
   extraFooter,
+  customerNotesPreview,
+  onOpenDrawingNotes,
+  drawingNotesCount,
 }: {
   borderClassName?: string;
   preview: React.ReactNode;
@@ -512,6 +526,9 @@ function JobMediaFileCard({
   resendApprovalBusy?: boolean;
   /** Volitelný řádek nad lištou akcí (např. přepínač „ve výrobě“). */
   extraFooter?: React.ReactNode;
+  customerNotesPreview?: string | null;
+  onOpenDrawingNotes?: () => void;
+  drawingNotesCount?: number;
 }) {
   return (
     <div
@@ -524,12 +541,13 @@ function JobMediaFileCard({
     >
       <div className="relative w-full shrink-0 overflow-hidden bg-muted">
         {preview}
-        {hasNote ? (
+        {hasNote || (drawingNotesCount ?? 0) > 0 ? (
           <span
             className="absolute right-1.5 top-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] leading-none text-white"
             title="Má poznámku"
           >
             📝
+            {(drawingNotesCount ?? 0) > 0 ? ` ${drawingNotesCount}` : ""}
           </span>
         ) : null}
       </div>
@@ -550,7 +568,7 @@ function JobMediaFileCard({
         ) : null}
         {note?.trim() ? (
           <div className="min-w-0 space-y-0.5">
-            <p className="text-xs font-medium text-gray-700 sm:text-sm">Poznámka</p>
+            <p className="text-xs font-medium text-gray-700 sm:text-sm">Interní poznámka</p>
             <ExpandableNoteText
               text={note.trim()}
               dense
@@ -558,10 +576,31 @@ function JobMediaFileCard({
             />
           </div>
         ) : null}
+        {customerNotesPreview?.trim() ? (
+          <div className="min-w-0 space-y-0.5">
+            <p className="text-xs font-medium text-gray-700 sm:text-sm">Poznámka k výkresu</p>
+            <ExpandableNoteText
+              text={customerNotesPreview.trim()}
+              dense
+              collapsedClassName="line-clamp-3"
+            />
+          </div>
+        ) : null}
         {extraFooter ? (
           <div className="rounded-md border border-border/40 bg-muted/20 px-2 py-1.5">{extraFooter}</div>
         ) : null}
         <div className="mt-auto flex flex-wrap items-center justify-start gap-2 border-t border-border/45 pt-2">
+          {onOpenDrawingNotes ? (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="h-8 gap-1 text-xs"
+              onClick={onOpenDrawingNotes}
+            >
+              Poznámky{(drawingNotesCount ?? 0) > 0 ? ` (${drawingNotesCount})` : ""}
+            </Button>
+          ) : null}
           {actions}
         </div>
       </div>
@@ -586,6 +625,9 @@ function UserFolderBlock({
   onOpenMediaApprovalDialog,
   photoCommentDeepLink = null,
   onPhotoCommentDeepLinkConsumed,
+  mediaNotesAll = [],
+  onMediaNoteAdded,
+  authorDisplayName = "Uživatel",
 }: {
   folder: JobFolderDoc;
   companyId: string;
@@ -617,6 +659,9 @@ function UserFolderBlock({
     fileName: string;
   } | null;
   onPhotoCommentDeepLinkConsumed?: () => void;
+  mediaNotesAll?: JobMediaFileNoteDoc[];
+  onMediaNoteAdded?: (note: JobMediaFileNoteDoc) => void;
+  authorDisplayName?: string;
 }) {
   const { toast } = useToast();
   const actorRef = useMemoFirebase(
@@ -625,6 +670,10 @@ function UserFolderBlock({
   );
   const { data: actorProfile } = useDoc(actorRef);
   const [busy, setBusy] = useState(false);
+  const [drawingNotesOpen, setDrawingNotesOpen] = useState(false);
+  const [drawingNotesTarget, setDrawingNotesTarget] =
+    useState<(JobMediaFileNoteTarget & { legacyRow?: Record<string, unknown> }) | null>(null);
+
   type FolderMediaViewerOpen = {
     url: string;
     title: string;
@@ -633,6 +682,7 @@ function UserFolderBlock({
     annotationData?: unknown;
     readOnly: boolean;
     adminNote?: string;
+    legacyRow?: Record<string, unknown>;
   };
   const [mediaViewer, setMediaViewer] = useState<FolderMediaViewerOpen | null>(null);
 
@@ -651,6 +701,27 @@ function UserFolderBlock({
   const isCustomerScope = mediaScope === "customer";
   /** Mazání, poznámky, anotace v seznamu souborů — ne pro zákaznický portál. */
   const allowFolderStaffFileActions = !isEmployeeLimited && !isCustomerScope;
+
+  const drawingNotesForTarget = useCallback(
+    (fileId: string, fileRow?: Record<string, unknown>) => {
+      const target: JobMediaFileNoteTarget = { fileId, folderId: folder.id };
+      let picked = pickMediaNotesForFile(mediaNotesAll, target);
+      if (fileRow) {
+        picked = mergeFileMediaNotesWithLegacyApprovalComment(picked, fileRow, target);
+      }
+      if (!isCustomerScope) return picked;
+      return filterMediaNotesForCustomerView(picked, user.uid);
+    },
+    [mediaNotesAll, folder.id, isCustomerScope, user.uid]
+  );
+
+  const openDrawingNotes = useCallback(
+    (target: JobMediaFileNoteTarget & { legacyRow?: Record<string, unknown> }) => {
+      setDrawingNotesTarget(target);
+      setDrawingNotesOpen(true);
+    },
+    []
+  );
 
   const openFolderMediaViewer = useCallback(
     (img: JobFolderImageDoc, openUrl: string, title: string) => {
@@ -726,7 +797,8 @@ function UserFolderBlock({
         mediaDocumentId: img.id,
         annotationData: skipVectorLayer ? undefined : img.annotationData,
         readOnly: readOnlyCustomer,
-        adminNote: typeof img.note === "string" ? img.note : "",
+        adminNote: isCustomerScope ? "" : typeof img.note === "string" ? img.note : "",
+        legacyRow: img as unknown as Record<string, unknown>,
       });
     },
     [folder, mediaScope, isCustomerScope, isEmployeeLimited, onAnnotatePhoto]
@@ -2395,6 +2467,15 @@ function UserFolderBlock({
                       ? `CSV · ${formatMediaDate(img.createdAt)}`
                       : formatMediaDate(img.createdAt);
               const hasNote = !!img.note?.trim();
+              const fileDrawingNotes =
+                kind === "image" || kind === "pdf"
+                  ? drawingNotesForTarget(img.id, img as unknown as Record<string, unknown>)
+                  : [];
+              const fileDrawingPreview =
+                fileDrawingNotes.length > 0
+                  ? fileDrawingNotes[fileDrawingNotes.length - 1]?.text
+                  : null;
+              const showInternalNote = !isCustomerScope && hasNote;
               const mediaApprovalSummary =
                 !isCustomerScope
                   ? parseJobMediaApproval(img as unknown as Record<string, unknown>)
@@ -2426,8 +2507,21 @@ function UserFolderBlock({
                     }
                     title={title}
                     dateLine={dateLine}
-                    note={img.note}
-                    hasNote={hasNote}
+                    note={isCustomerScope ? undefined : img.note}
+                    hasNote={showInternalNote}
+                    customerNotesPreview={kind === "pdf" ? fileDrawingPreview : null}
+                    drawingNotesCount={kind === "pdf" ? fileDrawingNotes.length : 0}
+                    onOpenDrawingNotes={
+                      kind === "pdf"
+                        ? () =>
+                            openDrawingNotes({
+                              fileId: img.id,
+                              folderId: folder.id,
+                              fileName: title,
+                              legacyRow: img as unknown as Record<string, unknown>,
+                            })
+                        : undefined
+                    }
                     mediaApprovalSummary={mediaApprovalSummary}
                     onResendApprovalEmail={
                       mediaApprovalSummary?.requiresCustomerApproval
@@ -2597,31 +2691,41 @@ function UserFolderBlock({
                     )
                   }
                   title={title}
-                  dateLine={dateLine}
-                  note={img.note}
-                  hasNote={hasNote}
-                  mediaApprovalSummary={mediaApprovalSummary}
-                  onResendApprovalEmail={
-                    mediaApprovalSummary?.requiresCustomerApproval
-                      ? () =>
-                          onOpenMediaApprovalDialog?.({
-                            target: {
-                              kind: "folderImages",
-                              folderId: folder.id,
-                              imageId: img.id,
-                            },
-                            fileLabel: title,
-                            row: img as unknown as Record<string, unknown>,
-                          })
-                      : undefined
-                  }
-                  resendApprovalBusy={false}
-                  extraFooter={productionFooter(img)}
-                  actions={
-                    <>
-                      {renderExportNotesButtons(img, title)}
-                      <JobMediaIconButton
-                        label={`Poznámky (${fileCommentStats.get(img.id)?.count ?? 0})`}
+                    dateLine={dateLine}
+                    note={isCustomerScope ? undefined : img.note}
+                    hasNote={showInternalNote}
+                    customerNotesPreview={fileDrawingPreview}
+                    drawingNotesCount={fileDrawingNotes.length}
+                    onOpenDrawingNotes={() =>
+                      openDrawingNotes({
+                        fileId: img.id,
+                        folderId: folder.id,
+                        fileName: title,
+                        legacyRow: img as unknown as Record<string, unknown>,
+                      })
+                    }
+                    mediaApprovalSummary={mediaApprovalSummary}
+                    onResendApprovalEmail={
+                      mediaApprovalSummary?.requiresCustomerApproval
+                        ? () =>
+                            onOpenMediaApprovalDialog?.({
+                              target: {
+                                kind: "folderImages",
+                                folderId: folder.id,
+                                imageId: img.id,
+                              },
+                              fileLabel: title,
+                              row: img as unknown as Record<string, unknown>,
+                            })
+                        : undefined
+                    }
+                    resendApprovalBusy={false}
+                    extraFooter={productionFooter(img)}
+                    actions={
+                      <>
+                        {renderExportNotesButtons(img, title)}
+                        <JobMediaIconButton
+                          label={`Poznámky (${fileCommentStats.get(img.id)?.count ?? 0})`}
                         disabled={!user?.uid}
                         onClick={() => {
                           setFileChatTarget({
@@ -2960,6 +3064,31 @@ function UserFolderBlock({
       </DialogContent>
     </Dialog>
 
+    <Dialog open={drawingNotesOpen} onOpenChange={setDrawingNotesOpen}>
+      <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>Poznámky k výkresu</DialogTitle>
+          <DialogDescription>
+            {drawingNotesTarget?.fileName?.trim() || "Soubor"} — historie a nová poznámka.
+          </DialogDescription>
+        </DialogHeader>
+        {drawingNotesTarget ? (
+          <JobMediaFileNotesPanel
+            firestore={firestore}
+            companyId={companyId}
+            jobId={jobId}
+            userId={user.uid}
+            authorName={authorDisplayName}
+            target={drawingNotesTarget}
+            legacyFileRow={drawingNotesTarget.legacyRow}
+            allNotes={mediaNotesAll}
+            customerPortal={isCustomerScope}
+            onNoteAdded={onMediaNoteAdded}
+          />
+        ) : null}
+      </DialogContent>
+    </Dialog>
+
     {firestore && user && mediaViewer ? (
       <CustomerMediaAnnotationViewer
         key={mediaViewer.mediaDocumentId}
@@ -2972,7 +3101,9 @@ function UserFolderBlock({
         actorRole={
           typeof (actorProfile as { role?: string })?.role === "string"
             ? (actorProfile as { role: string }).role
-            : ""
+            : isCustomerScope
+              ? "customer"
+              : ""
         }
         mediaUrl={mediaViewer.url}
         title={mediaViewer.title}
@@ -2981,7 +3112,17 @@ function UserFolderBlock({
         storagePath={{ kind: "folderImages", folderId: folder.id }}
         mediaDocumentId={mediaViewer.mediaDocumentId}
         embeddedAnnotationData={mediaViewer.annotationData}
-        adminNote={mediaViewer.adminNote}
+        adminNote={isCustomerScope ? "" : mediaViewer.adminNote}
+        allMediaNotes={mediaNotesAll}
+        fileNotesTarget={{
+          fileId: mediaViewer.mediaDocumentId,
+          folderId: folder.id,
+          fileName: mediaViewer.title,
+        }}
+        fileNotesLegacyRow={mediaViewer.legacyRow}
+        customerPortal={isCustomerScope}
+        authorDisplayName={authorDisplayName}
+        onMediaNoteAdded={onMediaNoteAdded}
       />
     ) : null}
     </>
@@ -3127,6 +3268,7 @@ export function JobMediaSection({
     annotationData?: unknown;
     readOnly: boolean;
     adminNote?: string;
+    legacyRow?: Record<string, unknown>;
   };
   const [legacyMediaViewer, setLegacyMediaViewer] = useState<LegacyMediaViewerOpen | null>(null);
 
@@ -3170,7 +3312,8 @@ export function JobMediaSection({
         mediaDocumentId: p.id,
         annotationData: skipVectorLayer ? undefined : p.annotationData,
         readOnly,
-        adminNote: typeof p.note === "string" ? p.note : "",
+        adminNote: mediaScope === "customer" ? "" : typeof p.note === "string" ? p.note : "",
+        legacyRow: p as unknown as Record<string, unknown>,
       });
     },
     [mediaScope, hideJobMediaAdminUi, onAnnotatePhoto]
@@ -3210,9 +3353,77 @@ export function JobMediaSection({
   );
   const { data: legacyFileCommentsRaw = [] } = useCollection(legacyFileCommentsQuery);
 
+  const mediaNotesQuery = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? query(
+            collection(firestore, "companies", companyId, "jobs", jobId, "media_notes"),
+            limit(500)
+          )
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: mediaNotesRaw = [] } = useCollection(mediaNotesQuery);
+  const [optimisticMediaNotes, setOptimisticMediaNotes] = useState<JobMediaFileNoteDoc[]>([]);
+
   const legacyFileCommentsList = (Array.isArray(legacyFileCommentsRaw)
     ? legacyFileCommentsRaw
     : []) as Array<Record<string, unknown> & { id: string }>;
+
+  const mediaNotesFromFirestore = useMemo(() => {
+    const list = (Array.isArray(mediaNotesRaw) ? mediaNotesRaw : []) as Array<
+      Record<string, unknown> & { id: string }
+    >;
+    const parsed: JobMediaFileNoteDoc[] = [];
+    for (const row of list) {
+      const n = parseJobMediaFileNoteDoc(row, row.id);
+      if (n) parsed.push(n);
+    }
+    for (const row of legacyFileCommentsList) {
+      const legacy = commentRowToMediaNoteLike(row);
+      if (legacy && legacy.visibleToCustomer) parsed.push(legacy);
+    }
+    return sortMediaNotesChronologically(parsed);
+  }, [mediaNotesRaw, legacyFileCommentsList]);
+
+  const mediaNotesAll = useMemo(() => {
+    const byId = new Map<string, JobMediaFileNoteDoc>();
+    for (const n of mediaNotesFromFirestore) byId.set(n.id, n);
+    for (const n of optimisticMediaNotes) byId.set(n.id, n);
+    return sortMediaNotesChronologically([...byId.values()]);
+  }, [mediaNotesFromFirestore, optimisticMediaNotes]);
+
+  const handleMediaNoteAdded = useCallback((note: JobMediaFileNoteDoc) => {
+    setOptimisticMediaNotes((prev) =>
+      prev.some((x) => x.id === note.id) ? prev : [...prev, note]
+    );
+  }, []);
+
+  const authorDisplayName = useMemo(() => {
+    const p = actorProfile as { displayName?: unknown; name?: unknown } | null;
+    return (
+      String(p?.displayName ?? p?.name ?? user?.email ?? "").trim() || "Uživatel"
+    );
+  }, [actorProfile, user?.email]);
+
+  const [legacyDrawingNotesOpen, setLegacyDrawingNotesOpen] = useState(false);
+  const [legacyDrawingNotesTarget, setLegacyDrawingNotesTarget] =
+    useState<(JobMediaFileNoteTarget & { legacyRow?: Record<string, unknown> }) | null>(null);
+
+  const legacyDrawingNotesFor = useCallback(
+    (fileId: string, fileRow?: Record<string, unknown>) => {
+      const target = { fileId, folderId: null as string | null };
+      let picked = pickMediaNotesForFile(mediaNotesAll, target);
+      if (fileRow) {
+        picked = mergeFileMediaNotesWithLegacyApprovalComment(picked, fileRow, target);
+      }
+      if (mediaScope !== "customer") return picked;
+      return user?.uid
+        ? filterMediaNotesForCustomerView(picked, user.uid)
+        : picked;
+    },
+    [mediaNotesAll, mediaScope, user?.uid]
+  );
 
   const renderLegacyExportNotesButtons = useCallback(
     (p: { id: string } & Record<string, unknown>, title: string) => {
@@ -3903,6 +4114,15 @@ export function JobMediaSection({
                           ? `CSV · ${formatMediaDate(p.createdAt)}`
                           : formatMediaDate(p.createdAt);
                   const hasNote = !!p.note?.trim();
+                  const showLegacyInternalNote = mediaScope !== "customer" && hasNote;
+                  const legacyFileDrawingNotes =
+                    kind === "image" || kind === "pdf"
+                      ? legacyDrawingNotesFor(p.id, p as unknown as Record<string, unknown>)
+                      : [];
+                  const legacyFileDrawingPreview =
+                    legacyFileDrawingNotes.length > 0
+                      ? legacyFileDrawingNotes[legacyFileDrawingNotes.length - 1]?.text
+                      : null;
                   const legacyMediaApprovalSummary =
                     mediaScope !== "customer"
                       ? parseJobMediaApproval(p as unknown as Record<string, unknown>)
@@ -3934,8 +4154,23 @@ export function JobMediaSection({
                         }
                         title={title}
                         dateLine={dateLine}
-                        note={p.note}
-                        hasNote={hasNote}
+                        note={mediaScope === "customer" ? undefined : p.note}
+                        hasNote={showLegacyInternalNote}
+                        customerNotesPreview={kind === "pdf" ? legacyFileDrawingPreview : null}
+                        drawingNotesCount={kind === "pdf" ? legacyFileDrawingNotes.length : 0}
+                        onOpenDrawingNotes={
+                          kind === "pdf"
+                            ? () => {
+                                setLegacyDrawingNotesTarget({
+                                  fileId: p.id,
+                                  folderId: null,
+                                  fileName: title,
+                                  legacyRow: p as unknown as Record<string, unknown>,
+                                });
+                                setLegacyDrawingNotesOpen(true);
+                              }
+                            : undefined
+                        }
                         mediaApprovalSummary={legacyMediaApprovalSummary}
                         onResendApprovalEmail={
                           legacyMediaApprovalSummary?.requiresCustomerApproval
@@ -4061,8 +4296,19 @@ export function JobMediaSection({
                       }
                       title={title}
                       dateLine={dateLine}
-                      note={p.note}
-                      hasNote={hasNote}
+                      note={mediaScope === "customer" ? undefined : p.note}
+                      hasNote={showLegacyInternalNote}
+                      customerNotesPreview={legacyFileDrawingPreview}
+                      drawingNotesCount={legacyFileDrawingNotes.length}
+                      onOpenDrawingNotes={() => {
+                        setLegacyDrawingNotesTarget({
+                          fileId: p.id,
+                          folderId: null,
+                          fileName: title,
+                          legacyRow: p as unknown as Record<string, unknown>,
+                        });
+                        setLegacyDrawingNotesOpen(true);
+                      }}
                       mediaApprovalSummary={legacyMediaApprovalSummary}
                       onResendApprovalEmail={
                         legacyMediaApprovalSummary?.requiresCustomerApproval
@@ -4323,6 +4569,9 @@ export function JobMediaSection({
                           onOpenMediaApprovalDialog={openMediaApprovalDialog}
                           photoCommentDeepLink={photoCommentDeepLink}
                           onPhotoCommentDeepLinkConsumed={onPhotoCommentDeepLinkConsumed}
+                          mediaNotesAll={mediaNotesAll}
+                          onMediaNoteAdded={handleMediaNoteAdded}
+                          authorDisplayName={authorDisplayName}
                         />
                       ))}
                     </div>
@@ -4418,6 +4667,31 @@ export function JobMediaSection({
         </DialogContent>
       </Dialog>
 
+      <Dialog open={legacyDrawingNotesOpen} onOpenChange={setLegacyDrawingNotesOpen}>
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Poznámky k výkresu</DialogTitle>
+            <DialogDescription>
+              {legacyDrawingNotesTarget?.fileName?.trim() || "Soubor"} — historie a nová poznámka.
+            </DialogDescription>
+          </DialogHeader>
+          {legacyDrawingNotesTarget && user ? (
+            <JobMediaFileNotesPanel
+              firestore={firestore}
+              companyId={companyId}
+              jobId={jobId}
+              userId={user.uid}
+              authorName={authorDisplayName}
+              target={legacyDrawingNotesTarget}
+              legacyFileRow={legacyDrawingNotesTarget.legacyRow}
+              allNotes={mediaNotesAll}
+              customerPortal={mediaScope === "customer"}
+              onNoteAdded={handleMediaNoteAdded}
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
+
       {firestore && user && legacyMediaViewer && mediaScope !== "employeeLimited" ? (
         <CustomerMediaAnnotationViewer
           key={legacyMediaViewer.mediaDocumentId}
@@ -4430,7 +4704,9 @@ export function JobMediaSection({
           actorRole={
             typeof (actorProfile as { role?: string })?.role === "string"
               ? (actorProfile as { role: string }).role
-              : ""
+              : mediaScope === "customer"
+                ? "customer"
+                : ""
           }
           mediaUrl={legacyMediaViewer.url}
           title={legacyMediaViewer.title}
@@ -4439,7 +4715,17 @@ export function JobMediaSection({
           storagePath={{ kind: "photos" }}
           mediaDocumentId={legacyMediaViewer.mediaDocumentId}
           embeddedAnnotationData={legacyMediaViewer.annotationData}
-          adminNote={legacyMediaViewer.adminNote}
+          adminNote={mediaScope === "customer" ? "" : legacyMediaViewer.adminNote}
+          allMediaNotes={mediaNotesAll}
+          fileNotesTarget={{
+            fileId: legacyMediaViewer.mediaDocumentId,
+            folderId: null,
+            fileName: legacyMediaViewer.title,
+          }}
+          fileNotesLegacyRow={legacyMediaViewer.legacyRow}
+          customerPortal={mediaScope === "customer"}
+          authorDisplayName={authorDisplayName}
+          onMediaNoteAdded={handleMediaNoteAdded}
         />
       ) : null}
 

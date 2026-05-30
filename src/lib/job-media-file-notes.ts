@@ -1,0 +1,317 @@
+/**
+ * Poznámky u výkresu / souboru zakázky (Firestore: jobs/{jobId}/media_notes).
+ */
+
+import { safeTime } from "@/lib/date-safe";
+
+export type JobMediaNoteAuthorType = "customer" | "admin" | "employee";
+export type JobMediaNoteSource = "customerPortal" | "admin" | "employee" | "approval" | "legacy";
+
+export type JobMediaFileNoteDoc = {
+  id: string;
+  companyId: string;
+  jobId: string;
+  fileId: string;
+  mediaId?: string | null;
+  imageId?: string | null;
+  documentId?: string | null;
+  photoId?: string | null;
+  targetId?: string | null;
+  folderId?: string | null;
+  authorType: JobMediaNoteAuthorType;
+  authorId: string;
+  authorName: string;
+  text: string;
+  visibleToCustomer: boolean;
+  source: JobMediaNoteSource;
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
+
+export type JobMediaFileNoteTarget = {
+  fileId: string;
+  folderId?: string | null;
+  fileName?: string | null;
+};
+
+export function jobMediaNotesCollectionPath(
+  companyId: string,
+  jobId: string
+): string {
+  return `companies/${companyId}/jobs/${jobId}/media_notes`;
+}
+
+/** Všechna možná ID souboru z dokumentu poznámky (legacy pole). */
+export function mediaNoteLinkedFileIds(note: Record<string, unknown>): string[] {
+  const keys = ["fileId", "mediaId", "imageId", "documentId", "photoId", "targetId"] as const;
+  const out: string[] = [];
+  for (const k of keys) {
+    const v = String(note[k] ?? "").trim();
+    if (v) out.push(v);
+  }
+  return [...new Set(out)];
+}
+
+export function mediaNoteMatchesFile(
+  note: Record<string, unknown>,
+  target: JobMediaFileNoteTarget
+): boolean {
+  const fileId = String(target.fileId ?? "").trim();
+  if (!fileId) return false;
+  const linked = mediaNoteLinkedFileIds(note);
+  if (!linked.includes(fileId)) return false;
+
+  const noteFolder = note.folderId != null ? String(note.folderId).trim() : "";
+  const targetFolder = target.folderId != null ? String(target.folderId).trim() : "";
+  if (targetFolder && noteFolder && noteFolder !== targetFolder) return false;
+  return true;
+}
+
+export function parseJobMediaFileNoteDoc(
+  raw: Record<string, unknown> | null | undefined,
+  id: string
+): JobMediaFileNoteDoc | null {
+  if (!raw) return null;
+  const text = String(raw.text ?? raw.message ?? "").trim();
+  if (!text) return null;
+
+  const fileId =
+    String(raw.fileId ?? raw.mediaId ?? raw.imageId ?? raw.documentId ?? raw.photoId ?? raw.targetId ?? "").trim();
+  if (!fileId) return null;
+
+  const authorTypeRaw = String(raw.authorType ?? raw.authorRole ?? "").toLowerCase();
+  const authorType: JobMediaNoteAuthorType =
+    authorTypeRaw === "customer"
+      ? "customer"
+      : authorTypeRaw === "employee"
+        ? "employee"
+        : "admin";
+
+  const visibleRaw = raw.visibleToCustomer;
+  const visibleToCustomer =
+    visibleRaw === false || visibleRaw === "false"
+      ? false
+      : authorType === "customer"
+        ? true
+        : visibleRaw === true || visibleRaw === "true";
+
+  const sourceRaw = String(raw.source ?? "").trim();
+  const source: JobMediaNoteSource =
+    sourceRaw === "customerPortal" ||
+    sourceRaw === "admin" ||
+    sourceRaw === "employee" ||
+    sourceRaw === "approval" ||
+    sourceRaw === "legacy"
+      ? sourceRaw
+      : authorType === "customer"
+        ? "customerPortal"
+        : "admin";
+
+  return {
+    id,
+    companyId: String(raw.companyId ?? raw.organizationId ?? ""),
+    jobId: String(raw.jobId ?? ""),
+    fileId,
+    mediaId: raw.mediaId != null ? String(raw.mediaId) : fileId,
+    imageId: raw.imageId != null ? String(raw.imageId) : null,
+    documentId: raw.documentId != null ? String(raw.documentId) : null,
+    photoId: raw.photoId != null ? String(raw.photoId) : null,
+    targetId: raw.targetId != null ? String(raw.targetId) : null,
+    folderId: raw.folderId != null ? String(raw.folderId) : null,
+    authorType,
+    authorId: String(raw.authorId ?? raw.createdBy ?? ""),
+    authorName: String(raw.authorName ?? "—").trim() || "—",
+    text,
+    visibleToCustomer,
+    source,
+    createdAt: raw.createdAt,
+    updatedAt: raw.updatedAt,
+  };
+}
+
+export function isMediaNoteVisibleToCustomer(note: JobMediaFileNoteDoc): boolean {
+  return note.visibleToCustomer === true;
+}
+
+/** Zákazník: vlastní poznámky + admin/employee označené jako viditelné. */
+export function filterMediaNotesForCustomerView(
+  notes: JobMediaFileNoteDoc[],
+  customerUid: string
+): JobMediaFileNoteDoc[] {
+  const uid = customerUid.trim();
+  return notes.filter(
+    (n) =>
+      isMediaNoteVisibleToCustomer(n) ||
+      (uid && n.authorId === uid && n.authorType === "customer")
+  );
+}
+
+export function sortMediaNotesChronologically(notes: JobMediaFileNoteDoc[]): JobMediaFileNoteDoc[] {
+  return notes.slice().sort((a, b) => safeTime(a.createdAt) - safeTime(b.createdAt));
+}
+
+export function pickMediaNotesForFile(
+  all: JobMediaFileNoteDoc[],
+  target: JobMediaFileNoteTarget
+): JobMediaFileNoteDoc[] {
+  return sortMediaNotesChronologically(
+    all.filter((n) => mediaNoteMatchesFile(n as unknown as Record<string, unknown>, target))
+  );
+}
+
+/** Mapa fileId → poznámky (jen podle fileId, bez folder — pro legacy). */
+export function groupMediaNotesByFileId(
+  notes: JobMediaFileNoteDoc[]
+): Map<string, JobMediaFileNoteDoc[]> {
+  const m = new Map<string, JobMediaFileNoteDoc[]>();
+  for (const n of notes) {
+    const ids = mediaNoteLinkedFileIds(n as unknown as Record<string, unknown>);
+    for (const id of ids) {
+      const prev = m.get(id) ?? [];
+      if (!prev.some((x) => x.id === n.id)) prev.push(n);
+      m.set(id, prev);
+    }
+  }
+  for (const [k, list] of m) {
+    m.set(k, sortMediaNotesChronologically(list));
+  }
+  return m;
+}
+
+export function buildCustomerMediaNotePayload(params: {
+  companyId: string;
+  jobId: string;
+  target: JobMediaFileNoteTarget;
+  text: string;
+  authorId: string;
+  authorName: string;
+  source?: JobMediaNoteSource;
+}): Omit<JobMediaFileNoteDoc, "id" | "createdAt"> & { createdAt: unknown } {
+  const fileId = String(params.target.fileId).trim();
+  const folderId = params.target.folderId != null ? String(params.target.folderId).trim() : "";
+  return {
+    companyId: params.companyId,
+    jobId: params.jobId,
+    fileId,
+    mediaId: fileId,
+    imageId: fileId,
+    documentId: fileId,
+    targetId: fileId,
+    ...(folderId ? { folderId } : { folderId: null }),
+    authorType: "customer",
+    authorId: params.authorId,
+    authorName: params.authorName.trim() || "Zákazník",
+    text: params.text.trim(),
+    visibleToCustomer: true,
+    source: params.source ?? "customerPortal",
+    updatedAt: null,
+    createdAt: null,
+  };
+}
+
+export function buildStaffMediaNotePayload(params: {
+  companyId: string;
+  jobId: string;
+  target: JobMediaFileNoteTarget;
+  text: string;
+  authorId: string;
+  authorName: string;
+  authorType: "admin" | "employee";
+  visibleToCustomer: boolean;
+}): Omit<JobMediaFileNoteDoc, "id" | "createdAt"> & { createdAt: unknown } {
+  const fileId = String(params.target.fileId).trim();
+  const folderId = params.target.folderId != null ? String(params.target.folderId).trim() : "";
+  return {
+    companyId: params.companyId,
+    jobId: params.jobId,
+    fileId,
+    mediaId: fileId,
+    imageId: fileId,
+    documentId: fileId,
+    targetId: fileId,
+    ...(folderId ? { folderId } : { folderId: null }),
+    authorType: params.authorType,
+    authorId: params.authorId,
+    authorName: params.authorName.trim() || "—",
+    text: params.text.trim(),
+    visibleToCustomer: params.visibleToCustomer,
+    source: params.authorType === "employee" ? "employee" : "admin",
+    updatedAt: null,
+    createdAt: null,
+  };
+}
+
+/** Legacy: customerComment na souboru (schválení) → poznámka v historii, pokud chybí v media_notes. */
+export function fileCustomerCommentToMediaNoteLike(
+  row: Record<string, unknown> | null | undefined,
+  target: JobMediaFileNoteTarget
+): JobMediaFileNoteDoc | null {
+  if (!row) return null;
+  const text = String(row.customerComment ?? "").trim();
+  if (!text) return null;
+  const fileId = String(target.fileId ?? "").trim();
+  if (!fileId) return null;
+  const folderId = target.folderId != null ? String(target.folderId).trim() : "";
+  const authorId = String(row.customerCommentBy ?? "").trim();
+  return {
+    id: `legacy-approval-comment-${fileId}-${folderId || "root"}`,
+    companyId: String(row.companyId ?? row.organizationId ?? ""),
+    jobId: String(row.jobId ?? ""),
+    fileId,
+    mediaId: fileId,
+    imageId: fileId,
+    documentId: fileId,
+    targetId: fileId,
+    folderId: folderId || null,
+    authorType: "customer",
+    authorId: authorId || "customer",
+    authorName: "Zákazník",
+    text,
+    visibleToCustomer: true,
+    source: "approval",
+    createdAt: row.customerCommentAt ?? row.updatedAt ?? null,
+  };
+}
+
+export function mergeFileMediaNotesWithLegacyApprovalComment(
+  notes: JobMediaFileNoteDoc[],
+  row: Record<string, unknown> | null | undefined,
+  target: JobMediaFileNoteTarget
+): JobMediaFileNoteDoc[] {
+  const legacy = fileCustomerCommentToMediaNoteLike(row, target);
+  if (!legacy) return notes;
+  const normalized = legacy.text.trim().toLowerCase();
+  if (notes.some((n) => n.text.trim().toLowerCase() === normalized)) return notes;
+  return sortMediaNotesChronologically([...notes, legacy]);
+}
+
+/** Legacy: komentář u souboru (jobs/.../comments) → poznámka pro export / zobrazení. */
+export function commentRowToMediaNoteLike(
+  row: Record<string, unknown> & { id: string }
+): JobMediaFileNoteDoc | null {
+  const msg = String(row.message ?? "").trim();
+  if (!msg) return null;
+  const fileId = String(row.fileId ?? "").trim();
+  if (!fileId) return null;
+  const role = String(row.authorRole ?? "").toLowerCase();
+  const authorType: JobMediaNoteAuthorType = role === "customer" ? "customer" : role === "employee" ? "employee" : "admin";
+  const visibleToCustomer =
+    row.visibleToCustomer === true ||
+    row.visibleToCustomer === "true" ||
+    authorType === "customer";
+  return {
+    id: `legacy-comment-${row.id}`,
+    companyId: String(row.organizationId ?? ""),
+    jobId: String(row.jobId ?? ""),
+    fileId,
+    mediaId: fileId,
+    folderId: row.folderId != null ? String(row.folderId) : null,
+    authorType,
+    authorId: String(row.authorId ?? ""),
+    authorName: String(row.authorName ?? "—").trim() || "—",
+    text: msg,
+    visibleToCustomer,
+    source: "legacy",
+    createdAt: row.createdAt,
+  };
+}

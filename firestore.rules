@@ -1302,6 +1302,67 @@ service cloud.firestore {
           allow delete: if signedIn() && sameCompany(companyId) && isPrivileged();
         }
 
+        /**
+         * Poznámky u výkresu / souboru (zákaznický portál + interní admin).
+         * companies/{companyId}/jobs/{jobId}/media_notes/{noteId}
+         */
+        match /media_notes/{noteId} {
+          function mediaNoteStaffReadOk() {
+            return signedIn() && sameCompany(companyId) && userRole() != 'customer' && (
+              isPrivileged() ||
+              jobFinancialReadAccess(companyId, jobId) ||
+              jobEmployeeLimitedMediaProfile(companyId, jobId)
+            );
+          }
+
+          function mediaNoteCustomerReadOk() {
+            return customerPortalLinkedJob(companyId, jobId) && (
+              resource.data.visibleToCustomer == true ||
+              (resource.data.authorId == request.auth.uid &&
+                resource.data.authorType == 'customer')
+            );
+          }
+
+          function mediaNotePayloadOk() {
+            let d = request.resource.data;
+            return d.companyId == companyId &&
+              d.jobId == jobId &&
+              d.text is string &&
+              d.text.size() > 0 &&
+              d.text.size() <= 8000 &&
+              d.authorId == request.auth.uid &&
+              d.authorName is string &&
+              d.authorName.size() > 0 &&
+              d.authorName.size() <= 200 &&
+              d.authorType in ['customer', 'admin', 'employee'] &&
+              d.visibleToCustomer is bool &&
+              d.source is string &&
+              d.source.size() > 0 &&
+              d.source.size() <= 64 &&
+              (
+                (d.fileId is string && d.fileId.size() > 0) ||
+                (d.mediaId is string && d.mediaId.size() > 0) ||
+                (d.imageId is string && d.imageId.size() > 0) ||
+                (d.documentId is string && d.documentId.size() > 0)
+              ) &&
+              d.createdAt is timestamp;
+          }
+
+          allow read: if mediaNoteStaffReadOk() || mediaNoteCustomerReadOk();
+
+          allow create: if mediaNotePayloadOk() && (
+            (mediaNoteStaffReadOk() &&
+              request.resource.data.authorType in ['admin', 'employee']) ||
+            (customerPortalLinkedJob(companyId, jobId) &&
+              request.resource.data.authorType == 'customer' &&
+              request.resource.data.visibleToCustomer == true &&
+              request.resource.data.source in ['customerPortal', 'approval'])
+          );
+
+          allow update, delete: if signedIn() && sameCompany(companyId) && isPrivileged() &&
+            jobDetailReadAccess(companyId, jobId);
+        }
+
         match /photos/{photoId} {
           allow read: if terminalCompanyMatches(companyId) ||
             jobFinancialReadAccess(companyId, jobId) ||
