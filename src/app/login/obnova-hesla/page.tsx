@@ -1,13 +1,10 @@
 "use client";
 
-import React, { Suspense, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import React, { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import Image from "next/image";
 import { useFirebase } from "@/firebase";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Card,
   CardContent,
@@ -15,99 +12,56 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Loader2, Eye, EyeOff } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
-import { PLATFORM_NAME } from "@/lib/platform-brand";
+import { PublicAuthPageLayout } from "@/components/auth/public-auth-page-layout";
+import { PasswordInputField } from "@/components/auth/password-input-field";
+import {
+  PUBLIC_AUTH_CARD_CLASS,
+  PUBLIC_AUTH_SUBMIT_BUTTON_CLASS,
+} from "@/lib/public-auth-form-classes";
+import {
+  MIN_EMPLOYEE_PASSWORD_LENGTH,
+  PASSWORD_MISMATCH_MESSAGE,
+  hasNewPasswordFormErrors,
+  validateNewPasswordForm,
+} from "@/lib/new-password-form-validation";
 import { confirmPasswordReset, type AuthError } from "firebase/auth";
 
-function AuthPageShell({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="min-h-screen grid lg:grid-cols-2">
-      <div className="relative hidden bg-black lg:block">
-        <Image
-          src="https://picsum.photos/seed/rajmondata-login/1200/1200"
-          alt="Pozadí přihlášení"
-          fill
-          className="object-cover opacity-50"
-          data-ai-hint="dark abstract orange"
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black to-transparent" />
-        <div className="absolute bottom-12 left-12 right-12">
-          <h1 className="mb-4 text-4xl font-bold text-white">
-            Posílení podnikání s {PLATFORM_NAME}.
-          </h1>
-          <p className="text-xl text-muted-foreground">
-            Komplexní platforma pro správu firem a provozní dokonalost v
-            multi-tenant prostředí.
-          </p>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-center bg-background p-8 text-foreground">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-const INPUT_CLASS =
-  "border-border bg-background text-foreground pr-10";
-const MIN_PASSWORD_LENGTH = 8;
-
-function PasswordField({
-  id,
-  label,
-  value,
-  onChange,
-  autoComplete,
-  show,
-  onToggleShow,
-  disabled,
+function ObnovaHeslaCard({
+  children,
+  title,
+  description,
 }: {
-  id: string;
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  autoComplete: string;
-  show: boolean;
-  onToggleShow: () => void;
-  disabled: boolean;
+  children: React.ReactNode;
+  title: string;
+  description: React.ReactNode;
 }) {
   return (
-    <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
-      <div className="relative">
-        <Input
-          id={id}
-          type={show ? "text" : "password"}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className={INPUT_CLASS}
-          autoComplete={autoComplete}
-          required
-          disabled={disabled}
-        />
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon"
-          className="absolute right-0.5 top-1/2 h-8 w-8 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-          onClick={onToggleShow}
-          disabled={disabled}
-          aria-label={show ? "Skrýt heslo" : "Zobrazit heslo"}
-        >
-          {show ? (
-            <EyeOff className="h-4 w-4" aria-hidden />
-          ) : (
-            <Eye className="h-4 w-4" aria-hidden />
-          )}
-        </Button>
-      </div>
-    </div>
+    <Card className={PUBLIC_AUTH_CARD_CLASS}>
+      <CardHeader className="space-y-3 text-center sm:space-y-4">
+        <div className="mx-auto flex justify-center">
+          <Logo context="page" compact />
+        </div>
+        <div className="space-y-1.5 text-center">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+            Obnova hesla
+          </p>
+          <CardTitle className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+            {title}
+          </CardTitle>
+          <CardDescription className="text-sm text-slate-600 sm:text-base">
+            {description}
+          </CardDescription>
+        </div>
+      </CardHeader>
+      {children}
+    </Card>
   );
 }
 
 function ObnovaHeslaContent() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const { auth, areServicesAvailable, firebaseConfigError } = useFirebase();
 
@@ -122,44 +76,51 @@ function ObnovaHeslaContent() {
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirm, setShowConfirm] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [formError, setFormError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [mismatchError, setMismatchError] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [linkInvalid, setLinkInvalid] = useState(false);
 
   const showInvalidState = !linkLooksValid || linkInvalid;
 
+  useEffect(() => {
+    if (!success) return;
+    const timer = window.setTimeout(() => {
+      router.push("/login");
+    }, 3000);
+    return () => window.clearTimeout(timer);
+  }, [success, router]);
+
   const canSubmit =
     !loading &&
     !showInvalidState &&
     !success &&
-    password.length > 0 &&
-    confirm.length > 0 &&
+    password.trim().length > 0 &&
+    confirm.trim().length > 0 &&
     !firebaseConfigError &&
     areServicesAvailable &&
     auth;
 
+  const clearFieldError = (key: string) => {
+    setFieldErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  };
+
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    setSubmitError(null);
-    setMismatchError(false);
+    setFormError(null);
 
-    if (!password.trim() || !confirm.trim()) {
-      return;
-    }
-
-    if (password !== confirm) {
-      setMismatchError(true);
-      return;
-    }
-
-    if (password.length < MIN_PASSWORD_LENGTH) {
-      setSubmitError(`Heslo musí mít alespoň ${MIN_PASSWORD_LENGTH} znaků.`);
-      return;
-    }
+    const errors = validateNewPasswordForm({ password, confirm });
+    const mapped: Record<string, string> = {};
+    if (errors.password) mapped.password = errors.password;
+    if (errors.confirm) mapped.confirm = errors.confirm;
+    setFieldErrors(mapped);
+    if (hasNewPasswordFormErrors(errors)) return;
 
     if (!auth || !oobCode) {
       setLinkInvalid(true);
@@ -168,7 +129,7 @@ function ObnovaHeslaContent() {
 
     setLoading(true);
     try {
-      await confirmPasswordReset(auth, oobCode, password);
+      await confirmPasswordReset(auth, oobCode, password.trim());
       setSuccess(true);
     } catch (err) {
       const code = (err as AuthError)?.code;
@@ -180,12 +141,12 @@ function ObnovaHeslaContent() {
         return;
       }
       if (code === "auth/weak-password") {
-        setSubmitError(
-          "Heslo je příliš slabé. Zvolte delší nebo složitější heslo."
-        );
+        setFieldErrors({
+          password: "Heslo je příliš slabé. Zvolte delší nebo složitější heslo.",
+        });
         return;
       }
-      setSubmitError("Nepodařilo se změnit heslo. Zkuste to znovu.");
+      setFormError("Nepodařilo se změnit heslo. Zkuste to znovu.");
     } finally {
       setLoading(false);
     }
@@ -193,158 +154,135 @@ function ObnovaHeslaContent() {
 
   if (showInvalidState) {
     return (
-      <AuthPageShell>
-        <Card className="w-full max-w-md border-border bg-surface shadow-2xl">
-          <CardHeader className="space-y-4 text-center">
-            <div className="mx-auto flex justify-center">
-              <Logo context="page" />
-            </div>
-            <div className="space-y-1">
-              <CardTitle className="text-3xl font-bold tracking-tight text-foreground">
-                Nastavení nového hesla
-              </CardTitle>
-              <CardDescription className="text-destructive">
-                Odkaz pro obnovu hesla je neplatný nebo již vypršel.
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Button
-              asChild
-              className="h-11 w-full bg-primary text-lg font-semibold text-white hover:bg-primary/90"
-            >
+      <PublicAuthPageLayout
+        mediaTitle="Obnova hesla"
+        mediaSubtitle="Odkaz pro nastavení nového hesla k zákaznickému portálu."
+      >
+        <ObnovaHeslaCard
+          title="Neplatný odkaz"
+          description={
+            <span className="text-destructive">
+              Odkaz pro obnovu hesla je neplatný nebo již vypršel. Požádejte o nový e-mailem
+              nebo u správce firmy.
+            </span>
+          }
+        >
+          <CardContent className="px-4 pb-6 sm:px-6 sm:pb-8">
+            <Button asChild className={PUBLIC_AUTH_SUBMIT_BUTTON_CLASS}>
               <Link href="/login">Přejít na přihlášení</Link>
             </Button>
           </CardContent>
-        </Card>
-      </AuthPageShell>
+        </ObnovaHeslaCard>
+      </PublicAuthPageLayout>
     );
   }
 
   if (success) {
     return (
-      <AuthPageShell>
-        <Card className="w-full max-w-md border-border bg-surface shadow-2xl">
-          <CardHeader className="space-y-4 text-center">
-            <div className="mx-auto flex justify-center">
-              <Logo context="page" />
-            </div>
-            <div className="space-y-1">
-              <CardTitle className="text-3xl font-bold tracking-tight text-foreground">
-                Nastavení nového hesla
-              </CardTitle>
-              <CardDescription className="text-foreground">
-                Heslo bylo nastaveno. Nyní se můžete přihlásit.
-              </CardDescription>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <Button
-              asChild
-              className="h-11 w-full bg-primary text-lg font-semibold text-white hover:bg-primary/90"
-            >
-              <Link href="/login">Přejít na přihlášení</Link>
+      <PublicAuthPageLayout
+        mediaTitle="Obnova hesla"
+        mediaSubtitle="Heslo bylo úspěšně nastaveno."
+      >
+        <ObnovaHeslaCard
+          title="Heslo bylo změněno"
+          description="Nové heslo je uloženo. Za chvíli vás přesměrujeme na přihlášení."
+        >
+          <CardContent className="space-y-4 px-4 pb-6 sm:px-6 sm:pb-8">
+            <p className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+              Heslo bylo úspěšně nastaveno. Použijte ho při příštím přihlášení do zákaznického
+              portálu.
+            </p>
+            <Button asChild className={PUBLIC_AUTH_SUBMIT_BUTTON_CLASS}>
+              <Link href="/login">Přihlásit se</Link>
             </Button>
           </CardContent>
-        </Card>
-      </AuthPageShell>
+        </ObnovaHeslaCard>
+      </PublicAuthPageLayout>
     );
   }
 
   return (
-    <AuthPageShell>
-      <Card className="w-full max-w-md border-border bg-surface shadow-2xl">
-        <CardHeader className="space-y-4 text-center">
-          <div className="mx-auto flex justify-center">
-            <Logo context="page" />
-          </div>
-          <div className="space-y-1">
-            <CardTitle className="text-3xl font-bold tracking-tight text-foreground">
-              Nastavení nového hesla
-            </CardTitle>
-            <CardDescription className="text-muted-foreground">
-              Zadejte nové heslo pro svůj účet.
-            </CardDescription>
-          </div>
-        </CardHeader>
-
-        <form onSubmit={handleSubmit}>
-          <CardContent className="space-y-4">
+    <PublicAuthPageLayout
+      mediaTitle="Obnova hesla"
+      mediaSubtitle="Nastavte si nové heslo pro přístup do zákaznického portálu."
+    >
+      <ObnovaHeslaCard
+        title="Nové heslo"
+        description="Zadejte nové heslo a potvrďte ho pro kontrolu."
+      >
+        <form onSubmit={(e) => void handleSubmit(e)}>
+          <CardContent className="space-y-4 px-4 sm:px-6">
             {firebaseConfigError ? (
               <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
                 {firebaseConfigError}
               </div>
             ) : !areServicesAvailable || !auth ? (
-              <div className="rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-sm text-orange-600">
-                Přihlašování se ještě načítá. Pokud stav trvá déle, obnovte
-                stránku.
+              <div className="rounded-md border border-orange-500/30 bg-orange-100 px-3 py-2 text-sm text-orange-800">
+                Přihlašování se ještě načítá. Pokud stav trvá déle, obnovte stránku.
               </div>
             ) : null}
 
-            {mismatchError ? (
+            {formError ? (
               <div
                 className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
                 role="alert"
               >
-                Hesla se neshodují
+                {formError}
               </div>
             ) : null}
 
-            {submitError ? (
-              <div
-                className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
-                role="alert"
-              >
-                {submitError}
-              </div>
-            ) : null}
-
-            <PasswordField
+            <PasswordInputField
               id="new-password"
               label="Nové heslo"
               value={password}
               onChange={(v) => {
                 setPassword(v);
-                setMismatchError(false);
+                clearFieldError("password");
+                if (fieldErrors.confirm === PASSWORD_MISMATCH_MESSAGE) clearFieldError("confirm");
               }}
               autoComplete="new-password"
-              show={showPassword}
-              onToggleShow={() => setShowPassword((s) => !s)}
               disabled={loading}
+              minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+              placeholder={`Min. ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků`}
+              error={fieldErrors.password}
+              variant="publicAuth"
             />
 
-            <PasswordField
+            <PasswordInputField
               id="confirm-password"
               label="Potvrzení nového hesla"
               value={confirm}
               onChange={(v) => {
                 setConfirm(v);
-                setMismatchError(false);
+                clearFieldError("confirm");
               }}
               autoComplete="new-password"
-              show={showConfirm}
-              onToggleShow={() => setShowConfirm((s) => !s)}
               disabled={loading}
+              minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+              error={fieldErrors.confirm}
+              variant="publicAuth"
             />
 
-            <Button
-              type="submit"
-              className="h-11 w-full bg-primary text-lg font-semibold text-white hover:bg-primary/90"
-              disabled={!canSubmit}
-            >
+            <Button type="submit" className={PUBLIC_AUTH_SUBMIT_BUTTON_CLASS} disabled={!canSubmit}>
               {loading ? (
                 <>
                   <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                  Ukládám...
+                  Ukládám…
                 </>
               ) : (
-                "Uložit heslo"
+                "Uložit nové heslo"
               )}
             </Button>
+
+            <p className="text-center text-sm text-slate-600">
+              <Link href="/login" className="text-orange-600 hover:underline">
+                Zpět na přihlášení
+              </Link>
+            </p>
           </CardContent>
         </form>
-      </Card>
-    </AuthPageShell>
+      </ObnovaHeslaCard>
+    </PublicAuthPageLayout>
   );
 }
 
@@ -352,19 +290,13 @@ export default function ObnovaHeslaPage() {
   return (
     <Suspense
       fallback={
-        <AuthPageShell>
-          <Card className="w-full max-w-md border-border bg-surface shadow-2xl">
-            <CardHeader className="space-y-4 text-center">
-              <div className="mx-auto flex justify-center">
-                <Logo context="page" />
-              </div>
-              <CardTitle className="text-3xl font-bold tracking-tight text-foreground">
-                Nastavení nového hesla
-              </CardTitle>
-              <CardDescription>Načítání…</CardDescription>
-            </CardHeader>
-          </Card>
-        </AuthPageShell>
+        <PublicAuthPageLayout mediaTitle="Obnova hesla" mediaSubtitle="Načítání…">
+          <ObnovaHeslaCard title="Nové heslo" description="Načítání formuláře…">
+            <CardContent className="flex justify-center px-4 py-8 sm:px-6">
+              <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+            </CardContent>
+          </ObnovaHeslaCard>
+        </PublicAuthPageLayout>
       }
     >
       <ObnovaHeslaContent />

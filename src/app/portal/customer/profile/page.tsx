@@ -12,16 +12,15 @@ import { useUser, useAuth, useFirestore, useDoc, useMemoFirebase } from "@/fireb
 import { doc } from "firebase/firestore";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { ChevronLeft, KeyRound, Loader2 } from "lucide-react";
+import { PasswordInputField } from "@/components/auth/password-input-field";
 import { CustomerChatPanel } from "@/components/customer/customer-chat-panel";
 import { CustomerLinkedJobsProgress } from "@/components/customer/customer-linked-jobs-progress";
 import { CustomerProfileMeetingRecords } from "@/components/meeting-records/customer-profile-meeting-records";
 import { useToast } from "@/hooks/use-toast";
 import { MIN_EMPLOYEE_PASSWORD_LENGTH } from "@/lib/employee-password-policy";
+import { PASSWORD_MISMATCH_MESSAGE } from "@/lib/new-password-form-validation";
 import { mapFirebaseAuthPasswordChangeError } from "@/lib/firebase-auth-password-errors";
-import { cn } from "@/lib/utils";
 
 function hasEmailPasswordProvider(user: User | null | undefined): boolean {
   if (!user?.providerData?.length) return false;
@@ -79,7 +78,7 @@ export default function CustomerProfilePage() {
     if (!pwdConfirm) {
       e.confirm = "Potvrďte nové heslo.";
     } else if (pwdNew !== pwdConfirm) {
-      e.confirm = "Nové heslo a potvrzení se neshodují.";
+      e.confirm = PASSWORD_MISMATCH_MESSAGE;
     }
     setFieldErrors(e);
     return Object.keys(e).length === 0;
@@ -173,80 +172,64 @@ export default function CustomerProfilePage() {
             </p>
           ) : (
             <form onSubmit={(ev) => void handlePasswordChange(ev)} className="grid max-w-md gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="cust-pwd-current">Aktuální heslo</Label>
-                <Input
-                  id="cust-pwd-current"
-                  name="currentPassword"
-                  type="password"
-                  autoComplete="current-password"
-                  value={pwdCurrent}
-                  onChange={(ev) => {
-                    setPwdCurrent(ev.target.value);
-                    clearFieldError("current");
-                  }}
-                  disabled={pwdLoading}
-                  className={cn(fieldErrors.current && "border-destructive")}
-                  aria-invalid={Boolean(fieldErrors.current)}
-                  aria-describedby={fieldErrors.current ? "cust-pwd-current-err" : undefined}
-                />
-                {fieldErrors.current ? (
-                  <p id="cust-pwd-current-err" className="text-sm text-destructive">
-                    {fieldErrors.current}
-                  </p>
-                ) : null}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="cust-pwd-new">Nové heslo</Label>
-                <Input
+              <PasswordInputField
+                id="cust-pwd-current"
+                label="Aktuální heslo"
+                value={pwdCurrent}
+                onChange={(v) => {
+                  setPwdCurrent(v);
+                  clearFieldError("current");
+                }}
+                autoComplete="current-password"
+                disabled={pwdLoading}
+                error={fieldErrors.current}
+                variant="portal"
+              />
+              <div className="space-y-1">
+                <PasswordInputField
                   id="cust-pwd-new"
-                  name="newPassword"
-                  type="password"
-                  autoComplete="new-password"
+                  label="Nové heslo"
                   value={pwdNew}
-                  onChange={(ev) => {
-                    setPwdNew(ev.target.value);
+                  onChange={(v) => {
+                    setPwdNew(v);
                     clearFieldError("new");
+                    if (fieldErrors.confirm === PASSWORD_MISMATCH_MESSAGE) {
+                      clearFieldError("confirm");
+                    }
                   }}
-                  disabled={pwdLoading}
-                  className={cn(fieldErrors.new && "border-destructive")}
-                  aria-invalid={Boolean(fieldErrors.new)}
-                  aria-describedby={fieldErrors.new ? "cust-pwd-new-err" : undefined}
-                />
-                {fieldErrors.new ? (
-                  <p id="cust-pwd-new-err" className="text-sm text-destructive">
-                    {fieldErrors.new}
-                  </p>
-                ) : (
-                  <p className="text-xs text-muted-foreground">
-                    Minimálně {MIN_EMPLOYEE_PASSWORD_LENGTH} znaků (stejná pravidla jako u zaměstnanců portálu).
-                  </p>
-                )}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="cust-pwd-confirm">Potvrzení nového hesla</Label>
-                <Input
-                  id="cust-pwd-confirm"
-                  name="newPasswordConfirm"
-                  type="password"
                   autoComplete="new-password"
-                  value={pwdConfirm}
-                  onChange={(ev) => {
-                    setPwdConfirm(ev.target.value);
-                    clearFieldError("confirm");
-                  }}
                   disabled={pwdLoading}
-                  className={cn(fieldErrors.confirm && "border-destructive")}
-                  aria-invalid={Boolean(fieldErrors.confirm)}
-                  aria-describedby={fieldErrors.confirm ? "cust-pwd-confirm-err" : undefined}
+                  minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+                  placeholder={`Min. ${MIN_EMPLOYEE_PASSWORD_LENGTH} znaků`}
+                  error={fieldErrors.new}
+                  variant="portal"
                 />
-                {fieldErrors.confirm ? (
-                  <p id="cust-pwd-confirm-err" className="text-sm text-destructive">
-                    {fieldErrors.confirm}
+                {!fieldErrors.new ? (
+                  <p className="text-xs text-muted-foreground">
+                    Minimálně {MIN_EMPLOYEE_PASSWORD_LENGTH} znaků (stejná pravidla jako u
+                    zaměstnanců portálu).
                   </p>
                 ) : null}
               </div>
-              <Button type="submit" disabled={pwdLoading} className="w-full sm:w-auto">
+              <PasswordInputField
+                id="cust-pwd-confirm"
+                label="Potvrzení nového hesla"
+                value={pwdConfirm}
+                onChange={(v) => {
+                  setPwdConfirm(v);
+                  clearFieldError("confirm");
+                }}
+                autoComplete="new-password"
+                disabled={pwdLoading}
+                minLength={MIN_EMPLOYEE_PASSWORD_LENGTH}
+                error={fieldErrors.confirm}
+                variant="portal"
+              />
+              <Button
+                type="submit"
+                disabled={pwdLoading}
+                className="w-full bg-orange-500 font-semibold text-white hover:bg-orange-600 sm:w-auto"
+              >
                 {pwdLoading ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
