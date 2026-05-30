@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useCallback } from "react";
 import {
   Card,
   CardContent,
@@ -24,7 +24,6 @@ import {
   Legend,
 } from "recharts";
 import {
-  Download,
   FileSpreadsheet,
   FileText,
   Loader2,
@@ -39,60 +38,55 @@ import {
   useDoc,
   useMemoFirebase,
   useCollection,
+  useCompany,
 } from "@/firebase";
-import { doc, collection, query, orderBy } from "firebase/firestore";
+import { doc, collection, query, orderBy, limit } from "firebase/firestore";
 import { useToast } from "@/hooks/use-toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { useCompany } from "@/firebase";
+import {
+  computeOrganizationReports,
+  formatReportCurrency,
+  type ReportTab,
+} from "@/lib/organization-reports";
+import {
+  exportOrganizationReportCsv,
+  exportOrganizationReportPdf,
+} from "@/lib/organization-reports-export";
+import type { AttendanceRow } from "@/lib/employee-attendance";
 
-const MONTH_NAMES_CS = [
-  "Leden",
-  "Únor",
-  "Březen",
-  "Duben",
-  "Květen",
-  "Červen",
-  "Červenec",
-  "Srpen",
-  "Září",
-  "Říjen",
-  "Listopad",
-  "Prosinec",
-];
-
-const ROLE_LABEL_CS: Record<string, string> = {
-  owner: "Majitel",
-  admin: "Administrátor",
-  manager: "Manažer",
-  employee: "Zaměstnanec",
-  orgAdmin: "Administrátor organizace",
-  accountant: "Účetní",
-  customer: "Zákazník",
-};
-
-function parseRecordDate(raw: unknown): Date | null {
-  if (raw == null) return null;
-  if (typeof raw === "string") {
-    const t = Date.parse(raw);
-    return Number.isNaN(t) ? null : new Date(t);
-  }
-  if (
-    typeof raw === "object" &&
-    raw !== null &&
-    "toDate" in raw &&
-    typeof (raw as { toDate: () => Date }).toDate === "function"
-  ) {
-    return (raw as { toDate: () => Date }).toDate();
-  }
-  return null;
+function EmptyChartPanel({ message }: { message: string }) {
+  return (
+    <div className="flex h-full min-h-[280px] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-sm text-muted-foreground">
+      {message}
+    </div>
+  );
 }
 
-/** Pouze zakázky s explicitním číselným ziskem (žádné odhady). */
-type JobWithProfit = {
-  id?: string;
-  name?: string;
-  profit?: unknown;
-};
+function KpiCard({
+  title,
+  value,
+  hint,
+}: {
+  title: string;
+  value: string;
+  hint?: string;
+}) {
+  return (
+    <Card className="border-slate-200 bg-white shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold text-slate-900">
+          {title}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="portal-kpi-value text-2xl">{value}</div>
+        {hint ? (
+          <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
 
 export default function ReportsPage() {
   const { user } = useUser();
@@ -100,6 +94,7 @@ export default function ReportsPage() {
   const { toast } = useToast();
   const [isExporting, setIsExporting] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+  const [activeTab, setActiveTab] = useState<ReportTab>("overview");
   const { companyName } = useCompany();
 
   useEffect(() => {
@@ -137,142 +132,91 @@ export default function ReportsPage() {
         : null,
     [firestore, companyId]
   );
+  const documentsQuery = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? collection(firestore, "companies", companyId, "documents")
+        : null,
+    [firestore, companyId]
+  );
+  const attendanceQuery = useMemoFirebase(
+    () =>
+      firestore && companyId
+        ? query(
+            collection(firestore, "companies", companyId, "attendance"),
+            orderBy("timestamp", "desc"),
+            limit(5000)
+          )
+        : null,
+    [firestore, companyId]
+  );
 
   const { data: jobs, isLoading: isJobsLoading } = useCollection(jobsQuery);
   const { data: employees, isLoading: isEmployeesLoading } =
     useCollection(employeesQuery);
   const { data: financeRecords, isLoading: isFinanceLoading } =
     useCollection(financeQuery);
+  const { data: documents, isLoading: isDocumentsLoading } =
+    useCollection(documentsQuery);
+  const { data: attendanceRows, isLoading: isAttendanceLoading } =
+    useCollection(attendanceQuery);
 
-  const ytdStats = useMemo(() => {
-    if (!financeRecords?.length) {
-      return { revenue: 0, costs: 0, net: 0 };
-    }
-    const year = new Date().getFullYear();
-    let revenue = 0;
-    let costs = 0;
-    for (const r of financeRecords as {
-      type?: string;
-      amount?: unknown;
-      date?: unknown;
-    }[]) {
-      const dt = parseRecordDate(r.date);
-      if (!dt || dt.getFullYear() !== year) continue;
-      const amt = Number(r.amount) || 0;
-      if (r.type === "revenue") revenue += amt;
-      else if (r.type === "expense") costs += amt;
-    }
-    return { revenue, costs, net: revenue - costs };
-  }, [financeRecords]);
+  const reportData = useMemo(
+    () =>
+      computeOrganizationReports({
+        financeRecords: financeRecords ?? [],
+        documents: documents ?? [],
+        jobs: jobs ?? [],
+        employees: employees ?? [],
+        attendanceRows: (attendanceRows ?? []) as AttendanceRow[],
+      }),
+    [financeRecords, documents, jobs, employees, attendanceRows]
+  );
 
-  const marginPct =
-    ytdStats.revenue > 0
-      ? ((ytdStats.revenue - ytdStats.costs) / ytdStats.revenue) * 100
-      : null;
+  const orgLabel = companyName || companyId || "organizace";
 
-  const activeJobsCount = useMemo(() => {
-    const list = (jobs as { status?: string }[] | undefined) ?? [];
-    return list.filter(
-      (j) => j.status !== "dokončená" && j.status !== "fakturována"
-    ).length;
-  }, [jobs]);
-
-  const monthlyBarData = useMemo(() => {
-    if (!financeRecords?.length) return [];
-    const year = new Date().getFullYear();
-    const buckets: Record<number, { revenue: number; costs: number }> = {};
-    for (const r of financeRecords as {
-      type?: string;
-      amount?: unknown;
-      date?: unknown;
-    }[]) {
-      const dt = parseRecordDate(r.date);
-      if (!dt || dt.getFullYear() !== year) continue;
-      const mi = dt.getMonth();
-      if (!buckets[mi]) buckets[mi] = { revenue: 0, costs: 0 };
-      const amt = Number(r.amount) || 0;
-      if (r.type === "revenue") buckets[mi].revenue += amt;
-      else if (r.type === "expense") buckets[mi].costs += amt;
-    }
-    const keys = Object.keys(buckets)
-      .map(Number)
-      .sort((a, b) => a - b);
-    return keys.map((mi) => ({
-      name: MONTH_NAMES_CS[mi],
-      revenue: buckets[mi].revenue,
-      costs: buckets[mi].costs,
-    }));
-  }, [financeRecords]);
-
-  const rolePieData = useMemo(() => {
-    const list = employees ?? [];
-    if (!list.length) return [];
-    const counts: Record<string, number> = {};
-    for (const e of list as { role?: string }[]) {
-      const r = e.role || "employee";
-      counts[r] = (counts[r] || 0) + 1;
-    }
-    const fills = [
-      "hsl(var(--primary))",
-      "hsl(var(--secondary))",
-      "#64748b",
-      "#fb923c",
-      "#22c55e",
-      "#a855f7",
-    ];
-    return Object.entries(counts).map(([role, value], i) => ({
-      name: ROLE_LABEL_CS[role] ?? role,
-      value,
-      fill: fills[i % fills.length],
-    }));
-  }, [employees]);
-
-  const jobProfitFromData = useMemo(() => {
-    const list = (jobs as JobWithProfit[] | undefined) ?? [];
-    const withProfit = list.filter(
-      (j) =>
-        typeof j.profit === "number" &&
-        !Number.isNaN(j.profit as number)
-    ) as { name?: string; profit: number }[];
-    return withProfit.map((j) => ({
-      name: j.name || "Zakázka",
-      profit: j.profit,
-    }));
-  }, [jobs]);
-
-  const jobsWithBudget = useMemo(() => {
-    const list = (jobs as { budget?: unknown; name?: string }[] | undefined) ?? [];
-    return list.filter(
-      (j) =>
-        j.budget != null &&
-        j.budget !== "" &&
-        !Number.isNaN(Number(j.budget))
-    );
-  }, [jobs]);
-
-  const avgJobBudget =
-    jobsWithBudget.length > 0
-      ? jobsWithBudget.reduce(
-          (s, j) => s + Number(j.budget),
-          0
-        ) / jobsWithBudget.length
-      : null;
-
-  const unpaidJobsCount = useMemo(() => {
-    const list = (jobs as { status?: string }[] | undefined) ?? [];
-    return list.filter((j) => j.status && j.status !== "fakturována").length;
-  }, [jobs]);
-
-  const handleExport = (format: "pdf" | "csv") => {
-    setIsExporting(true);
-    setTimeout(() => {
-      setIsExporting(false);
-      toast({
-        title: "Export úspěšný",
-        description: `Váš report byl vygenerován ve formátu ${format.toUpperCase()}.`,
-      });
-    }, 1500);
-  };
+  const handleExport = useCallback(
+    async (format: "pdf" | "csv") => {
+      if (!reportData.hasAnyData) {
+        toast({
+          title: "Export nelze vytvořit",
+          description: "Pro tuto organizaci zatím nejsou žádná data k exportu.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setIsExporting(true);
+      try {
+        if (format === "csv") {
+          exportOrganizationReportCsv({
+            tab: activeTab,
+            data: reportData,
+            companyName: orgLabel,
+          });
+        } else {
+          await exportOrganizationReportPdf({
+            tab: activeTab,
+            data: reportData,
+            companyName: orgLabel,
+          });
+        }
+        toast({
+          title: "Export úspěšný",
+          description: `Report záložky byla stažen ve formátu ${format.toUpperCase()}.`,
+        });
+      } catch (err) {
+        toast({
+          title: "Export se nezdařil",
+          description:
+            err instanceof Error ? err.message : "Zkuste to prosím znovu.",
+          variant: "destructive",
+        });
+      } finally {
+        setIsExporting(false);
+      }
+    },
+    [activeTab, orgLabel, reportData, toast]
+  );
 
   if (isProfileLoading) {
     return (
@@ -293,7 +237,13 @@ export default function ReportsPage() {
     );
   }
 
-  if (isJobsLoading || isFinanceLoading || isEmployeesLoading) {
+  if (
+    isJobsLoading ||
+    isFinanceLoading ||
+    isEmployeesLoading ||
+    isDocumentsLoading ||
+    isAttendanceLoading
+  ) {
     return (
       <div className="flex h-full items-center justify-center">
         <Loader2 className="h-10 w-10 animate-spin text-primary" />
@@ -301,132 +251,151 @@ export default function ReportsPage() {
     );
   }
 
-  const orgLabel = companyName || companyId;
-
-  const hasAnyReportingBasics =
-    (financeRecords?.length ?? 0) > 0 ||
-    (jobs?.length ?? 0) > 0 ||
-    (employees?.length ?? 0) > 0;
+  const { overview, employees: empReport, jobs: jobsReport, financials } =
+    reportData;
 
   return (
-    <div className="space-y-8">
+    <div className="mx-auto w-full max-w-7xl min-w-0 space-y-6 sm:space-y-8">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between md:items-center">
         <div className="min-w-0">
-          <h1 className="portal-page-title text-2xl sm:text-3xl">
+          <h1 className="portal-page-title text-xl sm:text-2xl md:text-3xl break-words">
             Analytika a reporty
           </h1>
           <p className="portal-page-description">
-            Přehled podle reálných dat organizace {orgLabel}.
+            Přehled podle reálných dat organizace {orgLabel} (rok{" "}
+            {reportData.year}).
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outlineLight"
-            className="gap-2"
-            disabled={isExporting}
-            onClick={() => handleExport("csv")}
+            className="min-h-[44px] gap-2"
+            disabled={isExporting || !reportData.hasAnyData}
+            onClick={() => void handleExport("csv")}
           >
-            <FileSpreadsheet className="h-4 w-4" /> CSV
+            {isExporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FileSpreadsheet className="h-4 w-4 shrink-0" />
+            )}
+            CSV
           </Button>
           <Button
-            className="gap-2"
-            disabled={isExporting}
-            onClick={() => handleExport("pdf")}
+            className="min-h-[44px] gap-2"
+            disabled={isExporting || !reportData.hasAnyData}
+            onClick={() => void handleExport("pdf")}
           >
-            <FileText className="h-4 w-4" /> PDF report
+            {isExporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <FileText className="h-4 w-4 shrink-0" />
+            )}
+            PDF report
           </Button>
         </div>
       </div>
 
-      {!hasAnyReportingBasics && (
+      {!reportData.hasAnyData && (
         <Alert className="border-slate-200 bg-slate-50">
           <AlertTitle>Zatím nejsou dostupná žádná data</AlertTitle>
           <AlertDescription>
-            Po přidání zakázek, záznamů ve financích nebo zaměstnanců se zde
-            zobrazí přehledy.
+            Po přidání zakázek, finančních záznamů, dokladů, zaměstnanců nebo
+            docházky se zde zobrazí přehledy. Grafy a exporty se nezobrazí, dokud
+            nebudou k dispozici reálná data.
           </AlertDescription>
         </Alert>
       )}
 
-      <Tabs defaultValue="overview" className="w-full">
-        <TabsList className="mb-6 rounded-lg border border-slate-200 bg-white shadow-sm">
+      <Tabs
+        value={activeTab}
+        onValueChange={(v) => setActiveTab(v as ReportTab)}
+        className="w-full"
+      >
+        <TabsList className="mb-6 flex h-auto w-full flex-wrap justify-start gap-1 rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
           <TabsTrigger
             value="overview"
-            className="gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            className="min-h-[44px] gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
           >
-            <TrendingUp className="h-4 w-4" /> Přehled
+            <TrendingUp className="h-4 w-4 shrink-0" /> Přehled
           </TabsTrigger>
           <TabsTrigger
             value="employees"
-            className="gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            className="min-h-[44px] gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
           >
-            <Users className="h-4 w-4" /> Zaměstnanci
+            <Users className="h-4 w-4 shrink-0" /> Zaměstnanci
           </TabsTrigger>
           <TabsTrigger
             value="jobs"
-            className="gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            className="min-h-[44px] gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
           >
-            <Briefcase className="h-4 w-4" /> Zakázky
+            <Briefcase className="h-4 w-4 shrink-0" /> Zakázky
           </TabsTrigger>
           <TabsTrigger
             value="financials"
-            className="gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
+            className="min-h-[44px] gap-2 text-slate-800 data-[state=active]:bg-slate-100 data-[state=active]:text-slate-900"
           >
-            <Wallet className="h-4 w-4" /> Finance
+            <Wallet className="h-4 w-4 shrink-0" /> Finance
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6 sm:space-y-8">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 sm:gap-6">
-            <Card className="border-slate-200 bg-white shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold text-slate-900">
-                  Příjmy (letos)
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="portal-kpi-value text-2xl">
-                  {ytdStats.revenue.toLocaleString("cs-CZ")} Kč
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {ytdStats.revenue === 0
-                    ? "Zatím žádné příjmové záznamy v aktuálním roce"
-                    : "Součet příjmů z finančního modulu"}
-                </p>
-              </CardContent>
-            </Card>
-            <Card className="border-slate-200 bg-white shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold text-slate-900">
-                  Čistý výsledek (letos)
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="portal-kpi-value text-2xl">
-                  {ytdStats.net.toLocaleString("cs-CZ")} Kč
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Příjmy mínus náklady podle dokladů
-                </p>
-              </CardContent>
-            </Card>
-            <Card className="border-slate-200 bg-white shadow-sm">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-semibold text-slate-900">
-                  Marže (letos)
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="portal-kpi-value text-2xl">
-                  {marginPct == null ? "—" : `${marginPct.toFixed(1)} %`}
-                </div>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {marginPct == null
-                    ? "Marži lze spočítat až po prvních příjmech"
-                    : "Čistý výsledek / příjmy"}
-                </p>
-              </CardContent>
-            </Card>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 sm:gap-6">
+            <KpiCard
+              title="Příjmy (letos)"
+              value={formatReportCurrency(overview.ytdRevenue)}
+              hint={
+                overview.ytdRevenue === 0
+                  ? "Z finančního modulu a dokladů v aktuálním roce"
+                  : "Součet příjmů z finančních záznamů"
+              }
+            />
+            <KpiCard
+              title="Náklady (letos)"
+              value={formatReportCurrency(overview.ytdCosts)}
+              hint="Součet nákladových záznamů v aktuálním roce"
+            />
+            <KpiCard
+              title="Zisk (letos)"
+              value={formatReportCurrency(overview.ytdProfit)}
+              hint="Příjmy mínus náklady"
+            />
+            <KpiCard
+              title="Marže (letos)"
+              value={
+                overview.marginPct == null
+                  ? "—"
+                  : `${overview.marginPct.toFixed(1)} %`
+              }
+              hint={
+                overview.marginPct == null
+                  ? "Marži lze spočítat až po prvních příjmech"
+                  : "Zisk / příjmy"
+              }
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 sm:gap-6">
+            <KpiCard
+              title="Aktivní zakázky"
+              value={String(overview.activeJobsCount)}
+            />
+            <KpiCard
+              title="Dokončené zakázky"
+              value={String(overview.completedJobsCount)}
+            />
+            <KpiCard
+              title="Nefakturované zakázky"
+              value={String(overview.unfacturedJobsCount)}
+              hint="Stav „Dokončená“ — čeká na fakturaci"
+            />
+            <KpiCard
+              title="Průměrný rozpočet"
+              value={
+                overview.avgJobBudget == null
+                  ? "—"
+                  : formatReportCurrency(overview.avgJobBudget)
+              }
+            />
           </div>
 
           <Card className="border-slate-200 bg-white shadow-sm">
@@ -435,13 +404,13 @@ export default function ReportsPage() {
                 Měsíční příjmy a náklady
               </CardTitle>
               <CardDescription className="text-slate-800">
-                Agregace podle finančních záznamů v aktuálním roce
+                Agregace finančních záznamů v roce {reportData.year}
               </CardDescription>
             </CardHeader>
-            <CardContent className="h-[400px]">
-              {monthlyBarData.length > 0 && isMounted ? (
+            <CardContent className="h-[min(400px,60vh)] min-h-[280px]">
+              {overview.hasMonthlyChart && isMounted ? (
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyBarData}>
+                  <BarChart data={overview.monthlyBarData}>
                     <CartesianGrid
                       strokeDasharray="3 3"
                       stroke="#e2e8f0"
@@ -457,9 +426,10 @@ export default function ReportsPage() {
                       stroke="#475569"
                       fontSize={12}
                       tick={{ fill: "#475569" }}
-                      tickFormatter={(v) => `${v / 1000}k`}
+                      tickFormatter={(v) => `${Math.round(v / 1000)}k`}
                     />
                     <Tooltip
+                      formatter={(v: number) => formatReportCurrency(v)}
                       contentStyle={{
                         backgroundColor: "#fff",
                         border: "1px solid #e2e8f0",
@@ -484,28 +454,65 @@ export default function ReportsPage() {
                   </BarChart>
                 </ResponsiveContainer>
               ) : (
-                <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 text-center text-sm text-muted-foreground">
-                  Zatím nejsou dostupná žádná data.
-                </div>
+                <EmptyChartPanel message="Zatím nejsou finanční záznamy v aktuálním roce — graf se nezobrazí." />
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="employees" className="space-y-8">
-          <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+        <TabsContent value="employees" className="space-y-6 sm:space-y-8">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
+            <KpiCard
+              title="Zaměstnanci"
+              value={String(empReport.totalCount)}
+            />
+            <KpiCard
+              title="Odpracované hodiny (letos)"
+              value={`${empReport.totalHoursYtd.toLocaleString("cs-CZ")} h`}
+              hint="Součet z evidence docházky v aktuálním roce"
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardHeader>
                 <CardTitle className="text-slate-900">
-                  Odpracované hodiny
+                  Odpracované hodiny po měsících
                 </CardTitle>
                 <CardDescription className="text-slate-800">
-                  Graf vyžaduje propojení s evidencí odpracovaných hodin
+                  Data z docházky organizace {orgLabel}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="flex min-h-[350px] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-sm text-muted-foreground">
-                Zatím nejsou k dispozici žádné agregované údaje o hodinách.
-                Po zavedení evidence se zde zobrazí reálná data.
+              <CardContent className="h-[min(350px,55vh)] min-h-[280px]">
+                {empReport.hasHoursChart && isMounted ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={empReport.hoursByMonth}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#e2e8f0"
+                        vertical={false}
+                      />
+                      <XAxis dataKey="name" stroke="#475569" fontSize={12} />
+                      <YAxis stroke="#475569" fontSize={12} />
+                      <Tooltip
+                        formatter={(v: number) => `${v} h`}
+                        contentStyle={{
+                          backgroundColor: "#fff",
+                          border: "1px solid #e2e8f0",
+                          borderRadius: "8px",
+                        }}
+                      />
+                      <Bar
+                        dataKey="hours"
+                        name="Hodiny"
+                        fill="hsl(var(--primary))"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyChartPanel message="Zatím nejsou zaznamenané odpracované hodiny v aktuálním roce." />
+                )}
               </CardContent>
             </Card>
 
@@ -516,12 +523,12 @@ export default function ReportsPage() {
                   Podle záznamů zaměstnanců ve firmě
                 </CardDescription>
               </CardHeader>
-              <CardContent className="flex h-[350px] items-center justify-center">
-                {rolePieData.length > 0 && isMounted ? (
+              <CardContent className="h-[min(350px,55vh)] min-h-[280px]">
+                {empReport.hasRoleChart && isMounted ? (
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
-                        data={rolePieData}
+                        data={empReport.rolePieData}
                         cx="50%"
                         cy="50%"
                         innerRadius={60}
@@ -529,7 +536,7 @@ export default function ReportsPage() {
                         paddingAngle={5}
                         dataKey="value"
                       >
-                        {rolePieData.map((e, i) => (
+                        {empReport.rolePieData.map((e, i) => (
                           <Cell key={i} fill={e.fill} />
                         ))}
                       </Pie>
@@ -544,80 +551,218 @@ export default function ReportsPage() {
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
-                  <div className="px-4 text-center text-sm text-muted-foreground">
-                    Zatím nemáte žádné zaměstnance – po prvním pozvání se zobrazí
-                    rozdělení rolí.
+                  <EmptyChartPanel message="Zatím nemáte žádné zaměstnance — po prvním pozvání se zobrazí rozdělení rolí." />
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          {empReport.hoursByEmployee.length > 0 && (
+            <Card className="border-slate-200 bg-white shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-slate-900">
+                  Hodiny podle zaměstnance
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2">
+                {empReport.hoursByEmployee.map((row) => (
+                  <div
+                    key={row.employeeId}
+                    className="flex flex-col gap-1 rounded-lg border border-slate-200 bg-slate-50 p-3 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-900">{row.name}</p>
+                      <p className="text-xs text-muted-foreground">{row.role}</p>
+                    </div>
+                    <span className="font-bold tabular-nums text-slate-900">
+                      {row.hours.toLocaleString("cs-CZ")} h
+                    </span>
                   </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </TabsContent>
+
+        <TabsContent value="jobs" className="space-y-6 sm:space-y-8">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 sm:gap-6">
+            <KpiCard
+              title="Aktivní zakázky"
+              value={String(jobsReport.activeCount)}
+              hint="Neukončené a nefakturované"
+            />
+            <KpiCard
+              title="Dokončené zakázky"
+              value={String(jobsReport.completedCount)}
+              hint="Stav dokončená nebo fakturována"
+            />
+            <KpiCard
+              title="Nefakturované"
+              value={String(jobsReport.unfacturedCount)}
+              hint="Dokončené, ale ještě nefakturované"
+            />
+            <KpiCard
+              title="Průměrný rozpočet"
+              value={
+                jobsReport.avgBudget == null
+                  ? "—"
+                  : formatReportCurrency(jobsReport.avgBudget)
+              }
+            />
+          </div>
+
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
+            <Card className="border-slate-200 bg-white shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-slate-900">
+                  Přehled stavů zakázek
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="h-[min(350px,55vh)] min-h-[280px]">
+                {jobsReport.hasStatusBreakdown && isMounted ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={jobsReport.statusBreakdown}>
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#e2e8f0"
+                        vertical={false}
+                      />
+                      <XAxis
+                        dataKey="name"
+                        stroke="#475569"
+                        fontSize={11}
+                        interval={0}
+                        angle={-25}
+                        textAnchor="end"
+                        height={70}
+                      />
+                      <YAxis stroke="#475569" fontSize={12} allowDecimals={false} />
+                      <Tooltip />
+                      <Bar
+                        dataKey="count"
+                        name="Počet"
+                        fill="hsl(var(--primary))"
+                        radius={[4, 4, 0, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyChartPanel message="Zatím nemáte žádné zakázky v této organizaci." />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-slate-200 bg-white shadow-sm">
+              <CardHeader>
+                <CardTitle className="text-slate-900">Zisk zakázek</CardTitle>
+                <CardDescription className="text-slate-800">
+                  Pouze zakázky s vyplněným polem zisku
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="h-[min(350px,55vh)] min-h-[280px]">
+                {jobsReport.hasProfitChart && isMounted ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={jobsReport.jobProfitChart} layout="vertical">
+                      <CartesianGrid
+                        strokeDasharray="3 3"
+                        stroke="#e2e8f0"
+                        horizontal={false}
+                      />
+                      <XAxis type="number" stroke="#475569" fontSize={12} />
+                      <YAxis
+                        dataKey="name"
+                        type="category"
+                        stroke="#475569"
+                        fontSize={11}
+                        width={100}
+                      />
+                      <Tooltip
+                        formatter={(v: number) => formatReportCurrency(v)}
+                        contentStyle={{
+                          backgroundColor: "#fff",
+                          border: "1px solid #e2e8f0",
+                        }}
+                      />
+                      <Bar
+                        dataKey="profit"
+                        name="Zisk"
+                        fill="hsl(var(--primary))"
+                        radius={[0, 4, 4, 0]}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyChartPanel message="Zatím nemáte zakázky se zadaným ziskem — graf se nezobrazí." />
                 )}
               </CardContent>
             </Card>
           </div>
         </TabsContent>
 
-        <TabsContent value="jobs" className="space-y-8">
-          <Card className="border-slate-200 bg-white shadow-sm">
-            <CardHeader>
-              <CardTitle className="text-slate-900">Zisk zakázek</CardTitle>
-              <CardDescription className="text-slate-800">
-                Pouze zakázky s vyplněným polem zisku (žádné odhady)
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="h-[400px]">
-              {jobProfitFromData.length > 0 && isMounted ? (
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={jobProfitFromData} layout="vertical">
-                    <CartesianGrid
-                      strokeDasharray="3 3"
-                      stroke="#e2e8f0"
-                      horizontal={false}
-                    />
-                    <XAxis type="number" stroke="#475569" fontSize={12} />
-                    <YAxis
-                      dataKey="name"
-                      type="category"
-                      stroke="#475569"
-                      fontSize={12}
-                      width={120}
-                    />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: "#fff",
-                        border: "1px solid #e2e8f0",
-                        color: "#0f172a",
-                      }}
-                    />
-                    <Bar
-                      dataKey="profit"
-                      name="Zisk (Kč)"
-                      fill="hsl(var(--primary))"
-                      radius={[0, 4, 4, 0]}
-                    />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex h-full items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-sm text-muted-foreground">
-                  Zatím nemáte žádné zakázky se zadaným ziskem. Po doplnění údajů
-                  u zakázky se graf naplní.
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </TabsContent>
+        <TabsContent value="financials" className="space-y-6 sm:space-y-8">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4 sm:gap-6">
+            <KpiCard
+              title="Příjmy (letos)"
+              value={formatReportCurrency(financials.ytdRevenue)}
+            />
+            <KpiCard
+              title="Náklady (letos)"
+              value={formatReportCurrency(financials.ytdCosts)}
+            />
+            <KpiCard
+              title="Zisk (letos)"
+              value={formatReportCurrency(financials.ytdProfit)}
+            />
+            <KpiCard
+              title="Marže (letos)"
+              value={
+                financials.marginPct == null
+                  ? "—"
+                  : `${financials.marginPct.toFixed(1)} %`
+              }
+            />
+          </div>
 
-        <TabsContent value="financials" className="space-y-8">
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:gap-8">
             <Card className="border-slate-200 bg-white shadow-sm">
               <CardHeader>
                 <CardTitle className="text-slate-900">
                   Struktura nákladů
                 </CardTitle>
                 <CardDescription className="text-slate-800">
-                  Vyžaduje kategorie nákladů u dokladů
+                  Přijaté doklady podle kategorie v roce {reportData.year}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="flex min-h-[300px] items-center justify-center rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 text-center text-sm text-muted-foreground">
-                Zatím nejsou k dispozici rozdělené nákladové kategorie. Po jejich
-                evidenci zde uvidíte strukturu nákladů.
+              <CardContent className="h-[min(300px,50vh)] min-h-[260px]">
+                {financials.hasExpenseChart && isMounted ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={financials.expenseStructure}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={90}
+                        paddingAngle={4}
+                        dataKey="value"
+                      >
+                        {financials.expenseStructure.map((e, i) => (
+                          <Cell key={i} fill={e.fill} />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(v: number) => formatReportCurrency(v)}
+                        contentStyle={{
+                          backgroundColor: "#fff",
+                          border: "1px solid #e2e8f0",
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: "12px" }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <EmptyChartPanel message="Zatím nejsou přijaté doklady s náklady v aktuálním roce — graf se nezobrazí." />
+                )}
               </CardContent>
             </Card>
 
@@ -625,16 +770,28 @@ export default function ReportsPage() {
               <CardHeader>
                 <CardTitle className="text-slate-900">Rychlé údaje</CardTitle>
                 <CardDescription className="text-slate-800">
-                  Pouze z reálných dat v systému
+                  Zakázky organizace {orgLabel}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-3">
+                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <span className="text-sm text-slate-800">Aktivní zakázky</span>
+                  <span className="font-bold tabular-nums text-slate-900">
+                    {financials.activeJobsCount}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
+                  <span className="text-sm text-slate-800">Dokončené zakázky</span>
+                  <span className="font-bold tabular-nums text-slate-900">
+                    {financials.completedJobsCount}
+                  </span>
+                </div>
                 <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
                   <span className="text-sm text-slate-800">
-                    Aktivní zakázky (neukončené)
+                    Nefakturované zakázky
                   </span>
                   <span className="font-bold tabular-nums text-slate-900">
-                    {activeJobsCount}
+                    {financials.unfacturedJobsCount}
                   </span>
                 </div>
                 <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -642,34 +799,64 @@ export default function ReportsPage() {
                     Průměrný rozpočet zakázky
                   </span>
                   <span className="font-bold tabular-nums text-slate-900">
-                    {avgJobBudget == null
+                    {financials.avgJobBudget == null
                       ? "—"
-                      : `${Math.round(avgJobBudget).toLocaleString("cs-CZ")} Kč`}
+                      : formatReportCurrency(financials.avgJobBudget)}
                   </span>
                 </div>
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <span className="text-sm text-slate-800">
-                    Zakázky neuvedené jako fakturované
-                  </span>
-                  <span className="font-bold tabular-nums text-slate-900">
-                    {unpaidJobsCount}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <span className="text-sm text-slate-800">
-                    Očekávané příjmy (příští měsíc)
-                  </span>
-                  <span className="font-bold tabular-nums text-slate-800">
-                    —
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Odhady budoucích příjmů zde zatím nezobrazujeme – bez reálných
-                  dat by šlo jen o ukázku.
-                </p>
               </CardContent>
             </Card>
           </div>
+
+          <Card className="border-slate-200 bg-white shadow-sm">
+            <CardHeader>
+              <CardTitle className="text-slate-900">
+                Měsíční příjmy a náklady
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="h-[min(350px,55vh)] min-h-[280px]">
+              {financials.hasMonthlyChart && isMounted ? (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={financials.monthlyBarData}>
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      stroke="#e2e8f0"
+                      vertical={false}
+                    />
+                    <XAxis dataKey="name" stroke="#475569" fontSize={12} />
+                    <YAxis
+                      stroke="#475569"
+                      fontSize={12}
+                      tickFormatter={(v) => `${Math.round(v / 1000)}k`}
+                    />
+                    <Tooltip
+                      formatter={(v: number) => formatReportCurrency(v)}
+                      contentStyle={{
+                        backgroundColor: "#fff",
+                        border: "1px solid #e2e8f0",
+                        borderRadius: "8px",
+                      }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: "12px" }} />
+                    <Bar
+                      dataKey="revenue"
+                      name="Příjmy"
+                      fill="hsl(var(--primary))"
+                      radius={[4, 4, 0, 0]}
+                    />
+                    <Bar
+                      dataKey="costs"
+                      name="Náklady"
+                      fill="#64748b"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              ) : (
+                <EmptyChartPanel message="Zatím nejsou finanční záznamy v aktuálním roce." />
+              )}
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
