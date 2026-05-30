@@ -522,6 +522,7 @@ function AttendanceLoginContent() {
 
   const endActiveSegment = async () => {
     if (!companyId || !selected) return;
+    const employeeId = selected.id;
     const endedLabel = displayActiveSegment
       ? terminalEndActiveSegmentButtonLabel(displayActiveSegment).replace(/^Ukončit /, "")
       : "úsek";
@@ -532,7 +533,7 @@ function AttendanceLoginContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           companyId,
-          employeeId: selected.id,
+          employeeId,
           pin,
         }),
       });
@@ -552,17 +553,19 @@ function AttendanceLoginContent() {
       setSelectedTariff(null);
       setLiveOpenSegments((prev) => {
         const next = { ...prev };
-        delete next[selected.id];
+        delete next[employeeId];
         return next;
       });
       setEmployees((prev) =>
-        prev.map((e) => (e.id === selected.id ? { ...e, activeSegment: null } : e))
+        prev.map((e) => (e.id === employeeId ? { ...e, activeSegment: null } : e))
       );
-      void loadEmployees(false);
 
-      toast({
+      await loadEmployees(false);
+
+      scheduleReturnToSelection({
         title: "Uloženo",
-        description: `${endedLabel.charAt(0).toUpperCase()}${endedLabel.slice(1)} byl ukončen. Směna zůstává otevřená — stále jste „V práci“.`,
+        description: `${endedLabel.charAt(0).toUpperCase()}${endedLabel.slice(1)} byl ukončen. Směna zůstává otevřená — zaměstnanec je stále „V práci“.`,
+        afterAttendance: false,
       });
     } catch {
       toast({

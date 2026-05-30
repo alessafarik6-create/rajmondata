@@ -11,7 +11,8 @@ const endRoute = readFileSync(join(root, "src/app/api/attendance-login/end-segme
 assert.match(lib, /terminalEndActiveSegmentButtonLabel/, "button label helper");
 assert.match(lib, /terminalActiveSegmentRunningLabel/, "running label helper");
 assert.match(lib, /resolveTerminalActiveSegmentForEmployeeCard/, "card resolver");
-assert.match(page, /displayActiveSegment/, "live segment in detail");
+assert.match(page, /scheduleReturnToSelection/, "returns to employee list after end");
+assert.match(page, /await loadEmployees\(false\)/, "reloads employees before return");
 assert.match(page, /bg-orange-500/, "visible orange button");
 assert.match(page, /resolveTerminalActiveSegmentForEmployeeCard/, "card uses live resolver");
 assert.match(endRoute, /closeAllOpenWorkSegmentsForEmployee/, "closes all open segments");
