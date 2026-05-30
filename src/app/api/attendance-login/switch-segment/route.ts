@@ -4,11 +4,9 @@ import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
 import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
-import { maybeAutoApproveJobSegmentAfterTerminalClose } from "@/lib/job-terminal-auto-approve";
 import {
-  closeWorkSegment,
+  closeAllOpenWorkSegmentsForEmployee,
   createWorkSegment,
-  findOpenWorkSegment,
   loadEmployeeAndRatesForSegment,
   type WorkSegmentSource,
 } from "@/lib/work-segment-server";
@@ -102,15 +100,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const open = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
-    if (open) {
-      const rate =
-        typeof (open.data() as { hourlyRateCzk?: number }).hourlyRateCzk === "number"
-          ? (open.data() as { hourlyRateCzk: number }).hourlyRateCzk
-          : null;
-      await closeWorkSegment(open.ref, nowMs, rate);
-      await maybeAutoApproveJobSegmentAfterTerminalClose(db, companyId, open.ref, employeeId);
-    }
+    await closeAllOpenWorkSegmentsForEmployee(db, companyId, employeeId, todayIso, nowMs);
 
     const jobId = sourceType === "job" ? String(body.jobId || "").trim() : null;
     const tariffId = sourceType === "tariff" ? String(body.tariffId || "").trim() : null;

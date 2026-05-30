@@ -12,6 +12,7 @@ import {
   type TerminalActiveSegment,
 } from "@/lib/terminal-active-segment";
 import { isJobTerminalAutoApprovedSegmentData } from "@/lib/job-terminal-auto-shared";
+import { maybeAutoApproveJobSegmentAfterTerminalClose } from "@/lib/job-terminal-auto-approve";
 
 export type WorkSegmentSource = "job" | "tariff";
 
@@ -25,6 +26,18 @@ export async function findOpenWorkSegment(
   employeeId: string,
   dateIso: string
 ): Promise<QueryDocumentSnapshot | null> {
+  const all = await findAllOpenWorkSegments(db, companyId, employeeId, dateIso);
+  if (all.length === 0) return null;
+  return pickPreferredOpenWorkSegmentDoc(all);
+}
+
+/** Všechny otevřené úseky zaměstnance za den (anomálie / duplicity). */
+export async function findAllOpenWorkSegments(
+  db: Firestore,
+  companyId: string,
+  employeeId: string,
+  dateIso: string
+): Promise<QueryDocumentSnapshot[]> {
   const snap = await db
     .collection("companies")
     .doc(companyId)
@@ -32,10 +45,56 @@ export async function findOpenWorkSegment(
     .where("employeeId", "==", employeeId)
     .where("date", "==", dateIso)
     .where("closed", "==", false)
-    .limit(10)
+    .limit(20)
     .get();
-  if (snap.empty) return null;
-  return pickPreferredOpenWorkSegmentDoc(snap.docs);
+  return snap.docs;
+}
+
+/** Uzavře všechny otevřené úseky — terminál zůstane „v práci“. */
+export async function closeAllOpenWorkSegmentsForEmployee(
+  db: Firestore,
+  companyId: string,
+  employeeId: string,
+  dateIso: string,
+  nowMs: number
+): Promise<number> {
+  const openDocs = await findAllOpenWorkSegments(db, companyId, employeeId, dateIso);
+  for (const doc of openDocs) {
+    const rate =
+      typeof (doc.data() as { hourlyRateCzk?: number }).hourlyRateCzk === "number"
+        ? (doc.data() as { hourlyRateCzk: number }).hourlyRateCzk
+        : null;
+    await closeWorkSegment(doc.ref, nowMs, rate);
+    await maybeAutoApproveJobSegmentAfterTerminalClose(db, companyId, doc.ref, employeeId);
+  }
+  return openDocs.length;
+}
+
+const EMPLOYEE_TERMINAL_ACTIVE_FIELD_KEYS = [
+  "activeJobId",
+  "activeJobName",
+  "activeTariffId",
+  "activeTariffName",
+  "currentTariff",
+  "currentWorkItem",
+  "activeSegment",
+  "terminalActiveSegment",
+] as const;
+
+/** Vyčistí legacy snapshot aktivní zakázky/tarifu na dokumentu zaměstnance. */
+export async function clearEmployeeTerminalActiveSnapshot(
+  db: Firestore,
+  companyId: string,
+  employeeId: string
+): Promise<void> {
+  const ref = db.collection("companies").doc(companyId).collection("employees").doc(employeeId);
+  const patch: Record<string, unknown> = {
+    updatedAt: FieldValue.serverTimestamp(),
+  };
+  for (const key of EMPLOYEE_TERMINAL_ACTIVE_FIELD_KEYS) {
+    patch[key] = FieldValue.delete();
+  }
+  await ref.set(patch, { merge: true });
 }
 
 /** Jeden dotaz: všichni zaměstnanci s otevřeným úsekem za den (terminál / API). */

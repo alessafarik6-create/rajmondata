@@ -18,6 +18,9 @@ import {
 } from "@/firebase/firestore/firestore-query-errors";
 import {
   buildTerminalActiveSegmentMapFromDocs,
+  resolveTerminalActiveSegmentForEmployeeCard,
+  terminalActiveSegmentRunningLabel,
+  terminalEndActiveSegmentButtonLabel,
   type TerminalActiveSegment,
 } from "@/lib/terminal-active-segment";
 
@@ -216,6 +219,21 @@ function AttendanceLoginContent() {
       return na.localeCompare(nb, "cs");
     });
   }, [employees, employeeSearchQuery]);
+
+  /** Aktivní úsek v detailu — live Firestore má prioritu před API / lokálním stavem. */
+  const displayActiveSegment = useMemo(() => {
+    if (!selected || sessionInWork !== true) return null;
+    if (!workSegmentsIndexPending) {
+      return liveOpenSegments[selected.id] ?? null;
+    }
+    return activeSegment;
+  }, [
+    selected,
+    sessionInWork,
+    workSegmentsIndexPending,
+    liveOpenSegments,
+    activeSegment,
+  ]);
 
   const resetToSelection = useCallback(
     (opts?: { afterAttendance?: boolean }) => {
@@ -504,6 +522,9 @@ function AttendanceLoginContent() {
 
   const endActiveSegment = async () => {
     if (!companyId || !selected) return;
+    const endedLabel = displayActiveSegment
+      ? terminalEndActiveSegmentButtonLabel(displayActiveSegment).replace(/^Ukončit /, "")
+      : "úsek";
     setSwitching(true);
     try {
       const res = await fetch("/api/attendance-login/end-segment", {
@@ -525,10 +546,23 @@ function AttendanceLoginContent() {
         });
         return;
       }
-      scheduleReturnToSelection({
+
+      setActiveSegment(null);
+      setSelectedJob(null);
+      setSelectedTariff(null);
+      setLiveOpenSegments((prev) => {
+        const next = { ...prev };
+        delete next[selected.id];
+        return next;
+      });
+      setEmployees((prev) =>
+        prev.map((e) => (e.id === selected.id ? { ...e, activeSegment: null } : e))
+      );
+      void loadEmployees(false);
+
+      toast({
         title: "Uloženo",
-        description: "Práce na zakázce / tarifu byla ukončena. Terminál se vrací na výběr zaměstnance.",
-        afterAttendance: true,
+        description: `${endedLabel.charAt(0).toUpperCase()}${endedLabel.slice(1)} byl ukončen. Směna zůstává otevřená — stále jste „V práci“.`,
       });
     } catch {
       toast({
@@ -543,7 +577,7 @@ function AttendanceLoginContent() {
 
   const switchSegment = async (kind: "job" | "tariff", row: JobRow | TariffRow) => {
     if (!companyId || !selected || !sessionInWork) return;
-    if (segmentMatchesCard(activeSegment, kind, row.id)) return;
+    if (segmentMatchesCard(displayActiveSegment, kind, row.id)) return;
     setSwitching(true);
     try {
       const body: Record<string, unknown> = {
@@ -748,7 +782,11 @@ function AttendanceLoginContent() {
               <ul className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-2.5 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 2xl:grid-cols-6">
                 {displayedEmployees.map((emp) => {
                   const inWork = emp.inWork === true;
-                  const seg = liveOpenSegments[emp.id] ?? emp.activeSegment ?? null;
+                  const seg = resolveTerminalActiveSegmentForEmployeeCard(
+                    emp,
+                    liveOpenSegments,
+                    workSegmentsIndexPending
+                  );
                   const showAssigned = inWork === true && seg != null;
                   const nameTitle = employeeFullName(emp);
                   return (
@@ -952,36 +990,48 @@ function AttendanceLoginContent() {
             </CardContent>
           </Card>
 
-          {sessionInWork && activeSegment && (
-            <div className="rounded-2xl border border-white/15 bg-white/5 px-4 py-3 text-center sm:text-left">
-              <p className="text-xs font-medium uppercase tracking-wide text-slate-400">Aktuálně</p>
-              <p className="text-lg font-semibold text-white">{activeSegment.displayName}</p>
-              <p className="text-xs text-slate-500">
-                {activeSegment.sourceType === "job" ? "Zakázka" : "Interní tarif"}
+          {sessionInWork && displayActiveSegment && (
+            <div className="rounded-2xl border-2 border-orange-400/50 bg-gradient-to-br from-orange-500/20 via-orange-950/30 to-slate-950 px-4 py-4 text-center sm:text-left">
+              <p className="text-base font-semibold text-white sm:text-lg">
+                {terminalActiveSegmentRunningLabel(displayActiveSegment)}
+              </p>
+              <p className="mt-1 text-sm text-orange-100/90">
+                {displayActiveSegment.sourceType === "job"
+                  ? "Pracujete na konkrétní zakázce."
+                  : "Běží interní tarif — ukončením tarifu zůstanete v práci."}
               </p>
             </div>
           )}
 
-          {sessionInWork && activeSegment && (
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-center text-sm text-slate-300 sm:text-left">
-                Ukončíte jen práci na zakázce / tarifu — směna zůstane otevřená.
-              </p>
+          {sessionInWork && displayActiveSegment && (
+            <div className="flex flex-col gap-3">
               <Button
                 type="button"
-                variant="secondary"
-                className="h-12 min-h-[44px] shrink-0 rounded-xl border-amber-400/40 bg-amber-950/40 text-amber-foreground hover:bg-amber-900/50"
+                size="lg"
+                className="h-14 min-h-[52px] w-full rounded-2xl border-2 border-orange-300 bg-orange-500 text-lg font-bold text-white shadow-lg shadow-orange-900/40 hover:bg-orange-600 focus-visible:ring-2 focus-visible:ring-orange-300 disabled:opacity-60"
                 disabled={switching || actionSaving || awaitingReturnToSelect}
                 onClick={() => void endActiveSegment()}
               >
                 {switching ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
+                  <>
+                    <Loader2 className="mr-2 h-6 w-6 animate-spin" />
+                    Ukládám…
+                  </>
                 ) : (
-                  "Ukončit práci na zakázce / tarifu"
+                  terminalEndActiveSegmentButtonLabel(displayActiveSegment)
                 )}
               </Button>
+              <p className="text-center text-xs text-slate-400 sm:text-left">
+                Ukončíte jen aktivní tarif nebo zakázku — směna zůstane otevřená („V práci“).
+              </p>
             </div>
           )}
+
+          {sessionInWork && !displayActiveSegment ? (
+            <p className="rounded-xl border border-emerald-500/30 bg-emerald-950/25 px-4 py-3 text-center text-sm text-emerald-100 sm:text-left">
+              Nemáte aktivní tarif ani zakázku — jste pouze „V práci“. Níže můžete zvolit nový úsek.
+            </p>
+          ) : null}
 
           {jobsLoading ? (
             <div className="flex min-h-[120px] flex-col items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/5 py-8">
@@ -1010,7 +1060,7 @@ function AttendanceLoginContent() {
                   <div className="grid max-h-[min(32vh,280px)] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                     {jobs.map((j) => {
                       const activeCard =
-                        sessionInWork && segmentMatchesCard(activeSegment, "job", j.id);
+                        sessionInWork && segmentMatchesCard(displayActiveSegment, "job", j.id);
                       const selectedBefore =
                         !sessionInWork && selectedJob?.id === j.id;
                       return (
@@ -1042,7 +1092,7 @@ function AttendanceLoginContent() {
                   <div className="grid max-h-[min(28vh,240px)] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                     {tariffs.map((t) => {
                       const activeCard =
-                        sessionInWork && segmentMatchesCard(activeSegment, "tariff", t.id);
+                        sessionInWork && segmentMatchesCard(displayActiveSegment, "tariff", t.id);
                       const selectedBefore =
                         !sessionInWork && selectedTariff?.id === t.id;
                       return (

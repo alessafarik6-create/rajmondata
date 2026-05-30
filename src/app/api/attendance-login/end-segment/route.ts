@@ -4,8 +4,10 @@ import { verifyAttendancePinForEmployee } from "@/lib/attendance-pin-server";
 import { normalizeTerminalPin } from "@/lib/terminal-pin-validation";
 import { loadTodayAttendanceEventsByEmployee } from "@/lib/attendance-day-server";
 import { isShiftOpenFromSorted } from "@/lib/attendance-shift-state";
-import { maybeAutoApproveJobSegmentAfterTerminalClose } from "@/lib/job-terminal-auto-approve";
-import { closeWorkSegment, findOpenWorkSegment } from "@/lib/work-segment-server";
+import {
+  clearEmployeeTerminalActiveSnapshot,
+  closeAllOpenWorkSegmentsForEmployee,
+} from "@/lib/work-segment-server";
 
 type Body = {
   companyId?: string;
@@ -53,21 +55,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const open = await findOpenWorkSegment(db, companyId, employeeId, todayIso);
-    if (!open) {
-      return NextResponse.json({ ok: true, activeSegment: null });
-    }
+    const closedCount = await closeAllOpenWorkSegmentsForEmployee(
+      db,
+      companyId,
+      employeeId,
+      todayIso,
+      nowMs
+    );
+    await clearEmployeeTerminalActiveSnapshot(db, companyId, employeeId);
 
-    const rate =
-      typeof (open.data() as { hourlyRateCzk?: number }).hourlyRateCzk === "number"
-        ? (open.data() as { hourlyRateCzk: number }).hourlyRateCzk
-        : null;
-    await closeWorkSegment(open.ref, nowMs, rate);
-    await maybeAutoApproveJobSegmentAfterTerminalClose(db, companyId, open.ref, employeeId);
+    console.log("Employee ended active job but remains checked in", {
+      employeeId,
+      closedCount,
+    });
 
-    console.log("Employee ended active job but remains checked in", { employeeId });
-
-    return NextResponse.json({ ok: true, activeSegment: null });
+    return NextResponse.json({ ok: true, activeSegment: null, closedCount });
   } catch (e) {
     console.error("[attendance-login/end-segment]", e);
     return NextResponse.json({ error: "Ukončení segmentu se nezdařilo." }, { status: 500 });

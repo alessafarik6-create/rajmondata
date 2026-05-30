@@ -89,6 +89,45 @@ export function terminalActiveSegmentDashboardLabel(
   return null;
 }
 
+/** Terminál — běžící tarif / zakázka (detail zaměstnance). */
+export function terminalActiveSegmentRunningLabel(
+  seg: TerminalActiveSegment | null | undefined
+): string | null {
+  if (!seg) return null;
+  if (seg.sourceType === "tariff") {
+    const n = seg.tariffName?.trim() || seg.displayName?.trim() || "Tarif";
+    return `Aktuálně běží tarif: ${n}`;
+  }
+  const jn = seg.jobName?.trim() || seg.displayName?.trim() || "Zakázka";
+  return `Aktuálně běží zakázka: ${jn}`;
+}
+
+/** Terminál — popisek tlačítka pro ukončení aktivního úseku. */
+export function terminalEndActiveSegmentButtonLabel(
+  seg: TerminalActiveSegment | null | undefined
+): string {
+  if (!seg) return "Ukončit aktivní úsek";
+  if (seg.sourceType === "tariff") {
+    const n = seg.tariffName?.trim() || seg.displayName?.trim() || "tarif";
+    return `Ukončit tarif ${n}`;
+  }
+  const jn = seg.jobName?.trim() || seg.displayName?.trim();
+  if (jn) return `Ukončit práci na zakázce ${jn}`;
+  return "Ukončit práci na zakázce";
+}
+
+/** Karta zaměstnance — preferuje live mapu z Firestore; API fallback jen při chybějícím indexu. */
+export function resolveTerminalActiveSegmentForEmployeeCard(
+  emp: { id: string; activeSegment?: TerminalActiveSegment | null },
+  liveOpenSegments: Record<string, TerminalActiveSegment>,
+  useApiFallback: boolean
+): TerminalActiveSegment | null {
+  if (!useApiFallback) {
+    return liveOpenSegments[emp.id] ?? null;
+  }
+  return liveOpenSegments[emp.id] ?? emp.activeSegment ?? null;
+}
+
 /** Vyhledání otevřeného segmentu — `employeeId` v segmentu může být id dokumentu nebo Auth UID. */
 export function getTerminalActiveSegmentForEmployee(
   map: Map<string, TerminalActiveSegment>,
