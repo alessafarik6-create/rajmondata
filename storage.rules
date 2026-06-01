@@ -39,17 +39,11 @@ service firebase.storage {
       );
     }
 
-    /** Shodně s Firestore: omezený zaměstnanec smí nahrávat jen s jobPermissions.canUploadFiles == true. */
-    function storageJobMemberLimitedCanUploadFiles(companyId, jobId) {
+    /** Zaměstnanec přiřazen k zakázce — nahrávání řídí příznaky konkrétní složky. */
+    function storageJobMemberAssigned(companyId, jobId) {
       let eid = storageUserDoc().employeeId;
       let mp = /databases/(default)/documents/companies/$(companyId)/jobs/$(jobId)/jobMembers/$(eid);
-      return eid is string &&
-        eid.size() > 0 &&
-        firestore.exists(mp) &&
-        'jobPermissions' in firestore.get(mp).data &&
-        firestore.get(mp).data.jobPermissions is map &&
-        'canUploadFiles' in firestore.get(mp).data.jobPermissions &&
-        firestore.get(mp).data.jobPermissions.canUploadFiles == true;
+      return eid is string && eid.size() > 0 && firestore.exists(mp);
     }
 
     function storageJobMemberFullInternal(companyId, jobId) {
@@ -103,7 +97,7 @@ service firebase.storage {
           storageFolderAllowEmployeeUpload(companyId, jobId, folderId) &&
           (
             storageJobMemberFullInternal(companyId, jobId) ||
-            storageJobMemberLimitedCanUploadFiles(companyId, jobId)
+            storageJobMemberAssigned(companyId, jobId)
           )
         )
       );

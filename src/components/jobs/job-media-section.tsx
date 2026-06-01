@@ -36,6 +36,7 @@ import {
   renderPdfPagesToPngBlobs,
 } from "@/lib/pdf-to-image-client";
 import {
+  buildJobMediaCardDateLine,
   formatMediaDate,
   getJobMediaPreviewUrl,
   jobMediaHasFlattenedAdminExport,
@@ -151,6 +152,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  Archive,
   Camera,
   ChevronDown,
   Download,
@@ -401,6 +403,20 @@ function JobMediaOfficePreview() {
       <FileText className="h-11 w-11 text-blue-700 dark:text-blue-400" strokeWidth={1.5} />
       <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
         Office
+      </span>
+    </div>
+  );
+}
+
+function JobMediaArchivePreview() {
+  return (
+    <div
+      className="flex aspect-[4/3] min-h-[240px] w-full flex-col items-center justify-center gap-2 bg-amber-500/[0.08]"
+      aria-hidden
+    >
+      <Archive className="h-12 w-12 text-amber-800 dark:text-amber-500" strokeWidth={1.5} />
+      <span className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+        Archiv
       </span>
     </div>
   );
@@ -1075,7 +1091,7 @@ function UserFolderBlock({
           folder as Record<string, unknown> & { id: string },
           memberPermissions
         )
-      : true);
+      : canManageFolders);
 
   const persistFolderEmployeeFlags = async (patch: {
     employeeVisible: boolean;
@@ -1180,7 +1196,8 @@ function UserFolderBlock({
       toast({
         variant: "destructive",
         title: "Nepodporovaný formát",
-        description: "Pouze JPG, PNG, WEBP, PDF, CSV nebo Office (DOC, XLS, PPT…).",
+        description:
+          "Pouze JPG, PNG, WEBP, PDF, CSV, Office (DOC, XLS…) nebo archiv (ZIP, RAR, 7z).",
       });
       return;
     }
@@ -1227,14 +1244,23 @@ function UserFolderBlock({
     const safeBaseName =
       file.name.replace(/^.*[\\/]/, "").replace(/\s+/g, " ").trim() || "photo";
     const fileType = getJobMediaFileTypeFromFile(file);
-    if (isAccountingFolder && fileType === "csv") {
+    if (isAccountingFolder && (fileType === "csv" || fileType === "archive")) {
       toast({
         variant: "destructive",
-        title: "CSV do účetní složky nelze",
-        description: "Soubory CSV ukládejte do složky Dokumenty nebo Soubory. Účetní složka slouží k fakturám a dokladům.",
+        title: "Tento typ do účetní složky nelze",
+        description:
+          "Archivy a CSV ukládejte do složky Dokumenty nebo Soubory. Účetní složka slouží k fakturám a dokladům.",
       });
       return;
     }
+
+    const uploadAuditBase = {
+      fileSizeBytes: file.size,
+      mimeType: file.type?.trim() || null,
+      uploadedBy: user.uid,
+      uploadedByName: authorDisplayName?.trim() || "Uživatel",
+      uploadedAt: serverTimestamp(),
+    };
 
     try {
       const { resolvedFullPath, downloadURL } =
@@ -1294,7 +1320,8 @@ function UserFolderBlock({
           visibleInProduction: false,
         });
       } else {
-        const expenseFt: JobExpenseFileType = fileType === "csv" ? "office" : fileType;
+        const expenseFt: JobExpenseFileType =
+          fileType === "image" || fileType === "pdf" ? fileType : "office";
         const { expenseId, financeId } = await commitFolderAccountingExpense({
           firestore,
           companyId,
@@ -1356,12 +1383,11 @@ function UserFolderBlock({
         createdAt: serverTimestamp(),
         createdBy: user.uid,
         visibleInProduction: false,
+        ...uploadAuditBase,
         ...(isEmployeeLimited
           ? {
               uploadSource: "employee-job-upload" as const,
               uploadedByEmployeeId: employeeRecordId,
-              uploadedBy: user.uid,
-              uploadedAt: serverTimestamp(),
               employeeVisible: true,
             }
           : {}),
@@ -2361,7 +2387,8 @@ function UserFolderBlock({
                       toast({
                         variant: "destructive",
                         title: "Nepodporovaný formát",
-                        description: "Pouze JPG, PNG, WEBP, PDF nebo Office.",
+                        description:
+                          "Pouze JPG, PNG, WEBP, PDF, Office nebo archiv (ZIP, RAR, 7z).",
                       });
                       return;
                     }
@@ -2458,14 +2485,9 @@ function UserFolderBlock({
               const kind = inferJobMediaItemType(img);
               const openUrl = getJobMediaPreviewUrl(img);
               const title = img.fileName || img.name || img.id;
-              const dateLine =
-                kind === "pdf"
-                  ? `PDF · ${formatMediaDate(img.createdAt)}`
-                  : kind === "office"
-                    ? `Office · ${formatMediaDate(img.createdAt)}`
-                    : kind === "csv"
-                      ? `CSV · ${formatMediaDate(img.createdAt)}`
-                      : formatMediaDate(img.createdAt);
+              const dateLine = buildJobMediaCardDateLine(img, {
+                uploaderFallback: authorDisplayName,
+              });
               const hasNote = !!img.note?.trim();
               const fileDrawingNotes =
                 kind === "image" || kind === "pdf"
@@ -2481,11 +2503,23 @@ function UserFolderBlock({
                   ? parseJobMediaApproval(img as unknown as Record<string, unknown>)
                   : null;
 
-                  if (!isCustomerScope && isFolderWide && (kind === "pdf" || kind === "office" || kind === "csv")) {
+                  if (
+                    !isCustomerScope &&
+                    isFolderWide &&
+                    (kind === "pdf" ||
+                      kind === "office" ||
+                      kind === "csv" ||
+                      kind === "archive")
+                  ) {
                 return null;
               }
 
-              if (kind === "pdf" || kind === "office" || kind === "csv") {
+              if (
+                kind === "pdf" ||
+                kind === "office" ||
+                kind === "csv" ||
+                kind === "archive"
+              ) {
                 return (
                   <JobMediaFileCard
                     key={img.id}
@@ -2494,13 +2528,17 @@ function UserFolderBlock({
                         ? "border-dashed border-blue-500/30"
                         : kind === "csv"
                           ? "border-dashed border-emerald-600/35"
-                          : "border-dashed border-red-500/30"
+                          : kind === "archive"
+                            ? "border-dashed border-amber-600/35"
+                            : "border-dashed border-red-500/30"
                     }
                     preview={
                       kind === "office" ? (
                         <JobMediaOfficePreview />
                       ) : kind === "csv" ? (
                         <JobMediaCsvPreview />
+                      ) : kind === "archive" ? (
+                        <JobMediaArchivePreview />
                       ) : (
                         <JobMediaPdfPreview />
                       )
@@ -2851,15 +2889,16 @@ function UserFolderBlock({
                 const kind = inferJobMediaItemType(img);
                 const openUrl = getJobMediaPreviewUrl(img);
                 const title = img.fileName || img.name || img.id;
-                const dateLine =
-                  kind === "pdf"
-                    ? `PDF · ${formatMediaDate(img.createdAt)}`
-                    : `Office · ${formatMediaDate(img.createdAt)}`;
+                const dateLine = buildJobMediaCardDateLine(img, {
+                  uploaderFallback: authorDisplayName,
+                });
                 return (
                   <MediaCompactDocRow
                     key={img.id}
                     icon={
-                      kind === "office" ? (
+                      kind === "archive" ? (
+                        <Archive className="h-6 w-6 text-amber-800" strokeWidth={1.5} />
+                      ) : kind === "office" ? (
                         <FileText className="h-6 w-6 text-blue-700" strokeWidth={1.5} />
                       ) : (
                         <FileText className="h-6 w-6 text-red-600" strokeWidth={1.5} />
@@ -4008,7 +4047,7 @@ export function JobMediaSection({
                             toast({
                               variant: "destructive",
                               title: "Přeskočeno",
-                              description: `${f.name} — pouze JPG, PNG, WEBP, PDF nebo Office.`,
+                              description: `${f.name} — nepodporovaný formát (viz povolené typy).`,
                             });
                             continue;
                           }
@@ -4105,14 +4144,9 @@ export function JobMediaSection({
                   const kind = inferJobMediaItemType(p);
                   const openUrl = getJobMediaPreviewUrl(p);
                   const title = p.fileName || p.name || p.id;
-                  const dateLine =
-                    kind === "pdf"
-                      ? `PDF · ${formatMediaDate(p.createdAt)}`
-                      : kind === "office"
-                        ? `Office · ${formatMediaDate(p.createdAt)}`
-                        : kind === "csv"
-                          ? `CSV · ${formatMediaDate(p.createdAt)}`
-                          : formatMediaDate(p.createdAt);
+                  const dateLine = buildJobMediaCardDateLine(p, {
+                    uploaderFallback: authorDisplayName,
+                  });
                   const hasNote = !!p.note?.trim();
                   const showLegacyInternalNote = mediaScope !== "customer" && hasNote;
                   const legacyFileDrawingNotes =
@@ -4128,11 +4162,23 @@ export function JobMediaSection({
                       ? parseJobMediaApproval(p as unknown as Record<string, unknown>)
                       : null;
 
-                  if (mediaScope !== "customer" && isJobDetailWide && (kind === "pdf" || kind === "office" || kind === "csv")) {
+                  if (
+                    mediaScope !== "customer" &&
+                    isJobDetailWide &&
+                    (kind === "pdf" ||
+                      kind === "office" ||
+                      kind === "csv" ||
+                      kind === "archive")
+                  ) {
                     return null;
                   }
 
-                  if (kind === "pdf" || kind === "office" || kind === "csv") {
+                  if (
+                    kind === "pdf" ||
+                    kind === "office" ||
+                    kind === "csv" ||
+                    kind === "archive"
+                  ) {
                     return (
                       <JobMediaFileCard
                         key={p.id}
@@ -4141,13 +4187,17 @@ export function JobMediaSection({
                             ? "border-dashed border-blue-500/30"
                             : kind === "csv"
                               ? "border-dashed border-emerald-600/35"
-                              : "border-dashed border-red-500/30"
+                              : kind === "archive"
+                                ? "border-dashed border-amber-600/35"
+                                : "border-dashed border-red-500/30"
                         }
                         preview={
                           kind === "office" ? (
                             <JobMediaOfficePreview />
                           ) : kind === "csv" ? (
                             <JobMediaCsvPreview />
+                          ) : kind === "archive" ? (
+                            <JobMediaArchivePreview />
                           ) : (
                             <JobMediaPdfPreview />
                           )
@@ -4423,15 +4473,16 @@ export function JobMediaSection({
                             const kind = inferJobMediaItemType(p);
                             const openUrl = getJobMediaPreviewUrl(p);
                             const title = p.fileName || p.name || p.id;
-                            const dateLine =
-                              kind === "pdf"
-                                ? `PDF · ${formatMediaDate(p.createdAt)}`
-                                : `Office · ${formatMediaDate(p.createdAt)}`;
+                            const dateLine = buildJobMediaCardDateLine(p, {
+                              uploaderFallback: authorDisplayName,
+                            });
                             return (
                               <MediaCompactDocRow
                                 key={p.id}
                                 icon={
-                                  kind === "office" ? (
+                                  kind === "archive" ? (
+                                    <Archive className="h-6 w-6 text-amber-800" strokeWidth={1.5} />
+                                  ) : kind === "office" ? (
                                     <FileText className="h-6 w-6 text-blue-700" strokeWidth={1.5} />
                                   ) : (
                                     <FileText className="h-6 w-6 text-red-600" strokeWidth={1.5} />

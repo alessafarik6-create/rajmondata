@@ -239,18 +239,18 @@ export function filterFoldersForLimitedEmployee(
   });
 }
 
+/**
+ * Zobrazení tlačítka „Nahrát soubor“ pro zaměstnance v portálu zakázky.
+ * Řídí se výhradně nastavením konkrétní složky (viditelnost + allowEmployeeUpload),
+ * volitelně doplněno whitelistem uploadFolderIds u člena zakázky.
+ */
 export function canEmployeeUploadToFolder(
   folder: Record<string, unknown> & { id: string },
   permissions: JobMemberPermissions | null | undefined
 ): boolean {
-  /** Upload zaměstnance řídíme primárně podle oprávnění složky + optional whitelistu uploadFolderIds. */
   if (!isFolderEmployeeVisible(folder)) return false;
   if (!isFolderEmployeeUploadAllowed(folder)) return false;
-  /** Přepínač „Zaměstnanec může nahrávat“ u člena zakázky — musí být zapnutý (shodně s Firestore rules). */
-  if (!permissions || permissions.canUploadFiles !== true) {
-    return false;
-  }
-  const uploads = permissions.uploadFolderIds;
+  const uploads = permissions?.uploadFolderIds;
   if (Array.isArray(uploads) && uploads.length > 0 && !uploads.includes(folder.id)) {
     return false;
   }

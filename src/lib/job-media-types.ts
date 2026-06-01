@@ -80,7 +80,7 @@ export type JobFolderDoc = {
   internalOnly?: boolean;
 };
 
-export type JobMediaFileType = "image" | "pdf" | "office" | "csv";
+export type JobMediaFileType = "image" | "pdf" | "office" | "csv" | "archive";
 
 export type JobFolderImageDoc = {
   id: string;
@@ -122,7 +122,11 @@ export type JobFolderImageDoc = {
   uploadSource?: string;
   uploadedBy?: string;
   uploadedByEmployeeId?: string;
+  uploadedByName?: string;
   uploadedAt?: unknown;
+  /** Velikost souboru v bajtech (při nahrání). */
+  fileSizeBytes?: number;
+  mimeType?: string | null;
   /** Klientský portál — výslovně viditelné zákazníkovi. */
   customerVisible?: boolean;
   customerAnnotatable?: boolean;
@@ -144,8 +148,9 @@ export type JobFolderImageDoc = {
   customerCommentBy?: string | null;
 };
 
-/** Výběr z galerie / souborů: obrázky, PDF, Office, CSV. */
-export const JOB_MEDIA_ACCEPT_ATTR = "image/*,application/pdf,text/csv,.csv";
+/** Výběr z galerie / souborů: obrázky, PDF, Office, CSV, archivy. */
+export const JOB_MEDIA_ACCEPT_ATTR =
+  "image/*,application/pdf,text/csv,.csv,.zip,.rar,.7z,application/zip,application/x-zip-compressed,application/vnd.rar,application/x-rar-compressed,application/x-rar,application/x-7z-compressed";
 
 /** Pouze obrázky (fotoaparát / Vyfotit). */
 export const JOB_IMAGE_ACCEPT_ATTR =
@@ -264,20 +269,88 @@ export function isAllowedJobCsvFile(file: File): boolean {
   return false;
 }
 
+const ARCHIVE_EXTENSIONS = [".zip", ".rar", ".7z"] as const;
+
+function isArchiveFileName(name: string): boolean {
+  const n = name.toLowerCase();
+  return ARCHIVE_EXTENSIONS.some((ext) => n.endsWith(ext));
+}
+
+export function isAllowedJobArchiveFile(file: File): boolean {
+  if (isArchiveFileName(file.name)) return true;
+  const t = (file.type || "").toLowerCase();
+  return (
+    t === "application/zip" ||
+    t === "application/x-zip-compressed" ||
+    t === "application/vnd.rar" ||
+    t === "application/x-rar-compressed" ||
+    t === "application/x-rar" ||
+    t === "application/x-7z-compressed"
+  );
+}
+
 export function isAllowedJobMediaFile(file: File): boolean {
   if (isAllowedJobImageFile(file)) return true;
   const t = (file.type || "").toLowerCase();
   if (t === "application/pdf") return true;
   if (file.name.toLowerCase().endsWith(".pdf")) return true;
   if (isAllowedJobCsvFile(file)) return true;
+  if (isAllowedJobArchiveFile(file)) return true;
   return isAllowedJobOfficeFile(file);
 }
 
 export function getJobMediaFileTypeFromFile(file: File): JobMediaFileType {
   if (isAllowedJobImageFile(file)) return "image";
   if (isAllowedJobCsvFile(file)) return "csv";
+  if (isAllowedJobArchiveFile(file)) return "archive";
   if (isAllowedJobOfficeFile(file)) return "office";
   return "pdf";
+}
+
+/** Lidsky čitelná velikost souboru. */
+export function formatJobMediaFileSize(bytes: unknown): string | null {
+  const n = Number(bytes);
+  if (!Number.isFinite(n) || n < 0) return null;
+  if (n < 1024) return `${Math.round(n)} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(n < 10_240 ? 1 : 0)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(n < 10_485_760 ? 1 : 0)} MB`;
+}
+
+/** Řádek pod názvem souboru: typ, datum, velikost, autor. */
+export function buildJobMediaCardDateLine(
+  row: {
+    fileType?: string | null;
+    fileName?: string | null;
+    name?: string | null;
+    createdAt?: unknown;
+    uploadedAt?: unknown;
+    fileSizeBytes?: unknown;
+    uploadedByName?: string | null;
+    uploadedBy?: string | null;
+  },
+  options?: { uploaderFallback?: string | null }
+): string {
+  const kind = inferJobMediaItemType(row);
+  const kindLabel =
+    kind === "pdf"
+      ? "PDF"
+      : kind === "office"
+        ? "Office"
+        : kind === "csv"
+          ? "CSV"
+          : kind === "archive"
+            ? "Archiv"
+            : "Soubor";
+  const when = formatMediaDate(row.uploadedAt ?? row.createdAt);
+  const size = formatJobMediaFileSize(row.fileSizeBytes);
+  const who =
+    String(row.uploadedByName ?? "").trim() ||
+    String(options?.uploaderFallback ?? "").trim() ||
+    null;
+  const parts = [kindLabel, when];
+  if (size) parts.push(size);
+  if (who) parts.push(who);
+  return parts.join(" · ");
 }
 
 /** Typ položky v UI / mazání – z DB nebo z názvu souboru. */
@@ -294,11 +367,13 @@ export function inferJobMediaItemType(row: {
   if (row.fileType === "image") return "image";
   if (row.fileType === "office") return "office";
   if (row.fileType === "csv") return "csv";
+  if (row.fileType === "archive") return "archive";
   const mt = String(row.mimeType ?? "").trim().toLowerCase();
   if (mt === "application/pdf") return "pdf";
   const base = String(row.fileName || row.name || "").toLowerCase();
   if (base.endsWith(".csv")) return "csv";
   if (base.endsWith(".pdf")) return "pdf";
+  if (isArchiveFileName(base)) return "archive";
   const u = String(row.url || row.fileUrl || row.downloadURL || "").toLowerCase();
   if (u.includes(".pdf")) return "pdf";
   if (isOfficeFileName(base)) return "office";
