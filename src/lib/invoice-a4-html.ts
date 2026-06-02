@@ -555,8 +555,17 @@ export function sanitizeInvoicePreviewHtml(html: string): string {
   return out;
 }
 
-/** Přibližná šířka A4 v px (96 DPI) — pro výpočet zoomu „přizpůsobit šířce“. */
+/** Přibližná šířka A4 v px (96 DPI) — pro výpočet zoomu v náhledu. */
 export const INVOICE_A4_WIDTH_PX = Math.round((210 * 96) / 25.4);
+
+/** Přibližná výška jedné stránky A4 v px (96 DPI). */
+export const INVOICE_A4_HEIGHT_PX = Math.round((297 * 96) / 25.4);
+
+/** Max. šířka kompaktního modalu náhledu (px). */
+export const INVOICE_PREVIEW_MODAL_MAX_WIDTH_PX = 1180;
+
+/** Výchozí zoom v kompaktním náhledu — přirozená čitelnost bez roztahování. */
+export const INVOICE_PREVIEW_DEFAULT_ZOOM_COMPACT = 75 as const;
 
 export const INVOICE_PREVIEW_ZOOM_LEVELS = [50, 75, 100, 125, 150] as const;
 

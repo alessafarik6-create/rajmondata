@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import {
   INVOICE_A4_WIDTH_PX,
+  INVOICE_PREVIEW_DEFAULT_ZOOM_COMPACT,
   INVOICE_PREVIEW_ZOOM_LEVELS,
   prepareInvoicePreviewHtmlForViewer,
   type InvoicePreviewZoomLevel,
@@ -39,6 +40,22 @@ function clampZoomPercent(value: number): InvoicePreviewZoomLevel {
   return nearest;
 }
 
+/** Přizpůsobení bez useknutí do stran; u dlouhého dokladu jen podle šířky (scroll dolů). */
+function computeFitZoomPercent(
+  availableWidth: number,
+  availableHeight: number,
+  contentHeight: number
+): InvoicePreviewZoomLevel {
+  const padding = 16;
+  const w = Math.max(160, availableWidth - padding);
+  const h = Math.max(160, availableHeight - padding);
+  const widthZoom = (w / INVOICE_A4_WIDTH_PX) * 100;
+  const heightZoom = (h / Math.max(contentHeight, 1)) * 100;
+  const useHeight =
+    contentHeight > 0 && contentHeight <= h * 1.05 && heightZoom < widthZoom;
+  return clampZoomPercent(useHeight ? heightZoom : widthZoom);
+}
+
 function measureIframeContentHeight(iframe: HTMLIFrameElement): number {
   const doc = iframe.contentDocument;
   if (!doc) return 0;
@@ -52,6 +69,8 @@ function measureIframeContentHeight(iframe: HTMLIFrameElement): number {
   );
 }
 
+export type PortalInvoicePreviewLayout = "compact" | "fullscreen" | "embedded";
+
 export type PortalInvoicePreviewViewerProps = {
   html: string;
   title: string;
@@ -60,6 +79,8 @@ export type PortalInvoicePreviewViewerProps = {
   onClose?: () => void;
   onSendEmail?: () => void;
   showSendEmail?: boolean;
+  /** Kompaktní modal (~76 % šířky, max 1180 px) vs. celá obrazovka. */
+  layout?: PortalInvoicePreviewLayout;
   fullscreen?: boolean;
   onFullscreenChange?: (fullscreen: boolean) => void;
   showFullscreenToggle?: boolean;
@@ -73,18 +94,26 @@ export function PortalInvoicePreviewViewer({
   onClose,
   onSendEmail,
   showSendEmail = false,
+  layout = "compact",
   fullscreen = false,
   onFullscreenChange,
   showFullscreenToggle = true,
 }: PortalInvoicePreviewViewerProps) {
   const { toast } = useToast();
+  const isFullscreenLayout = layout === "fullscreen" || fullscreen;
   const previewHtml = prepareInvoicePreviewHtmlForViewer(html);
   const [iframeSrc, setIframeSrc] = useState<string | null>(null);
   const blobUrlRef = useRef<string | null>(null);
   const [pdfBusy, setPdfBusy] = useState(false);
-  const [zoomMode, setZoomMode] = useState<"fit" | "manual">("fit");
-  const [manualZoom, setManualZoom] = useState<InvoicePreviewZoomLevel>(100);
-  const [fitZoom, setFitZoom] = useState<InvoicePreviewZoomLevel>(100);
+  const [zoomMode, setZoomMode] = useState<"fit" | "manual">(
+    isFullscreenLayout ? "fit" : "manual"
+  );
+  const [manualZoom, setManualZoom] = useState<InvoicePreviewZoomLevel>(
+    isFullscreenLayout ? 100 : INVOICE_PREVIEW_DEFAULT_ZOOM_COMPACT
+  );
+  const [fitZoom, setFitZoom] = useState<InvoicePreviewZoomLevel>(
+    INVOICE_PREVIEW_DEFAULT_ZOOM_COMPACT
+  );
   const [contentHeight, setContentHeight] = useState(1123);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -122,26 +151,33 @@ export function PortalInvoicePreviewViewer({
     };
   }, [previewHtml]);
 
-  const fitWidthZoom = useCallback((): InvoicePreviewZoomLevel => {
+  const computeFitZoom = useCallback((): InvoicePreviewZoomLevel => {
     const el = scrollRef.current;
-    if (!el) return 100;
-    const padding = fullscreen ? 32 : 48;
-    const available = Math.max(200, el.clientWidth - padding);
-    return clampZoomPercent((available / INVOICE_A4_WIDTH_PX) * 100);
-  }, [fullscreen]);
+    if (!el) return INVOICE_PREVIEW_DEFAULT_ZOOM_COMPACT;
+    return computeFitZoomPercent(el.clientWidth, el.clientHeight, contentHeight);
+  }, [contentHeight]);
+
+  useEffect(() => {
+    if (isFullscreenLayout) {
+      setZoomMode("fit");
+    } else {
+      setZoomMode("manual");
+      setManualZoom(INVOICE_PREVIEW_DEFAULT_ZOOM_COMPACT);
+    }
+  }, [isFullscreenLayout]);
 
   useEffect(() => {
     if (zoomMode !== "fit") return;
-    setFitZoom(fitWidthZoom());
-  }, [zoomMode, fitWidthZoom, fullscreen, iframeSrc, contentHeight]);
+    setFitZoom(computeFitZoom());
+  }, [zoomMode, computeFitZoom, isFullscreenLayout, iframeSrc, contentHeight]);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (!el || zoomMode !== "fit") return;
-    const ro = new ResizeObserver(() => setFitZoom(fitWidthZoom()));
+    const ro = new ResizeObserver(() => setFitZoom(computeFitZoom()));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [zoomMode, fitWidthZoom]);
+  }, [zoomMode, computeFitZoom]);
 
   const zoomPercent = zoomMode === "fit" ? fitZoom : manualZoom;
   const scale = zoomPercent / 100;
@@ -218,7 +254,7 @@ export function PortalInvoicePreviewViewer({
               onValueChange={(v) => {
                 if (v === ZOOM_FIT) {
                   setZoomMode("fit");
-                  setFitZoom(fitWidthZoom());
+                  setFitZoom(computeFitZoom());
                 } else {
                   setZoomMode("manual");
                   setManualZoom(Number(v) as InvoicePreviewZoomLevel);
@@ -232,7 +268,7 @@ export function PortalInvoicePreviewViewer({
                 <SelectValue placeholder="Zoom" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value={ZOOM_FIT}>Přizpůsobit šířce</SelectItem>
+                <SelectItem value={ZOOM_FIT}>Přizpůsobit</SelectItem>
                 {INVOICE_PREVIEW_ZOOM_LEVELS.map((level) => (
                   <SelectItem key={level} value={String(level)}>
                     {level} %
@@ -319,18 +355,18 @@ export function PortalInvoicePreviewViewer({
         className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto bg-neutral-900"
       >
         {iframeSrc ? (
-          <div className="flex justify-center px-2 py-4 sm:px-6 sm:py-8">
+          <div className="flex w-full justify-center py-4 sm:py-6">
             <div
               className="relative shrink-0"
               style={{ width: scaledWidth, height: scaledHeight }}
             >
               <div
-                className="absolute left-1/2 top-0 -translate-x-1/2"
+                className="absolute left-0 top-0"
                 style={{
                   width: INVOICE_A4_WIDTH_PX,
                   height: contentHeight,
                   transform: `scale(${scale})`,
-                  transformOrigin: "top center",
+                  transformOrigin: "top left",
                 }}
               >
                 <iframe
@@ -338,11 +374,12 @@ export function PortalInvoicePreviewViewer({
                   title={title}
                   src={iframeSrc}
                   referrerPolicy="no-referrer"
+                  scrolling="no"
                   onLoad={() => {
                     syncIframeHeight();
                     requestAnimationFrame(syncIframeHeight);
                   }}
-                  className="block w-full border-0 bg-white shadow-xl"
+                  className="block border-0 bg-white shadow-xl"
                   style={{
                     width: INVOICE_A4_WIDTH_PX,
                     height: contentHeight,

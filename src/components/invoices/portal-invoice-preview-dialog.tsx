@@ -55,13 +55,14 @@ export function PortalInvoicePreviewDialog({
           "[&>button.absolute]:hidden",
           fullscreen
             ? "!fixed !inset-0 !left-0 !top-0 !h-[100dvh] !w-screen !max-h-none !max-w-none !translate-x-0 !translate-y-0 !rounded-none"
-            : "!left-1/2 !top-1/2 !h-[95vh] !w-[95vw] !max-h-[95vh] !max-w-[95vw] -translate-x-1/2 -translate-y-1/2 !rounded-lg"
+            : "!left-1/2 !top-1/2 !h-[90vh] !max-h-[90vh] !w-[min(76vw,1180px)] !max-w-[min(76vw,1180px)] -translate-x-1/2 -translate-y-1/2 !rounded-lg"
         )}
       >
         <PortalInvoicePreviewViewer
           html={html}
           title={title}
           user={user}
+          layout={fullscreen ? "fullscreen" : "compact"}
           fullscreen={fullscreen}
           onFullscreenChange={setFullscreen}
           showFullscreenToggle

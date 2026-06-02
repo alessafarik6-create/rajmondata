@@ -356,11 +356,12 @@ export default function InvoiceDocumentPage() {
       </div>
       {html ? (
         <>
-          <div className="flex min-h-[min(85vh,960px)] flex-col overflow-hidden rounded-lg border-2 border-neutral-800">
+          <div className="mx-auto flex min-h-[min(85vh,960px)] max-w-[1180px] flex-col overflow-hidden rounded-lg border-2 border-neutral-800">
             <PortalInvoicePreviewViewer
               html={html}
               title={title}
               user={user}
+              layout="embedded"
               showSendEmail={isPortalManual}
               onSendEmail={isPortalManual ? () => setSendOpen(true) : undefined}
               showFullscreenToggle
