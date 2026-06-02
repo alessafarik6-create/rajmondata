@@ -39,7 +39,6 @@ import {
   buildJobMediaCardDateLine,
   formatMediaDate,
   getJobMediaPreviewUrl,
-  jobMediaHasFlattenedAdminExport,
   inferJobMediaItemType,
   isAllowedJobImageFile,
   isAllowedJobMediaFile,
@@ -59,13 +58,10 @@ import {
   type JobMemberPermissions,
 } from "@/lib/job-employee-access";
 import {
-  canCustomerAnnotateImage,
-  canCustomerAnnotateLegacyPhoto,
   filterFoldersForCustomer,
   isImageCustomerVisible,
   isLegacyPhotoCustomerVisible,
 } from "@/lib/job-customer-access";
-import { CustomerMediaAnnotationViewer } from "@/components/jobs/customer-media-annotation-viewer";
 import { MediaApprovalRequestDialog } from "@/components/jobs/media-approval-request-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -690,18 +686,6 @@ function UserFolderBlock({
   const [drawingNotesTarget, setDrawingNotesTarget] =
     useState<(JobMediaFileNoteTarget & { legacyRow?: Record<string, unknown> }) | null>(null);
 
-  type FolderMediaViewerOpen = {
-    url: string;
-    title: string;
-    fileType: "image" | "pdf";
-    mediaDocumentId: string;
-    annotationData?: unknown;
-    readOnly: boolean;
-    adminNote?: string;
-    legacyRow?: Record<string, unknown>;
-  };
-  const [mediaViewer, setMediaViewer] = useState<FolderMediaViewerOpen | null>(null);
-
   const [pdfConvertTarget, setPdfConvertTarget] = useState<{
     pdfDoc: JobFolderImageDoc;
     openUrl: string;
@@ -746,36 +730,7 @@ function UserFolderBlock({
         if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
         return;
       }
-      const folderAllowsEmployeeEdit =
-        (folder as { employeeCanEdit?: unknown }).employeeCanEdit === true;
-      /**
-       * Zaměstnanec bez práva upravovat anotace — náhled v modalu (bez navigace do editoru).
-       */
-      if (
-        isEmployeeLimited &&
-        (kind === "image" || kind === "pdf") &&
-        !folderAllowsEmployeeEdit
-      ) {
-        const fileType = kind === "pdf" ? "pdf" : "image";
-        const skipVectorLayer =
-          fileType === "image" && jobMediaHasFlattenedAdminExport(img);
-        setMediaViewer({
-          url: openUrl,
-          title,
-          fileType,
-          mediaDocumentId: img.id,
-          annotationData: skipVectorLayer ? undefined : img.annotationData,
-          readOnly: true,
-          adminNote: typeof img.note === "string" ? img.note : "",
-        });
-        return;
-      }
-      /**
-       * Interní zakázka (majitel/admin) nebo zaměstnanec s oprávněním upravovat:
-       * nový editor anotací (JobDetailPageContent / unified flow).
-       * Starý fullscreen editor (CustomerMediaAnnotationViewer) je jen pro klientský portál / náhled.
-       */
-      if ((kind === "image" || kind === "pdf") && !isCustomerScope) {
+      if (kind === "image" || kind === "pdf") {
         onAnnotatePhoto({
           id: img.id,
           imageUrl: img.imageUrl,
@@ -797,27 +752,8 @@ function UserFolderBlock({
         });
         return;
       }
-      const fileType = kind === "pdf" ? "pdf" : "image";
-      const readOnlyCustomer =
-        mediaScope === "customer" &&
-        !canCustomerAnnotateImage(
-          folder as Record<string, unknown>,
-          img as Record<string, unknown>
-        );
-      const skipVectorLayer =
-        fileType === "image" && jobMediaHasFlattenedAdminExport(img);
-      setMediaViewer({
-        url: openUrl,
-        title,
-        fileType,
-        mediaDocumentId: img.id,
-        annotationData: skipVectorLayer ? undefined : img.annotationData,
-        readOnly: readOnlyCustomer,
-        adminNote: isCustomerScope ? "" : typeof img.note === "string" ? img.note : "",
-        legacyRow: img as unknown as Record<string, unknown>,
-      });
     },
-    [folder, mediaScope, isCustomerScope, isEmployeeLimited, onAnnotatePhoto]
+    [folder.id, onAnnotatePhoto]
   );
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
@@ -3146,42 +3082,6 @@ function UserFolderBlock({
       </DialogContent>
     </Dialog>
 
-    {firestore && user && mediaViewer ? (
-      <CustomerMediaAnnotationViewer
-        key={mediaViewer.mediaDocumentId}
-        open={!!mediaViewer}
-        onClose={() => setMediaViewer(null)}
-        companyId={companyId}
-        jobId={jobId}
-        firestore={firestore}
-        userId={user.uid}
-        actorRole={
-          typeof (actorProfile as { role?: string })?.role === "string"
-            ? (actorProfile as { role: string }).role
-            : isCustomerScope
-              ? "customer"
-              : ""
-        }
-        mediaUrl={mediaViewer.url}
-        title={mediaViewer.title}
-        fileType={mediaViewer.fileType}
-        readOnly={mediaViewer.readOnly}
-        storagePath={{ kind: "folderImages", folderId: folder.id }}
-        mediaDocumentId={mediaViewer.mediaDocumentId}
-        embeddedAnnotationData={mediaViewer.annotationData}
-        adminNote={isCustomerScope ? "" : mediaViewer.adminNote}
-        allMediaNotes={mediaNotesAll}
-        fileNotesTarget={{
-          fileId: mediaViewer.mediaDocumentId,
-          folderId: folder.id,
-          fileName: mediaViewer.title,
-        }}
-        fileNotesLegacyRow={mediaViewer.legacyRow}
-        customerPortal={isCustomerScope}
-        authorDisplayName={authorDisplayName}
-        onMediaNoteAdded={onMediaNoteAdded}
-      />
-    ) : null}
     </>
   );
 }
@@ -3317,18 +3217,6 @@ export function JobMediaSection({
 
   const galleryRef = useRef<HTMLInputElement>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
-  type LegacyMediaViewerOpen = {
-    url: string;
-    title: string;
-    fileType: "image" | "pdf";
-    mediaDocumentId: string;
-    annotationData?: unknown;
-    readOnly: boolean;
-    adminNote?: string;
-    legacyRow?: Record<string, unknown>;
-  };
-  const [legacyMediaViewer, setLegacyMediaViewer] = useState<LegacyMediaViewerOpen | null>(null);
-
   const openLegacyMediaViewer = useCallback(
     (p: LegacyPhotoDoc, openUrl: string, title: string) => {
       const kind = inferJobMediaItemType(p);
@@ -3336,8 +3224,7 @@ export function JobMediaSection({
         if (openUrl) window.open(openUrl, "_blank", "noopener,noreferrer");
         return;
       }
-      /** Firemní detail zakázky — jednotný editor v JobDetailPageContent (zoom, kóty, PDF). */
-      if (!hideJobMediaAdminUi && (kind === "image" || kind === "pdf")) {
+      if (kind === "image" || kind === "pdf") {
         onAnnotatePhoto({
           id: p.id,
           imageUrl: p.imageUrl,
@@ -3356,24 +3243,8 @@ export function JobMediaSection({
         });
         return;
       }
-      const fileType = kind === "pdf" ? "pdf" : "image";
-      const readOnly =
-        mediaScope === "customer" &&
-        !canCustomerAnnotateLegacyPhoto(p as Record<string, unknown>);
-      const skipVectorLayer =
-        fileType === "image" && jobMediaHasFlattenedAdminExport(p);
-      setLegacyMediaViewer({
-        url: openUrl,
-        title,
-        fileType,
-        mediaDocumentId: p.id,
-        annotationData: skipVectorLayer ? undefined : p.annotationData,
-        readOnly,
-        adminNote: mediaScope === "customer" ? "" : typeof p.note === "string" ? p.note : "",
-        legacyRow: p as unknown as Record<string, unknown>,
-      });
     },
-    [mediaScope, hideJobMediaAdminUi, onAnnotatePhoto]
+    [onAnnotatePhoto]
   );
 
   const isJobDetailWide = layout === "jobDetailWide";
@@ -4757,43 +4628,6 @@ export function JobMediaSection({
           ) : null}
         </DialogContent>
       </Dialog>
-
-      {firestore && user && legacyMediaViewer && mediaScope !== "employeeLimited" ? (
-        <CustomerMediaAnnotationViewer
-          key={legacyMediaViewer.mediaDocumentId}
-          open={!!legacyMediaViewer}
-          onClose={() => setLegacyMediaViewer(null)}
-          companyId={companyId}
-          jobId={jobId}
-          firestore={firestore}
-          userId={user.uid}
-          actorRole={
-            typeof (actorProfile as { role?: string })?.role === "string"
-              ? (actorProfile as { role: string }).role
-              : mediaScope === "customer"
-                ? "customer"
-                : ""
-          }
-          mediaUrl={legacyMediaViewer.url}
-          title={legacyMediaViewer.title}
-          fileType={legacyMediaViewer.fileType}
-          readOnly={legacyMediaViewer.readOnly}
-          storagePath={{ kind: "photos" }}
-          mediaDocumentId={legacyMediaViewer.mediaDocumentId}
-          embeddedAnnotationData={legacyMediaViewer.annotationData}
-          adminNote={mediaScope === "customer" ? "" : legacyMediaViewer.adminNote}
-          allMediaNotes={mediaNotesAll}
-          fileNotesTarget={{
-            fileId: legacyMediaViewer.mediaDocumentId,
-            folderId: null,
-            fileName: legacyMediaViewer.title,
-          }}
-          fileNotesLegacyRow={legacyMediaViewer.legacyRow}
-          customerPortal={mediaScope === "customer"}
-          authorDisplayName={authorDisplayName}
-          onMediaNoteAdded={handleMediaNoteAdded}
-        />
-      ) : null}
 
       {firestore && user && mediaApprovalDlg ? (
         <MediaApprovalRequestDialog

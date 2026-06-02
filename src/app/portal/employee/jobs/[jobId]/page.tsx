@@ -26,6 +26,8 @@ import {
 import { useAssignedWorklogJobs } from "@/hooks/use-assigned-worklog-jobs";
 import { isJobIdAssigned } from "@/lib/assigned-jobs";
 import { parsePhotoCommentQueryParam } from "@/lib/job-photo-comment-email-settings";
+import { buildEmployeeJobMediaAnnotateHref } from "@/lib/job-media-annotate-route";
+import type { JobPhotoAnnotationTarget } from "@/lib/job-media-types";
 
 /** Bezpečná pole z dokumentu zakázky — žádné rozpočty / interní finance v UI. */
 function safeJobOverviewFields(job: Record<string, unknown> | null | undefined) {
@@ -214,7 +216,7 @@ export default function EmployeeJobDetailPage() {
   }, [foldersRaw, permissionsForMedia]);
 
   const onAnnotatePhoto = useCallback(
-    (t: any) => {
+    (t: JobPhotoAnnotationTarget) => {
       if (!jobId || typeof jobId !== "string") return;
       const kind = t?.annotationTarget?.kind;
       if (kind !== "folderImages" && kind !== "photos") return;
@@ -222,21 +224,11 @@ export default function EmployeeJobDetailPage() {
       if (!id) return;
       const folderId =
         kind === "folderImages" ? String(t?.annotationTarget?.folderId ?? "").trim() : "";
-      const ft = t?.fileType === "pdf" ? "pdf" : "image";
-      // Employee edit permission is controlled by folder toggle employeeCanEdit (default false).
       const canEdit =
         kind === "folderImages"
           ? visibleFolders.find((f) => f.id === folderId)?.employeeCanEdit === true
           : false;
-      const qs = new URLSearchParams();
-      qs.set("kind", kind);
-      qs.set("id", id);
-      qs.set("fileType", ft);
-      if (folderId) qs.set("folderId", folderId);
-      if (canEdit) qs.set("canEdit", "1");
-      router.push(
-        `/portal/employee/jobs/${encodeURIComponent(jobId)}/annotate?${qs.toString()}`
-      );
+      router.push(buildEmployeeJobMediaAnnotateHref(jobId, t, canEdit));
     },
     [jobId, router, visibleFolders]
   );

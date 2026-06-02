@@ -36,6 +36,13 @@ import {
 } from "@/lib/job-media-types";
 import { parsePhotoCommentQueryParam } from "@/lib/job-photo-comment-email-settings";
 import { JobMediaSection } from "@/components/jobs/job-media-section";
+import { JobMediaFileNotesPanel } from "@/components/jobs/job-media-file-notes-panel";
+import {
+  parseJobMediaFileNoteDoc,
+  sortMediaNotesChronologically,
+  type JobMediaFileNoteDoc,
+  type JobMediaFileNoteTarget,
+} from "@/lib/job-media-file-notes";
 import { JobCustomerProgressAdminSection } from "@/components/jobs/job-customer-progress-admin-section";
 import { JobCustomerTasksAdminSection } from "@/components/jobs/job-customer-tasks-admin-section";
 import { JobProductCatalogsSection } from "@/components/jobs/job-product-catalogs-section";
@@ -938,6 +945,13 @@ export function JobDetailPageContent({
   employeeAnnotationInitialTarget = null,
   employeeAnnotationReturnTo = null,
   employeeAnnotationReadOnly = false,
+  customerAnnotationShell = false,
+  customerAnnotationShellJobId = null,
+  customerAnnotationInitialTarget = null,
+  customerAnnotationReturnTo = null,
+  customerAnnotationReadOnly = false,
+  mediaAnnotationShellNotesTarget = null,
+  mediaAnnotationShellCustomerPortal = false,
 }: {
   measurementAnnotationShell?: boolean;
   employeeAnnotationShell?: boolean;
@@ -945,6 +959,13 @@ export function JobDetailPageContent({
   employeeAnnotationInitialTarget?: JobPhotoAnnotationTarget | null;
   employeeAnnotationReturnTo?: string | null;
   employeeAnnotationReadOnly?: boolean;
+  customerAnnotationShell?: boolean;
+  customerAnnotationShellJobId?: string | null;
+  customerAnnotationInitialTarget?: JobPhotoAnnotationTarget | null;
+  customerAnnotationReturnTo?: string | null;
+  customerAnnotationReadOnly?: boolean;
+  mediaAnnotationShellNotesTarget?: JobMediaFileNoteTarget | null;
+  mediaAnnotationShellCustomerPortal?: boolean;
 } = {}) {
   const { jobId } = useParams();
   const router = useRouter();
@@ -979,14 +1000,30 @@ export function JobDetailPageContent({
       : Array.isArray(jobId)
         ? String(jobId[0] ?? "").trim()
         : String(jobId ?? "").trim();
+  const isMediaAnnotationPortalShell =
+    employeeAnnotationShell || customerAnnotationShell;
+  const mediaAnnotationShellJobId =
+    employeeAnnotationShell && employeeAnnotationShellJobId
+      ? String(employeeAnnotationShellJobId).trim()
+      : customerAnnotationShell && customerAnnotationShellJobId
+        ? String(customerAnnotationShellJobId).trim()
+        : "";
+  const mediaAnnotationInitialTarget =
+    employeeAnnotationInitialTarget ?? customerAnnotationInitialTarget ?? null;
+  const mediaAnnotationReturnTo =
+    employeeAnnotationReturnTo ?? customerAnnotationReturnTo ?? null;
+  const mediaAnnotationReadOnly =
+    employeeAnnotationReadOnly === true || customerAnnotationReadOnly === true;
+
   const jobIdParam = measurementAnnotationShell
     ? ""
-    : employeeAnnotationShell && employeeAnnotationShellJobId
-      ? String(employeeAnnotationShellJobId).trim()
+    : isMediaAnnotationPortalShell && mediaAnnotationShellJobId
+      ? mediaAnnotationShellJobId
       : jobIdParamFromRoute;
   const isStandaloneMeasurementEditorRoute =
     measurementAnnotationShell ||
     jobIdParamFromRoute === MEASUREMENT_PHOTO_PENDING_EDITOR_ROUTE_JOB_ID;
+  const isStandaloneMediaAnnotationRoute = isMediaAnnotationPortalShell;
   const measurementEditorStripPath = isStandaloneMeasurementEditorRoute
     ? MEASUREMENT_PHOTO_ANNOTATE_PAGE_PATH
     : `/portal/jobs/${jobIdParam}`;
@@ -1005,6 +1042,60 @@ export function JobDetailPageContent({
     if (!pathname) return;
     router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
   }, [router, pathname, searchParams]);
+
+  const mediaAnnotationAuthorName = useMemo(() => {
+    const p = profile as Record<string, unknown> | null | undefined;
+    if (!p) return "Uživatel";
+    const name =
+      (typeof p.displayName === "string" && p.displayName.trim()) ||
+      (typeof p.fullName === "string" && p.fullName.trim()) ||
+      (typeof p.name === "string" && p.name.trim()) ||
+      "";
+    if (name) return name;
+    return user?.email?.split("@")[0] || "Uživatel";
+  }, [profile, user?.email]);
+
+  const mediaAnnotationShellNotesQuery = useMemoFirebase(
+    () =>
+      firestore && companyId && jobFirestoreId && isMediaAnnotationPortalShell
+        ? query(
+            collection(firestore, "companies", companyId, "jobs", jobFirestoreId, "media_notes"),
+            limit(500)
+          )
+        : null,
+    [firestore, companyId, jobFirestoreId, isMediaAnnotationPortalShell]
+  );
+  const { data: mediaAnnotationShellNotesRaw = [] } = useCollection(
+    mediaAnnotationShellNotesQuery
+  );
+  const [optimisticShellMediaNotes, setOptimisticShellMediaNotes] = useState<
+    JobMediaFileNoteDoc[]
+  >([]);
+
+  const mediaAnnotationShellNotesAll = useMemo(() => {
+    const list = (Array.isArray(mediaAnnotationShellNotesRaw)
+      ? mediaAnnotationShellNotesRaw
+      : []) as Array<Record<string, unknown> & { id: string }>;
+    const parsed: JobMediaFileNoteDoc[] = [];
+    for (const row of list) {
+      const n = parseJobMediaFileNoteDoc(row, row.id);
+      if (n) parsed.push(n);
+    }
+    const byId = new Map<string, JobMediaFileNoteDoc>();
+    for (const n of sortMediaNotesChronologically(parsed)) byId.set(n.id, n);
+    for (const n of optimisticShellMediaNotes) byId.set(n.id, n);
+    return sortMediaNotesChronologically([...byId.values()]);
+  }, [mediaAnnotationShellNotesRaw, optimisticShellMediaNotes]);
+
+  const handleShellMediaNoteAdded = useCallback((note: JobMediaFileNoteDoc) => {
+    setOptimisticShellMediaNotes((prev) => {
+      const byId = new Map<string, JobMediaFileNoteDoc>();
+      for (const n of prev) byId.set(n.id, n);
+      byId.set(note.id, note);
+      return sortMediaNotesChronologically([...byId.values()]);
+    });
+  }, []);
+
   const { company: companyDoc, companyName: companyNameFromDoc } = useCompany();
 
   const companyBankAccountNumber = useMemo(() => {
@@ -1598,8 +1689,8 @@ export function JobDetailPageContent({
   const [annotationLegendOpen, setAnnotationLegendOpen] = useState(false);
   /** Jeden zdroj pravdy: editor je otevřený právě tehdy, je-li vybrané médium k anotaci. */
   const editorOpen = Boolean(photoToEdit);
-  const annotationReadOnly = employeeAnnotationShell
-    ? employeeAnnotationReadOnly === true
+  const annotationReadOnly = isMediaAnnotationPortalShell
+    ? mediaAnnotationReadOnly === true
     : false;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1759,13 +1850,18 @@ export function JobDetailPageContent({
     []
   );
 
-  // Employee annotation-only entry: open editor immediately.
+  // Portal annotation-only entry: open editor immediately.
   useEffect(() => {
-    if (!employeeAnnotationShell) return;
+    if (!isMediaAnnotationPortalShell) return;
     if (photoToEdit) return;
-    if (!employeeAnnotationInitialTarget) return;
-    openPhotoAnnotationEditor(employeeAnnotationInitialTarget);
-  }, [employeeAnnotationShell, employeeAnnotationInitialTarget, openPhotoAnnotationEditor, photoToEdit]);
+    if (!mediaAnnotationInitialTarget) return;
+    openPhotoAnnotationEditor(mediaAnnotationInitialTarget);
+  }, [
+    isMediaAnnotationPortalShell,
+    mediaAnnotationInitialTarget,
+    openPhotoAnnotationEditor,
+    photoToEdit,
+  ]);
 
   const openMeasurementPhotoAnnotationFromRow = useCallback(
     (row: Record<string, unknown> & { id: string }) => {
@@ -2170,11 +2266,11 @@ export function JobDetailPageContent({
       return null;
     });
     resetAnnotationState();
-    if (employeeAnnotationShell) {
-      const back = employeeAnnotationReturnTo?.trim();
+    if (isMediaAnnotationPortalShell) {
+      const back = mediaAnnotationReturnTo?.trim();
       if (back) router.replace(back);
     }
-  }, [resetAnnotationState]);
+  }, [resetAnnotationState, isMediaAnnotationPortalShell, mediaAnnotationReturnTo, router]);
 
   const annotationSource = useMemo(() => {
     if (!photoToEdit) return null;
@@ -9311,7 +9407,7 @@ export function JobDetailPageContent({
     </>
   );
 
-  if (isLoading && !isStandaloneMeasurementEditorRoute) {
+  if (isLoading && !isStandaloneMeasurementEditorRoute && !isStandaloneMediaAnnotationRoute) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="w-8 h-8 border-4 border-primary border-t-transparent rounded-full animate-spin" />
@@ -9319,13 +9415,43 @@ export function JobDetailPageContent({
     );
   }
 
-  if (!job && !isStandaloneMeasurementEditorRoute) {
+  if (!job && !isStandaloneMeasurementEditorRoute && !isStandaloneMediaAnnotationRoute) {
     return (
       <div className="text-center py-20">
         <h2 className="text-2xl font-bold">Zakázka nenalezena</h2>
         <Button variant="link" onClick={() => router.push("/portal/jobs")}>
           Zpět na seznam
         </Button>
+      </div>
+    );
+  }
+
+  if (isStandaloneMediaAnnotationRoute) {
+    return (
+      <div className="min-h-[100dvh] bg-slate-950">
+        <div className="mx-auto flex min-h-[100dvh] max-w-[1600px] flex-col lg:flex-row">
+          <div className="min-h-0 min-w-0 flex-1">{measurementAnnotationEditorDialog}</div>
+          {firestore &&
+          user &&
+          companyId &&
+          jobFirestoreId &&
+          mediaAnnotationShellNotesTarget ? (
+            <aside className="w-full shrink-0 border-t border-white/10 bg-slate-900 p-3 lg:w-80 lg:border-l lg:border-t-0">
+              <JobMediaFileNotesPanel
+                firestore={firestore}
+                companyId={String(companyId)}
+                jobId={jobFirestoreId}
+                userId={user.uid}
+                authorName={mediaAnnotationAuthorName}
+                target={mediaAnnotationShellNotesTarget}
+                allNotes={mediaAnnotationShellNotesAll}
+                customerPortal={mediaAnnotationShellCustomerPortal}
+                readOnly={mediaAnnotationReadOnly}
+                onNoteAdded={handleShellMediaNoteAdded}
+              />
+            </aside>
+          ) : null}
+        </div>
       </div>
     );
   }

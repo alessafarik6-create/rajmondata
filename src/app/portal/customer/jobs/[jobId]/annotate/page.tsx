@@ -13,7 +13,7 @@ function firstStr(v: unknown): string {
   return typeof v === "string" ? v : Array.isArray(v) ? String(v[0] ?? "") : String(v ?? "");
 }
 
-export default function EmployeeJobAnnotatePage() {
+export default function CustomerJobAnnotatePage() {
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -29,13 +29,11 @@ export default function EmployeeJobAnnotatePage() {
   const { data: profile, isLoading: profileLoading } = useDoc(userRef);
 
   const companyId = typeof (profile as any)?.companyId === "string" ? String((profile as any).companyId) : "";
-  const employeeId = typeof (profile as any)?.employeeId === "string" ? String((profile as any).employeeId) : "";
 
-  // Query params provided by JobMediaSection → employee page.
-  const kind = String(searchParams.get("kind") || "").trim(); // folderImages | photos
+  const kind = String(searchParams.get("kind") || "").trim();
   const folderId = String(searchParams.get("folderId") || "").trim();
-  const mediaId = String(searchParams.get("id") || "").trim(); // imageId or photoId
-  const fileType = String(searchParams.get("fileType") || "").trim(); // image|pdf
+  const mediaId = String(searchParams.get("id") || "").trim();
+  const fileType = String(searchParams.get("fileType") || "").trim();
   const canEdit = String(searchParams.get("canEdit") || "").trim() === "1";
 
   const mediaRef = useMemoFirebase(() => {
@@ -66,16 +64,13 @@ export default function EmployeeJobAnnotatePage() {
     if (kind === "folderImages" && !folderId) return null;
     if (!mediaDoc || typeof mediaDoc !== "object") return null;
 
-    // Build the same shape the admin/editor expects: include URL/storage fields from Firestore doc.
     const base = mediaDoc as Record<string, unknown>;
     return {
       ...(base as any),
       id: mediaId,
       fileType: fileType === "pdf" ? "pdf" : "image",
       annotationTarget:
-        kind === "photos"
-          ? { kind: "photos" }
-          : { kind: "folderImages", folderId },
+        kind === "photos" ? { kind: "photos" } : { kind: "folderImages", folderId },
     } as JobPhotoAnnotationTarget;
   }, [mediaDoc, mediaId, kind, folderId, fileType]);
 
@@ -96,8 +91,8 @@ export default function EmployeeJobAnnotatePage() {
   useEffect(() => {
     if (profileLoading) return;
     if (!user) return;
-    if ((profile as any)?.role !== "employee") {
-      router.replace(`/portal/jobs/${encodeURIComponent(jobId)}`);
+    if ((profile as any)?.role !== "customer") {
+      router.replace(`/portal/customer/jobs/${encodeURIComponent(jobId)}`);
     }
   }, [profileLoading, profile, router, jobId, user]);
 
@@ -110,7 +105,7 @@ export default function EmployeeJobAnnotatePage() {
     );
   }
 
-  if (!jobId || !companyId || !employeeId || !mediaId) {
+  if (!jobId || !companyId || !mediaId) {
     return (
       <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 p-6">
         <p className="text-sm text-muted-foreground">
@@ -132,13 +127,13 @@ export default function EmployeeJobAnnotatePage() {
 
   return (
     <JobDetailPageContent
-      employeeAnnotationShell
-      employeeAnnotationShellJobId={jobId}
-      employeeAnnotationInitialTarget={initialTarget}
-      employeeAnnotationReturnTo={`/portal/employee/jobs/${encodeURIComponent(jobId)}`}
-      employeeAnnotationReadOnly={!canEdit}
+      customerAnnotationShell
+      customerAnnotationShellJobId={jobId}
+      customerAnnotationInitialTarget={initialTarget}
+      customerAnnotationReturnTo={`/portal/customer/jobs/${encodeURIComponent(jobId)}`}
+      customerAnnotationReadOnly={!canEdit}
       mediaAnnotationShellNotesTarget={fileNotesTarget}
+      mediaAnnotationShellCustomerPortal
     />
   );
 }
-

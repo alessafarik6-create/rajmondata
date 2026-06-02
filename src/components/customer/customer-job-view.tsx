@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { User } from "firebase/auth";
+import { collection } from "firebase/firestore";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Calendar, ChevronLeft, MapPin } from "lucide-react";
@@ -13,7 +15,14 @@ import { CustomerJobTasksSection } from "@/components/customer/customer-job-task
 import { CustomerJobQuestionnaireSection } from "@/components/customer/customer-job-questionnaire-section";
 import { CustomerJobMediaApprovalsSection } from "@/components/customer/customer-job-media-approvals-section";
 import { CustomerJobMeetingRecordsSection } from "@/components/meeting-records/customer-job-meeting-records-section";
-import { useFirestore } from "@/firebase";
+import { useCollection, useFirestore, useMemoFirebase } from "@/firebase";
+import {
+  canCustomerAnnotateImage,
+  canCustomerAnnotateLegacyPhoto,
+  filterFoldersForCustomer,
+} from "@/lib/job-customer-access";
+import { buildCustomerJobMediaAnnotateHref } from "@/lib/job-media-annotate-route";
+import type { JobPhotoAnnotationTarget } from "@/lib/job-media-types";
 
 function safeJobFields(job: Record<string, unknown> | null | undefined) {
   if (!job) return null;
@@ -56,8 +65,49 @@ export function CustomerJobView({
   topBar,
 }: CustomerJobViewProps) {
   const firestore = useFirestore();
+  const router = useRouter();
   const overview = useMemo(() => safeJobFields(jobDoc), [jobDoc]);
   const tasksBase = taskLinkBase ?? `/portal/customer/jobs/${jobId}`;
+
+  const foldersColRef = useMemoFirebase(
+    () =>
+      firestore && companyId && jobId
+        ? collection(firestore, "companies", companyId, "jobs", jobId, "folders")
+        : null,
+    [firestore, companyId, jobId]
+  );
+  const { data: foldersRaw } = useCollection(foldersColRef);
+
+  const customerFolders = useMemo(() => {
+    const list = (foldersRaw || []).filter(
+      (f): f is Record<string, unknown> & { id: string } =>
+        !!f && typeof (f as { id?: string }).id === "string"
+    );
+    return filterFoldersForCustomer(list);
+  }, [foldersRaw]);
+
+  const onAnnotatePhoto = useCallback(
+    (t: JobPhotoAnnotationTarget) => {
+      if (readOnly) return;
+      const kind = t.annotationTarget?.kind;
+      if (kind !== "folderImages" && kind !== "photos") return;
+      const id = String(t.id ?? "").trim();
+      if (!id) return;
+      const folderId =
+        kind === "folderImages" ? String(t.annotationTarget?.folderId ?? "").trim() : "";
+      let canEdit = false;
+      if (kind === "folderImages") {
+        const folder = customerFolders.find((f) => f.id === folderId);
+        canEdit = folder
+          ? canCustomerAnnotateImage(folder, t as Record<string, unknown>)
+          : false;
+      } else {
+        canEdit = canCustomerAnnotateLegacyPhoto(t as Record<string, unknown>);
+      }
+      router.push(buildCustomerJobMediaAnnotateHref(jobId, t, canEdit));
+    },
+    [jobId, router, customerFolders, readOnly]
+  );
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-3 py-6 sm:px-4">
@@ -127,7 +177,7 @@ export function CustomerJobView({
         photos={legacyPhotos}
         uploadLegacyPhoto={async () => {}}
         legacyUploading={false}
-        onAnnotatePhoto={() => {}}
+        onAnnotatePhoto={onAnnotatePhoto}
         layout="jobDetailWide"
         mediaScope="customer"
         memberPermissions={null}
