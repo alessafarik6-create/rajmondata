@@ -957,11 +957,25 @@ function UserFolderBlock({
   }, [imagesRaw]);
 
   const imagesForUi = useMemo(() => {
-    if (!isCustomerScope) return images;
-    return images.filter((img) =>
-      isImageCustomerVisible(folder as Record<string, unknown>, img as Record<string, unknown>)
-    );
-  }, [images, isCustomerScope, folder]);
+    let list = images;
+    if (isEmployeeLimited) {
+      list = list.filter((img) =>
+        isImageEmployeeVisible(
+          folder as Record<string, unknown>,
+          img as Record<string, unknown>
+        )
+      );
+    }
+    if (isCustomerScope) {
+      list = list.filter((img) =>
+        isImageCustomerVisible(
+          folder as Record<string, unknown>,
+          img as Record<string, unknown>
+        )
+      );
+    }
+    return list;
+  }, [images, isEmployeeLimited, isCustomerScope, folder]);
 
   const [folderOpen, setFolderOpen] = useState(false);
   const [showAllInFolder, setShowAllInFolder] = useState(false);
@@ -2506,10 +2520,7 @@ function UserFolderBlock({
                   if (
                     !isCustomerScope &&
                     isFolderWide &&
-                    (kind === "pdf" ||
-                      kind === "office" ||
-                      kind === "csv" ||
-                      kind === "archive")
+                    (kind === "pdf" || kind === "office" || kind === "csv")
                   ) {
                 return null;
               }
@@ -2580,20 +2591,22 @@ function UserFolderBlock({
                     actions={
                       <>
                         {renderExportNotesButtons(img, title)}
-                        <JobMediaIconButton
-                          label="Otevřít v novém okně"
-                          disabled={!openUrl}
-                          onClick={() => {
-                            if (openUrl)
-                              window.open(
-                                openUrl,
-                                "_blank",
-                                "noopener,noreferrer"
-                              );
-                          }}
-                        >
-                          <ExternalLink className="size-[18px]" aria-hidden />
-                        </JobMediaIconButton>
+                        {kind !== "archive" ? (
+                          <JobMediaIconButton
+                            label="Otevřít v novém okně"
+                            disabled={!openUrl}
+                            onClick={() => {
+                              if (openUrl)
+                                window.open(
+                                  openUrl,
+                                  "_blank",
+                                  "noopener,noreferrer"
+                                );
+                            }}
+                          >
+                            <ExternalLink className="size-[18px]" aria-hidden />
+                          </JobMediaIconButton>
+                        ) : null}
                         <JobMediaIconButton
                           label={`Poznámky (${fileCommentStats.get(img.id)?.count ?? 0})`}
                           disabled={!user?.uid}
@@ -2652,19 +2665,23 @@ function UserFolderBlock({
                               >
                                 <a
                                   href={openUrl}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
+                                  {...(kind === "archive"
+                                    ? { download: title }
+                                    : {
+                                        target: "_blank",
+                                        rel: "noopener noreferrer",
+                                      })}
                                 >
                                   <Download className="size-[18px]" aria-hidden />
                                 </a>
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent side="bottom" className="text-xs">
-                              Otevřít v prohlížeči
+                              {kind === "archive" ? "Stáhnout" : "Otevřít v prohlížeči"}
                             </TooltipContent>
                           </Tooltip>
                         ) : (
-                          <JobMediaIconButton label="Otevřít" disabled>
+                          <JobMediaIconButton label="Stáhnout" disabled>
                             <Download className="size-[18px]" aria-hidden />
                           </JobMediaIconButton>
                         )}
@@ -2672,7 +2689,8 @@ function UserFolderBlock({
                           <>
                             {!isCustomerScope &&
                             onOpenMediaApprovalDialog &&
-                            kind !== "office" ? (
+                            kind !== "office" &&
+                            kind !== "archive" ? (
                               <JobMediaIconButton
                                 label="Schválení zákazníkem"
                                 onClick={() =>
@@ -4165,10 +4183,7 @@ export function JobMediaSection({
                   if (
                     mediaScope !== "customer" &&
                     isJobDetailWide &&
-                    (kind === "pdf" ||
-                      kind === "office" ||
-                      kind === "csv" ||
-                      kind === "archive")
+                    (kind === "pdf" || kind === "office" || kind === "csv")
                   ) {
                     return null;
                   }

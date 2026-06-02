@@ -36,6 +36,17 @@ assert.match(typesSrc, /JOB_MEDIA_ACCEPT_ATTR/, "accept attr includes archives")
 
 assert.match(mediaSrc, /canEmployeeUploadToFolder/, "UI uses folder upload helper");
 assert.match(mediaSrc, /JobMediaArchivePreview/, "archive preview icon");
+assert.doesNotMatch(
+  mediaSrc,
+  /isFolderWide[\s\S]{0,200}kind === "archive"[\s\S]{0,80}return null/,
+  "archive must not be hidden from wide-layout folder grid"
+);
+assert.match(
+  mediaSrc,
+  /kind === "archive"[\s\S]{0,400}JobMediaArchivePreview/,
+  "archive files render archive card preview"
+);
+assert.match(mediaSrc, /isImageEmployeeVisible/, "employee file visibility filter in folder list");
 assert.match(mediaSrc, /buildJobMediaCardDateLine/, "card shows size and uploader");
 assert.match(mediaSrc, /fileSizeBytes/, "persist file size on upload");
 
