@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { collection, doc, query, where, orderBy } from "firebase/firestore";
@@ -13,10 +13,11 @@ import {
   PORTAL_MANUAL_INVOICE_TYPE,
   parseInvoiceRecipientFromInvoiceDoc,
 } from "@/lib/portal-manual-invoice";
-import { sanitizeInvoicePreviewHtml } from "@/lib/invoice-a4-html";
 import { printInvoiceHtmlDocument } from "@/lib/print-html";
 import { useToast } from "@/hooks/use-toast";
 import { PortalInvoiceSendDialog } from "@/components/invoices/portal-invoice-send-dialog";
+import { PortalInvoicePreviewViewer } from "@/components/invoices/portal-invoice-preview-viewer";
+import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
 import { formatCsDateTimeDot } from "@/lib/date-safe";
 
 export default function InvoiceDocumentPage() {
@@ -93,42 +94,7 @@ export default function InvoiceDocumentPage() {
     return h.trim();
   }, [invoice]);
 
-  /** Sanitizovaný HTML pro náhled v iframe i pro tisk (bez JS) — viz `printInvoiceHtmlDocument`. */
-  const previewHtml = useMemo(() => sanitizeInvoicePreviewHtml(html), [html]);
-
-  const [iframeSrc, setIframeSrc] = useState<string | null>(null);
-  const [previewError, setPreviewError] = useState<string | null>(null);
-  const blobUrlRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    setPreviewError(null);
-    if (!previewHtml) {
-      setIframeSrc(null);
-      return () => {
-        if (blobUrlRef.current) {
-          URL.revokeObjectURL(blobUrlRef.current);
-          blobUrlRef.current = null;
-        }
-      };
-    }
-    try {
-      const blob = new Blob([previewHtml], { type: "text/html;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      blobUrlRef.current = url;
-      setIframeSrc(url);
-    } catch (e) {
-      setIframeSrc(null);
-      setPreviewError(
-        e instanceof Error ? e.message : "Náhled se nepodařilo připravit."
-      );
-    }
-    return () => {
-      if (blobUrlRef.current) {
-        URL.revokeObjectURL(blobUrlRef.current);
-        blobUrlRef.current = null;
-      }
-    };
-  }, [previewHtml]);
+  const [largePreviewOpen, setLargePreviewOpen] = useState(false);
 
   const title = useMemo(() => {
     const inv = invoice as { invoiceNumber?: string; documentNumber?: string } | null;
@@ -388,29 +354,34 @@ export default function InvoiceDocumentPage() {
           <p className="mt-2 text-sm text-neutral-600">Není přiřazeno k faktuře.</p>
         )}
       </div>
-      {previewError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Náhled se nepodařilo zobrazit</AlertTitle>
-          <AlertDescription>{previewError}</AlertDescription>
-        </Alert>
-      ) : html && iframeSrc ? (
-        <div className="invoice-a4-preview overflow-auto rounded-lg border-2 border-neutral-950 bg-neutral-200 py-6">
-          {/*
-            Náhled: blob: URL + čisté HTML (bez scriptů). Nepoužívat srcDoc + sandbox —
-            Chrome hlásí „Blocked script execution in about:srcdoc“ bez allow-scripts.
-          */}
-          <iframe
-            key={iframeSrc}
+      {html ? (
+        <>
+          <div className="flex min-h-[min(85vh,960px)] flex-col overflow-hidden rounded-lg border-2 border-neutral-800">
+            <PortalInvoicePreviewViewer
+              html={html}
+              title={title}
+              user={user}
+              showSendEmail={isPortalManual}
+              onSendEmail={isPortalManual ? () => setSendOpen(true) : undefined}
+              showFullscreenToggle
+              fullscreen={false}
+              onFullscreenChange={() => setLargePreviewOpen(true)}
+              className="min-h-0 flex-1"
+            />
+          </div>
+          <PortalInvoicePreviewDialog
+            open={largePreviewOpen}
+            onOpenChange={setLargePreviewOpen}
+            html={html}
             title={title}
-            className="mx-auto block min-h-[1123px] w-full max-w-[210mm] border-0 bg-white shadow-md"
-            src={iframeSrc}
-            referrerPolicy="no-referrer"
+            user={user}
+            showSendEmail={isPortalManual}
+            onSendEmail={isPortalManual ? () => {
+              setLargePreviewOpen(false);
+              setSendOpen(true);
+            } : undefined}
           />
-        </div>
-      ) : html && !iframeSrc ? (
-        <div className="flex justify-center p-12">
-          <Loader2 className="h-8 w-8 animate-spin text-primary" />
-        </div>
+        </>
       ) : (
         <Alert>
           <AlertTitle>Bez náhledu</AlertTitle>

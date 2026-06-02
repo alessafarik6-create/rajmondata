@@ -968,6 +968,11 @@ export function PortalManualInvoiceForm({
         html={previewHtml}
         title={previewTitle}
         user={user}
+        showSendEmail={Boolean((mode === "edit" && invoiceId) || savedInvoiceId)}
+        onSendEmail={() => {
+          setPreviewOpen(false);
+          setSendOpen(true);
+        }}
       />
 
       {user && (savedInvoiceId || invoiceId) ? (

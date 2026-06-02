@@ -554,3 +554,27 @@ export function sanitizeInvoicePreviewHtml(html: string): string {
   out = out.replace(/href\s*=\s*["']?\s*javascript:[^"'>\s]*/gi, 'href="#"');
   return out;
 }
+
+/** Přibližná šířka A4 v px (96 DPI) — pro výpočet zoomu „přizpůsobit šířce“. */
+export const INVOICE_A4_WIDTH_PX = Math.round((210 * 96) / 25.4);
+
+export const INVOICE_PREVIEW_ZOOM_LEVELS = [50, 75, 100, 125, 150] as const;
+
+export type InvoicePreviewZoomLevel = (typeof INVOICE_PREVIEW_ZOOM_LEVELS)[number];
+
+/**
+ * HTML pro náhled ve vieweru: bez JS, průhledné pozadí dokumentu (tmavé pozadí vieweru).
+ */
+export function prepareInvoicePreviewHtmlForViewer(html: string): string {
+  const base = sanitizeInvoicePreviewHtml(html);
+  if (!base) return "";
+  const overrides = `<style data-portal-invoice-preview-viewer>
+html, body { background: transparent !important; margin: 0; padding: 0; }
+.a4-wrap { min-height: auto !important; padding: 0 !important; background: transparent !important; align-items: flex-start !important; flex-direction: column !important; gap: 16px !important; }
+.a4-sheet { margin: 0 !important; box-shadow: 0 2px 16px rgba(0,0,0,0.35) !important; }
+</style>`;
+  if (/<\/head>/i.test(base)) {
+    return base.replace(/<\/head>/i, `${overrides}</head>`);
+  }
+  return `${overrides}${base}`;
+}
