@@ -127,6 +127,8 @@ export function buildAdvanceInvoiceHtml(params: {
   amountGross: number;
   /** Pro jednoduchý zápis jedné sazby v patičce součtu */
   primaryVatRateLabel?: string;
+  /** Rozpis DPH podle sazeb (0 / 12 / 21 %) */
+  vatBreakdownByRate?: Array<{ rate: number; base: number; vat: number }>;
   note?: string;
   supplierStampUrl?: string | null;
   supplierFooterText?: string | null;
@@ -171,6 +173,30 @@ export function buildAdvanceInvoiceHtml(params: {
   const qrWarn = params.paymentQrWarning
     ? `<div class="payment-warn">${escapeHtml(params.paymentQrWarning)}</div>`
     : "";
+
+  const breakdown = Array.isArray(params.vatBreakdownByRate)
+    ? params.vatBreakdownByRate.filter((b) => b.base > 0 || b.vat > 0)
+    : [];
+  const totalsRowsHtml =
+    breakdown.length > 0
+      ? [
+          `<tr><td>Celkem bez DPH</td><td>${fmtKc(params.amountNet)}</td></tr>`,
+          ...breakdown.flatMap((b) => {
+            const rows: string[] = [];
+            if (b.rate === 0) {
+              rows.push(`<tr><td>Základ DPH ${b.rate} %</td><td>${fmtKc(b.base)}</td></tr>`);
+            } else {
+              rows.push(`<tr><td>Základ DPH ${b.rate} %</td><td>${fmtKc(b.base)}</td></tr>`);
+              rows.push(`<tr><td>DPH ${b.rate} %</td><td>${fmtKc(b.vat)}</td></tr>`);
+            }
+            return rows;
+          }),
+          `<tr><td>Celkem DPH</td><td>${fmtKc(params.vatAmount)}</td></tr>`,
+          `<tr class="grand"><td><strong>Celkem k úhradě</strong></td><td>${fmtKc(params.amountGross)}</td></tr>`,
+        ].join("")
+      : `<tr><td>Základ daně celkem</td><td>${fmtKc(params.amountNet)}</td></tr>
+      <tr><td>DPH${params.primaryVatRateLabel ? ` (${escapeHtml(params.primaryVatRateLabel)})` : ""}</td><td>${fmtKc(params.vatAmount)}</td></tr>
+      <tr class="grand"><td><strong>Celkem k úhradě</strong></td><td>${fmtKc(params.amountGross)}</td></tr>`;
   return `<!DOCTYPE html>
 <html lang="cs">
 <head>
@@ -222,9 +248,7 @@ export function buildAdvanceInvoiceHtml(params: {
       <tbody>${rowsHtml}</tbody>
     </table>
     <table class="totals">
-      <tr><td>Základ daně celkem</td><td>${fmtKc(params.amountNet)}</td></tr>
-      <tr><td>DPH${params.primaryVatRateLabel ? ` (${escapeHtml(params.primaryVatRateLabel)})` : ""}</td><td>${fmtKc(params.vatAmount)}</td></tr>
-      <tr class="grand"><td><strong>Celkem k úhradě</strong></td><td>${fmtKc(params.amountGross)}</td></tr>
+      ${totalsRowsHtml}
     </table>
     <p class="note">${escapeHtml(params.note ?? "Doklad slouží jako zálohová faktura dle smlouvy o dílo.")}</p>
     ${
