@@ -23,9 +23,9 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Plus, Trash2, Save, Loader2, Calculator, Search } from "lucide-react";
+import { Plus, Save, Loader2, Search, Eye, Mail } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { useCollection, useMemoFirebase, useCompany } from "@/firebase";
+import { useCollection, useMemoFirebase, useCompany, useUser } from "@/firebase";
 import type { Firestore } from "firebase/firestore";
 import { allocateNextDocumentNumber } from "@/lib/invoice-number-series";
 import { buildCustomerAddressMultiline } from "@/lib/customer-address-display";
@@ -47,11 +47,20 @@ import {
   scrubFirestoreValue,
   portalFormItemsForFirestore,
   parseInvoiceRecipientFromInvoiceDoc,
+  parsePortalManualFormItemFromFirestore,
+  createEmptyPortalManualFormItem,
+  computePortalManualInvoiceTotals,
+  formatPortalInvoiceMoney,
   recipientDisplayName,
   buildRecipientAddressMultiline,
 } from "@/lib/portal-manual-invoice";
-
-const DEFAULT_VAT = 21;
+import { syncPortalInvoiceToDocuments } from "@/lib/portal-invoice-documents-sync";
+import { PortalManualInvoiceLineCard } from "@/components/invoices/portal-manual-invoice-line-card";
+import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
+import { PortalInvoiceSendDialog } from "@/components/invoices/portal-invoice-send-dialog";
+import type { InventoryItemRow } from "@/lib/inventory-types";
+import type { PortalInvoiceInventoryPick } from "@/components/invoices/portal-manual-invoice-line-card";
+import { VAT_RATE_OPTIONS } from "@/lib/vat-calculations";
 
 type Props = {
   firestore: Firestore;
@@ -72,10 +81,16 @@ export function PortalManualInvoiceForm({
 }: Props) {
   const router = useRouter();
   const { toast } = useToast();
+  const { user } = useUser();
   const { company, companyName } = useCompany();
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [aresLoading, setAresLoading] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewTitle, setPreviewTitle] = useState("Náhled");
+  const [sendOpen, setSendOpen] = useState(false);
+  const [savedInvoiceId, setSavedInvoiceId] = useState(invoiceId ?? "");
 
   const [jobId, setJobId] = useState("");
   const [customerId, setCustomerId] = useState("");
@@ -84,9 +99,7 @@ export function PortalManualInvoiceForm({
     name: "",
   });
 
-  const [items, setItems] = useState<PortalManualFormItem[]>([
-    { id: "1", description: "", quantity: 1, unitPrice: 0 },
-  ]);
+  const [items, setItems] = useState<PortalManualFormItem[]>([createEmptyPortalManualFormItem("1")]);
   const [issueDate, setIssueDate] = useState(() => new Date().toISOString().split("T")[0]);
   const [dueDate, setDueDate] = useState(() => {
     const d = new Date();
@@ -130,6 +143,28 @@ export function PortalManualInvoiceForm({
     () => (Array.isArray(bankAccountsRaw) ? bankAccountsRaw : []) as OrgBankAccountRow[],
     [bankAccountsRaw]
   );
+
+  const inventoryColRef = useMemoFirebase(
+    () => collection(firestore, "companies", companyId, "inventoryItems"),
+    [firestore, companyId]
+  );
+  const { data: inventoryRaw } = useCollection(inventoryColRef);
+  const inventoryItems = useMemo(() => {
+    const rows = Array.isArray(inventoryRaw) ? inventoryRaw : [];
+    return rows
+      .map((r) => {
+        const row = r as Record<string, unknown> & { id: string };
+        return {
+          id: row.id,
+          name: String(row.name ?? "").trim() || "Položka",
+          unit: String(row.unit ?? "ks").trim() || "ks",
+          unitPrice: row.unitPrice != null ? Number(row.unitPrice) : null,
+          vatRate: row.vatRate != null ? Number(row.vatRate) : null,
+          imageUrl: typeof row.imageUrl === "string" ? row.imageUrl : null,
+        } satisfies PortalInvoiceInventoryPick;
+      })
+      .filter((r) => r.id);
+  }, [inventoryRaw]);
 
   const legacyCompanyBank = useMemo(() => {
     const c = company as { bankAccountNumber?: string } | null | undefined;
@@ -200,17 +235,12 @@ export function PortalManualInvoiceForm({
     const rawItems = inv.items;
     if (Array.isArray(rawItems) && rawItems.length > 0) {
       setItems(
-        rawItems.map((row: unknown, i: number) => {
-          const r = row as Record<string, unknown>;
-          return {
-            id: String(r.id ?? `row-${i}`),
-            description: String(r.description ?? ""),
-            quantity: Number(r.quantity) || 0,
-            unitPrice: Number(r.unitPrice) || 0,
-          };
-        })
+        rawItems.map((row: unknown, i: number) =>
+          parsePortalManualFormItemFromFirestore(row as Record<string, unknown>, i)
+        )
       );
     }
+    setSavedInvoiceId(typeof invoiceId === "string" ? invoiceId : "");
     setInitialized(true);
   }, [mode, initialInvoice, initialized]);
 
@@ -298,7 +328,7 @@ export function PortalManualInvoiceForm({
   };
 
   const addItem = () => {
-    setItems((prev) => [...prev, { id: Math.random().toString(36).slice(2), description: "", quantity: 1, unitPrice: 0 }]);
+    setItems((prev) => [...prev, createEmptyPortalManualFormItem()]);
   };
 
   const removeItem = (id: string) => {
@@ -309,10 +339,58 @@ export function PortalManualInvoiceForm({
     setItems((prev) => prev.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   };
 
-  const totalAmount = useMemo(
-    () => items.reduce((s, it) => s + (Number(it.quantity) || 0) * (Number(it.unitPrice) || 0), 0),
-    [items]
-  );
+  const invoiceTotals = useMemo(() => computePortalManualInvoiceTotals(items), [items]);
+
+  const profileDisplayName = useMemo(() => {
+    const c = company as { displayName?: string } | null;
+    return String(c?.displayName ?? user?.email ?? "").trim() || "Uživatel";
+  }, [company, user?.email]);
+
+  const buildHtmlParams = (invoiceNumberStr: string) => ({
+    invoiceNumber: invoiceNumberStr,
+    issueDate,
+    dueDate,
+    taxSupplyDate,
+    jobName: jobDisplayName,
+    notes: notes || null,
+    recipient,
+    supplierName,
+    supplierAddressLines,
+    supplierIco,
+    supplierDic,
+    logoUrl,
+    items,
+    orgBankAccounts,
+    overrideBankAccountId: bankAccountId.trim() || null,
+    legacyCompanyBankLine: legacyCompanyBank,
+  });
+
+  const openPreview = () => {
+    const err = validateInvoiceRecipientSnapshot(
+      recipient,
+      recipient.type === "job_customer" ? customerId : ""
+    );
+    if (err) {
+      toast({ variant: "destructive", title: "Odběratel", description: err });
+      return;
+    }
+    const previewNumber =
+      mode === "edit" && initialInvoice
+        ? String((initialInvoice as { invoiceNumber?: string }).invoiceNumber ?? "NÁHLED")
+        : "NÁHLED";
+    try {
+      const built = buildPortalManualInvoiceHtml(buildHtmlParams(previewNumber));
+      setPreviewHtml(built.html);
+      setPreviewTitle(previewNumber);
+      setPreviewOpen(true);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Náhled",
+        description: e instanceof Error ? e.message : "Zkontrolujte položky.",
+      });
+    }
+  };
 
   const persistInvoice = async () => {
     const err = validateInvoiceRecipientSnapshot(
@@ -337,24 +415,7 @@ export function PortalManualInvoiceForm({
 
     let built: ReturnType<typeof buildPortalManualInvoiceHtml>;
     try {
-      built = buildPortalManualInvoiceHtml({
-        invoiceNumber: invoiceNumberStr,
-        issueDate,
-        dueDate,
-        taxSupplyDate,
-        jobName: jobDisplayName,
-        notes: notes || null,
-        recipient,
-        supplierName,
-        supplierAddressLines,
-        supplierIco,
-        supplierDic,
-        logoUrl,
-        items,
-        orgBankAccounts,
-        overrideBankAccountId: bankAccountId.trim() || null,
-        legacyCompanyBankLine: legacyCompanyBank,
-      });
+      built = buildPortalManualInvoiceHtml(buildHtmlParams(invoiceNumberStr));
     } catch (e) {
       toast({
         variant: "destructive",
@@ -364,7 +425,7 @@ export function PortalManualInvoiceForm({
       return;
     }
 
-    const { html, amountNet, vatAmount, amountGross, variableSymbol } = built;
+    const { html, amountNet, vatAmount, amountGross, variableSymbol, vatBreakdown } = built;
     const bankSnap = resolvePaymentAccount({
       bankAccounts: orgBankAccounts,
       overrideBankAccountId: bankAccountId.trim() || null,
@@ -408,8 +469,9 @@ export function PortalManualInvoiceForm({
       amountNet,
       vatAmount,
       amountGross,
-      vat: DEFAULT_VAT,
-      vatRate: DEFAULT_VAT,
+      vatBreakdown: vatBreakdown.map((b) => ({ rate: b.rate, base: b.base, vat: b.vat })),
+      paymentStatus: (initialInvoice as { paymentStatus?: string })?.paymentStatus ?? "unpaid",
+      requiresPayment: true,
       variableSymbol,
       pdfHtml: html,
       issueDate,
@@ -432,7 +494,33 @@ export function PortalManualInvoiceForm({
         doc(firestore, "companies", companyId, "invoices", invoiceId),
         basePayload as UpdateData<DocumentData>
       );
-      toast({ title: "Faktura uložena", description: "Změny včetně náhledu byly uloženy." });
+      const linkedDocumentId =
+        typeof (initialInvoice as { linkedDocumentId?: string })?.linkedDocumentId === "string"
+          ? String((initialInvoice as { linkedDocumentId?: string }).linkedDocumentId)
+          : null;
+      const docId = await syncPortalInvoiceToDocuments({
+        firestore,
+        companyId,
+        invoiceId,
+        userId,
+        uploadedByName: profileDisplayName,
+        invoiceNumber: invoiceNumberStr,
+        customerName: displayName,
+        jobId: jobId.trim() || null,
+        jobName: jobDisplayName !== "—" ? jobDisplayName : null,
+        issueDate,
+        dueDate,
+        amountNet,
+        vatAmount,
+        amountGross,
+        linkedDocumentId,
+      });
+      if (docId !== linkedDocumentId) {
+        await updateDoc(doc(firestore, "companies", companyId, "invoices", invoiceId), {
+          linkedDocumentId: docId,
+        });
+      }
+      toast({ title: "Faktura uložena", description: "Změny včetně dokladu byly uloženy." });
       router.push(`/portal/invoices/${invoiceId}`);
       return;
     }
@@ -441,6 +529,26 @@ export function PortalManualInvoiceForm({
     basePayload.createdBy = userId;
 
     const invRef = await addDoc(collection(firestore, "companies", companyId, "invoices"), basePayload);
+
+    const docId = await syncPortalInvoiceToDocuments({
+      firestore,
+      companyId,
+      invoiceId: invRef.id,
+      userId,
+      uploadedByName: profileDisplayName,
+      invoiceNumber: invoiceNumberStr,
+      customerName: displayName,
+      jobId: jobId.trim() || null,
+      jobName: jobDisplayName !== "—" ? jobDisplayName : null,
+      issueDate,
+      dueDate,
+      amountNet,
+      vatAmount,
+      amountGross,
+    });
+    await updateDoc(doc(firestore, "companies", companyId, "invoices", invRef.id), {
+      linkedDocumentId: docId,
+    });
 
     const recipientLine =
       [
@@ -773,7 +881,7 @@ export function PortalManualInvoiceForm({
       </Card>
 
       <Card className="bg-surface border-border">
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <CardTitle>Položky faktury</CardTitle>
           <Button type="button" variant="outline" size="sm" onClick={addItem} className="gap-2">
             <Plus className="h-4 w-4" /> Přidat řádek
@@ -781,75 +889,103 @@ export function PortalManualInvoiceForm({
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-xs text-muted-foreground">
-            Cena za jednotku je včetně DPH (21 %), stejně jako dříve u této šablony.
+            U každé položky zvolte, zda je cena bez DPH nebo včetně DPH, a sazbu 0 / 12 / 21 %.
           </p>
-          <div className="hidden px-2 text-xs font-bold uppercase text-muted-foreground md:grid md:grid-cols-12 md:gap-4">
-            <div className="col-span-6">Popis</div>
-            <div className="col-span-2">Množství</div>
-            <div className="col-span-3">Cena za jedn. vč. DPH (Kč)</div>
-            <div className="col-span-1" />
+          <div className="space-y-4">
+            {items.map((item) => (
+              <PortalManualInvoiceLineCard
+                key={item.id}
+                item={item}
+                inventoryItems={inventoryItems}
+                onChange={(patch) => updateItem(item.id, patch)}
+                onRemove={() => removeItem(item.id)}
+                canRemove={items.length > 1}
+              />
+            ))}
           </div>
-          {items.map((item) => (
-            <div key={item.id} className="grid grid-cols-1 items-center gap-4 md:grid-cols-12">
-              <div className="col-span-6">
-                <Input
-                  placeholder="Popis služby / zboží"
-                  className="bg-background"
-                  value={item.description}
-                  onChange={(e) => updateItem(item.id, { description: e.target.value })}
-                />
-              </div>
-              <div className="col-span-2">
-                <Input
-                  type="number"
-                  className="bg-background"
-                  value={item.quantity}
-                  onChange={(e) => updateItem(item.id, { quantity: Number(e.target.value) })}
-                />
-              </div>
-              <div className="col-span-3">
-                <Input
-                  type="number"
-                  className="bg-background"
-                  value={item.unitPrice}
-                  onChange={(e) => updateItem(item.id, { unitPrice: Number(e.target.value) })}
-                />
-              </div>
-              <div className="col-span-1 flex justify-end">
-                <Button type="button" variant="ghost" size="icon" onClick={() => removeItem(item.id)}>
-                  <Trash2 className="text-muted-foreground" />
-                </Button>
-              </div>
-            </div>
-          ))}
         </CardContent>
         <Separator />
-        <CardFooter className="flex flex-col items-end py-6">
-          <p className="text-sm text-muted-foreground">
-            Celkem bez DPH: {Math.round(totalAmount / 1.21).toLocaleString("cs-CZ")} Kč
+        <CardFooter className="flex flex-col items-stretch gap-2 py-6 sm:items-end">
+          <p className="text-sm text-muted-foreground w-full sm:text-right">
+            Celkem bez DPH: {formatPortalInvoiceMoney(invoiceTotals.amountNet)}
           </p>
-          <p className="flex items-center gap-2 text-2xl font-bold text-primary">
-            <Calculator className="h-6 w-6" /> {totalAmount.toLocaleString("cs-CZ")} Kč
+          {VAT_RATE_OPTIONS.map((rate) => {
+            const row = invoiceTotals.vatBreakdown.find((b) => b.rate === rate);
+            if (!row || (row.base <= 0 && row.vat <= 0)) return null;
+            return (
+              <p key={rate} className="text-xs text-muted-foreground w-full sm:text-right">
+                {rate === 0
+                  ? `Základ DPH 0 %: ${formatPortalInvoiceMoney(row.base)}`
+                  : `DPH ${rate} %: ${formatPortalInvoiceMoney(row.vat)} (základ ${formatPortalInvoiceMoney(row.base)})`}
+              </p>
+            );
+          })}
+          <p className="text-sm font-medium w-full sm:text-right">
+            Celkem DPH: {formatPortalInvoiceMoney(invoiceTotals.vatAmount)}
           </p>
-          <p className="text-xs italic text-muted-foreground">Včetně DPH {DEFAULT_VAT} %</p>
+          <p className="flex items-center gap-2 text-2xl font-bold text-primary w-full sm:justify-end">
+            {formatPortalInvoiceMoney(invoiceTotals.amountGross)}
+          </p>
         </CardFooter>
       </Card>
 
-      <div className="flex justify-end gap-4">
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end sm:gap-4">
         <Button
           type="button"
           variant="outline"
           onClick={() =>
-            router.push(mode === "edit" && invoiceId ? `/portal/invoices/${invoiceId}` : "/portal/documents?view=issued")
+            router.push(
+              mode === "edit" && invoiceId ? `/portal/invoices/${invoiceId}` : "/portal/documents?view=issued"
+            )
           }
         >
           Zrušit
         </Button>
+        <Button type="button" variant="secondary" className="gap-2" onClick={openPreview}>
+          <Eye className="h-4 w-4" />
+          Náhled faktury
+        </Button>
+        {(mode === "edit" && invoiceId) || savedInvoiceId ? (
+          <Button
+            type="button"
+            variant="secondary"
+            className="gap-2"
+            onClick={() => setSendOpen(true)}
+          >
+            <Mail className="h-4 w-4" />
+            Odeslat e-mailem
+          </Button>
+        ) : null}
         <Button type="submit" disabled={isSubmitting} className="gap-2 px-8">
           {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {mode === "edit" ? "Uložit změny" : "Uložit fakturu"}
         </Button>
       </div>
+
+      <PortalInvoicePreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        html={previewHtml}
+        title={previewTitle}
+        user={user}
+      />
+
+      {user && (savedInvoiceId || invoiceId) ? (
+        <PortalInvoiceSendDialog
+          open={sendOpen}
+          onOpenChange={setSendOpen}
+          companyId={companyId}
+          invoiceId={savedInvoiceId || invoiceId || ""}
+          invoiceNumber={
+            mode === "edit" && initialInvoice
+              ? String((initialInvoice as { invoiceNumber?: string }).invoiceNumber ?? "")
+              : previewTitle
+          }
+          defaultTo={String(recipient.email ?? "").trim()}
+          user={user}
+          onSent={() => router.refresh()}
+        />
+      ) : null}
     </form>
   );
 }

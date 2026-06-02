@@ -11,7 +11,9 @@ import {
   serverTimestamp,
   updateDoc,
   where,
+  type DocumentData,
   type Firestore,
+  type UpdateData,
 } from "firebase/firestore";
 
 export type SyncPortalInvoiceDocumentInput = {
@@ -95,7 +97,7 @@ export async function syncPortalInvoiceToDocuments(
   };
 
   if (linkedId) {
-    await updateDoc(doc(docsCol, linkedId), payload);
+    await updateDoc(doc(docsCol, linkedId), payload as UpdateData<DocumentData>);
     return linkedId;
   }
 
@@ -108,7 +110,7 @@ export async function syncPortalInvoiceToDocuments(
   const dupSnap = await getDocs(dupQ);
   if (!dupSnap.empty) {
     const existingId = dupSnap.docs[0].id;
-    await updateDoc(doc(docsCol, existingId), payload);
+    await updateDoc(doc(docsCol, existingId), payload as UpdateData<DocumentData>);
     return existingId;
   }
 
@@ -118,6 +120,6 @@ export async function syncPortalInvoiceToDocuments(
     uploadedBy: userId,
     uploadedByName,
     createdAt: serverTimestamp(),
-  });
+  } as DocumentData);
   return ref.id;
 }

@@ -5,7 +5,7 @@ import type { Firestore } from "firebase-admin/firestore";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
 import { renderStoredHtmlToPdfBuffer } from "@/lib/document-email-pdf-server";
 import { sendTransactionalEmail } from "@/lib/email-notifications/resend-send";
-import { readInquiryEmailIdentity, isValidEmailAddress } from "@/lib/inquiry-offer-email";
+import { readInquiryEmailIdentity } from "@/lib/inquiry-offer-email";
 import { buildInquiryOfferSendPlan } from "@/lib/inquiry-offer-send-plan";
 import {
   resolveInquiryOfferCopyDelivery,
@@ -23,11 +23,10 @@ export type SendPortalInvoiceEmailParams = {
   userId: string;
   sentByEmail?: string | null;
   sentByName?: string | null;
-  copyEmailsRaw?: string | null;
 };
 
 export type SendPortalInvoiceEmailResult =
-  | { ok: true; messageId: string | null; copyTo: string[] }
+  | { ok: true; messageId: string | null; copyTo: string[]; sendNotice: string | null }
   | { ok: false; error: string; detail: string | null };
 
 function safePdfFilename(invoiceNumber: string): string {
@@ -48,7 +47,7 @@ export async function sendPortalInvoiceEmail(
   if (!companyId || !invoiceId) {
     return { ok: false, error: "Chybí identifikátor faktury.", detail: null };
   }
-  if (!isValidEmailAddress(to)) {
+  if (!to || !to.includes("@")) {
     return { ok: false, error: "Neplatná e-mailová adresa příjemce.", detail: null };
   }
 
@@ -73,20 +72,26 @@ export async function sendPortalInvoiceEmail(
   const companySnap = await db.collection(COMPANIES_COLLECTION).doc(companyId).get();
   const company = (companySnap.data() ?? {}) as Record<string, unknown>;
   const identity = readInquiryEmailIdentity(company);
-  const plan = buildInquiryOfferSendPlan(identity);
-  const orgEmail = String(company.email ?? "").trim() || null;
 
-  const copyValidation = validateOfferCopyEmailsRaw(params.copyEmailsRaw ?? "");
+  const copyValidation = validateOfferCopyEmailsRaw(identity.offerCopyEmails);
   if (!copyValidation.ok) {
     return { ok: false, error: copyValidation.error, detail: null };
   }
-  const copyDelivery = resolveInquiryOfferCopyDelivery({
-    orgEmail,
-    identity,
-    manualCopyEmails: copyValidation.emails,
-    autoCopyOrganization: true,
-    to,
-  });
+  let offerCopyDelivery: ReturnType<typeof resolveInquiryOfferCopyDelivery> = null;
+  try {
+    offerCopyDelivery = resolveInquiryOfferCopyDelivery(identity, to);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Neplatné kopie v nastavení.",
+      detail: null,
+    };
+  }
+
+  const planResult = await buildInquiryOfferSendPlan({ company, identity });
+  if ("error" in planResult) {
+    return { ok: false, error: planResult.error, detail: null };
+  }
 
   let pdfBuffer: Buffer;
   try {
@@ -101,53 +106,44 @@ export async function sendPortalInvoiceEmail(
 
   const invoiceNumber = String(inv.invoiceNumber ?? invoiceId).trim();
   const pdfFilename = safePdfFilename(invoiceNumber);
-  const attachments = [
-    {
-      filename: pdfFilename,
-      content: pdfBuffer,
-      contentType: "application/pdf",
-    },
-  ];
+  const attachments = [{ filename: pdfFilename, content: pdfBuffer, contentType: "application/pdf" }];
 
-  const cc = copyDelivery?.mode === "cc" ? copyDelivery.emails : [];
-  const bcc = copyDelivery?.mode === "bcc" ? copyDelivery.emails : [];
-
-  const sendResult = await sendTransactionalEmail({
-    to,
+  const offerCopyTo = offerCopyDelivery?.emails ?? [];
+  const send = await sendTransactionalEmail({
+    to: [to],
+    ...(offerCopyDelivery?.mode === "cc" && offerCopyTo.length ? { cc: offerCopyTo } : {}),
+    ...(offerCopyDelivery?.mode === "bcc" && offerCopyTo.length ? { bcc: offerCopyTo } : {}),
+    from: planResult.fromHeader,
+    replyTo: planResult.replyTo,
     subject: params.subject.trim(),
     html: params.bodyHtml,
-    text: params.bodyPlain,
-    from: plan.from,
-    replyTo: plan.replyTo,
-    cc,
-    bcc,
     attachments,
   });
 
-  if (!sendResult.ok) {
+  if (!send.ok) {
     await invRef.collection("emailOutboundHistory").add({
       to,
-      cc,
-      bcc,
+      cc: offerCopyDelivery?.mode === "cc" ? offerCopyTo : [],
+      bcc: offerCopyDelivery?.mode === "bcc" ? offerCopyTo : [],
       subject: params.subject.trim(),
       status: "error",
-      errorMessage: sendResult.error ?? "Odeslání selhalo.",
+      errorMessage: send.error ?? "Odeslání selhalo.",
       pdfFilename,
       sentByUid: params.userId,
       sentByEmail: params.sentByEmail ?? null,
       sentByName: params.sentByName ?? null,
       sentAt: FieldValue.serverTimestamp(),
     });
-    return { ok: false, error: sendResult.error ?? "E-mail se nepodařilo odeslat.", detail: null };
+    return { ok: false, error: send.error ?? "E-mail se nepodařilo odeslat.", detail: send.detail ?? null };
   }
 
   await invRef.collection("emailOutboundHistory").add({
     to,
-    cc,
-    bcc,
+    cc: offerCopyDelivery?.mode === "cc" ? offerCopyTo : [],
+    bcc: offerCopyDelivery?.mode === "bcc" ? offerCopyTo : [],
     subject: params.subject.trim(),
     status: "sent",
-    messageId: sendResult.messageId ?? null,
+    messageId: send.messageId ?? null,
     pdfFilename,
     sentByUid: params.userId,
     sentByEmail: params.sentByEmail ?? null,
@@ -178,20 +174,23 @@ export async function sendPortalInvoiceEmail(
         jobId,
         type: "invoice",
         to,
-        cc,
+        cc: offerCopyDelivery?.mode === "cc" ? offerCopyTo : [],
         subject: params.subject.trim(),
         status: "sent",
         invoiceId,
         sentByUid: params.userId,
         sentByEmail: params.sentByEmail ?? null,
         mainDocumentFilename: pdfFilename,
+        offerCopyTo,
+        offerCopyMode: offerCopyDelivery?.mode ?? null,
         sentAt: FieldValue.serverTimestamp(),
       });
   }
 
   return {
     ok: true,
-    messageId: sendResult.messageId ?? null,
-    copyTo: [...cc, ...bcc],
+    messageId: send.messageId ?? null,
+    copyTo: offerCopyTo,
+    sendNotice: planResult.sendNotice,
   };
 }
