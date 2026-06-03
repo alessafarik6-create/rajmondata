@@ -86,15 +86,17 @@ export function buildAdminRecipientCandidates(users: UserRow[]): JobNotification
   return dedupeRecipientRows(out);
 }
 
+type CustomerRecipientCandidate = {
+  uid?: string | null;
+  email?: string | null;
+  name?: string | null;
+};
+
 export function buildCustomerRecipientCandidates(
-  candidates: Array<{
-    uid?: string | null;
-    email?: string | null;
-    name?: string | null;
-  }>
+  candidates: CustomerRecipientCandidate[] | unknown
 ): JobNotificationRecipient[] {
   const out: JobNotificationRecipient[] = [];
-  for (const c of toArraySafe(candidates)) {
+  for (const c of toArraySafe<CustomerRecipientCandidate>(candidates)) {
     const email = normalizeEmail(c.email);
     if (!email || !isValidEmail(email)) continue;
     out.push({

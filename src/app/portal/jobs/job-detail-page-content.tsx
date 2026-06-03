@@ -158,6 +158,7 @@ import {
   type UserRow,
 } from "@/lib/job-notification-recipient-presets";
 import { toArraySafe } from "@/lib/to-array-safe";
+import type { JobNotificationRecipient } from "@/lib/job-notification-recipients";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
 import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
@@ -1408,7 +1409,7 @@ export function JobDetailPageContent({
   const jobExpenseTotals = useMemo(() => {
     let net = 0;
     let gross = 0;
-    for (const row of toArraySafe(jobExpenses)) {
+    for (const row of toArraySafe<JobExpenseRow>(jobExpenses)) {
       const r = resolveExpenseAmounts(row);
       net += r.amountNet;
       gross += r.amountGross;
@@ -1562,7 +1563,7 @@ export function JobDetailPageContent({
   ]);
 
   const folderCustomerNotificationCandidates = useMemo(
-    () => toArraySafe(chatNotificationPresets?.customerCandidates),
+    () => toArraySafe<JobNotificationRecipient>(chatNotificationPresets?.customerCandidates),
     [chatNotificationPresets]
   );
 
