@@ -24,6 +24,9 @@ const HANDOVER_PDF_CSS = `
     font-size: 11pt; line-height: 1.5; color: var(--ink); background: #fff;
   }
   .sheet { max-width: 800px; margin: 0 auto; padding: 28px 32px 36px; }
+  .doc-header { display: flex; gap: 20px; align-items: flex-start; justify-content: space-between; margin-bottom: 18px; }
+  .doc-logo img { max-height: 56px; max-width: 200px; object-fit: contain; }
+  .doc-company { flex: 1; text-align: right; font-size: 9.5pt; line-height: 1.45; color: var(--muted); white-space: pre-wrap; }
   @media print {
     @page { margin: 14mm 12mm 16mm; size: A4 portrait; }
     body { background: #fff !important; }
@@ -116,11 +119,22 @@ export function buildHandoverProtocolPdfHtml(params: {
   organizationSignatureUrl?: string | null;
   organizationStampName?: string | null;
   attachments?: { fileName: string }[];
+  logoUrl?: string | null;
+  companyAddressText?: string | null;
 }): string {
   const s = params.snapshot;
   const f = params.form;
   const num = params.protocolNumber.trim() || "—";
   const title = f.documentTitle.trim() || "Předávací protokol";
+
+  const logoBlock =
+    params.logoUrl && String(params.logoUrl).trim()
+      ? `<div class="doc-logo"><img src="${escapeHtml(String(params.logoUrl).trim())}" alt="Logo"/></div>`
+      : "";
+  const companyBlock = params.companyAddressText?.trim()
+    ? `<div class="doc-company">${withLineBreaks(params.companyAddressText.trim())}</div>`
+    : `<div class="doc-company">${escapeHtml(s.contractorCompanyName)}</div>`;
+  const headerHtml = `<div class="doc-header block">${logoBlock}${companyBlock}</div>`;
 
   const metaRows = [
     ["Číslo protokolu", num],
@@ -182,7 +196,7 @@ export function buildHandoverProtocolPdfHtml(params: {
 
   return `<!DOCTYPE html><html lang="cs"><head><meta charset="utf-8"/><style>${HANDOVER_PDF_CSS}</style></head><body>
 <div class="sheet">
-  <div class="org-line">${escapeHtml(s.contractorCompanyName)}</div>
+  ${headerHtml}
   <h1>${escapeHtml(title)}</h1>
   <p class="sub">Dokument předání díla (bez finančních údajů)</p>
   <table class="meta">${metaRows}</table>

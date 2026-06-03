@@ -2591,6 +2591,17 @@ service cloud.firestore {
         isPrivileged();
     }
 
+    match /handoverProtocolTemplates/{tid} {
+      allow read: if signedIn() &&
+        resource.data.companyId == userCompanyId();
+      allow create: if signedIn() &&
+        request.resource.data.companyId == userCompanyId() &&
+        isPrivileged();
+      allow update, delete: if signedIn() &&
+        resource.data.companyId == userCompanyId() &&
+        isPrivileged();
+    }
+
     /**
      * Licence firmy — zápis jen při registraci (pending); úpravy přes Admin SDK (superadmin).
      * Dokument company_licenses/{companyId} musí mít companyId shodný s ID dokumentu.

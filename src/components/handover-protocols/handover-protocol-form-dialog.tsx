@@ -32,8 +32,37 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Trash2, Eye, FileDown, Printer, Bookmark, LayoutTemplate } from "lucide-react";
+import {
+  HandoverProtocolPdfPreviewDialog,
+  type HandoverProtocolDraftPreview,
+} from "@/components/handover-protocols/handover-protocol-pdf-preview-dialog";
+import { buildHandoverProtocolHtmlForPreview } from "@/lib/handover-protocol-pdf-build";
+import {
+  applyHandoverTemplateToForm,
+  handoverTemplateContentFromForm,
+} from "@/lib/handover-protocol-template-fields";
+import {
+  createHandoverProtocolTemplate,
+  fetchHandoverProtocolTemplates,
+  type HandoverProtocolTemplateDoc,
+} from "@/lib/handover-protocol-templates-firestore";
+import {
+  downloadHandoverProtocolPdf,
+  downloadHandoverProtocolPdfFromHtml,
+} from "@/lib/handover-protocol-client-api";
+import { printInvoiceHtmlDocument } from "@/lib/print-html";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import { buildHandoverProtocolSnapshot } from "@/lib/handover-protocol-context";
 import { allocateNextHandoverProtocolNumber } from "@/lib/handover-protocol-allocate-client";
@@ -76,6 +105,8 @@ type SnapshotPreview = {
   jobName: string;
   jobNumber: string;
   customerName: string;
+  customerPhone: string;
+  customerEmail: string;
   realizationAddress: string;
   workContractNumber: string;
 };
@@ -119,6 +150,14 @@ export function HandoverProtocolFormDialog(props: {
   const [uploading, setUploading] = useState(false);
   const [preview, setPreview] = useState<SnapshotPreview | null>(null);
   const [prefetching, setPrefetching] = useState(false);
+  const [templates, setTemplates] = useState<HandoverProtocolTemplateDoc[]>([]);
+  const [templatesLoading, setTemplatesLoading] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
+  const [saveTemplateOpen, setSaveTemplateOpen] = useState(false);
+  const [templateName, setTemplateName] = useState("");
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const contractOptions = useMemo(
     () => handoverEligibleContracts(workContracts),
@@ -169,6 +208,8 @@ export function HandoverProtocolFormDialog(props: {
           jobName: built.jobName,
           jobNumber: built.jobNumber,
           customerName: built.customerName,
+          customerPhone: built.customerPhone,
+          customerEmail: built.customerEmail,
           realizationAddress: built.realizationAddress,
           workContractNumber: built.workContractNumber,
         });
@@ -201,8 +242,29 @@ export function HandoverProtocolFormDialog(props: {
   );
 
   useEffect(() => {
+    if (!open || !firestore || !companyId) return;
+    let cancelled = false;
+    setTemplatesLoading(true);
+    void fetchHandoverProtocolTemplates(firestore, companyId)
+      .then((list) => {
+        if (!cancelled) setTemplates(list);
+      })
+      .catch(() => {
+        if (!cancelled) setTemplates([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTemplatesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, firestore, companyId]);
+
+  useEffect(() => {
     if (!open) {
       setPreview(null);
+      setSelectedTemplateId("");
+      setPreviewOpen(false);
       return;
     }
     if (editProtocolId) return;
@@ -244,6 +306,8 @@ export function HandoverProtocolFormDialog(props: {
           jobName: String(d.jobName ?? jobName),
           jobNumber: String(d.jobNumber ?? ""),
           customerName: String(d.customerName ?? ""),
+          customerPhone: String(d.customerPhone ?? ""),
+          customerEmail: String(d.customerEmail ?? ""),
           realizationAddress: String(d.realizationAddress ?? ""),
           workContractNumber: String(d.workContractNumber ?? ""),
         });
@@ -510,6 +574,146 @@ export function HandoverProtocolFormDialog(props: {
 
   const defects = ensureDefects(form.defects);
 
+  const buildDraftSnapshot = (): HandoverProtocolDraftPreview["snapshot"] | null => {
+    if (!preview) return null;
+    const today = new Intl.DateTimeFormat("cs-CZ").format(new Date());
+    return {
+      jobNumber: preview.jobNumber,
+      jobName: preview.jobName,
+      workContractNumber: preview.workContractNumber,
+      customerName: preview.customerName,
+      realizationAddress: preview.realizationAddress,
+      customerPhone: preview.customerPhone,
+      customerEmail: preview.customerEmail,
+      createdAtLabel: today,
+      contractorCompanyName: "",
+    };
+  };
+
+  const draftPreview: HandoverProtocolDraftPreview | null = preview
+    ? {
+        form: { ...form, defects },
+        snapshot: buildDraftSnapshot()!,
+        protocolNumber: form.protocolNumber.trim() || "Náhled",
+      }
+    : null;
+
+  const buildDraftHtml = (): string | null => {
+    const snap = buildDraftSnapshot();
+    if (!snap) return null;
+    return buildHandoverProtocolHtmlForPreview({
+      companyDoc,
+      snapshot: snap,
+      form: { ...form, defects },
+      protocolNumber: form.protocolNumber.trim() || "Náhled",
+    });
+  };
+
+  const requirePreviewData = (): boolean => {
+    if (!preview || !workContractId.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Náhled",
+        description: "Vyberte smlouvu a počkejte na načtení údajů zakázky.",
+      });
+      return false;
+    }
+    return true;
+  };
+
+  const applyTemplate = (templateId: string) => {
+    const tpl = templates.find((t) => t.id === templateId);
+    if (!tpl?.content) {
+      toast({ variant: "destructive", title: "Šablona nenalezena." });
+      return;
+    }
+    setForm((f) => applyHandoverTemplateToForm(f, tpl.content));
+    toast({ title: "Šablona použita", description: tpl.name });
+  };
+
+  const saveAsTemplate = async () => {
+    const name = templateName.trim();
+    if (!name) {
+      toast({ variant: "destructive", title: "Zadejte název šablony." });
+      return;
+    }
+    setSavingTemplate(true);
+    try {
+      await createHandoverProtocolTemplate(firestore, {
+        companyId,
+        name,
+        content: handoverTemplateContentFromForm({ ...form, defects }),
+        createdBy: user.uid,
+      });
+      const list = await fetchHandoverProtocolTemplates(firestore, companyId);
+      setTemplates(list);
+      toast({ title: "Šablona uložena", description: name });
+      setSaveTemplateOpen(false);
+      setTemplateName("");
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Uložení šablony",
+        description: e instanceof Error ? e.message : "",
+      });
+    } finally {
+      setSavingTemplate(false);
+    }
+  };
+
+  const handleFormPdf = async () => {
+    if (!requirePreviewData()) return;
+    const html = buildDraftHtml();
+    if (!html) return;
+    setPdfBusy(true);
+    try {
+      let blob: Blob;
+      if (editProtocolId) {
+        blob = await downloadHandoverProtocolPdf({
+          user,
+          companyId,
+          protocolId: editProtocolId,
+        });
+      } else {
+        blob = await downloadHandoverProtocolPdfFromHtml({
+          user,
+          companyId,
+          jobId,
+          html,
+          filename: `predavaci-protokol-nahled.pdf`,
+        });
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `predavaci-protokol-${form.protocolNumber || "nahled"}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "PDF",
+        description: e instanceof Error ? e.message : "",
+      });
+    } finally {
+      setPdfBusy(false);
+    }
+  };
+
+  const handleFormPrint = () => {
+    if (!requirePreviewData()) return;
+    const html = buildDraftHtml();
+    if (!html) return;
+    const result = printInvoiceHtmlDocument(html, form.documentTitle || "Předávací protokol");
+    if (result === "blocked") {
+      toast({
+        variant: "destructive",
+        title: "Tisk byl zablokován",
+        description: "Povolte vyskakovací okna.",
+      });
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[min(92vh,900px)] overflow-y-auto w-[min(100vw-1rem,720px)] sm:max-w-2xl">
@@ -553,6 +757,62 @@ export function HandoverProtocolFormDialog(props: {
                 ) : null}
               </div>
             ) : null}
+
+            <div className="rounded-md border border-dashed p-3 space-y-2">
+              <p className="text-xs font-semibold flex items-center gap-1.5">
+                <LayoutTemplate className="h-3.5 w-3.5" />
+                Šablony protokolu
+              </p>
+              <div className="flex flex-col sm:flex-row gap-2 sm:items-end">
+                <div className="flex-1 space-y-1">
+                  <Label className="text-xs">Vybrat šablonu</Label>
+                  <Select
+                    value={selectedTemplateId || undefined}
+                    onValueChange={(id) => {
+                      setSelectedTemplateId(id);
+                      applyTemplate(id);
+                    }}
+                    disabled={templatesLoading || templates.length === 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          templatesLoading
+                            ? "Načítání…"
+                            : templates.length === 0
+                              ? "Žádná šablona"
+                              : "Vyberte šablonu"
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {templates.map((t) => (
+                        <SelectItem key={t.id} value={t.id}>
+                          {t.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => {
+                    setTemplateName(form.documentTitle.trim() || "Šablona protokolu");
+                    setSaveTemplateOpen(true);
+                  }}
+                >
+                  <Bookmark className="h-4 w-4 mr-1" />
+                  Uložit jako šablonu
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Šablona ukládá pouze texty a položky protokolu, ne zákazníka, adresu ani čísla
+                zakázky.
+              </p>
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5 sm:col-span-2">
@@ -764,20 +1024,105 @@ export function HandoverProtocolFormDialog(props: {
             )}
           </div>
         )}
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
-            Zrušit
-          </Button>
-          <Button
-            type="button"
-            onClick={() => void save()}
-            disabled={saving || loading || (!hasContracts && !editProtocolId)}
-          >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            <span className={saving ? "ml-2" : ""}>Uložit</span>
-          </Button>
+        <DialogFooter className="flex-col sm:flex-row gap-2 sm:justify-between">
+          <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={loading || !preview}
+              onClick={() => {
+                if (requirePreviewData()) setPreviewOpen(true);
+              }}
+            >
+              <Eye className="h-4 w-4 mr-1" /> Náhled
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={loading || pdfBusy || !preview}
+              onClick={() => void handleFormPdf()}
+            >
+              {pdfBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <FileDown className="h-4 w-4 mr-1" />
+              )}
+              Vygenerovat PDF
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={loading || !preview}
+              onClick={handleFormPrint}
+            >
+              <Printer className="h-4 w-4 mr-1" /> Tisk
+            </Button>
+          </div>
+          <div className="flex gap-2 w-full sm:w-auto justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => onOpenChange(false)}
+              disabled={saving}
+            >
+              Zrušit
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void save()}
+              disabled={saving || loading || (!hasContracts && !editProtocolId)}
+            >
+              {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              <span className={saving ? "ml-2" : ""}>Uložit</span>
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
+
+      <HandoverProtocolPdfPreviewDialog
+        open={previewOpen}
+        onOpenChange={setPreviewOpen}
+        draft={draftPreview}
+        companyDoc={companyDoc}
+        user={user}
+      />
+
+      <AlertDialog open={saveTemplateOpen} onOpenChange={setSaveTemplateOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Uložit jako šablonu</AlertDialogTitle>
+            <AlertDialogDescription>
+              Uloží se výchozí texty a položky protokolu pro další zakázky. Neukládají se údaje
+              zákazníka, adresa, čísla smlouvy ani datum předání.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="py-2">
+            <Label htmlFor="hp-template-name">Název šablony</Label>
+            <Input
+              id="hp-template-name"
+              className="mt-1.5"
+              value={templateName}
+              onChange={(e) => setTemplateName(e.target.value)}
+              placeholder="např. Standardní předání"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={savingTemplate}>Zrušit</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={savingTemplate}
+              onClick={(e) => {
+                e.preventDefault();
+                void saveAsTemplate();
+              }}
+            >
+              {savingTemplate ? "Ukládám…" : "Uložit šablonu"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

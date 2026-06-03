@@ -1,5 +1,6 @@
 import type { Firestore } from "firebase-admin/firestore";
 import { COMPANIES_COLLECTION } from "@/lib/firestore-collections";
+import { handoverCompanyPdfMeta } from "@/lib/handover-protocol-company-pdf";
 import { buildHandoverProtocolPdfHtml } from "@/lib/handover-protocol-pdf-html";
 import {
   handoverProtocolFormFromDoc,
@@ -28,6 +29,7 @@ export async function loadHandoverProtocolPdfHtml(
   const form = handoverProtocolFormFromDoc(rec);
   const attachments = (Array.isArray(rec.attachments) ? rec.attachments : []) as HandoverProtocolAttachment[];
 
+  const companyMeta = handoverCompanyPdfMeta(company);
   const html = buildHandoverProtocolPdfHtml({
     snapshot: {
       jobNumber: String(rec.jobNumber ?? ""),
@@ -38,7 +40,8 @@ export async function loadHandoverProtocolPdfHtml(
       customerEmail: String(rec.customerEmail ?? ""),
       realizationAddress: String(rec.realizationAddress ?? ""),
       createdAtLabel: String(rec.createdAtLabel ?? ""),
-      contractorCompanyName: String(rec.contractorCompanyName ?? ""),
+      contractorCompanyName:
+        String(rec.contractorCompanyName ?? "") || companyMeta.contractorCompanyName,
     },
     form,
     protocolNumber: String(rec.protocolNumber ?? form.protocolNumber ?? protocolId),
@@ -47,6 +50,8 @@ export async function loadHandoverProtocolPdfHtml(
     organizationSignatureUrl: orgSig?.url ?? null,
     organizationStampName: orgSig?.signedByName ?? null,
     attachments: attachments.map((a) => ({ fileName: a.fileName })),
+    logoUrl: companyMeta.logoUrl,
+    companyAddressText: companyMeta.companyAddressText,
   });
 
   const num = String(rec.protocolNumber ?? protocolId).replace(/[^\w.\-]+/g, "_");

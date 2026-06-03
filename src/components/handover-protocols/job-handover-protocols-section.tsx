@@ -18,7 +18,19 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { ClipboardList, Download, Mail, Pencil, PenLine, Eye, Trash2 } from "lucide-react";
+import {
+  ClipboardList,
+  Download,
+  Mail,
+  Pencil,
+  PenLine,
+  Eye,
+  Trash2,
+  Printer,
+  FolderOpen,
+} from "lucide-react";
+import { buildHandoverProtocolHtmlForPreview } from "@/lib/handover-protocol-pdf-build";
+import { printInvoiceHtmlDocument } from "@/lib/print-html";
 import { HandoverProtocolFormDialog } from "@/components/handover-protocols/handover-protocol-form-dialog";
 import { HandoverProtocolEmailDialog } from "@/components/handover-protocols/handover-protocol-email-dialog";
 import { HandoverProtocolPdfPreviewDialog } from "@/components/handover-protocols/handover-protocol-pdf-preview-dialog";
@@ -128,6 +140,45 @@ export function JobHandoverProtocolsSection(props: {
     }
   };
 
+  const printProtocol = (row: HandoverProtocolDoc) => {
+    try {
+      const form = handoverProtocolFormFromDoc(row as unknown as Record<string, unknown>);
+      const html = buildHandoverProtocolHtmlForPreview({
+        companyDoc,
+        snapshot: {
+          jobNumber: String(row.jobNumber ?? ""),
+          jobName: String(row.jobName ?? ""),
+          workContractNumber: String(row.workContractNumber ?? ""),
+          customerName: String(row.customerName ?? ""),
+          customerPhone: String(row.customerPhone ?? ""),
+          customerEmail: String(row.customerEmail ?? ""),
+          realizationAddress: String(row.realizationAddress ?? ""),
+          createdAtLabel: String(row.createdAtLabel ?? ""),
+          contractorCompanyName: String(row.contractorCompanyName ?? ""),
+        },
+        form,
+        protocolNumber: String(row.protocolNumber ?? row.id),
+        contractorSignature: row.contractorSignature,
+        customerSignature: row.customerSignature,
+        attachments: row.attachments,
+      });
+      const result = printInvoiceHtmlDocument(html, form.documentTitle || "Předávací protokol");
+      if (result === "blocked") {
+        toast({
+          variant: "destructive",
+          title: "Tisk byl zablokován",
+          description: "Povolte vyskakovací okna.",
+        });
+      }
+    } catch (e) {
+      toast({
+        variant: "destructive",
+        title: "Tisk",
+        description: e instanceof Error ? e.message : "",
+      });
+    }
+  };
+
   const downloadPdf = async (row: HandoverProtocolDoc) => {
     try {
       const blob = await downloadHandoverProtocolPdf({
@@ -216,6 +267,26 @@ export function JobHandoverProtocolsSection(props: {
                     size="sm"
                     variant="outline"
                     className="h-8 text-xs"
+                    onClick={() => openEdit(row.id)}
+                  >
+                    <FolderOpen className="h-3.5 w-3.5 mr-1" /> Otevřít
+                  </Button>
+                  {canEdit ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs"
+                      onClick={() => openEdit(row.id)}
+                    >
+                      <Pencil className="h-3.5 w-3.5 mr-1" /> Upravit
+                    </Button>
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs"
                     onClick={() => {
                       setPreviewDoc({ ...row, form });
                       setPreviewOpen(true);
@@ -230,7 +301,16 @@ export function JobHandoverProtocolsSection(props: {
                     className="h-8 text-xs"
                     onClick={() => void downloadPdf(row)}
                   >
-                    <Download className="h-3.5 w-3.5 mr-1" /> PDF
+                    <Download className="h-3.5 w-3.5 mr-1" /> Vygenerovat PDF
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs"
+                    onClick={() => printProtocol(row)}
+                  >
+                    <Printer className="h-3.5 w-3.5 mr-1" /> Tisk
                   </Button>
                   {canEdit ? (
                     <>
@@ -239,18 +319,9 @@ export function JobHandoverProtocolsSection(props: {
                         size="sm"
                         variant="outline"
                         className="h-8 text-xs"
-                        onClick={() => openEdit(row.id)}
-                      >
-                        <Pencil className="h-3.5 w-3.5 mr-1" /> Upravit
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs"
                         onClick={() => setEmailCtx({ ...row, form })}
                       >
-                        <Mail className="h-3.5 w-3.5 mr-1" /> Odeslat
+                        <Mail className="h-3.5 w-3.5 mr-1" /> Odeslat e-mailem
                       </Button>
                       <Button
                         type="button"
@@ -321,7 +392,7 @@ export function JobHandoverProtocolsSection(props: {
       <HandoverProtocolPdfPreviewDialog
         open={previewOpen}
         onOpenChange={setPreviewOpen}
-        protocol={previewDoc}
+        protocol={previewDoc ?? undefined}
         companyDoc={companyDoc}
         user={user}
         showSendEmail={canEdit}

@@ -1,44 +1,73 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import type { User } from "firebase/auth";
 import { PortalInvoicePreviewDialog } from "@/components/invoices/portal-invoice-preview-dialog";
-import { buildHandoverProtocolPdfHtml } from "@/lib/handover-protocol-pdf-html";
 import {
   handoverProtocolFormFromDoc,
-  type HandoverProtocolAttachment,
   type HandoverProtocolDoc,
+  type HandoverProtocolForm,
 } from "@/lib/handover-protocol-types";
+import { buildHandoverProtocolHtmlForPreview } from "@/lib/handover-protocol-pdf-build";
+import type { HandoverProtocolPdfSnapshot } from "@/lib/handover-protocol-pdf-build";
 import { useToast } from "@/hooks/use-toast";
 import { Loader2 } from "lucide-react";
+
+export type HandoverProtocolDraftPreview = {
+  form: HandoverProtocolForm;
+  snapshot: HandoverProtocolPdfSnapshot;
+  protocolNumber?: string;
+};
 
 export function HandoverProtocolPdfPreviewDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  protocol: HandoverProtocolDoc | null;
+  protocol?: HandoverProtocolDoc | null;
+  draft?: HandoverProtocolDraftPreview | null;
   companyDoc: Record<string, unknown> | null;
   user?: User | null;
   onSendEmail?: () => void;
   showSendEmail?: boolean;
 }) {
-  const { open, onOpenChange, protocol, companyDoc, user, onSendEmail, showSendEmail } = props;
+  const { open, onOpenChange, protocol, draft, companyDoc, user, onSendEmail, showSendEmail } =
+    props;
   const { toast } = useToast();
   const [html, setHtml] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const title = useMemo(() => {
+    if (draft?.form.documentTitle?.trim()) return draft.form.documentTitle.trim();
+    if (protocol) {
+      const form = handoverProtocolFormFromDoc(protocol as unknown as Record<string, unknown>);
+      return form.documentTitle || "Předávací protokol";
+    }
+    return "Předávací protokol";
+  }, [protocol, draft]);
+
   useEffect(() => {
-    if (!open || !protocol) {
+    if (!open) {
       setHtml("");
       return;
     }
     setLoading(true);
     try {
+      if (draft) {
+        const built = buildHandoverProtocolHtmlForPreview({
+          companyDoc,
+          snapshot: draft.snapshot,
+          form: draft.form,
+          protocolNumber: draft.protocolNumber,
+        });
+        setHtml(built);
+        return;
+      }
+      if (!protocol) {
+        setHtml("");
+        return;
+      }
       const form = handoverProtocolFormFromDoc(protocol as unknown as Record<string, unknown>);
-      const orgSig = companyDoc?.organizationSignature as
-        | { url?: string; signedByName?: string }
-        | undefined;
-      const attachments = (protocol.attachments ?? []) as HandoverProtocolAttachment[];
-      const built = buildHandoverProtocolPdfHtml({
+      const built = buildHandoverProtocolHtmlForPreview({
+        companyDoc,
         snapshot: {
           jobNumber: String(protocol.jobNumber ?? ""),
           jobName: String(protocol.jobName ?? ""),
@@ -54,22 +83,20 @@ export function HandoverProtocolPdfPreviewDialog(props: {
         protocolNumber: String(protocol.protocolNumber ?? protocol.id),
         contractorSignature: protocol.contractorSignature,
         customerSignature: protocol.customerSignature,
-        organizationSignatureUrl: orgSig?.url ?? null,
-        organizationStampName: orgSig?.signedByName ?? null,
-        attachments: attachments.map((a) => ({ fileName: a.fileName })),
+        attachments: protocol.attachments,
       });
       setHtml(built);
     } catch (e) {
       toast({
         variant: "destructive",
-        title: "Náhled PDF",
+        title: "Náhled",
         description: e instanceof Error ? e.message : "Nelze sestavit náhled.",
       });
       setHtml("");
     } finally {
       setLoading(false);
     }
-  }, [open, protocol, companyDoc, toast]);
+  }, [open, protocol, draft, companyDoc, toast]);
 
   if (!open) return null;
 
@@ -86,7 +113,7 @@ export function HandoverProtocolPdfPreviewDialog(props: {
       open={open}
       onOpenChange={onOpenChange}
       html={html}
-      title={protocol?.form?.documentTitle ?? "Předávací protokol"}
+      title={title}
       user={user}
       onSendEmail={onSendEmail}
       showSendEmail={showSendEmail}
