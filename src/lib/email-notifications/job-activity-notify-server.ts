@@ -34,6 +34,7 @@ export type JobActivityNotifyEvent =
   | "file_note"
   | "drawing_annotation"
   | "job_chat"
+  | "customer_job_chat"
   | "file_chat"
   | "customer_drawing_reminder"
   | "drawing_approved"
@@ -89,6 +90,8 @@ function orgModuleForEvent(
     case "drawing_rejected":
       return { module: "orders", eventKey: "orderStatusChanged" };
     case "job_chat":
+      return { module: "messages", eventKey: "newInternalMessage" };
+    case "customer_job_chat":
       return actorRole === "customer"
         ? { module: "messages", eventKey: "newCustomerMessage" }
         : { module: "messages", eventKey: "newInternalMessage" };
@@ -103,7 +106,8 @@ function eventLabelCs(eventType: JobActivityNotifyEvent): string {
     folder_create: "Nová složka",
     file_note: "Poznámka k souboru / výkresu",
     drawing_annotation: "Anotace ve výkresu",
-    job_chat: "Zpráva v chatu zakázky",
+    job_chat: "Interní zpráva k zakázce",
+    customer_job_chat: "Zpráva v chatu se zákazníkem",
     file_chat: "Zpráva u souboru",
     customer_drawing_reminder: "Připomínka zákazníka k výkresu",
     drawing_approved: "Schválení výkresu",
@@ -397,7 +401,14 @@ async function resolveRecipients(
   const requireFolder = requiresFolderAccess(input);
   const actorRole = String(input.actorRole ?? "").trim();
 
-  await addModuleRecipients(db, out, input, input.actorUid);
+  if (input.eventType === "customer_job_chat") {
+    if (actorRole === "customer") {
+      await addModuleRecipients(db, out, input, input.actorUid);
+    } else {
+      await addCustomerRecipients(db, out, input, job, null, false);
+    }
+  } else {
+    await addModuleRecipients(db, out, input, input.actorUid);
 
   if (requireFolder) {
     await addEmployeeRecipients(db, out, input, folder, true);
@@ -406,9 +417,6 @@ async function resolveRecipients(
     }
   } else if (input.eventType === "job_chat") {
     await addJobWideEmployeeRecipients(db, out, input);
-    if (actorRole !== "customer") {
-      await addCustomerRecipients(db, out, input, job, null, false);
-    }
   } else {
     await addEmployeeRecipients(db, out, input, folder, false);
     if (
@@ -425,6 +433,7 @@ async function resolveRecipients(
   if (actorRole === "customer") {
     await addEmployeeRecipients(db, out, input, folder, requireFolder);
     await addJobWideEmployeeRecipients(db, out, input);
+  }
   }
 
   const actorSnap = await db.collection("users").doc(input.actorUid).get();
@@ -503,6 +512,11 @@ function buildSubject(
   }
   if (input.eventType === "file_upload") {
     return `Změna v zakázce: ${jobTitle} — nový soubor`;
+  }
+  if (input.eventType === "customer_job_chat") {
+    return actorRole === "customer"
+      ? `Zákazník napsal zprávu — zakázka: ${jobTitle}`
+      : `Zpráva zákazníkovi — zakázka: ${jobTitle}`;
   }
   return `${activity} — ${jobTitle}`;
 }

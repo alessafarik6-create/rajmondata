@@ -15,6 +15,7 @@ const EVENTS = new Set<JobActivityNotifyEvent>([
   "file_note",
   "drawing_annotation",
   "job_chat",
+  "customer_job_chat",
   "file_chat",
   "customer_drawing_reminder",
   "drawing_approved",

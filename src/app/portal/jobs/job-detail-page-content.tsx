@@ -57,6 +57,7 @@ import { JobExpensesSection } from "@/components/jobs/job-expenses-section";
 import { JobBillingInvoicesSection } from "@/components/jobs/job-billing-invoices-section";
 import { JobContractDepositSection } from "@/components/jobs/job-contract-deposit-section";
 import { JobCommentsThread } from "@/components/jobs/job-comments-thread";
+import { JobCustomerChatThread } from "@/components/jobs/job-customer-chat-thread";
 import { JobDocumentEmailSection } from "@/components/jobs/job-document-email-section";
 import { JobTasksSection } from "@/components/jobs/job-tasks-section";
 import { JobMaterialOrdersSection } from "@/components/jobs/job-material-orders-section";
@@ -10462,48 +10463,68 @@ export function JobDetailPageContent({
           </Card>
 
           {companyId && jobFirestoreId && user && firestore ? (
-            <JobCommentsThread
-              firestore={firestore}
-              companyId={companyId}
-              jobId={String(jobId)}
-              userId={user.uid}
-              authorName={
-                String(
-                  (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
-                    (profile as { name?: unknown })?.name ??
-                    (profile as { email?: unknown })?.email ??
-                    user.email ??
-                    ""
-                ).trim() || "Admin"
-              }
-              authorRole="admin"
-              canPost={true}
-              title="Poznámky / chat k zakázce"
-              target={{ targetType: "job" }}
-              onAfterSend={async (sent) => {
-                // Notifikace řešíme přes API (Admin SDK), aby šlo dohledat cílové uživatele.
-                try {
-                  const token = await user.getIdToken();
-                  await fetch("/api/jobs/comments/notify", {
-                    method: "POST",
-                    headers: {
-                      Authorization: `Bearer ${token}`,
-                      "Content-Type": "application/json",
-                    },
-                    body: JSON.stringify({
-                      companyId,
-                      jobId: String(jobId),
-                      targetType: "job",
-                      messagePreview: sent.message,
-                    }),
-                  });
-                } catch {
-                  // ignore
+            <>
+              <JobCommentsThread
+                firestore={firestore}
+                companyId={companyId}
+                jobId={String(jobId)}
+                userId={user.uid}
+                authorName={
+                  String(
+                    (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
+                      (profile as { name?: unknown })?.name ??
+                      (profile as { email?: unknown })?.email ??
+                      user.email ??
+                      ""
+                  ).trim() || "Admin"
                 }
-              }}
-              wide
-              className={cn(JD.fullWidthCard, "border-gray-200")}
-            />
+                authorRole="admin"
+                canPost={true}
+                chatChannel="internal"
+                channelBadgeLabel="Interní"
+                title="Interní chat k zakázce"
+                target={{ targetType: "job" }}
+                onAfterSend={async (sent) => {
+                  try {
+                    const token = await user.getIdToken();
+                    await fetch("/api/jobs/comments/notify", {
+                      method: "POST",
+                      headers: {
+                        Authorization: `Bearer ${token}`,
+                        "Content-Type": "application/json",
+                      },
+                      body: JSON.stringify({
+                        companyId,
+                        jobId: String(jobId),
+                        targetType: "job",
+                        messagePreview: sent.message,
+                      }),
+                    });
+                  } catch {
+                    // ignore
+                  }
+                }}
+                wide
+                className={cn(JD.fullWidthCard, "border-gray-200")}
+              />
+              <JobCustomerChatThread
+                firestore={firestore}
+                companyId={companyId}
+                jobId={String(jobFirestoreId)}
+                job={job as Record<string, unknown>}
+                user={user}
+                authorName={
+                  String(
+                    (profile as { displayName?: unknown; name?: unknown; email?: unknown })?.displayName ??
+                      (profile as { name?: unknown })?.name ??
+                      (profile as { email?: unknown })?.email ??
+                      user.email ??
+                      ""
+                  ).trim() || "Admin"
+                }
+                className={cn(JD.fullWidthCard, "border-gray-200")}
+              />
+            </>
           ) : null}
 
           {companyId && jobFirestoreId ? (

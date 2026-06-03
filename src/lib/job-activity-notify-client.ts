@@ -1,5 +1,7 @@
 import type { JobActivityNotifyEvent } from "@/lib/email-notifications/job-activity-notify-server";
 
+export type { JobActivityNotifyEvent };
+
 export type NotifyJobActivityParams = {
   idToken: string;
   companyId: string;

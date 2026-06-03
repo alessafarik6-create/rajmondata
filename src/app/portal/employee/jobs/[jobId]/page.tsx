@@ -462,8 +462,11 @@ export default function EmployeeJobDetailPage() {
                 authorName={employeeDisplayName}
                 authorRole="employee"
                 canPost={true}
-                title="Poznámky / chat k zakázce"
+                chatChannel="internal"
+                channelBadgeLabel="Interní"
+                title="Interní chat k zakázce"
                 target={{ targetType: "job" }}
+                wide
                 onAfterSend={async (sent) => {
                   try {
                     const token = await user.getIdToken();

@@ -15,6 +15,7 @@ import { CustomerJobTasksSection } from "@/components/customer/customer-job-task
 import { CustomerJobQuestionnaireSection } from "@/components/customer/customer-job-questionnaire-section";
 import { CustomerJobMediaApprovalsSection } from "@/components/customer/customer-job-media-approvals-section";
 import { CustomerJobMeetingRecordsSection } from "@/components/meeting-records/customer-job-meeting-records-section";
+import { CustomerChatPanel } from "@/components/customer/customer-chat-panel";
 import { useCollection, useFirestore, useMemoFirebase } from "@/firebase";
 import {
   canCustomerAnnotateImage,
@@ -136,6 +137,10 @@ export function CustomerJobView({
         }
         readOnly={readOnly}
       />
+
+      {!readOnly && companyId ? (
+        <CustomerChatPanel companyId={companyId} linkedJobId={jobId} wide />
+      ) : null}
 
       <Card>
         <CardHeader>

@@ -86,6 +86,9 @@ export function JobCommentsThread(props: {
   authorRole: "admin" | "employee";
   canPost: boolean;
   title: string;
+  /** Interní vlákno — zákazník ho nevidí (výchozí internal). */
+  chatChannel?: "internal";
+  channelBadgeLabel?: string;
   target: JobCommentsTarget;
   /** pro embed vs dialog */
   dense?: boolean;
@@ -156,6 +159,10 @@ export function JobCommentsThread(props: {
     if (props.target.targetType === "job") {
       return list
         .filter((c) => String(c.targetType ?? "") === "job")
+        .filter((c) => {
+          const ch = String(c.chatChannel ?? "internal").trim();
+          return ch !== "customer";
+        })
         .slice()
         .sort((a, b) => millisFromTimestampLike(a.createdAt) - millisFromTimestampLike(b.createdAt));
     }
@@ -217,6 +224,7 @@ export function JobCommentsThread(props: {
       const payload: Record<string, unknown> = {
         organizationId: props.companyId,
         jobId: props.jobId,
+        chatChannel: props.chatChannel ?? "internal",
         targetType: props.target.targetType,
         fileId: props.target.targetType === "file" ? props.target.fileId : null,
         folderId:
@@ -278,8 +286,15 @@ export function JobCommentsThread(props: {
   return (
     <Card className={cn("border border-border bg-background text-foreground shadow-sm", props.className)}>
       <CardHeader className={cn(props.dense ? "pb-2" : "")}>
-        <CardTitle className="flex items-center justify-between gap-2 text-lg">
-          <span>{props.title}</span>
+        <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-lg">
+          <span className="flex flex-wrap items-center gap-2">
+            {props.title}
+            {props.channelBadgeLabel ? (
+              <Badge variant="secondary" className="text-[10px] font-normal">
+                {props.channelBadgeLabel}
+              </Badge>
+            ) : null}
+          </span>
           {unreadCount > 0 ? (
             <Badge variant="destructive" className="text-[10px]">
               {unreadCount} nepřečteno
@@ -316,6 +331,12 @@ export function JobCommentsThread(props: {
               const mine = String(c.authorId ?? "") === props.userId;
               const authorId = String(c.authorId ?? "");
               const author = String(c.authorName ?? "—");
+              const roleCs =
+                String(c.authorRole ?? "") === "employee"
+                  ? "Zaměstnanec"
+                  : String(c.authorRole ?? "") === "admin"
+                    ? "Administrátor"
+                    : String(c.authorRole ?? "") || "—";
               const msg = String(c.message ?? "");
               const sentAt = formatCsDateTimeDot(c.createdAt);
               const myReadMs = mine
@@ -350,8 +371,11 @@ export function JobCommentsThread(props: {
                         : "border-sky-200 rounded-bl-md",
                     )}
                   >
-                    <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-xs text-gray-600">
+                    <div className="mb-1.5 flex flex-wrap items-center gap-2 text-xs text-gray-600">
                       <span className="font-semibold text-gray-900">{author}</span>
+                      <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                        {roleCs}
+                      </Badge>
                       <span>{sentAt}</span>
                     </div>
                     <ExpandableNoteText text={msg} />
