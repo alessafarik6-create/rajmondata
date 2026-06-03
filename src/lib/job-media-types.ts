@@ -78,6 +78,10 @@ export type JobFolderDoc = {
   customerAnnotatable?: boolean;
   /** Pouze interní (firma), zákazník nevidí. */
   internalOnly?: boolean;
+  /** E-mail zaměstnancům při změně ve složce (vyžaduje i employeeVisible). */
+  notifyEmployees?: boolean;
+  /** E-mail zákazníkovi při změně ve složce (vyžaduje i customerVisible). */
+  notifyCustomer?: boolean;
 };
 
 export type JobMediaFileType = "image" | "pdf" | "office" | "csv" | "archive";

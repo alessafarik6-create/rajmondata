@@ -12,8 +12,15 @@ import {
 import {
   canCustomerAccessJob,
   isFolderCustomerVisible,
+  isFolderInternalOnly,
 } from "@/lib/job-customer-access";
 import { isFolderEmployeeVisible } from "@/lib/job-employee-access";
+import {
+  isFolderNotifyCustomerEnabled,
+  isFolderNotifyEmployeesEnabled,
+  isJobCustomerChatEmailEnabled,
+  isJobInternalChatEmailEnabled,
+} from "@/lib/job-notification-settings";
 import {
   jobChatEmailEnabled,
   photoDocUnreadEmailEnabled,
@@ -128,6 +135,15 @@ function requiresFolderAccess(input: JobActivityNotifyInput): boolean {
   return false;
 }
 
+function isFolderMediaNotifyEvent(eventType: JobActivityNotifyEvent): boolean {
+  return (
+    eventType === "file_upload" ||
+    eventType === "folder_create" ||
+    eventType === "file_note" ||
+    eventType === "drawing_annotation"
+  );
+}
+
 function employeeCanSeeFolder(
   folder: Record<string, unknown> | null,
   folderId: string | null,
@@ -155,8 +171,11 @@ function customerMayReceiveForFolder(
 ): boolean {
   if (requireFolder && !input.folderId?.trim()) return false;
   if (!folder) return !requireFolder;
+  if (isFolderInternalOnly(folder)) return false;
   if (input.visibleToCustomer === false) return false;
-  return isFolderCustomerVisible(folder);
+  if (!isFolderCustomerVisible(folder)) return false;
+  if (!isFolderNotifyCustomerEnabled(folder)) return false;
+  return true;
 }
 
 function userWantsEmail(
@@ -167,6 +186,7 @@ function userWantsEmail(
   if (String(user.role ?? "") === "customer") return true;
   switch (eventType) {
     case "job_chat":
+    case "customer_job_chat":
       return jobChatEmailEnabled(user);
     case "file_chat":
     case "file_note":
@@ -220,6 +240,7 @@ async function loadFolder(
   return snap.exists ? ((snap.data() ?? {}) as Record<string, unknown>) : null;
 }
 
+/** E-maily z modulového nastavení organizace (admini / vybrané adresy). */
 async function addModuleRecipients(
   db: Firestore,
   out: Map<string, Recipient>,
@@ -269,11 +290,21 @@ async function addEmployeeRecipients(
   out: Map<string, Recipient>,
   input: JobActivityNotifyInput,
   folder: Record<string, unknown> | null,
-  requireFolder: boolean
+  requireFolder: boolean,
+  opts?: { requireFolderNotifyToggle?: boolean }
 ): Promise<void> {
   const folderId = input.folderId?.trim() || null;
   if (requireFolder && !folderId) return;
+  if (requireFolder && !folder) return;
   if (requireFolder && folder && !isFolderEmployeeVisible(folder)) return;
+  if (
+    opts?.requireFolderNotifyToggle !== false &&
+    requireFolder &&
+    folder &&
+    !isFolderNotifyEmployeesEnabled(folder)
+  ) {
+    return;
+  }
 
   const membersSnap = await db
     .collection("companies")
@@ -316,34 +347,39 @@ async function addCustomerRecipients(
     : [];
 
   for (const uid of portalIds) {
-    if (!uid.trim() || uid === input.actorUid || seenUids.has(uid)) continue;
-    const uSnap = await db.collection("users").doc(uid.trim()).get();
+    const trimmed = uid.trim();
+    if (!trimmed || trimmed === input.actorUid || seenUids.has(trimmed)) continue;
+    const uSnap = await db.collection("users").doc(trimmed).get();
     const u = uSnap.data() as Record<string, unknown> | undefined;
     if (!u || String(u.role ?? "") !== "customer") continue;
-    if (!canCustomerAccessJob(uid, u, jobWithId)) continue;
+    if (!canCustomerAccessJob(trimmed, u, jobWithId)) continue;
     const email = normalizeEmail(u.email);
     if (!email || !isValidEmail(email)) continue;
-    seenUids.add(uid);
-    out.set(email, { email, uid, role: "customer", kind: "customer" });
+    seenUids.add(trimmed);
+    out.set(email, { email, uid: trimmed, role: "customer", kind: "customer" });
   }
 
-  const customersSnap = await db
-    .collection("users")
-    .where("companyId", "==", input.companyId)
-    .where("role", "==", "customer")
-    .get()
-    .catch(() => null);
-
-  if (customersSnap) {
-    for (const docSnap of customersSnap.docs) {
-      const uid = docSnap.id;
-      if (uid === input.actorUid || seenUids.has(uid)) continue;
-      const u = docSnap.data() as Record<string, unknown>;
-      if (!canCustomerAccessJob(uid, u, jobWithId)) continue;
-      const email = normalizeEmail(u.email);
-      if (!email || !isValidEmail(email)) continue;
-      seenUids.add(uid);
-      out.set(email, { email, uid, role: "customer", kind: "customer" });
+  const crmCustomerId =
+    typeof job.customerId === "string" ? String(job.customerId).trim() : "";
+  if (crmCustomerId) {
+    const uSnap = await db
+      .collection("users")
+      .where("customerRecordId", "==", crmCustomerId)
+      .where("role", "==", "customer")
+      .limit(3)
+      .get()
+      .catch(() => null);
+    if (uSnap) {
+      for (const d of uSnap.docs) {
+        const uid = d.id;
+        if (uid === input.actorUid || seenUids.has(uid)) continue;
+        const u = d.data() as Record<string, unknown>;
+        if (!canCustomerAccessJob(uid, u, jobWithId)) continue;
+        const email = normalizeEmail(u.email);
+        if (!email || !isValidEmail(email)) continue;
+        seenUids.add(uid);
+        out.set(email, { email, uid, role: "customer", kind: "customer" });
+      }
     }
   }
 
@@ -353,15 +389,18 @@ async function addCustomerRecipients(
     job,
   });
   if (fallbackEmail && isValidEmail(fallbackEmail) && !out.has(fallbackEmail)) {
-    out.set(fallbackEmail, {
-      email: fallbackEmail,
-      role: "customer",
-      kind: "customer",
-    });
+    const alreadyUid = [...seenUids].some((id) => id === input.actorUid);
+    if (!alreadyUid) {
+      out.set(fallbackEmail, {
+        email: fallbackEmail,
+        role: "customer",
+        kind: "customer",
+      });
+    }
   }
 }
 
-/** Chat u celé zakázky (bez složky) — zaměstnanci přiřazení k zakázce. */
+/** Interní chat u zakázky — zaměstnanci přiřazení k zakázce (bez složky). */
 async function addJobWideEmployeeRecipients(
   db: Firestore,
   out: Map<string, Recipient>,
@@ -400,6 +439,17 @@ async function resolveRecipients(
   const out = new Map<string, Recipient>();
   const requireFolder = requiresFolderAccess(input);
   const actorRole = String(input.actorRole ?? "").trim();
+  const folderMedia = isFolderMediaNotifyEvent(input.eventType);
+
+  if (input.eventType === "job_chat" && !isJobInternalChatEmailEnabled(job)) {
+    return [];
+  }
+  if (input.eventType === "file_chat" && !isJobInternalChatEmailEnabled(job)) {
+    return [];
+  }
+  if (input.eventType === "customer_job_chat" && !isJobCustomerChatEmailEnabled(job)) {
+    return [];
+  }
 
   if (input.eventType === "customer_job_chat") {
     if (actorRole === "customer") {
@@ -407,33 +457,49 @@ async function resolveRecipients(
     } else {
       await addCustomerRecipients(db, out, input, job, null, false);
     }
-  } else {
-    await addModuleRecipients(db, out, input, input.actorUid);
-
-  if (requireFolder) {
-    await addEmployeeRecipients(db, out, input, folder, true);
-    if (actorRole !== "customer") {
+  } else if (folderMedia) {
+    if (isFolderNotifyEmployeesEnabled(folder)) {
+      await addEmployeeRecipients(db, out, input, folder, true, {
+        requireFolderNotifyToggle: true,
+      });
+    }
+    if (actorRole !== "customer" && isFolderNotifyCustomerEnabled(folder)) {
       await addCustomerRecipients(db, out, input, job, folder, true);
     }
-  } else if (input.eventType === "job_chat") {
-    await addJobWideEmployeeRecipients(db, out, input);
-  } else {
-    await addEmployeeRecipients(db, out, input, folder, false);
-    if (
-      input.eventType === "customer_drawing_reminder" ||
-      input.eventType === "drawing_approved" ||
-      input.eventType === "drawing_rejected"
-    ) {
-      // zákazník provedl akci → notifikovat tým
-    } else if (actorRole !== "customer") {
-      await addCustomerRecipients(db, out, input, job, folder, false);
+    if (actorRole === "customer") {
+      await addModuleRecipients(db, out, input, input.actorUid);
+      if (isFolderNotifyEmployeesEnabled(folder)) {
+        await addEmployeeRecipients(db, out, input, folder, true, {
+          requireFolderNotifyToggle: true,
+        });
+      }
     }
-  }
-
-  if (actorRole === "customer") {
-    await addEmployeeRecipients(db, out, input, folder, requireFolder);
+  } else if (input.eventType === "file_chat") {
+    await addModuleRecipients(db, out, input, input.actorUid);
+    const folderId = input.folderId?.trim() || null;
+    if (folderId && folder) {
+      await addEmployeeRecipients(db, out, input, folder, true, {
+        requireFolderNotifyToggle: false,
+      });
+    } else {
+      await addJobWideEmployeeRecipients(db, out, input);
+    }
+  } else if (input.eventType === "job_chat") {
+    await addModuleRecipients(db, out, input, input.actorUid);
     await addJobWideEmployeeRecipients(db, out, input);
-  }
+  } else if (requireFolder && folder) {
+    if (actorRole === "customer") {
+      await addModuleRecipients(db, out, input, input.actorUid);
+      if (isFolderNotifyEmployeesEnabled(folder)) {
+        await addEmployeeRecipients(db, out, input, folder, true, {
+          requireFolderNotifyToggle: true,
+        });
+      }
+    } else {
+      await addModuleRecipients(db, out, input, input.actorUid);
+    }
+  } else {
+    await addModuleRecipients(db, out, input, input.actorUid);
   }
 
   const actorSnap = await db.collection("users").doc(input.actorUid).get();
@@ -496,9 +562,7 @@ function resolveJobNumber(job: Record<string, unknown>): string | null {
 }
 
 function resolveCustomerName(job: Record<string, unknown>): string {
-  return (
-    String(job.customerName ?? job.clientName ?? "").trim() || "—"
-  );
+  return String(job.customerName ?? job.clientName ?? "").trim() || "—";
 }
 
 function buildSubject(

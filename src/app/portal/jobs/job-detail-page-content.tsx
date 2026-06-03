@@ -150,6 +150,10 @@ import { getJobCustomerPortalPreviewGate } from "@/lib/job-customer-portal-previ
 import { JD } from "@/lib/job-detail-page-styles";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import { notifyJobActivity } from "@/lib/job-activity-notify-client";
+import {
+  isJobCustomerChatEmailEnabled,
+  isJobInternalChatEmailEnabled,
+} from "@/lib/job-notification-settings";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
 import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
@@ -1482,6 +1486,33 @@ export function JobDetailPageContent({
     const j = job as { customerEmail?: string } | null | undefined;
     return String(j?.customerEmail ?? "").trim();
   }, [customer, job]);
+
+  const internalChatEmailNotify = useMemo(
+    () => isJobInternalChatEmailEnabled(job as Record<string, unknown> | null | undefined),
+    [job]
+  );
+  const customerChatEmailNotify = useMemo(
+    () => isJobCustomerChatEmailEnabled(job as Record<string, unknown> | null | undefined),
+    [job]
+  );
+
+  const persistJobChatEmailNotify = useCallback(
+    async (
+      field: "internalChatEmailNotifications" | "customerChatEmailNotifications",
+      enabled: boolean
+    ) => {
+      if (!firestore || !jobRef) return;
+      try {
+        await updateDoc(jobRef, {
+          [field]: enabled,
+          updatedAt: serverTimestamp(),
+        });
+      } catch {
+        /* ignore */
+      }
+    },
+    [firestore, jobRef]
+  );
 
   const customerPortalPreviewGate = useMemo(
     () =>
@@ -10518,6 +10549,11 @@ export function JobDetailPageContent({
                     // ignore
                   }
                 }}
+                emailNotifyEnabled={internalChatEmailNotify}
+                showEmailNotifyToggle
+                onEmailNotifyChange={(v) =>
+                  void persistJobChatEmailNotify("internalChatEmailNotifications", v)
+                }
                 wide
                 className={cn(JD.fullWidthCard, "border-gray-200")}
               />
@@ -10528,6 +10564,11 @@ export function JobDetailPageContent({
                 job={job as Record<string, unknown>}
                 customer={customer ?? null}
                 customerPortalUserDocId={customerPortalUserDocId}
+                emailNotifyEnabled={customerChatEmailNotify}
+                showEmailNotifyToggle
+                onEmailNotifyChange={(v) =>
+                  void persistJobChatEmailNotify("customerChatEmailNotifications", v)
+                }
                 user={user}
                 authorName={
                   String(

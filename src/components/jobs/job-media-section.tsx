@@ -1044,10 +1044,42 @@ function UserFolderBlock({
         )
       : canManageFolders);
 
+  const persistFolderNotifyFlags = async (patch: {
+    notifyEmployees?: boolean;
+    notifyCustomer?: boolean;
+  }) => {
+    if (!firestore || folderPermBusy) return;
+    setFolderPermBusy(true);
+    try {
+      await updateDoc(
+        doc(
+          firestore,
+          "companies",
+          companyId,
+          "jobs",
+          jobId,
+          "folders",
+          folder.id
+        ),
+        patch
+      );
+    } catch (e) {
+      console.error(e);
+      toast({
+        variant: "destructive",
+        title: "Chyba",
+        description: "Nastavení notifikací se nepodařilo uložit.",
+      });
+    } finally {
+      setFolderPermBusy(false);
+    }
+  };
+
   const persistFolderEmployeeFlags = async (patch: {
     employeeVisible: boolean;
     allowEmployeeUpload: boolean;
     employeeCanEdit: boolean;
+    notifyEmployees?: boolean;
   }) => {
     if (!firestore || folderPermBusy) return;
     setFolderPermBusy(true);
@@ -1066,6 +1098,9 @@ function UserFolderBlock({
           employeeVisible: patch.employeeVisible,
           allowEmployeeUpload: patch.allowEmployeeUpload,
           employeeCanEdit: patch.employeeCanEdit,
+          ...(patch.notifyEmployees !== undefined
+            ? { notifyEmployees: patch.notifyEmployees }
+            : {}),
           /** Legacy (zpětná kompatibilita během přechodu) */
           employeeUploadAllowed: patch.allowEmployeeUpload,
         }
@@ -1097,6 +1132,7 @@ function UserFolderBlock({
     customerVisible: boolean;
     customerAnnotatable: boolean;
     internalOnly: boolean;
+    notifyCustomer?: boolean;
   }) => {
     if (!firestore || folderPermBusy) return;
     setFolderPermBusy(true);
@@ -1115,6 +1151,9 @@ function UserFolderBlock({
           customerVisible: patch.customerVisible,
           customerAnnotatable: patch.customerAnnotatable,
           internalOnly: patch.internalOnly,
+          ...(patch.notifyCustomer !== undefined
+            ? { notifyCustomer: patch.notifyCustomer }
+            : {}),
         }
       );
       toast({
@@ -2222,6 +2261,7 @@ function UserFolderBlock({
                               (folder as { employeeUploadAllowed?: unknown }).employeeUploadAllowed === true)
                           : false,
                         employeeCanEdit: v ? folder.employeeCanEdit === true : false,
+                        notifyEmployees: v ? folder.notifyEmployees === true : false,
                       })
                     }
                   />
@@ -2279,10 +2319,27 @@ function UserFolderBlock({
                     Zaměstnanec může upravovat
                   </Label>
                 </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id={`emp-notify-${folder.id}`}
+                    checked={folder.notifyEmployees === true}
+                    disabled={folderPermBusy || folder.employeeVisible !== true}
+                    onCheckedChange={(v) =>
+                      void persistFolderNotifyFlags({ notifyEmployees: v })
+                    }
+                  />
+                  <Label
+                    htmlFor={`emp-notify-${folder.id}`}
+                    className="cursor-pointer text-sm font-normal"
+                  >
+                    Posílat notifikace zaměstnancům
+                  </Label>
+                </div>
               </div>
               <p className="text-[11px] leading-snug text-muted-foreground">
                 Bez zaškrtnutí „Viditelné zaměstnanci“ je složka jen pro interní
-                přístup (výchozí u starších dat).
+                přístup (výchozí u starších dat). E-mail zaměstnancům jen při zapnutých
+                obou přepínačích viditelnosti a notifikací.
               </p>
             </div>
           ) : null}
@@ -2302,6 +2359,7 @@ function UserFolderBlock({
                         customerVisible: v,
                         customerAnnotatable: v ? folder.customerAnnotatable === true : false,
                         internalOnly: folder.internalOnly === true,
+                        notifyCustomer: v ? folder.notifyCustomer === true : false,
                       })
                     }
                   />
@@ -2338,6 +2396,7 @@ function UserFolderBlock({
                         customerVisible: v ? false : folder.customerVisible === true,
                         customerAnnotatable: v ? false : folder.customerAnnotatable === true,
                         internalOnly: v,
+                        notifyCustomer: v ? false : folder.notifyCustomer === true,
                       })
                     }
                   />
@@ -2345,10 +2404,31 @@ function UserFolderBlock({
                     Interní pouze pro firmu
                   </Label>
                 </div>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id={`cust-notify-${folder.id}`}
+                    checked={folder.notifyCustomer === true}
+                    disabled={
+                      folderPermBusy ||
+                      folder.customerVisible !== true ||
+                      folder.internalOnly === true
+                    }
+                    onCheckedChange={(v) =>
+                      void persistFolderNotifyFlags({ notifyCustomer: v })
+                    }
+                  />
+                  <Label
+                    htmlFor={`cust-notify-${folder.id}`}
+                    className="cursor-pointer text-sm font-normal"
+                  >
+                    Posílat notifikace zákazníkovi
+                  </Label>
+                </div>
               </div>
               <p className="text-[11px] leading-snug text-muted-foreground">
-                Bez „Viditelné zákazníkovi“ zákazník složku neuvidí. Účetní složky typu Doklady se v klientském
-                portálu nezobrazují.
+                Bez „Viditelné zákazníkovi“ zákazník složku neuvidí. E-mail zákazníkovi jen při zapnutých
+                obou přepínačích viditelnosti a notifikací. Účetní složky typu Doklady se v klientském portálu
+                nezobrazují.
               </p>
             </div>
           ) : null}
