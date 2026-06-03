@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import type { Firestore } from "firebase/firestore";
 import {
   arrayUnion,
@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Select,
   SelectContent,
@@ -36,6 +37,10 @@ import { Loader2, Plus, Trash2 } from "lucide-react";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
 import { buildHandoverProtocolSnapshot } from "@/lib/handover-protocol-context";
 import { allocateNextHandoverProtocolNumber } from "@/lib/handover-protocol-allocate-client";
+import {
+  handoverEligibleContracts,
+  pickDefaultHandoverContractId,
+} from "@/lib/handover-protocol-contracts";
 import {
   defaultHandoverProtocolForm,
   handoverProtocolFormFromDoc,
@@ -63,6 +68,18 @@ function historyEvent(
   };
 }
 
+function ensureDefects(defects: unknown): HandoverDefectRow[] {
+  return Array.isArray(defects) ? defects : [];
+}
+
+type SnapshotPreview = {
+  jobName: string;
+  jobNumber: string;
+  customerName: string;
+  realizationAddress: string;
+  workContractNumber: string;
+};
+
 export function HandoverProtocolFormDialog(props: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -73,7 +90,7 @@ export function HandoverProtocolFormDialog(props: {
   user: User;
   profile: ActivityActorProfile | null | undefined;
   companyDoc: Record<string, unknown> | null;
-  workContracts: WorkContractDoc[];
+  workContracts: unknown;
   editProtocolId?: string | null;
   defaultWorkContractId?: string | null;
   defaultCustomerEmail?: string | null;
@@ -100,26 +117,112 @@ export function HandoverProtocolFormDialog(props: {
   const [workContractId, setWorkContractId] = useState("");
   const [form, setForm] = useState<HandoverProtocolForm>(defaultHandoverProtocolForm());
   const [uploading, setUploading] = useState(false);
+  const [preview, setPreview] = useState<SnapshotPreview | null>(null);
+  const [prefetching, setPrefetching] = useState(false);
 
-  const contractOptions = workContracts
-    .filter((c) => {
-      const role = String(c.documentRole ?? "").trim();
-      return role !== "attachment" && role !== "addendum" && c.isTemplate !== true;
-    })
-    .map((c) => ({
-      id: c.id,
-      label: `${String(c.contractNumber ?? c.id)} — ${String(c.documentTitle ?? c.title ?? "Smlouva")}`,
-    }));
+  const contractOptions = useMemo(
+    () => handoverEligibleContracts(workContracts),
+    [workContracts]
+  );
+
+  const hasContracts = contractOptions.length > 0;
+
+  const selectValue = useMemo(() => {
+    const id = String(workContractId ?? "").trim();
+    if (!id) return undefined;
+    return contractOptions.some((o) => o.id === id) ? id : undefined;
+  }, [workContractId, contractOptions]);
+
+  const loadSnapshotPreview = useCallback(
+    async (contractId: string, mergeForm?: HandoverProtocolForm | null) => {
+      if (!firestore || !companyId || !jobId || !contractId.trim()) {
+        setPreview(null);
+        return;
+      }
+      setPrefetching(true);
+      try {
+        const [jobSnap, wcSnap, custSnap] = await Promise.all([
+          getDoc(doc(firestore, "companies", companyId, "jobs", jobId)),
+          getDoc(
+            doc(firestore, "companies", companyId, "jobs", jobId, "workContracts", contractId)
+          ),
+          (async () => {
+            const j = await getDoc(doc(firestore, "companies", companyId, "jobs", jobId));
+            const cid = String((j.data() as { customerId?: string })?.customerId ?? "").trim();
+            if (!cid) return null;
+            return getDoc(doc(firestore, "companies", companyId, "customers", cid));
+          })(),
+        ]);
+        const built = buildHandoverProtocolSnapshot({
+          companyId,
+          jobId,
+          job: (jobSnap.data() ?? null) as Record<string, unknown> | null,
+          customer: custSnap?.exists() ? (custSnap.data() as Record<string, unknown>) : null,
+          companyDoc,
+          workContract: wcSnap.exists()
+            ? ({ id: contractId, ...wcSnap.data() } as WorkContractDoc)
+            : null,
+          workContractId: contractId,
+          existingForm: mergeForm ?? defaultHandoverProtocolForm(),
+        });
+        setPreview({
+          jobName: built.jobName,
+          jobNumber: built.jobNumber,
+          customerName: built.customerName,
+          realizationAddress: built.realizationAddress,
+          workContractNumber: built.workContractNumber,
+        });
+        if (!editProtocolId) {
+          setForm((prev) => ({
+            ...built.form,
+            documentTitle: prev.documentTitle?.trim() || built.form.documentTitle,
+            handoverDateLabel:
+              prev.handoverDateLabel?.trim() || built.form.handoverDateLabel,
+            deliveredWork: prev.deliveredWork?.trim() || built.form.deliveredWork,
+            completedWorkDescription:
+              prev.completedWorkDescription?.trim() || built.form.completedWorkDescription,
+            handoverNote: prev.handoverNote?.trim() || built.form.handoverNote,
+            acceptanceText: prev.acceptanceText?.trim() || built.form.acceptanceText,
+            defects: ensureDefects(prev.defects),
+            handedDocumentation: prev.handedDocumentation,
+            handedManuals: prev.handedManuals,
+            handedKeys: prev.handedKeys,
+            otherHandedItems: prev.otherHandedItems,
+            protocolNumber: prev.protocolNumber,
+          }));
+        }
+      } catch {
+        setPreview(null);
+      } finally {
+        setPrefetching(false);
+      }
+    },
+    [firestore, companyId, jobId, companyDoc, editProtocolId]
+  );
 
   useEffect(() => {
-    if (!open) return;
+    if (!open) {
+      setPreview(null);
+      return;
+    }
     if (editProtocolId) return;
-    setWorkContractId(defaultWorkContractId?.trim() || contractOptions[0]?.id || "");
+
+    const nextContractId = pickDefaultHandoverContractId(
+      workContracts,
+      defaultWorkContractId
+    );
+    setWorkContractId(nextContractId ?? "");
     setForm(defaultHandoverProtocolForm());
-  }, [open, editProtocolId, defaultWorkContractId, contractOptions]);
+
+    if (nextContractId) {
+      void loadSnapshotPreview(nextContractId, defaultHandoverProtocolForm());
+    } else {
+      setPreview(null);
+    }
+  }, [open, editProtocolId, defaultWorkContractId, workContracts, loadSnapshotPreview]);
 
   useEffect(() => {
-    if (!open || !editProtocolId) return;
+    if (!open || !editProtocolId || !firestore) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -133,8 +236,17 @@ export function HandoverProtocolFormDialog(props: {
           return;
         }
         const d = snap.data() as Record<string, unknown>;
-        setWorkContractId(String(d.workContractId ?? ""));
-        setForm(handoverProtocolFormFromDoc(d));
+        const wcId = String(d.workContractId ?? "").trim();
+        setWorkContractId(wcId);
+        const parsed = handoverProtocolFormFromDoc(d);
+        setForm({ ...parsed, defects: ensureDefects(parsed.defects) });
+        setPreview({
+          jobName: String(d.jobName ?? jobName),
+          jobNumber: String(d.jobNumber ?? ""),
+          customerName: String(d.customerName ?? ""),
+          realizationAddress: String(d.realizationAddress ?? ""),
+          workContractNumber: String(d.workContractNumber ?? ""),
+        });
       } catch (e) {
         toast({
           variant: "destructive",
@@ -148,48 +260,14 @@ export function HandoverProtocolFormDialog(props: {
     return () => {
       cancelled = true;
     };
-  }, [open, editProtocolId, firestore, companyId, toast]);
+  }, [open, editProtocolId, firestore, companyId, toast, jobName]);
 
-  useEffect(() => {
-    if (!open || editProtocolId || !workContractId) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const [jobSnap, wcSnap, custSnap] = await Promise.all([
-          getDoc(doc(firestore, "companies", companyId, "jobs", jobId)),
-          getDoc(
-            doc(firestore, "companies", companyId, "jobs", jobId, "workContracts", workContractId)
-          ),
-          (async () => {
-            const j = await getDoc(doc(firestore, "companies", companyId, "jobs", jobId));
-            const cid = String((j.data() as { customerId?: string })?.customerId ?? "").trim();
-            if (!cid) return null;
-            return getDoc(doc(firestore, "companies", companyId, "customers", cid));
-          })(),
-        ]);
-        if (cancelled) return;
-        const snap = buildHandoverProtocolSnapshot({
-          companyId,
-          jobId,
-          job: (jobSnap.data() ?? null) as Record<string, unknown> | null,
-          customer: custSnap?.exists() ? (custSnap.data() as Record<string, unknown>) : null,
-          companyDoc,
-          workContract: wcSnap.exists()
-            ? ({ id: workContractId, ...wcSnap.data() } as WorkContractDoc)
-            : null,
-          workContractId,
-          existingForm: form,
-        });
-        setForm(snap.form);
-      } catch {
-        /* ignore prefetch */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only prefetch on contract change for new doc
-  }, [open, editProtocolId, workContractId, companyId, jobId, firestore, companyDoc]);
+  const handleContractChange = (nextId: string) => {
+    setWorkContractId(nextId);
+    if (nextId.trim() && !editProtocolId) {
+      void loadSnapshotPreview(nextId, defaultHandoverProtocolForm());
+    }
+  };
 
   const actorName =
     profile?.displayName?.trim() ||
@@ -198,6 +276,13 @@ export function HandoverProtocolFormDialog(props: {
     "Uživatel";
 
   const validate = (): boolean => {
+    if (!hasContracts) {
+      toast({
+        variant: "destructive",
+        title: "Nejdříve vytvořte smlouvu o dílo.",
+      });
+      return false;
+    }
     if (!form.documentTitle.trim()) {
       toast({ variant: "destructive", title: "Vyplňte název dokumentu." });
       return false;
@@ -251,16 +336,18 @@ export function HandoverProtocolFormDialog(props: {
           ? ({ id: workContractId, ...wcSnap.data() } as WorkContractDoc)
           : null,
         workContractId,
-        existingForm: form,
+        existingForm: { ...form, defects: ensureDefects(form.defects) },
       });
       const formToSave: HandoverProtocolForm = {
         ...built.form,
         ...form,
+        defects: ensureDefects(form.defects),
         protocolNumber: form.protocolNumber.trim() || built.form.protocolNumber,
       };
 
       const isNew = !editProtocolId;
-      const id = editProtocolId || doc(collection(firestore, "companies", companyId, "handoverProtocols")).id;
+      const id =
+        editProtocolId || doc(collection(firestore, "companies", companyId, "handoverProtocols")).id;
       let protocolNumber = formToSave.protocolNumber.trim();
       if (isNew && !protocolNumber) {
         try {
@@ -345,9 +432,11 @@ export function HandoverProtocolFormDialog(props: {
 
   const setDefect = (idx: number, patch: Partial<HandoverDefectRow>) => {
     setForm((f) => {
-      const defects = [...f.defects];
-      defects[idx] = { ...defects[idx], ...patch };
-      return { ...f, defects };
+      const defects = ensureDefects(f.defects);
+      if (idx < 0 || idx >= defects.length) return f;
+      const next = defects.slice();
+      next[idx] = { ...next[idx], ...patch };
+      return { ...f, defects: next };
     });
   };
 
@@ -364,9 +453,20 @@ export function HandoverProtocolFormDialog(props: {
     if (!storage) return;
     setUploading(true);
     try {
-      const newAtts: { id: string; fileName: string; fileUrl: string; storagePath: string; mimeType: string; fileSize: number; createdAt: unknown; createdBy: string; visibleToCustomer: boolean }[] = [];
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i]!;
+      const fileList = Array.from(files);
+      const newAtts: {
+        id: string;
+        fileName: string;
+        fileUrl: string;
+        storagePath: string;
+        mimeType: string;
+        fileSize: number;
+        createdAt: unknown;
+        createdBy: string;
+        visibleToCustomer: boolean;
+      }[] = [];
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i]!;
         const attId = `att-${Date.now()}-${i}`;
         const path = `companies/${companyId}/handoverProtocols/${protocolId}/attachments/${attId}_${file.name}`;
         const sref = storageRef(storage, path);
@@ -388,7 +488,12 @@ export function HandoverProtocolFormDialog(props: {
         attachments: arrayUnion(...newAtts),
         updatedAt: serverTimestamp(),
         activityHistory: arrayUnion(
-          historyEvent("attachment_added", user.uid, actorName, newAtts.map((a) => a.fileName).join(", "))
+          historyEvent(
+            "attachment_added",
+            user.uid,
+            actorName,
+            newAtts.map((a) => a.fileName).join(", ")
+          )
         ),
       });
       toast({ title: "Přílohy nahrány" });
@@ -403,6 +508,8 @@ export function HandoverProtocolFormDialog(props: {
     }
   };
 
+  const defects = ensureDefects(form.defects);
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[min(92vh,900px)] overflow-y-auto w-[min(100vw-1rem,720px)] sm:max-w-2xl">
@@ -415,27 +522,61 @@ export function HandoverProtocolFormDialog(props: {
           <p className="text-sm text-muted-foreground flex items-center gap-2">
             <Loader2 className="h-4 w-4 animate-spin" /> Načítání…
           </p>
+        ) : !hasContracts && !editProtocolId ? (
+          <Alert variant="destructive">
+            <AlertDescription>Nejdříve vytvořte smlouvu o dílo.</AlertDescription>
+          </Alert>
         ) : (
           <div className="space-y-4 text-sm">
+            {preview ? (
+              <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1">
+                <p>
+                  <span className="font-medium">Zakázka:</span> {preview.jobName}
+                  {preview.jobNumber ? ` (${preview.jobNumber})` : ""}
+                </p>
+                <p>
+                  <span className="font-medium">Zákazník:</span>{" "}
+                  {preview.customerName || "—"}
+                </p>
+                <p>
+                  <span className="font-medium">Adresa realizace:</span>{" "}
+                  {preview.realizationAddress || "—"}
+                </p>
+                <p>
+                  <span className="font-medium">Smlouva o dílo:</span>{" "}
+                  {preview.workContractNumber || "—"}
+                </p>
+                {prefetching ? (
+                  <p className="text-muted-foreground flex items-center gap-1 pt-1">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Načítám údaje…
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-1.5 sm:col-span-2">
                 <Label>Smlouva o dílo *</Label>
-                <Select
-                  value={workContractId}
-                  onValueChange={setWorkContractId}
-                  disabled={!!editProtocolId}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Vyberte smlouvu" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {contractOptions.map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                {hasContracts ? (
+                  <Select
+                    value={selectValue}
+                    onValueChange={handleContractChange}
+                    disabled={!!editProtocolId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Vyberte smlouvu" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {contractOptions.map((o) => (
+                        <SelectItem key={o.id} value={o.id}>
+                          {o.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-sm text-muted-foreground">Žádná smlouva o dílo.</p>
+                )}
               </div>
               <div className="space-y-1.5">
                 <Label>Název dokumentu *</Label>
@@ -487,18 +628,24 @@ export function HandoverProtocolFormDialog(props: {
                   size="sm"
                   variant="outline"
                   onClick={() =>
-                    setForm((f) => ({ ...f, defects: [...f.defects, newHandoverDefectRow()] }))
+                    setForm((f) => ({
+                      ...f,
+                      defects: [...ensureDefects(f.defects), newHandoverDefectRow()],
+                    }))
                   }
                 >
                   <Plus className="h-4 w-4 mr-1" /> Přidat řádek
                 </Button>
               </div>
-              {form.defects.length === 0 ? (
+              {defects.length === 0 ? (
                 <p className="text-xs text-muted-foreground">Žádné vady — volitelné.</p>
               ) : (
                 <div className="space-y-2">
-                  {form.defects.map((row, idx) => (
-                    <div key={row.id} className="grid gap-2 sm:grid-cols-12 items-start border rounded p-2">
+                  {defects.map((row, idx) => (
+                    <div
+                      key={row.id}
+                      className="grid gap-2 sm:grid-cols-12 items-start border rounded p-2"
+                    >
                       <div className="sm:col-span-5">
                         <Input
                           placeholder="Popis vady"
@@ -524,13 +671,13 @@ export function HandoverProtocolFormDialog(props: {
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {(Object.keys(HANDOVER_DEFECT_STATUS_LABELS) as HandoverDefectStatus[]).map(
-                              (k) => (
-                                <SelectItem key={k} value={k}>
-                                  {HANDOVER_DEFECT_STATUS_LABELS[k]}
-                                </SelectItem>
-                              )
-                            )}
+                            {(
+                              Object.keys(HANDOVER_DEFECT_STATUS_LABELS) as HandoverDefectStatus[]
+                            ).map((k) => (
+                              <SelectItem key={k} value={k}>
+                                {HANDOVER_DEFECT_STATUS_LABELS[k]}
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
@@ -543,7 +690,7 @@ export function HandoverProtocolFormDialog(props: {
                           onClick={() =>
                             setForm((f) => ({
                               ...f,
-                              defects: f.defects.filter((_, i) => i !== idx),
+                              defects: ensureDefects(f.defects).filter((_, i) => i !== idx),
                             }))
                           }
                         >
@@ -621,7 +768,11 @@ export function HandoverProtocolFormDialog(props: {
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>
             Zrušit
           </Button>
-          <Button type="button" onClick={() => void save()} disabled={saving || loading}>
+          <Button
+            type="button"
+            onClick={() => void save()}
+            disabled={saving || loading || (!hasContracts && !editProtocolId)}
+          >
             {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
             <span className={saving ? "ml-2" : ""}>Uložit</span>
           </Button>

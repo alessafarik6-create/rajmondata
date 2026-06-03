@@ -273,18 +273,23 @@ export function JobHandoverProtocolsSection(props: {
                     </>
                   ) : null}
                 </div>
-                {Array.isArray(row.emailSendHistory) && row.emailSendHistory.length > 0 ? (
+                {(() => {
+                  const emailHistory = Array.isArray(row.emailSendHistory)
+                    ? row.emailSendHistory
+                    : [];
+                  return emailHistory.length > 0 ? (
                   <div className="text-xs text-muted-foreground border-t pt-2">
                     <p className="font-medium">Historie odeslání</p>
                     <ul className="mt-1 space-y-0.5">
-                      {[...row.emailSendHistory].slice(-3).reverse().map((ev, i) => (
+                      {[...emailHistory].slice(-3).reverse().map((ev, i) => (
                         <li key={i}>
                           {String(ev.at ?? "").slice(0, 19).replace("T", " ")} — {ev.detail ?? "—"}
                         </li>
                       ))}
                     </ul>
                   </div>
-                ) : null}
+                  ) : null;
+                })()}
               </li>
             );
           })}

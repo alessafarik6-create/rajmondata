@@ -161,6 +161,7 @@ import { toArraySafe } from "@/lib/to-array-safe";
 import type { JobNotificationRecipient } from "@/lib/job-notification-recipients";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
 import { JobHandoverProtocolsSection } from "@/components/handover-protocols/job-handover-protocols-section";
+import { pickDefaultHandoverContractId } from "@/lib/handover-protocol-contracts";
 import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
   staffCanEditMeetingRecords,
@@ -1716,7 +1717,7 @@ export function JobDetailPageContent({
     useCollection<WorkContractDoc>(workContractsColRef);
 
   const workContractsForJob = useMemo(() => {
-    const list = (workContracts || []) as WorkContractDoc[];
+    const list = (Array.isArray(workContracts) ? workContracts : []) as WorkContractDoc[];
     const filtered = list.filter((c) => {
       if (c.isTemplate === true) return false;
       const ct = String(c.contractType ?? "").trim();
@@ -2201,7 +2202,7 @@ export function JobDetailPageContent({
   );
 
   const workContractsBaseForJob = useMemo(() => {
-    const list = (workContractsForJob || []) as WorkContractDoc[];
+    const list = (Array.isArray(workContractsForJob) ? workContractsForJob : []) as WorkContractDoc[];
     return list.filter(
       (c) => String(c.documentRole ?? "").trim() !== "attachment"
     );
@@ -2209,7 +2210,7 @@ export function JobDetailPageContent({
 
   const attachmentsByParentContractId = useMemo(() => {
     const map = new Map<string, WorkContractDoc[]>();
-    for (const c of workContractsForJob ?? []) {
+    for (const c of Array.isArray(workContractsForJob) ? workContractsForJob : []) {
       if (String(c.documentRole ?? "").trim() !== "attachment") continue;
       const pid = String(c.parentContractId ?? "").trim();
       if (!pid) continue;
@@ -9916,20 +9917,15 @@ export function JobDetailPageContent({
                   size="sm"
                   className="h-9 w-full sm:w-auto"
                   onClick={() => {
-                    const first = workContractsBaseForJob.find((c) => {
-                      const r = String(c.documentRole ?? "").trim();
-                      return r !== "attachment" && r !== "addendum";
-                    });
-                    if (!first) {
+                    const contractId = pickDefaultHandoverContractId(workContractsForJob, null);
+                    if (!contractId) {
                       toast({
                         variant: "destructive",
-                        title: "Nejprve smlouva",
-                        description:
-                          "Předávací protokol lze vytvořit až po uložení smlouvy o dílo u zakázky.",
+                        title: "Nejdříve vytvořte smlouvu o dílo.",
                       });
                       return;
                     }
-                    setHandoverDefaultContractId(first.id);
+                    setHandoverDefaultContractId(contractId);
                     setHandoverFormOpen(true);
                   }}
                 >
@@ -10044,7 +10040,18 @@ export function JobDetailPageContent({
                               className="h-9 text-xs"
                               type="button"
                               onClick={() => {
-                                setHandoverDefaultContractId(c.id);
+                                const contractId = pickDefaultHandoverContractId(
+                                  workContractsForJob,
+                                  c.id
+                                );
+                                if (!contractId) {
+                                  toast({
+                                    variant: "destructive",
+                                    title: "Nejdříve vytvořte smlouvu o dílo.",
+                                  });
+                                  return;
+                                }
+                                setHandoverDefaultContractId(contractId);
                                 setHandoverFormOpen(true);
                               }}
                             >
