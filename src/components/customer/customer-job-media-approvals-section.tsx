@@ -38,6 +38,7 @@ import {
   type JobMediaRef,
 } from "@/lib/job-media-customer-approval";
 import { createCustomerActivity } from "@/lib/customer-activity";
+import { notifyJobActivity } from "@/lib/job-activity-notify-client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -305,6 +306,21 @@ export function CustomerJobMediaApprovalsSection({
         targetLink: `/portal/jobs/${jobId}`,
       });
       toast({ title: "Děkujeme", description: "Souhlas byl uložen." });
+      if (user) {
+        const approvedFileId =
+          it.target.kind === "photos" ? it.target.photoId : it.target.imageId;
+        const token = await user.getIdToken();
+        void notifyJobActivity({
+          idToken: token,
+          companyId,
+          jobId,
+          eventType: "drawing_approved",
+          folderId: it.target.kind === "folderImages" ? it.target.folderId : null,
+          fileId: approvedFileId,
+          fileName: it.title,
+          entityId: it.key,
+        });
+      }
       setLightbox(null);
       setLightboxCommentOpen(false);
       setLightboxCommentDraft("");
@@ -373,6 +389,21 @@ export function CustomerJobMediaApprovalsSection({
         targetLink: `/portal/jobs/${jobId}`,
       });
       toast({ title: "Odesláno", description: "Vaše připomínka byla uložena." });
+      if (user) {
+        const token = await user.getIdToken();
+        void notifyJobActivity({
+          idToken: token,
+          companyId,
+          jobId,
+          eventType: "customer_drawing_reminder",
+          folderId,
+          fileId,
+          fileName: it.title,
+          messagePreview: text,
+          visibleToCustomer: true,
+          entityId: it.key,
+        });
+      }
       setCommentOpenFor(null);
       setCommentDraft("");
       setLightbox(null);

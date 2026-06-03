@@ -148,6 +148,7 @@ import { cn } from "@/lib/utils";
 import { getJobCustomerPortalPreviewGate } from "@/lib/job-customer-portal-preview";
 import { JD } from "@/lib/job-detail-page-styles";
 import { logActivitySafe, type ActivityActorProfile } from "@/lib/activity-log";
+import { notifyJobActivity } from "@/lib/job-activity-notify-client";
 import { JobMeetingRecordsSection } from "@/components/meeting-records/job-meeting-records-section";
 import { JobCuttingPlanExcelSection } from "@/components/jobs/job-cutting-plan-excel-section";
 import {
@@ -7204,6 +7205,20 @@ export function JobDetailPageContent({
               description: "Kóty a poznámky byly uloženy.",
             }
       );
+
+      if (user && companyId && jobFirestoreId && target.kind !== "measurementPhotos") {
+        const token = await user.getIdToken();
+        void notifyJobActivity({
+          idToken: token,
+          companyId,
+          jobId: String(jobFirestoreId),
+          eventType: "drawing_annotation",
+          folderId: target.kind === "folderImages" ? target.folderId : null,
+          fileId: photoToEdit.id,
+          fileName: photoToEdit.fileName ?? photoToEdit.name ?? null,
+          entityId: photoToEdit.id,
+        });
+      }
 
       if (target.kind === "measurementPhotos") {
         const raw = measurementEditorReturnToRef.current;

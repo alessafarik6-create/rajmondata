@@ -26,6 +26,7 @@ import {
 } from "@/firebase";
 import { getDocsSafe } from "@/lib/firestore-safe-query";
 import { logActivitySafe } from "@/lib/activity-log";
+import { notifyJobActivity } from "@/lib/job-activity-notify-client";
 import { getFirebaseStorage } from "@/firebase/storage";
 import {
   uploadJobFolderImageBlobViaFirebaseSdk,
@@ -1140,8 +1141,9 @@ function UserFolderBlock({
       amountType: JobBudgetType;
       vatRate: VatRatePercent;
       date: string;
-    }
-  ) => {
+    },
+    opts?: { skipNotify?: boolean }
+  ): Promise<string | undefined> => {
     if (!isAllowedJobMediaFile(file)) {
       toast({
         variant: "destructive",
@@ -1399,6 +1401,22 @@ function UserFolderBlock({
         title: isEmployeeLimited ? "Soubor byl nahrán" : "Soubor uložen",
         description: safeBaseName,
       });
+      if (!opts?.skipNotify && user) {
+        void user.getIdToken().then((token) =>
+          notifyJobActivity({
+            idToken: token,
+            companyId,
+            jobId,
+            eventType: "file_upload",
+            folderId: folder.id,
+            folderName: folder.name ?? null,
+            fileId: refDoc.id,
+            fileName: safeBaseName,
+            entityId: refDoc.id,
+          })
+        );
+      }
+      return safeBaseName;
     } catch (err) {
       const code =
         typeof (err as { code?: unknown })?.code === "string"
@@ -1708,6 +1726,7 @@ function UserFolderBlock({
       const blobs = await renderPdfPagesToPngBlobs(openUrl, pages, 2);
       const baseStem =
         title.replace(/\.pdf$/i, "").replace(/\s+/g, " ").trim() || "dokument";
+      const convertedNames: string[] = [];
       for (let i = 0; i < blobs.length; i++) {
         const pageNum = pages[i] ?? i + 1;
         const blob = blobs[i];
@@ -1722,6 +1741,7 @@ function UserFolderBlock({
           );
         const refDoc = doc(imagesColRef);
         const displayName = outFileName;
+        convertedNames.push(displayName);
         await setDoc(refDoc, {
           id: refDoc.id,
           companyId,
@@ -1802,6 +1822,19 @@ function UserFolderBlock({
             ? "Obrázek je ve složce fotodokumentace."
             : `Vytvořeno ${blobs.length} obrázků.`,
       });
+      if (convertedNames.length && user) {
+        const token = await user.getIdToken();
+        void notifyJobActivity({
+          idToken: token,
+          companyId,
+          jobId,
+          eventType: "file_upload",
+          folderId: folder.id,
+          folderName: folder.name ?? null,
+          batchFileNames: convertedNames,
+          entityId: `${folder.id}:pdf:${convertedNames.join(",")}`,
+        });
+      }
       setPdfConvertTarget(null);
     } catch (e) {
       console.error(e);
@@ -2347,9 +2380,11 @@ function UserFolderBlock({
                   }
                   setBusy(true);
                   void (async () => {
+                    const uploaded: string[] = [];
                     for (const f of files) {
                       try {
-                        await uploadOne(f);
+                        const name = await uploadOne(f, undefined, { skipNotify: true });
+                        if (name) uploaded.push(name);
                       } catch (err) {
                         console.error(err);
                         toast({
@@ -2358,6 +2393,19 @@ function UserFolderBlock({
                           description: f.name,
                         });
                       }
+                    }
+                    if (uploaded.length && user) {
+                      const token = await user.getIdToken();
+                      void notifyJobActivity({
+                        idToken: token,
+                        companyId,
+                        jobId,
+                        eventType: "file_upload",
+                        folderId: folder.id,
+                        folderName: folder.name ?? null,
+                        batchFileNames: uploaded,
+                        entityId: `${folder.id}:${uploaded.join(",")}`,
+                      });
                     }
                   })().finally(() => setBusy(false));
                 }}
@@ -3321,11 +3369,30 @@ export function JobMediaSection({
     return sortMediaNotesChronologically([...byId.values()]);
   }, [mediaNotesFromFirestore, optimisticMediaNotes]);
 
-  const handleMediaNoteAdded = useCallback((note: JobMediaFileNoteDoc) => {
-    setOptimisticMediaNotes((prev) =>
-      prev.some((x) => x.id === note.id) ? prev : [...prev, note]
-    );
-  }, []);
+  const handleMediaNoteAdded = useCallback(
+    (note: JobMediaFileNoteDoc) => {
+      setOptimisticMediaNotes((prev) =>
+        prev.some((x) => x.id === note.id) ? prev : [...prev, note]
+      );
+      if (user) {
+        void user.getIdToken().then((token) =>
+          notifyJobActivity({
+            idToken: token,
+            companyId,
+            jobId,
+            eventType: "file_note",
+            folderId: note.folderId ?? null,
+            fileId: note.fileId,
+            fileName: null,
+            messagePreview: note.text,
+            visibleToCustomer: note.visibleToCustomer,
+            entityId: note.id,
+          })
+        );
+      }
+    },
+    [user, companyId, jobId]
+  );
 
   const authorDisplayName = useMemo(() => {
     const p = actorProfile as { displayName?: unknown; name?: unknown } | null;
@@ -3543,6 +3610,23 @@ export function JobMediaSection({
       }
 
       toast({ title: text ? "Poznámka uložena" : "Poznámka odstraněna" });
+      if (text && user) {
+        void user.getIdToken().then((token) =>
+          notifyJobActivity({
+            idToken: token,
+            companyId,
+            jobId,
+            eventType: "file_note",
+            folderId:
+              noteCtx.path.kind === "folderImages" ? noteCtx.path.folderId : null,
+            fileId: noteCtx.imageId,
+            fileName: noteCtx.fileNameHint,
+            messagePreview: text,
+            visibleToCustomer: true,
+            entityId: noteCtx.imageId,
+          })
+        );
+      }
       if (user && companyId) {
         logActivitySafe(firestore, companyId, user, actorProfile, {
           actionType: "job_media.note_update",
@@ -3718,6 +3802,19 @@ export function JobMediaSection({
       setNewFolderType("files");
       setNewFolderOpen(false);
       toast({ title: "Složka vytvořena", description: name });
+      if (user) {
+        void user.getIdToken().then((token) =>
+          notifyJobActivity({
+            idToken: token,
+            companyId,
+            jobId,
+            eventType: "folder_create",
+            folderId: refDoc.id,
+            folderName: name,
+            entityId: refDoc.id,
+          })
+        );
+      }
     } catch (e) {
       console.error(e);
       toast({

@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminFirestore } from "@/lib/firebase-admin";
 import { emitPortalNotification } from "@/lib/portal-notifications-server";
 import {
-  isPrivilegedRole,
-  trySendUnreadJobCommentEmail,
-  type JobCommentRow,
-} from "@/lib/email-notifications/job-comments-unread-email-server";
+  dispatchJobActivityNotifications,
+  type JobActivityNotifyEvent,
+} from "@/lib/email-notifications/job-activity-notify-server";
 
 type Body = {
   companyId?: string;
@@ -16,14 +15,6 @@ type Body = {
   fileName?: string | null;
   messagePreview?: string | null;
 };
-
-function appBaseUrl(): string {
-  return (
-    String(process.env.APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "")
-      .trim()
-      .replace(/\/$/, "") || ""
-  );
-}
 
 export async function POST(request: NextRequest) {
   const db = getAdminFirestore();
@@ -44,6 +35,7 @@ export async function POST(request: NextRequest) {
   }
 
   let callerUid: string;
+  let callerRole = "";
   try {
     const decoded = await auth.verifyIdToken(idToken);
     callerUid = decoded.uid;
@@ -81,7 +73,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Neplatná organizace." }, { status: 403 });
   }
 
-  const callerRole = String(caller.role ?? "").trim();
+  callerRole = String(caller.role ?? "").trim();
   const callerName =
     String(caller.displayName ?? caller.name ?? caller.email ?? "").trim() ||
     "Uživatel";
@@ -95,57 +87,28 @@ export async function POST(request: NextRequest) {
     targetType === "file" ? "Poznámka k souboru" : "Poznámka k zakázce";
   const whereLabel =
     targetType === "file" ? fileName || "soubor" : "zakázka";
-
   const bodyText = `${callerName}: nová zpráva (${whereLabel}).`;
 
-  let jobTitle = "";
+  const eventType: JobActivityNotifyEvent =
+    targetType === "file" ? "file_chat" : "job_chat";
+
   try {
-    const jobSnap = await db
-      .collection("companies")
-      .doc(companyId)
-      .collection("jobs")
-      .doc(jobId)
-      .get();
-    const jd = jobSnap.data() as Record<string, unknown> | undefined;
-    jobTitle =
-      String(jd?.title ?? jd?.name ?? jd?.jobTitle ?? "").trim() || "Zakázka";
-  } catch {
-    jobTitle = "Zakázka";
-  }
-
-  let commentRows: JobCommentRow[] = [];
-  try {
-    const cs = await db
-      .collection("companies")
-      .doc(companyId)
-      .collection("jobs")
-      .doc(jobId)
-      .collection("comments")
-      .limit(400)
-      .get();
-    commentRows = cs.docs.map((d) => ({ id: d.id, ...d.data() })) as JobCommentRow[];
-  } catch {
-    commentRows = [];
-  }
-
-  const baseUrl = appBaseUrl();
-
-  const tryEmailForTarget = async (targetUserId: string) => {
-    await trySendUnreadJobCommentEmail({
-      db,
-      callerUid,
-      targetUserId,
+    await dispatchJobActivityNotifications(db, {
+      companyId,
       jobId,
-      jobTitle,
-      targetType,
-      fileId,
+      eventType,
+      actorUid: callerUid,
+      actorName: callerName,
+      actorRole: callerRole,
       folderId,
+      fileId,
       fileName,
       messagePreview,
-      commentRows,
-      appBaseUrl: baseUrl,
+      entityId: targetType === "file" ? fileId : jobId,
     });
-  };
+  } catch (e) {
+    console.warn("[jobs/comments/notify] email dispatch failed", e);
+  }
 
   try {
     if (callerRole === "employee") {
@@ -171,9 +134,9 @@ export async function POST(request: NextRequest) {
           })
         )
       );
-
-      await Promise.allSettled(targets.map((uid) => tryEmailForTarget(uid)));
-    } else if (isPrivilegedRole(callerRole)) {
+    } else if (
+      ["owner", "admin", "manager", "accountant", "super_admin"].includes(callerRole)
+    ) {
       const membersSnap = await db
         .collection("companies")
         .doc(companyId)
@@ -202,11 +165,9 @@ export async function POST(request: NextRequest) {
           })
         )
       );
-
-      await Promise.allSettled(targets.map((uid) => tryEmailForTarget(uid)));
     }
   } catch (e) {
-    console.warn("[jobs/comments/notify] emit failed", e);
+    console.warn("[jobs/comments/notify] portal notify failed", e);
   }
 
   return NextResponse.json({ ok: true });
